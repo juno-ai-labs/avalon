@@ -1,7 +1,6 @@
 import { conversationNeedsViewer } from '@rally/contracts';
 import { compareAlphabeticalTitle } from '@rally/ui/lib/alphabetical';
 import { compareRecentChannels } from '../../common/recency-groups';
-import { orderByStoredIds } from './personal-order';
 import type { WorkstreamSummary } from './types';
 import type { SidebarChannelSort } from './ui-store';
 
@@ -45,58 +44,3 @@ export function compareChannels(sort: SidebarChannelSort, heldId: string | null 
   return (left, right) => needsYou(right) - needsYou(left) || compareRecentChannels(left, right);
 }
 
-/**
- * The pinned work streams, in the order to render them.
- *
- * `pinPosition` is the server's answer and the only order that survives a
- * reload. `dragOrder` is the arrangement a drag is currently building, and wins
- * while it exists so rows move under the pointer rather than after the round
- * trip. Ids in `dragOrder` that are no longer pinned — unpinned in another
- * window mid-drag — drop out, and anything pinned that the drag never saw is
- * appended, so the section always shows every pin exactly once.
- */
-export function orderPinnedWorkstreams(
-  workstreams: WorkstreamSummary[],
-  dragOrder: readonly string[] | null,
-): WorkstreamSummary[] {
-  const pinned = workstreams
-    .filter((workstream) => workstream.pinPosition !== null)
-    // The id breaks a tie the way both server readers do. Positions are unique
-    // today, so this cannot fire — it is here because "readers of this list
-    // agree on the order" is stated as an invariant, and a third reader that
-    // fell back to arrival order would be the one place it was not true.
-    .sort((left, right) =>
-      (left.pinPosition ?? 0) - (right.pinPosition ?? 0) || left.id.localeCompare(right.id));
-  // The same arrangement rule every other hand-ordered list in the app is
-  // drawn by, with the drag standing in for the stored order: ids it names
-  // first, then everything it never saw, and an id that is no longer pinned —
-  // unpinned in another window mid-drag — dropped rather than drawn as a gap.
-  return orderByStoredIds(pinned, dragOrder ?? [], (workstream) => workstream.id);
-}
-
-/** Where a Channel sits in one Space's Pinned section, or null when it is not pinned there. */
-export function spacePinPosition(
-  workstream: Pick<WorkstreamSummary, 'spaceIds' | 'spacePins'>,
-  spaceId: string,
-): number | null {
-  return workstream.spaceIds.includes(spaceId)
-    ? workstream.spacePins?.find((pin) => pin.spaceId === spaceId)?.position ?? null
-    : null;
-}
-
-/**
- * The top row of a Space's list in the sidebar: its first pin, or else the
- * first unpinned Channel under the reader's sort. Only Channels in that Space
- * are considered, and never a create still in flight.
- */
-export function firstSidebarChannelInSpace(
-  workstreams: WorkstreamSummary[],
-  spaceId: string,
-  sort: SidebarChannelSort,
-): WorkstreamSummary | undefined {
-  const inSpace = workstreams
-    .filter((workstream) => !workstream.pending && workstream.spaceIds.includes(spaceId))
-    .map((workstream) => ({ ...workstream, pinPosition: spacePinPosition(workstream, spaceId) }));
-  return orderPinnedWorkstreams(inSpace, null)[0]
-    ?? inSpace.filter((workstream) => workstream.pinPosition === null).sort(compareChannels(sort))[0];
-}

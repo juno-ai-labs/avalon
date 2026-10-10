@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import type { WorkstreamSummary } from './types';
 
 /** The general channel context rail remains retired; artifact reading uses the slot directly. */
 export const CONTEXT_SIDEBAR_ENABLED = false;
@@ -18,9 +17,6 @@ export interface RailInspector {
 interface UiState {
   sidebarOpen: boolean;
   sidebarWidth: number;
-  /** The Space the sidebar's Channel list is filtered to, or null for All. */
-  sidebarSpaceFilter: string | null;
-  sidebarChannelSort: SidebarChannelSort;
   sidebarSection: SidebarSection;
   /** How the Threads tab orders the threads nobody pinned; Recent until changed. */
   threadSort: SidebarChannelSort;
@@ -32,8 +28,6 @@ interface UiState {
   railScope: string | null;
   setSidebarOpen: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
-  setSidebarSpaceFilter: (spaceId: string | null) => void;
-  setSidebarChannelSort: (sort: SidebarChannelSort) => void;
   setSidebarSection: (section: SidebarSection) => void;
   setThreadSort: (sort: SidebarChannelSort) => void;
   openRail: (variant?: RailVariant) => void;
@@ -48,14 +42,6 @@ interface UiState {
   // The inspector keeps its width per work stream. Screens outside a work
   // stream pass null and share one bucket.
   setRailScope: (scope: string | null) => void;
-  /**
-   * The sidebar's own pin action, so a Channel's menu pins through the same
-   * rule (`channelPinTargets`, answered as under All) and the same reveal. It
-   * takes the menu's own row, which need not be in the sidebar's loaded page.
-   * Null while no sidebar is mounted.
-   */
-  pinChannel: ((workstream: WorkstreamSummary, pinned: boolean) => void) | null;
-  setPinChannel: (pin: ((workstream: WorkstreamSummary, pinned: boolean) => void) | null) => void;
 }
 
 export const MIN_RAIL_WIDTH = 280;
@@ -65,8 +51,6 @@ export { COLLAPSED_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, DEFAULT_
 import { clampSidebarWidth, loadSidebarWidth, saveSidebarPreference } from '@rally/ui/lib/sidebar-preferences';
 import { SINGLE_SIDEBAR_DEFAULT_WIDTH } from '@rally/ui/lib/sidebar-geometry';
 const SIDEBAR_WIDTH_STORAGE_KEY = 'rally.sidebar-width';
-const SIDEBAR_SPACE_FILTER_STORAGE_KEY = 'rally.sidebar-space-filter';
-const SIDEBAR_CHANNEL_SORT_STORAGE_KEY = 'rally.sidebar-channel-sort';
 const RAIL_WIDTH_STORAGE_PREFIX = 'rally.rail-width';
 const SIDEBAR_SECTION_STORAGE_KEY = 'rally.sidebar-section';
 const THREAD_SORT_STORAGE_KEY = 'rally.sidebar-thread-sort';
@@ -88,44 +72,6 @@ function savePreference(key: string, value: string): void {
     window.localStorage.setItem(key, value);
   } catch {
     // Best-effort device preference; it still applies for this session.
-  }
-}
-
-function loadSpaceFilter(): string | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    return window.localStorage.getItem(SIDEBAR_SPACE_FILTER_STORAGE_KEY) || null;
-  } catch {
-    return null;
-  }
-}
-
-function saveSpaceFilter(spaceId: string | null): void {
-  if (typeof window === 'undefined') return;
-  try {
-    if (spaceId === null) window.localStorage.removeItem(SIDEBAR_SPACE_FILTER_STORAGE_KEY);
-    else window.localStorage.setItem(SIDEBAR_SPACE_FILTER_STORAGE_KEY, spaceId);
-  } catch {
-    // Best-effort device preference; the filter still works for this session.
-  }
-}
-
-function loadChannelSort(): SidebarChannelSort {
-  if (typeof window === 'undefined') return 'alphabetical';
-  try {
-    const stored = window.localStorage.getItem(SIDEBAR_CHANNEL_SORT_STORAGE_KEY);
-    return stored === 'recent' || stored === 'needs_you' ? stored : 'alphabetical';
-  } catch {
-    return 'alphabetical';
-  }
-}
-
-function saveChannelSort(sort: SidebarChannelSort): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(SIDEBAR_CHANNEL_SORT_STORAGE_KEY, sort);
-  } catch {
-    // Best-effort device preference; the order still applies for this session.
   }
 }
 
@@ -163,8 +109,6 @@ function saveRailWidth(prefix: string, scope: string | null, width: number): voi
 export const useUiStore = create<UiState>((set, get) => ({
   sidebarOpen: false,
   sidebarWidth: loadSidebarWidth(SIDEBAR_WIDTH_STORAGE_KEY, SINGLE_SIDEBAR_DEFAULT_WIDTH),
-  sidebarSpaceFilter: loadSpaceFilter(),
-  sidebarChannelSort: loadChannelSort(),
   sidebarSection: loadPreference<SidebarSection>(SIDEBAR_SECTION_STORAGE_KEY, ['channels', 'threads', 'activity'], 'channels'),
   threadSort: loadPreference<SidebarChannelSort>(THREAD_SORT_STORAGE_KEY, ['alphabetical', 'recent', 'needs_you'], 'recent'),
   railOpen: false,
@@ -178,14 +122,6 @@ export const useUiStore = create<UiState>((set, get) => ({
     const sidebarWidth = clampSidebarWidth(width);
     saveSidebarPreference(SIDEBAR_WIDTH_STORAGE_KEY, sidebarWidth);
     set({ sidebarWidth });
-  },
-  setSidebarSpaceFilter: (sidebarSpaceFilter) => {
-    saveSpaceFilter(sidebarSpaceFilter);
-    set({ sidebarSpaceFilter });
-  },
-  setSidebarChannelSort: (sidebarChannelSort) => {
-    saveChannelSort(sidebarChannelSort);
-    set({ sidebarChannelSort });
   },
   setSidebarSection: (sidebarSection) => {
     savePreference(SIDEBAR_SECTION_STORAGE_KEY, sidebarSection);
@@ -212,6 +148,4 @@ export const useUiStore = create<UiState>((set, get) => ({
     railScope,
     railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, railScope),
   }),
-  pinChannel: null,
-  setPinChannel: (pinChannel) => set({ pinChannel }),
 }));

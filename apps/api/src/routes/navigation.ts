@@ -1,6 +1,7 @@
 import {
   ActivityPageSchema,
   ActivitySeenRequestSchema,
+  ChannelStatsListSchema,
   IdSchema,
   MyThreadsPageSchema,
   PinKindSchema,
@@ -33,6 +34,10 @@ navigationRoutes.get("/threads", zValidator("query", pageQuery), async (c) =>
   c.json(MyThreadsPageSchema.parse(
     await new SpaceService(c.env, getWorkspaceAuth(c)).listMyThreads(c.req.valid("query").cursor ?? null),
   )),
+);
+
+navigationRoutes.get("/channel-stats", async (c) =>
+  c.json(ChannelStatsListSchema.parse(await new SpaceService(c.env, getWorkspaceAuth(c)).listChannelStats())),
 );
 
 navigationRoutes.get("/pins", async (c) =>

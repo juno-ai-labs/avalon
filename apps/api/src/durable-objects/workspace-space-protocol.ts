@@ -8,6 +8,7 @@ import {
   ScopeSchema,
   ActivityPageSchema,
   ChannelFeedPageSchema,
+  ChannelStatsListSchema,
   MyThreadsPageSchema,
   PinKindSchema,
   PinListSchema,
@@ -402,6 +403,12 @@ export const WorkspacePinResultSchema = z.union([
   z.strictObject({ ok: z.literal(false), code: z.enum(["pin_target_not_found", "pin_limit_reached"]) }),
 ]);
 export type WorkspacePinResult = z.infer<typeof WorkspacePinResultSchema>;
+
+export const WorkspaceChannelStatsResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), stats: ChannelStatsListSchema }),
+  z.strictObject({ ok: z.literal(false), code: z.literal("space_access_denied") }),
+]);
+export type WorkspaceChannelStatsResult = z.infer<typeof WorkspaceChannelStatsResultSchema>;
 
 export const WorkspaceChannelSpacesRequestSchema = SpaceActorSchema.extend({
   workstreamId: WorkstreamIdSchema,

@@ -420,7 +420,15 @@ function ThreadRow({ active, drag, onOpen, onPin, pinned, row, spaces }: {
 function ChannelsSection({ guest }: { guest: boolean }): React.JSX.Element {
   const navigate = useNavigate();
   const { active } = useSpaceDirectories();
-  const stats = useQuery<ChannelStats[]>({ queryKey: CHANNEL_STATS_QUERY_KEY, queryFn: async () => [], enabled: false });
+  const { api } = useAppSession();
+  // The socket's Space snapshot seeds this; a placement nudge marks it stale
+  // and only then is it read on its own.
+  const stats = useQuery<ChannelStats[]>({
+    queryKey: CHANNEL_STATS_QUERY_KEY,
+    queryFn: ({ signal }) => api!.getChannelStats(signal),
+    enabled: api !== null,
+    staleTime: Infinity,
+  });
   const pins = usePins();
   const pin = usePinAction();
   const openChannelId = useOpenChannelId();

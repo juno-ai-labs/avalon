@@ -295,6 +295,21 @@ describe("private Channels", () => {
   });
 });
 
+describe("Channels tab", () => {
+  it("given a Channel with an open and a private thread, when each person reads the stats, then each counts only the threads they may list", async () => {
+    const channelId = await channelWithThreads();
+
+    const count = async (userId: UserId) => {
+      const result = await workspace().listChannelStats({ workspaceId: WORKSPACE_ID, userId });
+      if (!result.ok) throw new Error(`listChannelStats refused: ${result.code}`);
+      return result.stats.find((stats) => stats.channelId === channelId)?.threadCount;
+    };
+
+    expect(await count(MEMBER)).toBe(1);
+    expect(await count(OWNER)).toBe(2);
+  });
+});
+
 describe("Threads tab", () => {
   it("given threads and a breakout, when a person reads their threads, then it lists what they take part in and leaves the rest out", async () => {
     await channelWithThreads();

@@ -15,10 +15,10 @@ vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ d
 vi.mock('../components/channel-composer', () => ({ ChannelComposer: () => <div>composer</div> }));
 vi.mock('./workstream', () => ({ WorkstreamScreen: () => <div>thread pane</div> }));
 
-const workspace = {
-  id: 'org', name: 'Rally', region: 'global',
-  currentUser: { id: 'me', name: 'Me', email: 'me@rally.test', role: 'member', accessClass: 'member' },
-} as unknown as Workspace;
+const workspace: Workspace = {
+  id: 'org', name: 'Rally', region: 'enterprise', timezone: 'UTC',
+  currentUser: { id: 'me', name: 'Me', email: 'me@rally.test', timezone: 'UTC', role: 'member', accessClass: 'member' },
+};
 
 function outbound(reach: 'organization' | 'participant' | 'through_channel') {
   return { waterline: 1, items: [{
@@ -28,13 +28,13 @@ function outbound(reach: 'organization' | 'participant' | 'through_channel') {
   }] };
 }
 
-const plan = {
+const plan: WorkstreamSummary = {
   id: 'plan', title: 'Q4 plan', objective: 'A four-week outbound setup plan.', titleStatus: 'settled', scope: 'workspace',
   harnessStatus: 'completed', latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0,
   manualUnreadFromSequenceNumber: null, manualUnreadGeneration: 0, hasUnread: false, firstUnreadSequenceNumber: null,
   nextPendingWakeup: null, participantUserIds: [], participantExtraCount: 0, spaceIds: ['outbound'], pinPosition: null,
-  lastActivityAt: '2026-10-02T00:00:00.000Z', createdByUserId: null,
-} as unknown as WorkstreamSummary;
+  lastActivityAt: '2026-10-02T00:00:00.000Z',
+};
 
 function Location(): React.JSX.Element {
   const location = useLocation();
