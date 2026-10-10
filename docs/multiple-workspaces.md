@@ -80,6 +80,13 @@ or GitHub, needs only its sign-in code: neither the bridge nor the table names
 the providers.
 An older version-1 workspace-only envelope can be reconnected in place after one
 Google exchange, preserving its selected workspace rather than forcing setup.
+A live sign-in attempt that lands on stored credentials with no organization
+session to show (an identity credential whose profile could not be rebuilt, or
+an active entry whose profile is gone) replaces them: the renderer drew the
+sign-in screen for that state, so the stale set is cleared, revoked in the
+background, and the new identity stored. A stored organization session for the
+same email keeps its selection and gains the identity credential; one for a
+different email refuses the sign-in.
 
 ### Credential renewal
 
@@ -463,6 +470,31 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-10-10: A sign-in replaces stored credentials the app could not show
+
+**What changed:** `exchangeDesktopTicket` no longer refuses a live attempt
+because an identity credential is already stored. When the stored set has no
+organization session to show, it is cleared and revoked in the background and
+the new sign-in is stored. A stored organization session keeps its old rule:
+same email gains the identity credential, a different email is refused.
+
+**Why:** A person was stuck on the sign-in screen with "Another Rally sign-in
+completed first". `session:get` answers null when the identity credential's
+profile is missing and the rebuilding refresh fails without being terminal, so
+the credential stays on disk while the renderer shows sign-in. The exchange
+then read that leftover credential as a competing sign-in and refused every
+attempt, with no path back in short of deleting app data.
+
+**Considered and rejected:** Keeping the refusal and clearing the credential
+in `session:get` instead. A network blip there must not sign anyone out, which
+is why it keeps the credential; the sign-in is the moment the person has
+asked to replace it.
+
+**Consequences:** The guard against a late callback replacing a newer sign-in
+is the attempt registry alone: creating an attempt retires every earlier one,
+and a completed exchange retires it. A future change that lets an attempt
+outlive a completed sign-in must restore a check here.
 
 ### 2026-10-08: Organization rows show an activity count, on the Mac and in the browser
 
