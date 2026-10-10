@@ -295,6 +295,30 @@ describe("private Channels", () => {
   });
 });
 
+describe("archiving a Channel", () => {
+  it("given a thread that lives only in a Channel, when the Channel is archived, then the thread moves to General and a restore puts it back", async () => {
+    const general = await workspace().openGeneralSpace({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId("00000000-0000-7000-8000-00000000e1aa"),
+    });
+    if (!general.ok || "absent" in general) throw new Error("openGeneralSpace refused");
+    const generalId = asSpaceId(general.space.id);
+    const channelId = await channelWithThreads();
+
+    await expect(workspace().archiveSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId }))
+      .resolves.toMatchObject({ ok: true, space: { status: "archived" } });
+
+    // Both threads, the private one included: an archive strands neither.
+    const inGeneral = (await feed(generalId, OWNER)).items
+      .map((item) => item.kind === "thread" ? item.thread.id : item.threadId);
+    expect(inGeneral).toEqual(expect.arrayContaining([OPEN_THREAD, PRIVATE_THREAD]));
+
+    await expect(workspace().restoreSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId }))
+      .resolves.toMatchObject({ ok: true, space: { status: "active" } });
+    expect((await feed(channelId, OWNER)).items.map((item) => item.kind === "thread" ? item.thread.id : item.threadId))
+      .toEqual(expect.arrayContaining([OPEN_THREAD, PRIVATE_THREAD]));
+  });
+});
+
 describe("Channels tab", () => {
   it("given a Channel with an open and a private thread, when each person reads the stats, then each counts only the threads they may list", async () => {
     const channelId = await channelWithThreads();

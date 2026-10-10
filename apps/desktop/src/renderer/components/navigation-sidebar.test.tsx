@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '../lib/api';
-import { CHANNEL_STATS_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
+import { CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import type { SpaceConversationSummary, Workspace } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { NavigationSidebar } from './navigation-sidebar';
@@ -17,6 +17,7 @@ const api = vi.hoisted(() => ({
   setPinned: vi.fn(),
   reorderPins: vi.fn(),
   getChannelStats: vi.fn(async () => []),
+  restoreSpace: vi.fn(),
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
 vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ data: [] }) }));
@@ -105,6 +106,23 @@ describe('the navigation sidebar', () => {
     fireEvent.contextMenu(screen.getByRole('button', { name: /Outbound/u }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
     expect(await screen.findByText('You’ve pinned as many items as Rally allows. Unpin one first.')).toBeInTheDocument();
+  });
+
+  it('keeps archived Channels folded at the bottom, and restores one into the list', async () => {
+    api.restoreSpace.mockResolvedValue(channel('hiring', 'Hiring'));
+    renderSidebar((client) => {
+      client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] });
+      client.setQueryData(INACTIVE_SPACES_QUERY_KEY, { waterline: 1, items: [channel('hiring', 'Hiring', { status: 'archived' })] });
+    });
+    const archived = within(screen.getByRole('region', { name: 'Archived channels' }));
+    expect(archived.queryByText('Hiring')).not.toBeInTheDocument();
+    fireEvent.click(archived.getByRole('button', { name: 'Show 1' }));
+    fireEvent.click(archived.getByRole('button', { name: 'Restore' }));
+
+    const all = within(screen.getByRole('region', { name: 'All channels' }));
+    expect(await all.findByRole('button', { name: /Hiring/u })).toBeInTheDocument();
+    expect(api.restoreSpace).toHaveBeenCalledWith('hiring');
+    expect(screen.queryByRole('region', { name: 'Archived channels' })).not.toBeInTheDocument();
   });
 
   it('opens a Channel on its own route', () => {

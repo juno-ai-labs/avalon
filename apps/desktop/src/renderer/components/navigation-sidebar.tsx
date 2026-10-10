@@ -34,7 +34,7 @@ import { formatSidebarActivityTime, workstreamMarkerStatus } from '../lib/format
 import { channelRoute, homeChannelId, threadRoute } from '../lib/navigation-routes';
 import { moveWithin } from '../lib/personal-order';
 import { compareChannels } from '../lib/sidebar-channel-order';
-import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, MY_THREADS_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
+import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, MY_THREADS_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import type { SpaceConversationSummary, Workspace } from '../lib/types';
 import { useUiStore, type SidebarChannelSort, type SidebarSection } from '../lib/ui-store';
 import { useSpaceDirectories } from '../lib/use-space-directories';
@@ -441,7 +441,7 @@ function ThreadRow({ active, drag, onOpen, onPin, pinned, row, spaces }: {
  */
 function ChannelsSection({ guest }: { guest: boolean }): React.JSX.Element {
   const navigate = useNavigate();
-  const { active } = useSpaceDirectories();
+  const { active, inactive } = useSpaceDirectories();
   const { api } = useAppSession();
   // The socket's Space snapshot seeds this; a placement nudge marks it stale
   // and only then is it read on its own.
@@ -488,8 +488,47 @@ function ChannelsSection({ guest }: { guest: boolean }): React.JSX.Element {
       {rest.map((space) => row(space))}
       {active.data !== undefined && channels.length === 0 && <p className="navigation-empty">No channels yet.</p>}
     </section>
+    {!guest && (inactive.data?.items.length ?? 0) > 0 && <ArchivedChannels channels={inactive.data!.items} />}
     {creating && <NewChannelDialog onClose={() => setCreating(false)} />}
   </>;
+}
+
+/**
+ * Archived Channels, folded away under their own heading, each with
+ * **Restore**. A restore brings back the threads the archive took out; any it
+ * moved to General stay there too.
+ */
+function ArchivedChannels({ channels }: { channels: readonly SpaceSummary[] }): React.JSX.Element {
+  const { api } = useAppSession();
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const restore = (space: SpaceSummary): void => {
+    if (!api) return;
+    setFailed(null);
+    void api.restoreSpace(space.id).then((restored) => {
+      queryClient.setQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY, (current) => current ? {
+        ...current, items: current.items.filter((item) => item.id !== space.id),
+      } : current);
+      queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current ? {
+        ...current, items: [...current.items.filter((item) => item.id !== space.id), restored],
+      } : current);
+    }, () => setFailed(space.name));
+  };
+  return <section aria-label="Archived channels" className="navigation-section">
+    <SectionHeading trailing={<button aria-expanded={open} className="navigation-sort" onClick={() => setOpen(!open)} type="button">
+      {open ? 'Hide' : `Show ${channels.length}`}
+    </button>}>Archived</SectionHeading>
+    {failed && <InlineError>{failed} couldn’t be restored. Try again.</InlineError>}
+    {open && [...channels].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }))
+      .map((space) => <div className="navigation-archived-row" key={space.id}>
+        <span className="navigation-channel-mark is-small" style={{ background: markColors(space.colorKey).tint }}>
+          <SpaceIcon size={16} space={space} />
+        </span>
+        <span className="navigation-archived-name">{space.name}</span>
+        <Button onClick={() => restore(space)}>Restore</Button>
+      </div>)}
+  </section>;
 }
 
 function ChannelRow({ active, drag, onOpen, onPin, pinned, space, stats }: {

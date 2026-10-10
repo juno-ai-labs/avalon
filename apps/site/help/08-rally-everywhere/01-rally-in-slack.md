@@ -202,7 +202,8 @@ per job.
   link is paused. Invite Rally again, or mention it, to bring the link back.
   Unarchiving the Slack channel on its own is not enough.
 - If the Channel in Rally has been archived, Rally does not start work in that
-  Slack room and says so. A Rally administrator can restore the Channel.
+  Slack room and says so. Restore the Channel from **Archived** at the bottom of
+  the Channels list to bring the link back.
 
 ## When Rally stops answering in Slack
 

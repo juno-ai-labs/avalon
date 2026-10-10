@@ -112,8 +112,11 @@ the Channel's menu:
   [Private channels](#private-channels).
 - **Pinned in my sidebar** pins the Channel to the top of your Channels list. You
   can also right-click the Channel in the list and choose **Pin**.
+- **Archive channel** takes the Channel out of everyone's Channels list, after
+  asking. Its Threads keep going, and any that sit in no other Channel move to
+  General so nobody loses them. See [Archiving](02-arranging-channels.md#archiving).
 
-General's menu has no privacy switch and no **Rename**. A Channel you can see but
+General's menu has no privacy switch, no **Rename** and no **Archive channel**. A Channel you can see but
 not change (see below) shows its people but offers nothing to change.
 
 ## Who belongs in a Channel
@@ -173,6 +176,13 @@ explains what a recommendation does.
 A Thread can sit in more than one Channel. It shows in each Channel's feed, and
 its row in your Threads list carries a chip for each, so work that belongs to
 two teams does not need copying.
+
+To change where a Thread sits, click its name in its title pill and choose
+**Channels**. The list shows the Channels it is in; under **Add to a channel**,
+click another to add it there. To take it out of one, click **…** beside that
+Channel and choose **Remove from this channel**. A Thread always keeps at least
+one Channel, so the last one cannot be removed. You can add a Thread to any
+Channel you could start a Thread in.
 
 If you open a link to a Channel that has been archived, that has been made
 private, or that you no longer have access to, Rally shows **Channel not found**

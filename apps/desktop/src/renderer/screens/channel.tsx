@@ -18,7 +18,9 @@ import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { ChannelPaneContextValue, threadRoute, type ChannelPaneContext } from '../lib/navigation-routes';
 import { desktopBridge } from '../lib/platform';
-import { PINS_QUERY_KEY, SPACES_QUERY_KEY, channelFeedQueryKey } from '../lib/sidebar-list-store';
+import { INACTIVE_SPACES_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY, channelFeedQueryKey } from '../lib/sidebar-list-store';
+import { spaceFailureSentence } from '../lib/space-failure-copy';
+import { WORKSTREAM_LANDING_ROUTE } from '../lib/workstream-landing';
 import type { AutomationSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
@@ -248,6 +250,8 @@ function ChannelHeader({ members, space, workspace }: {
   const [failure, setFailure] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [archiving, setArchiving] = useState<'confirm' | 'saving' | null>(null);
+  const navigate = useNavigate();
   const pins = useQuery<PinList>({ queryKey: PINS_QUERY_KEY, queryFn: async () => [], enabled: false });
   const library = useQuery<AutomationSummary[]>({ queryKey: ['automations'], queryFn: async () => [], enabled: false });
   const member = workspace.currentUser.accessClass !== 'guest';
@@ -281,6 +285,26 @@ function ChannelHeader({ members, space, workspace }: {
     }),
     scope === 'personal' ? 'This channel couldn’t be made private.' : 'This channel’s people couldn’t be updated.',
   );
+  const archive = async (): Promise<void> => {
+    setArchiving('saving');
+    setFailure(null);
+    try {
+      const archived = await api!.archiveSpace(space.id);
+      // Out of the list now rather than when the snapshot lands, so the
+      // landing below cannot pick it.
+      queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current ? {
+        ...current, items: current.items.filter((item) => item.id !== space.id),
+      } : current);
+      queryClient.setQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY, (current) => current ? {
+        ...current, items: [...current.items.filter((item) => item.id !== space.id), archived],
+      } : current);
+      setArchiving(null);
+      void navigate(WORKSTREAM_LANDING_ROUTE, { replace: true, state: { skipWorkstreamIds: [] } });
+    } catch (cause) {
+      setArchiving(null);
+      setFailure(spaceFailureSentence(cause, 'This channel couldn’t be archived.'));
+    }
+  };
   const pinned = (pins.data ?? []).some((pin) => pin.kind === 'channel' && pin.id === space.id);
   const recommended = new Set(space.defaultSidekickIds);
   const sidekicks: SidekickRow[] = (library.data ?? [])
@@ -315,6 +339,7 @@ function ChannelHeader({ members, space, workspace }: {
       </DropdownMenu.Sub> : undefined}
       channel={{ name: space.name, scope: space.scope }}
       members={roster}
+      onArchive={editable && !general ? () => setArchiving('confirm') : undefined}
       onOpenSidekick={(id) => void desktopBridge().openSidekicks(id)}
       onRename={editable && !general ? () => setRenaming(space.name) : undefined}
       people={editable ? {
@@ -367,6 +392,21 @@ function ChannelHeader({ members, space, workspace }: {
         <span>Name</span>
         <input autoFocus maxLength={180} onChange={(event) => setRenaming(event.target.value)} value={renaming ?? ''} />
       </label>
+    </Modal>
+    <Modal
+      footer={<>
+        <Button disabled={archiving === 'saving'} onClick={() => setArchiving(null)}>Cancel</Button>
+        <Button className="button-danger" disabled={archiving === 'saving'} onClick={() => void archive()}>Archive</Button>
+      </>}
+      onOpenChange={(open) => { if (!open && archiving !== 'saving') setArchiving(null); }}
+      open={archiving !== null}
+      title={`Archive ${space.name}?`}
+    >
+      <p className="modal-copy">
+        It leaves the Channels list for everyone. Its threads keep going, and any that live only
+        here move to General. You can restore it from <strong>Archived</strong> at the bottom of
+        the Channels list.
+      </p>
     </Modal>
   </>;
 }

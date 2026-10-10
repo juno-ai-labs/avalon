@@ -414,4 +414,27 @@ describe('a title pill menu with levels', () => {
     fireEvent.keyDown(breakout, { key: 'ArrowLeft' });
     expect(await screen.findByRole('menuitem', { name: /^Breakouts/u })).toHaveFocus();
   });
+
+  it('lists the Channels a thread sits in, adds it to another, and keeps the last one', async () => {
+    const onAdd = vi.fn();
+    const onRemove = vi.fn();
+    renderChannelPill({ channels: {
+      current: [{ id: 'general', name: 'General', icon: null }],
+      addable: [{ id: 'outbound', name: 'Outbound', icon: null }],
+      onAdd,
+      onRemove,
+    } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Channels\s*1/u }));
+
+    expect(await screen.findByText('General')).toBeInTheDocument();
+    // A thread keeps at least one Channel, so its only one cannot be removed.
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'General actions' }), { button: 0, ctrlKey: false });
+    expect(await screen.findByRole('menuitem', { name: 'Remove from this channel' })).toHaveAttribute('data-disabled');
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Outbound' }));
+    expect(onAdd).toHaveBeenCalledWith('outbound');
+    expect(onRemove).not.toHaveBeenCalled();
+  });
 });

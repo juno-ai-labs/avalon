@@ -71,6 +71,7 @@ import {
   WorkspaceExternalEventDeliveryQueueMessageSchema,
   WorkspaceExternalEventMatchResultSchema,
   asSpaceId,
+  asWorkstreamId,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
@@ -9964,9 +9965,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const result = WorkspaceSpaceMutationResultSchema.parse(this.spaceStorage().archive(request.userId, request.spaceId));
+    const storage = this.spaceStorage();
+    const archived = storage.archive(request.workspaceId, request.userId, request.spaceId);
+    const result = WorkspaceSpaceMutationResultSchema.parse(archived.result);
     if (!result.ok) return result;
     this.publishSpaceSnapshot();
+    if (archived.rehomed.length > 0) {
+      const general = asSpaceId(storage.generalSpaceId()!);
+      this.publishSpaceConversationsChanged({
+        spaceIdsThroughChannel: new Map(archived.rehomed.map((workstreamId) => [asWorkstreamId(workstreamId), [general]])),
+      });
+      for (const workstreamId of archived.rehomed) {
+        this.deferSpaceMembershipConvergence(request.workspaceId, asWorkstreamId(workstreamId), false);
+      }
+      await this.afterSidekickDefaultsApplied(storage, request.workspaceId);
+    }
     // An archive takes every member Channel off this Space's dashboard and a
     // restore puts them back. `spaceIds`, which names the Space to everybody
     // who reaches it, is right here: the Space's own disappearance and return

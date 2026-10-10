@@ -7,11 +7,14 @@ import {
   IconCloudDownload,
   IconCornerDownRight,
   IconDots,
+  IconFolderMinus,
+  IconHash,
   IconHexagons,
   IconLink,
   IconLock,
   IconPencil,
   IconPin,
+  IconPlus,
   IconUserMinus,
   IconX,
   IconUserPlus,
@@ -63,6 +66,27 @@ const PEOPLE_VIEW: TitleMenuView = { key: 'people', label: 'People' };
 const SIDEKICKS_VIEW: TitleMenuView = { key: 'sidekicks', label: 'Sidekicks' };
 const BREAKOUTS_VIEW: TitleMenuView = { key: 'breakouts', label: 'Breakouts' };
 const MORE_VIEW: TitleMenuView = { key: 'more', label: 'More' };
+const CHANNELS_VIEW: TitleMenuView = { key: 'channels', label: 'Channels' };
+
+/** One Channel row in a thread's Channels level. */
+export interface ThreadChannelRow {
+  id: string;
+  name: string;
+  icon: ReactNode;
+}
+
+/**
+ * The Channels a thread sits in, and those it could be added to. A thread
+ * may sit in several; it must keep at least one, so the last cannot be
+ * removed. Absent `onAdd` or `onRemove` means the viewer may not change them.
+ */
+export interface ThreadChannels {
+  current: readonly ThreadChannelRow[];
+  addable: readonly ThreadChannelRow[];
+  onAdd?: ((channelId: string) => void) | undefined;
+  onRemove?: ((channelId: string) => void) | undefined;
+  error?: string | null | undefined;
+}
 
 /**
  * Adding people from inside the menu: everyone the reader could add, and the
@@ -369,6 +393,37 @@ function SidekicksView({ addSidekick, failure, items, onMenuOpen, onOpen, onRefr
   </div>;
 }
 
+function ChannelsView({ channels }: { channels: ThreadChannels }): React.JSX.Element {
+  const [query, setQuery] = useState('');
+  const needle = query.trim().toLocaleLowerCase();
+  const addable = channels.addable.filter((channel) => channel.name.toLocaleLowerCase().includes(needle));
+  return <>
+    {channels.error && <p className="title-menu-error" role="alert">{channels.error}</p>}
+    {channels.current.map((channel) => <div className="title-menu-person" key={channel.id}>
+      <span className="title-menu-channel-mark">{channel.icon}</span>
+      <span className="title-menu-person-copy">
+        <span className="title-menu-person-name">{channel.name}</span>
+      </span>
+      {channels.onRemove && <RowAction
+        disabled={channels.current.length <= 1}
+        icon={<IconFolderMinus aria-hidden="true" size={16} stroke={1.8} />}
+        label="Remove from this channel"
+        name={channel.name}
+        onSelect={() => channels.onRemove?.(channel.id)}
+      />}
+    </div>)}
+    {channels.onAdd && channels.addable.length > 0 && <>
+      <div className="title-menu-section-heading">Add to a channel</div>
+      {channels.addable.length > 8 && <TitleMenuSearch label="Find a channel" onChange={setQuery} value={query} />}
+      {addable.map((channel) => <TitleMenuItem
+        icon={<IconPlus aria-hidden="true" size={16} stroke={1.8} />}
+        key={channel.id}
+        onSelect={() => channels.onAdd?.(channel.id)}
+      >{channel.name}</TitleMenuItem>)}
+    </>}
+  </>;
+}
+
 function BreakoutsView({ breakouts, onOpenBreakout, openSubstreamId, renderAge }: {
   breakouts: readonly BreakoutMark[] | undefined;
   onOpenBreakout: (substreamId: string) => void;
@@ -469,6 +524,7 @@ export function ChannelMenu({
   addSidekick,
   appearance,
   breakouts,
+  channels,
   extraActions,
   onImportUpdates,
   onOpenArtifact,
@@ -492,6 +548,8 @@ export function ChannelMenu({
   /** The Channel's icon-and-colour choice, as a submenu, when the viewer may change it. */
   appearance?: ReactNode;
   breakouts: readonly BreakoutMark[] | undefined;
+  /** The Channels this thread sits in; absent where the host has none to show. */
+  channels?: ThreadChannels | undefined;
   /** Host-only items placed in **More** after the shared ones, e.g. a debug copy. */
   extraActions?: ReactNode;
   onImportUpdates?: (() => void) | undefined;
@@ -526,6 +584,7 @@ export function ChannelMenu({
   if (nav.view?.key === 'breakouts') {
     return <BreakoutsView breakouts={breakouts} onOpenBreakout={onOpenBreakout} openSubstreamId={openSubstreamId} renderAge={renderAge} />;
   }
+  if (nav.view?.key === 'channels' && channels) return <ChannelsView channels={channels} />;
   if (nav.view?.key === 'more') {
     return <>
       {appearance}
@@ -551,6 +610,7 @@ export function ChannelMenu({
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(workstream.participants.length, workstream.scope, participantsPending)} view={PEOPLE_VIEW} />
     <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
     <LevelRow icon={<IconCornerDownRight aria-hidden="true" size={17} stroke={1.7} />} label="Breakouts" meta={breakouts?.length} view={BREAKOUTS_VIEW} />
+    {channels && <LevelRow icon={<IconHash aria-hidden="true" size={17} stroke={1.7} />} label="Channels" meta={channels.current.length} view={CHANNELS_VIEW} />}
   </>;
 }
 
@@ -568,6 +628,7 @@ export function ChannelContainerMenu({
   addSidekick,
   channel,
   members,
+  onArchive,
   onCopyLink,
   onOpenSidekick,
   onRename,
@@ -580,6 +641,8 @@ export function ChannelContainerMenu({
   addSidekick?: ReactNode;
   channel: { name: string; scope: 'personal' | 'workspace' };
   members: readonly WorkspaceMember[];
+  /** Asks to archive the Channel; absent where the viewer may not (General, a guest). */
+  onArchive?: (() => void) | undefined;
   onCopyLink?: (() => void) | undefined;
   onOpenSidekick?: (id: string) => void;
   onRename?: (() => void) | undefined;
@@ -608,6 +671,10 @@ export function ChannelContainerMenu({
     {(privacy || pinned) && <TitleMenuSeparator />}
     {privacy && <SwitchRow checked={privacy.on} disabled={privacy.disabled} icon={<IconLock aria-hidden="true" size={16} stroke={1.8} />} label="Private to its members" onChange={privacy.onChange} />}
     {pinned && <SwitchRow checked={pinned.on} icon={<IconPin aria-hidden="true" size={16} stroke={1.8} />} label="Pinned in my sidebar" onChange={pinned.onChange} />}
+    {onArchive && <>
+      <TitleMenuSeparator />
+      <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={onArchive}>Archive channel</TitleMenuItem>
+    </>}
   </>;
 }
 

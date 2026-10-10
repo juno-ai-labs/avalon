@@ -245,6 +245,16 @@ Removing one is the same shape in reverse (`removeSpaceChannel`,
 `space_membership_final` preserves the invariant that every Channel has a home.
 A move, an archive and a restore are likewise one transaction each.
 
+**An archive re-homes rather than refuses.** A thread started from a Channel's
+composer lives in that Channel alone, so the invariant would refuse nearly
+every archive. `WorkspaceSpaceStorage.archive` first adds each live thread
+whose only active Space is the one being archived to General
+(`rehomeStrandedInGeneral`, through `addMembership`, defaults included), then
+archives, in one transaction; WorkspaceDO publishes General's change for the
+threads it moved. A restore reactivates the archived Space's memberships, so a
+re-homed thread ends up in both. Without a General (an Organization still
+opening), or for General itself, `space_membership_final` still refuses.
+
 **Legacy intents.** Before the Space-source code was removed, these operations
 staged a `space_intents` row and finished in a second transaction. A row
 staged before the deploy is finished by the alarm in one transaction
@@ -1966,7 +1976,8 @@ default target.
 **What changed:** A Space's audience may be `personal` again, by audience
 change only; a private Space is listed to its participants alone; General
 cannot be made private. The feed, participating and stats reads serve the new
-navigation.
+navigation. Archiving a Space moves the threads that live only there into
+General instead of refusing.
 
 **Why:** The navigation redesign turns each Space into a Channel and lets a
 Channel be private
@@ -1982,7 +1993,9 @@ in one transaction.
 
 **Consequences:** Migration 94's "every Space is Organization-wide" no longer
 holds; its migration is not touched. Storage names stay, and the product words
-differ from them.
+differ from them. A thread started in a Channel has that Channel as its only
+home, which is why archive re-homes to General: the refusal would have made
+archive unusable, and General is where every member already looks.
 
 ### 2026-10-08: A Space lists Organization invitees until they join
 
