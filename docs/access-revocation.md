@@ -345,7 +345,7 @@ readers keep whatever sockets they have open until they reconnect.
 This is a gap rather than a regression. Before the Spaces branch that path
 published *nothing at all*, so the announcement is strictly new and the missing
 gate is the part that was never built. It is now the only narrowing, because
-[a Space grants no reader](spaces.md#every-space-is-organization-wide).
+[a Space grants no reader](spaces.md#a-space-starts-organization-wide-and-grants-no-reader).
 
 Closing it means giving the direct narrowing a durable intent of its own, which
 is a change with a table behind it rather than a line in this one; it is named

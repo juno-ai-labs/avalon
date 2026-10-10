@@ -68,7 +68,9 @@ export function useOpenFirstWorkstream(): (skipWorkstreamIds?: readonly string[]
 }
 
 export function openWorkstreamId(pathname: string): string | null {
-  const id = /^\/workstreams\/([^/]+)$/.exec(pathname)?.[1];
+  // A thread opens on its own route or beside a Channel (`docs/pane-stack.md`).
+  const id = /^\/workstreams\/([^/]+)$/.exec(pathname)?.[1]
+    ?? /^\/channels\/[^/]+\/threads\/([^/]+)$/.exec(pathname)?.[1];
   if (id === undefined || id === 'new') return null;
   try {
     return decodeURIComponent(id);

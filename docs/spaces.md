@@ -82,7 +82,7 @@ the list a Channel created in the Space reads, in the same call. Nothing outside
 WorkspaceDO holds a copy.
 
 **Each Channel owns its own audience.** A Space grants none (see
-[Every Space is Organization-wide](#every-space-is-organization-wide)), so a
+[A Space starts Organization-wide and grants no reader](#a-space-starts-organization-wide-and-grants-no-reader)), so a
 membership, an archive and a restore change only WorkspaceDO's Space tables
 and never reach a Channel. The code that once applied a Space's audience to its
 Channels is gone; [`space-access-sources.md`](space-access-sources.md) keeps
@@ -170,23 +170,26 @@ Space private still grants and removes no reader of any Channel in it, and only
 a participant may place a Channel into it (`canEdit`). Guests are shown only
 Organization-wide Spaces through `sharedNavigationSpaces`.
 
-### Every Space is Organization-wide
+### A Space starts Organization-wide and grants no reader
 
-A product decision: a Space can only be Organization-wide, and it grants no
-reader to the Channels in it. A Channel's audience is its own scope and
-participants, so a private Channel can sit in any Space, and **Make private**
-works on a Channel in General. The Space's participants are its listed members,
-not who reads its Channels: a Space never adds, removes or acts as a Channel
-participant, and every Channel starts with only its creator plus whoever the
-creator adds. Like any Organization-wide Space, any active member
-may edit one, so migration 94 also opened editing of formerly private Spaces to
-every member.
+A Space (the product's Channel) starts Organization-wide and becomes private
+only through an audience change, and in either state it grants no reader to the
+threads in it. A thread's audience is its own scope and participants, so a
+private thread can sit in any Space, and **Make private** works on a thread in
+General. The Space's participants are its listed members, not who reads its
+threads: a Space never adds, removes or acts as a thread participant, and every
+thread starts with only its creator plus whoever the creator adds. Any active
+member may edit an Organization-wide Space; a private one is edited by its
+participants.
 
-The contract enforces it: `CreateSpaceRequest.scope` and
-`UpdateSpaceAudienceRequest.scope` accept only `workspace`
-(`SpaceRequestScopeSchema`). `SpaceScopeSchema` still reads `personal` for rows
-written before WorkspaceDO migration 94 (`SPACE_PUBLIC_ONLY_MIGRATION`), which
-widened every Space, archived ones included, and touched no Channel: a Channel
+The contract says so: `CreateSpaceRequest.scope` is `SpaceCreationScopeSchema`,
+which reads `personal` from an older desktop as `workspace`, so a creation is
+always Organization-wide. `UpdateSpaceAudienceRequest.scope` is
+`SpaceRequestScopeSchema`, which accepts both. History: WorkspaceDO migration 94
+(`SPACE_PUBLIC_ONLY_MIGRATION`) had widened every Space and opened editing of
+formerly private ones to every member, before private Spaces came back as
+private Channels. That migration widened every Space, archived ones included,
+and touched no Channel: a Channel
 that was private through a private Space keeps its seated participants and stays
 private. Those seats are ordinary grants now, and removing one revokes it. The
 widening does not step a Space's revision, so an add staged against it still
@@ -227,7 +230,7 @@ place that names it; a refusal the object *chose* keeps its own code.
 ### Membership
 
 A membership records where a Channel is placed and changes no reader, because
-[a Space grants none](#every-space-is-organization-wide). Adding a Channel that
+[a Space grants none](#a-space-starts-organization-wide-and-grants-no-reader). Adding a Channel that
 already exists is one call, `addSpaceChannel`, and one WorkspaceDO transaction
 (`WorkspaceSpaceStorage.addMembership`): it checks the caller may edit the
 Space, writes the membership active, and stages every current default for the
@@ -1421,8 +1424,19 @@ Channel unread from its newest placement and bumps the generation. Both refuse a
 Channel the person cannot list as `space_not_found`, answer the person's
 `ChannelStats` row, and send that person's sockets the per-person Space
 snapshot (the path a pin change already takes), which carries the updated row,
-so another window's dot follows without a new event kind. A support session
-reads without moving the person's position (`docs/impersonation.md`).
+so another window's dot follows without a new event kind. The client applies
+that snapshot's pins and Channel stats even though the Space waterline did not
+move, since neither write moves it. A support session reads without moving the
+person's position (`docs/impersonation.md`).
+
+**What the reader acknowledges.** The feed's first page carries
+`latestAttentionSequenceNumber`, the Channel's waterline read in the same
+synchronous turn as the page. Every placement at or below it is on that page or
+no longer listed, so the client acknowledges the higher of it and the newest
+row it holds. Acknowledging only listed rows left the dot standing for good
+once the newest placement was removed or its thread archived. Neither a Channel
+hidden behind its thread or a breakout nor a thread hidden behind its breakout
+acknowledges anything (`PaneVisibility`).
 
 **Backfill.** Migration 98 numbers each Space's active placements by
 `(joined_at, workstream_id)` from one and sets both the waterline and the
@@ -1928,7 +1942,7 @@ Channels' readers will see.
 
 WorkspaceDO's directory and membership projections are discovery and
 coordination state. **They never authorize Channel content**:
-[a Space grants no reader](#every-space-is-organization-wide). A grant a Space
+[a Space grants no reader](#a-space-starts-organization-wide-and-grants-no-reader). A grant a Space
 seated before migration 94 keeps that provenance and is never published to the
 shared scope-grant directory. A direct add of such a reader promotes the grant
 to `direct` and publishes it, and an ordinary removal revokes it.

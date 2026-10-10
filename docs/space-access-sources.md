@@ -3,7 +3,7 @@
 **Retired.** From the Spaces cutover until PR #1119, a Space supplied readers to
 the Channels placed in it: an Organization-wide Space made a Channel public, and
 a private Space seated its participants. Every Space is Organization-wide now
-and grants no reader ([`spaces.md`](spaces.md#every-space-is-organization-wide)),
+and grants no reader ([`spaces.md`](spaces.md#a-space-starts-organization-wide-and-grants-no-reader)),
 so the code that applied and withdrew a Space's audience on its Channels was
 deleted. WorkspaceDO migration 94 dropped its tables.
 

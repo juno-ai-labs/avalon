@@ -7,6 +7,7 @@ import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchThroughOwner } from '../lib/fetch-through-owner';
+import { PaneVisibility } from '../lib/pane-visibility';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import { asSubstreamId, asWorkspaceId, asWorkstreamId, conversationNeedsViewer, type HarnessStatus, type PinList } from '@rally/contracts';
@@ -903,7 +904,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     <SplitConversationLayout
       breakout={breakoutPane}
       breakoutWidth={breakoutWidth}
-      main={mainPane}
+      main={mainPane && <PaneVisibility visible={shownMode !== 'breakout'}>{mainPane}</PaneVisibility>}
       mode={splitMode}
       onBreakoutWidthChange={changeBreakoutWidth}
       onShownChange={setShownMode}

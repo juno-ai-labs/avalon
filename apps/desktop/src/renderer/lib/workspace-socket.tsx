@@ -66,6 +66,7 @@ import {
   applyVersionedSidebarList,
   CHANNEL_STATS_QUERY_KEY,
   MY_THREADS_QUERY_KEY,
+  ACTIVITY_QUERY_KEY,
   channelFeedQueryKey,
 } from './sidebar-list-store';
 import { realtimeSocketTelemetry } from './socket-telemetry';
@@ -295,7 +296,8 @@ function invalidateTopic(
     // REST read.
     projects: [],
     resources: [['resources'], ['workstream-context']],
-    activity: [['work-opportunities']],
+    // A mention or a finished run is a new row in the Activity tab too.
+    activity: [['work-opportunities'], ACTIVITY_QUERY_KEY],
     work_opportunities: [['work-opportunities']],
     workstream_directory: [WORKSTREAMS_QUERY_KEY],
     viewer_preferences: [['telemetry-preference'], ['member-preferences']],
@@ -1255,6 +1257,8 @@ export function WorkspaceSocketProvider({
             // takes part in; the Threads tab's own list is read again.
             void queryClient.invalidateQueries({ queryKey: MY_THREADS_QUERY_KEY });
             void queryClient.invalidateQueries({ queryKey: CHANNEL_STATS_QUERY_KEY });
+            // Activity lists thread starts, and a placement is how one arrives.
+            void queryClient.invalidateQueries({ queryKey: ACTIVITY_QUERY_KEY });
             if (spaceConversations.data.attentionCounts.length > 0) {
               const counts = new Map(spaceConversations.data.attentionCounts.map((entry) => [
                 entry.spaceId,

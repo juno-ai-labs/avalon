@@ -4126,7 +4126,7 @@ function slackRoutingFailureText(reason: string): string {
       return "Rally didn't start work here because nobody in this private conversation has a Rally account it can recognize yet. Connect your Rally account in App Home, then mention Rally again.";
     case "space_access_denied":
     case "space_not_found":
-      return "Rally couldn't open a thread for this conversation in its Rally channel, because you can't open that channel in Rally yet. Connect your Rally account in App Home, or ask a member of the Space to add you, then mention Rally again.";
+      return "Rally couldn't open a thread for this conversation in its Rally channel, because you can't open that channel in Rally yet. Connect your Rally account in App Home, or ask a member of that channel to add you, then mention Rally again.";
     default:
       return `Rally couldn't start work here (${reason}). Mention Rally again to retry, or ask a Rally admin if it keeps happening.`;
   }
