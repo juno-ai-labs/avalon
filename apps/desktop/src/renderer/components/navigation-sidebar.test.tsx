@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '../lib/api';
 import { CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
+import type { ChannelStats } from '@rally/contracts';
 import type { SpaceConversationSummary, Workspace } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { NavigationSidebar } from './navigation-sidebar';
@@ -32,6 +33,15 @@ function channel(id: string, name: string, overrides: Record<string, unknown> = 
     id, name, iconKey: 'briefcase', colorKey: 'blue', scope: 'workspace', status: 'active', systemRole: null,
     revision: 1, reach: 'organization', participants: [], channelCount: 0, attentionCount: 0,
     defaultResourceIds: [], defaultSidekickIds: [], createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function stats(channelId: string, overrides: Partial<ChannelStats> = {}): ChannelStats {
+  return {
+    channelId, threadCount: 0, lastActivityAt: null,
+    latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0, manualUnreadFromSequenceNumber: null,
+    manualUnreadGeneration: 0, firstUnreadSequenceNumber: null, hasUnread: false,
     ...overrides,
   };
 }
@@ -79,6 +89,7 @@ describe('the navigation sidebar', () => {
     localStorage.clear();
     useUiStore.getState().setSidebarSection('channels');
     useUiStore.getState().setThreadSort('recent');
+    useUiStore.getState().setChannelSort('alphabetical');
   });
 
   it('lists pinned Channels in the person’s order, then every other Channel A–Z with its thread count', () => {
@@ -90,7 +101,7 @@ describe('the navigation sidebar', () => {
         { kind: 'channel', id: 'outbound', parentId: null },
         { kind: 'channel', id: 'growth', parentId: null },
       ]);
-      client.setQueryData(CHANNEL_STATS_QUERY_KEY, [{ channelId: 'apple', threadCount: 1, lastActivityAt: null }]);
+      client.setQueryData(CHANNEL_STATS_QUERY_KEY, [stats('apple', { threadCount: 1 })]);
     });
 
     const pinned = within(screen.getByRole('region', { name: 'Pinned channels' }));
@@ -167,5 +178,56 @@ describe('the navigation sidebar', () => {
     expect(today.getByRole('button')).toHaveTextContent('Maya K added you to Reply-handling playbook');
     expect(today.getByRole('img', { name: 'Unread' })).toBeInTheDocument();
     await waitFor(() => expect(api.markActivitySeen).toHaveBeenCalledWith(now.toISOString()));
+  });
+
+  describe('the Channels tab’s unread state and sort', () => {
+    // Apple has never had a thread; Kiwi holds a thread that needs this
+    // person; Mango has a placement this person has not seen; Zebra is the
+    // most recently active and fully read.
+    const seed = (client: QueryClient): void => {
+      client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [
+        channel('zebra', 'Zebra'), channel('apple', 'Apple'), channel('mango', 'Mango'), channel('kiwi', 'Kiwi', { attentionCount: 2 }),
+      ] });
+      client.setQueryData(CHANNEL_STATS_QUERY_KEY, [
+        stats('zebra', { threadCount: 3, lastActivityAt: '2026-10-05T00:00:00.000Z', latestAttentionSequenceNumber: 3, readThroughSequenceNumber: 3 }),
+        stats('mango', {
+          threadCount: 1, lastActivityAt: '2026-10-03T00:00:00.000Z', latestAttentionSequenceNumber: 1,
+          firstUnreadSequenceNumber: 1, hasUnread: true,
+        }),
+        stats('kiwi', { threadCount: 2, lastActivityAt: '2026-10-04T00:00:00.000Z', latestAttentionSequenceNumber: 2, readThroughSequenceNumber: 2 }),
+      ]);
+    };
+    const names = (): Array<string | null | undefined> => within(screen.getByRole('region', { name: 'All channels' }))
+      .getAllByRole('button')
+      .filter((row) => row.classList.contains('navigation-channel-row'))
+      .map((row) => row.querySelector('.navigation-row-title')?.textContent);
+
+    it('marks only an unread Channel with a dot', () => {
+      renderSidebar(seed);
+      expect(within(screen.getByRole('button', { name: /Mango/u })).getByRole('img', { name: 'Unread' })).toBeInTheDocument();
+      expect(screen.getAllByRole('img', { name: 'Unread' })).toHaveLength(1);
+    });
+
+    it('cycles A–Z, Recent and Needs attention from the heading', () => {
+      renderSidebar(seed);
+      expect(names()).toEqual(['Apple', 'Kiwi', 'Mango', 'Zebra']);
+
+      fireEvent.click(screen.getByRole('button', { name: 'A–Z' }));
+      expect(names()).toEqual(['Zebra', 'Kiwi', 'Mango', 'Apple']);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Recent' }));
+      expect(names()).toEqual(['Mango', 'Kiwi', 'Zebra', 'Apple']);
+      expect(screen.getByRole('button', { name: 'Needs attention' })).toBeInTheDocument();
+    });
+
+    it('keeps the chosen order when the sidebar is drawn again', () => {
+      const first = renderSidebar(seed);
+      fireEvent.click(screen.getByRole('button', { name: 'A–Z' }));
+      first.unmount();
+
+      renderSidebar(seed);
+      expect(screen.getByRole('button', { name: 'Recent' })).toBeInTheDocument();
+      expect(names()).toEqual(['Zebra', 'Kiwi', 'Mango', 'Apple']);
+    });
   });
 });

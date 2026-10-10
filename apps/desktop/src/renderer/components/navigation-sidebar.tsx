@@ -58,6 +58,49 @@ const THREAD_SORTS: ReadonlyArray<{ sort: SidebarChannelSort; label: string }> =
   { sort: 'needs_you', label: 'Needs attention' },
 ];
 
+/** The Channels tab's cycle: A–Z first, because a Channel list is looked up by name. */
+const CHANNEL_SORTS: ReadonlyArray<{ sort: SidebarChannelSort; label: string }> = [
+  { sort: 'alphabetical', label: 'A–Z' },
+  { sort: 'recent', label: 'Recent' },
+  { sort: 'needs_you', label: 'Needs attention' },
+];
+
+function compareChannelNames(left: SpaceSummary, right: SpaceSummary): number {
+  return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' });
+}
+
+/**
+ * The comparator for the Channels nobody pinned. Recent is the Channel's last
+ * activity, newest first, a Channel with none last. Needs attention puts an
+ * unread Channel first, then one holding a thread that needs this person, each
+ * group in Recent order. `heldId` is the open Channel: opening one reads it,
+ * and without the hold it would drop out from under the pointer, as the
+ * Threads tab's Needs attention does.
+ */
+export function compareChannelRows(
+  sort: SidebarChannelSort,
+  statsById: ReadonlyMap<string, ChannelStats>,
+  heldId: string | null = null,
+): (left: SpaceSummary, right: SpaceSummary) => number {
+  if (sort === 'alphabetical') return compareChannelNames;
+  const recent = (left: SpaceSummary, right: SpaceSummary): number => {
+    const leftAt = statsById.get(left.id)?.lastActivityAt ?? null;
+    const rightAt = statsById.get(right.id)?.lastActivityAt ?? null;
+    if (leftAt !== rightAt) {
+      if (leftAt === null) return 1;
+      if (rightAt === null) return -1;
+      const delta = Date.parse(rightAt) - Date.parse(leftAt);
+      if (delta !== 0) return delta;
+    }
+    return compareChannelNames(left, right);
+  };
+  if (sort === 'recent') return recent;
+  const rank = (space: SpaceSummary): number => space.id === heldId || statsById.get(space.id)?.hasUnread === true
+    ? 2
+    : (space.attentionCount ?? 0) > 0 ? 1 : 0;
+  return (left, right) => rank(right) - rank(left) || recent(left, right);
+}
+
 export type AccessDecision = 'approve' | 'decline';
 
 /**
@@ -437,7 +480,9 @@ function ThreadRow({ active, drag, onOpen, onPin, pinned, row, spaces }: {
 
 /**
  * The Channels tab: what this person pinned, then every Channel they may see,
- * A–Z. A Channel's second line is how many threads in it they may see.
+ * in the order the sort control names (A–Z until changed). A Channel's second
+ * line is how many threads in it they may see; a dot and a bold name mean a
+ * thread was placed in it since this person last had it open.
  */
 function ChannelsSection({ guest }: { guest: boolean }): React.JSX.Element {
   const navigate = useNavigate();
@@ -454,6 +499,8 @@ function ChannelsSection({ guest }: { guest: boolean }): React.JSX.Element {
   const pins = usePins();
   const pin = usePinAction();
   const openChannelId = useOpenChannelId();
+  const sort = useUiStore((state) => state.channelSort);
+  const setSort = useUiStore((state) => state.setChannelSort);
   const [creating, setCreating] = useState(false);
   const statsById = useMemo(() => new Map((stats.data ?? []).map((item) => [item.channelId, item])), [stats.data]);
   const channels = active.data?.items ?? [];
@@ -462,7 +509,8 @@ function ChannelsSection({ guest }: { guest: boolean }): React.JSX.Element {
   const drag = usePinnedDrag('channel', channelPins);
   const pinned = new Set(channelPins);
   const rest = channels.filter((space) => !pinned.has(space.id))
-    .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }));
+    .sort(compareChannelRows(sort, statsById, openChannelId));
+  const nextSort = CHANNEL_SORTS[(CHANNEL_SORTS.findIndex((candidate) => candidate.sort === sort) + 1) % CHANNEL_SORTS.length]!;
   const row = (space: SpaceSummary, rowDrag?: React.HTMLAttributes<HTMLElement> & { draggable: boolean }): ReactNode => <ChannelRow
     active={space.id === openChannelId}
     drag={rowDrag}
@@ -482,9 +530,15 @@ function ChannelsSection({ guest }: { guest: boolean }): React.JSX.Element {
       })}
     </section>}
     <section aria-label="All channels" className="navigation-section">
-      <SectionHeading trailing={guest ? undefined : <Tip label="New channel"><button aria-label="New channel" className="navigation-sort" onClick={() => setCreating(true)} type="button">
-        <IconPlus aria-hidden="true" size={14} stroke={1.9} />
-      </button></Tip>}>All channels</SectionHeading>
+      <SectionHeading trailing={<>
+        <button className="navigation-sort" onClick={() => setSort(nextSort.sort)} type="button">
+          {CHANNEL_SORTS.find((candidate) => candidate.sort === sort)?.label}
+          <IconArrowsSort aria-hidden="true" size={13} stroke={1.8} />
+        </button>
+        {!guest && <Tip label="New channel"><button aria-label="New channel" className="navigation-sort" onClick={() => setCreating(true)} type="button">
+          <IconPlus aria-hidden="true" size={14} stroke={1.9} />
+        </button></Tip>}
+      </>}>All channels</SectionHeading>
       {rest.map((space) => row(space))}
       {active.data !== undefined && channels.length === 0 && <p className="navigation-empty">No channels yet.</p>}
     </section>
@@ -545,7 +599,7 @@ function ChannelRow({ active, drag, onOpen, onPin, pinned, space, stats }: {
     <ContextMenu.Trigger asChild>
       <button
         aria-current={active ? 'page' : undefined}
-        className={clsx('navigation-row navigation-channel-row', active && 'is-active')}
+        className={clsx('navigation-row navigation-channel-row', active && 'is-active', stats?.hasUnread && 'is-unread')}
         onClick={onOpen}
         type="button"
         {...drag}
@@ -558,6 +612,7 @@ function ChannelRow({ active, drag, onOpen, onPin, pinned, space, stats }: {
             <span className="navigation-row-title">{space.name}</span>
             {space.scope === 'personal' && <IconLock aria-label="Private" className="navigation-row-lock" size={13} stroke={1.8} />}
             {stats?.lastActivityAt && <RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={stats.lastActivityAt} />}
+            {stats?.hasUnread && <span aria-label="Unread" className="navigation-row-unread-dot" role="img" />}
           </span>
           <span className="navigation-row-detail">{count === 1 ? '1 thread' : `${count} threads`}</span>
         </span>

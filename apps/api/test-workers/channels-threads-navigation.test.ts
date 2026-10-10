@@ -34,9 +34,10 @@ import {
   type ParentEffect,
 } from "@rally/contracts/conversation-effects";
 
+import { WORKSPACE_CHANNEL_READS_MIGRATION } from "../src/durable-objects/workspace-channel-read-storage";
 import { WORKSPACE_PINS_MIGRATION } from "../src/durable-objects/workspace-pin-storage";
 import { hostedParentStub } from "./helpers/hosted-parent";
-import { placeMembership } from "./helpers/space-membership";
+import { placeMembership, removeMembership } from "./helpers/space-membership";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000e100");
 const OWNER = asUserId("00000000-0000-7000-8000-00000000e101");
@@ -45,6 +46,8 @@ const OPEN_THREAD = asWorkstreamId("00000000-0000-7000-8000-00000000e103");
 const PRIVATE_THREAD = asWorkstreamId("00000000-0000-7000-8000-00000000e104");
 const MEMBER_THREAD = asWorkstreamId("00000000-0000-7000-8000-00000000e105");
 const BREAKOUT = asSubstreamId("00000000-0000-7000-8000-00000000e106");
+const GUEST = asUserId("00000000-0000-7000-8000-00000000e107");
+const LATE_THREAD = asWorkstreamId("00000000-0000-7000-8000-00000000e108");
 
 const workspace = () => hostedParentStub(env, WORKSPACE_ID);
 
@@ -80,6 +83,9 @@ async function establishWorkspace(): Promise<void> {
     env.DB.prepare(`INSERT OR REPLACE INTO workspace_members
       (workspace_id, user_id, status, role, access_class) VALUES (?, ?, 'active', 'member', 'member')`)
       .bind(WORKSPACE_ID, MEMBER),
+    env.DB.prepare(`INSERT OR REPLACE INTO workspace_members
+      (workspace_id, user_id, status, role, access_class) VALUES (?, ?, 'active', NULL, 'guest')`)
+      .bind(WORKSPACE_ID, GUEST),
   ]);
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
 }
@@ -249,7 +255,7 @@ describe("Channel feed", () => {
     const page = await feed(channelId, MEMBER);
 
     expect(page.items).toEqual([
-      { kind: "locked", placedAt: expect.any(String), threadId: PRIVATE_THREAD },
+      { kind: "locked", placedAt: expect.any(String), attentionSequenceNumber: 2, threadId: PRIVATE_THREAD },
       expect.objectContaining({ kind: "thread", thread: expect.objectContaining({ id: OPEN_THREAD, title: "Cold outreach" }) }),
     ]);
     // The owner opens both, so neither is locked for them.
@@ -331,6 +337,125 @@ describe("Channels tab", () => {
 
     expect(await count(MEMBER)).toBe(1);
     expect(await count(OWNER)).toBe(2);
+  });
+});
+
+describe("Channel read state", () => {
+  async function stats(userId: UserId, channelId: SpaceId) {
+    const result = await workspace().listChannelStats({ workspaceId: WORKSPACE_ID, userId });
+    if (!result.ok) throw new Error(`listChannelStats refused: ${result.code}`);
+    const row = result.stats.find((entry) => entry.channelId === channelId);
+    if (!row) throw new Error("Channel not listed");
+    return row;
+  }
+
+  const readState = (row: Awaited<ReturnType<typeof stats>>) => ({
+    latest: row.latestAttentionSequenceNumber,
+    readThrough: row.readThroughSequenceNumber,
+    firstUnread: row.firstUnreadSequenceNumber,
+    hasUnread: row.hasUnread,
+  });
+
+  it("given the owner places two threads, when each person reads the stats, then the member is unread from the first and the owner has read their own placements", async () => {
+    const channelId = await channelWithThreads();
+
+    expect(readState(await stats(MEMBER, channelId))).toEqual({ latest: 2, readThrough: 0, firstUnread: 1, hasUnread: true });
+    expect(readState(await stats(OWNER, channelId))).toEqual({ latest: 2, readThrough: 2, firstUnread: null, hasUnread: false });
+  });
+
+  it("given an unread Channel, when the member acknowledges it, then it is read, and a later placement makes it unread again", async () => {
+    const channelId = await channelWithThreads();
+
+    const acknowledged = await workspace().acknowledgeSpaceRead({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId,
+      readThroughSequenceNumber: 2, observedManualUnreadGeneration: 0,
+    });
+    expect(acknowledged).toMatchObject({ ok: true, stats: { channelId, readThroughSequenceNumber: 2, hasUnread: false } });
+    expect(readState(await stats(MEMBER, channelId))).toEqual({ latest: 2, readThrough: 2, firstUnread: null, hasUnread: false });
+
+    await openThreadObject(LATE_THREAD);
+    await publish(LATE_THREAD, [threadEffect("Late addition"), viewerEffect(OWNER)]);
+    await place(channelId, LATE_THREAD);
+
+    expect(readState(await stats(MEMBER, channelId))).toEqual({ latest: 3, readThrough: 2, firstUnread: 3, hasUnread: true });
+  });
+
+  it("given placements that existed before migration 98, when its backfill runs, then each is numbered in placement order and nothing is unread", async () => {
+    const channelId = await channelWithThreads();
+
+    // Put the rows back the way an object held them before migration 98 (the
+    // columns at their defaults), then run the migration's own backfill.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec(`UPDATE space_channel_memberships SET attention_ordinal = NULL`);
+      sql.exec(`UPDATE spaces SET latest_attention_ordinal = 0, unread_tracking_start_ordinal = 0`);
+      sql.exec(`DELETE FROM space_reads`);
+      for (const statement of WORKSPACE_CHANNEL_READS_MIGRATION.slice(4)) sql.exec(statement);
+    });
+
+    expect(readState(await stats(MEMBER, channelId))).toEqual({ latest: 2, readThrough: 2, firstUnread: null, hasUnread: false });
+    expect((await feed(channelId, OWNER)).items.map((item) => [
+      item.kind === "thread" ? item.thread.id : item.threadId, item.attentionSequenceNumber,
+    ])).toEqual([[PRIVATE_THREAD, 2], [OPEN_THREAD, 1]]);
+  });
+
+  it("given a thread removed from a Channel, when it is placed again, then it takes a fresh, higher ordinal and the waterline never went down", async () => {
+    const channelId = await channelWithThreads();
+    // A second home, so the removal is not the thread's last placement.
+    const elsewhere = await reserveChannel("Elsewhere");
+    await place(elsewhere, OPEN_THREAD);
+
+    await removeMembership(workspace(), { workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId, workstreamId: OPEN_THREAD });
+    expect((await stats(MEMBER, channelId)).latestAttentionSequenceNumber).toBe(2);
+
+    await place(channelId, OPEN_THREAD);
+
+    const ordinals = (await feed(channelId, OWNER)).items.map((item) => [
+      item.kind === "thread" ? item.thread.id : item.threadId, item.attentionSequenceNumber,
+    ]);
+    expect(ordinals).toEqual(expect.arrayContaining([[OPEN_THREAD, 3], [PRIVATE_THREAD, 2]]));
+    expect(readState(await stats(MEMBER, channelId))).toEqual({ latest: 3, readThrough: 0, firstUnread: 1, hasUnread: true });
+  });
+
+  it("given a guest who reaches a Channel through a thread in it, when they read the stats, then the Channel is never unread for them", async () => {
+    const channelId = await channelWithThreads();
+    await publish(OPEN_THREAD, [viewerEffect(GUEST)]);
+
+    expect(readState(await stats(GUEST, channelId))).toEqual({ latest: 2, readThrough: 2, firstUnread: null, hasUnread: false });
+    // The member, who saw the same placements, is unread: the guest's answer is the exclusion, not an empty Channel.
+    expect((await stats(MEMBER, channelId)).hasUnread).toBe(true);
+  });
+
+  it("given a read Channel, when the member marks it unread and then acknowledges at the generation they saw, then the mark is set and cleared", async () => {
+    const channelId = await channelWithThreads();
+    await workspace().acknowledgeSpaceRead({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId,
+      readThroughSequenceNumber: 2, observedManualUnreadGeneration: 0,
+    });
+
+    const marked = await workspace().markSpaceUnread({ workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId });
+    expect(marked).toMatchObject({
+      ok: true, stats: { manualUnreadFromSequenceNumber: 2, manualUnreadGeneration: 1, firstUnreadSequenceNumber: 2, hasUnread: true },
+    });
+
+    await workspace().acknowledgeSpaceRead({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId,
+      readThroughSequenceNumber: 2, observedManualUnreadGeneration: 1,
+    });
+    expect(readState(await stats(MEMBER, channelId))).toEqual({ latest: 2, readThrough: 2, firstUnread: null, hasUnread: false });
+  });
+
+  it("given a Channel the member cannot list, when they acknowledge it, then it is refused as not found", async () => {
+    const channelId = await channelWithThreads();
+    await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId,
+      audience: { scope: "personal", participantUserIds: [OWNER] },
+    });
+
+    await expect(workspace().acknowledgeSpaceRead({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId,
+      readThroughSequenceNumber: 2, observedManualUnreadGeneration: 0,
+    })).resolves.toEqual({ ok: false, code: "space_not_found" });
   });
 });
 

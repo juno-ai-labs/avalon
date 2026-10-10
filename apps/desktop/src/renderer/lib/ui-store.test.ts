@@ -122,3 +122,31 @@ describe('sidebar thread sort', () => {
     expect(restarted.getState().threadSort).toBe('alphabetical');
   });
 });
+
+describe('sidebar channel sort', () => {
+  // Read as a restarted app would: the module is re-imported over storage the
+  // previous run left behind.
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.resetModules();
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    vi.resetModules();
+  });
+
+  it('starts A to Z on a device that never chose', async () => {
+    const { useUiStore: fresh } = await import('./ui-store');
+    expect(fresh.getState().channelSort).toBe('alphabetical');
+  });
+
+  it('comes back to the order chosen before a restart, apart from the thread sort', async () => {
+    const { useUiStore: first } = await import('./ui-store');
+    first.getState().setChannelSort('needs_you');
+
+    vi.resetModules();
+    const { useUiStore: restarted } = await import('./ui-store');
+    expect(restarted.getState().channelSort).toBe('needs_you');
+    expect(restarted.getState().threadSort).toBe('recent');
+  });
+});

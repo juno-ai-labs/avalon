@@ -8,6 +8,8 @@ import {
   ChannelFeedPageSchema,
   MyThreadsPageSchema,
   ChannelStatsListSchema,
+  ChannelStatsSchema,
+  type ChannelStats,
   type ChannelStatsList,
   PinListSchema,
   type ActivityPage,
@@ -1466,8 +1468,18 @@ export class RallyApi {
     });
     return {
       items: page.items.map((item) => item.kind === 'thread'
-        ? { kind: 'thread' as const, placedAt: item.placedAt, thread: mapWorkstreamSummary(item.thread) }
-        : { kind: 'locked' as const, placedAt: item.placedAt, threadId: item.threadId }),
+        ? {
+            kind: 'thread' as const,
+            placedAt: item.placedAt,
+            attentionSequenceNumber: item.attentionSequenceNumber,
+            thread: mapWorkstreamSummary(item.thread),
+          }
+        : {
+            kind: 'locked' as const,
+            placedAt: item.placedAt,
+            attentionSequenceNumber: item.attentionSequenceNumber,
+            threadId: item.threadId,
+          }),
       nextCursor: page.nextCursor,
     };
   }
@@ -1491,6 +1503,34 @@ export class RallyApi {
 
   getChannelStats(signal?: AbortSignal): Promise<ChannelStatsList> {
     return this.request('/navigation/channel-stats', { schema: ChannelStatsListSchema, ...(signal ? { signal } : {}) });
+  }
+
+  /**
+   * Tell a Channel how far this person has read its feed: through the
+   * placement whose attention sequence number is given. The answer is the
+   * Channel's whole stats row, which the caller writes back over its entry in
+   * the channel-stats cache. A generation that no longer matches the stored
+   * one (the Channel was marked unread elsewhere since) leaves the stored
+   * position where it is, and the answer says so.
+   */
+  acknowledgeChannelRead(
+    channelId: string,
+    readThroughSequenceNumber: number,
+    observedManualUnreadGeneration: number,
+  ): Promise<ChannelStats> {
+    return this.request(`/spaces/${encodeURIComponent(channelId)}/read-state`, {
+      method: 'PATCH',
+      body: { readThroughSequenceNumber, observedManualUnreadGeneration },
+      schema: ChannelStatsSchema,
+    });
+  }
+
+  /** By hand: mark a Channel unread from its newest placement. */
+  markChannelUnread(channelId: string): Promise<ChannelStats> {
+    return this.request(`/spaces/${encodeURIComponent(channelId)}/read-state/mark-unread`, {
+      method: 'POST',
+      schema: ChannelStatsSchema,
+    });
   }
 
   setPinned(kind: PinKind, id: string, pinned: boolean, parentId?: string): Promise<PinList> {
@@ -2723,8 +2763,8 @@ export class RallyApi {
 /** A Channel feed page with its threads in the client's row shape. */
 export interface ChannelFeedPageView {
   items: Array<
-    | { kind: 'thread'; placedAt: string; thread: WorkstreamSummary }
-    | { kind: 'locked'; placedAt: string; threadId: string }
+    | { kind: 'thread'; placedAt: string; attentionSequenceNumber: number; thread: WorkstreamSummary }
+    | { kind: 'locked'; placedAt: string; attentionSequenceNumber: number; threadId: string }
   >;
   nextCursor: string | null;
 }

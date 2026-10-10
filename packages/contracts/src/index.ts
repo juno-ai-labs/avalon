@@ -1253,11 +1253,14 @@ export const ChannelFeedItemSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("thread"),
     placedAt: TimestampSchema,
+    /** The placement's position in the Channel's unread order (`ChannelStats`). */
+    attentionSequenceNumber: z.number().int().nonnegative(),
     thread: WorkstreamSchema,
   }),
   z.strictObject({
     kind: z.literal("locked"),
     placedAt: TimestampSchema,
+    attentionSequenceNumber: z.number().int().nonnegative(),
     threadId: WorkstreamIdSchema,
   }),
 ]);

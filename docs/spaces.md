@@ -1350,13 +1350,15 @@ read over the listing rules:
   A Channel the viewer may open comes back whole, with its description as the
   one-to-two-line summary; one a member may not open is a locked row with its id
   and placement time only. A guest gets no locked rows. Archived and system
-  Channels are left out.
+  Channels are left out. Every row, locked or not, carries its placement's
+  `attentionSequenceNumber` ([read state](#the-channels-read-state)).
 - **`participatingPage`** (`GET /navigation/threads`, `listMyThreads`): the
   Channels and breakouts a person takes part in or pinned, newest activity
   first — the conversation page's two-arm shape started from the person, through
   migration 97's `(user_id, is_participant)` indexes on both viewer tables.
 - **`channelStats`**: per listed Space, how many Channels in it the viewer may
-  list and when the newest of those last moved. It rides the sidebar payload and
+  list, when the newest of those last moved, and the viewer's
+  [read state](#the-channels-read-state) in it. It rides the sidebar payload and
   the Space snapshot as `channelStats`, beside the Spaces rather than on
   `SpaceSummary`, which shipped desktops parse strictly. Between snapshots
   `GET /navigation/channel-stats` (`listChannelStats`) reads it on its own,
@@ -1366,6 +1368,66 @@ read over the listing rules:
 `conversationRows` in `workspace-do.ts`. The feed and the stats each cost one
 pass over a Space's active memberships, which for General is every Channel in
 the Organization, as the dashboard page already did.
+
+### The Channel's read state
+
+A product Channel (a stored Space) has an unread waterline and a per-person read
+position, in the **same columns and with the same meaning** a thread and a
+breakout carry, so the client draws one unread dot from one set of fields and a
+future Channel SubstreamAgent could write them through directory effects
+unchanged. Migration 98 (`workspace-channel-read-storage.ts`) adds them:
+
+- `spaces.latest_attention_ordinal` and `spaces.unread_tracking_start_ordinal`,
+  the waterline and where unread tracking began.
+- `space_channel_memberships.attention_ordinal`, the ordinal a placement took.
+- `space_reads(space_id, user_id, seen_attention_ordinal,
+  manual_unread_from_ordinal, manual_unread_generation, updated_at)`, each
+  person's position. It is a table of its own rather than columns on
+  `space_viewers` because a member reaches an Organization-wide Space with no
+  viewer row at all, and that table is the Space authority's projection: a row
+  is deleted when the projection goes inactive and replaced at each newer
+  source version, which would erase a read position on an unrelated audience
+  change. No foreign key, for the reason `space_invitees` gives.
+
+**Only a placement advances the waterline.** Every transition of a membership
+into `active` — `enterMembershipAtBirth`, `finalizeMembership` (and so
+`addMembership` and an archive's re-home into General), a move's target, a
+restore, an abandoned archive putting its rows back, a legacy `add` intent —
+goes through one private helper, `stampPlacements`, which in the same
+transaction increments the Space's `latest_attention_ordinal` and stamps the new
+value on that membership. An idempotent settle of a row that was already active
+takes no ordinal, a re-add after a removal takes a fresh, higher one, and a
+removal never lowers the waterline. The placer's own position rises to the new
+ordinal: your own placement is not news to you. Activity inside a placed thread
+does not move the Channel; the thread carries its own unread state.
+
+**Derivation.** `channelStats` answers `latestAttentionSequenceNumber`,
+`readThroughSequenceNumber`, `manualUnreadFromSequenceNumber`,
+`manualUnreadGeneration`, `firstUnreadSequenceNumber` and `hasUnread` per
+Channel, from `unreadState` in `unread-state.ts` — the one helper
+`directoryWorkstream` and `breakoutConversation` use too. `seen` falls back to
+the tracking start when the person has no `space_reads` row, which is why a
+Channel nobody has opened is not unread to everyone. **A guest is never
+unread**: they reach a Channel only through threads they may list and see no
+locked rows, so their read position is reported as the waterline.
+
+**Acknowledgement.** `PATCH /spaces/:id/read-state` (body
+`AcknowledgeWorkstreamReadRequestSchema`, RPC `acknowledgeSpaceRead`) moves the
+position to `MAX(old, MIN(requested, latest))` — clamped rather than refused,
+unlike a thread's, because a feed row can outlive the waterline it was read
+from by a moment — and clears a manual mark when the observed generation
+matches. `POST /spaces/:id/read-state/mark-unread` (`markSpaceUnread`) marks the
+Channel unread from its newest placement and bumps the generation. Both refuse a
+Channel the person cannot list as `space_not_found`, answer the person's
+`ChannelStats` row, and send that person's sockets the per-person Space
+snapshot (the path a pin change already takes), which carries the updated row,
+so another window's dot follows without a new event kind. A support session
+reads without moving the person's position (`docs/impersonation.md`).
+
+**Backfill.** Migration 98 numbers each Space's active placements by
+`(joined_at, workstream_id)` from one and sets both the waterline and the
+tracking start to the count, so nothing is unread on deploy. Rows that were not
+active keep `NULL`, which the feed reports as zero.
 
 ## Invariants
 
@@ -1795,6 +1857,10 @@ other row in it. What a new WorkspaceDO table does owe is a routing decision in
 `apps/api/test/workspace-runtime-database.test.ts`, and both are declared there
 as reached by typed RPC only.
 
+**Migration 98 adds a Channel's read state**: two waterline columns on
+`spaces`, `attention_ordinal` on `space_channel_memberships`, and the
+`space_reads` table; see [The Channel's read state](#the-channels-read-state).
+
 **Migration 64 deletes the eight Project tables**, after the invalidation
 described under [Operations](#operations) and children-before-parents, because
 `PRAGMA foreign_keys = OFF` is a no-op once a Durable Object event has touched
@@ -1977,7 +2043,10 @@ default target.
 change only; a private Space is listed to its participants alone; General
 cannot be made private. The feed, participating and stats reads serve the new
 navigation. Archiving a Space moves the threads that live only there into
-General instead of refusing.
+General instead of refusing. A Space now has an unread waterline that only a
+thread's placement advances, a per-person read position in `space_reads`, and
+acknowledge and mark-unread routes, in breakout-identical columns (migration
+98).
 
 **Why:** The navigation redesign turns each Space into a Channel and lets a
 Channel be private
@@ -1991,8 +2060,30 @@ rewrite links for no product gain. Delta member routes beside the audience
 route: `noteSpaceAudience` already sets the scope and the whole participant set
 in one transaction.
 
+The waterline exists because the redesign asks for an unread dot on Channel
+rows and Recent and Needs-attention sorts, and a Channel's news is a thread
+arriving in it. The Channel stays in WorkspaceDO rather than moving onto a
+SubstreamAgent of its own: its feed is a per-viewer projection of mutable
+placements, and WorkspaceDO already owns the listing rules that decide who may
+see each one, so an agent would add a hop and a second authority over the same
+fact. The columns are spelled as a breakout spells them so that a future
+Channel SubstreamAgent, hosted under the Space's existing parent
+(`hostedParent(spaceId)`), can write the same columns through directory effects
+without a migration of meaning. A person's position is its own table rather
+than `space_viewers` columns because most readers of an Organization-wide Space
+have no viewer row and that table is a projection that deletes rows.
+
+**Considered and rejected (waterline):** Advancing on activity inside placed
+threads, which would make every Channel unread whenever any thread in it
+moved and duplicate the thread's own unread state. Columns on `space_viewers`,
+for the reason above.
+
 **Consequences:** Migration 94's "every Space is Organization-wide" no longer
-holds; its migration is not touched. Storage names stay, and the product words
+holds; its migration is not touched. Only a placement may advance a Channel's
+waterline, and only through `stampPlacements`; a new path into `active` that
+skips it is a Channel that never turns unread. Revisit the WorkspaceDO decision
+when Channels gain chat, mentions or typing, which are a conversation's and
+belong on an agent. Storage names stay, and the product words
 differ from them. A thread started in a Channel has that Channel as its only
 home, which is why archive re-homes to General: the refusal would have made
 archive unusable, and General is where every member already looks.
