@@ -19,6 +19,7 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | `apps/browser/src/shell.tsx` | The signed-in application's one lazy boundary: the desktop shell over the cookie session, for members and guests, and the browser's `AppSessionValue`. |
 | `apps/browser/public/sw.js` | The root service worker that shows Web Push notifications and opens their links on this origin. |
 | `apps/browser/public/manifest.webmanifest`, `icon-*.png`, `apple-touch-icon.png` | The install manifest and icons that let the host be added to an iOS Home Screen or installed as an app window. |
+| `apps/browser/src/phone-scale.ts` | On a phone, the viewport tag that draws the whole host 20% larger. |
 | `apps/desktop/src/renderer/lib/home-screen.ts` | On iPhone and iPad, whether the host runs as a Home Screen app or in a Safari tab. |
 | `apps/browser/src/session.ts`, `packages/contracts/src/client-session.ts` | Credential-free collaboration session metadata and its cookie adapter. |
 | `apps/desktop/src/renderer/lib/api.ts` | Existing product API client, shared by native bearer and browser cookie sessions. |
@@ -423,6 +424,14 @@ allows HTTPS remote images for existing avatars and Markdown images. Socket
 routing still relies on the existing ticket and source-object admission; there
 is no separate browser permission model or arbitrary forwarding destination.
 
+On a phone the whole host draws 20% larger. `phone-scale.ts` rewrites the
+viewport tag before the first render so the phone lays out its screen width
+divided by 1.2 and stretches that over the screen, and rewrites it again when
+the phone turns. A phone is a screen whose short side is 640px or less, so an
+iPad keeps device width, and desktop browsers ignore the tag. Because the
+viewport itself narrows, `vh`, `vw`, fixed positioning and the 640px media
+queries all agree with the larger size; nothing in `app.css` knows about it.
+
 At phone width the shared sidebar becomes a top bar with a menu button that
 drops the navigation in as a sheet
 ([`desktop-shell.md`](desktop-shell.md#at-phone-width)). Archive and
@@ -592,6 +601,22 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-10-10: Draw the browser host 20% larger on phones
+
+**What changed:** On a phone the host sets its viewport to the screen width
+divided by 1.2, so every screen, the sign-in entry included, draws 20% larger.
+
+**Why:** At phone size the shared desktop UI read too small.
+
+**Considered and rejected:** CSS `zoom` on the root, which scales `vh` and
+`vw` too, so the fixed full-height shell overflows the screen. Raising the
+root font size, which misses the many `px` lengths in `app.css`. Separate
+phone sizes in `app.css`, which would touch every rule.
+
+**Consequences:** At a 390px phone the layout is 325 CSS pixels wide. A
+screen meant for phones has to fit that width, not the device's. The factor
+lives in `PHONE_SCALE`.
 
 ### 2026-10-07: Add Rally to the iOS Home Screen
 
