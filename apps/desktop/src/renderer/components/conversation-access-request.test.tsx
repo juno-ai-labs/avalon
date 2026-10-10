@@ -23,7 +23,7 @@ function show(api: ConversationAccessApi, substreamId = '0', onRetry: () => void
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <ConversationAccessRequest api={api} fallback={<p>Channel could not be opened</p>} onRetry={onRetry} parentId={PARENT} substreamId={substreamId} />
+      <ConversationAccessRequest api={api} fallback={<p>Thread could not be opened</p>} onRetry={onRetry} parentId={PARENT} substreamId={substreamId} />
     </QueryClientProvider>,
   );
 }
@@ -33,9 +33,9 @@ describe('ConversationAccessRequest', () => {
     const api = fakeApi(preview());
     show(api);
     expect(await screen.findByRole('heading', { name: 'Launch plan' })).toBeTruthy();
-    expect(screen.queryByText('Channel could not be opened')).toBeNull();
+    expect(screen.queryByText('Thread could not be opened')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Request access' }));
-    expect((await screen.findByRole('status')).textContent).toContain('Request sent. This channel opens once you’re approved.');
+    expect((await screen.findByRole('status')).textContent).toContain('Request sent. This thread opens once you’re approved.');
     expect(api.requestConversationAccess).toHaveBeenCalledWith(PARENT, '0');
     expect(screen.queryByRole('button', { name: 'Request access' })).toBeNull();
   });
@@ -59,7 +59,7 @@ describe('ConversationAccessRequest', () => {
     const api = fakeApi(preview({ access: 'open' }));
     show(api);
     await vi.waitFor(() => expect(api.conversationAccessPreview).toHaveBeenCalled(), { timeout: 2_000 });
-    expect(screen.getByText('Channel could not be opened')).toBeTruthy();
+    expect(screen.getByText('Thread could not be opened')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Request access' })).toBeNull();
   });
 

@@ -158,7 +158,7 @@ const BASE_COMMANDS: ComposerCommand[] = [
 ];
 
 export function WorkstreamComposer({
-  placeholder = 'Message the channel…',
+  placeholder = 'Message the thread…',
   ariaLabel,
   className,
   footerHint,
@@ -569,8 +569,8 @@ export function WorkstreamComposer({
 
       <Modal
         description={confirmationNames.length > 1
-          ? `${confirmationNames.join(', ')} are not currently participants. Would you like to add them with this message? If you do not add them, they will not be able to see the mentions or this ${substreamId === '0' ? 'channel' : 'breakout'}.`
-          : `${confirmationNames[0] ?? 'This person'} is not currently a participant. Would you like to add them with this message? If you do not add them, they will not be able to see the mention or this ${substreamId === '0' ? 'channel' : 'breakout'}.`}
+          ? `${confirmationNames.join(', ')} are not currently participants. Would you like to add them with this message? If you do not add them, they will not be able to see the mentions or this ${substreamId === '0' ? 'thread' : 'breakout'}.`
+          : `${confirmationNames[0] ?? 'This person'} is not currently a participant. Would you like to add them with this message? If you do not add them, they will not be able to see the mention or this ${substreamId === '0' ? 'thread' : 'breakout'}.`}
         footer={
           <>
             <Button disabled={confirming} onClick={() => setPendingConfirmation(null)}>Cancel</Button>

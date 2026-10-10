@@ -531,7 +531,7 @@ export class ResendRegionalEmailService {
       }
       : null;
     if (!workstream) {
-      throw new ApiError(404, "email_workstream_not_found", "The email address is not attached to an active work stream");
+      throw new ApiError(404, "email_workstream_not_found", "The email address is not attached to an active thread");
     }
 
     // The receipt is WorkspaceDO product state, and every lease operation
@@ -631,7 +631,7 @@ export class ResendRegionalEmailService {
         input.workstreamId,
       ).identity();
       if (stillAddressed?.email_address?.toLowerCase() !== input.emailAddress.toLowerCase()) {
-        throw new ApiError(409, "email_workstream_changed", "The work stream no longer accepts this email address");
+        throw new ApiError(409, "email_workstream_changed", "The thread no longer accepts this email address");
       }
       const appended = await messages.appendMessage({
         messageId,

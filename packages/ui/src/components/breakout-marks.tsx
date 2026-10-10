@@ -120,7 +120,7 @@ export function BreakoutTickBar({ breakouts, onOpen, openSubstreamId, renderAge 
   renderAge?: (breakout: BreakoutMark) => ReactNode;
 }): React.JSX.Element | null {
   if (breakouts.length === 0) return null;
-  return <nav aria-label="Breakouts in this channel" className="breakout-tick-bar">
+  return <nav aria-label="Breakouts in this thread" className="breakout-tick-bar">
     {breakouts.map((breakout) => {
       const open = breakout.substreamId === openSubstreamId;
       const news = breakoutNewsLabel(breakout);

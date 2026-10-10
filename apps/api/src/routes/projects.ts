@@ -21,6 +21,6 @@ export const projectRoutes = new Hono<HonoAppEnv>();
 
 projectRoutes.all("/*", (c) => c.json({
   error: "client_update_required",
-  message: "Projects have been replaced by Spaces. Update Rally to continue.",
+  message: "Projects have been replaced by Channels. Update Rally to continue.",
   replacement: "/spaces",
 }, 410));

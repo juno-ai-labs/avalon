@@ -988,7 +988,7 @@ export class WorkstreamObjectProductService {
 
   private root(): RootRow {
     const row = first(this.storage.sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
-    if (!row) throw new ApiError(404, "workstream_not_found", "Work stream not found");
+    if (!row) throw new ApiError(404, "workstream_not_found", "Thread not found");
     if (row.authority_mode !== "authoritative" || row.authority_generation <= 0) {
       throw new ApiError(503, "workstream_maintenance", "Work-stream maintenance is in progress");
     }
@@ -1200,7 +1200,7 @@ export class WorkstreamObjectProductService {
   async importedSessionCheckpoint(auth: AuthContext): Promise<Array<{ sourceMessageId: string; sourceRevision: string }>> {
     const root = await this.authorize(auth);
     if (root.created_by_user_id !== auth.userId) {
-      throw new ApiError(403, "session_import_update_denied", "Only the original importer can update this channel");
+      throw new ApiError(403, "session_import_update_denied", "Only the original importer can update this thread");
     }
     return this.storage.sql.exec<{ source_message_id: string; source_revision: string }>(
       `SELECT source_message_id, source_revision FROM imported_session_messages ORDER BY source_position`).toArray()
@@ -1214,11 +1214,11 @@ export class WorkstreamObjectProductService {
     const conversation = PreparedConversationSchema.parse(rawConversation);
     const root = await this.authorize(auth);
     if (root.created_by_user_id !== auth.userId) {
-      throw new ApiError(403, "session_import_update_denied", "Only the original importer can update this channel");
+      throw new ApiError(403, "session_import_update_denied", "Only the original importer can update this thread");
     }
     const source = first(this.storage.sql.exec<{ provider: string; session_id: string; source_url: string | null }>(
       `SELECT provider, session_id, source_url FROM imported_session_sources WHERE id = 1`));
-    if (!source) throw new ApiError(409, "session_import_source_missing", "This channel has no updateable source session");
+    if (!source) throw new ApiError(409, "session_import_source_missing", "This thread has no updateable source session");
     const entries = conversation.messages.map((message, position) => ({
       message, position, provenance: ImportedMessageProvenanceSchema.parse(message.structuredContent),
     }));
@@ -1226,7 +1226,7 @@ export class WorkstreamObjectProductService {
       || provenance.source.sessionId !== source.session_id
       || provenance.source.url !== source.source_url
       || !provenance.sourceMessageId || !provenance.sourceRevision)) {
-      throw new ApiError(409, "session_import_source_mismatch", "Select the original source conversation for this channel");
+      throw new ApiError(409, "session_import_source_mismatch", "Select the original source conversation for this thread");
     }
     const ids = entries.map(({ provenance }) => provenance.sourceMessageId!);
     if (new Set(ids).size !== ids.length) throw new ApiError(422, "session_import_duplicate_message", "The source contains duplicate message IDs");
@@ -1257,7 +1257,7 @@ export class WorkstreamObjectProductService {
         const old = previous.get(provenance.sourceMessageId!);
         return old && Number(old.source_position) !== position;
       })) {
-      throw new ApiError(409, "session_import_branch_changed", "The source removed or reordered earlier messages. Import this branch into a new channel");
+      throw new ApiError(409, "session_import_branch_changed", "The source removed or reordered earlier messages. Import this branch into a new thread");
     }
     const changes = entries.filter(({ provenance }) => previous.get(provenance.sourceMessageId!)?.source_revision !== provenance.sourceRevision);
     const added = changes.filter(({ provenance }) => !previous.has(provenance.sourceMessageId!)).length;
@@ -1404,7 +1404,7 @@ export class WorkstreamObjectProductService {
       );
     }
     if (auth.workspaceId !== input.workspaceId || auth.userId !== input.creatorUserId) {
-      throw new ApiError(403, "workstream_create_denied", "The work stream cannot be created for this identity");
+      throw new ApiError(403, "workstream_create_denied", "The thread cannot be created for this identity");
     }
     const requestedPersonIds = [...new Set(input.mentions.flatMap((mention) =>
       mention.type === "person" && mention.userId ? [mention.userId] : []))];
@@ -1463,7 +1463,7 @@ export class WorkstreamObjectProductService {
           harnessRunId: null, workflowInput: null };
       }
       if (!part || !run || run.execution_context_json === null) {
-        throw new ApiError(409, "workstream_create_replay_incomplete", "The work stream is incomplete");
+        throw new ApiError(409, "workstream_create_replay_incomplete", "The thread is incomplete");
       }
       const workflowInput = WorkstreamWorkflowInputSchema.parse(
         JSON.parse(run.execution_context_json),
@@ -1903,13 +1903,13 @@ export class WorkstreamObjectProductService {
   private locallyAuthorizedRoot(auth: AuthContext, includeArchived = false): RootRow {
     const root = this.root();
     if (root.parent_workspace_key !== auth.workspaceId || root.workstream_key === "") {
-      throw new ApiError(404, "workstream_not_found", "Work stream not found");
+      throw new ApiError(404, "workstream_not_found", "Thread not found");
     }
     if (!participantVisible(root, this.isParticipant(auth.userId))) {
-      throw new ApiError(404, "workstream_not_found", "Work stream not found");
+      throw new ApiError(404, "workstream_not_found", "Thread not found");
     }
     if (!includeArchived && root.archived_at !== null) {
-      throw new ApiError(404, "workstream_not_found", "Work stream not found");
+      throw new ApiError(404, "workstream_not_found", "Thread not found");
     }
     return root;
   }
@@ -1921,7 +1921,7 @@ export class WorkstreamObjectProductService {
         WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
     ).bind(auth.workspaceId, auth.userId).first<{ one: number }>();
     if (!membership) {
-      throw new ApiError(404, "workstream_not_found", "Work stream not found");
+      throw new ApiError(404, "workstream_not_found", "Thread not found");
     }
     return root;
   }
@@ -2036,8 +2036,8 @@ export class WorkstreamObjectProductService {
         422,
         "scope_change_unsupported",
         before.system_kind !== null
-          ? "This work stream belongs to Avalon itself, so its visibility cannot be changed"
-          : "Automation execution work streams are private and their visibility cannot be changed",
+          ? "This thread belongs to Rally itself, so its visibility cannot be changed"
+          : "Sidekick run threads are private and their visibility cannot be changed",
       );
     }
     const now = Date.now();
@@ -2876,7 +2876,7 @@ export class WorkstreamObjectProductService {
       throw new ApiError(
         403,
         "workstream_scope_narrow_forbidden",
-        "Share this work stream with yourself before making it private",
+        "Share this thread with yourself before making it private",
       );
     }
     if (!this.isParticipant(auth.userId)) {
@@ -3192,7 +3192,7 @@ export class WorkstreamObjectProductService {
           throw new ApiError(
             409,
             "workstream_participant_required",
-            "At least one participant must remain in this work stream",
+            "At least one participant must remain in this thread",
           );
         }
         sql.exec(
@@ -3228,7 +3228,7 @@ export class WorkstreamObjectProductService {
       requireAuthorizedRead(await access.check({ kind: "resource", workspaceId: auth.workspaceId, resourceId }));
     }
     if (resource.connection_scope === "personal" && resource.owner_user_id !== auth.userId) {
-      throw new ApiError(403, "resource_access_denied", "This personal resource is not available to the work stream");
+      throw new ApiError(403, "resource_access_denied", "This personal resource is not available to the thread");
     }
     if (resource.provider === "avalon_upload" && resource.attachment_status !== "attached") {
       throw new ApiError(409,"attachment_draft_requires_message","Send this upload with a message before attaching it as an existing resource");
@@ -3468,7 +3468,7 @@ export class WorkstreamObjectProductService {
     throw new ApiError(
       409,
       "workstream_audience_restricted_content",
-      "This work stream contains retained content that the wider audience cannot view",
+      "This thread contains retained content that the wider audience cannot view",
     );
   }
 
@@ -4804,7 +4804,7 @@ export class WorkstreamObjectProductService {
               ORDER BY created_at DESC, run_id DESC LIMIT 1`,
           ));
           if (latest?.run_id !== input.expectedLatestHarnessRunId) {
-            throw new ApiError(409, "terminal_repository_request_stale", "The work stream changed before this message was admitted");
+            throw new ApiError(409, "terminal_repository_request_stale", "The thread changed before this message was admitted");
           }
         }
         const result = this.loops.completeInputPreparation({
@@ -4890,7 +4890,7 @@ export class WorkstreamObjectProductService {
           requestHash,
         );
         const current = first(sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
-        if (!current) throw new ApiError(404, "workstream_not_found", "Work stream not found");
+        if (!current) throw new ApiError(404, "workstream_not_found", "Thread not found");
         const replay = first(sql.exec<{
           id: string; sequence_number: number; attention_ordinal: number | null; created_at: number;
         } & Record<string, SqlStorageValue>>(
@@ -5337,7 +5337,7 @@ export class WorkstreamObjectProductService {
     const admitted = this.storage.transactionSync(() => {
       const sql = this.storage.sql;
       const current = first(sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
-      if (!current) throw new ApiError(404, "workstream_not_found", "Work stream not found");
+      if (!current) throw new ApiError(404, "workstream_not_found", "Thread not found");
       const changed = sql.exec<{ elicitation_id: string }>(
         `UPDATE elicitation_requests SET status = 'answered', answer_json = ?,
                 answered_by_user_id = ?, answered_at = ?
@@ -5475,7 +5475,7 @@ export class WorkstreamObjectProductService {
 
   async setAppearanceForAdmittedSocket(auth: AuthContext, operationId: string, raw: WorkstreamAppearancePatch): Promise<void> {
     this.locallyAuthorizedRoot(auth);
-    if (this.objectStore.identity()?.parentKind !== "workstream") throw new ApiError(403, "main_conversation_required", "Change the work stream appearance from Main");
+    if (this.objectStore.identity()?.parentKind !== "workstream") throw new ApiError(403, "main_conversation_required", "Change the thread appearance from Main");
     return this.applyAppearance(auth, operationId, raw);
   }
 
@@ -5677,7 +5677,7 @@ export class WorkstreamObjectProductService {
       };
     }
     if (loop.status === "executing") {
-      throw new ApiError(409, "harness_already_running", "This work stream already has an active run");
+      throw new ApiError(409, "harness_already_running", "This thread already has an active run");
     }
     const latest = first(this.storage.sql.exec<{
       run_id: string;
@@ -5760,7 +5760,7 @@ export class WorkstreamObjectProductService {
         const currentLoop = this.loops.loop();
         if (!currentLoop || currentLoop.loop_id !== loop.loop_id
           || currentLoop.revision !== loop.revision || currentLoop.status !== "idle") {
-          throw new ApiError(409, "harness_already_running", "This work stream already has an active run");
+          throw new ApiError(409, "harness_already_running", "This thread already has an active run");
         }
         const stillLatest = first(sql.exec<{ run_id: string; status: string }>(
           `SELECT run_id, status FROM runs

@@ -184,7 +184,7 @@ export class TerminalWorkstreamService {
   private async requireVisible(workstreamId: string): Promise<void> {
     const visible = await new WorkstreamDirectoryService(this.env, this.auth).visible(workstreamId);
     if (!visible) {
-      throw new ApiError(404, "workstream_not_found", "Work stream not found");
+      throw new ApiError(404, "workstream_not_found", "Thread not found");
     }
   }
 
@@ -194,7 +194,7 @@ export class TerminalWorkstreamService {
       this.auth.workspaceId,
       workstreamId,
     ).participants()).find((row) => row.user_id === this.auth.userId);
-    if (!participant) throw new ApiError(403, "workstream_participant_required", "Join this work stream before selecting or replacing its Terminal repository.");
+    if (!participant) throw new ApiError(403, "workstream_participant_required", "Join this thread before selecting or replacing its Terminal repository.");
   }
 }
 

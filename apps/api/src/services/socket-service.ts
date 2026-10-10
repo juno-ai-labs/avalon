@@ -147,7 +147,7 @@ export async function issueSocketTicket(
   // is later mistaken for authorization.
   if (parent.kind === "space") {
     throw new ApiError(403, "space_feed_socket_refused",
-      "A Space has no conversation feed to open");
+      "A channel has no conversation feed to open");
   }
   const now = options.issuedAt ?? Math.floor(Date.now() / 1_000);
   return new SignJWT({
@@ -691,7 +691,7 @@ export class WorkstreamControlSocketService {
       socketTicketFromRequest(request, queryTicket),
     );
     if (claims.region !== this.env.AVALON_REGION || claims.workstreamId !== workstreamId) {
-      throw new ApiError(403, "socket_ticket_scope_mismatch", "The ticket does not authorize this work stream");
+      throw new ApiError(403, "socket_ticket_scope_mismatch", "The ticket does not authorize this thread");
     }
     // The Channel's parent is hosted by the Organization object, which holds
     // the Channel's control sockets beside its own; see

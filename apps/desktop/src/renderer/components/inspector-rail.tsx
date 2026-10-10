@@ -206,7 +206,7 @@ function ContextContent({
 >): React.JSX.Element {
   const debugEnabled = useDebugEnabled();
 
-  if (!workstream) return <EmptyState title="No channel selected" description="Open a channel to inspect its context." />;
+  if (!workstream) return <EmptyState title="No thread selected" description="Open a thread to inspect its context." />;
   const sources = workstream.resources.filter((resource) => resource.direction === 'source');
   const artifacts = workstream.resources.filter((resource) => resource.direction === 'artifact');
 
@@ -263,7 +263,7 @@ function ContextContent({
                     must not still be showing over the next stream's. */}
                 <CopyButton
                   key={workstream.id}
-                  label="Copy channel email address"
+                  label="Copy thread email address"
                   onCopied={() => reportTelemetryProductIntent({
                     kind: 'content_copied', contentType: 'workstream_email', resourceType: 'workstream',
                     resourceId: workstream.id,
@@ -294,12 +294,12 @@ function ContextContent({
               )}
               {!workstream.latestHarnessRun && workstream.latestHarnessRunId && <div><dt>Harness run</dt><dd className="mono">{workstream.latestHarnessRunId}</dd></div>}
               <div>
-                <dt>Channel ID</dt>
+                <dt>Thread ID</dt>
                 <dd className="copy-detail">
                   <span className="mono">{workstream.id}</span>
                   <CopyButton
                     key={workstream.id}
-                    label="Copy channel ID"
+                    label="Copy thread ID"
                     onCopied={() => reportTelemetryProductIntent({
                       kind: 'content_copied', contentType: 'workstream_id', resourceType: 'workstream',
                       resourceId: workstream.id,
@@ -715,7 +715,7 @@ export function ArtifactSidebar({
 }
 
 const railTitle: Record<RailVariant, string> = {
-  context: 'Channel',
+  context: 'Thread',
   browser: 'Browser',
 };
 
@@ -925,7 +925,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       </div>
       </DetailHeaderActionsHost>
       <Modal
-        description={`${archiveTarget?.title ?? 'This resource'} will leave this channel. Rally has no way to bring it back yet.`}
+        description={`${archiveTarget?.title ?? 'This resource'} will leave this thread. Rally has no way to bring it back yet.`}
         footer={(
           <>
             <Button disabled={archiving} onClick={closeArchive}>Cancel</Button>
