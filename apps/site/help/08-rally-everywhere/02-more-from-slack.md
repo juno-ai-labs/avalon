@@ -56,8 +56,8 @@ connecting and refreshing in more detail.
 
 > [!WARNING]
 > Your personal connection can read your private Slack messages. If you ask
-> Rally about them in a shared Channel, everyone in that Channel can read the
-> answer. Ask in a Channel only you are in when the subject is private.
+> Rally about them in a shared Thread, everyone in that Thread can read the
+> answer. Ask in a Thread only you are in when the subject is private.
 
 ## Talking back to a Sidekick in Slack
 
@@ -79,19 +79,19 @@ how to tell a Sidekick to post in Slack in the first place.
 
 ## Rally links in Slack
 
-Paste a link to a Rally Channel into Slack and it opens out into a small card.
-The card shows the Channel's title, when it last had activity, and whether a
-Sidekick started it. While the Channel is running, waiting for input, has
+Paste a link to a Rally Thread into Slack and it opens out into a small card.
+The card shows the Thread's title, when it last had activity, and whether a
+Sidekick started it. While the Thread is running, waiting for input, has
 failed or was stopped, the card also shows a status badge, and the badge updates as the status
 changes. Your team can see that the report is still cooking before anyone
 clicks.
 
-To get a link, use **Copy link** in the Channel's title pill menu in Rally, as described in [Search and
+To get a link, use **Copy link** in the Thread's title pill menu in Rally, as described in [Search and
 links](../03-spaces-and-breakouts/06-search-and-links.md).
 
-- The card carries no content from the Channel. Opening the link still needs
+- The card carries no content from the Thread. Opening the link still needs
   normal access in Rally.
-- A Channel from a different Organization, an archived Channel, or any link
+- A Thread from a different Organization, an archived Thread, or any link
   pasted into a Slack Connect channel shows a plain card with no details.
 - Old Rally links that start with `rallywithai://` do not get a card.
 

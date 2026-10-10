@@ -23,7 +23,7 @@ administrator cannot do that the owner can are change the owner's role and
 remove the owner.
 
 **Member.** An ordinary member of the team. Members can do everything the
-earlier chapters describe: start Channels and Spaces, work with Rally, build
+earlier chapters describe: start Threads and Channels, work with Rally, build
 Sidekicks, connect their own tools, and use the connections the Organization
 shares. They cannot invite people or change Organization-wide settings.
 
@@ -45,7 +45,7 @@ and nothing else in the Organization.
 | Add, refresh and delete Organization connections | Yes | Yes | No |
 | Set GitHub repository access and MCP tool rules for shared connections | Yes | Yes | No |
 | Connect, refresh and delete your own personal connections | Yes | Yes | Yes |
-| Use the Organization's shared connections in Channels | Yes | Yes | Yes |
+| Use the Organization's shared connections in Threads | Yes | Yes | Yes |
 | Leave the Organization | Yes, with one exception | Yes | Yes |
 
 The exception: an owner who is the only owner cannot leave while other people

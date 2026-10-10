@@ -1,103 +1,75 @@
 ---
 title: Who can see what
-description: Understand public and private Channels, Space audiences, roles, and what happens when access changes.
+description: Understand public and private Threads, private Channels, roles, and what happens when access changes.
 ---
 
-Before you paste a contract, a salary or a customer's details into a Channel, you
+Before you paste a contract, a salary or a customer's details into a Thread, you
 should know who can read it. This page explains how Rally decides, how to check
-for any Channel, and what happens the moment you change it.
+for any Thread, and what happens the moment you change it.
 
-## Two kinds of Channel
+## Two kinds of Thread
 
-Every Channel is one of two things:
+Every Thread is one of two things:
 
 - **Public to organization.** Everyone in your Organization can find it, open it
-  and read it. Hover over it in the sidebar and the card says **Public to
-  organization**.
+  and read it.
 - **Private.** Only the people listed as its participants can open it.
 
-To check which one a Channel is, click its name in the title pill. The
+To check which one a Thread is, click its name in the title pill. The
 **People** row says **Public** or **Private**, as you saw in
 [People in the room](../02-working-in-a-channel/05-people-in-the-room.md).
 
-A new Channel takes its starting point from the Space you create it in. Start it
-in a Space open to the whole Organization and it begins public. Start it in a
-Space limited to its participants and it begins private.
+A new Thread takes its starting point from the Channel you start it in. Start it
+in a Channel open to the whole Organization and it begins public. Start it in a
+private Channel and it begins private to you and anyone you mention in your
+first message.
 
-## Where access comes from
+## Channels do not open Threads
 
-A person can read a Channel if any one of these lets them in:
+A Channel decides who can see the Channel: its name, its feed and its message
+box. It does not decide who can read the Threads in it. Every Thread has its own
+setting, and that setting is the whole answer. A person can read a Thread if the
+Thread is public to the Organization, or if they are one of its participants.
 
-- **The Channel itself.** Either the Channel is public to the Organization, or
-  the person is one of its participants.
-- **Each Space that holds the Channel.** A Space open to the whole Organization
-  lets everyone read every Channel in it. A Space limited to its participants
-  lets those participants read every Channel in it.
+Two things follow from that:
 
-One open door is enough. Two things follow from that:
+- A private Thread in an Organization-wide Channel stays private. Everyone in
+  the Channel sees that it exists, as a **Private thread** entry in the feed with
+  a **Request access** chip, but nobody outside the Thread sees its name, its
+  summary or who is in it.
+- A public Thread in a private Channel is still public. Anyone in the
+  Organization can open it from a link or find it in search, even though they
+  cannot see the Channel.
 
-- A Channel that is "private" in its own setting is still readable by everyone if
-  it sits in an Organization-wide Space.
-- Making a Space private does not make a Channel private if the Channel is also
-  public in its own right or through another Space.
+Channels and their privacy switch are covered in [Channels](01-spaces.md#private-channels).
 
-Spaces and their audiences are set up as described in [Spaces](01-spaces.md).
+## Change who can read a Thread
 
-## Manage access
+To open a Thread up to the whole Organization, or close it again:
 
-To see exactly who can read a Channel, and why, right-click it in the sidebar
-and choose **Manage access**. The window opens with **Everyone listed here
-can read** followed by the Channel's name, and lists every source of access:
+1. Click the Thread's name in its title pill and choose **More**.
+2. Turn **Public to organization** on to make it public, or off to make it
+   private to its participants.
 
-- **This channel.** The Channel's own setting, with a sentence such as **Only the
-  3 people in the channel.** or **Everyone in the organization, from the channel
-  itself.** Next to it is a **Make private** or **Make public to organization**
-  button.
-- **One row for each Space that holds the Channel.** Each says who that Space
-  lets in, such as **Everyone in the organization, through this space.** or **The
-  5 people in this space.**, with a **Remove from space** button.
+The switch is there for people who can change the Thread. It is not offered on
+Rally's own built-in Threads, or to guests.
 
-Click **Done** when you have finished.
-
-Rally will not call a Channel private while an Organization-wide Space still
-makes it readable by everyone. In that case the **This channel** row says the
-Channel is **public through** that Space, and the **Make private** button does
-not appear. To make the Channel private, first remove it from that Space (or
-narrow the Space), then come back and click **Make private**.
-
-A few rows you may meet:
-
-- **A space you can't see.** The Channel is also in a Space you are not part of.
-  You can see that it exists, but you cannot change it.
-- A Space you only reach through this Channel has no **Remove from space**
-  button.
-- **Access from this space is still being applied.** or **This channel has left
-  this space; its access is still being withdrawn.** A change is still taking
-  effect. Give it a moment.
-
-If the list cannot be loaded, Rally says **Who can see this channel couldn't be
-loaded.** Click **Try again**.
-
-**Manage access** is not offered on Rally's own built-in Channels, or to guests.
-
-### Making a Channel public from the Channel itself
-
-You can also open a Channel up from inside it: click its name in the title
-pill, choose **More**, then **Make public to organization**. That menu has no
-way back. To make the Channel private again, use **Manage access** from the
-Channel's right-click menu in the sidebar.
+To change who the participants are, use **Add people** and **People** in the same
+menu, as described in
+[People in the room](../02-working-in-a-channel/05-people-in-the-room.md).
 
 ### Breakouts are separate
 
 A Breakout has its own participants and starts private to whoever made it.
 Adding someone to a Breakout lets them read that Breakout only, not the rest of
-the Channel. See [Breakouts](03-breakouts.md#who-can-see-a-breakout).
+the Thread. See [Breakouts](03-breakouts.md#who-can-see-a-breakout).
 
 ### Asking to join from a link
 
-If you open a link to a private Channel or Breakout you are not in, Rally shows
-its name, color and icon and a **Request access** button. Pressing it sends the
-request to whoever created it. Once they approve, you are added, the Channel
+If you open a link to a private Thread or Breakout you are not in, Rally shows
+its name, color and icon and a **Request access** button. A **Private thread**
+entry in a Channel's feed has a **Request access** chip that does the same. Pressing it sends the
+request to whoever created it. Once they approve, you are added, the Thread
 opens on its own within about half a minute, and you get an email. You get an
 email if they decline, too. Guests do not see this; they are shared in by email
 instead.
@@ -105,12 +77,14 @@ instead.
 If you created it, the request reaches you in four places:
 
 - **By email**, with an **Approve access** button that works in one click.
-- **In the attention button** left of search in the sidebar. The request is
-  listed first, with a check to approve and a cancel sign to decline. Click
-  the request itself to see it in a dialog with **Approve** and **Decline**.
+- **In Activity.** Click **Activity** at the left edge of the window. The
+  request sits at the top, under **Requests**, with a check to approve and a
+  cancel sign to decline. Click the request itself to see it in a dialog with
+  **Approve** and **Decline**. It also counts towards the number on the
+  **Threads** button until you decide.
 - **In the Mac menu bar**, under **Needs attention**. Choosing it opens Rally
   on the same dialog.
-- **Among the conversation's people.** Open the Channel's or Breakout's menu
+- **Among the conversation's people.** Open the Thread's or Breakout's menu
   and choose **Add people**: requests are listed under **Asked to join**,
   above **Suggested**, with the same check and cancel buttons.
 
@@ -121,9 +95,9 @@ Who may change things depends on each person's role in the Organization.
 | Role | In short |
 | --- | --- |
 | **Owner** | The person who created the Organization. Can do everything an administrator can. |
-| **Administrator** | Runs the Organization. Can change roles and, like the owner, can take someone else out of a Space. |
-| **Member** | Can create Spaces and Channels, and add people to Spaces. |
-| **Guest** | Someone from outside the Organization who was shared into particular conversations by email. Sees only those, cannot create Spaces, and has no **Manage access**. |
+| **Administrator** | Runs the Organization. Can change roles. |
+| **Member** | Can create Channels, start Threads, and add people to Channels and Threads. |
+| **Guest** | Someone from outside the Organization who was shared into particular conversations by email. Sees only those, cannot create Channels or start Threads, and cannot change who can read a Thread. |
 
 Rally shows buttons according to your role and checks every change again when
 you make it, so a button that has stopped applying to you will refuse. Roles, and how to change them, are covered in
@@ -132,40 +106,39 @@ you make it, so a button that has stopped applying to you will refuse. Roles, an
 ## When access narrows
 
 Rally applies a narrowing within moments, including to people who have the
-Channel open at that moment. Nobody keeps reading a conversation because they
+Thread open at that moment. Nobody keeps reading a conversation because they
 happened to have it on screen.
 
-**Someone is removed from a Channel or Breakout.** As described in
+**Someone is removed from a Thread or Breakout.** As described in
 [People in the room](../02-working-in-a-channel/05-people-in-the-room.md), you
 remove a participant from the participants window with **Remove from main
 conversation** or **Remove from breakout**.
 
-- If the Channel is private, it disappears from their sidebar, and if they had it
-  open Rally moves them to the next Channel in their list.
+- If the Thread is private, it disappears from their Threads list, and if they
+  had it open, it closes.
 - If they are removed from a Breakout, the Breakout closes and they land back in
-  the Channel.
-- Removing someone from a Channel's main conversation also means they can no longer
-  open or manage Sidekicks that belong to that Channel, unless they created them.
+  the Thread.
+- Removing someone from a Thread's main conversation also means they can no longer
+  open or manage Sidekicks that belong to that Thread, unless they created them.
 - You cannot remove the last participant.
 
-**A Channel becomes private.** People who could read it only because it was
+**A Thread becomes private.** People who could read it only because it was
 public, and who are not participants, are cut off. If they had it open, it
 closes.
 
-**Someone loses a Space.** When a person is taken out of a Space, or the Space is
-narrowed so they are no longer in its audience, the Channels they could reach
-only through that Space close for them. If they open the Space, they see **Space
-not found** and **It may have been archived or you may no longer have access.**
-Rally shows the same words for an archived Space and for one you cannot reach,
-on purpose, so the message gives nothing away.
+**Someone loses a Channel.** When a person is taken out of a private Channel, or
+an open Channel is made private without them, the Channel leaves their Channels
+list. If they open it, they see **Channel not found** and **It may have been
+archived, made private, or you may no longer have access.** Rally shows the same
+words whichever it is, on purpose, so the message gives nothing away. Losing a
+Channel does not take away any Thread: they keep every Thread they are a
+participant in, and every public one.
 
 > [!IMPORTANT]
-> Taking away one source of access does not take away the others. Removing
-> someone from a Channel's participants does nothing if the Channel is public to
-> the Organization or sits in a Space they belong to: they can still read it
-> through that route. Likewise, someone who is a direct participant of a Channel
-> keeps it after losing a Space that also held it. Open **Manage access** to see
-> every route, and close each one that should be closed.
+> Taking away one route to a Thread does not take away the other. Removing
+> someone from a Thread's participants does nothing if the Thread is public to
+> the Organization: they can still read it. To shut someone out of a Thread,
+> make it private and make sure they are not one of its participants.
 
 > [!WARNING]
 > Narrowing access stops people reading from now on. It cannot take back what

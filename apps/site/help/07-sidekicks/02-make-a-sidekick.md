@@ -13,11 +13,11 @@ assistant works out the details and writes them down.
 There are two places to start one.
 
 - In the Sidekicks window, click **New Sidekick** at the top right. (Open the
-  window from the account menu at the bottom of the sidebar → **Sidekicks**.)
-- In a Channel or Breakout, click its name in the title pill, choose
+  window from the account menu at the bottom left of the window → **Sidekicks**.)
+- In a Thread or Breakout, click its name in the title pill, choose
   **Sidekicks**, then **Add Sidekick** → **Create new Sidekick**. This opens the Sidekicks window on a
   new draft that starts as **Only you**; to get a Sidekick that belongs to
-  the Channel, ask Rally in the Channel instead (see below).
+  the Thread, ask Rally in the Thread instead (see below).
 
 Rally shows **Creating Sidekick…** for a moment, then opens your new
 Sidekick. On one side is its details panel; on the other, a panel headed
@@ -74,28 +74,28 @@ saves at once, and the palette stays open while you try a few. Every window
 showing that Sidekick updates to match.
 
 A recognisable hexagon is worth a minute: it is how you spot the Sidekick in
-the Sidekicks window and in a Channel's **Sidekicks** list. Changing it
+the Sidekicks window and in a Thread's **Sidekicks** list. Changing it
 needs permission to manage the Sidekick; if you lack it, the palette shows an
 error and the hexagon goes back to how it was.
 
-Channels and Breakouts have icons and colours too; those are covered in
+Threads and Breakouts have icons and colours too; those are covered in
 [Names, icons and colours](../02-working-in-a-channel/07-name-icon-and-colour.md).
 
-## Or ask Rally in a Channel
+## Or ask Rally in a Thread
 
 You do not have to leave a conversation to make a Sidekick. Ask Rally in any
-Channel or Breakout:
+Thread or Breakout:
 
-> Every Friday, summarize this Channel and post it here.
+> Every Friday, summarize this Thread and post it here.
 
-Rally first looks for a suitable Sidekick the Channel already has and reuses
-it. If there is none, it makes a small one owned by the Channel and passes
+Rally first looks for a suitable Sidekick the Thread already has and reuses
+it. If there is none, it makes a small one owned by the Thread and passes
 your request to that Sidekick's drafting assistant. You see the work in the
 conversation under a **Sidekicks** row, and the new Sidekick appears in the
-Channel's **Sidekicks** list, in its title pill menu.
+Thread's **Sidekicks** list, in its title pill menu.
 
-A Sidekick made this way belongs to the Channel (its scope badge says
-**Channel**). If you asked from a Breakout, that Breakout becomes its home and
+A Sidekick made this way belongs to the Thread (its scope badge says
+**Thread**). If you asked from a Breakout, that Breakout becomes its home and
 where it posts by default.
 
 ## Writing good instructions
@@ -103,7 +103,7 @@ where it posts by default.
 The drafting assistant turns what you say into instructions, so a vague
 request gets you a vague Sidekick. These habits help.
 
-- **Say where the result goes.** "Post it in this Channel", "send me a Slack
+- **Say where the result goes.** "Post it in this Thread", "send me a Slack
   DM", "email the summary to me". A Sidekick does not deliver anywhere on its
   own; see [Where a Sidekick's results go](05-where-results-go.md).
 - **Say what to do when there is nothing to report.** "If nothing new came

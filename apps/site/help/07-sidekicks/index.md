@@ -15,7 +15,7 @@ wrong in the explaining, and a form with a frequency drop-down and a row of
 weekday checkboxes makes the explaining worse: it does exactly what you
 clicked, which is rarely all of what you meant. So Sidekicks have no form. A
 Sidekick is a named helper that you describe once, in plain words, and then
-stop describing. You talk to it the way you talk to Rally in a Channel, and it
+stop describing. You talk to it the way you talk to Rally in a Thread, and it
 writes its own instructions down: a name, a short description, the
 instructions themselves and, if you want it to act on its own, one or more
 triggers that say when to start.
@@ -34,7 +34,7 @@ Sidekicks come in two kinds, and a trigger is the whole difference.
   it. Each time, it does its job and reports back where you told it to.
 
 The second idea is ownership. A Sidekick belongs to you alone, to the whole
-Organization, or to one Channel, and that decides who can see it, who can
+Organization, or to one Thread, and that decides who can see it, who can
 change it, and whose connected tools it uses when it runs.
 
 ## A word about the old name
@@ -50,5 +50,5 @@ contain `automations`. They are all the same thing.
 The pages ahead start with what a Sidekick is and who it belongs to, then
 show you how to make one by describing it. After that come the triggers that
 start a Sidekick, the window where you manage them, and where a Sidekick's
-results end up. The last page brings a Sidekick into a Channel so the whole
+results end up. The last page brings a Sidekick into a Thread so the whole
 room can use it.

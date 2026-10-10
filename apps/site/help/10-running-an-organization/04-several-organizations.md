@@ -9,7 +9,7 @@ client who also works in Rally. One Rally account can belong
 to several Organizations, and you move between them from the account menu
 without signing out.
 
-As the [chapter opening](index.md) said, Organizations are separate worlds. Channels, Spaces, Sidekicks, connections and members never cross from
+As the [chapter opening](index.md) said, Organizations are separate worlds. Threads, Channels, Sidekicks, connections and members never cross from
 one to another. Rally shows you one Organization at a time.
 
 > [!NOTE]
@@ -28,7 +28,7 @@ belong to.
 - A **check mark** sits beside the one you are in now.
 - A **green dot** beside another one means something has happened there. Hover
   over it for the details, such as how many mentions are waiting for you, or
-  how many Channels are waiting for your input. **Unread activity** means there
+  how many Threads are waiting for your input. **Unread activity** means there
   is something new to look at, but nothing is waiting on you.
 - If you belong to Organizations in different regions, each row also shows its
   region.
@@ -44,7 +44,7 @@ over.
 
 Click its name in the **Organizations** section. A small spinner appears on the
 row while Rally gets it ready, then Rally reopens in that Organization, with
-its own Spaces, Channels and settings.
+its own Channels, Threads and settings.
 
 Now and then Rally asks you to confirm who you are before it opens another
 Organization, usually because you have not been there for a while. The row

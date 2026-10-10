@@ -4,7 +4,7 @@ description: How long Rally keeps your content, what archiving and leaving do, a
 nav_title: What Rally keeps
 ---
 
-Rally is built to remember. A Channel you started in spring is still there in
+Rally is built to remember. A Thread you started in spring is still there in
 autumn, with every message, file and artifact version. That is the point of
 it, and it also means you should know how long things stay and how to have
 them removed. This page summarizes section 8 of the
@@ -13,14 +13,14 @@ them removed. This page summarizes section 8 of the
 
 > [!NOTE]
 > The Privacy Policy still uses some of Rally's old names. Where it says
-> *workspace*, read Organization; *work streams* are Channels; *automations*
+> *workspace*, read Organization; *threads* are Threads; *automations*
 > are Sidekicks.
 
 ## How long Rally keeps things
 
 | What | How long |
 | --- | --- |
-| Your work: Channels, Breakouts, messages, files, artifacts, Sidekicks and their runs, including anything Rally fetched from your connected tools while doing the work | No automatic expiry. It stays until someone with the right to do so deletes it, or the Organization is deleted. |
+| Your work: Threads, Breakouts, messages, files, artifacts, Sidekicks and their runs, including anything Rally fetched from your connected tools while doing the work | No automatic expiry. It stays until someone with the right to do so deletes it, or the Organization is deleted. |
 | The Organization's audit records (who joined, who changed what) | For as long as the Organization exists. |
 | The one-time check Rally uses when you link your Slack account | 15 minutes. |
 | Rally's own records of product events and deliveries | Up to 90 days. |
@@ -38,22 +38,20 @@ Two more points from the policy:
 
 ## Archiving is not deleting
 
-Throughout this manual you have met **Archive**: for Channels and Breakouts in
-[Arranging your Channels](../03-spaces-and-breakouts/02-arranging-channels.md),
-for Spaces, for Sidekicks and for resources. In every case archiving takes
+Throughout this manual you have met **Archive**: for Threads and Breakouts in
+[Arranging your Threads](../03-spaces-and-breakouts/02-arranging-channels.md),
+for Sidekicks and for resources. In every case archiving takes
 something out of sight. It does not erase it.
 
-- A Channel. Archiving takes it out of the sidebar for everyone who can see
+- A Thread. Archiving takes it out of the lists of everyone who can see
   it, and nobody, you included, can open it again. Any run in progress stops,
   scheduled follow-ups stop, and mail to its address is refused. As the dialog
-  says: **Nothing is deleted, but Rally has no way to bring a channel back.**
+  says: **Nothing is deleted, but Rally has no way to bring a thread back.**
 - A Breakout. The same: it is kept, and there is no control in the app to
   restore it.
-- A Space. Archiving removes its pill from the sidebar. Spaces are the one
-  thing you can restore from the app.
 - A Sidekick. Its schedules stop, and its conversation and run history stay
   stored but can no longer be viewed. It cannot be unarchived.
-- A resource. It leaves the Channel's list. The original file in Google
+- A resource. It leaves the Thread's list. The original file in Google
   Drive, Slack or wherever it came from is not touched.
 
 Archive when you want something gone from view. If you need the content
@@ -64,8 +62,8 @@ erased, ask for deletion as described below.
 When you delete a connection in
 [Settings → Connections](../05-connecting-your-tools/01-connections.md), Rally
 stops reaching that tool. Work Rally already did with it stays in your
-Channels. The Privacy Policy spells this out for Slack: disconnecting stops new
-access but does not delete Rally Channels, summaries or artifacts that already
+Threads. The Privacy Policy spells this out for Slack: disconnecting stops new
+access but does not delete Rally Threads, summaries or artifacts that already
 contain Slack information. To remove the Rally app from Slack itself, a Slack
 administrator also has to uninstall it in Slack.
 
