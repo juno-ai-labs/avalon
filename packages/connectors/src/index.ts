@@ -1,5 +1,12 @@
 export { CANVA_POLL_SECONDS } from "./canva-polling";
 export { parseCanvaDesignReference } from "./canva-resource";
+export {
+  readConnectorDocument,
+  type ConnectorDocumentConnection,
+  type ConnectorDocumentContent,
+  type ConnectorDocumentReader,
+  type ConnectorFile,
+} from "./documents";
 import { createCanvaConnector, type CanvaConnectorConfig } from "./canva";
 export { createCanvaConnector, CanvaCapabilities, CanvaAgentPluginDescriptor, type CanvaConnectorConfig } from "./canva";
 import { RegionSchema } from "@rally/contracts/regions";
@@ -31,6 +38,7 @@ import {
   type ResolvedConnectorAdapter,
 } from "./types";
 import { isProviderCredentialRejection, withProviderReauthorization } from "./provider-utils";
+import { readConnectorDocument, type ConnectorDocumentReader } from "./documents";
 import { instrumentConnectorAdapter, instrumentConnectorFetch } from "./observability";
 export {
   isProviderCredentialRejection,
@@ -340,6 +348,8 @@ export interface GoogleConnectorConfig {
   clientSecret: string;
   redirectUri: string;
   fetch?: typeof globalThis.fetch;
+  /** Reads stored files Drive cannot export as text, such as Office files and PDFs. */
+  documents?: ConnectorDocumentReader;
 }
 
 const googleScopes = {
@@ -374,6 +384,9 @@ const GOOGLE_DRIVE_FILE_TYPES = [
   "drawing",
   "folder",
   "pdf",
+  "word",
+  "excel",
+  "powerpoint",
 ] as const;
 
 const GOOGLE_DRIVE_FILE_TYPE_MIME: Record<(typeof GOOGLE_DRIVE_FILE_TYPES)[number], string> = {
@@ -384,6 +397,9 @@ const GOOGLE_DRIVE_FILE_TYPE_MIME: Record<(typeof GOOGLE_DRIVE_FILE_TYPES)[numbe
   drawing: "application/vnd.google-apps.drawing",
   folder: "application/vnd.google-apps.folder",
   pdf: "application/pdf",
+  word: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  excel: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  powerpoint: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 };
 
 /**
@@ -415,6 +431,9 @@ const GOOGLE_DRIVE_FILE_TYPE_TOOL: Record<
   // tool that returns the folder again would be advice that goes nowhere.
   folder: null,
   pdf: { remedy: "Read it with drive.download, which returns bounded text.", capability: "drive.read" },
+  word: { remedy: "Read it with drive.download, which returns its text.", capability: "drive.read" },
+  excel: { remedy: "Read it with drive.download, which returns every sheet's cells.", capability: "drive.read" },
+  powerpoint: { remedy: "Read it with drive.download, which returns each slide's text.", capability: "drive.read" },
 };
 
 /**
@@ -436,9 +455,13 @@ function googleFileFamilyError(
   const advice = remedy && grantedScopes.includes(remedy.capability) ? ` ${remedy.remedy}` : "";
   return new ConnectorError(
     "invalid_payload",
-    `That id is a ${actual}, not a ${expected}.${advice}`,
+    `That id is ${withArticle(actual)}, not ${withArticle(expected)}.${advice}`,
     { reason: "wrong_id_family", field, expected, actual }
   );
+}
+
+function withArticle(noun: string): string {
+  return `${/^[aeiou]/u.test(noun) ? "an" : "a"} ${noun}`;
 }
 
 /**
@@ -862,7 +885,7 @@ export const googleTools: ToolDefinition[] = [
         fileType: {
           type: "string",
           enum: [...GOOGLE_DRIVE_FILE_TYPES],
-          description: "Restrict results to one kind of file.",
+          description: "Restrict results to one kind of file. document, spreadsheet, and presentation are Google Docs, Sheets, and Slides; word, excel, and powerpoint are Microsoft Office files stored in Drive.",
         },
         modifiedAfter: {
           type: "string",
@@ -2517,7 +2540,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           .then((response) => safeJsonBounded(response, GOOGLE_HYDRATION_RESPONSE_BYTES));
         return {
           ...sanitizeDriveFile(metadata),
-          ...await readDriveTextContent(api, connection, providerResourceId, metadata, signal, GOOGLE_MAX_HYDRATED_TEXT_BYTES)
+          ...await readDriveTextContent(api, connection, providerResourceId, metadata, signal, GOOGLE_MAX_HYDRATED_TEXT_BYTES, config.documents)
         };
       }
 
@@ -2531,7 +2554,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           .then((response) => safeJsonBounded(response, GOOGLE_HYDRATION_RESPONSE_BYTES));
         return {
           ...sanitizeDriveFile(metadata),
-          ...await readDriveTextContent(api, connection, providerResourceId, metadata, signal, GOOGLE_MAX_HYDRATED_TEXT_BYTES)
+          ...await readDriveTextContent(api, connection, providerResourceId, metadata, signal, GOOGLE_MAX_HYDRATED_TEXT_BYTES, config.documents)
         };
       }
 
@@ -2541,39 +2564,10 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const payload = await api(connection, url.toString(), { signal }).then((response) =>
           safeJsonBounded(response, GOOGLE_HYDRATION_RESPONSE_BYTES)
         );
-        const hydrated = sanitizeDriveFile(payload);
-        const mimeType = readString(payload, "mimeType") ?? "application/octet-stream";
-        const declaredSize = Number(readString(payload, "size") ?? Number.NaN);
-        let textContent: string | null = null;
-        let contentOmittedReason: string | null = "Unsupported or potentially large file type";
-
-        if (mimeType === "application/vnd.google-apps.document") {
-          const exportUrl = new URL(
-            `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(providerResourceId)}/export`
-          );
-          exportUrl.searchParams.set("mimeType", "text/plain");
-          const response = await api(connection, exportUrl.toString(), { signal });
-          textContent = new TextDecoder().decode(
-            await readBounded(response, GOOGLE_MAX_HYDRATED_TEXT_BYTES)
-          );
-          contentOmittedReason = null;
-        } else if (isTextLikeMimeType(mimeType) && (!Number.isFinite(declaredSize) || declaredSize <= GOOGLE_MAX_HYDRATED_TEXT_BYTES)) {
-          const downloadUrl = new URL(
-            `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(providerResourceId)}`
-          );
-          downloadUrl.searchParams.set("alt", "media");
-          downloadUrl.searchParams.set("supportsAllDrives", "true");
-          const response = await api(connection, downloadUrl.toString(), { signal });
-          textContent = new TextDecoder().decode(
-            await readBounded(response, GOOGLE_MAX_HYDRATED_TEXT_BYTES)
-          );
-          contentOmittedReason = null;
-        }
         return {
-          ...hydrated,
-          textContent,
+          ...sanitizeDriveFile(payload),
           contentTruncated: false,
-          ...(contentOmittedReason ? { contentOmittedReason } : {})
+          ...await readDriveTextContent(api, connection, providerResourceId, payload, signal, GOOGLE_MAX_HYDRATED_TEXT_BYTES, config.documents)
         };
       }
 
@@ -3199,7 +3193,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             providerOperationId: args.fileId
           };
         }
-        const content = await readDriveTextContent(api, context.connection, args.fileId, payload, context.signal, GOOGLE_TOOL_TEXT_BYTES);
+        const content = await readDriveTextContent(api, context.connection, args.fileId, payload, context.signal, GOOGLE_TOOL_TEXT_BYTES, config.documents);
         return {
           output: boundedToolOutput({ ...metadata, ...content }),
           summary: content.textContent == null ? "Read Drive metadata; binary or large content was omitted" : "Read bounded Drive text content",
@@ -4629,10 +4623,25 @@ async function readDriveTextContent(
   fileId: string,
   metadata: Record<string, unknown>,
   signal: AbortSignal,
-  maximumBytes: number
+  maximumBytes: number,
+  documents: ConnectorDocumentReader | undefined
 ): Promise<Record<string, unknown> & { textContent: string | null }> {
   const mimeType = readString(metadata, "mimeType") ?? "application/octet-stream";
   const declaredSize = Number(readString(metadata, "size") ?? Number.NaN);
+  const file = { fileName: readString(metadata, "name") ?? "", mimeType, size: Number.isFinite(declaredSize) ? declaredSize : null };
+  const nativeOrText = mimeType === "application/vnd.google-apps.document"
+    || mimeType === "application/vnd.google-apps.spreadsheet"
+    || isTextLikeMimeType(mimeType);
+  if (!nativeOrText && documents?.reads(file)) {
+    return readConnectorDocument({
+      reader: documents,
+      file,
+      connection,
+      textBudgetBytes: maximumBytes,
+      signal,
+      download: () => api(connection, driveMediaUrl(fileId).toString(), { signal })
+    });
+  }
   if (Number.isFinite(declaredSize) && declaredSize > maximumBytes) {
     return {
       textContent: null,
@@ -4683,6 +4692,13 @@ async function readDriveTextContent(
     }
     throw error;
   }
+}
+
+function driveMediaUrl(fileId: string): URL {
+  const url = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`);
+  url.searchParams.set("alt", "media");
+  url.searchParams.set("supportsAllDrives", "true");
+  return url;
 }
 
 function sanitizeCalendarDateTime(value: Record<string, unknown> | null): Record<string, unknown> {
@@ -5328,6 +5344,12 @@ export function createConnectorRegistry(input: {
   notion?: NotionConnectorConfig;
   slack?: SlackConnectorConfig;
   x?: XConnectorConfig;
+  /**
+   * The host's file converter, handed to every adapter that can reach a
+   * provider file. An adapter that adds a file read takes it here rather
+   * than parsing formats itself.
+   */
+  documents?: ConnectorDocumentReader;
 } = {}): ConnectorRegistry {
   const adapters: ConnectorAdapter[] = [createGenericWebhookConnector()];
   if (input.customMcp) adapters.push(createCustomMcpConnector({
@@ -5361,6 +5383,7 @@ export function createConnectorRegistry(input: {
   }));
   if (input.google) adapters.push(createGoogleConnector({
     ...input.google,
+    ...(input.documents ? { documents: input.documents } : {}),
     fetch: instrumentConnectorFetch(
       "google",
       input.google.fetch ?? globalThis.fetch,
@@ -5393,6 +5416,7 @@ export function createConnectorRegistry(input: {
   }));
   if (input.slack) adapters.push(createSlackConnector({
     ...input.slack,
+    ...(input.documents ? { documents: input.documents } : {}),
     fetch: instrumentConnectorFetch(
       "slack",
       input.slack.fetch ?? globalThis.fetch,
