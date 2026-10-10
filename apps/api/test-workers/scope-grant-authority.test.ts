@@ -320,7 +320,7 @@ it("applies committed grants to the grant directory in the same object even when
   expect(await listSharedNavigationDirectory(env, workspaceId, recipientId)).toEqual({ spaces: [], workstreams: [] });
 });
 
-it("shows every containing Space when a guest has shared Breakouts, reading every Channel in one round trip", async () => {
+it("shows every containing Organization-wide Space when a guest has shared Breakouts, reading every Channel in one round trip", async () => {
   await initializeSecondRoom();
   await parkEffectQueue(room());
   await seedActorGrant(child);
@@ -365,7 +365,8 @@ it("shows every containing Space when a guest has shared Breakouts, reading ever
     spaces: [
       { id: firstSpaceId, name: "Product", iconKey: "rocket", colorKey: "violet", scope: "workspace", systemRole: null, workstreamIds: [parentId] },
       { id: secondSpaceId, name: "Research", iconKey: "lightbulb", colorKey: "teal", scope: "workspace", systemRole: null, workstreamIds: [secondParentId] },
-      { id: privateSpaceId, name: "Private planning", iconKey: "star", colorKey: "red", scope: "personal", systemRole: null, workstreamIds: [parentId] },
+      // A private Channel stays unnamed to anybody outside it, a guest reached
+      // through a shared thread included.
     ],
     workstreams: [
       { parentId, title: "Private parent", scope: "personal", archived: false,

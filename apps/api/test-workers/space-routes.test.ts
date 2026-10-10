@@ -673,15 +673,15 @@ describe("PATCH /spaces/:id/audience", () => {
     expect(await channelAudience(workstreamId)).toEqual({ scope: "personal", participantUserIds: [OWNER] });
   });
 
-  it("refuses a personal audience and leaves the Space Organization-wide", async () => {
+  it("makes a Channel private to its members and keeps it so in the directory", async () => {
     const created = await createSpace("Hiring");
 
-    const refused = await request(`/spaces/${created.id}/audience`, OWNER_AUTH, {
+    const saved = await request(`/spaces/${created.id}/audience`, OWNER_AUTH, {
       scope: "personal", participantUserIds: [OWNER],
     }, "PATCH");
 
-    expect(refused.status).toBe(400);
-    expect(await spaceDirectoryRow(created.id)).toMatchObject({ scope: "workspace" });
+    expect(saved.status).toBe(200);
+    expect(await spaceDirectoryRow(created.id)).toMatchObject({ scope: "personal" });
   });
 });
 
