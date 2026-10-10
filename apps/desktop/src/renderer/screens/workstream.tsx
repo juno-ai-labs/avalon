@@ -6,6 +6,7 @@ import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { fetchThroughOwner } from '../lib/fetch-through-owner';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import { asSubstreamId, asWorkspaceId, asWorkstreamId, conversationNeedsViewer, type HarnessStatus, type PinList } from '@rally/contracts';
@@ -201,7 +202,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const mainVisible = selectedSubstreamId === '0' || !conversationScoped;
   const mainConnection = useRetainedWorkstreamSocket(api, id, Boolean(api && id && !conversationScoped), 'workstream', '0');
   const parent = useQuery<WorkstreamDetail | undefined>({
-    queryKey: ['workstream', id], queryFn: async () => undefined, enabled: false,
+    queryKey: ['workstream', id], queryFn: fetchThroughOwner, enabled: false,
   });
   const importedSource = useQuery({
     queryKey: ['workstream-import-source', session?.user.id, id],
@@ -216,7 +217,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   // that entry is what retires the picker's own preview.
   const rowAppearance = useCachedWorkstreamAppearance(id);
   const children = useQuery<WorkstreamChildDirectory | undefined>({
-    queryKey: ['workstream-children', id], queryFn: async () => undefined, enabled: false,
+    queryKey: ['workstream-children', id], queryFn: fetchThroughOwner, enabled: false,
   });
   const sharedParent = conversationScoped ? directoryEntry : undefined;
   const linkSpaceIds = parent.data?.spaceIds ?? conversationDirectory?.spaces
@@ -230,7 +231,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   // and the header's are then one value rather than two that agree eventually.
   const openChild = useQuery<WorkstreamDetail | undefined>({
     queryKey: workstreamDetailQueryKey(id, selectedSubstreamId),
-    queryFn: async () => undefined,
+    queryFn: fetchThroughOwner,
     enabled: false,
   });
   /**

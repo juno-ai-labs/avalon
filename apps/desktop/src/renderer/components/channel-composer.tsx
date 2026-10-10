@@ -14,7 +14,6 @@ import { uuidV7 } from '../lib/telemetry';
 import type { AgentModelOverride, CreatedWorkstream, MessageAttachment, Workspace, WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
-import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { EmailMentionContext, emailMentionDirectory, NO_INVITEES, useWorkspaceInvitees } from '../lib/workspace-invitees';
 import { addPendingWorkstream, confirmPendingWorkstream, discardPendingWorkstream } from '../lib/workstreams-cache';
 import { AttachmentLightbox } from './attachment-lightbox';
@@ -191,7 +190,6 @@ export function ChannelComposer({ channelId, channelName, channelScope, workspac
         }, workspace.currentUser, members.data ?? []),
       );
       void queryClient.invalidateQueries({ queryKey: ['workstream', created.workstream.id], exact: true });
-      void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       attachmentDraft.consume(input.attachmentLocalIds);
       if (createTrace.current) holdCreationTraceUntilSendReady(
         createTrace.current,

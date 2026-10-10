@@ -1,4 +1,5 @@
-import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
+import { hashKey, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
+import { fetchThroughOwner } from './fetch-through-owner';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useDebugEnabled } from './use-debug-enabled';
 import { useWorkspaceSocket } from './workspace-socket';
@@ -36,10 +37,18 @@ function activeWorkstreams(rows: WorkstreamSummary[] | undefined): WorkstreamSum
 const selectActiveWorkstreams = (rows: WorkstreamSummary[]): WorkstreamSummary[] =>
   activeWorkstreams(rows);
 
+const WORKSTREAMS_QUERY_HASH = hashKey(WORKSTREAMS_QUERY_KEY);
+
 /** Observe directory pushes without registering another pager or query function. */
 export function useCachedWorkstreams(): WorkstreamSummary[] | undefined {
   const client = useQueryClient();
-  const subscribe = useCallback((onChange: () => void) => client.getQueryCache().subscribe(onChange), [client]);
+  // Only a change to this entry's data. Every other cache event, including the
+  // ones a component raises by mounting an observer while it renders, would
+  // reach this store mid-render and update the component holding it from there.
+  const subscribe = useCallback((onChange: () => void) => client.getQueryCache().subscribe((event) => {
+    if ((event.type === 'updated' || event.type === 'added' || event.type === 'removed')
+      && event.query.queryHash === WORKSTREAMS_QUERY_HASH) onChange();
+  }), [client]);
   const snapshot = useCallback(() => activeWorkstreams(
     client.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY),
   ), [client]);
@@ -290,7 +299,7 @@ export function useCachedWorkstreamAppearance(workstreamId: string): WorkstreamA
     queryKey: WORKSTREAMS_QUERY_KEY,
     // Never fetches: the list has exactly one fetcher, in `useWorkstreamsQuery`
     // above. This is a read of what that one put there.
-    queryFn: async () => undefined,
+    queryFn: fetchThroughOwner,
     enabled: false,
     select: (rows) => rows?.find((row) => row.id === workstreamId)?.appearance,
   }).data;
@@ -303,7 +312,7 @@ export function useCachedWorkstreamAppearance(workstreamId: string): WorkstreamA
 export function useCachedWorkstreamSummary(workstreamId: string): WorkstreamSummary | undefined {
   return useQuery<WorkstreamSummary[] | undefined, Error, WorkstreamSummary | undefined>({
     queryKey: WORKSTREAMS_QUERY_KEY,
-    queryFn: async () => undefined,
+    queryFn: fetchThroughOwner,
     enabled: false,
     select: (rows) => rows?.find((row) => row.id === workstreamId),
   }).data;
