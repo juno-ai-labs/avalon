@@ -3676,6 +3676,40 @@ describe("agent harness", () => {
       .toBe("This conversation is longer than the selected model will accept. Start a new work stream to continue, and copy the request ID for support");
   });
 
+  it("names an input the model cannot read rather than blaming Rally", async () => {
+    // The body OpenRouter returned on 2026-10-09 for DeepSeek V4 Pro with an
+    // image attached. Before this arm the run failed `harness_execution_failed`.
+    const capabilityRefusal = (step: string) => vi.fn(async () => Response.json({
+      error: {
+        message: "No endpoints found that support image input",
+        code: 404,
+        metadata: {
+          routing_funnel: [{ step: "Initial Endpoints", endpoint_count: 16 }],
+          failed_routing_step: step,
+        },
+      },
+    }, { status: 404 })) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
+
+    await expect(runHarness(runInput(capabilityRefusal("Filter by Image Support"), {
+      workspaceId: "workspace-openrouter-image-unsupported",
+    }))).resolves.toMatchObject({
+      status: "failed",
+      failure: { kind: "context", code: "model_input_unsupported" },
+    });
+
+    // A step that is Rally's own routing configuration, not a capability the
+    // model lacks, keeps the catch-all.
+    await expect(runHarness(runInput(capabilityRefusal("Filter by Provider Allow List"), {
+      workspaceId: "workspace-openrouter-provider-filter",
+    }))).resolves.toMatchObject({
+      status: "failed",
+      failure: { kind: "execution", code: "harness_execution_failed" },
+    });
+
+    expect(memberSafeHarnessFailureMessage("model_input_unsupported"))
+      .toBe("The selected model cannot read part of this message, such as an attached image or file. Remove it or use a different model, and copy the request ID for support");
+  });
+
   it("does not read a context-length refusal out of a provider's prose", async () => {
     // The whole response body is what `providerError.detail` holds, so a
     // substring search for the machine code would also see `message` — and a

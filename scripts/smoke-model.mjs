@@ -47,13 +47,19 @@ const deadline = Date.now() + 90_000;
 let detail;
 let assistant;
 while (Date.now() < deadline) {
-  detail = await request(`/workstreams/${workstreamId}`, { headers });
+  // A channel is read through the conversation route; `GET /workstreams/:id`
+  // no longer exists and answered 404 on every poll.
+  detail = await request(`/conversations/${workstreamId}`, { headers });
   const status = detail.body?.latestHarnessRun?.status;
   const transcript = detail.body?.transcript;
-  const turns = [
+  // The snapshot's ranges can overlap, so a turn is keyed by its sequence.
+  const bySequence = new Map();
+  for (const turn of [
     ...(transcript?.ranges ?? []).flatMap((range) => range.turns ?? []),
     ...(transcript?.activeTurns ?? []),
-  ].sort((left, right) => left.transcriptSequence - right.transcriptSequence);
+  ]) bySequence.set(turn.transcriptSequence, turn);
+  const turns = [...bySequence.values()]
+    .sort((left, right) => left.transcriptSequence - right.transcriptSequence);
   assistant = turns.filter((turn) => turn.actor === "assistant")
     .map((turn) => (turn.blocks ?? [])
       .filter((block) => block.type === "text")

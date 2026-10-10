@@ -1108,7 +1108,10 @@ participants remain deferred product work.
 - **Owning a failure is not a reason to stop naming it.** The one 400 whose
   cause the endpoint states in a machine code — `context_length_exceeded` —
   is reported under that name with kind `context`, still Rally's request and
-  never the provider's. The invariant above is about *who owns* a failure; this
+  never the provider's. So is OpenRouter's 404 when its routing funnel names a
+  capability filter (`failed_routing_step` of the form `Filter by <capability>
+  Support`): `model_input_unsupported`, kind `context`, because the model
+  cannot read an input the request carries. The invariant above is about *who owns* a failure; this
   one is about *what it was*, and answering the first by discarding the second
   is how a run that crossed a known token limit reached a member as "Rally
   could not complete this run. Retrying is unlikely to help."
@@ -1500,6 +1503,14 @@ change needs; the translation at the client is cheap and reversible. Replaying
 reasoning items was also left out: it needs a place in the transcript and a rule
 for dropping them on compaction and on a fallback to another model, and is the
 change that would realize most of the Responses API's benefit.
+
+The live sweep that verified this change also found a run with an image
+attached to DeepSeek V4 Pro failing as `harness_execution_failed` while
+OpenRouter's 404 named the cause (`failed_routing_step: "Filter by Image
+Support"`). It now fails as `model_input_unsupported`, read from that field and
+never from the message text; a routing step that is not a capability filter
+keeps the catch-all, because a provider allow-list or price ceiling is Rally's
+own configuration.
 
 **What a future change must respect:** the transcript stays Chat-shaped until
 reasoning replay gives it a reason not to. Any new streamed provider request

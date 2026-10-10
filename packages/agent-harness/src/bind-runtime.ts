@@ -2126,6 +2126,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     // candidate with a larger window is still tried first, and this is what is
     // left when every one of them refused the prompt too.
     const contextLengthRejection = isProviderContextLengthRejection(error);
+    // Same standing and position as the context-length arm: the endpoint
+    // named why it refused, so the catch-all would discard a reason in hand.
+    const inputUnsupported = !contextLengthRejection && isProviderInputUnsupportedRejection(error);
     const code = error instanceof HarnessLimitError
       ? error.code
       : error instanceof AmbiguousExternalWriteError
@@ -2134,7 +2137,11 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         ? error.code
       : timedOut
         ? "run_wall_time_limit_exceeded"
-      : providerCode ?? (contextLengthRejection ? "context_length_exceeded" as const : "harness_execution_failed");
+      : providerCode ?? (contextLengthRejection
+        ? "context_length_exceeded" as const
+        : inputUnsupported
+          ? "model_input_unsupported" as const
+          : "harness_execution_failed");
     const failure: HarnessFailure = {
       kind: error instanceof HarnessLimitError
         ? error.code === "context_limit_exceeded"
@@ -2152,7 +2159,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           ? "provider"
         : error instanceof ProviderCircuitOpenError
           ? "routing"
-        : contextLengthRejection
+        : contextLengthRejection || inputUnsupported
           ? "context"
           : "execution",
       code,
@@ -3472,6 +3479,35 @@ function isProviderContextLengthRejection(error: unknown): boolean {
   if (!providerError) return false;
   if (normalizedProviderCode(providerError.code) === CONTEXT_LENGTH_REJECTION_CODE) return true;
   return forwardedUpstreamErrorCode(providerError.detail) === CONTEXT_LENGTH_REJECTION_CODE;
+}
+
+/**
+ * Did OpenRouter find no endpoint for the model that accepts what this request
+ * carries — an image, a file, tool use?
+ *
+ * OpenRouter answers 404 and names the routing step that filtered the last
+ * endpoint out in `error.metadata.failed_routing_step`, a label of the form
+ * `Filter by <capability> Support` ("Filter by Image Support"). That field is
+ * read; the free-text `message` is not. A step that is not a capability
+ * filter (a provider allow-list, a price ceiling) is Rally's own routing
+ * configuration and stays `harness_execution_failed`. Kind `context` like the
+ * context-length arm: the request's content is what the model cannot take,
+ * and the remedy is the attachment or the model, not a retry.
+ */
+function isProviderInputUnsupportedRejection(error: unknown): boolean {
+  if (!(error instanceof OpenRouterError) || error.status !== 404) return false;
+  const detail = (error.details as { providerError?: OpenRouterProviderError } | undefined)
+    ?.providerError?.detail;
+  if (detail === undefined) return false;
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(detail);
+  } catch {
+    return false;
+  }
+  const step = (envelope as { error?: { metadata?: { failed_routing_step?: unknown } } })
+    ?.error?.metadata?.failed_routing_step;
+  return typeof step === "string" && /^Filter by .+ Support$/u.test(step.trim());
 }
 
 function providerDeclaredTransportFailure(details: unknown): {

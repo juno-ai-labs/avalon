@@ -4540,6 +4540,9 @@ const MEMBER_SAFE_HARNESS_FAILURE_MESSAGES: Readonly<Record<HarnessFailureCode, 
   // to take — while the window Rally had wrong is an operator's, which is why
   // the sentence still asks for the request ID.
   context_length_exceeded: "This conversation is longer than the selected model will accept. Start a new work stream to continue, and copy the request ID for support",
+  // Separable by remedy: the member can remove the attachment or pick another
+  // model, which no other code tells them.
+  model_input_unsupported: "The selected model cannot read part of this message, such as an attached image or file. Remove it or use a different model, and copy the request ID for support",
   tool_surface_too_large: "The authorized tool surface is too large for one run",
   ambiguous_external_write: "An external write may have completed, so Rally did not retry it",
   // Not "did not respond": this code also covers a 429 and a 5xx, where the
