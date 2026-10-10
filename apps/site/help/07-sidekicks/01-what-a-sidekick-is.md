@@ -33,15 +33,15 @@ A Sidekick with no triggers is a page of know-how. When you ask Rally for
 something it covers, Rally can load the Sidekick's instructions into the
 conversation and follow them, the same way a new colleague might pull the
 style guide off the shelf before writing a press release. If you have a
-"Brand voice" Sidekick and ask a Channel to draft a launch announcement,
+"Brand voice" Sidekick and ask a Thread to draft a launch announcement,
 Rally can pick up the brand voice and write in it.
 
 Rally decides when a Sidekick is relevant. Having one does not mean every
 answer follows it, and that is deliberate: your proposal checklist has no
 business turning up in a conversation about lunch. If you want a particular
-Sidekick used, say so ("use the Brand voice Sidekick"). In a Channel you can
+Sidekick used, say so ("use the Brand voice Sidekick"). In a Thread you can
 also recommend one for everyone there, which is covered in
-[Sidekicks in a Channel](06-sidekicks-in-channels.md).
+[Sidekicks in a Thread](06-sidekicks-in-channels.md).
 
 A Sidekick's instructions are guidance only. Loading one never gives Rally a
 tool or a connection it did not already have in that conversation.
@@ -70,21 +70,21 @@ in the Sidekicks window.
 | --- | --- | --- | --- |
 | **Only you** | You | You | You |
 | **Organization** | The whole Organization | Every member of the Organization except guests | Its author, the person it runs as, and the Organization's owners and administrators |
-| **Channel** | One Channel or Breakout | The people in that Channel or Breakout | Anyone in that Channel or Breakout |
+| **Thread** | One Thread or Breakout | The people in that Thread or Breakout | Anyone in that Thread or Breakout |
 
 A few rules follow from this.
 
 - **New Sidekicks start as Only you.** If you want one shared with the whole
   Organization, ask the drafting assistant to make it an Organization
   Sidekick before it is published.
-- **Channel Sidekicks are born in a Channel.** You get one by asking Rally
-  for a Sidekick from inside a Channel or Breakout. Its scope is fixed: it
+- **Thread Sidekicks are born in a Thread.** You get one by asking Rally
+  for a Sidekick from inside a Thread or Breakout. Its scope is fixed: it
   cannot later become personal or Organization-wide. (**Create new
-  Sidekick** in a Channel's **Sidekicks** list starts an ordinary new Sidekick, which
+  Sidekick** in a Thread's **Sidekicks** list starts an ordinary new Sidekick, which
   begins as **Only you**.)
 - **Personal Sidekicks stay personal.** An Only you Sidekick is offered only
   in conversations where everyone present is you. It will not turn up in a
-  Channel your whole team is in.
+  Thread your whole team is in.
 - **Organization Sidekicks use shared connections.** A Sidekick that belongs
   to everyone can only use the tools the Organization has connected for
   everyone, not your personal Gmail. If a personal Sidekick relies on your own
@@ -93,9 +93,9 @@ A few rules follow from this.
   explains the difference between connecting for yourself and for the
   Organization.
 
-Who can see what in Channels and Spaces works as described in
+Who can see what in Threads and Channels works as described in
 [Who can see what](../03-spaces-and-breakouts/04-who-can-see-what.md); a
-Channel Sidekick follows its Channel.
+Thread Sidekick follows its Thread.
 
 ## Whose permissions a run uses
 
@@ -117,7 +117,7 @@ the run began on a schedule, from an event, or because a teammate pressed
 ## Finding Sidekicks by scope
 
 The Sidekicks window has four filter buttons above the list: **Everyone**,
-**Only you**, **Organization** and **Channels**. Each row also says what kind
+**Only you**, **Organization** and **Threads**. Each row also says what kind
 of Sidekick it is and who it belongs to, for example "Available in
 conversations · Organization" or "Draft · Only you".
 [The Sidekicks window](04-the-sidekicks-window.md) has the full tour.
@@ -128,8 +128,8 @@ Here are a few that people make early on.
 
 - **Brand voice** (instructions only, Organization): how your company
   writes, which words it avoids, and an example paragraph.
-- **Weekly Channel summary** (delegated, Channel): "Every Friday at 4pm,
-  summarize what happened in this Channel this week and post it here."
+- **Weekly Thread summary** (delegated, Thread): "Every Friday at 4pm,
+  summarize what happened in this Thread this week and post it here."
 - **Morning inbox** (delegated, Only you): "Check my Gmail every morning and
   send me the top three emails in Slack."
 - **Meeting follow-up** (delegated, Organization): "When a new Granola note

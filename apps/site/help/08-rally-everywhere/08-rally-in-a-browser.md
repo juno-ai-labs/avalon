@@ -5,7 +5,7 @@ description: Use the lightweight browser version to join conversations someone s
 
 Rally has a lightweight version that runs in an ordinary web browser, at
 **app.rallywith.ai**. It is made for one job: working together in conversations
-someone has shared with you. A client you invited into a single Channel, a
+someone has shared with you. A client you invited into a single Thread, a
 contractor helping with one Breakout, or a teammate on a computer without the
 Mac app can all open the browser version and join in, with nothing to install.
 
@@ -63,7 +63,7 @@ Organizations you belong to.
 
 ## Starting an Organization
 
-If you do not belong to an Organization yet, ask a teammate to share a Channel
+If you do not belong to an Organization yet, ask a teammate to share a Thread
 or Breakout with you, or start your own: **Your organizations** offers **Create
 an organization**. Click it, type a name and click **Create organization**. The new
 Organization opens and walks you through the same setup as the Mac app:
@@ -81,25 +81,24 @@ mode](../11-privacy-and-security/01-signing-in-and-out.md) has the details.
 
 ## Finding your way around
 
-If you have used the Mac app, the layout will look familiar: one sidebar with
-Space pills across the top and your Channels under them, the conversation with
-its title pill, and an account menu. The difference is that you only see what
-has been shared with you.
+If you have used the Mac app, the layout will look familiar: the **Threads**,
+**Channels** and **Activity** buttons down the left edge with the account menu
+at the bottom, the list beside them, and the conversation with its title pill.
+[A tour of the window](../01-getting-started/04-a-tour-of-the-window.md) walks
+through it. The difference is that you only see what has been shared with you.
 
-- Space pills appear only when you can see a Space other than General. Click
-  one to show only its Channels, or **All** for everything. A guest with one
-  shared conversation sees little more than that conversation, which is the
-  point.
-- Channels shared with you that are not in a Space you can see are grouped
-  under a **Shared channels** pill.
-- **Open space** in a Channel's title pill menu shows **Channels in this
-  Space**, a read-only overview.
-- Breakouts open beside their Channel, as on the Mac. See
-  [Breakouts](../03-spaces-and-breakouts/03-breakouts.md#a-breakout-beside-its-channel).
+- **Threads** lists the conversations shared with you. A guest with one shared
+  conversation sees little more than that conversation, which is the point.
+- **Channels** lists the Channels those conversations sit in. Opening one shows
+  its feed with only the Threads you can open, and no box for starting a new
+  one.
+- Threads open beside their Channel, and Breakouts beside their Thread, as on
+  the Mac. See
+  [Breakouts](../03-spaces-and-breakouts/03-breakouts.md#a-breakout-beside-its-thread).
 - The account menu has **Switch organization** and **Sign out**.
 - On a computer, a **Download the Mac app** button sits above the account menu. The Mac app is for Macs with Apple silicon. Phones and tablets do not show it.
-- You can rename a Channel or Breakout, and archive a Breakout, from its title
-  pill menu. An archived Breakout shows **Restore breakout**. An archived Channel has to be
+- You can rename a Thread or Breakout, and archive a Breakout, from its title
+  pill menu. An archived Breakout shows **Restore breakout**. An archived Thread has to be
   restored before its conversations can reopen.
 
 The browser version needs a reasonably wide window. If it is too narrow, Rally
@@ -112,7 +111,7 @@ Drafts you are typing survive switching to another tab and back.
 The conversation works as it does on the Mac: live messages, attachments,
 pictures in the lightbox, artifacts, the people in the conversation, its
 resources, and the Sidekicks attached to it. Everything in [Working in a
-Channel](../02-working-in-a-channel/index.md) applies, with a few exceptions:
+Thread](../02-working-in-a-channel/index.md) applies, with a few exceptions:
 
 - Live sites do not preview inside the page. You see **Preview unavailable
   here** and a way to open the site in your browser instead.
@@ -127,7 +126,7 @@ Channel](../02-working-in-a-channel/index.md) applies, with a few exceptions:
 ## Sharing from the browser
 
 To bring someone else into the conversation you are in, click its name in the
-title pill and choose **Share**. Type
+title pill, choose **People**, then **Change**, and use **Share by email**. Type
 one or more email addresses, separated by spaces, commas or semicolons, and
 send. Each person gets an invitation like the one you received.
 

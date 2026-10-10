@@ -36,9 +36,9 @@ running the latest version**. If it cannot reach the update service, it says
 Once an update has downloaded, Rally gives you three ways to finish it:
 
 - A **Restart to update** button appears among the round buttons at the top of
-  the sidebar. Hover over it to see the version number.
+  the sidebar's list. Hover over it to see the version number.
 - **Restart to Update** appears at the top of the account menu, which you open
-  by clicking your name at the bottom of the sidebar.
+  by clicking your avatar at the bottom left of the window.
 - **Rally → Restart to Update** in the menu bar.
 
 Or do nothing, and the update installs the next time you quit Rally anyway.
@@ -61,7 +61,7 @@ advice.
 **Settings → Application → Updates** has **Update channel**, which decides how
 quickly new versions reach this Mac:
 
-| Channel | What you get |
+| Thread | What you get |
 | --- | --- |
 | **Stable** | At most one release every 24 hours. This is the default. |
 | **Faster** | Every desktop release, as soon as it is out. |

@@ -1,15 +1,15 @@
 ---
 title: Email into Rally
-description: Every Channel has its own email address, so you can forward mail straight into the conversation.
+description: Every Thread has its own email address, so you can forward mail straight into the conversation.
 ---
 
-Every Channel in Rally has its own email address. Send or forward an email to
-it and the email turns up in the Channel, where everyone in the Channel can see
+Every Thread in Rally has its own email address. Send or forward an email to
+it and the email turns up in the Thread, where everyone in the Thread can see
 it and Rally can read it. That gets a customer's message or a supplier's quote
 out of your inbox and into the place where the work on it is happening, from
 any device that can send email.
 
-## Finding a Channel's address
+## Finding a Thread's address
 
 The addresses look like this:
 
@@ -20,25 +20,25 @@ luminous-tidal-structured-curie@automation.rallywith.ai
 Three cheerful words and a famous scientist (or an animal), joined with hyphens.
 Nobody will ever guess one, and nobody will ever have to: you copy it.
 
-On the iPhone, the Channel's **Details** panel shows the address.
+On the iPhone, the Thread's **Details** panel shows the address.
 
 Paste it into the **To** or **Cc** line of any email. Save it in your contacts
-under the Channel's name and you will not have to look it up again.
+under the Thread's name and you will not have to look it up again.
 
-If it shows no address, the Channel does not have one yet.
+If it shows no address, the Thread does not have one yet.
 
 ## What happens when mail arrives
 
-The email appears in the Channel as an entry marked as untrusted outside email,
-showing who sent it, its subject and its text. It is also kept with the Channel's
+The email appears in the Thread as an entry marked as untrusted outside email,
+showing who sent it, its subject and its text. It is also kept with the Thread's
 [resources](../06-things-rally-makes/04-resources.md), so Rally can open it
 again later.
 
 How Rally treats it:
 
-- It does not start Rally working. An email landing in a Channel is like a
+- It does not start Rally working. An email landing in a Thread is like a
   letter left on the desk. Rally reads it when someone asks, so follow up in
-  the Channel with what you want: "Draft a reply to the email Priya just
+  the Thread with what you want: "Draft a reply to the email Priya just
   forwarded", for example.
 - It is marked as untrusted. Rally treats the email as information to
   read, never as instructions to follow. If an email says "ignore your previous
@@ -47,35 +47,35 @@ How Rally treats it:
 - Attachments are listed, not opened. Rally notes each attached file's name
   and type, but does not read the files themselves through this address. To
   give Rally a file to read, [attach it in the
-  Channel](../02-working-in-a-channel/02-attaching-files.md).
+  Thread](../02-working-in-a-channel/02-attaching-files.md).
 
 Long emails are shortened in the conversation, and the entry says so.
 If the mail system happens to deliver the same email twice, it still appears
 only once.
 
-Only people who can see the Channel can read what was mailed to it. A private
-Channel stays private.
+Only people who can see the Thread can read what was mailed to it. A private
+Thread stays private.
 
 ## Replying to a notification email
 
-When Rally emails you because someone mentioned you or added you to a Channel
+When Rally emails you because someone mentioned you or added you to a Thread
 (see [Notifications](04-notifications.md)), the email's reply address is that
-Channel's address. The email says so at the bottom: "Reply to this email to
-continue the channel." or "Reply to this email to post into the channel."
+Thread's address. The email says so at the bottom: "Reply to this email to
+continue the thread." or "Reply to this email to post into the thread."
 
-Reply as usual and your answer lands in the Channel like any other email, with
+Reply as usual and your answer lands in the Thread like any other email, with
 the same rules as above.
 
-## The address belongs to the Channel for good
+## The address belongs to the Thread for good
 
-An address is given to a Channel once and never changes. It is never reused or
-handed to another Channel, even after the Channel is archived or deleted, so an
+An address is given to a Thread once and never changes. It is never reused or
+handed to another Thread, even after the Thread is archived or deleted, so an
 old address in someone's contacts can never deliver mail to the wrong place.
-Once a Channel is archived, mail sent to its address is refused.
+Once a Thread is archived, mail sent to its address is refused.
 
 > [!WARNING]
-> A Channel's address is a way to deliver mail, not a password. Anyone who has
-> the address can send email to it, and that email will appear in the Channel.
+> A Thread's address is a way to deliver mail, not a password. Anyone who has
+> the address can send email to it, and that email will appear in the Thread.
 > Treat it like a phone number you give out: share it with the people and
 > systems that should be sending things in, and keep it out of public places.
 

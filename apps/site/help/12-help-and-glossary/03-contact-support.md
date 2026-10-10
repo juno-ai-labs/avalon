@@ -33,7 +33,7 @@ questions. These help most:
   others. The card is described in
   [While Rally works](../02-working-in-a-channel/03-while-rally-works.md).
 - Roughly when it happened, with your time zone.
-- A link to the Channel, if the problem is in one. Use **Copy link** as
+- A link to the Thread, if the problem is in one. Use **Copy link** as
   shown in [Search and links](../03-spaces-and-breakouts/06-search-and-links.md).
   A link grants nothing by itself, so it is safe to send: it only tells us
   where to look.
@@ -59,7 +59,7 @@ into your accounts.
   information.
 
 If a screenshot would show any of these, crop or cover that part first. The
-Request ID, the error message and the Channel link are enough for us to find
+Request ID, the error message and the Thread link are enough for us to find
 what we need on our side.
 
 > [!WARNING]

@@ -14,7 +14,7 @@ without the crossword.
 Rally writes each digest itself, looking at what happened since the previous
 one:
 
-- the Channels you are in,
+- the Threads you are in,
 - anything that tagged you,
 - activity from your connected tools.
 

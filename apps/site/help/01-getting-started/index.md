@@ -14,18 +14,18 @@ The agent inside Rally is also called Rally. That sounds confusing for about a d
 A handful of words come up on nearly every page of this book. Here they are, from the biggest to the smallest.
 
 - An **Organization** is your team's home in Rally. Its members, its connections to other tools and all of its work live inside it.
-- A **Space** is a group of Channels. Use one for a team, a client or a long-running project. Every Organization starts with one Space, called General.
-- A **Channel** is one conversation about one piece of work. This is where you talk to Rally and your teammates, and where most of your time goes.
-- A **Breakout** is a side conversation that branches off a Channel, for chasing an idea without derailing the main thread.
+- A **Channel** is a group of Threads. Use one for a team, a client or a long-running project. Every Organization starts with one Channel, called General.
+- A **Thread** is one conversation about one piece of work. This is where you talk to Rally and your teammates, and where most of your time goes.
+- A **Breakout** is a side conversation that branches off a Thread, for chasing an idea without derailing the main thread.
 - A **Sidekick** is a saved helper. You describe a job once, and it can run on a schedule, when something happens in another tool, or whenever you call on it.
 
-If you remember only one picture, make it this: an Organization holds Spaces, a Space holds Channels, and a Channel can sprout Breakouts. Sidekicks are the helpers who come and go between them.
+If you remember only one picture, make it this: an Organization holds Channels, a Channel holds Threads, and a Thread can sprout Breakouts. Sidekicks are the helpers who come and go between them.
 
 > [!NOTE]
-> Rally has renamed a few things since it started, and some screens and older emails still use the old words. If you see **Workspace**, read Organization. **Project** means Space. A **work stream** or **stream** is a Channel, a **substream** is a Breakout, and an **automation** is a Sidekick. Same furniture, new labels on the drawers.
+> Rally has renamed a few things since it started, and some screens and older emails still use the old words. If you see **Workspace**, read Organization. **Project** or **Space** means Channel. A **work stream**, a **stream**, or what Rally used to call a **Channel** is a Thread, a **substream** is a Breakout, and an **automation** is a Sidekick. Same furniture, new labels on the drawers.
 
 ## What this chapter covers
 
-This chapter has five short pages. You will install Rally and sign in, create or join an Organization, go through the guided setup, take a tour of the window, and then start your first Channel and give Rally something to do. Allow about as long as it takes a kettle to boil, twice.
+This chapter has five short pages. You will install Rally and sign in, create or join an Organization, go through the guided setup, take a tour of the window, and then start your first Thread and give Rally something to do. Allow about as long as it takes a kettle to boil, twice.
 
 Start with [Install Rally and sign in](01-install-rally.md).

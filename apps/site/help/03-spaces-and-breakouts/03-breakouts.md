@@ -1,15 +1,15 @@
 ---
 title: Breakouts
-description: Branch a private side conversation off a Channel to explore an idea without derailing the main one.
+description: Branch a private side conversation off a Thread to explore an idea without derailing the main one.
 ---
 
-A **Breakout** is a side conversation inside a Channel. You start one when an
+A **Breakout** is a side conversation inside a Thread. You start one when an
 idea deserves some room but would hijack the main conversation if you had it
 there: a rough first draft, a "what if we tried it the other way", a question you
 want to think through before you ask everyone.
 
-Every Channel has its main conversation and as many Breakouts as you like. A
-Breakout opens beside its Channel, so you can keep an eye on both.
+Every Thread has its main conversation and as many Breakouts as you like. A
+Breakout opens beside its Thread, so you can keep an eye on both.
 
 ## Start a Breakout
 
@@ -22,11 +22,11 @@ the conversation.
   breakout** among the buttons underneath it.
 
 A launch screen headed **New breakout from this message** opens to the right of
-the Channel, with a reminder: **Private to you until you add somebody. Rally
+the Thread, with a reminder: **Private to you until you add somebody. Rally
 brings the conversation so far with it.**
 
 1. In the box labelled **What should this breakout work on?**, write your first
-   message, the same way you would in any Channel.
+   message, the same way you would in any Thread.
 2. Press <kbd>Return</kbd> to create the Breakout. <kbd>⇧ Shift</kbd>
    <kbd>Return</kbd> starts a new line instead.
 
@@ -41,48 +41,54 @@ Starting a Breakout needs a live connection. While Rally is still connecting,
 the launch screen says **Starting a breakout is available once Rally connects**.
 If it fails, you will see **The breakout couldn't be created. Try again.**
 
-## A Breakout beside its Channel
+## A Breakout beside its Thread
 
-An open Breakout sits in a pane to the right of its Channel, so the main
-conversation stays in view while you work on the side. Drag the line between
-them to share the room differently.
+An open Breakout sits in a pane to the right of its Thread, so the main
+conversation stays in view while you work on the side. Everything moves one step
+left to make room: the Thread takes the left pane, and the Channel it was beside
+becomes a small breadcrumb in the header above the Thread. Click the breadcrumb
+to go back to the Channel and the Thread side by side. Drag the line between the
+two panes to share the room differently.
 
 - **Where it started.** The top of a Breakout shows the message it started from
   as a card, with up to three earlier messages above it, each a little fainter
   the further back it goes.
-- **Chips under messages.** In the Channel, every message that started a
+- **Chips under messages.** In the Thread, every message that started a
   Breakout gets a small chip underneath with the Breakout's name. It says how
   many things are new (**2 new**), and **Open** when that Breakout is the one
   beside you. Click a chip to open its Breakout.
-- **The tick bar.** Down the edge of the Channel's conversation runs a column
+- **The tick bar.** Down the edge of the Thread's conversation runs a column
   of small ticks, one per Breakout, in the order they started. A longer, red
   tick has news; the longest is the one that is open. Hover over a tick for the
-  Breakout's name, and click it to open the Breakout and scroll the Channel to
+  Breakout's name, and click it to open the Breakout and scroll the Thread to
   where it started.
-- **The list.** Click the Channel's name in its title pill and choose
-  **Breakouts** for every Breakout in the Channel, newest activity first, with a
+- **The list.** Click the Thread's name in its title pill and choose
+  **Breakouts** for every Breakout in the Thread, newest activity first, with a
   dot beside any with news. Past six, the rest wait behind **Show _N_ more**, and
 a **Find a breakout** box appears.
-- **Show in channel.** In a Breakout's menu, **Show in channel** scrolls the
-  Channel to the message the Breakout started from.
+- **Show in thread.** In a Breakout's menu, **Show in thread** scrolls the
+  Thread to the message the Breakout started from.
 
 Click the **X** (**Close breakout**) at the top right of the Breakout to close
-it and have the Channel to yourself again.
+it and have the Thread to yourself again.
 
 A Breakout's title pill shows how many replies it has, such as **12 replies**,
 once all of it has loaded.
 
 If the window is too narrow for two conversations side by side, the Breakout
-takes the whole window instead. Its close button takes you back to the Channel.
-Opening a file or the built-in browser from the Breakout puts the file on the
-right and moves the Breakout into the Channel's place; click the Channel's name,
-now at the top left, to close the file and go back to the two side by side.
+takes the whole window instead. Its close button takes you back to the Thread.
+
+Opening a file or the built-in browser from the Breakout moves everything left
+once more: the Breakout takes the left pane, the file opens on the right, and the
+Thread joins the Channel in the breadcrumbs. Click the Thread's name in the
+breadcrumbs to close the file and go back to the Thread and the Breakout side by
+side. Rally never shows more than two panes at once.
 
 ## What Rally knows in a Breakout
 
 Rally does not start a Breakout from a blank page. It begins with a summary
 of the main conversation up to the point you branched from, so it already knows
-what the Channel is about and what has been decided.
+what the Thread is about and what has been decided.
 
 From there:
 
@@ -97,7 +103,7 @@ You cannot choose how much Rally brings with it. It always brings the summary.
 
 ## Who can see a Breakout
 
-A new Breakout is private to you. Nobody else sees it, not even the Channel's
+A new Breakout is private to you. Nobody else sees it, not even the Thread's
 other participants, until you invite them. It is the one
 room in Rally with a door that starts closed.
 
@@ -106,18 +112,18 @@ people** and add them, as described in
 [People in the room](../02-working-in-a-channel/05-people-in-the-room.md). The
 **Add a participant** window reminds you of an important rule: **Added participants can read this
 breakout and its shared context. This does not grant access to the parent
-channel.**
+thread.**
 
 So adding a colleague to a Breakout lets them read that Breakout, including what
 Rally brought into it from the main conversation, but it does not give them the rest of the
-Channel. That makes Breakouts a good way to involve someone in one part of the
+Thread. That makes Breakouts a good way to involve someone in one part of the
 work without opening up everything.
 
 > [!IMPORTANT]
 > The summary Rally brings into a Breakout is part of what an added person can
 > read. Anything said in the main conversation before you branched may reach them that way, in
 > summary form. If the earlier conversation holds something they should not see,
-> start a fresh Channel with them instead.
+> start a fresh Thread with them instead.
 
 To share a Breakout with someone outside your Organization, see
 [Sharing with people outside your Organization](05-sharing-with-guests.md).
@@ -125,41 +131,39 @@ To share a Breakout with someone outside your Organization, see
 ## The Breakout menu
 
 Click the Breakout's name in its title pill for its menu. At the top it names the
-Channel it belongs to, with **Show in channel**, and the message it started
-from. Then come the same buttons a Channel has:
+Thread it belongs to, with **Show in thread**, and the message it started
+from. Then come the same buttons a Thread has:
 
 - **Add people** brings someone in.
 - **Rename** gives it a new name.
 - **Copy link** copies a link that opens this Breakout. See
   [Search and links](06-search-and-links.md).
-- **Share** invites people to this Breakout by email.
-- **More** holds **Icon and color** and **Make public to organization**.
+- **More** holds **Icon and color** and **Archive breakout**, which retires it.
 
-Under the buttons are **People** and **Sidekicks**, and at the bottom **Archive
-breakout** retires it.
+Under the buttons are **People** and **Sidekicks**.
 
-The Channel's own menu, from its title pill, has the same buttons for the whole
-Channel. Its **More** has **Make public to organization**, greyed out if the
-Channel is already open to everyone. That item makes the whole Channel visible to
+The Thread's own menu, from its title pill, has the same buttons for the whole
+Thread. Its **More** has **Make public to organization**, greyed out if the
+Thread is already open to everyone. That item makes the whole Thread visible to
 your Organization; [Who can see what](04-who-can-see-what.md) explains what that
 means and how to undo it.
 
 ### Archiving a Breakout
 
-**Archive breakout** asks you to confirm, then the Breakout leaves the Channel
+**Archive breakout** asks you to confirm, then the Breakout leaves the Thread
 for everyone in it and stops accepting messages. Rally keeps the conversation,
 but there is no way in the app to restore it. Archive a Breakout when you are
 sure you are finished with it.
 
-## Bring a result back to the Channel
+## Bring a result back to the Thread
 
 Because a Breakout is private, the documents and files Rally makes there do not
-show up in the Channel. When one is worth sharing, attach it:
+show up in the Thread. When one is worth sharing, attach it:
 
 1. In the Breakout, find the artifact card in the conversation.
-2. Right-click it and choose **Attach to channel**.
+2. Right-click it and choose **Attach to thread**.
 
-The artifact now also appears in the Channel, and everyone who can read the main
+The artifact now also appears in the Thread, and everyone who can read the main
 conversation can open it. The Breakout keeps its own copy of the link, so people
 in either place can open it. The conversation that produced it stays private,
 including the twenty minutes spent arguing about the font.
@@ -167,7 +171,7 @@ including the twenty minutes spent arguing about the font.
 A few details:
 
 - Only artifacts Rally made in the Breakout can be attached this way.
-- If the Channel already has that artifact, the item is greyed out.
+- If the Thread already has that artifact, the item is greyed out.
 - Rally attaches one thing at a time.
 
 Artifacts themselves are covered in [Artifacts](../06-things-rally-makes/01-artifacts.md).

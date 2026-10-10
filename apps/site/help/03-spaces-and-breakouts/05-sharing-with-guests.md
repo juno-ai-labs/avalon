@@ -11,38 +11,31 @@ People who join this way are **guests**.
 
 ## Share a conversation
 
-You can share from two places.
+You share from the same window you use to add teammates:
 
-- **The title pill.** Open the Channel or Breakout, click its name in the
-  title pill and choose **Share**. This shares that conversation: the
-  Channel's main conversation, or the Breakout.
-- **The sidebar.** Right-click a Channel in the sidebar and choose **Share**.
-
-Then:
-
-1. The **Share conversation** window opens: **Invite people to collaborate using
-   their email address.**
-2. Type one or more addresses in **Email addresses**. Separate them with spaces,
-   commas or semicolons.
+1. Open the Thread or Breakout, click its name in the title pill and choose
+   **People**, then click **Change** at the top. The **Add a participant** window
+   opens, as described in
+   [People in the room](../02-working-in-a-channel/05-people-in-the-room.md).
+2. Under the list of members is **Share by email**. Type one or more addresses in
+   **Email addresses**. Separate them with spaces, commas or semicolons.
 3. Click **Share**.
 
-The same **Share by email** form also sits in the participants window, under
-the list of members (see
-[People in the room](../02-working-in-a-channel/05-people-in-the-room.md)).
+This shares the conversation you opened the window from: the Thread's main
+conversation, or the Breakout.
 
 If an address does not look right, Rally says **Enter valid email addresses,
 separated by spaces, commas, or semicolons.** If sharing fails, it says **The
-conversation couldn't be shared. Try again.** The **Share** item is greyed out
-until Rally has connected.
+conversation couldn't be shared. Try again.**
 
 ### What you are sharing
 
 Sharing gives access to one conversation and nothing around it:
 
-- Sharing a Channel, from its row or its title pill, shares the main
+- Sharing a Thread shares the main
   conversation only. Its Breakouts stay private.
 - Sharing a Breakout shares that Breakout only. The guest does not get the
-  Channel's main conversation, its other Breakouts, or its list of participants.
+  Thread's main conversation, its other Breakouts, or its list of participants.
 
 Inside what you shared, a guest can read and write messages and open the
 artifacts and files that belong to that conversation. They get access to the
@@ -69,8 +62,8 @@ else.
 
 Guests use Rally in a web browser, in a lighter version of the app made for
 this. They see the conversations shared with them and the names of the
-Spaces and Channels those conversations sit in, and nothing else in your
-Organization. They cannot create Spaces or browse your Organization's directory.
+Channels and Threads those conversations sit in, and nothing else in your
+Organization. They cannot create Channels or browse your Organization's directory.
 [Rally in a web browser](../08-rally-everywhere/08-rally-in-a-browser.md) shows
 what that looks like from their side.
 
