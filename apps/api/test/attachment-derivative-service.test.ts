@@ -113,6 +113,25 @@ describe("attachment derivative conversion", () => {
     expect(workbook.status === "ready" ? workbook.text : "").toContain("B1: 42 (formula: SUM(B2:B3))");
   });
 
+  it("keeps each shared string whole, so a rich-text cell does not shift later cells onto the wrong text", async () => {
+    // Excel writes a string with mixed formatting as several runs inside one
+    // <si>, and a Japanese string with a phonetic guide inside <rPh>.
+    const xlsx = zipSync({
+      "xl/workbook.xml": strToU8('<workbook xmlns:r="r"><sheets><sheet name="Cap table" sheetId="1" r:id="rId1"/></sheets></workbook>'),
+      "xl/_rels/workbook.xml.rels": strToU8('<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'),
+      "xl/sharedStrings.xml": strToU8(
+        "<sst><si><r><rPr><b/></rPr><t>Series</t></r><r><t xml:space=\"preserve\"> A</t></r></si>"
+        + "<si><t>東京</t><rPh sb=\"0\" eb=\"2\"><t>トウキョウ</t></rPh></si>"
+        + "<si><t>Common</t></si></sst>",
+      ),
+      "xl/worksheets/sheet1.xml": strToU8('<worksheet><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="s"><v>2</v></c></row></sheetData></worksheet>'),
+    });
+
+    const workbook = await buildAttachmentDerivative({ bytes: xlsx, fileName: "cap.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+
+    expect(workbook.status === "ready" ? workbook.text : "").toBe("# Sheet: Cap table\n\nA1: Series A\nB1: 東京\nC1: Common");
+  });
+
   it("extracts PDFs page by page and invokes bounded OCR only for materially empty documents", async () => {
     const textPdf = await buildAttachmentDerivative({
       bytes: encoder.encode("%PDF fixture"), fileName: "text.pdf", mimeType: "application/pdf",
