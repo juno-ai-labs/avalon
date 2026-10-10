@@ -109,15 +109,18 @@ export async function readConnectorDocument(input: {
       contentOmittedReason: `The file could not be read as a document: ${converted.code}`,
     };
   }
-  const encoded = new TextEncoder().encode(converted.text);
-  if (encoded.byteLength <= input.textBudgetBytes) {
+  // Every character is at least one UTF-8 byte, so a prefix of the budget's
+  // length in characters holds everything the budget can take, and a very
+  // long text is never encoded whole.
+  const prefix = new TextEncoder().encode(converted.text.slice(0, input.textBudgetBytes));
+  if (converted.text.length <= input.textBudgetBytes && prefix.byteLength <= input.textBudgetBytes) {
     return { textContent: converted.text, contentIncluded: true, contentBytes: bytes.byteLength, contentTruncated: false };
   }
   return {
-    textContent: new TextDecoder().decode(encoded.subarray(0, input.textBudgetBytes)).replace(/�$/u, ""),
+    textContent: new TextDecoder().decode(prefix.subarray(0, input.textBudgetBytes)).replace(/\uFFFD$/u, ""),
     contentIncluded: true,
     contentBytes: bytes.byteLength,
     contentTruncated: true,
-    contentNotice: `Only the first ${input.textBudgetBytes} bytes of the document's ${encoded.byteLength}-byte text are included`,
+    contentNotice: `Only the first ${input.textBudgetBytes} bytes of the document's ${converted.text.length}-character text are included`,
   };
 }

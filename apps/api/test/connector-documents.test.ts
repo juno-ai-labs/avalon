@@ -96,6 +96,21 @@ describe("files read through Google Drive", () => {
     expect(result.textContent?.startsWith("# Sheet: Ledger\n\nA1: 1000000\nA2: 1000001")).toBe(true);
   });
 
+  it("cuts a workbook whose text passes the stored-attachment ceiling instead of refusing it", async () => {
+    // Small on disk, huge as text: one long shared string referenced by every
+    // cell expands to about 2.5 million characters.
+    const rows = Array.from({ length: 12_000 }, (_, index) =>
+      `<row r="${index + 1}"><c r="A${index + 1}" t="s"><v>0</v></c></row>`).join("");
+    const result = await driveDownload({
+      name: "Export.xlsx",
+      mimeType: XLSX,
+      bytes: workbook({ Export: `<worksheet><sheetData>${rows}</sheetData></worksheet>` }, `<sst><si><t>${"x".repeat(200)}</t></si></sst>`),
+    });
+
+    expect(result.contentTruncated).toBe(true);
+    expect(result.textContent?.startsWith(`# Sheet: Export\n\nA1: ${"x".repeat(200)}\nA2: `)).toBe(true);
+  });
+
   it("does not download a file larger than the converter accepts", async () => {
     let mediaRequests = 0;
     const result = await driveDownload(
