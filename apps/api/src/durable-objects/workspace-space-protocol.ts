@@ -254,6 +254,8 @@ export const WorkspaceChannelReservationRequestSchema = SpaceActorSchema.extend(
   spaceIds: z.array(SpaceIdSchema),
   requestedScope: ScopeSchema,
   requestedParticipantUserIds: z.array(UserIdSchema),
+  /** A person started it from a Channel; see `resolveSpaceWorkstreamStart`. */
+  narrowInPrivateSpaces: z.boolean().optional(),
   authorityGeneration: z.number().int().positive(),
   directory: ConversationParentReserveChildRequestSchema.shape.directory.unwrap().omit({
     scope: true,
