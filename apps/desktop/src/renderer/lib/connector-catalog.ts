@@ -48,6 +48,9 @@ export const connectorProviders = [
     name: 'Canva', description: 'Designs, presentations, graphics, comments, and exports.',
     mark: ConnectorConnectionCardCatalog.canva.iconName, scopes: ['you'] as const,
     capabilities: ['canva.personal.mcp'],
+    // Canva's OAuth returns to a loopback listener in the Mac app's main
+    // process (`canva-loopback.ts`), which a browser tab cannot open.
+    desktopOnly: true,
   },
   {
     id: 'fireflies' as const,

@@ -12,7 +12,7 @@ If you went through [the guided setup](../01-getting-started/03-guided-setup.md)
 
 Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> (or **Rally → Settings…** in the menu bar) and click **Connections** in the list on the left. You can also type "connectors" or "integrations" into the Settings search box and it will take you there.
 
-Connections are managed in the Mac app. The iPhone app and the browser version do not have this screen.
+You can manage connections in the Mac app or the browser version. The browser version can connect every tool except Canva, which you connect from the Mac app. The iPhone app does not have this screen.
 
 The page is headed **Your connections**. It has two halves.
 

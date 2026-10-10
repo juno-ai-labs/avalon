@@ -429,15 +429,6 @@ export const WorkspaceAttentionSchema = z.object({
 });
 
 /**
- * The browser's launch connector set: Gmail with Calendar, and Drive with Docs
- * and Sheets. Each is one connection request in the UI, so each is listed whole.
- */
-export const BROWSER_CONNECTABLE_CAPABILITIES_DEFAULT = [
-  "gmail.read", "gmail.draft", "gmail.send", "calendar.read", "calendar.write",
-  "drive.read", "docs.read", "docs.write", "sheets.read", "sheets.write",
-] as const;
-
-/**
  * Every server-decided feature flag a client is allowed to see, resolved for
  * the signed-in person. Each field defaults to the answer an unreachable flag
  * provider — or a response from an older service that does not know the field —
@@ -475,14 +466,6 @@ export const ClientFeatureFlagsSchema = z.object({
    */
   digestsEnabled: z.boolean().default(true),
   pushNotificationsEnabled: z.boolean().default(false),
-  /**
-   * Connector capabilities the browser may start an authorization for. Every
-   * other connector is shown there and disabled with a pointer to the Mac app.
-   * Presentation only: the connection routes do not read it. Defaults to the
-   * launch set, the two Google connections, rather than to nothing, because
-   * that set is the product decision an unreachable provider has to reproduce.
-   */
-  browserConnectableCapabilities: z.array(z.string().min(1)).default(() => [...BROWSER_CONNECTABLE_CAPABILITIES_DEFAULT]),
 });
 
 /** Product flags Ace is allowed to manage and publish to connected clients. */

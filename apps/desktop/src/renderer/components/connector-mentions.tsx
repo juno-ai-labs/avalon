@@ -316,7 +316,7 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provid
   const capabilities = scope === 'you' && 'personalCapabilities' in provider
     ? [...provider.personalCapabilities]
     : [...provider.capabilities];
-  const connectorStartAvailable = useConnectorStartAvailable(api, session);
+  const connectorStartAvailable = useConnectorStartAvailable(session);
   const connect = useMutation({
     mutationFn: async () => {
       if (!api || !session?.workspace) throw new Error('Rally is not ready to connect this account.');
@@ -361,7 +361,7 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provid
       checkingAvailability={availability.isLoading}
       connected={connected}
       error={connect.error?.message}
-      macAppOnly={!reconnect && !connectorStartAvailable(capabilities)}
+      macAppOnly={!connectorStartAvailable(provider)}
       onConnect={() => connect.mutate()}
       pending={pending}
       provider={provider}
