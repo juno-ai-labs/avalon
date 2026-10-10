@@ -29,6 +29,8 @@ and extracted text is labeled separately. See [session import](session-import.md
 | `apps/api/src/lib/attachment-cursor.ts` | Legacy signed-cursor decoding for pre-pagination receipts. New continuations use receipt-owned private state. |
 | `apps/api/src/services/attachment-derivative-state.ts` | Interprets explicit lifecycle state and lazily maps pre-migration resources. |
 | `apps/api/src/services/attachment-derivative-service.ts` | Converts authorized originals into complete, versioned text/Office/PDF derivatives, then atomically selects their regional objects. |
+| `apps/api/src/lib/office-document-text.ts` | The DOCX/PPTX/XLSX parser the derivative service calls. |
+| `apps/api/src/services/connector-document-reader.ts` | The derivative converter as the `ConnectorDocumentReader` the connector registry hands adapters, so a file found through Drive, Slack or another connector reads the same as an upload. See [`connectors.md`](connectors.md#reading-provider-files). |
 | `apps/api/src/services/attachment-summary-service.ts` | Runs one isolated bounded reader over server-identified source ranges and reports honest complete or sampled coverage. |
 | `apps/api/src/services/resource-object-cleanup.ts` | Retries regional object deletion without logging object keys or provider bodies. |
 | `apps/api/src/durable-objects/workspace-resources-protocol.ts` | The typed request/result contracts for every resource-domain WorkspaceDO method, with refusals as outcomes rather than throws. |
@@ -310,11 +312,13 @@ reading or converting the original again.
 UTF-8 text retains its full ordering and is rejected rather than replacement-
 decoded when invalid. Extractor v2 recognizes CSV and TSV as plain UTF-8 even
 when classification labels them as spreadsheets; a terminal failed or
-unsupported v2 result is reused instead of rereading R2 on every tool retry.
+unsupported result is reused instead of rereading R2 on every tool retry.
+Extractor v3 reads XLSX shared strings one per `<si>`, as described below.
 DOCX becomes semantic Markdown with headings, lists,
 tables, hyperlinks, headers, footers, footnotes, and endnotes. PPTX preserves
 slide order, tables, and speaker-note text. XLSX identifies sheets, cell
-references, display values, and formulas. PDFs are page-delimited; a bounded OCR
+references, display values, and formulas; a shared string is one `<si>`, with
+its rich-text runs joined and its phonetic guide (`<rPh>`) left out. PDFs are page-delimited; a bounded OCR
 adapter is required when the text layer is materially empty, and incomplete OCR
 is a failure rather than empty success.
 
@@ -686,6 +690,38 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-10-10 — Connectors read files through this converter, and XLSX shared strings stay aligned
+
+**What changed:** The DOCX, PPTX and XLSX parsing moved out of
+`attachment-derivative-service.ts` into `apps/api/src/lib/office-document-text.ts`,
+unchanged except for XLSX shared strings, which are now read one per `<si>`
+instead of one per `<t>`. Format detection is the exported
+`attachmentTextFormat`, which `convertAttachment` and the new
+`connectorDocumentReader` both use, so connectors hand files they find to
+`buildAttachmentDerivative` itself. `ATTACHMENT_TEXT_EXTRACTOR_VERSION` is
+`attachment-text-v3`, so existing spreadsheet derivatives are rebuilt on their
+next read.
+
+**Why:** Drive and Slack needed to read the same files, and a second converter
+would drift from this one. Reading one entry per `<t>` split any rich-text
+string (mixed bold, a coloured word) into several entries, so every later
+`t="s"` cell showed the text of a different cell. A cap table with one
+formatted header showed the wrong holder against each ownership figure, with
+nothing in the output to say so.
+
+**Considered and rejected:** Moving the converter into `@rally/connectors`. That package does
+not depend on `fflate`, and adding it rewrote about 11,000 lockfile lines,
+because the catalog resolves `vitest` and `zod` as `latest`.
+
+**Consequences:** Any change to conversion output needs a
+new extractor version, or stale derivatives keep being served. Connector reads
+are live and unversioned, so they pick up such a change at once. A format added
+to `attachmentTextFormat` becomes readable by every connector too. The two-million-character
+ceiling guards stored derivatives only: connector reads pass
+`maxTextCharacters: null` and cut the text to their own budget.
+
+Shipped in #1185.
 
 ### 2026-10-08 — A Breakout sees every resource its Channel attached
 

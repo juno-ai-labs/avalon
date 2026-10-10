@@ -6191,7 +6191,15 @@ function installDynamicPluginTools(
  * All other schema/policy fields remain unchanged, so future changes still fence.
  */
 function prePaginationTool(tool: HarnessTool): HarnessTool {
-  const descriptions: Record<string, Record<string, string>> = {
+  // A string restores a property's description; an object restores the
+  // schema fields it names, for a property whose shape changed as well.
+  const descriptions: Record<string, Record<string, string | Record<string, unknown>>> = {
+    "drive.read:drive.search": {
+      fileType: {
+        enum: ["document", "spreadsheet", "presentation", "form", "drawing", "folder", "pdf"],
+        description: "Restrict results to one kind of file.",
+      },
+    },
     "gmail.read:gmail.search": {
       maxResults: "Maximum messages to return in one page. Defaults to 10; follow the returned page token for more.",
     },
@@ -6230,7 +6238,7 @@ function prePaginationTool(tool: HarnessTool): HarnessTool {
   const properties = z.record(z.string(), z.record(z.string(), z.unknown())).parse(tool.definition.inputSchema.properties);
   return { ...tool, definition: { ...tool.definition, inputSchema: { ...tool.definition.inputSchema,
     properties: Object.fromEntries(Object.entries(properties).map(([name, schema]) => [name,
-      overrides[name] ? { ...schema, description: overrides[name] } : schema])),
+      overrides[name] ? { ...schema, ...(typeof overrides[name] === "string" ? { description: overrides[name] } : overrides[name]) } : schema])),
   } } };
 }
 
