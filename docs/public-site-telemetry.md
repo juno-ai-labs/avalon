@@ -13,7 +13,9 @@ Trust Center pages load the landing's `landing.css` and add `apps/site/src/trust
 | Path | Responsibility |
 | --- | --- |
 | `apps/site/src/telemetry.ts` | Global route lookup, first-party anonymous identity, capability bootstrap, closed envelopes, page/action/handoff reporting, and failure isolation. |
-| `apps/site/src/site-entry.ts` | Initializes page-view and page-leave reporting on every built HTML entry. |
+| `apps/site/src/site-entry.ts` | Initializes page-view and page-leave reporting on every built HTML entry, and starts the PostHog SDK loader on pages that run it. |
+| `apps/site/src/posthog-loader.ts` | Which pages run PostHog's browser SDK, and adding its separate script from the `rally-posthog-src` meta tag. |
+| `apps/site/src/posthog.ts` | The PostHog SDK entry, a separate build input: initializes the full SDK with replay, heatmaps and autocapture, and hands its session to the reporter. |
 | `apps/site/src/*-handoff.ts`, `desktop-open.ts`, `invite.ts`, `slack-link.ts`, `workstream-link.ts` | Report presented, automatic, and manual browser-to-desktop handoff attempts after each page has validated its own target. |
 | `apps/site/vite.config.ts` | Injects the shared telemetry entry and immutable release/build context into every site page. |
 | `apps/api/src/routes/telemetry.ts` | Exposes the content-free Cloudflare route decision and the capability-bound anonymous ingest. |
@@ -73,15 +75,45 @@ event spool and no retry that can delay navigation or opening the desktop.
 - **Handoff analytics never carries the handoff.** Tokens, fragments, query
   values, and resource identifiers stay inside the page-specific parser.
 
-- **The site has no generic capture or DOM autocapture.** A new event starts in
-  the shared closed registry and one semantic producer.
+- **The closed registry stays the source of record.** Every event a dashboard,
+  the lakehouse, or a signup report depends on is a registered site event sent
+  through the API. PostHog's SDK, below, adds replay and behavior on top; no
+  report should be built on its `$autocapture` events in place of a registered
+  one, because the SDK will be removed.
 
-- **PostHog remains a server-side destination.** The site does not load
-  `posthog-js`, expose the project token, accept remote capture settings, or
-  enable PostHog cookies, autocapture, replay, heatmaps, exception capture, or
-  browser person profiles. PostHog's cookieless browser mode is therefore not
-  part of this path; Rally's narrower first-party envelopes already cross the
-  regional boundary before delivery.
+### PostHog browser SDK (temporary)
+
+To see why the landing does not convert, the marketing pages also run
+PostHog's full browser SDK (`posthog-js`, the `module.full.no-external`
+bundle) with session replay at a 100% sample rate, heatmaps, autocapture,
+rage and dead clicks, exception capture, console logs and web vitals. It sends
+through PostHog's managed reverse proxy at `p.rallywith.ai`, configured in the
+PostHog organization's proxy settings, with the project's public token.
+
+- **One page view, one page leave.** The SDK runs with `capture_pageview` and
+  `capture_pageleave` off. `$pageview` and `$pageleave` reach PostHog only from
+  the API adapter, so the dashboards built on them see no duplicates.
+- **One visitor, one session.** The SDK is bootstrapped with the site's
+  anonymous epoch as its `distinct_id`, and keeps its own state in
+  `localStorage` beside that epoch, so the two cannot drift apart. The reporter
+  holds its events until the SDK has loaded and stamps each with the SDK's
+  current session as `context.sessionId`, which the adapter maps to
+  `$session_id`. Server page views, clicks and the recording therefore share a
+  person and a session, and PostHog's web analytics sees multi-page sessions
+  rather than one per page. If the SDK script fails to load, events keep the
+  page's own session.
+- **Only pages whose URLs carry nothing.** `runsPostHog` admits the `landing`,
+  `support` and `legal` page classes in production only. Handoff, download,
+  invitation and desktop-auth pages never load it, because their URLs hold
+  tickets, tokens and fragments that a recording would keep.
+- **No external scripts.** The full bundle carries the recorder and every
+  extension, so the CSP adds only `p.rallywith.ai` to `connect-src` and
+  `blob:` to `worker-src` (the recorder's worker). The PostHog toolbar and
+  surveys cannot load or style themselves under this policy; view heatmaps in
+  PostHog's Heatmaps page instead.
+- **Separate script.** The SDK is its own build input, added by the loader as a
+  module script, so pages that do not run it never download it (about 210 KB
+  compressed).
 
 - **Measurement cannot change the site experience.** Storage denial, route or
   bootstrap failure, a rejected event, and destination failure are silent to
@@ -90,11 +122,12 @@ event spool and no retry that can delay navigation or opening the desktop.
 ## Boundary
 
 This module owns public-site page classification, anonymous acquisition
-identity, semantic action capture, and browser-to-desktop handoff measurement.
-It does not own advertising, cross-site identity, account identification,
-session replay, heatmaps, form analytics, consent-law determinations, or the
-desktop action that follows a handoff. Site identities are not automatically
-linked to a Rally login.
+identity, semantic action capture, browser-to-desktop handoff measurement, and,
+for now, the PostHog browser SDK on the marketing pages. It does not own
+advertising, cross-site identity, account identification, form analytics,
+consent-law determinations, or the desktop action that follows a handoff. Site
+identities are not automatically linked to a Rally login; signup reports join
+the site to the app by `flowId`.
 
 - If route lookup or capability bootstrap fails, events for that page are lost;
   product behavior continues.
@@ -169,6 +202,35 @@ avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
 
 ## Changelog
+
+### 2026-10-10 — Run PostHog's browser SDK on the marketing pages
+
+**What changed:** The landing, blog, compare, help and Trust Center pages load
+the full `posthog-js` SDK through the `p.rallywith.ai` reverse proxy, with
+session replay at 100%, heatmaps, autocapture, dead clicks, exceptions and
+console logs. The SDK shares the site's anonymous epoch, and site events now
+carry the SDK's session instead of a per-page one. The Cookie Notice describes
+the recording.
+
+**Why:** The landing is not converting and page views and tagged clicks cannot
+say why. The team wants to watch visits and see where people click and stop for
+the next few weeks, then remove the SDK for privacy reasons.
+
+**Considered and rejected:** Letting the SDK own `$pageview` and `$pageleave`
+and dropping the site's own: the dashboards, the lakehouse and signup reports
+are built on the registered events and their page class, and the SDK is
+temporary. Sending both would double every page view. Loading the SDK from
+PostHog's CDN or with `import()`: the CDN needs `script-src` widened, and the
+repository bans dynamic imports, so it is a separate build entry like the
+technology schematic. A separate per-page session id joined to the SDK's by a
+property: PostHog only links an event to a recording by `$session_id`.
+
+**Consequences:** PostHog's scroll-depth heatmap reads scroll properties from
+the SDK's own `$pageleave`, which is off, so scroll maps stay empty; replays
+still show scrolling. Removing the SDK means deleting `posthog.ts`, the loader,
+its build input and meta tag, the CSP additions and Cookie Notice section 4;
+the reporter then falls back to a per-page session. Any page whose URL can
+carry a credential must stay out of `runsPostHog`.
 
 ### 2026-10-08 — Name the page on each click
 

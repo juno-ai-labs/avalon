@@ -4,7 +4,7 @@ import { renderBlogIndex, renderBlogPost } from './src/blog-pages';
 import { renderComparisonPage } from './src/comparison-pages';
 import { renderBlogCard, renderComparisonCard } from './src/social-cards';
 import { blogPosts, comparisons, renderBlogSitemap, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from './src/site-chrome';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 
@@ -41,6 +41,30 @@ const generatedFiles = new Map<string, { type: string; render: () => string | Pr
   ['blog/sitemap.xml', { type: 'application/xml', render: renderBlogSitemap }],
   ['llms.txt', { type: 'text/plain; charset=utf-8', render: renderLlmsTxt }],
 ]);
+/**
+ * A plugin that rewrites `attribute="/src/<file>"` in built HTML to the hashed
+ * bundle of the separate entry `name`, for a page script that adds that entry
+ * itself. A build that cannot find the bundle fails rather than shipping a
+ * page that loads a 404.
+ */
+function hashedEntrySource(name: string, attribute: string, file: string): Plugin {
+  return {
+    name: `rally-${name}-entry`,
+    transformIndexHtml: {
+      order: 'post',
+      handler: (html, context) => {
+        const source = `${attribute}="/src/${file}"`;
+        if (!context.bundle || !html.includes(source)) return html;
+        const entry = Object.values(context.bundle).find(
+          (output) => output.type === 'chunk' && output.isEntry && output.name === name,
+        );
+        if (!entry) throw new Error(`rally-${name}-entry: the ${name} bundle is missing from the build`);
+        return html.replace(source, `${attribute}="/${entry.fileName}"`);
+      },
+    },
+  };
+}
+
 const rootPackage = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string };
 
 export default defineConfig({
@@ -51,7 +75,12 @@ export default defineConfig({
   plugins: [
     // The help center is Markdown under help/, published at /help/. Its pages
     // are not HTML entries; the plugin writes them, linking the `help` entry.
-    helpCenter({ contentRoot: `${projectRoot}help`, entryName: 'help', entrySource: '/src/help.ts' }),
+    helpCenter({
+      contentRoot: `${projectRoot}help`,
+      entryName: 'help',
+      entrySource: '/src/help.ts',
+      entryMeta: [{ name: 'rally-posthog-src', entryName: 'posthog', entrySource: '/src/posthog.ts' }],
+    }),
     { name: 'rally-access-copy', transformIndexHtml: renderAccessCopy },
     { name: 'rally-site-chrome', transformIndexHtml: { order: 'pre', handler: renderSiteChrome } },
     {
@@ -81,31 +110,22 @@ export default defineConfig({
         });
       },
     },
-    {
-      // The technology schematic is its own entry so three.js stays out of the
-      // landing page. `technology-loader.ts` adds its script when the figure
-      // nears the screen, reading the URL from `data-tech-src`: the source file
-      // in development, rewritten here to the hashed bundle. A build that cannot
-      // find the bundle fails rather than shipping a page that loads a 404.
-      name: 'rally-technology-entry',
-      transformIndexHtml: {
-        order: 'post',
-        handler: (html, context) => {
-          const source = 'data-tech-src="/src/technology.ts"';
-          if (!context.bundle || !html.includes(source)) return html;
-          const entry = Object.values(context.bundle).find(
-            (output) => output.type === 'chunk' && output.isEntry && output.name === 'technology',
-          );
-          if (!entry) throw new Error('rally-technology-entry: the technology bundle is missing from the build');
-          return html.replace(source, `data-tech-src="/${entry.fileName}"`);
-        },
-      },
-    },
+    // The technology schematic is its own entry so three.js stays out of the
+    // landing page. `technology-loader.ts` adds its script when the figure
+    // nears the screen, reading the URL from `data-tech-src`.
+    hashedEntrySource('technology', 'data-tech-src', 'technology.ts'),
+    // PostHog's SDK is its own entry so pages that never run it never download
+    // it. `posthog-loader.ts` adds its script, reading the URL from this meta tag.
+    hashedEntrySource('posthog', 'content', 'posthog.ts'),
     {
       name: 'rally-site-telemetry',
       transformIndexHtml: {
         order: 'pre',
         handler: () => [{
+          tag: 'meta',
+          attrs: { name: 'rally-posthog-src', content: '/src/posthog.ts' },
+          injectTo: 'head',
+        }, {
           tag: 'script',
           attrs: { type: 'module', src: '/src/site-entry.ts' },
           injectTo: 'head',
@@ -120,6 +140,7 @@ export default defineConfig({
         main: `${projectRoot}index.html`,
         startFast: `${projectRoot}start-fast/index.html`,
         technology: `${projectRoot}src/technology.ts`,
+        posthog: `${projectRoot}src/posthog.ts`,
         help: `${projectRoot}src/help.ts`,
         concepts: `${projectRoot}concepts/index.html`,
         horizonConcepts: `${projectRoot}concepts/horizon/index.html`,

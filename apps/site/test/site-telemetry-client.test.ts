@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-interface Sent { keepalive: boolean; capability: string; events: Array<{ name: string; properties: Record<string, unknown> }> }
+interface Sent { keepalive: boolean; capability: string; events: Array<{ name: string; properties: Record<string, unknown>; context: { sessionId?: string } }> }
 
 /** A stub Global API: route, bootstrap and ingest, with scripted ingest statuses. */
 function stubApi(options: { statuses?: number[]; bootstrapped?: Promise<void> } = {}) {
   const statuses = [...(options.statuses ?? [])];
   const sent: Sent[] = [];
+  const anonymousIds: string[] = [];
   let bootstraps = 0;
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith('/telemetry/route')) {
@@ -14,6 +15,7 @@ function stubApi(options: { statuses?: number[]; bootstrapped?: Promise<void> } 
     }
     if (url.endsWith('/telemetry/bootstrap')) {
       await options.bootstrapped;
+      anonymousIds.push((JSON.parse(String(init?.body)) as { anonymousEpochId: string }).anonymousEpochId);
       bootstraps += 1;
       return Response.json({
         journeyId: '01a0ee73-d366-7fb9-b5c0-3ceb3156f70a',
@@ -26,14 +28,20 @@ function stubApi(options: { statuses?: number[]; bootstrapped?: Promise<void> } 
     sent.push({ keepalive: init?.keepalive === true, ...JSON.parse(String(init?.body)) as Omit<Sent, 'keepalive'> });
     return new Response(null, { status: statuses.shift() ?? 202 });
   }));
-  return { sent, clicks: () => sent.flatMap((request) => request.events).filter((event) => event.name === 'site_action_selected') };
+  return { sent, anonymousIds, clicks: () => sent.flatMap((request) => request.events).filter((event) => event.name === 'site_action_selected') };
 }
 
-async function start(html: string) {
+async function start(html: string, session?: (() => string) | null) {
   document.body.innerHTML = html;
-  const { initializeSiteTelemetry } = await import('../src/telemetry');
-  initializeSiteTelemetry();
+  const telemetry = await import('../src/telemetry');
+  if (session !== undefined) telemetry.awaitAnalyticsSession();
+  telemetry.initializeSiteTelemetry();
+  // The SDK arrives after the page view is queued, as its separate script does.
+  if (session !== undefined) setTimeout(() => telemetry.provideAnalyticsSession(session), 0);
+  return telemetry;
 }
+
+const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 // jsdom keeps one `document` per file, so each fresh import of the reporter
 // would stack another click listener on the last test's.
@@ -154,5 +162,45 @@ describe('site telemetry reporter', () => {
     await vi.waitFor(() => expect(api.sent).toHaveLength(2));
     expect(api.sent[1]!.events.map((event) => event.name)).toEqual(['site_page_viewed']);
     expect(api.sent[1]!.capability).not.toBe(api.sent[0]!.capability);
+  });
+
+  it("reports each event under PostHog's session at the moment it is made", async () => {
+    const api = stubApi();
+    let current = '019a0000-0000-7000-8000-000000000001';
+    await start('<a data-site-action="download-hero" href="#">a</a>', () => current);
+    await vi.waitFor(() => expect(api.sent).toHaveLength(1));
+    // PostHog rotates a session after inactivity; the next event follows it.
+    current = '019a0000-0000-7000-8000-000000000002';
+    document.querySelector<HTMLElement>('a')!.click();
+
+    await vi.waitFor(() => expect(api.clicks()).toHaveLength(1));
+    expect(api.sent.flatMap((request) => request.events).map((event) => [event.name, event.context.sessionId])).toEqual([
+      ['site_page_viewed', '019a0000-0000-7000-8000-000000000001'],
+      ['site_action_selected', '019a0000-0000-7000-8000-000000000002'],
+    ]);
+  });
+
+  it("keeps the page's own session when PostHog could not load", async () => {
+    const api = stubApi();
+    await start('<a data-site-action="download-hero" href="#">a</a>', null);
+    document.querySelector<HTMLElement>('a')!.click();
+
+    await vi.waitFor(() => expect(api.clicks()).toHaveLength(1));
+    const sessions = new Set(api.sent.flatMap((request) => request.events).map((event) => event.context.sessionId));
+    expect(sessions.size).toBe(1);
+    expect([...sessions][0]).toMatch(UUID_V7);
+  });
+
+  it('bootstraps with the anonymous id given to PostHog, even when storage is refused', async () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('denied'); });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('denied'); });
+    const api = stubApi();
+    const { globalAnonymousEpochId } = await import('../src/telemetry');
+    const givenToPostHog = globalAnonymousEpochId();
+    await start('');
+
+    await vi.waitFor(() => expect(api.anonymousIds).toHaveLength(1));
+    expect(api.anonymousIds[0]).toBe(givenToPostHog);
+    expect(givenToPostHog).toMatch(UUID_V7);
   });
 });

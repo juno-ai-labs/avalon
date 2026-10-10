@@ -19,6 +19,10 @@ interface CapabilityState extends TelemetryBootstrapResponse {
 }
 
 const sessionId = uuidV7();
+// While PostHog's browser SDK runs on the page, events carry its session so
+// PostHog joins them to that session's replay instead of opening one per page.
+let analyticsSession: Promise<(() => string) | null> = Promise.resolve(null);
+let provideSession: ((session: (() => string) | null) => void) | null = null;
 const pageVisibleAt = Date.now();
 const pending: TelemetryEnvelope[] = [];
 let capabilityPromise: Promise<CapabilityState> | null = null;
@@ -64,14 +68,23 @@ export function storageWrite(storage: Storage, key: string, value: string): void
   }
 }
 
-function globalAnonymousEpochId(): string {
+let pageEpochId: string | null = null;
+
+/**
+ * The first-party anonymous id every site event, and the PostHog SDK, reports
+ * as. Kept for the page, so a browser that refuses storage still gives both
+ * the same id rather than one each.
+ */
+export function globalAnonymousEpochId(): string {
+  if (pageEpochId) return pageEpochId;
   const stored = storageRead(localStorage, ANONYMOUS_EPOCH_KEY);
   if (stored && /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(stored)) {
+    pageEpochId = stored;
     return stored;
   }
-  const created = uuidV7();
-  storageWrite(localStorage, ANONYMOUS_EPOCH_KEY, created);
-  return created;
+  pageEpochId = uuidV7();
+  storageWrite(localStorage, ANONYMOUS_EPOCH_KEY, pageEpochId);
+  return pageEpochId;
 }
 
 async function coarseRoute(): Promise<TelemetryRouteResponse> {
@@ -120,7 +133,7 @@ const PRODUCTION_SITE_HOSTS = new Set([
   'www.with-avalon.com',
 ]);
 
-function environment(): 'development' | 'staging' | 'production' {
+export function environment(): 'development' | 'staging' | 'production' {
   if (PRODUCTION_SITE_HOSTS.has(location.hostname)) return 'production';
   if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') return 'development';
   return 'staging';
@@ -128,6 +141,7 @@ function environment(): 'development' | 'staging' | 'production' {
 
 function makeEnvelope<TName extends TelemetryEventName>(
   state: CapabilityState,
+  session: string,
   name: TName,
   properties: TelemetryEventProperties<TName>,
 ): TelemetryEnvelope {
@@ -148,7 +162,7 @@ function makeEnvelope<TName extends TelemetryEventName>(
       region: state.route,
       release: __RALLY_SITE_RELEASE__,
       buildId: __RALLY_SITE_BUILD__,
-      sessionId,
+      sessionId: session,
       onboardingJourneyId: state.journeyId,
     },
   } as TelemetryEnvelope;
@@ -204,9 +218,9 @@ function report<TName extends TelemetryEventName>(
   properties: TelemetryEventProperties<TName>,
   keepalive = false,
 ): void {
-  void getCapability().then((state) => {
+  void Promise.all([getCapability(), analyticsSession]).then(([state, session]) => {
     if (pending.length >= MAX_PENDING_EVENTS) pending.shift();
-    pending.push(makeEnvelope(state, name, properties));
+    pending.push(makeEnvelope(state, session?.() ?? sessionId, name, properties));
     if (keepalive) keepaliveWanted = true;
     return flush();
   }).catch(() => undefined);
@@ -346,6 +360,24 @@ export function reportDesktopHandoff(
   // the already-bounded event a best-effort chance to leave during unload.
   // Merely presenting the handoff stays on the ordinary request path.
   report('desktop_handoff_attempted', { handoffType, method, validity }, method !== 'presented');
+}
+
+/**
+ * Holds events until `provideAnalyticsSession` names the session they report
+ * under. Called before `initializeSiteTelemetry` on a page that loads PostHog,
+ * so even the page view waits for the SDK's session.
+ */
+export function awaitAnalyticsSession(): void {
+  analyticsSession = new Promise((resolve) => { provideSession = resolve; });
+}
+
+/**
+ * Reports every event under the session `session` returns, read when each
+ * event is made. Null, for an SDK that failed to load, keeps the page's own.
+ */
+export function provideAnalyticsSession(session: (() => string) | null): void {
+  provideSession?.(session);
+  provideSession = null;
 }
 
 export function initializeSiteTelemetry(): void {

@@ -21,10 +21,17 @@ const CONTENT_TYPES: Record<string, string> = {
 /**
  * Publishes the Markdown in `contentRoot` as the help center under `/help/`.
  * `entryName` is the Rollup input whose script and stylesheet every page loads.
+ * Each of `entryMeta` names another input's URL in a meta tag, for a page
+ * script that loads that entry itself (the PostHog SDK).
  * In `vite dev` each request re-reads the folder, drafts included, so a writer
  * sees a saved file on reload; a build that finds a broken page fails.
  */
-export function helpCenter({ contentRoot, entryName, entrySource }: { contentRoot: string; entryName: string; entrySource: string }): Plugin {
+export function helpCenter({ contentRoot, entryName, entrySource, entryMeta = [] }: {
+  contentRoot: string;
+  entryName: string;
+  entrySource: string;
+  entryMeta?: Array<{ name: string; entryName: string; entrySource: string }>;
+}): Plugin {
   return {
     name: 'rally-help-center',
     configureServer(server) {
@@ -63,7 +70,11 @@ export function helpCenter({ contentRoot, entryName, entrySource }: { contentRoo
         }
         let outputs: HelpOutputs;
         try {
-          outputs = buildHelp(contentRoot, { includeDrafts: true, assets: { styles: [], scripts: ['/@vite/client', entrySource] } });
+          outputs = buildHelp(contentRoot, { includeDrafts: true, assets: {
+            styles: [],
+            scripts: ['/@vite/client', entrySource],
+            meta: entryMeta.map(({ name, entrySource: content }) => ({ name, content })),
+          } });
         } catch (error) {
           response.statusCode = 500;
           response.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -83,7 +94,12 @@ export function helpCenter({ contentRoot, entryName, entrySource }: { contentRoo
       );
       if (!entry) this.error(`rally-help-center: the ${entryName} entry is missing from the build`);
       const styles = [...(entry.viteMetadata?.importedCss ?? [])].map((file) => `/${file}`);
-      const outputs = buildHelp(contentRoot, { assets: { styles, scripts: [`/${entry.fileName}`] } });
+      const meta = entryMeta.map(({ name, entryName: metaEntry }) => {
+        const linked = Object.values(bundle).find((output) => output.type === 'chunk' && output.isEntry && output.name === metaEntry);
+        if (!linked) this.error(`rally-help-center: the ${metaEntry} entry is missing from the build`);
+        return { name, content: `/${linked.fileName}` };
+      });
+      const outputs = buildHelp(contentRoot, { assets: { styles, scripts: [`/${entry.fileName}`], meta } });
       for (const [fileName, source] of outputs) this.emitFile({ type: 'asset', fileName, source });
       for (const [fileName, source] of await renderOgImages(loadHelpSite(contentRoot))) this.emitFile({ type: 'asset', fileName, source });
     },
