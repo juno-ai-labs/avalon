@@ -64,6 +64,7 @@ import {
   SIDEBAR_LIST_QUERY_KEYS,
   applyVersionedSpaceSnapshot,
   applyVersionedSidebarList,
+  CHANNEL_STATS_QUERY_KEY,
   MY_THREADS_QUERY_KEY,
   channelFeedQueryKey,
 } from './sidebar-list-store';
@@ -671,7 +672,7 @@ export function WorkspaceSocketProvider({
         const requestId = uuidV7();
         const timeout = window.setTimeout(() => {
           pendingRailRequests.delete(requestId);
-          reject(new ApiError('Channel details could not be loaded.', 0, 'workspace_channel_rails_timeout'));
+          reject(new ApiError('Thread details could not be loaded.', 0, 'workspace_channel_rails_timeout'));
         }, COMMAND_TIMEOUT_MS);
         pendingRailRequests.set(requestId, { resolve, reject, timeout, named: new Set() });
         const command = WorkspaceSocketClientEventSchema.parse({ type: 'channel_rails', requestId, workstreamIds });
@@ -696,7 +697,7 @@ export function WorkspaceSocketProvider({
         const timeout = window.setTimeout(() => {
           pendingSpaceRequests.delete(requestId);
           reject(new ApiError(
-            'The channel directory could not be loaded. Try again.',
+            'The thread list could not be loaded. Try again.',
             0,
             'workspace_space_channels_timeout',
           ));
@@ -1253,6 +1254,7 @@ export function WorkspaceSocketProvider({
             // A placement or attention change can add a thread this person
             // takes part in; the Threads tab's own list is read again.
             void queryClient.invalidateQueries({ queryKey: MY_THREADS_QUERY_KEY });
+            void queryClient.invalidateQueries({ queryKey: CHANNEL_STATS_QUERY_KEY });
             if (spaceConversations.data.attentionCounts.length > 0) {
               const counts = new Map(spaceConversations.data.attentionCounts.map((entry) => [
                 entry.spaceId,
@@ -1391,7 +1393,7 @@ export function WorkspaceSocketProvider({
       const timeout = window.setTimeout(() => {
         pendingDirectoryRequests.delete(requestId);
         reject(new ApiError(
-          'The channel directory could not be loaded. Try again.',
+          'The thread list could not be loaded. Try again.',
           0,
           'workspace_directory_timeout',
         ));
@@ -1415,13 +1417,13 @@ export function WorkspaceSocketProvider({
       setState('unavailable');
       setPresenceUserIdsByWorkstream({});
       rejectPendingDirectoryRequests(new ApiError(
-        'The channel directory cannot be loaded while offline.',
+        'The thread list cannot be loaded while offline.',
         0,
         'workspace_directory_offline',
       ));
-      rejectPendingRailRequests(new ApiError('Channel details cannot be loaded while offline.', 0, 'workspace_directory_offline'));
+      rejectPendingRailRequests(new ApiError('Thread details cannot be loaded while offline.', 0, 'workspace_directory_offline'));
       rejectPendingSpaceRequests(new ApiError(
-        'The channel directory cannot be loaded while offline.',
+        'The thread list cannot be loaded while offline.',
         0,
         'workspace_directory_offline',
       ));

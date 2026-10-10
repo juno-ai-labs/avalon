@@ -671,6 +671,8 @@ import {
   WorkspacePinChangeRequestSchema,
   WorkspacePinOrderRequestSchema,
   WorkspacePinResultSchema,
+  WorkspaceChannelStatsResultSchema,
+  type WorkspaceChannelStatsResult,
   type WorkspaceChannelFeedResult,
   type WorkspaceMyThreadsRequest,
   type WorkspaceMyThreadsResult,
@@ -9358,6 +9360,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * The Channels tab's second lines on their own, read again when a thread is
+   * placed or moves, so the counts follow without a whole Space snapshot.
+   */
+  async listChannelStats(input: WorkspaceSpaceListRequest): Promise<WorkspaceChannelStatsResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceListRequestSchema, input, "list_channel_stats");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return { ok: false, code: "space_access_denied" };
+    return WorkspaceChannelStatsResultSchema.parse({ ok: true, stats: this.channelStatsFor(viewer) });
+  }
+
+  /**
    * Pin or unpin a thread, a Channel or a breakout.
    *
    * A pin is refused for an item this person may not list, so a pin can never
@@ -9793,7 +9808,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!this.directoryVisible(member(request.auth.userId), request.workstreamId)) {
       return {
         ok: false,
-        refusal: { about: "conversation", status: 404, code: "workstream_not_found", message: "Channel not found" },
+        refusal: { about: "conversation", status: 404, code: "workstream_not_found", message: "Thread not found" },
       };
     }
     return this.addChannelToSpace(request.auth.workspaceId, request.auth.userId, request.spaceId, request.workstreamId);
@@ -16698,13 +16713,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ordering: spaces.readOrders(attachment.workspaceId, viewer),
       pinnedOrder: spaces.readPinnedOrder(viewer),
       pins: new WorkspacePinStorage(this.state.storage).list(viewer.userId),
-      channelStats: spaces.channelStats(viewer).map((stats) => ({
-        channelId: stats.spaceId,
-        threadCount: stats.threadCount,
-        lastActivityAt: iso(stats.lastActivityAt),
-      })),
+      channelStats: this.channelStatsFor(viewer),
       spacesReady: spaces.bootstrapStatus().ready,
     };
+  }
+
+  private channelStatsFor(viewer: Viewer): ChannelStats[] {
+    return this.spaceStorage().channelStats(viewer).map((stats) => ({
+      channelId: stats.spaceId,
+      threadCount: stats.threadCount,
+      lastActivityAt: iso(stats.lastActivityAt),
+    }));
   }
 
   private async publishDirectorySync(workspaceId: string): Promise<void> {

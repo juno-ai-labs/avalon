@@ -58,7 +58,9 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
 **Channels**: what the person pinned, in their order (drag to reorder), then
 every other Channel they may see, A to Z. Each row is the Channel's mark, its
 name, a lock when it is private, the time of its newest listable thread, and
-"N threads" — both from `channelStats` on the socket. **+** opens New channel,
+"N threads" — both from `channelStats`, seeded by the socket's snapshot and
+read again (`GET /navigation/channel-stats`) when a placement nudge names a
+Channel. **+** opens New channel,
 which names one; every Channel starts Organization-wide.
 
 **Threads**: what the person pinned (threads, then breakouts), then every

@@ -8079,6 +8079,28 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .title-pill-ancestors { align-items: center; display: flex; gap: 6px; justify-self: start; min-width: 0; }
 .title-pill-current { justify-self: center; min-width: 0; }
 .title-pill-trailing { align-items: center; display: flex; gap: 8px; justify-self: end; }
+/*
+ * A pane too narrow to centre its pill between full ancestors (a breakout
+ * standing alone on a phone, with its Channel and thread as breadcrumbs):
+ * ancestors keep only their marks, and the pill takes what is left and
+ * truncates. The pane is the container because a query cannot restyle the
+ * element it measures.
+ */
+@container conversation-pane (width < 460px) {
+  .title-pill-header { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .title-pill-current { display: flex; justify-content: center; justify-self: stretch; }
+  .title-pill.is-ancestor .title-pill-title,
+  .title-pill.is-ancestor .title-pill-meta,
+  .title-pill.is-ancestor .title-pill-chevron,
+  .title-pill.is-ancestor .title-pill-crumb-separator {
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+}
 .title-pill {
   align-items: center;
   background: var(--av-sys-color-surface-raised);
@@ -8525,7 +8547,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
    right panel opened from either pane takes the other pane's place: the pane
    that opened it stays, the other is hidden but kept mounted. */
 .split-conversation { display: flex; height: 100%; min-width: 0; position: relative; }
-.split-conversation-pane { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; position: relative; }
+.split-conversation-pane { container: conversation-pane / inline-size; display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; position: relative; }
 .split-conversation-pane.is-breakout { flex: 0 0 var(--split-breakout-width, 50%); max-width: calc(100% - var(--conversation-min-width)); }
 .split-conversation-pane.is-breakout::before {
   background: var(--av-sys-color-border-subtle);
