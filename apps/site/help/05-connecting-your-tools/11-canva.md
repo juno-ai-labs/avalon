@@ -19,7 +19,7 @@ Canva decides which of these your Canva plan allows. Some actions may run into a
 
 ## Connecting
 
-Canva is personal only, and any member can connect it.
+Canva is personal only, and any member can connect it. Connect it from the Mac app: the browser version cannot connect Canva.
 
 1. Open **Settings → Connections** and find the **Canva** card.
 2. Hover over **Connect for me** and read the note. Connecting lets Rally read and change your Canva designs, folders, assets and brand kit. Canva receives a brief description of each thing Rally asks it to do. Watches are off until you turn them on.
