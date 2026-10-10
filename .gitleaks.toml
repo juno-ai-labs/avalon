@@ -65,4 +65,11 @@ regexes = [
   # in the RFC and protect nothing. Pinned literally, so no auth-secret shape
   # is exempt.
   '''^BTBZMqHH6r4Tts7J_aSIgg$''',
+  # The Rally PostHog project's ingestion token, in `apps/site/src/posthog.ts`.
+  # A `phc_` project token is PostHog's public key: the browser SDK ships it in
+  # page source, and it can only send events into the project, never read
+  # them. The secret kind is the `phx_` personal API key, which this does not
+  # admit. Pinned to the one literal rather than to the `phc_` shape, so a
+  # different project's token still stops the gate and gets looked at.
+  '''^phc_DdHrRpgL7QujHkP4dMRaWyiBJZ94pNxAVuAv4Eurk3FR$''',
 ]
