@@ -1270,6 +1270,13 @@ export type ChannelFeedItem = z.infer<typeof ChannelFeedItemSchema>;
 export const ChannelFeedPageSchema = z.strictObject({
   items: z.array(ChannelFeedItemSchema),
   nextCursor: z.string().min(1).nullable(),
+  /**
+   * The Channel's latest attention sequence number as the first page was read
+   * (`ChannelStats.latestAttentionSequenceNumber`); null on a later page. Every
+   * placement at or below it is on that page or no longer listed, so a reader
+   * of the first page has read the Channel through it.
+   */
+  latestAttentionSequenceNumber: z.number().int().nonnegative().nullable(),
 });
 export type ChannelFeedPage = z.infer<typeof ChannelFeedPageSchema>;
 
@@ -1281,6 +1288,12 @@ export type ChannelFeedPage = z.infer<typeof ChannelFeedPageSchema>;
 export const MyThreadsPageSchema = z.strictObject({
   items: z.array(SpaceConversationSchema),
   nextCursor: z.string().min(1).nullable(),
+  /**
+   * On the first page, every thread and breakout this person pinned and may
+   * still list, whatever page its activity would put it on; empty on a later
+   * page. The Pinned section is drawn from this.
+   */
+  pinned: z.array(SpaceConversationSchema),
 });
 export type MyThreadsPage = z.infer<typeof MyThreadsPageSchema>;
 

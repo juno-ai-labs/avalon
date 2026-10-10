@@ -1765,6 +1765,8 @@ export class WorkspaceSpaceStorage {
   ): {
     items: Array<{ workstreamId: string; placedAt: number; attentionOrdinal: number; openable: boolean }>;
     nextCursor: string | null;
+    /** The Channel's latest placement ordinal as this first page was read; null on a later page. */
+    latestAttentionOrdinal: number | null;
   } | "invalid_cursor" | false {
     if (this.reach(viewer, spaceId) === null) return false;
     const after = cursor === null ? null : decodeConversationCursor(cursor);
@@ -1804,7 +1806,16 @@ export class WorkspaceSpaceStorage {
     const hasMore = rows.length > SPACE_CHANNEL_PAGE_SIZE;
     if (hasMore) rows.pop();
     const last = rows.at(-1);
+    // Read with the page, in the same synchronous turn: every placement at or
+    // below it is on this page or gone, so reading the page reads the Channel
+    // through it, including a newest placement since removed or archived.
+    const latestAttentionOrdinal = cursor !== null || !this.readsReady() ? null
+      : this.storage.sql.exec<{ latest_attention_ordinal: number } & Record<string, SqlStorageValue>>(
+        "SELECT latest_attention_ordinal FROM spaces WHERE space_id = ?",
+        spaceId,
+      ).toArray()[0]?.latest_attention_ordinal ?? null;
     return {
+      latestAttentionOrdinal,
       items: rows.map((row) => ({
         workstreamId: row.workstream_id,
         placedAt: row.joined_at,
@@ -1832,11 +1843,18 @@ export class WorkspaceSpaceStorage {
   participatingPage(
     viewer: Viewer,
     cursor: string | null,
+    /**
+     * Every thread and breakout this person pinned and may still list, in one
+     * answer: the Pinned section, which a page of the whole list cannot be
+     * trusted to hold. Bounded by the pin limit rather than the page size.
+     */
+    { pinnedOnly = false }: { pinnedOnly?: boolean } = {},
   ): SpaceConversationPage | "invalid_cursor" {
     const breakouts = this.breakoutsReady();
     const pins = this.storage.sql.exec(
       `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_pins'`,
     ).toArray().length === 1;
+    if (pinnedOnly && !pins) return { items: [], nextCursor: null };
     const after = cursor === null ? null : decodeConversationCursor(cursor);
     if (cursor !== null && after === null) return "invalid_cursor";
     const pinned = (kind: "thread" | "breakout", id: string) => (pins
@@ -1864,7 +1882,7 @@ export class WorkspaceSpaceStorage {
               AND viewer.authority_generation = directory.authority_generation
             WHERE directory.archived_at IS NULL
               AND directory.system_kind IS NULL
-              AND (viewer.is_participant = 1 OR ${pinned("thread", "directory.workstream_id")})
+              AND (${pinnedOnly ? "0" : "viewer.is_participant = 1"} OR ${pinned("thread", "directory.workstream_id")})
               AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
               AND ${afterCursorSql("channel", "directory.last_activity_at", "directory.workstream_id")}
             ORDER BY directory.last_activity_at DESC, directory.workstream_id
@@ -1891,7 +1909,7 @@ export class WorkspaceSpaceStorage {
               AND viewer.authority_generation = directory.authority_generation
             WHERE breakout.archived_at IS NULL
               AND directory.archived_at IS NULL
-              AND (breakout_viewer.is_participant = 1 OR ${pinned("breakout", "breakout.substream_id")})
+              AND (${pinnedOnly ? "0" : "breakout_viewer.is_participant = 1"} OR ${pinned("breakout", "breakout.substream_id")})
               AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts, userId: "?1" })}
               AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass)}
               AND ${afterCursorSql("breakout", "breakout.last_activity_at", "breakout.substream_id")}
@@ -1906,9 +1924,10 @@ export class WorkspaceSpaceStorage {
       after?.lastActivityAt ?? null,
       after?.kind ?? "",
       after?.conversationId ?? "",
-      SPACE_CHANNEL_PAGE_SIZE + 1,
+      // SQLite reads a negative LIMIT as none; the pin limit bounds the rows.
+      pinnedOnly ? -1 : SPACE_CHANNEL_PAGE_SIZE + 1,
     ).toArray();
-    const hasMore = rows.length > SPACE_CHANNEL_PAGE_SIZE;
+    const hasMore = !pinnedOnly && rows.length > SPACE_CHANNEL_PAGE_SIZE;
     if (hasMore) rows.pop();
     const last = rows.at(-1);
     return {

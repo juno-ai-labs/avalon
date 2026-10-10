@@ -9331,6 +9331,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           return { kind: "thread", placedAt, attentionSequenceNumber, thread: WorkstreamSchema.parse(thread) };
         }),
         nextCursor: page.nextCursor,
+        latestAttentionSequenceNumber: page.latestAttentionOrdinal,
       },
     });
   }
@@ -9344,9 +9345,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!viewer) return { ok: false, code: "space_access_denied" };
     const page = this.spaceStorage().participatingPage(viewer, request.cursor);
     if (page === "invalid_cursor") return { ok: false, code: "space_cursor_invalid" };
+    const pinnedPage = request.cursor !== null ? null
+      : this.spaceStorage().participatingPage(viewer, null, { pinnedOnly: true });
+    const pinned = pinnedPage === null || pinnedPage === "invalid_cursor" ? [] : pinnedPage.items;
     return WorkspaceMyThreadsResultSchema.parse({
       ok: true,
-      page: { items: this.conversationRows(viewer, request.workspaceId, page.items), nextCursor: page.nextCursor },
+      page: {
+        items: this.conversationRows(viewer, request.workspaceId, page.items),
+        nextCursor: page.nextCursor,
+        pinned: this.conversationRows(viewer, request.workspaceId, pinned),
+      },
     });
   }
 

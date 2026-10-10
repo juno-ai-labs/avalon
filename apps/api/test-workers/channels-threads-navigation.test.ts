@@ -417,6 +417,23 @@ describe("Channel read state", () => {
     expect(readState(await stats(MEMBER, channelId))).toEqual({ latest: 3, readThrough: 0, firstUnread: 1, hasUnread: true });
   });
 
+  it("given the newest placement since removed, when the member reads the feed and acknowledges what it says, then the Channel is read", async () => {
+    const channelId = await channelWithThreads();
+    const elsewhere = await reserveChannel("Elsewhere");
+    await place(elsewhere, PRIVATE_THREAD);
+    await removeMembership(workspace(), { workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId, workstreamId: PRIVATE_THREAD });
+
+    const page = await feed(channelId, MEMBER);
+    expect(page.items.map((item) => item.attentionSequenceNumber)).toEqual([1]);
+    expect(page.latestAttentionSequenceNumber).toBe(2);
+    await workspace().acknowledgeSpaceRead({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId,
+      readThroughSequenceNumber: page.latestAttentionSequenceNumber!, observedManualUnreadGeneration: 0,
+    });
+
+    expect(readState(await stats(MEMBER, channelId))).toEqual({ latest: 2, readThrough: 2, firstUnread: null, hasUnread: false });
+  });
+
   it("given a guest who reaches a Channel through a thread in it, when they read the stats, then the Channel is never unread for them", async () => {
     const channelId = await channelWithThreads();
     await publish(OPEN_THREAD, [viewerEffect(GUEST)]);
@@ -475,6 +492,20 @@ describe("Threads tab", () => {
       ["channel", OPEN_THREAD],
     ]);
     expect(page.items[0]).toMatchObject({ breakoutOf: { workstreamId: OPEN_THREAD, title: "Cold outreach" } });
+  });
+
+  it("given a pinned thread the person does not take part in, when they read the first page, then it comes back with the pins and nothing they only take part in does", async () => {
+    await channelWithThreads();
+    await openThreadObject(MEMBER_THREAD);
+    await publish(MEMBER_THREAD, [threadEffect("Launch plan"), viewerEffect(MEMBER, { isParticipant: false })]);
+    await publish(OPEN_THREAD, [viewerEffect(MEMBER)]);
+    await workspace().changePin({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, kind: "thread", itemId: MEMBER_THREAD, parentId: null, pinned: true,
+    });
+
+    const page = await myThreads(MEMBER);
+
+    expect(page.pinned.map((item) => [item.kind, item.id])).toEqual([["channel", MEMBER_THREAD]]);
   });
 });
 

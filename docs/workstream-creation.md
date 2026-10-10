@@ -318,7 +318,7 @@ Space if this is the first thing that ever needed it.
 
 **A Channel is born with the scope its caller asked for**, whichever Spaces it
 is born in: every Space is Organization-wide and grants no reader
-([`spaces.md`](spaces.md#every-space-is-organization-wide)). `POST /workstreams`
+([`spaces.md`](spaces.md#a-space-starts-organization-wide-and-grants-no-reader)). `POST /workstreams`
 asks for `workspace`, so a Channel somebody starts in Rally is public. An
 internal caller that names nothing gets the fail-closed `personal`, and one that
 names `personal` (a private Slack room, session import, a suggestion shown to
@@ -455,7 +455,7 @@ than whichever rejection landed first.
   reaches the object as an argument rather than a hardcoded `'workspace'`, and
   an internal create path that omits it gets `personal`. The request body
   carries no scope; `POST /workstreams` itself passes `workspace`, because [a
-  Space grants no reader](spaces.md#every-space-is-organization-wide) and a
+  Space grants no reader](spaces.md#a-space-starts-organization-wide-and-grants-no-reader) and a
   Channel a person starts in Rally is public. A create receipt the previous
   Worker hashed as `personal` is replayed by that `workspace` retry, never the
   other way round. An ingress reading a Slack room passes the room's privacy.

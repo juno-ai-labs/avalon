@@ -38,8 +38,10 @@ function summary(harnessStatus: WorkstreamSummary['harnessStatus'], id = workstr
 }
 
 describe('openWorkstreamId', () => {
-  it('names the channel the route has open', () => {
+  it('names the thread the route has open, alone or beside its Channel', () => {
     expect(openWorkstreamId(`/workstreams/${workstreamId}`)).toBe(workstreamId);
+    expect(openWorkstreamId(`/channels/general/threads/${workstreamId}`)).toBe(workstreamId);
+    expect(openWorkstreamId('/channels/general')).toBeNull();
   });
 
   it('decodes an escaped segment, and survives a malformed one', () => {

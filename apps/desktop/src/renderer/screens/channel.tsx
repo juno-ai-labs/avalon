@@ -17,6 +17,7 @@ import { RelativeTime } from '../components/relative-time';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { ChannelPaneContextValue, channelRoute, threadRoute, type ChannelPaneContext } from '../lib/navigation-routes';
+import { PaneVisibility } from '../lib/pane-visibility';
 import { desktopBridge } from '../lib/platform';
 import { CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY, channelFeedQueryKey } from '../lib/sidebar-list-store';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
@@ -89,7 +90,9 @@ function ChannelStack({ channelId, threadId, workspace }: {
     <SplitConversationLayout
       breakout={threadId === null ? null : <WorkstreamRoute key={threadId} />}
       breakoutWidth={threadWidth}
-      main={<ChannelPane channelId={channelId} openThreadId={threadId} workspace={workspace} />}
+      main={<PaneVisibility visible={shown !== 'breakout'}>
+        <ChannelPane channelId={channelId} openThreadId={threadId} workspace={workspace} />
+      </PaneVisibility>}
       mode={threadId === null ? 'main' : threadUsesTwoPanes ? 'breakout' : 'split'}
       onBreakoutWidthChange={changeThreadWidth}
       onNarrowChange={setNarrow}
@@ -184,8 +187,14 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
   // same gate a conversation's read acknowledgement uses. One request per
   // position in flight; a failure leaves the sidebar dot standing and is not
   // retried, so an unread Channel that will not clear is what gets noticed.
+  // The first page carries the Channel's latest number as it was read, which
+  // covers a newest placement since removed or archived: nothing listed shows
+  // it, and acknowledging only what is listed would leave the dot standing.
   const newestLoadedSequence = useMemo(() => Math.max(0, ...(feed.data?.pages ?? [])
-    .flatMap((page) => page.items.map((item) => item.attentionSequenceNumber))), [feed.data]);
+    .flatMap((page) => [
+      ...page.items.map((item) => item.attentionSequenceNumber),
+      page.latestAttentionSequenceNumber ?? 0,
+    ])), [feed.data]);
   // Subscribed rather than read once, so stats arriving after the feed (or a
   // mark made elsewhere) schedules the acknowledgement again. The sidebar owns
   // fetching this list; this pane only reads it.
