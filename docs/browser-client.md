@@ -175,8 +175,9 @@ A member can start every connection except those whose catalog entry in
 OAuth returns to a loopback listener in the Mac app's main process. A new
 connector is offered in both clients unless it is marked. A marked connector, in
 Settings and a conversation's connection card, is shown with its buttons
-disabled (reconnect included) and "Download the Mac app to connect this."
-linking to the Mac build. On a phone or tablet (`MAC_APP_DOWNLOADABLE` false) it
+disabled and "Download the Mac app to connect this." linking to the Mac build.
+An installed marked connection's Refresh is disabled too, with the same note as
+its tooltip, since reconnecting takes the same path. On a phone or tablet (`MAC_APP_DOWNLOADABLE` false) it
 reads "Connect this from the Mac app." with no link, since the build cannot run
 there. The mark is presentation only; the connection routes do not read it.
 
@@ -599,7 +600,8 @@ Substream Archive stays in the right-click menu, away from the header Share cont
 `desktopOnly` in the connector catalog, where it offered only the ones a served
 `browser-connectable-capabilities` list named (the two Google connections). The
 flag, its resolver and the `browserConnectableCapabilities` client field are
-gone. Canva carries the mark, and its reconnect is now gated too.
+gone. Canva carries the mark, and its reconnect, from the card or an installed
+connection's Refresh, is now gated too.
 
 **Why:** Every start route already returns to the browser's completion page, so
 the allowlist kept working connectors in the Mac app for no reason, and each new

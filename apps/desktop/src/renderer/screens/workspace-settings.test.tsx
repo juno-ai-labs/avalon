@@ -2522,6 +2522,26 @@ describe('Organization settings', () => {
     for (const button of within(canva).getAllByRole('button')) expect(button).toHaveAttribute('aria-disabled', 'true');
   });
 
+  it('keeps an installed desktop-only connection from refreshing in a browser', async () => {
+    sessionHost.current = 'browser';
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000011',
+      connectorType: 'canva',
+      scope: 'you',
+      displayName: 'Canva · adam@example.com',
+      capabilities: ['canva.personal.mcp'],
+      status: 'reconnect_required',
+    }]);
+    renderSettings();
+    openSettingsSection('Connections');
+
+    await openConnection('Canva · adam@example.com');
+    const refresh = await screen.findByRole('button', { name: 'Refresh Canva · adam@example.com' });
+    expect(refresh).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(refresh);
+    expect(screen.queryByRole('dialog', { name: 'Refresh Canva · adam@example.com?' })).toBeNull();
+  });
+
   it('offers browser notifications in a browser and says when this browser cannot show them', async () => {
     sessionHost.current = 'browser';
     api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));

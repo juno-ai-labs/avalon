@@ -164,3 +164,9 @@ export function isOAuthConnectorProvider(
     && provider.provider !== 'generic_webhook'
     && provider.provider !== 'x';
 }
+
+/** Whether connecting `connectorType` needs the Mac app; a browser tab cannot start or refresh it. */
+export function isDesktopOnlyConnector(connectorType: string): boolean {
+  return connectorProviders.some((provider) =>
+    provider.provider === connectorType && 'desktopOnly' in provider && provider.desktopOnly);
+}
