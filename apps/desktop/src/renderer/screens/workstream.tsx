@@ -162,7 +162,9 @@ export function WorkstreamScreen(): React.JSX.Element {
     return (
       <ConversationOpeningSkeleton
         caption
-        label={row.pendingOrigin === 'import' ? 'Importing conversation…' : 'Creating thread…'}
+        label={row.pendingOrigin === 'import' ? 'Importing conversation…' : 'Starting…'}
+        openingAuthorId={row.createdByUserId}
+        openingMessage={row.pendingOrigin === 'import' ? undefined : row.objective}
         parentKind="workstream"
       />
     );

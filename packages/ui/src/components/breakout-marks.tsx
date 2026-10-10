@@ -4,6 +4,7 @@ import { IconCornerDownRight } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
 import { statusLabel } from '../lib/format';
+import { TitleSkeleton } from './primitives';
 
 /**
  * What a Channel's feed knows about one of its Breakouts: enough to place it
@@ -24,6 +25,8 @@ export interface BreakoutMark {
   needsAttention?: boolean | undefined;
   /** The Breakout's run is paused on a question only it can answer. */
   needsInput?: boolean | undefined;
+  /** Rally is still choosing its title: a skeleton stands in, as in its title pill. */
+  naming?: boolean | undefined;
 }
 
 /** Whether a Breakout has something its reader has not seen. */
@@ -90,7 +93,7 @@ export function BreakoutChipRow({ breakouts, onOpen, openSubstreamId }: {
       const open = breakout.substreamId === openSubstreamId;
       const news = breakoutNewsLabel(breakout);
       return <button
-        aria-label={[breakout.title, news, open && 'Open'].filter(Boolean).join(', ')}
+        aria-label={[breakout.naming ? 'Rally is naming this thread' : breakout.title, news, open && 'Open'].filter(Boolean).join(', ')}
         aria-pressed={open}
         className={clsx('breakout-chip', open && 'is-open', news && 'has-news')}
         key={breakout.substreamId}
@@ -98,7 +101,7 @@ export function BreakoutChipRow({ breakouts, onOpen, openSubstreamId }: {
         type="button"
       >
         <IconCornerDownRight aria-hidden="true" className="breakout-chip-icon" size={13} stroke={1.9} />
-        <span className="breakout-chip-title">{breakout.title}</span>
+        <span className="breakout-chip-title">{breakout.naming ? <TitleSkeleton className="breakout-chip-skeleton" /> : breakout.title}</span>
         {breakout.needsInput
           ? <span className="breakout-chip-badge">{news}</span>
           : news && <span className="breakout-chip-news">· {news}</span>}

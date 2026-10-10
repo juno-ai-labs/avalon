@@ -240,6 +240,8 @@ export function ChannelComposer({ channelId, channelName, channelScope, workspac
       scope: channelScope,
       harnessStatus: 'running',
       createdAt,
+      createdByUserId: workspace.currentUser.id,
+      objective: openingMessage,
     });
     void navigate(threadRoute(threadId, channelId));
     await create.mutateAsync({
