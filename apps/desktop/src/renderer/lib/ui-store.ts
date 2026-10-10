@@ -20,6 +20,8 @@ interface UiState {
   sidebarSection: SidebarSection;
   /** How the Threads tab orders the threads nobody pinned; Recent until changed. */
   threadSort: SidebarChannelSort;
+  /** How the Channels tab orders the Channels nobody pinned; A–Z until changed. */
+  channelSort: SidebarChannelSort;
   railOpen: boolean;
   railVariant: RailVariant;
   railWidth: number;
@@ -30,6 +32,7 @@ interface UiState {
   setSidebarWidth: (width: number) => void;
   setSidebarSection: (section: SidebarSection) => void;
   setThreadSort: (sort: SidebarChannelSort) => void;
+  setChannelSort: (sort: SidebarChannelSort) => void;
   openRail: (variant?: RailVariant) => void;
   closeRail: () => void;
   setRailVariant: (variant: RailVariant) => void;
@@ -54,6 +57,7 @@ const SIDEBAR_WIDTH_STORAGE_KEY = 'rally.sidebar-width';
 const RAIL_WIDTH_STORAGE_PREFIX = 'rally.rail-width';
 const SIDEBAR_SECTION_STORAGE_KEY = 'rally.sidebar-section';
 const THREAD_SORT_STORAGE_KEY = 'rally.sidebar-thread-sort';
+const CHANNEL_SORT_STORAGE_KEY = 'rally.sidebar-channel-sort';
 
 /** A device preference read once; storage that throws or holds junk reads as the fallback. */
 function loadPreference<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
@@ -111,6 +115,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   sidebarWidth: loadSidebarWidth(SIDEBAR_WIDTH_STORAGE_KEY, SINGLE_SIDEBAR_DEFAULT_WIDTH),
   sidebarSection: loadPreference<SidebarSection>(SIDEBAR_SECTION_STORAGE_KEY, ['channels', 'threads', 'activity'], 'channels'),
   threadSort: loadPreference<SidebarChannelSort>(THREAD_SORT_STORAGE_KEY, ['alphabetical', 'recent', 'needs_you'], 'recent'),
+  channelSort: loadPreference<SidebarChannelSort>(CHANNEL_SORT_STORAGE_KEY, ['alphabetical', 'recent', 'needs_you'], 'alphabetical'),
   railOpen: false,
   railVariant: 'context',
   railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, null),
@@ -130,6 +135,10 @@ export const useUiStore = create<UiState>((set, get) => ({
   setThreadSort: (threadSort) => {
     savePreference(THREAD_SORT_STORAGE_KEY, threadSort);
     set({ threadSort });
+  },
+  setChannelSort: (channelSort) => {
+    savePreference(CHANNEL_SORT_STORAGE_KEY, channelSort);
+    set({ channelSort });
   },
   openRail: (railVariant = 'context') => set({ railOpen: true, railVariant, inspector: null }),
   // The detail view is cleared when the rail is next opened rather than as it

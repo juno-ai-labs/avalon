@@ -1,5 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import type { SpaceSummary } from '@rally/contracts';
+import type { ChannelStats, ChannelStatsList, SpaceSummary } from '@rally/contracts';
 import { BreakoutChipRow, type BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { ChannelContainerMenu } from '@rally/ui/components/conversation-menus';
 import type { SidekickRow } from '@rally/ui/components/sidekick-section';
@@ -8,7 +8,7 @@ import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/c
 import { TitleMenuItem, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { IconLock, IconPlus } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
 
 import { ChannelComposer } from '../components/channel-composer';
@@ -18,11 +18,12 @@ import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { ChannelPaneContextValue, threadRoute, type ChannelPaneContext } from '../lib/navigation-routes';
 import { desktopBridge } from '../lib/platform';
-import { INACTIVE_SPACES_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY, channelFeedQueryKey } from '../lib/sidebar-list-store';
+import { CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY, channelFeedQueryKey } from '../lib/sidebar-list-store';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { WORKSTREAM_LANDING_ROUTE } from '../lib/workstream-landing';
 import type { AutomationSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { useSpaceDirectories } from '../lib/use-space-directories';
+import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { WorkstreamScreen } from './workstream';
 import type { PinList, SpaceDirectory } from '@rally/contracts';
@@ -110,6 +111,28 @@ type FeedRow =
   | { kind: 'thread'; placedAt: string; thread: WorkstreamSummary }
   | { kind: 'locked'; placedAt: string; threadId: string };
 
+/**
+ * What to acknowledge for a Channel the reader has open, or null when there is
+ * nothing to send: the newest loaded placement, when it is past the cached
+ * read position or a manual mark is standing (which this acknowledgement is
+ * what retires). The feed is read top to bottom down to now, so the newest
+ * placement is on screen when the Channel opens; there is no per-row
+ * visibility tracking, deliberately.
+ */
+export function channelReadAcknowledgement(
+  newestLoadedSequence: number,
+  stats: Pick<ChannelStats, 'readThroughSequenceNumber' | 'manualUnreadFromSequenceNumber' | 'manualUnreadGeneration'>,
+): { readThroughSequenceNumber: number; observedManualUnreadGeneration: number } | null {
+  if (newestLoadedSequence === 0) return null;
+  if (newestLoadedSequence <= stats.readThroughSequenceNumber && stats.manualUnreadFromSequenceNumber === null) return null;
+  return { readThroughSequenceNumber: newestLoadedSequence, observedManualUnreadGeneration: stats.manualUnreadGeneration };
+}
+
+/** Replace one Channel's row in the channel-stats cache. */
+function writeChannelStats(list: ChannelStatsList | undefined, channelId: string, write: (row: ChannelStats) => ChannelStats): ChannelStatsList | undefined {
+  return list?.map((row) => row.channelId === channelId ? write(row) : row);
+}
+
 function ChannelPane({ channelId, openThreadId, workspace }: {
   channelId: string;
   openThreadId: string | null;
@@ -142,6 +165,48 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
       ? { ...item, thread: liveById.get(item.thread.id) ?? item.thread }
       : item)];
   }, [channelId, feed.data, live.data, liveById]);
+  const queryClient = useQueryClient();
+  // The Channel is read while it is open in a focused, visible window: the
+  // same gate a conversation's read acknowledgement uses. One request per
+  // position in flight; a failure leaves the sidebar dot standing and is not
+  // retried, so an unread Channel that will not clear is what gets noticed.
+  const newestLoadedSequence = useMemo(() => Math.max(0, ...(feed.data?.pages ?? [])
+    .flatMap((page) => page.items.map((item) => item.attentionSequenceNumber))), [feed.data]);
+  // Subscribed rather than read once, so stats arriving after the feed (or a
+  // mark made elsewhere) schedules the acknowledgement again. The sidebar owns
+  // fetching this list; this pane only reads it.
+  const channelStats = useQuery<ChannelStatsList>({
+    queryKey: CHANNEL_STATS_QUERY_KEY,
+    queryFn: ({ signal }) => api!.getChannelStats(signal),
+    enabled: false,
+  });
+  const stats = channelStats.data?.find((row) => row.channelId === channelId);
+  const ackInFlight = useRef<string | null>(null);
+  // The pane stays mounted from one Channel to the next; coming back to one
+  // whose acknowledgement failed is opening it again, and may send again.
+  useEffect(() => { ackInFlight.current = null; }, [channelId]);
+  const acknowledgeRead = useCallback((): void => {
+    if (!api || !stats || document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    const pending = channelReadAcknowledgement(newestLoadedSequence, stats);
+    if (!pending) return;
+    const key = `${channelId}:${pending.readThroughSequenceNumber}:${pending.observedManualUnreadGeneration}`;
+    if (ackInFlight.current === key) return;
+    ackInFlight.current = key;
+    const previous = stats;
+    queryClient.setQueryData<ChannelStatsList>(CHANNEL_STATS_QUERY_KEY, (list) =>
+      writeChannelStats(list, channelId, (row) => ({ ...row, hasUnread: false })));
+    void api.acknowledgeChannelRead(channelId, pending.readThroughSequenceNumber, pending.observedManualUnreadGeneration)
+      .then((updated) => {
+        queryClient.setQueryData<ChannelStatsList>(CHANNEL_STATS_QUERY_KEY, (list) =>
+          writeChannelStats(list, channelId, () => updated));
+      })
+      .catch(() => {
+        // Put the dot back: the server did not record the read.
+        queryClient.setQueryData<ChannelStatsList>(CHANNEL_STATS_QUERY_KEY, (list) =>
+          writeChannelStats(list, channelId, (row) => ({ ...row, hasUnread: previous.hasUnread })));
+      });
+  }, [api, channelId, newestLoadedSequence, queryClient, stats]);
+  useVisibleReadAcknowledgement(acknowledgeRead);
   const members = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),

@@ -673,6 +673,12 @@ import {
   WorkspacePinOrderRequestSchema,
   WorkspacePinResultSchema,
   WorkspaceChannelStatsResultSchema,
+  WorkspaceSpaceReadRequestSchema,
+  type WorkspaceSpaceReadRequest,
+  WorkspaceSpaceReadResultSchema,
+  type WorkspaceSpaceReadResult,
+  WorkspaceSpaceUnreadRequestSchema,
+  type WorkspaceSpaceUnreadRequest,
   type WorkspaceChannelStatsResult,
   type WorkspaceChannelFeedResult,
   type WorkspaceMyThreadsRequest,
@@ -774,6 +780,8 @@ import {
   type SpaceConversationKey,
 } from "./workspace-space-storage";
 import { WorkspacePinStorage, WORKSPACE_PINS_MIGRATION } from "./workspace-pin-storage";
+import { type ChannelReadState, WORKSPACE_CHANNEL_READS_MIGRATION } from "./workspace-channel-read-storage";
+import { unreadState } from "./unread-state";
 import { WorkspaceActivityFeed } from "./workspace-activity-feed";
 import {
   PersonalSystemPromptReadRequestSchema,
@@ -4232,6 +4240,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "one pin table for threads, Channels and breakouts, and the Threads and Channel feed indexes",
   // The old pin tables stay and are still written; see workspace-pin-storage.ts.
   statements: WORKSPACE_PINS_MIGRATION,
+}, {
+  version: 98,
+  description: "a Channel's unread waterline and each person's read position in it",
+  // Breakout-identical columns, advanced only by placing a thread; see
+  // workspace-channel-read-storage.ts and docs/spaces.md#channel-read-state.
+  statements: WORKSPACE_CHANNEL_READS_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -4493,13 +4507,15 @@ function directoryWorkstream(
   mainOpen = true,
 ): Workstream {
   const latest = Number(row.latest_attention_ordinal);
-  const seen = row.seen_attention_ordinal === null
-    ? Number(row.unread_tracking_start_ordinal)
-    : Number(row.seen_attention_ordinal);
   const manual = row.manual_unread_from_ordinal === null
     ? null
     : Number(row.manual_unread_from_ordinal);
-  const firstUnread = manual ?? (latest > seen ? Math.min(latest, seen + 1) : null);
+  const { readThrough: seen, firstUnread, hasUnread } = unreadState({
+    latest,
+    seen: row.seen_attention_ordinal === null ? null : Number(row.seen_attention_ordinal),
+    trackingStart: Number(row.unread_tracking_start_ordinal),
+    manual,
+  });
   const titleStatus = settledTitleStatus(row.title_status, row.source_created_at);
   const participantPreview = row.scope === "personal"
     ? preview
@@ -4518,7 +4534,7 @@ function directoryWorkstream(
     readThroughSequenceNumber: seen,
     manualUnreadFromSequenceNumber: manual,
     manualUnreadGeneration: Number(row.manual_unread_generation ?? 0),
-    hasUnread: firstUnread !== null,
+    hasUnread,
     youAreMentioned: Number(row.latest_mention_attention_ordinal ?? 0) > seen,
     unseen: row.unseen === 1,
     firstUnreadSequenceNumber: firstUnread,
@@ -4596,13 +4612,14 @@ function withoutMainState(state: ChannelViewerState | undefined): Partial<Channe
  * The derivations are `directoryWorkstream`'s, against the breakout tables:
  * the unread waterline falls back to the conversation's own
  * `unread_tracking_start_ordinal` when this person has no viewer row, and a
- * mention counts only above that waterline. They are written out rather than
- * shared with that function because the two read different tables and the
- * columns a Channel row has that a breakout does not — a pin, a visit, an
- * email address, a facepile, a wake-up — are exactly the fields a breakout
- * answers with their empty value. What *is* shared is the decision that
- * matters: which of these rows appears at all, which the page query makes with
- * one predicate rendered against both tables.
+ * mention counts only above that waterline. The unread derivation itself is
+ * the shared `unreadState`, which a Channel container's read state uses too.
+ * The rest is written out rather than shared with that function because the
+ * two read different tables and the columns a Channel row has that a breakout
+ * does not — a pin, a visit, an email address, a facepile, a wake-up — are
+ * exactly the fields a breakout answers with their empty value. What *is*
+ * shared is the decision that matters: which of these rows appears at all,
+ * which the page query makes with one predicate rendered against both tables.
  *
  * `id` is the substream id, because that is this conversation's identity. The
  * parent's id, the substream id again and the parent's title travel in
@@ -4639,13 +4656,15 @@ function breakoutConversation(
   spaceIds: readonly string[],
 ): SpaceConversation {
   const latest = Number(row.latest_attention_ordinal);
-  const seen = row.seen_attention_ordinal === null
-    ? Number(row.unread_tracking_start_ordinal)
-    : Number(row.seen_attention_ordinal);
   const manual = row.manual_unread_from_ordinal === null
     ? null
     : Number(row.manual_unread_from_ordinal);
-  const firstUnread = manual ?? (latest > seen ? Math.min(latest, seen + 1) : null);
+  const { readThrough: seen, firstUnread, hasUnread } = unreadState({
+    latest,
+    seen: row.seen_attention_ordinal === null ? null : Number(row.seen_attention_ordinal),
+    trackingStart: Number(row.unread_tracking_start_ordinal),
+    manual,
+  });
   return SpaceConversationSchema.parse({
     id: row.substream_id,
     workspaceId,
@@ -4662,7 +4681,7 @@ function breakoutConversation(
     readThroughSequenceNumber: seen,
     manualUnreadFromSequenceNumber: manual,
     manualUnreadGeneration: Number(row.manual_unread_generation ?? 0),
-    hasUnread: firstUnread !== null,
+    hasUnread,
     youAreMentioned: Number(row.latest_mention_attention_ordinal ?? 0) > seen,
     unseen: row.unseen === 1,
     firstUnreadSequenceNumber: firstUnread,
@@ -9307,8 +9326,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         items: page.items.map((item) => {
           const thread = item.openable ? threads.get(item.workstreamId) : undefined;
           const placedAt = iso(item.placedAt);
-          if (!thread) return { kind: "locked", placedAt, threadId: item.workstreamId };
-          return { kind: "thread", placedAt, thread: WorkstreamSchema.parse(thread) };
+          const attentionSequenceNumber = item.attentionOrdinal;
+          if (!thread) return { kind: "locked", placedAt, attentionSequenceNumber, threadId: item.workstreamId };
+          return { kind: "thread", placedAt, attentionSequenceNumber, thread: WorkstreamSchema.parse(thread) };
         }),
         nextCursor: page.nextCursor,
       },
@@ -9371,6 +9391,46 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const viewer = await this.spaceReader(request.workspaceId, request.userId);
     if (!viewer) return { ok: false, code: "space_access_denied" };
     return WorkspaceChannelStatsResultSchema.parse({ ok: true, stats: this.channelStatsFor(viewer) });
+  }
+
+  /**
+   * Acknowledge a Channel read through a placement, for this person alone.
+   *
+   * Answers the person's whole `ChannelStats` row for that Channel, and sends
+   * their other sockets the snapshot that carries the same row, the path a pin
+   * already takes, so a second window's dot clears without a new event kind.
+   */
+  async acknowledgeSpaceRead(input: WorkspaceSpaceReadRequest): Promise<WorkspaceSpaceReadResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceReadRequestSchema, input, "acknowledge_space_read");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return { ok: false, code: "space_access_denied" };
+    const read = this.spaceStorage().acknowledgeRead(
+      viewer,
+      request.spaceId,
+      request.readThroughSequenceNumber,
+      request.observedManualUnreadGeneration,
+    );
+    return this.spaceReadAnswer(viewer, request.spaceId, read);
+  }
+
+  /** Mark a Channel unread from its newest placement, for this person alone. */
+  async markSpaceUnread(input: WorkspaceSpaceUnreadRequest): Promise<WorkspaceSpaceReadResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceUnreadRequestSchema, input, "mark_space_unread");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return { ok: false, code: "space_access_denied" };
+    return this.spaceReadAnswer(viewer, request.spaceId, this.spaceStorage().markUnread(viewer, request.spaceId));
+  }
+
+  private spaceReadAnswer(viewer: Viewer, spaceId: string, read: ChannelReadState | false): WorkspaceSpaceReadResult {
+    if (read === false) return { ok: false, code: "space_not_found" };
+    const stats = this.channelStatsFor(viewer, spaceId)[0];
+    if (!stats) return { ok: false, code: "space_not_found" };
+    this.publishSpaceSnapshot(viewer.userId);
+    return WorkspaceSpaceReadResultSchema.parse({ ok: true, stats });
   }
 
   /**
@@ -16732,11 +16792,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     };
   }
 
-  private channelStatsFor(viewer: Viewer): ChannelStats[] {
-    return this.spaceStorage().channelStats(viewer).map((stats) => ({
+  private channelStatsFor(viewer: Viewer, onlySpaceId?: string): ChannelStats[] {
+    return this.spaceStorage().channelStats(viewer, onlySpaceId).map((stats) => ({
       channelId: stats.spaceId,
       threadCount: stats.threadCount,
       lastActivityAt: iso(stats.lastActivityAt),
+      ...stats.read,
     }));
   }
 

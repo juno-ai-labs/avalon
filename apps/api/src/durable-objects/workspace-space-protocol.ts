@@ -9,6 +9,7 @@ import {
   ActivityPageSchema,
   ChannelFeedPageSchema,
   ChannelStatsListSchema,
+  ChannelStatsSchema,
   MyThreadsPageSchema,
   PinKindSchema,
   PinListSchema,
@@ -411,6 +412,30 @@ export const WorkspaceChannelStatsResultSchema = z.union([
   z.strictObject({ ok: z.literal(false), code: z.literal("space_access_denied") }),
 ]);
 export type WorkspaceChannelStatsResult = z.infer<typeof WorkspaceChannelStatsResultSchema>;
+
+/**
+ * Acknowledge or mark unread one Channel (storage Space) for one viewer. The
+ * acknowledgement carries the thread acknowledgement's two fields
+ * (`AcknowledgeWorkstreamReadRequestSchema`); a mark-unread carries neither.
+ */
+export const WorkspaceSpaceReadRequestSchema = SpaceActorSchema.extend({
+  spaceId: SpaceIdSchema,
+  readThroughSequenceNumber: z.number().int().nonnegative(),
+  observedManualUnreadGeneration: z.number().int().nonnegative(),
+}).strict();
+export type WorkspaceSpaceReadRequest = z.infer<typeof WorkspaceSpaceReadRequestSchema>;
+
+export const WorkspaceSpaceUnreadRequestSchema = SpaceActorSchema.extend({
+  spaceId: SpaceIdSchema,
+}).strict();
+export type WorkspaceSpaceUnreadRequest = z.infer<typeof WorkspaceSpaceUnreadRequestSchema>;
+
+/** The viewer's `ChannelStats` row after the change, or `space_not_found` for a Channel they cannot list. */
+export const WorkspaceSpaceReadResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), stats: ChannelStatsSchema }),
+  z.strictObject({ ok: z.literal(false), code: z.enum(["space_access_denied", "space_not_found"]) }),
+]);
+export type WorkspaceSpaceReadResult = z.infer<typeof WorkspaceSpaceReadResultSchema>;
 
 export const WorkspaceChannelSpacesRequestSchema = SpaceActorSchema.extend({
   workstreamId: WorkstreamIdSchema,

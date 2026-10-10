@@ -56,11 +56,23 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   and **Restart to update** when one is downloaded.
 
 **Channels**: what the person pinned, in their order (drag to reorder), then
-every other Channel they may see, A to Z. Each row is the Channel's mark, its
+every other Channel they may see, ordered **A–Z** (default), **Recent** (newest
+activity first, a Channel with none last) or **Needs attention** (unread first,
+then a Channel holding a thread that needs this person, each group by Recent),
+cycled from the same heading control the Threads tab uses and kept per device
+(`rally.sidebar-channel-sort`). Each row is the Channel's mark, its
 name, a lock when it is private, the time of its newest listable thread, and
 "N threads" — both from `channelStats`, seeded by the socket's snapshot and
 read again (`GET /navigation/channel-stats`) when a placement nudge names a
-Channel. **+** opens New channel,
+Channel. A Channel with a thread placed in it since this person last had it
+open (`hasUnread` on its stats row) draws its name bold and a dot in the
+unread colour (`--av-sys-color-workstream-news`, the Activity tab's dot).
+Opening the Channel in a focused, visible window acknowledges the newest
+loaded placement's `attentionSequenceNumber` (`PATCH /spaces/:id/read-state`),
+under the same gate and debounce a conversation's read acknowledgement uses,
+and writes the answered stats row back over the cached one. A failed
+acknowledgement puts the dot back and is not retried until the Channel is
+opened again. **+** opens New channel,
 which names one; every Channel starts Organization-wide.
 
 **Threads**: what the person pinned (threads, then breakouts), then every
@@ -286,6 +298,9 @@ one list on screen and changes which list it is, so that reasoning holds.
 **Considered and rejected:** Keeping the Space pills as a filter over the
 Channels list: Spaces are hidden for now. A Channels list with a Recent sort
 and a "new threads" count: the product owner asked for A–Z only and no count.
+Within the same change that was revisited once a Channel gained its own unread
+state: a row now carries a dot rather than a count, and the sort control came
+back with A–Z as its default so the list still opens in the order asked for.
 
 **Consequences:** The attention count moved from a pop-out to the Threads
 button; its definition did not change. Old Space links redirect to the
