@@ -80,7 +80,7 @@ import {
 } from './transcript';
 import type { HarnessStatus, Message, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from './types';
 import { withDerivedUnread } from './workstream-state-store';
-import { evictCachedSubstream, patchCachedGeneratedIcon, patchCachedWorkstream, patchCachedWorkstreamAppearance, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY, workstreamDetailQueryKey } from './workstreams-cache';
+import { evictCachedSubstream, patchCachedGeneratedIcon, patchCachedWorkstream, patchCachedWorkstreamAppearance, setCachedWorkstreams, workstreamDetailQueryKey } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
 import {
   applyBreakoutAppearanceReceipt,
@@ -1647,7 +1647,6 @@ export function useWorkstreamSocket(
                 ],
           ),
         );
-        queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       } else if (event.type === 'loop_input_upserted') {
         queryClient.setQueryData<TranscriptOverlay[]>(
           overlaysQueryKey,
