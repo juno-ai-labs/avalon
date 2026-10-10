@@ -8351,6 +8351,13 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .split-conversation-pane.is-breakout.is-alone { flex: 1 1 0; max-width: none; }
 .split-conversation-pane.is-breakout.is-alone::before { content: none; }
 .split-conversation-pane[hidden] { display: none; }
+.split-conversation-pane[data-motion='enter'] { animation: split-pane-enter 240ms cubic-bezier(.22, 1, .36, 1); }
+.split-conversation-pane[data-motion='shift'] { animation: split-pane-shift 240ms cubic-bezier(.22, 1, .36, 1); }
+@keyframes split-pane-enter { from { opacity: 0; transform: translateX(24px); } }
+@keyframes split-pane-shift { from { transform: translateX(var(--split-motion-from, 0px)); } }
+@media (prefers-reduced-motion: reduce) {
+  .split-conversation-pane[data-motion] { animation: none; }
+}
 .split-conversation-pane > .conversation-layout { flex: 1; min-height: 0; }
 .split-conversation-resizer {
   cursor: col-resize;
