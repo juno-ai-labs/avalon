@@ -22,15 +22,12 @@ export const MAC_APP_CONNECT_NOTE = MAC_APP_DOWNLOADABLE
   : 'Connect this from the Mac app.';
 
 /**
- * Answers whether this client may start or refresh a connection of
- * `connectorType`. The Mac app may do any; a browser tab any but those marked
- * `desktopOnly` in the catalog, whose authorization needs something only the
- * Mac app has. A new connector is offered in both unless it is marked.
- * Presentation only: the connection routes do not read the mark.
+ * Whether this client may start or refresh a connection of `connectorType`.
+ * The Mac app may do any; a browser tab any but those marked `desktopOnly` in
+ * the catalog, whose authorization needs something only the Mac app has. A new
+ * connector is offered in both unless it is marked. Presentation only: the
+ * connection routes do not read the mark.
  */
-export function useConnectorStartAvailable(
-  session: ClientSession | null,
-): (connectorType: string) => boolean {
-  const browser = isCookieSession(session);
-  return (connectorType) => !browser || !isDesktopOnlyConnector(connectorType);
+export function connectorStartsHere(session: ClientSession | null, connectorType: string): boolean {
+  return !isCookieSession(session) || !isDesktopOnlyConnector(connectorType);
 }
