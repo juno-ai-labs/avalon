@@ -87,7 +87,7 @@ export function ManageAccessDialog({
   const directIsPublic = sources?.direct.scope === 'workspace';
   return (
     <Modal
-      description={`Who can read ${workstreamTitle}, and the spaces it is placed in.`}
+      description={`Who can read ${workstreamTitle}, and the channels it is placed in.`}
       footer={<Button onClick={() => onOpenChange(false)}>Done</Button>}
       onOpenChange={onOpenChange}
       open={open}
@@ -98,7 +98,7 @@ export function ManageAccessDialog({
           still loading for as long as it stayed open. */}
       {sources === undefined && access.isError
         ? <div className="manage-access-failed">
-          <InlineError>Who can see this channel couldn’t be loaded.</InlineError>
+          <InlineError>Who can see this thread couldn’t be loaded.</InlineError>
           <Button disabled={access.isFetching} onClick={() => void access.refetch()}>Try again</Button>
         </div>
         : sources === undefined
@@ -113,10 +113,10 @@ export function ManageAccessDialog({
                 ? <Globe2 aria-hidden="true" size={15} />
                 : <Lock aria-hidden="true" size={15} />}
               key="direct"
-              name="This channel"
+              name="This thread"
               sentence={directIsPublic
                 ? 'Everyone in the organization.'
-                : `Only the ${people(sources.direct.participantUserIds.length)} in the channel.`}
+                : `Only the ${people(sources.direct.participantUserIds.length)} in the thread.`}
             />
             {(sources.spaceIds as string[]).map((spaceId) => {
               const space = spaces.find((candidate) => candidate.id === spaceId);
@@ -126,14 +126,14 @@ export function ManageAccessDialog({
                   // reach only through this Channel, carries no control: the
                   // server refuses taking the Channel out of it by name.
                   action={space !== undefined && space.reach !== 'through_channel'
-                    ? <Button disabled={saving !== null} onClick={() => void run(spaceId, () => onRemoveFromSpace(spaceId))}>Remove from space</Button>
+                    ? <Button disabled={saving !== null} onClick={() => void run(spaceId, () => onRemoveFromSpace(spaceId))}>Remove from channel</Button>
                     : undefined}
                   failure={failures[spaceId]}
                   // Not the globe: in this dialog that means "everyone in the organization".
                   icon={space ? <SpaceIcon space={space} /> : <Layers aria-hidden="true" size={15} />}
                   key={spaceId}
-                  name={space?.name ?? 'A space you can’t see'}
-                  sentence="Placed in this space."
+                  name={space?.name ?? 'A channel you can’t see'}
+                  sentence="Placed in this channel."
                 />
               );
             })}

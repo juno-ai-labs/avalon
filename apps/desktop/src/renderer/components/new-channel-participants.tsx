@@ -304,7 +304,7 @@ export function NewChannelParticipants({
         )}
         {rosterOpen && (
           <div
-            aria-label="Participants in this channel"
+            aria-label="Participants in this thread"
             className="new-channel-popover new-channel-roster-list"
             ref={rosterListRef}
             role="group"

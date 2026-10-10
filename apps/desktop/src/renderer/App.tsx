@@ -109,7 +109,7 @@ function NotFoundScreen(): React.JSX.Element {
     <div className="screen-error-state screen-with-titlebar">
       <div className="screen-drag-strip window-drag" />
       <EmptyState
-        action={<Button onClick={() => openFirstWorkstream()}>Go to your channels</Button>}
+        action={<Button onClick={() => openFirstWorkstream()}>Go to your threads</Button>}
         description="This Rally view does not exist or is no longer available."
         title="Nothing here"
       />

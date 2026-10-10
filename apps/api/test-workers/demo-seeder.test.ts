@@ -168,7 +168,7 @@ describe("seeding a pack", () => {
       .bind("private-rejected-value", DEMO_PRIYA_ID).run();
     await expect(roomClient(seed, opened.workstreamId!, DEMO_MARCUS_ID).get()).rejects.toMatchObject({
       code: expect.stringMatching(/^workstream_product_invalid:participants\.[0-9]+\.user.createdAt:invalid_format/u),
-      message: "The work stream could not be loaded",
+      message: "The thread could not be loaded",
     });
   });
 

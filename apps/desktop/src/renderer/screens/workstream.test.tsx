@@ -198,7 +198,7 @@ describe('running channel message delivery', () => {
     );
 
     expect(screen.queryByRole('combobox', { name: 'Message delivery' })).not.toBeInTheDocument();
-    const composer = screen.getByRole('textbox', { name: 'Message the channel' });
+    const composer = screen.getByRole('textbox', { name: 'Message the thread' });
     fireEvent.change(composer, { target: { value: 'Add this context to the current conversation' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -587,16 +587,16 @@ describe('WorkstreamErrorState', () => {
       </Tooltip.Provider>,
     );
 
-    expect(screen.getByText('Channel could not be opened')).toBeInTheDocument();
+    expect(screen.getByText('Thread could not be opened')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(onRetry).toHaveBeenCalledOnce();
 
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'More channel actions' }), {
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More thread actions' }), {
       button: 0,
       ctrlKey: false,
     });
     const items = await screen.findAllByRole('menuitem');
-    expect(items.map((item) => item.textContent?.trim())).toEqual(['Copy channel ID']);
+    expect(items.map((item) => item.textContent?.trim())).toEqual(['Copy thread ID']);
 
     fireEvent.click(items[0]!);
     expect(copyText).toHaveBeenCalledWith('workstream-unopenable');
@@ -684,17 +684,17 @@ describe('RemoveParticipantDialog', () => {
   it('asks the reader whether to leave when they chose themselves, and shows a refusal in place', () => {
     render(
       <Tooltip.Provider>
-        <RemoveParticipantDialog failure="You are the last participant." member={jordan} noun="channel" onCancel={vi.fn()} onContinue={vi.fn()} pending={false} self />
+        <RemoveParticipantDialog failure="You are the last participant." member={jordan} noun="thread" onCancel={vi.fn()} onContinue={vi.fn()} pending={false} self />
       </Tooltip.Provider>,
     );
 
-    expect(screen.getByRole('heading', { name: 'Leave the channel?' })).toBeTruthy();
-    expect(screen.getByText('You will be taken off this channel. You keep access only if it’s public or a space you’re in includes it.')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Leave the thread?' })).toBeTruthy();
+    expect(screen.getByText('You will be taken off this thread. You keep access only if it’s public or a channel you’re in includes it.')).toBeTruthy();
     expect(screen.getByText('You are the last participant.')).toBeTruthy();
   });
 
   it('is closed while nobody is chosen', () => {
-    render(<RemoveParticipantDialog member={undefined} noun="channel" onCancel={vi.fn()} onContinue={vi.fn()} pending={false} self={false} />);
+    render(<RemoveParticipantDialog member={undefined} noun="thread" onCancel={vi.fn()} onContinue={vi.fn()} pending={false} self={false} />);
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 });

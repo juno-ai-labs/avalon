@@ -443,7 +443,7 @@ async function serveCurrent(
         stack: error instanceof Error ? (error.stack ?? null) : null,
       }).catch(() => undefined);
     }
-    return html(plainErrorPage("This artifact hit an error. Ask Rally in the work stream to fix it."), 500);
+    return html(plainErrorPage("This artifact hit an error. Ask Rally in the thread to fix it."), 500);
   }
 }
 

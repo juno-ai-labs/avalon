@@ -59,7 +59,7 @@ describe('organization search modal', () => {
   it('queries the selected source and opens the highlighted canonical result with Enter', async () => {
     const search = vi.fn(async () => ({ results: [result] }));
     const { onSelect, onOpenChange } = setup(search);
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['All', 'Messages', 'Links', 'Artifacts', 'Files', 'Channels']);
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['All', 'Messages', 'Links', 'Artifacts', 'Files', 'Threads']);
     fireEvent.click(screen.getByRole('tab', { name: 'Messages' }));
     const input = screen.getByRole('combobox');
     fireEvent.change(input, { target: { value: 'danil' } });
@@ -89,13 +89,13 @@ describe('organization search modal', () => {
     const search = vi.fn(async () => ({ results: [result] }));
     const { onSelectPlace, onOpenChange } = setup(search, PLACES);
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent))
-      .toEqual(['All', 'Messages', 'Links', 'Artifacts', 'Files', 'Channels', 'Spaces']);
-    fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
+      .toEqual(['All', 'Messages', 'Links', 'Artifacts', 'Files', 'Threads', 'Channels']);
+    fireEvent.click(screen.getByRole('tab', { name: 'Threads' }));
     const input = screen.getByRole('combobox');
     // Each Channel is followed by its Breakouts.
     fireEvent.change(input, { target: { value: 'ing' } });
     expect(screen.getAllByRole('option').map((option) => option.textContent))
-      .toEqual(['Pricing reviewChannel', 'Hiring planBreakout in Pricing review', 'HiringChannel']);
+      .toEqual(['Pricing reviewThread', 'Hiring planBreakout in Pricing review', 'HiringThread']);
     fireEvent.change(input, { target: { value: 'i' } });
     expect(screen.queryByRole('option')).not.toBeInTheDocument();
     fireEvent.change(input, { target: { value: 'plan' } });
@@ -104,7 +104,7 @@ describe('organization search modal', () => {
     for (const option of screen.getAllByRole('option')) expect(option.querySelector('svg.workstream-mark')).not.toBeNull();
     fireEvent.change(input, { target: { value: 'PLAN' } });
     expect(screen.getByRole('option').querySelector('strong')).toHaveTextContent('plan');
-    fireEvent.click(screen.getByRole('tab', { name: 'Spaces' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
     fireEvent.change(input, { target: { value: 'nothing' } });
     expect(screen.getByText('No results')).toBeVisible();
     fireEvent.change(input, { target: { value: 'launch' } });
@@ -125,7 +125,7 @@ describe('organization search modal', () => {
     expect(screen.queryByRole('option')).not.toBeInTheDocument();
     expect(screen.getByText('What are you looking for?')).toBeVisible();
     // The place tabs wait as well.
-    fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Threads' }));
     expect(screen.queryByRole('option')).not.toBeInTheDocument();
     expect(screen.getByText('What are you looking for?')).toBeVisible();
     fireEvent.click(screen.getByRole('tab', { name: 'All' }));
@@ -139,7 +139,7 @@ describe('organization search modal', () => {
       { kind: 'channel', id: channelId, name: 'Pricing review' },
       { kind: 'breakout', id: '00000000-0000-7000-8000-0000000000b4', channelId, channelName: 'Pricing review', name: 'Pricing tiers' },
     ] });
-    fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Threads' }));
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'pricing' } });
     const [channel, breakout] = screen.getAllByRole('option').map((option) => option.querySelector('.rally-search-result-icon')!.innerHTML);
     expect(breakout).toBe(channel);
@@ -154,7 +154,7 @@ describe('organization search modal', () => {
 
   it('highlights the matched letters of a name whose lowercase is longer', () => {
     setup(async () => ({ results: [] }), { channels: [{ kind: 'channel', id: '00000000-0000-7000-8000-0000000000c3', name: 'İİ Pricing' }] });
-    fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Threads' }));
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'pric' } });
     expect(screen.getByRole('option').querySelector('strong')).toHaveTextContent(/^Pric$/);
   });
@@ -165,7 +165,7 @@ describe('organization search modal', () => {
     const input = screen.getByRole('combobox');
     fireEvent.change(input, { target: { value: 'pric' } });
     // Places answer at once; content follows below them.
-    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Pricing reviewChannel', 'PricingSpace']);
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Pricing reviewThread', 'PricingChannel']);
     expect(screen.getByText('Searching…')).toBeVisible();
     // A listbox holds only options; the status line sits beside it.
     expect(screen.getByRole('listbox')).not.toContainElement(screen.getByText('Searching…'));

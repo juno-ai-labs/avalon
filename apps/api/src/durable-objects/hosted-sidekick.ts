@@ -637,7 +637,7 @@ export class HostedSidekick {
     if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
     await this.assertManager(row, request.actor);
     if (row.owning_room_archived_at !== null) {
-      throw new ApiError(409, "sidekick_room_archived", "The Channel that owns this Sidekick is archived");
+      throw new ApiError(409, "sidekick_room_archived", "The thread that owns this Sidekick is archived");
     }
     const revision = this.revision(row.current_definition_revision);
     if (!revision || revision.ready !== 1) {
@@ -762,7 +762,7 @@ export class HostedSidekick {
     if (row.lifecycle === "active") return;
     if (row.lifecycle !== "paused") throw new ApiError(409, "sidekick_not_paused", "Only a paused Sidekick can be resumed");
     if (row.owning_room_archived_at !== null) {
-      throw new ApiError(409, "sidekick_room_archived", "The Channel that owns this Sidekick is archived");
+      throw new ApiError(409, "sidekick_room_archived", "The thread that owns this Sidekick is archived");
     }
     const evaluators = this.storage.transactionSync(() => this.resumeFromPause(Date.now()));
     await this.host.afterRegistrations(this.sidekickId, row.accepted_definition_revision, evaluators);

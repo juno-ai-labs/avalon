@@ -189,7 +189,7 @@ export function BrowserImportWindow(): React.JSX.Element {
           // window lets go of the page rather than holding the modal forever.
           setRun(null);
           setMirror(null);
-          setFailure('The conversation was imported, but Rally could not open it. Find it in your Channels.');
+          setFailure('The conversation was imported, but Rally could not open it. Find it in your Threads.');
           return;
         }
       }
@@ -309,19 +309,19 @@ export function BrowserImportWindow(): React.JSX.Element {
       </>}
       onOpenChange={(open) => { if (!open) setPending(null); }}
       open={pending !== null}
-      title="Import channel"
+      title="Import thread"
     >
       <form className="space-create-form" onSubmit={(event) => { event.preventDefault(); startChannel(); }}>
         <label className="form-field">
-          <span>Space</span>
-          <DropdownSelect ariaLabel="Space" disabled={context?.spaceLocked === true} onValueChange={(value) => { setSpaceId(value); renewRequest(); }}
+          <span>Channel</span>
+          <DropdownSelect ariaLabel="Channel" disabled={context?.spaceLocked === true} onValueChange={(value) => { setSpaceId(value); renewRequest(); }}
             options={spaces.map((space) => ({ label: space.name, value: space.id }))} value={spaceId} />
         </label>
         <label className="form-field" htmlFor={nameId}>
-          <span>Name of channel</span>
+          <span>Name of thread</span>
           <input autoFocus id={nameId} maxLength={180} onChange={(event) => { setName(event.target.value); renewRequest(); }} required value={name} />
         </label>
-        {spaces.length === 0 && <InlineError>There is no Space to import into. Create one in Rally first.</InlineError>}
+        {spaces.length === 0 && <InlineError>There is no channel to import into. Create one in Rally first.</InlineError>}
       </form>
     </Modal>
   </div>;

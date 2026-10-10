@@ -161,7 +161,7 @@ function renderScreen(participant = false, cachedOwnedSidekicks?: WorkstreamAuto
  * are not buttons there.
  */
 async function openChannelMenu(): Promise<void> {
-  await openSidekicksIn('Channel menu: Investigate ENG-142');
+  await openSidekicksIn('Thread menu: Investigate ENG-142');
 }
 
 /** The open Breakout's pill, beside Main's; its child detail carries the same title. */
@@ -175,7 +175,7 @@ async function openSidekicksIn(pill: string): Promise<void> {
 }
 
 /** Closes the open pane menu from its own pill, which toggles it whatever level it is on. */
-async function closeMenu(pill: 'Channel' | 'Breakout'): Promise<void> {
+async function closeMenu(pill: 'Thread' | 'Breakout'): Promise<void> {
   fireEvent.pointerDown(screen.getByRole('button', { name: new RegExp(`^${pill} menu: `, 'u') }), { button: 0, ctrlKey: false });
   await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
 }
@@ -184,7 +184,7 @@ async function closeMenu(pill: 'Channel' | 'Breakout'): Promise<void> {
 async function openBreakoutBesideMain(): Promise<void> {
   fireEvent.click(screen.getByRole('link', { name: 'Switch child' }));
   expect(await screen.findByRole('button', { name: 'Breakout menu: Investigate ENG-142' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Channel menu: Investigate ENG-142' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Thread menu: Investigate ENG-142' })).toBeVisible();
 }
 
 /**
@@ -275,7 +275,7 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
     expect(await screen.findByLabelText('Main guide')).toBeVisible();
     expect(screen.getByLabelText('Shared guide')).toHaveAttribute('aria-description', 'Recommended Sidekick');
     expect(screen.queryByLabelText('Child guide')).not.toBeInTheDocument();
-    await closeMenu('Channel');
+    await closeMenu('Thread');
 
     await openBreakoutMenu();
     expect(await screen.findByLabelText('Child guide')).toBeVisible();
@@ -304,8 +304,8 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
   });
 
   it.each([
-    { attached: false, action: 'Recommend for this channel', expected: 'That Sidekick couldn’t be recommended.' },
-    { attached: true, action: 'Remove channel recommendation', expected: 'That Sidekick recommendation couldn’t be removed.' },
+    { attached: false, action: 'Recommend for this thread', expected: 'That Sidekick couldn’t be recommended.' },
+    { attached: true, action: 'Remove thread recommendation', expected: 'That Sidekick recommendation couldn’t be removed.' },
   ])('reports a rejected $action as that action', async ({ attached, action, expected }) => {
     const diagnostic = `provider rejected recommendation attached=${attached}`;
     const recommendation = { id: 'attached-1', name: 'Editorial guidance', description: 'Write clearly.', available: true };

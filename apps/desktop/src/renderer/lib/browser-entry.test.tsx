@@ -436,7 +436,7 @@ it('waits for the organization list before saying nothing has been shared', asyn
   expect(screen.queryByText(/is not part of an organization/u)).toBeNull();
   await act(async () => { finish!(Response.json({ workspaces: [] })); });
   expect(await screen.findByText('guest@example.test is not part of an organization, and nothing has been shared with it yet.')).toBeInTheDocument();
-  expect(screen.getByText('Ask a teammate to share a Channel or Breakout with you, or create a new organization.')).toBeInTheDocument();
+  expect(screen.getByText('Ask a teammate to share a thread or Breakout with you, or create a new organization.')).toBeInTheDocument();
 });
 
 it('starts Google sign-in for the page it was opened on and explains a declined one on return', async () => {

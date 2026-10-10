@@ -36,17 +36,17 @@ function PlaceIcon({ place }: { place: SearchPlace }): React.JSX.Element {
   return <WorkstreamMark appearance={place.appearance} id={place.id} size={18} />;
 }
 
-const placeSource = (place: SearchPlace) => place.kind === 'space' ? 'Space'
-  : place.kind === 'breakout' ? `Breakout in ${place.channelName}` : 'Channel';
+const placeSource = (place: SearchPlace) => place.kind === 'space' ? 'Channel'
+  : place.kind === 'breakout' ? `Breakout in ${place.channelName}` : 'Thread';
 type PlaceTab = 'channels' | 'spaces';
 type SearchTab = SearchCategory | PlaceTab;
 const isPlaceTab = (tab: SearchTab): tab is PlaceTab => tab === 'channels' || tab === 'spaces';
 const CONTENT_TABS: Array<{ id: SearchTab; label: string }> = [
   { id: 'all', label: 'All' }, { id: 'messages', label: 'Messages' },
   { id: 'links', label: 'Links' }, { id: 'artifacts', label: 'Artifacts' },
-  { id: 'files', label: 'Files' }, { id: 'channels', label: 'Channels' },
+  { id: 'files', label: 'Files' }, { id: 'channels', label: 'Threads' },
 ];
-const SPACES_TAB = { id: 'spaces', label: 'Spaces' } as const;
+const SPACES_TAB = { id: 'spaces', label: 'Channels' } as const;
 // The 360px body minus 16px padding, divided by a 52px two-line row plus 2px
 // gap. The list is the whole body until a pagination footer takes part of it.
 const SEARCH_VISIBLE_PAGE_SIZE = Math.ceil((360 - 16) / (52 + 2));

@@ -333,7 +333,7 @@ export class WorkstreamObjectCreationService {
     ).run());
     const receipt = await span.step("workstream.create.receipt.read", () => this.receipt(body.clientMessageId));
     if (!receipt && body.workstreamId) {
-      throw new ApiError(409, "workstream_id_unavailable", "This workstream id is already in use");
+      throw new ApiError(409, "workstream_id_unavailable", "This thread id is already in use");
     }
     if (!receipt || (receipt.request_hash !== requestHash && receipt.request_hash !== legacyRequestHash
       && !legacyScopeHashes.includes(receipt.request_hash))) {
@@ -394,7 +394,7 @@ export class WorkstreamObjectCreationService {
     const workstreamId = asWorkstreamId(receipt.workstream_id);
     const objective = body.objective
       ?? provisionalWorkstreamDescription(body.openingMessage, "Review the attached files");
-    const title = body.title ?? provisionalWorkstreamTitle(objective, "New work stream");
+    const title = body.title ?? provisionalWorkstreamTitle(objective, "New thread");
     const routeInput = {
       region: this.env.AVALON_REGION,
       workspaceId: this.auth.workspaceId,

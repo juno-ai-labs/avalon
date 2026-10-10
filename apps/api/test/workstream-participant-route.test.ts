@@ -62,7 +62,7 @@ describe("the participant removal route", () => {
       .mockRejectedValue(new ApiError(
         409,
         "workstream_participant_required",
-        "At least one participant must remain in this work stream",
+        "At least one participant must remain in this thread",
       ));
 
     const response = await routedApp().request(

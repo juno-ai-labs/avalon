@@ -97,7 +97,7 @@ describe("channel participant-added email", () => {
     );
 
     const body = sentBody(resend);
-    expect(String(body.text)).toContain("You were added to a channel in Rally.");
+    expect(String(body.text)).toContain("You were added to a thread in Rally.");
     expect(String(body.text)).toContain("Open in Rally: https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/");
     expect(String(body.html)).toContain(">Rally</td>");
     expect(String(body.html)).toContain("Open in Rally</a>");
@@ -118,8 +118,8 @@ describe("channel participant-added email", () => {
     // The heading already says it; repeating it two lines below is the bug this
     // covers, not a missing greeting.
     const html = String(sentBody(unnamed).html);
-    expect(html).toContain("You were added to a channel</h1>");
-    expect(html).not.toContain("You were added to a channel in Rally.");
+    expect(html).toContain("You were added to a thread</h1>");
+    expect(html).not.toContain("You were added to a thread in Rally.");
   });
 
   it("does not name a channel the naming agent has not named yet", async () => {
@@ -136,10 +136,10 @@ describe("channel participant-added email", () => {
     }, resend);
 
     const body = sentBody(resend);
-    expect(String(body.subject)).toBe("Adam <Admin> Injected started a channel with you");
+    expect(String(body.subject)).toBe("Adam <Admin> Injected started a thread with you");
     expect(String(body.text))
-      .toContain("started a channel in Research & Development and added you to it.");
-    expect(String(body.html)).toContain("You're in a new channel</h1>");
+      .toContain("started a thread in Research & Development and added you to it.");
+    expect(String(body.html)).toContain("You're in a new thread</h1>");
     // The opening line appears exactly once, as the objective, rather than
     // twice — once cut mid-sentence as a name and once whole.
     expect(String(body.text).split(opening)).toHaveLength(2);

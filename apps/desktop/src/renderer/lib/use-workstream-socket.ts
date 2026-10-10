@@ -771,7 +771,7 @@ export function useWorkstreamSocket(
   }, []);
   const createMessageRef = useRef<(input: CreateWorkstreamMessageInput) => Promise<AcceptedWorkstreamTurn>>(
     () => Promise.reject(new ApiError(
-      'The channel is not ready to receive messages.',
+      'The thread is not ready to receive messages.',
       409,
       'workstream_socket_unavailable',
     )),
@@ -802,7 +802,7 @@ export function useWorkstreamSocket(
     (inputIds) => reorderPendingInputsRef.current(inputIds),
     [],
   );
-  const setAppearanceRef = useRef<WorkstreamSocketConnection['setAppearance']>(() => Promise.reject(new Error('Channel is not connected')));
+  const setAppearanceRef = useRef<WorkstreamSocketConnection['setAppearance']>(() => Promise.reject(new Error('Thread is not connected')));
   const setAppearance = useCallback<WorkstreamSocketConnection['setAppearance']>((appearance) => setAppearanceRef.current(appearance), []);
   const stopHarnessRef = useRef<WorkstreamSocketConnection['stopHarness']>(
     () => Promise.reject(new ApiError(
@@ -831,7 +831,7 @@ export function useWorkstreamSocket(
     range: TranscriptRange;
     resumeAfterEventSequence: number;
   }) => Promise<TranscriptRangeResult>>(() => Promise.reject(new ApiError(
-    'The channel is not ready to load transcript ranges.',
+    'The thread is not ready to load transcript ranges.',
     409,
     'workstream_socket_unavailable',
   )));
@@ -857,7 +857,7 @@ export function useWorkstreamSocket(
       setSendReady(false);
       requestSnapshotRef.current = () => undefined;
       createMessageRef.current = () => Promise.reject(new ApiError(
-        'The channel is not ready to receive messages.',
+        'The thread is not ready to receive messages.',
         409,
         'workstream_socket_unavailable',
       ));
@@ -867,7 +867,7 @@ export function useWorkstreamSocket(
       reorderPendingInputsRef.current = () => Promise.reject(new ApiError(
         'The breakout is not ready to reorder queued messages.', 409, 'workstream_socket_unavailable',
       ));
-      setAppearanceRef.current = () => Promise.reject(new ApiError('The channel is not connected.', 409, 'workstream_socket_unavailable'));
+      setAppearanceRef.current = () => Promise.reject(new ApiError('The thread is not connected.', 409, 'workstream_socket_unavailable'));
       stopHarnessRef.current = () => Promise.reject(new ApiError(
         'The breakout is not ready to stop.', 409, 'workstream_socket_unavailable',
       ));
@@ -875,7 +875,7 @@ export function useWorkstreamSocket(
         'The breakout is not ready to retry.', 409, 'workstream_socket_unavailable',
       ));
       loadTranscriptRangeRef.current = () => Promise.reject(new ApiError(
-        'The channel is not ready to load transcript ranges.',
+        'The thread is not ready to load transcript ranges.',
         409,
         'workstream_socket_unavailable',
       ));
@@ -959,7 +959,7 @@ export function useWorkstreamSocket(
     ): Promise<SuccessfulSubstreamMutation> => {
       if (accessRevoked) {
         return Promise.reject(new ApiError(
-          'You can no longer access this channel.',
+          'You can no longer access this thread.',
           403,
           'workstream_access_revoked',
         ));
@@ -1150,7 +1150,7 @@ export function useWorkstreamSocket(
         ));
         if (closedByEffect || accessRevoked) {
           throw new ApiError(
-            'The channel is no longer available.',
+            'The thread is no longer available.',
             409,
             'workstream_socket_unavailable',
           );
@@ -1203,7 +1203,7 @@ export function useWorkstreamSocket(
     setAppearanceRef.current = (appearance) => {
       const command = { type: 'set_workstream_appearance' as const, operationId: uuidV7(), appearance };
       const result = appearanceQueue.then(async () => {
-        if (closedByEffect) throw new ApiError('The channel is no longer available.', 409, 'workstream_socket_unavailable');
+        if (closedByEffect) throw new ApiError('The thread is no longer available.', 409, 'workstream_socket_unavailable');
         const breakoutUpdate = substreamId === '0'
           ? null
           : captureBreakoutAppearanceUpdate(queryClient, parentId, substreamId, appearance);
@@ -1256,7 +1256,7 @@ export function useWorkstreamSocket(
     loadTranscriptRangeRef.current = (input): Promise<TranscriptRangeResult> => {
       if (closedByEffect || accessRevoked || socket?.readyState !== WebSocket.OPEN) {
         return Promise.reject(new ApiError(
-          'The channel connection is not ready to load transcript ranges.',
+          'The thread connection is not ready to load transcript ranges.',
           409,
           'workstream_socket_unavailable',
         ));
@@ -1283,7 +1283,7 @@ export function useWorkstreamSocket(
           window.clearTimeout(timeout);
           pendingTranscriptRanges.delete(requestId);
           reject(new ApiError(
-            'The channel connection could not send the transcript range request.',
+            'The thread connection could not send the transcript range request.',
             409,
             'workstream_socket_unavailable',
             error,
@@ -1415,7 +1415,7 @@ export function useWorkstreamSocket(
         // snapshot fence. A reconnect cannot answer them, so release callers
         // immediately into their existing retry-after-reconnect path.
         rejectPendingTranscriptRanges(
-          'The channel resynchronized while loading transcript ranges.',
+          'The thread resynchronized while loading transcript ranges.',
         );
         setActiveCompaction(event.activeCompaction);
         updateInferenceDelays(event.activeInferenceDelays);
@@ -2288,7 +2288,7 @@ export function useWorkstreamSocket(
           clearHeartbeat();
           clearStabilityTimer();
           rejectPendingTranscriptRanges(
-            'The channel connection closed while loading transcript ranges.',
+            'The thread connection closed while loading transcript ranges.',
           );
           pendingInputSnapshot = null;
           const contextAssemblyWasIncomplete = initialContextSnapshot !== null;
@@ -2307,7 +2307,7 @@ export function useWorkstreamSocket(
               cause: 'access_revoked',
             });
             rejectPendingSubstreamCommands(new ApiError(
-              'You can no longer access this channel.',
+              'You can no longer access this thread.',
               403,
               'workstream_access_revoked',
             ));
@@ -2333,7 +2333,7 @@ export function useWorkstreamSocket(
           } catch {
             if (socket === nextSocket) socket = null;
             rejectPendingTranscriptRanges(
-              'The channel connection failed while loading transcript ranges.',
+              'The thread connection failed while loading transcript ranges.',
             );
             pendingInputSnapshot = null;
             if (!closedByEffect) {
@@ -2440,7 +2440,7 @@ export function useWorkstreamSocket(
       openTrace?.end({ outcome: 'unmounted' });
       openTrace = null;
       createMessageRef.current = () => Promise.reject(new ApiError(
-        'The channel is no longer available.',
+        'The thread is no longer available.',
         409,
         'workstream_socket_unavailable',
       ));
@@ -2450,7 +2450,7 @@ export function useWorkstreamSocket(
       reorderPendingInputsRef.current = () => Promise.reject(new ApiError(
         'The breakout is no longer available.', 409, 'workstream_socket_unavailable',
       ));
-      setAppearanceRef.current = () => Promise.reject(new ApiError('The channel is not connected.', 409, 'workstream_socket_unavailable'));
+      setAppearanceRef.current = () => Promise.reject(new ApiError('The thread is not connected.', 409, 'workstream_socket_unavailable'));
       stopHarnessRef.current = () => Promise.reject(new ApiError(
         'The breakout is no longer available.', 409, 'workstream_socket_unavailable',
       ));
@@ -2458,11 +2458,11 @@ export function useWorkstreamSocket(
         'The breakout is no longer available.', 409, 'workstream_socket_unavailable',
       ));
       loadTranscriptRangeRef.current = () => Promise.reject(new ApiError(
-        'The channel is no longer available.',
+        'The thread is no longer available.',
         409,
         'workstream_socket_unavailable',
       ));
-      rejectPendingTranscriptRanges('The channel changed while loading transcript ranges.');
+      rejectPendingTranscriptRanges('The thread changed while loading transcript ranges.');
       rejectPendingSubstreamCommands(new ApiError(
         'The breakout changed while sending a command.',
         409,
