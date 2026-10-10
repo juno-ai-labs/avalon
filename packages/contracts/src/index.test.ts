@@ -343,6 +343,9 @@ describe("boundary contracts", () => {
       // something different by each, and an operator learns from this one that
       // the window Rally sized against is wrong.
       "context_length_exceeded",
+      // The model cannot read something the request carries; the remedy is
+      // the attachment or the model, not a retry and not a support ticket.
+      "model_input_unsupported",
       "tool_receipt_persistence_failed",
       "run_state_persistence_failed",
       // The two provider arms are separate on purpose: one says Avalon called
