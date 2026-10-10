@@ -63,15 +63,15 @@ message.
 
 ## Reaching other conversations
 
-Rally in a Channel works in that Channel. It does not go reading your other
-Channels. Two kinds of conversation can reach a little further, because their
+Rally in a Thread works in that Thread. It does not go reading your other
+Threads. Two kinds of conversation can reach a little further, because their
 job needs it:
 
-- **A Breakout** can read the main conversation of the Channel it branched
+- **A Breakout** can read the main conversation of the Thread it branched
   from. That way, Rally in a Breakout knows what the main thread decided
   without you copying it across. It can read, but not post there. (Breakouts
   are explained in [Breakouts](../03-spaces-and-breakouts/03-breakouts.md).)
-- **A Sidekick** can read and post to its home Channel or Breakout and to any
+- **A Sidekick** can read and post to its home Thread or Breakout and to any
   conversation attached to it. This is how a Sidekick reports its results
   where the team will see them. See
   [Where a Sidekick's results go](../07-sidekicks/05-where-results-go.md).

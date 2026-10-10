@@ -20,7 +20,7 @@ Rally saves a sign-in on your Mac and renews it quietly while you use the app.
   the moment you signed in with Google.
 
 When either limit is reached, Rally asks you to sign in with Google again. Your
-Channels, settings and connections are still there afterwards. Only the
+Threads, settings and connections are still there afterwards. Only the
 sign-in was renewed.
 
 These limits exist so that a sign-in left on an old laptop, or copied from one,
@@ -39,7 +39,7 @@ sign in with a different Google account.
 
 There are two ways:
 
-- Click your avatar and name at the bottom of the sidebar to open the
+- Click your avatar at the bottom left of the window to open the
   account menu (the one from the
   [tour of the window](../01-getting-started/04-a-tour-of-the-window.md)), then
   choose **Log out**. (Some older layouts call it **Sign out**.)
@@ -62,7 +62,7 @@ People mix these two up, and they do different things.
 | | Signing out | Leaving an Organization |
 | --- | --- | --- |
 | Where it applies | This device only | Every device you use |
-| What you lose | Nothing; sign in again and everything is back | Access to that Organization's Channels and Spaces |
+| What you lose | Nothing; sign in again and everything is back | Access to that Organization's Threads and Channels |
 | How to undo it | Sign in with Google | Someone has to invite you again |
 
 Leaving is covered in

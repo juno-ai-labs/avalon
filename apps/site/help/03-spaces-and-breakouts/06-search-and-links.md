@@ -11,13 +11,13 @@ exact spot.
 
 Press <kbd>⌘</kbd> <kbd>⇧ Shift</kbd> <kbd>F</kbd> from anywhere in the main
 window, or click **Search organization** (the magnifying glass) at the top of
-the sidebar. A search window opens
+the sidebar's list. A search window opens
 over everything else.
 
 Start typing. Results appear after a short pause, with no need to press
 anything. Search looks through:
 
-- **Messages** in every Channel and Breakout you can read.
+- **Messages** in every Thread and Breakout you can read.
 - **Links** that people and Rally have shared in conversations.
 - **Artifacts**, the documents and files Rally has made.
 - **Files** that people have attached or brought in.
@@ -33,7 +33,7 @@ The tabs along the top, **All**, **Messages**, **Links**, **Artifacts** and
 
 Click a result, or move to it and press <kbd>Return</kbd>.
 
-- **A message** opens its Channel or Breakout and jumps to that exact message.
+- **A message** opens its Thread or Breakout and jumps to that exact message.
 - **A link** opens in your web browser.
 - **An artifact or a file** opens in a preview. See
   [Opening, docking and downloading](../06-things-rally-makes/02-opening-and-downloading.md).
@@ -55,8 +55,9 @@ Every shortcut in Rally is collected in
 
 - **Things you cannot read.** Search only shows results from conversations you
   have access to, and checks again when you open one.
-- **Spaces and Channels by name.** Search looks inside conversations, not at
-  their titles. To find a Channel by name, look in the sidebar.
+- **Channels and Threads by name.** Search looks inside conversations, not at
+  their titles. To find a Thread by name, open the **Threads** list and sort it
+  **A–Z**. Channels are listed from A to Z under **Channels**.
 - **Anything, while you are signed out.** The Search button is greyed out and the
   shortcut does nothing until you are signed in.
 
@@ -70,13 +71,12 @@ click **Retry loading more results**.
 
 ## Links to the right place
 
-Every Space, Channel, Breakout and Sidekick has a web link of its own. Send one
+Every Channel, Thread, Breakout and Sidekick has a web link of its own. Send one
 to a teammate and it opens Rally at exactly that place.
 
 | To copy a link to | Do this |
 | --- | --- |
-| A Space | Click **Copy space link** on the Space's page. |
-| A Channel | Click the Channel's name in its title pill and choose **Copy link**. |
+| A Thread | Click the Thread's name in its title pill and choose **Copy link**. |
 | A Breakout | Click the Breakout's name in its title pill and choose **Copy link**. |
 
 If the copy fails, Rally says so and you can try again.
@@ -84,8 +84,8 @@ If the copy fails, Rally says so and you can try again.
 The links are ordinary web addresses starting with `https://rallywith.ai/app/`,
 which beats a link only the app understands in two ways:
 
-- **They look right in other places.** Paste a Channel link in Slack and it
-  unfurls into a small card with the Channel's name and when it was last active.
+- **They look right in other places.** Paste a Thread link in Slack and it
+  unfurls into a small card with the Thread's name and when it was last active.
   While Rally is running in it, waiting for input, or has failed, the card shows
   that too. See [Rally in Slack](../08-rally-everywhere/01-rally-in-slack.md).
 - **They work in email and documents**, anywhere a normal link works.
@@ -93,13 +93,13 @@ which beats a link only the app understands in two ways:
 ### What happens when someone clicks one
 
 On a Mac with Rally installed, the link opens straight in the app. Otherwise it
-opens a short web page that says **Opening this channel in Rally** (or space,
+opens a short web page that says **Opening this thread in Rally** (or channel,
 breakout or sidekick) and hands over to the app a moment later. If nothing
 happens, click **Open Rally**. If Rally is not installed, the page says to
 install it and come back.
 
-On an iPhone, links to Channels and Breakouts open in the Rally app. Links to
-Spaces and Sidekicks ask you to use the Mac. See
+On an iPhone, links to Threads and Breakouts open in the Rally app. Links to
+Channels and Sidekicks ask you to use the Mac. See
 [Rally on your iPhone](../08-rally-everywhere/06-rally-on-iphone.md).
 
 If you belong to several Organizations and the link is for a different one,
@@ -108,7 +108,7 @@ Rally switches to that Organization first.
 > [!IMPORTANT]
 > A link is an address, not a key. Opening one uses the person's own Rally
 > account and permissions, so it grants nothing by itself. A teammate who cannot
-> see a private Channel still cannot see it after you send them the link. To let
+> see a private Thread still cannot see it after you send them the link. To let
 > them in, add them as a participant or follow
 > [Who can see what](04-who-can-see-what.md). For someone outside your
 > Organization, see [Sharing with people outside your Organization](05-sharing-with-guests.md).

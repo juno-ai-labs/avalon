@@ -39,7 +39,7 @@ described in
 
 Sometimes the quickest way for us to help is to see Rally the way one of your
 people sees it: set up a Sidekick for them, check why a connection fails, or
-tidy up a Space. **Allow Rally access** lets the Rally team do that for seven
+tidy up a Channel. **Allow Rally access** lets the Rally team do that for seven
 calendar days.
 
 Press **Grant access**. The row then counts down how long is left (**6 days
@@ -168,7 +168,7 @@ owners and administrators can:
 
 > [!IMPORTANT]
 > An Organization connection is shared in full. Every member can use every tool
-> it grants, in any Channel, and Rally acts with the account you connected it
+> it grants, in any Thread, and Rally acts with the account you connected it
 > with. Before you connect an account with wide access for the whole
 > Organization, ask whether a personal connection would do.
 

@@ -134,7 +134,7 @@ Who can email it depends on the Sidekick's scope.
 | Scope | Accepts mail from |
 | --- | --- |
 | **Only you** | Its owner |
-| **Organization** or **Channel** | The email address of any active member of the Organization |
+| **Organization** or **Thread** | The email address of any active member of the Organization |
 
 Mail from anyone else is refused. A paused Sidekick refuses all mail, and
 starts accepting it again when you resume it; the address stays the same.
@@ -150,5 +150,5 @@ Archiving a Sidekick retires its address for good.
 > see the Sidekick can see its address.
 
 Instructions-only Sidekicks have no email address, since they never run on
-their own. Every Channel has an address too, which works differently; see
+their own. Every Thread has an address too, which works differently; see
 [Email into Rally](../08-rally-everywhere/03-email-into-rally.md).

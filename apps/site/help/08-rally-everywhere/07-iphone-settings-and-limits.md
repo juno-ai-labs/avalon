@@ -5,7 +5,7 @@ nav_title: iPhone settings
 ---
 
 The iPhone app has a small Settings screen of its own. To open it, go to the
-**Channels** tab and tap the round avatar at the top left (VoiceOver calls it
+**Threads** tab and tap the round avatar at the top left (VoiceOver calls it
 **Organization and settings**). Tap **Done** to close it.
 
 ## What is in iPhone Settings
@@ -80,8 +80,8 @@ The iPhone app is for following and joining in. These all need the Mac app:
 
 | Job | On the Mac, see |
 | --- | --- |
-| Starting a new Channel | [Your first Channel](../01-getting-started/05-your-first-channel.md) |
-| Spaces: creating them, dashboards, pins, managing access | [Spaces](../03-spaces-and-breakouts/01-spaces.md) |
+| Starting a new Thread | [Your first Thread](../01-getting-started/05-your-first-channel.md) |
+| Channels: creating them, their feeds, pins and privacy | [Channels](../03-spaces-and-breakouts/01-spaces.md) |
 | Creating or editing Sidekicks | [Make a Sidekick](../07-sidekicks/02-make-a-sidekick.md) |
 | Connecting tools, GitHub repository access, custom MCP servers, inbound webhooks | [Settings → Connections](../05-connecting-your-tools/01-connections.md) |
 | Where Rally's code may reach on the internet | [Organization settings](../10-running-an-organization/03-organization-settings.md) |

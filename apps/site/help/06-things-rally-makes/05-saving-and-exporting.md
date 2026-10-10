@@ -41,11 +41,11 @@ Copying puts content on your clipboard, so it goes wherever you paste it next.
 
 ## Downloading files
 
-Any file in a Channel, whether you attached it or Rally made it, can be downloaded as the original file. See [Download the original file](02-opening-and-downloading.md#download-the-original-file).
+Any file in a Thread, whether you attached it or Rally made it, can be downloaded as the original file. See [Download the original file](02-opening-and-downloading.md#download-the-original-file).
 
 ## Sharing links
 
-- Click a Channel's or Breakout's name in its title pill and choose **Copy link**. A link opens that place in Rally, for people who are allowed to see it. Links are covered in [Search and links](../03-spaces-and-breakouts/06-search-and-links.md).
+- Click a Thread's or Breakout's name in its title pill and choose **Copy link**. A link opens that place in Rally, for people who are allowed to see it. Links are covered in [Search and links](../03-spaces-and-breakouts/06-search-and-links.md).
 - A live site has a public link that anyone can open. Read [Sharing a site, and who can see it](03-live-sites.md#sharing-a-site-and-who-can-see-it) before you send one.
 
 ## Every way content leaves Rally
@@ -59,7 +59,7 @@ If you look after your team's data, or someone has asked exactly where their inf
 | **Share** in a message's right-click menu (Mac) | The message's text | The app or person you share it with |
 | **Copy as CSV** on a live site's data | Up to 200 rows of a site's stored data | Wherever you paste it |
 | Download a file | The original file, on your Mac | Whoever you give the file to |
-| **Copy link** in a Channel's or Breakout's menu | A link only | Only people who can already see that place in Rally |
+| **Copy link** in a Thread's or Breakout's menu | A link only | Only people who can already see that place in Rally |
 | A live site's public link | The latest version of the site | Anyone who has the link |
 | Guests (see [Sharing with people outside your Organization](../03-spaces-and-breakouts/05-sharing-with-guests.md)) | The conversation you shared | The person you invited |
 

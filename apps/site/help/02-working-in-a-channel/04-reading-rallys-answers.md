@@ -66,7 +66,7 @@ Sections always start open. A smaller heading belongs to the section above it,
 so it folds along with it rather than on its own. Folding only changes what you
 see: copying and reading aloud always use the whole answer.
 
-Folding works in the Channel's conversation only. Documents open in side panels,
+Folding works in the Thread's conversation only. Documents open in side panels,
 and answers you save as an image or PDF, always show everything.
 
 ## Where did that come from?
@@ -78,7 +78,7 @@ Rally marks the sources it relied on, so you can check its work with one click.
   something like **example.com · Opens in your browser**. Click to open it.
 - Footnote pills. A numbered pill opens a small pop-up that links to a file
   or a web page.
-- File chips. A phrase can link straight to a file in the Channel. Click it
+- File chips. A phrase can link straight to a file in the Thread. Click it
   to open the file.
 - File cards. When Rally announces something new it made, such as a
   document, spreadsheet, image or site, it shows a card on its own line with an
@@ -117,7 +117,7 @@ how to share it, is in
 [Saving and sharing what Rally wrote](../06-things-rally-makes/05-saving-and-exporting.md).
 If a save fails, the button says **Image failed** or **PDF failed**.
 
-**New breakout** appears only in a Channel's main conversation, not inside a
+**New breakout** appears only in a Thread's main conversation, not inside a
 Breakout or a Sidekick's conversation. Breakouts are explained in
 [Breakouts](../03-spaces-and-breakouts/03-breakouts.md).
 
@@ -140,8 +140,8 @@ Right-click any message, yours, a teammate's or Rally's, for:
 
 Right-click a cited file or a file attached to a message and you may get a menu
 with actions for that file instead. Inside a Breakout, for example,
-right-clicking a file card Rally made there offers **Attach to channel**, which
-makes it part of the main Channel. It is greyed out if the file is already
+right-clicking a file card Rally made there offers **Attach to thread**, which
+makes it part of the main Thread. It is greyed out if the file is already
 there.
 
 ## Reading aloud
@@ -156,4 +156,4 @@ goes back to **Speak**, so try again.
 
 On iPhone, tap the speaker icon under a message.
 
-Next: the people you share a Channel with, in [People in the room](05-people-in-the-room.md).
+Next: the people you share a Thread with, in [People in the room](05-people-in-the-room.md).

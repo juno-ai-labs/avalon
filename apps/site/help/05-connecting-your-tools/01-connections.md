@@ -50,9 +50,9 @@ Each card shows the tool, a one-line description, and one of these words under i
 
 A card can have two buttons.
 
-**Connect for me** makes a personal connection. Rally signs in to the tool as you, sees what you can see there, and acts with your name on it. Nobody else in the Organization can use it. Being in a Channel with someone does not lend them your connections.
+**Connect for me** makes a personal connection. Rally signs in to the tool as you, sees what you can see there, and acts with your name on it. Nobody else in the Organization can use it. Being in a Thread with someone does not lend them your connections.
 
-**Connect for organization** makes one shared connection. Every member can ask Rally to use its tools in their Channels. It acts for the Organization, or as the one account the administrator signed in with when setting it up, never as the member who happened to ask. Only owners and administrators see this button.
+**Connect for organization** makes one shared connection. Every member can ask Rally to use its tools in their Threads. It acts for the Organization, or as the one account the administrator signed in with when setting it up, never as the member who happened to ask. Only owners and administrators see this button.
 
 Not every tool offers both. A card shows only the buttons that apply to it, and each page in this chapter says which ones its tool has. For example, Google Mail + Calendar, Canva and Fireflies are personal only, and X is Organization only.
 
@@ -65,7 +65,7 @@ For most tools, your web browser opens on that tool's own sign-in page, where yo
 A few tools ask for a key or an address instead of a browser sign-in. Their pages walk you through it.
 
 > [!WARNING]
-> A personal connection is private, but what Rally finds with it is not, once it is in a conversation. If you ask Rally to look something up in your personal Gmail inside a Channel your teammates share, they can read the answer. Use a Channel only you are in when the results are private.
+> A personal connection is private, but what Rally finds with it is not, once it is in a conversation. If you ask Rally to look something up in your personal Gmail inside a Thread your teammates share, they can read the answer. Use a Thread only you are in when the results are private.
 
 ### What Organization Sidekicks use
 
