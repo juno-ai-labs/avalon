@@ -23,7 +23,7 @@ describe('which pages run the PostHog SDK', () => {
 });
 
 describe('loading the PostHog script', () => {
-  it('releases held events with the page session when the script fails to load', async () => {
+  it.each(['error', 'load'])('releases held events with the page session when the script fires %s without providing one', async (settled) => {
     vi.resetModules();
     const sent: Array<{ sessionId?: string }> = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -46,7 +46,7 @@ describe('loading the PostHog script', () => {
     // Held until the script settles: nothing is sent while it is loading.
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(sent).toHaveLength(0);
-    script!.dispatchEvent(new Event('error'));
+    script!.dispatchEvent(new Event(settled));
 
     await vi.waitFor(() => expect(sent).toHaveLength(1));
     expect(sent[0]!.sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
