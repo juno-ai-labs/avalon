@@ -1918,7 +1918,7 @@ describe('WorkspaceSocketProvider', () => {
   // The Space dashboard's page is fetched, not pushed, so WorkspaceDO sends a
   // nudge naming the Spaces to read again rather than the rows. This is the
   // only thing that invalidates that entry while the screen is open.
-  it('invalidates only the named spaces when a dashboard nudge arrives', async () => {
+  it('invalidates only the named Channels\' feeds and the Threads list when a nudge arrives', async () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, {
       waterline: 1,
@@ -1976,14 +1976,15 @@ describe('WorkspaceSocketProvider', () => {
     }));
 
     const keys = invalidate.mock.calls.map(([filters]) => filters?.queryKey);
+    // The named Channels' feeds, and the Threads tab's list, which a
+    // placement can add to. A Channel the nudge did not name is a feed this
+    // change cannot have moved, and refetching it would be one wasted page
+    // read per message in the Organization.
     expect(keys).toEqual([
-      ['space-channels', '00000000-0000-7000-8000-0000000000f2'],
-      ['space-channels', '00000000-0000-7000-8000-0000000000f3'],
+      ['channel-feed', '00000000-0000-7000-8000-0000000000f2'],
+      ['channel-feed', '00000000-0000-7000-8000-0000000000f3'],
+      ['my-threads'],
     ]);
-    // A Space the nudge did not name is a dashboard this change cannot have
-    // moved, and refetching it would be one wasted page read per message in
-    // the Organization.
-    expect(keys).not.toContainEqual(['space-channels', '00000000-0000-7000-8000-0000000000f4']);
     expect(queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY)?.items[0]?.attentionCount).toBe(3);
   });
 

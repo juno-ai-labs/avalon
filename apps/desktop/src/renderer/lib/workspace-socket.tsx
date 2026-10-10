@@ -64,7 +64,6 @@ import {
   SIDEBAR_LIST_QUERY_KEYS,
   applyVersionedSpaceSnapshot,
   applyVersionedSidebarList,
-  spaceConversationsQueryKey,
   MY_THREADS_QUERY_KEY,
   channelFeedQueryKey,
 } from './sidebar-list-store';
@@ -1241,16 +1240,14 @@ export function WorkspaceSocketProvider({
             WorkspaceSpaceConversationsEventSchema, decoded,
           );
           if (spaceConversations.success) {
-            // The Space dashboard's page is the one list on that screen the
-            // socket does not carry, so the named Spaces are read again. The
+            // A Channel's feed is the one list on its screen the socket does
+            // not carry, so the named Channels' feeds are read again. The
             // count beside each id updates the sidebar without rebuilding the
             // whole Space directory. The only
             // coalescing is React Query's own in-flight dedupe — a burst of
             // messages in one Space costs one refetch while it is in flight,
             // and there is no timer here to tune.
             for (const spaceId of spaceConversations.data.spaceIds) {
-              void queryClient.invalidateQueries({ queryKey: spaceConversationsQueryKey(spaceId) });
-              // A Channel's feed is the same membership read in placement order.
               void queryClient.invalidateQueries({ queryKey: channelFeedQueryKey(spaceId) });
             }
             // A placement or attention change can add a thread this person
