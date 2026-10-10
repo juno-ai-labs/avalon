@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
 import { connectorRegistryForEnv, googleConnectorConfig } from "../src/lib/connector-registry";
-import { officeDocumentTextReader } from "../src/lib/office-document-text";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
 function env(overrides: Partial<Env> = {}): Env {
@@ -29,7 +28,6 @@ describe("separate Google OAuth clients", () => {
       clientId: "connector-client",
       clientSecret: "connector-secret",
       redirectUri: "https://api.with-avalon.com/connections/google/callback",
-      storedDocumentText: officeDocumentTextReader,
     });
     expect(connectorRegistryForEnv(input).list().map((manifest) => manifest.type)).toContain("google");
   });

@@ -1,5 +1,11 @@
 export { CANVA_POLL_SECONDS } from "./canva-polling";
 export { parseCanvaDesignReference } from "./canva-resource";
+export {
+  readConnectorDocument,
+  type ConnectorDocumentContent,
+  type ConnectorDocumentReader,
+  type ConnectorFile,
+} from "./documents";
 import { createCanvaConnector, type CanvaConnectorConfig } from "./canva";
 export { createCanvaConnector, CanvaCapabilities, CanvaAgentPluginDescriptor, type CanvaConnectorConfig } from "./canva";
 import { RegionSchema } from "@rally/contracts/regions";
@@ -31,6 +37,7 @@ import {
   type ResolvedConnectorAdapter,
 } from "./types";
 import { isProviderCredentialRejection, withProviderReauthorization } from "./provider-utils";
+import { readConnectorDocument, type ConnectorDocumentReader } from "./documents";
 import { instrumentConnectorAdapter, instrumentConnectorFetch } from "./observability";
 export {
   isProviderCredentialRejection,
@@ -335,31 +342,13 @@ export {
   type XConnectorConfig,
 } from "./x";
 
-/**
- * Turns a stored file the provider cannot export as text — a Word, Excel or
- * PowerPoint file kept in Drive — into model-readable text.
- *
- * The host supplies it rather than the adapter carrying a parser, so a file in
- * a provider's storage reads exactly as the same file uploaded as an
- * attachment: there is one converter, and it lives with the attachment
- * pipeline that already owns document conversion.
- */
-export interface StoredDocumentTextReader {
-  /** The largest source file `read` accepts. Larger files are not downloaded. */
-  maxSourceBytes: number;
-  /** Whether `read` understands this file, decided before downloading it. */
-  reads(mimeType: string, fileName: string): boolean;
-  /** The file's text, or the code naming why it could not be read. */
-  read(bytes: Uint8Array, mimeType: string, fileName: string): { ok: true; text: string } | { ok: false; code: string };
-}
-
 export interface GoogleConnectorConfig {
   clientId: string;
   clientSecret: string;
   redirectUri: string;
   fetch?: typeof globalThis.fetch;
-  /** Reads Office files in Drive. Without it they stay metadata-only. */
-  storedDocumentText?: StoredDocumentTextReader;
+  /** Reads stored files Drive cannot export as text, such as Office files and PDFs. */
+  documents?: ConnectorDocumentReader;
 }
 
 const googleScopes = {
@@ -2550,7 +2539,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           .then((response) => safeJsonBounded(response, GOOGLE_HYDRATION_RESPONSE_BYTES));
         return {
           ...sanitizeDriveFile(metadata),
-          ...await readDriveTextContent(api, connection, providerResourceId, metadata, signal, GOOGLE_MAX_HYDRATED_TEXT_BYTES, config.storedDocumentText)
+          ...await readDriveTextContent(api, connection, providerResourceId, metadata, signal, GOOGLE_MAX_HYDRATED_TEXT_BYTES, config.documents)
         };
       }
 
@@ -2564,7 +2553,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           .then((response) => safeJsonBounded(response, GOOGLE_HYDRATION_RESPONSE_BYTES));
         return {
           ...sanitizeDriveFile(metadata),
-          ...await readDriveTextContent(api, connection, providerResourceId, metadata, signal, GOOGLE_MAX_HYDRATED_TEXT_BYTES, config.storedDocumentText)
+          ...await readDriveTextContent(api, connection, providerResourceId, metadata, signal, GOOGLE_MAX_HYDRATED_TEXT_BYTES, config.documents)
         };
       }
 
@@ -2577,7 +2566,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         return {
           ...sanitizeDriveFile(payload),
           contentTruncated: false,
-          ...await readDriveTextContent(api, connection, providerResourceId, payload, signal, GOOGLE_MAX_HYDRATED_TEXT_BYTES, config.storedDocumentText)
+          ...await readDriveTextContent(api, connection, providerResourceId, payload, signal, GOOGLE_MAX_HYDRATED_TEXT_BYTES, config.documents)
         };
       }
 
@@ -3203,7 +3192,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             providerOperationId: args.fileId
           };
         }
-        const content = await readDriveTextContent(api, context.connection, args.fileId, payload, context.signal, GOOGLE_TOOL_TEXT_BYTES, config.storedDocumentText);
+        const content = await readDriveTextContent(api, context.connection, args.fileId, payload, context.signal, GOOGLE_TOOL_TEXT_BYTES, config.documents);
         return {
           output: boundedToolOutput({ ...metadata, ...content }),
           summary: content.textContent == null ? "Read Drive metadata; binary or large content was omitted" : "Read bounded Drive text content",
@@ -4634,13 +4623,22 @@ async function readDriveTextContent(
   metadata: Record<string, unknown>,
   signal: AbortSignal,
   maximumBytes: number,
-  storedDocumentText: StoredDocumentTextReader | undefined
+  documents: ConnectorDocumentReader | undefined
 ): Promise<Record<string, unknown> & { textContent: string | null }> {
   const mimeType = readString(metadata, "mimeType") ?? "application/octet-stream";
   const declaredSize = Number(readString(metadata, "size") ?? Number.NaN);
-  const fileName = readString(metadata, "name") ?? "";
-  if (storedDocumentText?.reads(mimeType, fileName)) {
-    return readDriveStoredDocument(api, connection, fileId, mimeType, fileName, declaredSize, signal, maximumBytes, storedDocumentText);
+  const file = { fileName: readString(metadata, "name") ?? "", mimeType, size: Number.isFinite(declaredSize) ? declaredSize : null };
+  const nativeOrText = mimeType === "application/vnd.google-apps.document"
+    || mimeType === "application/vnd.google-apps.spreadsheet"
+    || isTextLikeMimeType(mimeType);
+  if (!nativeOrText && documents?.reads(file)) {
+    return readConnectorDocument({
+      reader: documents,
+      file,
+      textBudgetBytes: maximumBytes,
+      signal,
+      download: () => api(connection, driveMediaUrl(fileId).toString(), { signal })
+    });
   }
   if (Number.isFinite(declaredSize) && declaredSize > maximumBytes) {
     return {
@@ -4694,61 +4692,11 @@ async function readDriveTextContent(
   }
 }
 
-/**
- * A stored Office file: download the original, convert it, and bound the text.
- *
- * The source is bounded by what the converter accepts, not by the text budget —
- * a deck is mostly images, so its file size says little about its text. The
- * text is then cut to the budget rather than refused, because the start of a
- * long workbook still answers most questions about it, and `contentTruncated`
- * says that more exists.
- */
-async function readDriveStoredDocument(
-  api: GoogleApiRequester,
-  connection: ConnectorConnectionContext,
-  fileId: string,
-  mimeType: string,
-  fileName: string,
-  declaredSize: number,
-  signal: AbortSignal,
-  maximumBytes: number,
-  reader: StoredDocumentTextReader
-): Promise<Record<string, unknown> & { textContent: string | null }> {
-  const tooLarge = {
-    textContent: null,
-    contentIncluded: false,
-    contentOmittedReason: `File exceeds the ${reader.maxSourceBytes}-byte document conversion limit`
-  };
-  if (Number.isFinite(declaredSize) && declaredSize > reader.maxSourceBytes) return tooLarge;
+function driveMediaUrl(fileId: string): URL {
   const url = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`);
   url.searchParams.set("alt", "media");
   url.searchParams.set("supportsAllDrives", "true");
-  let bytes: Uint8Array;
-  try {
-    bytes = await readBounded(await api(connection, url.toString(), { signal }), reader.maxSourceBytes);
-  } catch (error) {
-    if (error instanceof ConnectorError && error.code === "payload_too_large") return tooLarge;
-    throw error;
-  }
-  const converted = reader.read(bytes, mimeType, fileName);
-  if (!converted.ok) {
-    return {
-      textContent: null,
-      contentIncluded: false,
-      contentOmittedReason: `The file could not be read as a document: ${converted.code}`
-    };
-  }
-  const encoded = new TextEncoder().encode(converted.text);
-  if (encoded.byteLength <= maximumBytes) {
-    return { textContent: converted.text, contentIncluded: true, contentBytes: bytes.byteLength, contentTruncated: false };
-  }
-  return {
-    textContent: new TextDecoder().decode(encoded.subarray(0, maximumBytes)).replace(/\uFFFD$/u, ""),
-    contentIncluded: true,
-    contentBytes: bytes.byteLength,
-    contentTruncated: true,
-    contentNotice: `Only the first ${maximumBytes} bytes of the document's ${encoded.byteLength}-byte text are included`
-  };
+  return url;
 }
 
 function sanitizeCalendarDateTime(value: Record<string, unknown> | null): Record<string, unknown> {
@@ -5394,6 +5342,12 @@ export function createConnectorRegistry(input: {
   notion?: NotionConnectorConfig;
   slack?: SlackConnectorConfig;
   x?: XConnectorConfig;
+  /**
+   * The host's file converter, handed to every adapter that can reach a
+   * provider file. An adapter that adds a file read takes it here rather
+   * than parsing formats itself.
+   */
+  documents?: ConnectorDocumentReader;
 } = {}): ConnectorRegistry {
   const adapters: ConnectorAdapter[] = [createGenericWebhookConnector()];
   if (input.customMcp) adapters.push(createCustomMcpConnector({
@@ -5427,6 +5381,7 @@ export function createConnectorRegistry(input: {
   }));
   if (input.google) adapters.push(createGoogleConnector({
     ...input.google,
+    ...(input.documents ? { documents: input.documents } : {}),
     fetch: instrumentConnectorFetch(
       "google",
       input.google.fetch ?? globalThis.fetch,
@@ -5459,6 +5414,7 @@ export function createConnectorRegistry(input: {
   }));
   if (input.slack) adapters.push(createSlackConnector({
     ...input.slack,
+    ...(input.documents ? { documents: input.documents } : {}),
     fetch: instrumentConnectorFetch(
       "slack",
       input.slack.fetch ?? globalThis.fetch,

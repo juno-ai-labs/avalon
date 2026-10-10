@@ -1,4 +1,3 @@
-import type { StoredDocumentTextReader } from "@rally/connectors";
 import { unzipSync } from "fflate";
 
 /**
@@ -9,16 +8,10 @@ import { unzipSync } from "fflate";
  * Google Drive, are the same bytes and must read the same way. The converter
  * is pure — it takes bytes the caller has already authorized and fetched, and
  * owns only the archive and XML guards that make an untrusted file safe to
- * expand inside an isolate. Connectors reach it through
- * `officeDocumentTextReader`, which the registry hands to an adapter that
- * stores files.
+ * expand inside an isolate. Connectors reach it through the attachment
+ * converter, as `connectorDocumentReader`.
  */
 
-/**
- * The largest source file the converter is offered. Shared with the attachment
- * derivative's own source ceiling, which set this number first.
- */
-export const OFFICE_DOCUMENT_MAX_SOURCE_BYTES = 8 * 1_024 * 1_024;
 const MAX_EXPANDED_OFFICE_BYTES = 12 * 1_024 * 1_024;
 const MAX_OFFICE_XML_BYTES = 3 * 1_024 * 1_024;
 
@@ -60,22 +53,6 @@ export function officeDocumentFormat(mimeType: string | null, fileName: string):
   }
   return null;
 }
-
-/** The converter as a connector's stored-document reader. */
-export const officeDocumentTextReader: StoredDocumentTextReader = {
-  maxSourceBytes: OFFICE_DOCUMENT_MAX_SOURCE_BYTES,
-  reads: (mimeType, fileName) => officeDocumentFormat(mimeType, fileName) !== null,
-  read(bytes, mimeType, fileName) {
-    const format = officeDocumentFormat(mimeType, fileName);
-    if (!format) return { ok: false, code: "resource_format_unsupported" };
-    try {
-      return { ok: true, text: convertOfficeDocument(bytes, format).text };
-    } catch (error) {
-      if (error instanceof OfficeDocumentConversionError) return { ok: false, code: error.code };
-      throw error;
-    }
-  },
-};
 
 export function convertOfficeDocument(bytes: Uint8Array, format: OfficeDocumentFormat): OfficeDocumentText {
   if (format === "docx") return convertDocx(bytes);
