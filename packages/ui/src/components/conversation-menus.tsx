@@ -177,7 +177,7 @@ function openLevel(nav: ReturnType<typeof useTitleMenuNav>, view: TitleMenuView)
  */
 function PeopleView({ members, noun, people, presentUserIds }: {
   members: readonly WorkspaceMember[];
-  noun: 'channel' | 'breakout';
+  noun: 'thread' | 'channel' | 'breakout';
   people?: TitleMenuPeople | undefined;
   presentUserIds: readonly string[];
 }): React.JSX.Element {
@@ -518,7 +518,7 @@ export function ChannelMenu({
   const artifacts = workstream.resources.filter((resource) => resource.direction === 'artifact');
   const otherResources = workstream.resources.filter((resource) => resource.direction !== 'artifact');
   if (nav.view?.key === 'people') {
-    return <PeopleView members={workstream.participants} noun="channel" people={people} presentUserIds={presentUserIds} />;
+    return <PeopleView members={workstream.participants} noun="thread" people={people} presentUserIds={presentUserIds} />;
   }
   if (nav.view?.key === 'sidekicks') {
     return <SidekicksView addSidekick={addSidekick} failure={sidekickFailure} items={sidekicks} onMenuOpen={onSidekickMenuOpen} onOpen={onOpenSidekick} onRefresh={onRefreshSidekicks} />;
@@ -537,7 +537,7 @@ export function ChannelMenu({
       {onOpenResource && <ResourceList label="Resources" onOpen={onOpenResource} resources={otherResources} />}
       {actions?.onArchive && <>
         <TitleMenuSeparator />
-        <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onArchive?.(target)}>Archive channel</TitleMenuItem>
+        <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onArchive?.(target)}>Archive thread</TitleMenuItem>
       </>}
     </>;
   }
@@ -673,7 +673,7 @@ export function BreakoutMenu({
   }
   return <>
     <TitleMenuHeader
-      action={onShowInChannel && <TitleMenuLink onSelect={onShowInChannel}>Show in channel</TitleMenuLink>}
+      action={onShowInChannel && <TitleMenuLink onSelect={onShowInChannel}>Show in thread</TitleMenuLink>}
       eyebrow="Breakout of"
       icon={<WorkstreamMark appearance={channel.appearance} id={channel.id} size={20} />}
       title={channel.title}

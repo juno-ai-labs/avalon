@@ -26,7 +26,7 @@ describe('SidekickSection', () => {
     expect(marker.querySelector('.tabler-icon-carambola')).not.toBeNull();
     expect(screen.queryByText('Recommended')).toBeNull();
     fireEvent.pointerMove(marker, { pointerType: 'mouse' });
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Recommended for every breakout in this channel');
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Recommended for every breakout in this thread');
     expect(screen.getByRole('tooltip')).toHaveTextContent('isn’t automatically loaded');
   });
   it('opens a row and keeps removal in its right-click menu', () => {
@@ -52,7 +52,7 @@ describe('SidekickSection', () => {
       onRemoveRecommendation: remove }] });
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Editor' }));
     expect(screen.queryByRole('menuitem', { name: 'Remove from this breakout' })).toBeNull();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove channel recommendation' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove thread recommendation' }));
     expect(remove).toHaveBeenCalledOnce();
   });
 

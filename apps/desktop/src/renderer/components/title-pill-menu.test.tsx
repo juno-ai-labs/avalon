@@ -11,7 +11,7 @@ function renderChannelPill(overrides: Partial<React.ComponentProps<typeof Channe
     key: 'channel:c1',
     icon: null,
     title: 'Launch',
-    label: 'Channel menu: Launch',
+    label: 'Thread menu: Launch',
     menu: <ChannelMenu
       breakouts={[{ substreamId: 'b1', title: 'Pricing' }]}
       onOpenBreakout={vi.fn()}
@@ -25,7 +25,7 @@ function renderChannelPill(overrides: Partial<React.ComponentProps<typeof Channe
 }
 
 function openMenu(): void {
-  fireEvent.pointerDown(screen.getByRole('button', { name: 'Channel menu: Launch' }), { button: 0, ctrlKey: false });
+  fireEvent.pointerDown(screen.getByRole('button', { name: 'Thread menu: Launch' }), { button: 0, ctrlKey: false });
 }
 
 describe('a title pill menu with levels', () => {
@@ -45,20 +45,20 @@ describe('a title pill menu with levels', () => {
     openMenu();
     fireEvent.click(await screen.findByRole('menuitem', { name: /^Breakouts/u }));
 
-    expect(await screen.findByRole('button', { name: 'Channel menu: Launch, Breakouts' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Thread menu: Launch, Breakouts' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /Pricing/u })).toBeInTheDocument();
 
     // Escape returns to the root first; only a second Escape would close.
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     expect(await screen.findByRole('menuitem', { name: /^People/u })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Channel menu: Launch' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Thread menu: Launch' })).toBeInTheDocument();
   });
 
   it('goes back to the root from the breadcrumb’s first step, keeping the menu open', async () => {
     renderChannelPill();
     openMenu();
     fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
-    expect(await screen.findByRole('button', { name: 'Channel menu: Launch, More' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Thread menu: Launch, More' })).toBeInTheDocument();
 
     fireEvent.pointerDown(screen.getByText('Launch'), { button: 0 });
 
@@ -172,7 +172,7 @@ describe('a title pill menu with levels', () => {
     expect(onAdd).toHaveBeenCalledExactlyOnceWith(newcomer);
     await vi.waitFor(() => expect(onInvite).toHaveBeenCalledExactlyOnceWith(['new@guest.test', 'other@guest.test']));
     await vi.waitFor(() => expect(search).toHaveValue(''));
-    expect(screen.getByRole('button', { name: 'Channel menu: Launch, People' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Thread menu: Launch, People' })).toBeInTheDocument();
   });
 
   it('suggests people invited to the organization who have not joined, and invites one here with Add', async () => {
@@ -356,13 +356,13 @@ describe('a title pill menu with levels', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
 
     fireEvent.pointerDown(await screen.findByRole('button', { name: 'Jordan actions' }), { button: 0, ctrlKey: false });
-    const remove = await screen.findByRole('menuitem', { name: 'Remove from channel' });
+    const remove = await screen.findByRole('menuitem', { name: 'Remove from thread' });
     expect(remove).toHaveClass('menu-item-danger');
     fireEvent.click(remove);
     expect(onRemove).toHaveBeenCalledWith(colleague);
 
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Adam actions' }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Leave the channel' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Leave the thread' }));
     expect(onRemove).toHaveBeenLastCalledWith(member);
   });
 
@@ -373,7 +373,7 @@ describe('a title pill menu with levels', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
 
     fireEvent.pointerDown(await screen.findByRole('button', { name: 'Adam actions' }), { button: 0, ctrlKey: false });
-    expect(await screen.findByRole('menuitem', { name: 'Leave the channel' })).toHaveAttribute('data-disabled');
+    expect(await screen.findByRole('menuitem', { name: 'Leave the thread' })).toHaveAttribute('data-disabled');
   });
 
   it('keeps keyboard focus in the menu across levels, and returns it to the row it left', async () => {

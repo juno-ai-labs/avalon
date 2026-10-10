@@ -1591,7 +1591,7 @@ export class SlackAgentService {
       return;
     }
     if (resolution.outcome === "hold") {
-      throw new ApiError(503, "external_binding_held", "This Slack thread's Channel is still being created");
+      throw new ApiError(503, "external_binding_held", "This Slack thread's Rally thread is still being created");
     }
     if (resolution.outcome === "deliver" && resolution.target.parentKind === "automation") {
       await this.deliverToRunChild(connection, token, teamId, slackUserId, resolution.target, {
@@ -1819,7 +1819,7 @@ export class SlackAgentService {
         await slackApi(token, "chat.postMessage", {
           channel: channelId,
           client_msg_id: await stableUuid(`room-linked:${installationId}:${channelId}`),
-          text: "Rally is here. Mention @Rally in a thread to start work on it; each thread becomes a Channel in this conversation's Rally Space.",
+          text: "Rally is here. Mention @Rally in a thread to start work on it; each thread becomes a thread in this conversation's Rally channel.",
         }, AbortSignal.timeout(5_000));
       }
       return true;
@@ -2609,7 +2609,7 @@ export class SlackAgentService {
     // the objective, and leaving it to them is what lets the naming agent
     // replace it — a title supplied here would read as a deliberate choice.
     if (spawn && !input.identity && !spawn.spaceActorUserId) {
-      throw new ApiError(409, "external_room_space_actor_missing", "The linked Space has no member to place a Channel for this sender");
+      throw new ApiError(409, "external_room_space_actor_missing", "The linked channel has no member to place a thread for this sender");
     }
     const created = input.identity
       ? await new WorkstreamService(this.env, input.identity.auth).create({
@@ -4119,14 +4119,14 @@ function slackBindingLifecycleApplies(event: Record<string, unknown>, botUserId:
 function slackRoutingFailureText(reason: string): string {
   switch (reason) {
     case "space_archived":
-      return "This conversation's Rally Space is archived, so Rally did not start work here. A Rally admin can restore the Space in Rally.";
+      return "This conversation's Rally channel is archived, so Rally did not start work here. A Rally admin can restore the channel in Rally.";
     case "room_shared_externally":
-      return "This conversation is now shared with another organization, and its Rally Space holds this organization's own work, so Rally did not start work here.";
+      return "This conversation is now shared with another organization, and its Rally channel holds this organization's own work, so Rally did not start work here.";
     case "no_rally_member_in_private_room":
       return "Rally didn't start work here because nobody in this private conversation has a Rally account it can recognize yet. Connect your Rally account in App Home, then mention Rally again.";
     case "space_access_denied":
     case "space_not_found":
-      return "Rally couldn't open a Channel for this conversation in its Rally Space, because you can't open that Space in Rally yet. Connect your Rally account in App Home, or ask a member of the Space to add you, then mention Rally again.";
+      return "Rally couldn't open a thread for this conversation in its Rally channel, because you can't open that channel in Rally yet. Connect your Rally account in App Home, or ask a member of the Space to add you, then mention Rally again.";
     default:
       return `Rally couldn't start work here (${reason}). Mention Rally again to retry, or ask a Rally admin if it keeps happening.`;
   }

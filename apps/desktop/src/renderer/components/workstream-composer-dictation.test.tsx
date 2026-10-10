@@ -146,7 +146,7 @@ describe('WorkstreamComposer live dictation', () => {
       </Tooltip.Provider>,
     );
 
-    const input = screen.getByRole('textbox', { name: 'Message the channel' });
+    const input = screen.getByRole('textbox', { name: 'Message the thread' });
     fireEvent.change(input, { target: { value: 'Existing draft' } });
     fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
     await waitFor(() => expect(dictationHarness.start).toHaveBeenCalledOnce());
@@ -186,7 +186,7 @@ describe('WorkstreamComposer live dictation', () => {
       </Tooltip.Provider>,
     );
 
-    const input = screen.getByRole('textbox', { name: 'Message the channel' });
+    const input = screen.getByRole('textbox', { name: 'Message the thread' });
     fireEvent.change(input, { target: { value: 'Partial transcript' } });
     act(() => dictationHarness.setState?.('transcribing'));
 
@@ -222,7 +222,7 @@ describe('WorkstreamComposer live dictation', () => {
       </Tooltip.Provider>,
     );
 
-    const input = screen.getByRole('textbox', { name: 'Message the channel' });
+    const input = screen.getByRole('textbox', { name: 'Message the thread' });
     fireEvent.change(input, { target: { value: 'Final dictated message' } });
     act(() => dictationHarness.setState?.('finalizing'));
 
@@ -372,7 +372,7 @@ describe('WorkstreamComposer live dictation', () => {
 
     await waitFor(() => expect(screen.getByText('The dictation connection closed before transcription completed.')).toBeVisible());
     expect(onSend).not.toHaveBeenCalled();
-    expect(screen.getByRole('textbox', { name: 'Message the channel' })).toHaveValue('Draft the');
+    expect(screen.getByRole('textbox', { name: 'Message the thread' })).toHaveValue('Draft the');
   });
 
   it('lets the microphone cancel a send whose finalization never answers', async () => {
@@ -412,7 +412,7 @@ describe('WorkstreamComposer live dictation', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
     expect(onSend).not.toHaveBeenCalled();
     // The drain is left to finish on its own; the transcript stays in the draft.
-    expect(screen.getByRole('textbox', { name: 'Message the channel' })).toHaveValue('Draft the launch note');
+    expect(screen.getByRole('textbox', { name: 'Message the thread' })).toHaveValue('Draft the launch note');
     expect(dictationHarness.stop).toHaveBeenCalledOnce();
   });
 

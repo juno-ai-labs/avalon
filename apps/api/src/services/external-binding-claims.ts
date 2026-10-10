@@ -25,8 +25,8 @@ type ClaimStub = Pick<WorkspaceStub, "activateExternalConversationBinding" | "re
  */
 export function externalBindingRefusal(outcome: "held" | "bound"): ApiError {
   return outcome === "held"
-    ? new ApiError(503, "external_binding_held", "Another request is creating this conversation's Channel")
-    : new ApiError(409, "external_binding_bound", "This conversation is already bound to a Channel");
+    ? new ApiError(503, "external_binding_held", "Another request is creating this conversation's thread")
+    : new ApiError(409, "external_binding_bound", "This conversation is already bound to a thread");
 }
 
 /** The claim a completed creation made becomes the thread's route. */
@@ -49,7 +49,7 @@ export async function activateExternalBindingClaim(
   // Channel exists and holds its opening message, but nothing routes to it;
   // the log names it so it can be found.
   logWarn(env, "external_binding_activation_lost", { workspace_id: workspaceId, workstream_id: workstreamId });
-  throw new ApiError(409, "external_binding_bound", "This conversation is already bound to another Channel");
+  throw new ApiError(409, "external_binding_bound", "This conversation is already bound to another thread");
 }
 
 /**

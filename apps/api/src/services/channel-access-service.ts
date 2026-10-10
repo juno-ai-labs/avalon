@@ -149,7 +149,7 @@ export class ChannelAccessService {
       userId: asUserId(this.auth.userId),
     });
     if (!management.allowed) {
-      throw new ApiError(404, "workstream_not_found", "Work stream not found");
+      throw new ApiError(404, "workstream_not_found", "Thread not found");
     }
   }
 }
@@ -162,16 +162,16 @@ export function spaceAccessError(code: SpaceErrorCode, channelTitle: string): Ap
         `“${channelTitle}” holds retained content this audience cannot view`);
     case "space_audience_incompatible":
       return new ApiError(409, code,
-        `Everyone who can read “${channelTitle}” must still be able to find it through a Space`);
+        `Everyone who can read “${channelTitle}” must still be able to find it through a channel`);
     case "channel_scope_locked_by_space":
       return new ApiError(409, code,
-        `“${channelTitle}” is visible to the Organization through a Space, so it cannot be made private until it leaves that Space`);
+        `“${channelTitle}” is visible to the Organization through a channel, so it cannot be made private until it leaves that channel`);
     case "space_revision_conflict":
-      return new ApiError(409, code, "The Space changed while this was being applied; try again");
+      return new ApiError(409, code, "The channel changed while this was being applied; try again");
     case "space_not_found":
-      return new ApiError(404, code, "That Space no longer reaches this Channel");
+      return new ApiError(404, code, "That channel no longer reaches this thread");
     case "space_membership_final":
-      return new ApiError(409, code, `“${channelTitle}” must belong to at least one Space`);
+      return new ApiError(409, code, `“${channelTitle}” must belong to at least one channel`);
     case "space_protected":
       return new ApiError(409, code, "General cannot be archived or made private");
     case "space_default_audience_mismatch":
@@ -184,7 +184,7 @@ export function spaceAccessError(code: SpaceErrorCode, channelTitle: string): Ap
     // gate that refuses somebody reaching one through a Channel in it changing
     // it. The sentence has to be true of both.
     case "space_access_denied":
-      return new ApiError(403, code, "Your access to that space does not allow this");
+      return new ApiError(403, code, "Your access to that channel does not allow this");
     case "space_conversation_unreachable":
       return new ApiError(409, code,
         `“${channelTitle}” could not be asked whether this audience may read it`);
@@ -193,13 +193,13 @@ export function spaceAccessError(code: SpaceErrorCode, channelTitle: string): Ap
       // Space's own authority is what did not answer, and the reader is being
       // told why the Channel in front of them did not change.
       return new ApiError(503, code,
-        `The Space that reaches “${channelTitle}” could not be reached; try again`);
+        `The channel that reaches “${channelTitle}” could not be reached; try again`);
     // Reachable only because this map is exhaustive over the shared union. No
     // Channel access path is paginated, so no cursor reaches one, and no
     // Channel access path changes a Space's audience.
     case "space_cursor_invalid":
-      return new ApiError(400, code, "That page cursor is not one this Space issued");
+      return new ApiError(400, code, "That page cursor is not one this channel issued");
     case "space_audience_self_excluded":
-      return new ApiError(409, code, "A space cannot be made private without its own editor in it");
+      return new ApiError(409, code, "A channel cannot be made private without its own editor in it");
   }
 }

@@ -71,7 +71,7 @@ describe('Manage access', () => {
   it('given the access read failed, then it says so once, with a retry and no spinner', async () => {
     renderDialog(new Error('The access read did not answer'));
 
-    expect(await screen.findByText('Who can see this channel couldn’t be loaded.')).toBeVisible();
+    expect(await screen.findByText('Who can see this thread couldn’t be loaded.')).toBeVisible();
     expect(screen.queryByText('Loading access\u2026')).not.toBeInTheDocument();
 
     api.channelAccess.mockResolvedValue({
@@ -81,8 +81,8 @@ describe('Manage access', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
-    expect(await screen.findByText('Only the 1 person in the channel.')).toBeVisible();
-    expect(screen.queryByText('Who can see this channel couldn’t be loaded.')).not.toBeInTheDocument();
+    expect(await screen.findByText('Only the 1 person in the thread.')).toBeVisible();
+    expect(screen.queryByText('Who can see this thread couldn’t be loaded.')).not.toBeInTheDocument();
   });
 
   it('says who reads the channel from the channel alone, and lists each space it is placed in', async () => {
@@ -92,13 +92,13 @@ describe('Manage access', () => {
       spaceIds: [hiring.id, general.id],
     });
 
-    expect(await screen.findByText('Only the 2 people in the channel.')).toBeVisible();
+    expect(await screen.findByText('Only the 2 people in the thread.')).toBeVisible();
     // The description must not say the Spaces listed below can read it.
-    expect(screen.getByText('Who can read Quarterly planning, and the spaces it is placed in.')).toBeVisible();
+    expect(screen.getByText('Who can read Quarterly planning, and the channels it is placed in.')).toBeVisible();
     expect(screen.getByText('Hiring')).toBeVisible();
     expect(screen.getByText('General')).toBeVisible();
     // An Organization-wide Space beside it does not make it public.
-    expect(screen.getAllByText('Placed in this space.')).toHaveLength(2);
+    expect(screen.getAllByText('Placed in this channel.')).toHaveLength(2);
     expect(screen.queryByText(/Everyone in the organization/u)).not.toBeInTheDocument();
   });
 
@@ -110,8 +110,8 @@ describe('Manage access', () => {
       spaceIds: [unseen],
     });
 
-    expect(await screen.findByText('A space you can’t see')).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Remove from space' })).not.toBeInTheDocument();
+    expect(await screen.findByText('A channel you can’t see')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Remove from channel' })).not.toBeInTheDocument();
   });
 
   // A reader who can open this Channel is told the mark and name of every
@@ -125,7 +125,7 @@ describe('Manage access', () => {
     }, { spaces: [general, hiring, reached] });
 
     expect(await screen.findByText('Side work')).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Remove from space' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove from channel' })).not.toBeInTheDocument();
   });
 
   it('offers the public scope change on a private channel', async () => {
@@ -168,9 +168,9 @@ describe('Manage access', () => {
       },
     });
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove from space' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove from channel' }));
 
-    expect(await screen.findByText('Every channel needs a space, and this would leave one with none. Add it to another space first.'))
+    expect(await screen.findByText('Every thread needs a channel, and this would leave one with none. Add it to another channel first.'))
       .toBeVisible();
   });
 });

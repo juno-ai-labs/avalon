@@ -59,7 +59,7 @@ export function SessionImportUpdateDialog({ open, onClose, source, workstreamId 
     open={open}
     title="Import source updates"
   >
-    <p>Read this conversation again in Rally’s browser and add what changed to this channel.</p>
+    <p>Read this conversation again in Rally’s browser and add what changed to this thread.</p>
     {failure && <InlineError>{failure}</InlineError>}
   </Modal>;
 }

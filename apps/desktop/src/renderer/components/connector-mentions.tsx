@@ -199,7 +199,7 @@ export function ConnectorResourceAuthorizationCard({ request, latchedAuthorized 
       </div>
       {!succeeded && status === 'denied' ? <InlineError>Authorization was not granted. Try again when you’re ready.</InlineError> : null}
       {!succeeded && status === 'failed' ? <InlineError>Rally could not confirm the authorization. Try again.</InlineError> : null}
-      {!succeeded && !setup ? <InlineError>Open this channel in Rally desktop to authorize editing.</InlineError> : null}
+      {!succeeded && !setup ? <InlineError>Open this thread in Rally desktop to authorize editing.</InlineError> : null}
       {!succeeded && (personalOwnerRequired || connectionUnavailable) ? <InlineError>Only the owner of this connection can authorize editing.</InlineError> : null}
       {!succeeded && mutation.error && status !== 'failed' ? <InlineError>Rally could not start authorization. Try again.</InlineError> : null}
     </article>

@@ -96,8 +96,8 @@ describe('menu bar content', () => {
       breakouts: {},
     });
 
-    expect(content.recents[0]?.title).toBe('Untitled channel');
-    expect(content.attention[0]?.title).toBe('Untitled channel');
+    expect(content.recents[0]?.title).toBe('Untitled thread');
+    expect(content.attention[0]?.title).toBe('Untitled thread');
   });
 
   it('opens the Breakout for a Channel listed only through one, and leaves it out until its list arrives', () => {

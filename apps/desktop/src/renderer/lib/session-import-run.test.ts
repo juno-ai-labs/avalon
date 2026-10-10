@@ -446,7 +446,7 @@ describe('running an import', () => {
       confirmSocketTicket: vi.fn(),
       getSocketTicket: async () => ({ url: 'wss://rally.test/feed', ticket: 't', protocols: ['rally', 't'] as [string, string] }),
       discardSessionImport: async () => undefined,
-      completeSessionImport: async () => { throw new Error('This import key belongs to another channel'); },
+      completeSessionImport: async () => { throw new Error('This import key belongs to another thread'); },
       startSessionImportUpdate: unused,
       updateImportedSession: unused,
       importedSessionSource: unused,
@@ -470,6 +470,6 @@ describe('running an import', () => {
     socket.emit('message', wire('desktop_action_requested', { request: { id: 'a1', action: { kind: 'session_import.finish', title: 'Garden plan', messages: 'messages', verification } } }));
     await vi.waitFor(() => expect(socket.log.filter((entry) => entry === 'send answer_desktop_action')).toHaveLength(2), { timeout: 5_000 });
     socket.emit('message', wire('harness_status_changed', { status: 'completed' }));
-    await expect(run.done).resolves.toEqual({ kind: 'unfinished', refusal: 'This import key belongs to another channel' });
+    await expect(run.done).resolves.toEqual({ kind: 'unfinished', refusal: 'This import key belongs to another thread' });
   });
 });

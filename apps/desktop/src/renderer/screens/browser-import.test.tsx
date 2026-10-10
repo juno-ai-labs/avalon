@@ -63,14 +63,14 @@ describe('browser import window', () => {
     await waitFor(() => expect(harness.bridge.getBrowserImportContext).toHaveBeenCalled());
 
     fireEvent.click(screen.getByRole('button', { name: 'Import' }));
-    const sheet = await screen.findByRole('dialog', { name: 'Import channel' });
-    expect(within(sheet).getByRole('combobox', { name: 'Space' })).toHaveTextContent('Alpha');
+    const sheet = await screen.findByRole('dialog', { name: 'Import thread' });
+    expect(within(sheet).getByRole('combobox', { name: 'Channel' })).toHaveTextContent('Alpha');
 
     // Main reuses this window for an import started from Beta's channel list.
     harness.state.context = { spaces: [{ id: 'space-b', name: 'Beta' }], spaceLocked: true };
     await act(async () => { harness.state.contextChanged?.(); });
 
-    const picker = within(sheet).getByRole('combobox', { name: 'Space' });
+    const picker = within(sheet).getByRole('combobox', { name: 'Channel' });
     await waitFor(() => expect(picker).toHaveTextContent('Beta'));
     expect(picker).toBeDisabled();
     fireEvent.click(within(sheet).getByRole('button', { name: 'Import' }));
@@ -140,7 +140,7 @@ describe('browser import window', () => {
     render(<Tooltip.Provider><BrowserImportWindow /></Tooltip.Provider>);
     await waitFor(() => expect(harness.bridge.getBrowserImportContext).toHaveBeenCalled());
     fireEvent.click(screen.getByRole('button', { name: 'Import' }));
-    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Import channel' })).getByRole('button', { name: 'Import' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Import thread' })).getByRole('button', { name: 'Import' }));
     const progress = await screen.findByRole('dialog', { name: 'Importing conversation' });
 
     // Before the API answers there is no import to name.

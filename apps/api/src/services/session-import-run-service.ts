@@ -147,11 +147,11 @@ export class SessionImportRunService {
     ).bind(new Date().toISOString(), workspaceId, this.auth.userId, clientMessageId, workstreamId)
       .first<{ workstream_id: string }>();
     if (retired?.workstream_id !== workstreamId) {
-      throw new ApiError(409, "session_import_already_open", "This channel has already opened; archive it instead");
+      throw new ApiError(409, "session_import_already_open", "This thread has already opened; archive it instead");
     }
     const result = await (await this.parent()).discardReservedMain({ workspaceId, parentId: workstreamId, userId: this.auth.userId });
     if (result.status === "refused") {
-      throw new ApiError(409, `session_import_discard_${result.code}`, "This channel cannot be discarded");
+      throw new ApiError(409, `session_import_discard_${result.code}`, "This thread cannot be discarded");
     }
   }
 
@@ -159,7 +159,7 @@ export class SessionImportRunService {
   async startUpdate(workstreamId: string) {
     const client = new WorkstreamObjectClient(this.env, this.auth, workstreamId, "0");
     const recorded = await client.importedSessionSource();
-    if (!recorded?.url) throw new ApiError(409, "session_import_source_missing", "This channel has no updateable source session");
+    if (!recorded?.url) throw new ApiError(409, "session_import_source_missing", "This thread has no updateable source session");
     const checkpoint = await client.importedSessionCheckpoint();
     const source = browserConversationSource(recorded.url);
     await this.stopEarlierImports(workstreamId);
@@ -194,7 +194,7 @@ export class SessionImportRunService {
       createdByUserId: userId,
     }).catch((error: unknown) => {
       if (error instanceof Error && error.message === "workstream_archived") {
-        throw new ApiError(409, "workstream_archived", "This channel is archived");
+        throw new ApiError(409, "workstream_archived", "This thread is archived");
       }
       throw error;
     });
@@ -286,7 +286,7 @@ export class SessionImportRunService {
         WHERE workspace_id = ? AND creator_user_id = ? AND client_message_id = ?`,
     ).bind(this.auth.workspaceId, this.auth.userId, body.clientMessageId).first<{ workstream_id: string }>();
     if (receipt?.workstream_id !== workstreamId) {
-      throw new ApiError(409, "session_import_channel_mismatch", "This import key belongs to another channel");
+      throw new ApiError(409, "session_import_channel_mismatch", "This import key belongs to another thread");
     }
     const conversation = await prepareSessionImport(this.env, this.auth, body, body.clientMessageId);
     const created = await this.creation().openReservedImport(
@@ -295,7 +295,7 @@ export class SessionImportRunService {
       importIdentityHash(body.clientMessageId, browserConversationSource(body.source.url).url),
     );
     if (created.workstream.id !== workstreamId) {
-      throw new ApiError(409, "session_import_channel_mismatch", "This import key belongs to another channel");
+      throw new ApiError(409, "session_import_channel_mismatch", "This import key belongs to another thread");
     }
     return created;
   }

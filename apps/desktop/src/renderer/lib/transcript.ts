@@ -1180,7 +1180,7 @@ export function composeTranscript(
       || !Number.isSafeInteger(transcriptSequence)
       || transcriptSequence < 1
       || transcriptSequence < previousCanonicalSequence) {
-      throw new Error('Rally received an invalid transcript order. Reopen this channel.');
+      throw new Error('Rally received an invalid transcript order. Reopen this thread.');
     }
     previousCanonicalSequence = transcriptSequence;
     return !(

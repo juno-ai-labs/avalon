@@ -358,9 +358,9 @@ describe("Space refusals", () => {
       status: 409,
       message: expect.stringContaining("1 of its readers"),
     });
-    // Without a name in hand the sentence says "this Space" rather than
+    // Without a name in hand the sentence says "this channel" rather than
     // rendering an empty pair of quotation marks.
-    expect(spaceRefusal("space_membership_final", "").message).toContain("this Space");
+    expect(spaceRefusal("space_membership_final", "").message).toContain("this channel");
     expect(spaceRefusal("space_access_denied", "Company")).toBeInstanceOf(ApiError);
     expect(spaceRefusal("space_access_denied", "Company").status).toBe(403);
     expect(spaceRefusal("space_not_found", "Company").status).toBe(404);

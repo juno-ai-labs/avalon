@@ -209,7 +209,7 @@ export function startSessionImportRun(input: {
             ? await input.api.importedSessionSource(run.workstreamId)
             : { provider: conversation.provider, url: conversation.url, sessionId: conversation.id };
           if (!source || source.provider === 'claude_code') {
-            return { ok: false, code: 'import_rejected', message: 'This channel has no source conversation to update.' };
+            return { ok: false, code: 'import_rejected', message: 'This thread has no source conversation to update.' };
           }
           preview = assemblePreview(store, {
             title: input.mode.kind === 'create' ? input.mode.title : action.title,

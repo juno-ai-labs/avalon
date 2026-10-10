@@ -43,7 +43,7 @@ function sharingResult(input: ScopeInvitationResult) {
  */
 function channelScopeNotFound(error: unknown): never {
   if (error instanceof Error && error.message === "channel_parent_required") {
-    throw new ApiError(404, "scope_not_found", "That Channel could not be found");
+    throw new ApiError(404, "scope_not_found", "That thread could not be found");
   }
   throw error;
 }
@@ -102,7 +102,7 @@ sharingRoutes.post("/", requireWorkspaceAuth, zValidator("json", CreateRequestSc
   const auth = getWorkspaceAuth(c);
   const body = c.req.valid("json");
   if (body.targets.some((target) => target.workspaceId !== auth.workspaceId || target.parentId !== body.parentId)) {
-    throw new ApiError(400, "scope_address_mismatch", "Choose targets in this workstream");
+    throw new ApiError(400, "scope_address_mismatch", "Choose targets in this thread");
   }
   const request = CreateScopeInvitationsSchema.parse({ ...body, workspaceId: auth.workspaceId, actorUserId: auth.userId });
   const result = sharingResult(

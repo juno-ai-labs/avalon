@@ -27,7 +27,7 @@ export function breakoutResourceActions({ attach, breakoutResources, channelReso
     if (!resource) return undefined;
     return [{
       id: 'attach-to-channel',
-      label: 'Attach to channel',
+      label: 'Attach to thread',
       disabled: pending || inChannel.has(resource.id),
       onSelect: () => attach(resource),
     }];

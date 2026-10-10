@@ -1815,12 +1815,12 @@ describe('MessageBlock text context menu', () => {
     const citations = {
       open: vi.fn(),
       resolve: (resourceId: string) => (resourceId === site.id ? site : undefined),
-      actions: () => [{ id: 'attach-to-channel', label: 'Attach to channel', onSelect }],
+      actions: () => [{ id: 'attach-to-channel', label: 'Attach to thread', onSelect }],
     };
     render(<MessageBlock {...actions} citations={citations}
       message={{ ...agent, text: 'Updated the site.\n\n![Market map](resource://market-map)\n' }} />);
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Open Market map' }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Attach to channel' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Attach to thread' }));
     expect(onSelect).toHaveBeenCalledOnce();
     expect(screen.queryByRole('menuitem', { name: /^Copy$/ })).toBeNull();
   });
@@ -2696,7 +2696,7 @@ describe('the card proposing an automation drafted in this room', () => {
 
   it('says who will be able to manage it, which acceptance freezes', () => {
     render(<MessageBlock {...actions} message={proposal} />);
-    expect(screen.getByRole('group').textContent).toContain('This channel can manage it');
+    expect(screen.getByRole('group').textContent).toContain('This thread can manage it');
 
     const personal = { ...proposal, draftProposed: { ...proposal.draftProposed, suggestedScope: 'personal' as const } };
     const { unmount } = render(<MessageBlock {...actions} message={personal} />);
