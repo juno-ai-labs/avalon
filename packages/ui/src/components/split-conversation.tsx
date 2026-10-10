@@ -32,12 +32,19 @@ export function clampBreakoutWidth(requested: number, containerWidth: number): n
  * single pane neither reconnects a conversation nor loses its scroll. The host
  * owns persistence of the width; null means half.
  */
-export function SplitConversationLayout({ breakout, breakoutWidth, main, mode, onBreakoutWidthChange }: {
+export function SplitConversationLayout({ breakout, breakoutWidth, main, mode, onBreakoutWidthChange, onShownChange }: {
   breakout: ReactNode | null;
   breakoutWidth: number | null;
   main: ReactNode | null;
   mode: SplitConversationMode;
   onBreakoutWidthChange: (width: number) => void;
+  /**
+   * Which mode is actually drawn, which differs from `mode` when the window is
+   * too narrow for a split. A host nesting this layout one level up (a Channel
+   * beside its thread) reads it to know when the right pane stands alone and
+   * has to carry the left one as a breadcrumb.
+   */
+  onShownChange?: (shown: SplitConversationMode) => void;
 }): React.JSX.Element {
   const container = useRef<HTMLDivElement>(null);
   const [resizing, setResizing] = useState(false);
@@ -82,6 +89,7 @@ export function SplitConversationLayout({ breakout, breakoutWidth, main, mode, o
     };
   }, [onBreakoutWidthChange, resizing]);
   const shown: SplitConversationMode = mode === 'split' && narrow ? 'breakout' : mode;
+  useEffect(() => { onShownChange?.(shown); }, [onShownChange, shown]);
   const split = shown === 'split' && main !== null && breakout !== null;
   const style = breakoutWidth === null ? undefined : { '--split-breakout-width': `${breakoutWidth}px` } as CSSProperties;
   return <div className={clsx('split-conversation', resizing && 'is-resizing')} ref={container} style={style}>

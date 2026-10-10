@@ -396,6 +396,24 @@ has.
 "pin dual-write keeps both clients in step" to the old-to-new direction. Shipped
 in PR A.
 
+### 2026-10-10 — Sidekicks live in the title pill; a private channel's threads start private
+
+**Decided:** The Sidekick list is a level of the title pill's pop-out: a
+thread's and a breakout's pills keep the Sidekicks level they have, and the
+channel screen's pill gains one listing the channel's Sidekick defaults (the
+Space defaults of kind `sidekick`). A thread started in a private channel is
+visible only to the person who started it and whoever they mention. A thread
+started in an Organization-wide channel stays Organization-wide, as every new
+thread is today.
+
+**Why:** The product owner's answers to the two open questions. The sidebar
+never held a Sidekick list, so nothing moves out of it.
+
+**Changes:** Resolves both open questions. Space Sidekick defaults are kept
+rather than retired in the cleanup PR. `resolveSpaceWorkstreamStart` narrows a
+thread born in any private channel to private, for every creator (the
+composer, Slack rooms, Sidekick runs). Shipped in PR B.
+
 ## Key design decisions
 
 1. **Today's Space container is the new Channel.** It keeps the same rows
@@ -504,13 +522,3 @@ To back out B, revert it; A keeps serving the old client, and the pin
 dual-write keeps both clients' pins in step. A channel made private after B
 shipped stays private, and the old client must show it as a personal Space;
 A checks that its Space contract still parses that value before B merges.
-
-## Open questions
-
-1. **What audience does a thread started in a private channel default to?**
-   This PRD keeps today's default for a new Channel. If the answer is the
-   channel's members, the composer needs a new default and the thread a
-   starting grant, which changes key design decision 4's argument for locked
-   rows in private channels.
-2. **Where does the Sidekick list live?** Today it sits in the sidebar. The
-   section switcher has three sections and no place for it. Blocks B.
