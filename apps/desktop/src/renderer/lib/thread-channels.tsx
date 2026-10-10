@@ -4,7 +4,7 @@ import { markColors } from '@rally/ui/lib/project-palette';
 import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import { useAppSession } from './app-session';
+import { useCollaborationSession } from './collaboration-session';
 import { channelFeedQueryKey, MY_THREADS_QUERY_KEY } from './sidebar-list-store';
 import { spaceFailureSentence } from './space-failure-copy';
 import { useSpaceDirectories } from './use-space-directories';
@@ -20,7 +20,8 @@ import { workstreamDetailQueryKey } from './workstreams-cache';
  * for a guest, who sees where the thread sits and changes nothing.
  */
 export function useThreadChannels(threadId: string, spaceIds: readonly string[], writable: boolean): ThreadChannels | undefined {
-  const { api } = useAppSession();
+  // The same session the thread screen reads, so any host of that screen has it.
+  const { api } = useCollaborationSession();
   const queryClient = useQueryClient();
   const { active } = useSpaceDirectories();
   const [error, setError] = useState<string | null>(null);
