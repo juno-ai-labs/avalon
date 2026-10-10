@@ -1,18 +1,28 @@
-import type { TelemetryEventProperties } from '@rally/contracts/telemetry';
 import { provideAnalyticsSession } from './telemetry';
 
-type SitePage = TelemetryEventProperties<'site_page_viewed'>['page'];
-
 /**
- * Pages that run the PostHog SDK: the landing, its variants and compare
- * pages, the blog, help and the Trust Center. Handoff and download pages
- * carry tickets, invitation tokens and fragments in their URLs, which the
- * SDK would record, so they never load it.
+ * Paths that never run the PostHog SDK. Every other page records by default,
+ * so a new page is covered without an edit here. These pages carry sign-in
+ * tickets, invitation tokens, download grants or resource ids in their URL,
+ * which a recording would keep. A new page that receives a credential in its
+ * URL must be added here before it ships.
  */
-const RECORDED_PAGES = new Set<SitePage>(['landing', 'support', 'legal']);
+const RECORDING_DENIED_PATHS: readonly RegExp[] = [
+  /^\/download(?:\/|$)/u,
+  /^\/invite(?:\/|$)/u,
+  /^\/auth\//u,
+  /^\/slack\/link(?:\/|$)/u,
+  /^\/open(?:\/|$)/u,
+  /^\/app(?:\/|$)/u,
+  // Not a path but the 404 page: a mistyped handoff link lands here with its
+  // token still in the URL.
+  /^\/404(?:\.html)?$/u,
+];
 
-export function runsPostHog(environment: 'development' | 'staging' | 'production', page: SitePage): boolean {
-  return environment === 'production' && RECORDED_PAGES.has(page);
+export function runsPostHog(environment: 'development' | 'staging' | 'production', pathname: string, notFound: boolean): boolean {
+  if (environment !== 'production' || notFound) return false;
+  const path = pathname.toLowerCase();
+  return !RECORDING_DENIED_PATHS.some((denied) => denied.test(path));
 }
 
 /**
