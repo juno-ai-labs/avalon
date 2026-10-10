@@ -169,6 +169,9 @@ export const HarnessFailureCodeSchema = z.enum([
   // body the whole time. The name is the endpoint's own machine code so an
   // operator grepping what the provider said finds the run that got it.
   "context_length_exceeded",
+  // No endpoint for the model accepts an input the request carries (an image,
+  // a file, audio), as OpenRouter's `failed_routing_step` names it.
+  "model_input_unsupported",
   "tool_surface_too_large",
   "ambiguous_external_write",
   // Every route candidate answered with a transport fault the provider owns —

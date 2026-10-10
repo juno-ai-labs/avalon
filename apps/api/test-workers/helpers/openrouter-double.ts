@@ -23,8 +23,12 @@
  * model instead.
  */
 import { afterEach, beforeEach, expect, vi } from "vitest";
+import { providerRequestView, responsesStreamResponse } from "@rally/agent-harness/test-support/responses-stream";
 
 const OPENROUTER_ORIGIN = "https://openrouter.ai";
+/** Streamed agent turns. */
+const RESPONSES_PATH = "/api/v1/responses";
+/** Structured, non-streamed calls, which stay on Chat Completions. */
 const CHAT_COMPLETIONS_PATH = "/api/v1/chat/completions";
 const MODELS_PATH = "/api/v1/models";
 
@@ -34,7 +38,11 @@ export interface ProviderCall {
   readonly model: string;
   /** Whether the harness asked for a streamed response. */
   readonly stream: boolean;
-  /** The full protocol transcript sent for this turn. */
+  /**
+   * The full protocol transcript sent for this turn, Chat-shaped. A streamed
+   * turn's Responses `input` is read back into messages by
+   * `providerRequestView`; the raw items stay on `body.input`.
+   */
   readonly messages: readonly { role: string; content: unknown }[];
   /** Names of the tools offered on this turn, in the order they were sent. */
   readonly toolNames: readonly string[];
@@ -62,35 +70,27 @@ export interface OpenRouterDouble {
   readonly calls: readonly ProviderCall[];
 }
 
-function sse(events: readonly Record<string, unknown>[]): Response {
-  const body = `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`;
-  return new Response(body, {
-    status: 200,
-    headers: { "content-type": "text/event-stream" },
-  });
-}
-
 /**
- * The stream the harness parses: a chunk carrying output, then a finish reason,
- * then usage.
+ * The stream the harness parses, described as a chunk carrying output, then a
+ * finish reason, then usage, and sent as the Responses events OpenRouter
+ * streams for them (output, then one `response.completed` carrying usage).
  *
- * Only the output chunk is load-bearing for ending a turn — the loop stops when
- * an assistant message arrives with no tool calls, and dropping the
- * `finish_reason` chunk was verified not to change that. The finish reason is
- * sent anyway because it is what a real stream carries, it is what the harness
+ * Only the output is load-bearing for ending a turn — the loop stops when an
+ * assistant message arrives with no tool calls. The terminal status is sent
+ * anyway because it is what a real stream carries, it is what the harness
  * reads to detect a length-truncated turn, and a double whose shape drifts from
  * the provider's teaches the next reader the wrong thing.
  */
 function streamedReply(reply: Exclude<ProviderReply, { raw: Response } | { httpError: unknown }>): Response {
   if ("say" in reply) {
-    return sse([
+    return responsesStreamResponse([
       { choices: [{ delta: { content: reply.say }, finish_reason: null }] },
       { choices: [{ delta: {}, finish_reason: "stop" }] },
       { usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } },
     ]);
   }
   const call = reply.callTool;
-  return sse([
+  return responsesStreamResponse([
     {
       choices: [{
         delta: {
@@ -171,12 +171,12 @@ export function useOpenRouterDouble(handler: ProviderHandler): OpenRouterDouble 
         // double is not the place to invent a number for one.
         return Response.json({ data: [] });
       }
-      if (url.pathname !== CHAT_COMPLETIONS_PATH) {
+      if (url.pathname !== RESPONSES_PATH && url.pathname !== CHAT_COMPLETIONS_PATH) {
         unexpected.push(url.toString());
         throw new Error(`openrouter_double_unexpected_path:${url.pathname}`);
       }
 
-      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      const body = providerRequestView(JSON.parse(String(init?.body ?? "{}")));
       const call: ProviderCall = {
         model: String(body.model ?? ""),
         stream: body.stream === true,

@@ -839,6 +839,16 @@ and be called again with the result, `{ httpError }` for a refusal, `{ raw }`
 for a `Response` you build yourself. So a test can assert on
 *what the model was asked*, which is usually the more interesting half.
 
+Streamed turns reach the double as OpenRouter Responses requests, and it answers
+with Responses events. `call.messages` and `call.toolNames` read the request
+back as Chat messages and tool names through `providerRequestView`, and the raw
+items stay on `call.body.input`. The Responses fixture vocabulary lives in one
+place, `@rally/agent-harness/test-support/responses-stream`: harness and API
+suites describe a turn in Chat chunks (`{ choices: [{ delta, finish_reason }],
+usage }`) and `responsesStreamResponse` sends them as the events OpenRouter
+streams. An Azure turn is still Chat Completions, so a fetcher that serves both
+uses `providerStreamResponse(request, chunks)`.
+
 Four things about it are deliberate:
 
 - **It is opt-in per file, not installed suite-wide.** A file that does not ask
