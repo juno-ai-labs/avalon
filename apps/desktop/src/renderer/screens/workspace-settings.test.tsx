@@ -2509,20 +2509,17 @@ describe('Organization settings', () => {
     expect(await screen.findByText('Using dark automatically with the system appearance.')).toBeVisible();
   });
 
-  it('starts only the connections the browser list names, and points at the Mac app for the rest', async () => {
+  it('starts every connection in a browser but the desktop-only ones, and points at the Mac app for those', async () => {
     sessionHost.current = 'browser';
-    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ browserConnectableCapabilities: [
-      'drive.read', 'docs.read', 'docs.write', 'sheets.read', 'sheets.write',
-    ] }));
     renderSettings();
     openSettingsSection('Connections');
 
-    const drive = (await screen.findByText('Google Drive + Docs + Sheets')).closest('.provider-card') as HTMLElement;
-    await waitFor(() => expect(within(drive).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
-    expect(within(drive).queryByText('Download the Mac app to connect this.')).toBeNull();
-    const linear = screen.getByText('Linear').closest('.provider-card') as HTMLElement;
-    expect(within(linear).getByRole('link', { name: 'Download the Mac app to connect this.' })).toBeVisible();
-    for (const button of within(linear).getAllByRole('button')) expect(button).toHaveAttribute('aria-disabled', 'true');
+    const linear = (await screen.findByText('Linear')).closest('.provider-card') as HTMLElement;
+    await waitFor(() => expect(within(linear).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
+    expect(within(linear).queryByText('Download the Mac app to connect this.')).toBeNull();
+    const canva = screen.getByText('Canva').closest('.provider-card') as HTMLElement;
+    expect(within(canva).getByRole('link', { name: 'Download the Mac app to connect this.' })).toBeVisible();
+    for (const button of within(canva).getAllByRole('button')) expect(button).toHaveAttribute('aria-disabled', 'true');
   });
 
   it('offers browser notifications in a browser and says when this browser cannot show them', async () => {

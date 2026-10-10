@@ -2,7 +2,6 @@ const PUSH_NOTIFICATIONS_FLAG_KEY = "push-notifications-enabled";
 import type { ClientFeatureFlags, ProductFeatureFlagKey } from "@rally/contracts";
 import type { Env, IdentityAuthContext } from "../env";
 import { logStructuredEvent } from "../observability/logger";
-import { resolveBrowserConnectableCapabilities } from "./browser-connector-flags";
 import { resolveDigestsEnabled } from "./digest-flags";
 import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
 
@@ -177,7 +176,6 @@ export async function resolveClientFeatureFlagsForSubject(
     liveArtifactsEnabled,
     digestsEnabled,
     pushNotificationsEnabled,
-    browserConnectableCapabilities,
   ] = await Promise.all([
     resolveBooleanClientFlag(env, subject, DEVELOPER_SETTINGS_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, SUGGESTED_WORK_FLAG_KEY, context),
@@ -193,7 +191,6 @@ export async function resolveClientFeatureFlagsForSubject(
       ? resolveDigestsEnabled(env, { userId: subject.userId, workspaceId: subject.workspaceId })
       : Promise.resolve(true),
     resolveBooleanClientFlag(env, subject, PUSH_NOTIFICATIONS_FLAG_KEY, context),
-    resolveBrowserConnectableCapabilities(env, subject.userId, context),
   ]);
   return {
     developerSettings,
@@ -202,7 +199,6 @@ export async function resolveClientFeatureFlagsForSubject(
     liveArtifactsEnabled,
     digestsEnabled,
     pushNotificationsEnabled,
-    browserConnectableCapabilities,
   };
 }
 

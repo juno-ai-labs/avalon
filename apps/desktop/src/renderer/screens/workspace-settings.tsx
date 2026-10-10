@@ -603,7 +603,7 @@ export function WorkspaceSettingsScreen({
   } = useAppSession();
   const { host, guest } = useShellCapabilities();
   const browserHost = host === 'browser';
-  const connectorStartAvailable = useConnectorStartAvailable(api, session);
+  const connectorStartAvailable = useConnectorStartAvailable(session);
   const workspaceSocket = useOptionalWorkspaceSocket();
   const featureFlags = useClientFeatureFlags(api);
   // Fails open: `digestsEnabled` defaults `true` and only an explicit `false`
@@ -2027,11 +2027,10 @@ export function WorkspaceSettingsScreen({
                       const personalConnectPrerequisite = provider.provider === 'ashby'
                         ? "Personal sign-in requires your organization's Ashby MCP opt-in and an eligible account."
                         : undefined;
-                      // A browser tab starts only the connections the served list names.
-                      const personalStartsHere = connectorStartAvailable(providerCapabilitiesForScope(provider, 'you'));
-                      const workspaceStartsHere = connectorStartAvailable(providerCapabilitiesForScope(provider, 'workspace'));
-                      const personalConnectDisabled = !personalStartsHere || !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
-                      const personalConnectTitle = !personalStartsHere
+                      // A browser tab starts every connection but those marked desktop only.
+                      const startsHere = connectorStartAvailable(provider);
+                      const personalConnectDisabled = !startsHere || !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
+                      const personalConnectTitle = !startsHere
                         ? MAC_APP_CONNECT_NOTE
                         : hasActivePersonalConnection
                         ? `A ${provider.name} personal connection is already installed. Manage it above.`
@@ -2042,8 +2041,8 @@ export function WorkspaceSettingsScreen({
                           : personalConnectionStateUnavailable && connections.isError
                             ? 'Installed personal connections could not be loaded.'
                             : undefined;
-                      const workspaceConnectDisabled = !workspaceStartsHere || !providerAvailable || connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
-                      const workspaceConnectTitle = !workspaceStartsHere
+                      const workspaceConnectDisabled = !startsHere || !providerAvailable || connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
+                      const workspaceConnectTitle = !startsHere
                         ? MAC_APP_CONNECT_NOTE
                         : hasActiveWorkspaceConnection
                         ? `A ${provider.name} organization connection is already installed. Manage it above.`
@@ -2065,8 +2064,7 @@ export function WorkspaceSettingsScreen({
                             <div><strong><SettingLabel setting={providerSetting(provider, isAdmin)} /></strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : connectorCatalog.isLoading ? 'Checking availability' : providerAvailable ? 'Available' : 'Unavailable'}</span></div>
                           </div>
                           <p>{provider.description}</p>
-                          {((provider.scopes.includes('you' as never) && !personalStartsHere)
-                            || (provider.scopes.includes('workspace' as never) && isAdmin && !workspaceStartsHere)) && (
+                          {!startsHere && (
                             <p className="settings-oauth-status">{MAC_APP_DOWNLOADABLE ? <a href={MAC_APP_DOWNLOAD_URL}>{MAC_APP_CONNECT_NOTE}</a> : MAC_APP_CONNECT_NOTE}</p>
                           )}
                           {searchTarget?.definition.entryPoint === 'provider:' + provider.id && (
