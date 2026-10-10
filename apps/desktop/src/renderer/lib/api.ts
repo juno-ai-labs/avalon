@@ -1481,24 +1481,28 @@ export class RallyApi {
             threadId: item.threadId,
           }),
       nextCursor: page.nextCursor,
+      latestAttentionSequenceNumber: page.latestAttentionSequenceNumber,
     };
   }
 
   /** One page of the threads and breakouts this person takes part in or pinned, newest activity first. */
-  async getMyThreads(cursor: string | null, signal?: AbortSignal): Promise<{ items: SpaceConversationSummary[]; nextCursor: string | null }> {
+  async getMyThreads(cursor: string | null, signal?: AbortSignal): Promise<{
+    items: SpaceConversationSummary[];
+    nextCursor: string | null;
+    /** Every pinned row this person may list, on the first page; empty after it. */
+    pinned: SpaceConversationSummary[];
+  }> {
     const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
     const page = await this.request(`/navigation/threads${query}`, {
       schema: MyThreadsPageSchema,
       ...(signal ? { signal } : {}),
     });
-    return {
-      items: page.items.map((conversation) => ({
-        ...mapWorkstreamSummary(conversation),
-        kind: conversation.kind,
-        breakoutOf: conversation.breakoutOf,
-      })),
-      nextCursor: page.nextCursor,
-    };
+    const row = (conversation: (typeof page.items)[number]): SpaceConversationSummary => ({
+      ...mapWorkstreamSummary(conversation),
+      kind: conversation.kind,
+      breakoutOf: conversation.breakoutOf,
+    });
+    return { items: page.items.map(row), nextCursor: page.nextCursor, pinned: page.pinned.map(row) };
   }
 
   getChannelStats(signal?: AbortSignal): Promise<ChannelStatsList> {
@@ -2767,4 +2771,6 @@ export interface ChannelFeedPageView {
     | { kind: 'locked'; placedAt: string; attentionSequenceNumber: number; threadId: string }
   >;
   nextCursor: string | null;
+  /** The Channel's latest attention sequence number as the first page was read; null on a later page. */
+  latestAttentionSequenceNumber: number | null;
 }

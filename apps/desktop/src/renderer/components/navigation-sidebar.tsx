@@ -309,6 +309,9 @@ function usePinWrite(): (write: Promise<PinList>) => void {
       if (issued !== pinWritesStarted) return;
       queryClient.setQueryData(PINS_QUERY_KEY, list);
       queryClient.setQueryData(PIN_FAILURE_QUERY_KEY, null);
+      // A pin can add a thread this person does not take part in, which only
+      // the Threads list's own read brings.
+      void queryClient.invalidateQueries({ queryKey: MY_THREADS_QUERY_KEY });
     }, (error: unknown) => queryClient.setQueryData(PIN_FAILURE_QUERY_KEY, pinFailureCopy(error)));
   };
 }
@@ -427,7 +430,14 @@ function ThreadsSection(): React.JSX.Element {
       ? { ...row, ...liveById.get(row.id), kind: row.kind, breakoutOf: row.breakoutOf }
       : row)];
   }, [list.data, live.data, liveById]);
-  const byId = useMemo(() => new Map(rows.map((row) => [row.id, row])), [rows]);
+  // Pinned rows come whole with the first page, so a pin whose activity is
+  // pages back is still drawn; a row on a loaded page is the fresher copy.
+  const byId = useMemo(() => new Map([
+    ...(list.data?.pages[0]?.pinned ?? []).map((row): [string, SpaceConversationSummary] => [row.id, row.kind === 'channel'
+      ? { ...row, ...liveById.get(row.id), kind: row.kind, breakoutOf: row.breakoutOf }
+      : row]),
+    ...rows.map((row): [string, SpaceConversationSummary] => [row.id, row]),
+  ]), [list.data, liveById, rows]);
   const threadPins = pins.filter((item) => item.kind === 'thread').map((item) => item.id);
   const breakoutPins = pins.filter((item) => item.kind === 'breakout').map((item) => item.id);
   const threadDrag = usePinnedDrag('thread', threadPins);

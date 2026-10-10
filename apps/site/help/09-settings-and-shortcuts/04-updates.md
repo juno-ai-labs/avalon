@@ -61,7 +61,7 @@ advice.
 **Settings → Application → Updates** has **Update channel**, which decides how
 quickly new versions reach this Mac:
 
-| Thread | What you get |
+| Channel | What you get |
 | --- | --- |
 | **Stable** | At most one release every 24 hours. This is the default. |
 | **Faster** | Every desktop release, as soon as it is out. |

@@ -40,7 +40,8 @@ helpful it seems at the time.
 
 It ends with the glossary: every Rally word in one alphabetical list. That
 includes the old names one last time. An Organization used to be a Workspace,
-a Channel was a Project, a Thread was a Thread, a Breakout was a Substream,
+a Channel was a Space (and before that a Project), a Thread was a Channel (and
+before that a Work stream), a Breakout was a Substream,
 and a Sidekick was an Automation. The app has mostly caught up, but here and
 there a button or a message still uses the old word. If you spot one, it is not
 a different feature, only an older label.

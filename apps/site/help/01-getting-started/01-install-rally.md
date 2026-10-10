@@ -43,9 +43,6 @@ When you open Rally with a brand-new account, it plays a short animated introduc
 
 **Back** goes back a screen. If you would rather skip it, the skip button on the first two screens reads **Sign in** before you have signed in, and **Skip intro** afterwards.
 
-> [!NOTE]
-> The first screen and its button still say **stream**, which is the old name for a Thread. Wherever it says stream, think Thread. The rest of this book uses the new word.
-
 Once you finish or skip it, Rally remembers that on your account, so you will not see it again, even on another Mac. People whose accounts already existed when the introduction was added never see it. If your Mac has **Reduce motion** turned on in its accessibility settings, the animations show their final frame instead of moving.
 
 ## Sign in with Google

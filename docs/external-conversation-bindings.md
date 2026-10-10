@@ -78,7 +78,7 @@ the bot's own user calls `linkRoom`, which resolves the room with
 `conversations.info`, asks `admitSpaceCreation` before claiming a parent anchor,
 and calls `linkExternalRoom`. That one WorkspaceDO transaction writes the Space
 and the active room binding together. Every room's Space is Organization-wide,
-because every Space is (see [`spaces.md`](spaces.md#every-space-is-organization-wide)),
+because every Space starts that way (see [`spaces.md`](spaces.md#a-space-starts-organization-wide-and-grants-no-reader)),
 and it seats nobody. A room's privacy belongs to the Channels its threads open:
 a public room's thread is Organization-wide, and a private channel's or group
 DM's is private to the room's members Rally can map, until the room passes the

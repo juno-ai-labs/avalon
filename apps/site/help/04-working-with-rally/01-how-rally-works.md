@@ -135,7 +135,7 @@ reaches it, it carries on with the ones it already has.
 
 Rally reads the conversation before it answers, but there is only so much it
 can hold in mind at once. When a long run fills about four fifths of that
-channel, Rally writes itself a tidy summary of the job so far: what you asked
+space, Rally writes itself a tidy summary of the job so far: what you asked
 for, what was decided, what is done, the important facts, the files that
 matter and what is still open. It then carries on from that summary. You do
 not have to do anything.
