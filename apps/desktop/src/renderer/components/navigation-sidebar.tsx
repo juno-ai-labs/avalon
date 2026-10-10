@@ -27,6 +27,7 @@ import { createPortal } from 'react-dom';
 import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 
 import type { AttentionItem } from '../lib/attention-items';
+import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { formatSidebarActivityTime, workstreamMarkerStatus } from '../lib/format';
@@ -101,6 +102,7 @@ export function NavigationSidebar({
   const [accountSlot, setAccountSlot] = useState<HTMLDivElement | null>(null);
   const panel = useRef<HTMLElement>(null);
   const guest = workspace.currentUser.accessClass === 'guest';
+  const pinFailure = usePinFailure();
   // The same number as the dock badge and the menu bar: every conversation
   // waiting on this reader, and every access request waiting on them.
   const waiting = attentionItems.length + accessRequests.length;
@@ -167,6 +169,7 @@ export function NavigationSidebar({
           </div>
         </header>
         <SidebarScroll className="navigation-panel-scroll">
+          {pinFailure && <InlineError>{pinFailure}</InlineError>}
           {section === 'threads' && <ThreadsSection />}
           {section === 'channels' && <ChannelsSection guest={guest} />}
           {section === 'activity' && <ActivitySection
@@ -199,6 +202,28 @@ function useOpenThreadId(): string | null {
     ?? null;
 }
 
+/** The last pin or reorder that did not save, shown above whichever tab is open. */
+const PIN_FAILURE_QUERY_KEY = ['navigation', 'pin-failure'] as const;
+
+function pinFailureCopy(error: unknown): string {
+  return error instanceof ApiError && error.code === 'pin_limit_reached'
+    ? 'You’ve pinned as many items as Rally allows. Unpin one first.'
+    : 'That pin didn’t save. Try again.';
+}
+
+function usePinFailure(): string | null {
+  return useQuery<string | null>({ queryKey: PIN_FAILURE_QUERY_KEY, queryFn: () => null, enabled: false }).data ?? null;
+}
+
+/** Hold a pin write's answer, or say why it failed. */
+function usePinWrite(): (write: Promise<PinList>) => void {
+  const queryClient = useQueryClient();
+  return (write) => void write.then((list) => {
+    queryClient.setQueryData(PINS_QUERY_KEY, list);
+    queryClient.setQueryData(PIN_FAILURE_QUERY_KEY, null);
+  }, (error: unknown) => queryClient.setQueryData(PIN_FAILURE_QUERY_KEY, pinFailureCopy(error)));
+}
+
 function usePins(): PinList {
   return useQuery<PinList>({ queryKey: PINS_QUERY_KEY, queryFn: async () => [], enabled: false }).data ?? [];
 }
@@ -206,12 +231,9 @@ function usePins(): PinList {
 /** Pin or unpin, answered with the whole list, which replaces what is held. */
 function usePinAction(): (kind: PinKind, id: string, pinned: boolean, parentId?: string) => void {
   const { api } = useAppSession();
-  const queryClient = useQueryClient();
+  const write = usePinWrite();
   return (kind, id, pinned, parentId) => {
-    if (!api) return;
-    void api.setPinned(kind, id, pinned, parentId)
-      .then((list) => queryClient.setQueryData(PINS_QUERY_KEY, list))
-      .catch(() => undefined);
+    if (api) write(api.setPinned(kind, id, pinned, parentId));
   };
 }
 
@@ -225,7 +247,7 @@ function usePinnedDrag(kind: PinKind, ids: readonly string[]): {
   rowProps: (id: string, index: number) => React.HTMLAttributes<HTMLElement> & { draggable: boolean };
 } {
   const { api } = useAppSession();
-  const queryClient = useQueryClient();
+  const write = usePinWrite();
   const [drag, setDrag] = useState<{ id: string; order: string[] } | null>(null);
   const order = drag?.order ?? ids;
   return {
@@ -247,7 +269,7 @@ function usePinnedDrag(kind: PinKind, ids: readonly string[]): {
         const next = drag.order;
         setDrag(null);
         if (next.join() === ids.join()) return;
-        void api.reorderPins(kind, next).then((list) => queryClient.setQueryData(PINS_QUERY_KEY, list)).catch(() => undefined);
+        write(api.reorderPins(kind, next));
       },
       onDragEnd: () => setDrag(null),
     }),
