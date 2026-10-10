@@ -9,6 +9,11 @@ import {
   MoveChannelBetweenSpacesResultSchema,
   type SpaceChannelPage,
   SpaceChannelPageSchema,
+  type ActivityPage,
+  type ChannelFeedPage,
+  type MyThreadsPage,
+  type PinKind,
+  type PinList,
   type SpaceDefaultKind,
   type SpaceErrorCode,
   type SpaceId,
@@ -23,6 +28,11 @@ import {
 
 import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import {
+  WorkspaceActivityResultSchema,
+  WorkspaceChannelFeedResultSchema,
+  WorkspaceMyThreadsResultSchema,
+  WorkspacePinResultSchema,
+  type WorkspacePinResult,
   WorkspaceSpaceChannelPageResultSchema,
   WorkspaceSpaceDefaultResultSchema,
   WorkspaceContainerOrderResultSchema,
@@ -205,6 +215,88 @@ export class SpaceService {
     return result.itemIds;
   }
 
+  /** A Channel's feed: its threads, newest placement first, unopenable ones locked. */
+  async listFeed(spaceId: SpaceId, cursor: string | null): Promise<ChannelFeedPage> {
+    const result = WorkspaceChannelFeedResultSchema.parse(await (await this.workspace()).listChannelFeed({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      spaceId,
+      cursor,
+    }));
+    if (!result.ok) throw spaceRefusal(result.code, "");
+    return result.page;
+  }
+
+  /** The Threads tab: what this person takes part in or pinned, newest activity first. */
+  async listMyThreads(cursor: string | null): Promise<MyThreadsPage> {
+    const result = WorkspaceMyThreadsResultSchema.parse(await (await this.workspace()).listMyThreads({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      cursor,
+    }));
+    if (!result.ok) throw spaceRefusal(result.code, "");
+    return result.page;
+  }
+
+  /** The Activity tab, newest first. */
+  async listActivity(cursor: string | null): Promise<ActivityPage> {
+    const result = WorkspaceActivityResultSchema.parse(await (await this.workspace()).listActivity({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      cursor,
+    }));
+    if (!result.ok) throw spaceRefusal(result.code, "");
+    return result.page;
+  }
+
+  async markActivitySeen(seenThrough: number): Promise<void> {
+    await (await this.workspace()).markActivitySeen({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      seenThrough,
+    });
+  }
+
+  async listPins(): Promise<PinList> {
+    return this.pins(await (await this.workspace()).listPins({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+    }));
+  }
+
+  async changePin(kind: PinKind, itemId: string, parentId: WorkstreamId | null, pinned: boolean): Promise<PinList> {
+    return this.pins(await (await this.workspace()).changePin({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      kind,
+      itemId,
+      parentId,
+      pinned,
+    }));
+  }
+
+  async reorderPins(kind: PinKind, ids: string[]): Promise<PinList> {
+    return this.pins(await (await this.workspace()).reorderPins({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      kind,
+      ids,
+    }));
+  }
+
+  private pins(result: WorkspacePinResult): PinList {
+    const parsed = WorkspacePinResultSchema.parse(result);
+    if (parsed.ok) return parsed.pins;
+    if (parsed.code === "pin_limit_reached") {
+      return this.refusePin(409, parsed.code, "You have pinned as many items as Rally allows");
+    }
+    return this.refusePin(404, parsed.code, "Nothing you can see has that id");
+  }
+
+  private refusePin(status: 404 | 409, code: string, message: string): never {
+    throw new ApiError(status, code, message);
+  }
+
   async summary(spaceId: SpaceId): Promise<SpaceSummary> {
     return this.settled(await (await this.workspace()).spaceSummary({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
@@ -375,11 +467,11 @@ export class SpaceService {
   }
 
   /**
-   * Change a Space's participants: one WorkspaceDO write.
+   * Change a Space's scope and participants: one WorkspaceDO write.
    *
-   * Every Space is Organization-wide, so the request only names its
-   * participants, and a Space grants no reader to its Channels: there is
-   * nothing to preflight and no member Channel to reach.
+   * A Space grants no reader to the threads in it, so making one private or
+   * Organization-wide changes who may list the Space and nothing else: there
+   * is nothing to preflight and no member thread to reach.
    */
   async updateAudience(spaceId: SpaceId, input: UpdateSpaceAudienceRequest): Promise<SpaceSummary> {
     const current = await this.editable(spaceId);

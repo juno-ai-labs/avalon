@@ -35,6 +35,17 @@ contracts expose camel-cased TypeScript values; storage uses explicit
 snake-cased columns, and JSON only where provider- or model-shaped data is not
 relationally queried.
 
+**Storage words and product words differ.** Since the navigation redesign
+([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)) a stored **Space**
+(`spaces`, `space_*`) is the product's **Channel**, a stored **Channel** or
+**work stream** (`channels`, `workstreams`, `workstream_id`) is the product's
+**thread**, and a **substream** is a **breakout**. Tables, columns, RPCs and
+telemetry keep the storage words; only user-facing copy uses the product ones.
+WorkspaceDO migration 97 adds `workspace_pins` (one pin list per person per
+kind; [`workstream-pinning.md`](workstream-pinning.md)) and
+`workspace_activity_seen` (the Activity tab's read mark;
+[`digests.md`](digests.md#the-activity-tab)).
+
 Read it before adding a table, a column, or a migration, and before assuming that
 knowing an object's ID is enough to read it — it never is.
 

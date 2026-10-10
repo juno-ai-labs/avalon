@@ -26,6 +26,7 @@ import {
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { PersonalPresentationSchema } from './onboarding';
 import { PersonalOrderSchema, PinnedOrderSchema, SpaceIdSchema, SpaceSnapshotSchema } from "./spaces";
+import { ChannelStatsSchema, PinListSchema } from "./navigation";
 import {
   ResourceDirectionSchema,
   WireResourceRelationshipTypeSchema,
@@ -69,6 +70,7 @@ export * from "./palette";
 export * from "./projects";
 export * from "./resource-relationships";
 export * from "./spaces";
+export * from "./navigation";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 export { parseDesktopDeepLinkIntent,type DesktopDeepLinkIntent } from "./desktop-deep-link-intent";
@@ -1237,6 +1239,47 @@ export const SpaceChannelPageSchema = z.strictObject({
   nextCursor: z.string().min(1).nullable(),
 });
 export type SpaceChannelPage = z.infer<typeof SpaceChannelPageSchema>;
+
+/**
+ * One row of a Channel's feed: a thread placed in it, newest placement first.
+ *
+ * `locked` is a thread the viewer may not open. The feed says it is there and
+ * when it arrived, so a Channel's members see the whole shape of the work in
+ * it, and says nothing else: no title, no summary, no participants. Its id is
+ * what a request for access addresses. This is the one place a thread is named
+ * to somebody it is not listed to; `docs/listing-rules.md` records why.
+ */
+export const ChannelFeedItemSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("thread"),
+    placedAt: TimestampSchema,
+    thread: WorkstreamSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("locked"),
+    placedAt: TimestampSchema,
+    threadId: WorkstreamIdSchema,
+  }),
+]);
+export type ChannelFeedItem = z.infer<typeof ChannelFeedItemSchema>;
+
+/** One page of a Channel's feed. Opaque cursor, as on every Space read. */
+export const ChannelFeedPageSchema = z.strictObject({
+  items: z.array(ChannelFeedItemSchema),
+  nextCursor: z.string().min(1).nullable(),
+});
+export type ChannelFeedPage = z.infer<typeof ChannelFeedPageSchema>;
+
+/**
+ * One page of the threads and breakouts this person takes part in, newest
+ * activity first: the Threads tab. Rows are the dashboard's conversation rows,
+ * so a breakout carries its thread for the chip it prints.
+ */
+export const MyThreadsPageSchema = z.strictObject({
+  items: z.array(SpaceConversationSchema),
+  nextCursor: z.string().min(1).nullable(),
+});
+export type MyThreadsPage = z.infer<typeof MyThreadsPageSchema>;
 
 export const WorkstreamDetailSchema = WorkstreamSchema.extend({
   /** Durable safe-boundary stop request for the one substream-owned loop. */
@@ -2629,6 +2672,14 @@ export const WorkspaceSidebarSchema = z.strictObject({
    */
   pinnedOrder: PinnedOrderSchema.optional(),
   /**
+   * This viewer's pins of every kind, each kind in their order: the Pinned
+   * sections of the Channels and Threads tabs. A key of its own, absent from a
+   * server that predates it, for the reason `pinnedOrder` is.
+   */
+  pins: PinListSchema.optional(),
+  /** Each listed Channel's thread count and last activity, for the Channels tab. */
+  channelStats: z.array(ChannelStatsSchema).optional(),
+  /**
    * False while the Organization has not finished creating General and placing
    * every Channel in it.
    *
@@ -2820,6 +2871,9 @@ export const WorkspaceSpaceSnapshotEventSchema = z.strictObject({
   ordering: PersonalOrderSchema,
   /** All's Pinned order, beside `ordering` for the reason the sidebar payload gives. */
   pinnedOrder: PinnedOrderSchema.optional(),
+  /** Every pin, beside `pinnedOrder` for the reason the sidebar payload gives. */
+  pins: PinListSchema.optional(),
+  channelStats: z.array(ChannelStatsSchema).optional(),
   spacesReady: z.boolean(),
 });
 

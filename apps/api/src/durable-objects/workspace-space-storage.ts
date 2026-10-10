@@ -1726,6 +1726,235 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
+   * One page of a Channel's feed: the threads placed in it, newest placement
+   * first, each marked whether this viewer may open it.
+   *
+   * A Channel is the storage `space`, and a thread the storage Channel. Rows a
+   * member may not open come back too, as `openable: false`, and the caller
+   * renders them as locked rows with nothing but an id and a time — the one
+   * place the listing rules let a thread be named to somebody it is not listed
+   * to (`docs/listing-rules.md`). A guest gets no locked rows: they reach a
+   * Channel only through the threads they may list, and the rest of an
+   * Organization's work is none of theirs to count. Archived threads and
+   * system conversations are left out.
+   *
+   * Ordered by `(joined_at, workstream_id)`, which migration 97's index on the
+   * membership table serves directly; the cursor is the conversation cursor
+   * with the placement time where the activity time would be.
+   */
+  feedPage(
+    viewer: Viewer,
+    spaceId: string,
+    cursor: string | null,
+  ): { items: Array<{ workstreamId: string; placedAt: number; openable: boolean }>; nextCursor: string | null }
+    | "invalid_cursor" | false {
+    if (this.reach(viewer, spaceId) === null) return false;
+    const after = cursor === null ? null : decodeConversationCursor(cursor);
+    if (cursor !== null && after === null) return "invalid_cursor";
+    const rows = this.storage.sql.exec<{
+      workstream_id: string;
+      joined_at: number;
+      openable: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT membership.workstream_id, membership.joined_at,
+              CASE WHEN ${mainOpenableSql("directory", "viewer", viewer.accessClass)} THEN 1 ELSE 0 END AS openable
+         FROM space_channel_memberships membership
+         JOIN channels directory
+           ON directory.workstream_id = membership.workstream_id
+         LEFT JOIN channel_viewers viewer
+           ON viewer.workstream_id = directory.workstream_id
+          AND viewer.user_id = ?1
+          AND viewer.authority_generation = directory.authority_generation
+        WHERE membership.space_id = ?2 AND membership.state = 'active'
+          AND directory.archived_at IS NULL
+          AND directory.system_kind IS NULL
+          AND (?5 = 1 OR ${mainOpenableSql("directory", "viewer", viewer.accessClass)})
+          AND (?3 IS NULL
+               OR membership.joined_at < ?3
+               OR (membership.joined_at = ?3 AND membership.workstream_id > ?4))
+        ORDER BY membership.joined_at DESC, membership.workstream_id
+        LIMIT ?6`,
+      viewer.userId,
+      spaceId,
+      after?.lastActivityAt ?? null,
+      after?.conversationId ?? "",
+      viewer.accessClass === "member" ? 1 : 0,
+      SPACE_CHANNEL_PAGE_SIZE + 1,
+    ).toArray();
+    const hasMore = rows.length > SPACE_CHANNEL_PAGE_SIZE;
+    if (hasMore) rows.pop();
+    const last = rows.at(-1);
+    return {
+      items: rows.map((row) => ({
+        workstreamId: row.workstream_id,
+        placedAt: row.joined_at,
+        openable: row.openable === 1,
+      })),
+      nextCursor: hasMore && last
+        ? encodeConversationCursor({ lastActivityAt: last.joined_at, kind: "channel", conversationId: last.workstream_id })
+        : null,
+    };
+  }
+
+  /**
+   * One page of the threads and breakouts this person takes part in or has
+   * pinned, newest activity first: the Threads tab.
+   *
+   * The conversation page's two-arm shape, started from the person rather than
+   * from a Space: migration 97's `(user_id, is_participant)` index on each
+   * viewer table drives each arm, and the pin table adds what the person
+   * pinned without taking part. A breakout is listed only under a thread this
+   * person may list, the same two gates the conversation page asks. Archived
+   * and system conversations are left out; stale ones are not, because this is
+   * the list of a person's work, not of what needs them.
+   */
+  participatingPage(
+    viewer: Viewer,
+    cursor: string | null,
+  ): SpaceConversationPage | "invalid_cursor" {
+    const breakouts = this.breakoutsReady();
+    const pins = this.storage.sql.exec(
+      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_pins'`,
+    ).toArray().length === 1;
+    const after = cursor === null ? null : decodeConversationCursor(cursor);
+    if (cursor !== null && after === null) return "invalid_cursor";
+    const pinned = (kind: "thread" | "breakout", id: string) => (pins
+      ? `EXISTS (SELECT 1 FROM workspace_pins pin
+                  WHERE pin.user_id = ?1 AND pin.item_kind = '${kind}' AND pin.item_id = ${id})`
+      : "0");
+    const rows = this.storage.sql.exec<{
+      kind: "channel" | "breakout";
+      workstream_id: string;
+      substream_id: string | null;
+      conversation_id: string;
+      last_activity_at: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT kind, workstream_id, substream_id, conversation_id, last_activity_at FROM (
+         SELECT * FROM (
+           SELECT 'channel' AS kind,
+                  directory.workstream_id AS workstream_id,
+                  NULL AS substream_id,
+                  directory.workstream_id AS conversation_id,
+                  directory.last_activity_at AS last_activity_at
+             FROM channels directory
+             LEFT JOIN channel_viewers viewer
+               ON viewer.workstream_id = directory.workstream_id
+              AND viewer.user_id = ?1
+              AND viewer.authority_generation = directory.authority_generation
+            WHERE directory.archived_at IS NULL
+              AND directory.system_kind IS NULL
+              AND (viewer.is_participant = 1 OR ${pinned("thread", "directory.workstream_id")})
+              AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
+              AND ${afterCursorSql("channel", "directory.last_activity_at", "directory.workstream_id")}
+            ORDER BY directory.last_activity_at DESC, directory.workstream_id
+            LIMIT ?6
+         )
+         ${breakouts ? `UNION ALL
+         SELECT * FROM (
+           SELECT 'breakout' AS kind,
+                  breakout.workstream_id AS workstream_id,
+                  breakout.substream_id AS substream_id,
+                  breakout.substream_id AS conversation_id,
+                  breakout.last_activity_at AS last_activity_at
+             FROM breakouts breakout
+             LEFT JOIN breakout_viewers breakout_viewer
+               ON breakout_viewer.workstream_id = breakout.workstream_id
+              AND breakout_viewer.substream_id = breakout.substream_id
+              AND breakout_viewer.user_id = ?1
+              AND breakout_viewer.authority_generation = breakout.authority_generation
+             JOIN channels directory
+               ON directory.workstream_id = breakout.workstream_id
+             LEFT JOIN channel_viewers viewer
+               ON viewer.workstream_id = directory.workstream_id
+              AND viewer.user_id = ?1
+              AND viewer.authority_generation = directory.authority_generation
+            WHERE breakout.archived_at IS NULL
+              AND directory.archived_at IS NULL
+              AND (breakout_viewer.is_participant = 1 OR ${pinned("breakout", "breakout.substream_id")})
+              AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts, userId: "?1" })}
+              AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass)}
+              AND ${afterCursorSql("breakout", "breakout.last_activity_at", "breakout.substream_id")}
+            ORDER BY breakout.last_activity_at DESC, breakout.substream_id
+            LIMIT ?6
+         )` : ""}
+       )
+       ORDER BY last_activity_at DESC, kind, conversation_id
+       LIMIT ?6`,
+      viewer.userId,
+      null,
+      after?.lastActivityAt ?? null,
+      after?.kind ?? "",
+      after?.conversationId ?? "",
+      SPACE_CHANNEL_PAGE_SIZE + 1,
+    ).toArray();
+    const hasMore = rows.length > SPACE_CHANNEL_PAGE_SIZE;
+    if (hasMore) rows.pop();
+    const last = rows.at(-1);
+    return {
+      items: rows.map((row) => ({
+        kind: row.kind,
+        workstreamId: row.workstream_id,
+        substreamId: row.substream_id,
+      })),
+      nextCursor: hasMore && last
+        ? encodeConversationCursor({
+          lastActivityAt: last.last_activity_at,
+          kind: last.kind,
+          conversationId: last.conversation_id,
+        })
+        : null,
+    };
+  }
+
+  /**
+   * For each Space this viewer may list, how many threads in it they may list
+   * and when the newest of those last moved: the Channels tab's second line.
+   *
+   * One grouped pass over the active memberships of the listed Spaces, the
+   * same cost {@link attentionCounts} pays. A Space with nothing listable in it
+   * is still answered, with zero and no time.
+   */
+  channelStats(viewer: Viewer): Array<{ spaceId: string; threadCount: number; lastActivityAt: number | null }> {
+    if (!this.ready()) return [];
+    const spaceIds = this.visibleSpaceIds(viewer);
+    if (spaceIds.length === 0) return [];
+    const listed = this.channelListing(viewer);
+    const counted = new Map<string, { count: number; last: number | null }>();
+    for (const chunk of boundParameterChunks(spaceIds)) {
+      for (const row of this.storage.sql.exec<{
+        space_id: string;
+        count: number;
+        last_activity_at: number | null;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT membership.space_id, COUNT(*) AS count, MAX(directory.last_activity_at) AS last_activity_at
+           FROM space_channel_memberships membership
+           JOIN channels directory
+             ON directory.workstream_id = membership.workstream_id
+           LEFT JOIN channel_viewers viewer
+             ON viewer.workstream_id = directory.workstream_id
+            AND viewer.user_id = ?
+            AND viewer.authority_generation = directory.authority_generation
+          WHERE membership.state = 'active'
+            AND directory.archived_at IS NULL
+            AND directory.system_kind IS NULL
+            AND ${listed.sql}
+            AND membership.space_id IN (${chunk.map(() => "?").join(", ")})
+          GROUP BY membership.space_id`,
+        viewer.userId,
+        ...listed.binds,
+        ...chunk,
+      ).toArray()) {
+        counted.set(row.space_id, { count: row.count, last: row.last_activity_at });
+      }
+    }
+    return spaceIds.map((spaceId) => ({
+      spaceId,
+      threadCount: counted.get(spaceId)?.count ?? 0,
+      lastActivityAt: counted.get(spaceId)?.last ?? null,
+    }));
+  }
+
+  /**
    * Every Channel and Breakout in one Space that the dashboard would list for
    * this viewer. This is the dashboard query's admission predicate without its
    * page bound or ordering, so a sidebar badge never counts a different state.
@@ -1996,7 +2225,9 @@ export class WorkspaceSpaceStorage {
    *
    * The caller supplies only Channels already re-read from their hosted parents.
    * This read therefore exposes the Space's presentation and containment edge,
-   * even when the guest is not a Space participant. The candidate Channel is
+   * even when the guest is not a Space participant — for an Organization-wide
+   * Space only. A private Space is named to its participants alone, and a guest
+   * who is one already lists it by the ordinary rule. The candidate Channel is
    * the associative permission; no roster, defaults, lifecycle or writes leave.
    */
   sharedNavigationSpaces(workstreamIds: readonly string[]): SharedNavigationSpace[] {
@@ -2021,6 +2252,7 @@ export class WorkspaceSpaceStorage {
            FROM space_channel_memberships membership
            JOIN spaces space ON space.space_id = membership.space_id
            WHERE membership.state = 'active' AND space.archived_at IS NULL
+            AND space.scope = 'workspace'
             AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})
           ORDER BY space.created_at, space.space_id, membership.workstream_id`,
         ...chunk,
