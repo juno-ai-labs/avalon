@@ -12,6 +12,7 @@ import {
 } from "@rally/connectors";
 import type { Env } from "../env";
 import { notionCallbackUrl } from "./notion-ingress";
+import { connectorDocumentReader } from "../services/connector-document-reader";
 import { logStructuredEvent } from "../observability/logger";
 
 export function githubConnectorConfig(env: Env): GitHubConnectorConfig | null {
@@ -191,6 +192,7 @@ function buildConnectorRegistry(env: Env) {
   const x = xConnectorConfig(env);
   return createConnectorRegistry({
     observer: (level, event, fields) => logStructuredEvent(env, level, event, fields),
+    documents: connectorDocumentReader(env),
     customMcp,
     ashby: { redirectUri: new URL("/connections/ashby/callback", env.PUBLIC_API_BASE_URL).toString() },
     canva,
