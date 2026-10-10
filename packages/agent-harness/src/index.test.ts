@@ -42,7 +42,7 @@ import {
   type RunHarnessInput,
   type StructuredModelDiagnostic,
 } from "./index";
-import { providerRequestView, providerStreamResponse, responsesStreamResponse } from "./test-support/responses-stream";
+import { providerRequestView, providerStreamResponse, responsesStreamResponse, sseBody } from "./test-support/responses-stream";
 
 describe("transport retry backoff", () => {
   const httpFailure = (retryAfterMs: number | null): InferenceAttemptError => ({
@@ -3221,6 +3221,28 @@ describe("agent harness", () => {
       content: "fallback recovered",
       model: "fallback/model",
     });
+  });
+
+  it.each(["server_error", "rate_limit_exceeded"])("traverses a Responses stream failure coded %s to the fallback model", async (code) => {
+    const models: string[] = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      models.push((JSON.parse(String(init?.body)) as { model: string }).model);
+      return models.length === 1
+        ? new Response(sseBody([
+            { type: "response.created", response: { status: "in_progress" } },
+            { type: "response.failed", response: { status: "failed", error: { code, message: "upstream failed" } } },
+          ]), { headers: { "content-type": "text/event-stream" } })
+        : responsesStreamResponse([{ choices: [{ delta: { content: "fallback recovered" }, finish_reason: "stop" }] }]);
+    }) as typeof fetch;
+
+    const outcome = await runHarness(runInput(fetcher, {
+      fallbackModels: ["fallback/model"],
+      transportRetries: 0,
+      workspaceId: `workspace-responses-${code}-fallback`,
+    }));
+
+    expect(models).toEqual(["test/model", "fallback/model"]);
+    expect(outcome).toMatchObject({ status: "completed", content: "fallback recovered", model: "fallback/model" });
   });
 
   it("does not traverse for an unrecognized statusless stream error", async () => {

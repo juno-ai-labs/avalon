@@ -1470,9 +1470,13 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 `/api/v1/responses` instead of `/api/v1/chat/completions`. Only its wire layer
 changed: `toResponsesInput` and `openRouterResponsesRequest` translate Bind's
 Chat-shaped messages out, and `createResponsesStreamReducer` translates the
-event stream back into the Chat-shaped result Bind stores. Azure turns,
-structured calls and embeddings are unchanged. The archived request is now the
-Responses body, and the lakehouse request row records which API it used.
+event stream back into the Chat-shaped result Bind stores. Bind builds the body
+once, archives it, and passes it to the client to send as-is. Azure turns,
+structured calls and embeddings are unchanged. A Responses stream's transient
+failure codes (`server_error`, `rate_limit_exceeded`) traverse like the numeric
+ones Chat streams sent. A model that cannot read an input the request carries
+now fails as `model_input_unsupported`, read from OpenRouter's
+`failed_routing_step` (image, file and audio filters only).
 
 **Why:** OpenAI is moving tool calls with reasoning off Chat Completions
 (GPT-5.4 onward refuses tools with any effort but `none`; GPT-6 Astra needs
@@ -1483,29 +1487,31 @@ staying on Chat Completions meant depending on a translation layer for the
 default model's core path. Token prices are the same on both endpoints, and
 OpenRouter's Responses endpoint is stateless, so retention and payload size do
 not change. Live two-turn tool loops on Sol 6.1, Gemini 3.8 Flash and Grok 4.6
-completed with synthetic `fc_` ids and reported cost and cached tokens.
+completed with synthetic `fc_` ids and reported cost and cached tokens. The live
+sweep that verified the switch also found a DeepSeek V4 Pro run with an image
+attached failing as `harness_execution_failed` while OpenRouter's 404 named the
+cause, which is the generic-code defect CLAUDE.md forbids.
 
-**Rejected:** Changing the transcript to Responses items. It would have meant a
-Durable Object storage migration and touching every caller for no gain this
-change needs; the translation at the client is cheap and reversible. Replaying
-reasoning items was also left out: it needs a place in the transcript and a rule
-for dropping them on compaction and on a fallback to another model, and is the
-change that would realize most of the Responses API's benefit.
+**Considered and rejected:** Changing the transcript to Responses items. It
+would have meant a Durable Object storage migration and touching every caller
+for no gain this change needs; the translation at the client is cheap and
+reversible. Replaying reasoning items was left out: it needs a place in the
+transcript and a rule for dropping them on compaction and on a fallback to
+another model, and is the change that would realize most of the Responses API's
+benefit. Building the body in both Bind and the client was the first version;
+it serialized the whole transcript twice per attempt on the startup path.
 
-The live sweep that verified this change also found a run with an image
-attached to DeepSeek V4 Pro failing as `harness_execution_failed` while
-OpenRouter's 404 named the cause (`failed_routing_step: "Filter by Image
-Support"`). It now fails as `model_input_unsupported`, read from that field and
-never from the message text. Only input filters (image, file, audio) count; a
-tool-support, provider or price step keeps the catch-all, because those are
-Rally's own routing and the member has nothing to remove.
-
-**What a future change must respect:** the transcript stays Chat-shaped until
-reasoning replay gives it a reason not to. Any new streamed provider request
-field goes through `openRouterResponsesRequest`, never around it, or the
-archived body stops being the body sent. OpenRouter's Responses endpoint does
+**Consequences:** The transcript stays Chat-shaped until reasoning replay gives
+it a reason not to. Any new streamed provider request field goes through
+`openRouterResponsesRequest`, never around it, or the archived body stops being
+the body sent. A new transient stream code from the Responses API belongs in
+`providerDeclaredTransportFailure`'s allowlist, or that outage fails as Rally's
+defect. A tool-support, provider or price routing refusal keeps the catch-all,
+because the member has nothing to remove. OpenRouter's Responses endpoint does
 not expose Anthropic per-block `cache_control` or its 1-hour TTL; explicit
 Claude caching would need `prompt_cache_breakpoint` or the Messages endpoint.
+
+Shipped in #1182.
 
 ### 2026-10-02 — Sol low is the default primary model
 
