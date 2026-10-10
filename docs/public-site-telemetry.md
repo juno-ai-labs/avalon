@@ -14,7 +14,7 @@ Trust Center pages load the landing's `landing.css` and add `apps/site/src/trust
 | --- | --- |
 | `apps/site/src/telemetry.ts` | Global route lookup, first-party anonymous identity, capability bootstrap, closed envelopes, page/action/handoff reporting, and failure isolation. |
 | `apps/site/src/site-entry.ts` | Initializes page-view and page-leave reporting on every built HTML entry, and starts the PostHog SDK loader on pages that run it. |
-| `apps/site/src/posthog-loader.ts` | Which pages run PostHog's browser SDK, and adding its separate script from the `rally-posthog-src` meta tag. |
+| `apps/site/src/posthog-loader.ts` | The paths denied PostHog's browser SDK, and adding its separate script from the `rally-posthog-src` meta tag. |
 | `apps/site/src/posthog.ts` | The PostHog SDK entry, a separate build input: initializes the full SDK with replay, heatmaps and autocapture, and hands its session to the reporter. |
 | `apps/site/src/*-handoff.ts`, `desktop-open.ts`, `invite.ts`, `slack-link.ts`, `workstream-link.ts` | Report presented, automatic, and manual browser-to-desktop handoff attempts after each page has validated its own target. |
 | `apps/site/vite.config.ts` | Injects the shared telemetry entry and immutable release/build context into every site page. |
@@ -83,8 +83,8 @@ event spool and no retry that can delay navigation or opening the desktop.
 
 ### PostHog browser SDK (temporary)
 
-To see why the landing does not convert, the marketing pages also run
-PostHog's full browser SDK (`posthog-js`, the `module.full.no-external`
+To see why the landing does not convert, every public page except a short
+deny list also runs PostHog's full browser SDK (`posthog-js`, the `module.full.no-external`
 bundle) with session replay at a 100% sample rate, heatmaps, autocapture,
 rage and dead clicks, exception capture, console logs and web vitals. It sends
 through PostHog's managed reverse proxy at `p.rallywith.ai`, configured in the
@@ -102,10 +102,13 @@ PostHog organization's proxy settings, with the project's public token.
   person and a session, and PostHog's web analytics sees multi-page sessions
   rather than one per page. If the SDK script fails to load, events keep the
   page's own session.
-- **Only pages whose URLs carry nothing.** `runsPostHog` admits the `landing`,
-  `support` and `legal` page classes in production only. Handoff, download,
-  invitation and desktop-auth pages never load it, because their URLs hold
-  tickets, tokens and fragments that a recording would keep.
+- **On by default, denied by path.** `runsPostHog` runs the SDK on every
+  production page except `RECORDING_DENIED_PATHS`: `/download`, `/invite`,
+  `/auth/`, `/slack/link`, `/open` and `/app`, whose URLs hold tickets,
+  tokens, grants and resource ids a recording would keep, plus the 404 page,
+  where a mistyped handoff link lands with its token. A new page records
+  without an edit; a new page that receives a credential in its URL must be
+  added to the deny list before it ships.
 - **No external scripts.** The full bundle carries the recorder and every
   extension, so the CSP adds only `p.rallywith.ai` to `connect-src` and
   `blob:` to `worker-src` (the recorder's worker). The PostHog toolbar and
@@ -205,12 +208,17 @@ is allowed.
 
 ### 2026-10-10 — Run PostHog's browser SDK on the marketing pages
 
-**What changed:** The landing, blog, compare, help and Trust Center pages load
-the full `posthog-js` SDK through the `p.rallywith.ai` reverse proxy, with
+**What changed:** Every public page except a deny list of credential-carrying
+paths loads the full `posthog-js` SDK through the `p.rallywith.ai` reverse proxy, with
 session replay at 100%, heatmaps, autocapture, dead clicks, exceptions and
 console logs. The SDK shares the site's anonymous epoch, and site events now
 carry the SDK's session instead of a per-page one. The Cookie Notice describes
 the recording.
+
+Recording is on by default and denied by path, rather than allowed by page
+class, so a new landing variant or marketing page is recorded without anyone
+remembering to opt it in. The cost is the reverse risk: a new handoff page is
+recorded until it is denied.
 
 **Why:** The landing is not converting and page views and tagged clicks cannot
 say why. The team wants to watch visits and see where people click and stop for
@@ -230,7 +238,7 @@ the SDK's own `$pageleave`, which is off, so scroll maps stay empty; replays
 still show scrolling. Removing the SDK means deleting `posthog.ts`, the loader,
 its build input and meta tag, the CSP additions and Cookie Notice section 4;
 the reporter then falls back to a per-page session. Any page whose URL can
-carry a credential must stay out of `runsPostHog`.
+carry a credential must be in `RECORDING_DENIED_PATHS`.
 
 ### 2026-10-08 — Name the page on each click
 
