@@ -1,13 +1,13 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { ChannelScreen } from './channel';
 
-const api = vi.hoisted(() => ({ getChannelFeed: vi.fn(), getWorkspaceMembers: vi.fn(async () => []) }));
+const api = vi.hoisted(() => ({ getChannelFeed: vi.fn(), getWorkspaceMembers: vi.fn(async () => []), archiveSpace: vi.fn() }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session: null }) }));
 const spaces = vi.hoisted(() => ({ data: undefined as unknown }));
 vi.mock('../lib/use-space-directories', () => ({ useSpaceDirectories: () => ({ active: spaces, inactive: { data: undefined } }) }));
@@ -86,5 +86,16 @@ describe('a Channel', () => {
     renderChannel();
     await screen.findByRole('list', { name: 'Threads in Outbound' });
     expect(screen.queryByText('composer')).not.toBeInTheDocument();
+  });
+
+  it('archives from its title menu after asking, and leaves for the landing', async () => {
+    api.archiveSpace.mockResolvedValue({ ...outbound('organization').items[0], status: 'archived' });
+    renderChannel();
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Outbound' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive channel' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive' }));
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(/^\/$/u));
+    expect(api.archiveSpace).toHaveBeenCalledWith('outbound');
   });
 });

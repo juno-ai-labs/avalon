@@ -65,6 +65,7 @@ there is no button anywhere that deletes a Thread.
 | --- | --- |
 | A Thread | Click its name in its title pill, choose **More**, then **Archive thread**. |
 | A Breakout | Click its name in its title pill, choose **More**, then **Archive breakout**. See [Breakouts](03-breakouts.md). |
+| A Channel | Click its name in its title pill and choose **Archive channel**. General cannot be archived. |
 | A Sidekick | Click **…** on the Sidekick and choose **Archive Sidekick**. See [The Sidekicks window](../07-sidekicks/04-the-sidekicks-window.md). |
 
 > [!WARNING]
@@ -75,6 +76,12 @@ there is no button anywhere that deletes a Thread.
 > app to bring an archived Thread or Breakout back. If you only want it out of
 > your way, pin the Threads you care about instead, or sort by **Recent** and
 > let it sink.
+
+Archiving a Channel is gentler. Its Threads keep going: any that also sit in
+another Channel stay there, and any that sit only in this one move to General.
+The Channel moves to **Archived** at the bottom of the Channels list. Click
+**Show** there, then **Restore** beside it to bring it back with its Threads.
+Threads that moved to General stay in General too.
 
 ## Making room
 

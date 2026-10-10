@@ -8056,6 +8056,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .title-menu-people-search { height: 40px; margin-bottom: 6px; border-radius: 10px; }
 .title-menu-person { align-items: center; display: flex; gap: 12px; min-height: 52px; padding: 4px 8px; }
 .title-menu-person .avatar { height: 34px; width: 34px; }
+.title-menu-channel-mark { align-items: center; display: inline-flex; flex: none; height: 34px; justify-content: center; width: 34px; }
 .title-menu-person-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .title-menu-person-name { align-items: center; color: var(--av-sys-color-text-default); display: flex; font-size: 14.5px; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .title-menu-person-detail { color: var(--av-sys-color-text-muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -8540,6 +8541,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .navigation-row-lock { color: var(--av-sys-color-text-muted); flex: none; }
 .navigation-row-detail { color: var(--av-sys-color-text-muted); font-size: 13px; }
 .navigation-channel-mark { align-items: center; border-radius: 999px; display: flex; height: 40px; justify-content: center; width: 40px; }
+.navigation-channel-mark.is-small { height: 34px; width: 34px; }
+.navigation-archived-row { align-items: center; display: flex; gap: 10px; padding: 6px 10px; }
+.navigation-archived-name { color: var(--av-sys-color-text-muted); flex: 1; font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .navigation-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .navigation-chip {
   align-items: center;

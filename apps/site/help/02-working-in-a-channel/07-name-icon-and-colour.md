@@ -26,8 +26,10 @@ At the top of the menu is a row of buttons:
   the **Public to organization** switch, **Import updates** for an imported
   Thread, the Thread's **Artifacts**, and **Archive thread** at the bottom.
 
-Below the buttons are three rows, each with a count: **People**, **Sidekicks**
-and **Breakouts**. Click one and the menu changes in place to show that list,
+Below the buttons are four rows, each with a count: **People**, **Sidekicks**,
+**Breakouts** and **Channels**, the Channels the Thread sits in (see
+[A Thread in several Channels](../03-spaces-and-breakouts/01-spaces.md#a-thread-in-several-channels)).
+Click one and the menu changes in place to show that list,
 and the pill turns into a breadcrumb, such as the Thread's name followed by
 **People**. To go back, click the Thread's name in the pill, or press
 <kbd>Esc</kbd> or <kbd>←</kbd>. The menu always opens at the top again next

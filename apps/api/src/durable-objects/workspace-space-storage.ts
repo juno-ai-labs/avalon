@@ -11,6 +11,8 @@ import {
   SpaceDirectorySchema,
   SpaceSummarySchema,
   asSpaceId,
+  asUserId,
+  asWorkspaceId,
   asWorkstreamId,
   STORABLE_APPEARANCE_ICON_KEYS,
   SPACE_COLOR_KEYS_STORABLE,
@@ -2818,15 +2820,54 @@ export class WorkspaceSpaceStorage {
   }
 
   /** Archive a Space that strands no live Channel, in one transaction. */
-  archive(userId: string, spaceId: string, now = Date.now()): WorkspaceSpaceMutationResult {
-    return this.storage.transactionSync((): WorkspaceSpaceMutationResult => {
+  /**
+   * Archive a Channel container, first adding to General every live thread
+   * that would otherwise be left in no Channel, all in one transaction.
+   *
+   * A thread started from a Channel's composer lives in that Channel alone,
+   * so refusing those (`space_membership_final`) would refuse nearly every
+   * archive. General is where every member already looks, and a restore puts
+   * the thread back in this Channel too. Without a General (an Organization
+   * still opening) the refusal stands. Answers which threads moved, so the
+   * caller can publish General's change.
+   */
+  archive(
+    workspaceId: string,
+    userId: string,
+    spaceId: string,
+    now = Date.now(),
+  ): { result: WorkspaceSpaceMutationResult; rehomed: string[] } {
+    return this.storage.transactionSync(() => {
+      const rehomed = this.rehomeStrandedInGeneral(workspaceId, userId, spaceId, now);
       const prepared = this.prepareArchive(userId, spaceId, now);
-      if (!prepared.ok) return prepared;
+      if (!prepared.ok) return { result: prepared, rehomed: [] };
       const space = this.finalizeArchive(userId, spaceId, now);
-      if (space === "protected") return { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] };
-      if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
-      return { ok: true, space };
+      if (space === "protected") {
+        return { result: { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] }, rehomed: [] };
+      }
+      if (space === false) {
+        return { result: { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] }, rehomed: [] };
+      }
+      return { result: { ok: true, space }, rehomed };
     });
+  }
+
+  private rehomeStrandedInGeneral(workspaceId: string, userId: string, spaceId: string, now: number): string[] {
+    const general = this.generalSpaceId();
+    if (general === null || general === spaceId || !this.canEdit(userId, spaceId, true)) return [];
+    const stranded = this.liveMemberWorkstreamIds(spaceId)
+      .filter((workstreamId) => this.otherActiveSpaceIds(workstreamId, spaceId).length === 0);
+    const rehomed: string[] = [];
+    for (const workstreamId of stranded) {
+      const added = this.addMembership({
+        workspaceId: asWorkspaceId(workspaceId),
+        userId: asUserId(userId),
+        spaceId: asSpaceId(general),
+        workstreamId: asWorkstreamId(workstreamId),
+      }, now);
+      if (added.ok) rehomed.push(workstreamId);
+    }
+    return rehomed;
   }
 
   /**
