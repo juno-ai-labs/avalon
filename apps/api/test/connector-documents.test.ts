@@ -87,7 +87,7 @@ describe("files read through Google Drive", () => {
     expect(result).toMatchObject({
       textContent: null,
       contentIncluded: false,
-      contentOmittedReason: "The file could not be read as a document: invalid_office_archive",
+      contentOmittedReason: "invalid_office_archive",
     });
   });
 
@@ -129,7 +129,7 @@ describe("files read through Google Drive", () => {
 
     expect(result).toMatchObject({
       textContent: null,
-      contentOmittedReason: "File exceeds the 8388608-byte document conversion limit",
+      contentOmittedReason: "source_too_large",
     });
     expect(mediaRequests).toBe(0);
   });

@@ -8,13 +8,8 @@ import {
 } from "./attachment-derivative-service";
 
 /**
- * The attachment converter, as the document reader the connector registry
- * hands every adapter that can reach a provider file.
- *
- * It is the same conversion an uploaded attachment gets — plain text, Word,
- * Excel, PowerPoint and a PDF's text layer — so a file reads identically
- * whether someone uploaded it or the agent found it in Drive, a Slack thread or
- * any other connector. That includes OCR of a scanned PDF, metered to the
+ * The attachment converter as the reader the connector registry hands
+ * adapters (see `documents.ts` in `@rally/connectors`). OCR is metered to the
  * workspace of the connection the file was read through.
  */
 export function connectorDocumentReader(env: Env): ConnectorDocumentReader {

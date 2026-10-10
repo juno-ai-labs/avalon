@@ -2,17 +2,10 @@ import { readResponseBytes } from "./provider-utils";
 import { ConnectorError } from "./types";
 
 /**
- * Reading a file a connector found — a Drive file, a Slack upload, a Linear
- * comment attachment — as model text.
- *
- * Every connector that can reach a file has the same problem: the provider
- * hands back bytes, and only some of them are text. The host owns one
- * converter (the attachment pipeline's, so a file reads the same uploaded or
- * found through a connector) and passes it to the registry as a
- * `ConnectorDocumentReader`. An adapter never parses a format itself: it
- * describes the file, says how to download it, and calls
- * `readConnectorDocument`, which owns the size ceiling, the bounded download,
- * the conversion and the text budget.
+ * Reading a file a connector reached (a Drive file, a Slack upload) as model
+ * text. The host passes its converter to the registry as a
+ * `ConnectorDocumentReader`; an adapter never parses a format, it describes the
+ * file, says how to download it, and calls `readConnectorDocument`.
  */
 
 /** What a connector knows about a file before reading any of its bytes. */
@@ -54,22 +47,23 @@ export interface ConnectorDocumentConnection {
 export type ConnectorDocumentContent = {
   textContent: string | null;
   contentIncluded: boolean;
-  /** Source bytes downloaded. */
-  contentBytes?: number;
+  /** Size of the downloaded source file, which for a converted format is not the text's size. */
+  sourceBytes?: number;
   contentTruncated?: boolean;
   contentNotice?: string;
+  /** A code: `source_too_large`, or the converter's own refusal such as `invalid_office_archive`. */
   contentOmittedReason?: string;
 };
 
 /**
  * Download a provider file and return its text, bounded for model context.
+ * Call it only for a file `reader.reads` accepts.
  *
- * The source is bounded by what the converter accepts, not by the text budget:
- * a deck is mostly images, so its file size says little about its text. The
- * text is then cut to `textBudgetBytes` rather than refused, because the start
- * of a long workbook still answers most questions about it, and
- * `contentTruncated` says that more exists. `download` is called at most once,
- * and only when the file is one the reader understands and is small enough.
+ * The source is bounded by the converter's ceiling, not the text budget, since
+ * a deck's size is mostly images. The text is then cut to `textBudgetBytes`
+ * rather than refused: the start of a long workbook still answers most
+ * questions about it. Nothing is cached, so a scanned PDF is OCR'd, and
+ * billed, on every read.
  */
 export async function readConnectorDocument(input: {
   reader: ConnectorDocumentReader;
@@ -80,14 +74,7 @@ export async function readConnectorDocument(input: {
   download: () => Promise<Response>;
 }): Promise<ConnectorDocumentContent> {
   const { reader, file } = input;
-  const tooLarge: ConnectorDocumentContent = {
-    textContent: null,
-    contentIncluded: false,
-    contentOmittedReason: `File exceeds the ${reader.maxSourceBytes}-byte document conversion limit`,
-  };
-  if (!reader.reads(file)) {
-    return { textContent: null, contentIncluded: false, contentOmittedReason: "resource_format_unsupported" };
-  }
+  const tooLarge = { textContent: null, contentIncluded: false, contentOmittedReason: "source_too_large" };
   if (file.size != null && Number.isFinite(file.size) && file.size > reader.maxSourceBytes) return tooLarge;
   let bytes: Uint8Array;
   try {
@@ -102,25 +89,19 @@ export async function readConnectorDocument(input: {
     signal: input.signal,
     connection: { id: input.connection.id, workspaceId: input.connection.workspaceId },
   });
-  if (!converted.ok) {
-    return {
-      textContent: null,
-      contentIncluded: false,
-      contentOmittedReason: `The file could not be read as a document: ${converted.code}`,
-    };
-  }
+  if (!converted.ok) return { textContent: null, contentIncluded: false, contentOmittedReason: converted.code };
   // Every character is at least one UTF-8 byte, so a prefix of the budget's
   // length in characters holds everything the budget can take, and a very
   // long text is never encoded whole.
   const prefix = new TextEncoder().encode(converted.text.slice(0, input.textBudgetBytes));
   if (converted.text.length <= input.textBudgetBytes && prefix.byteLength <= input.textBudgetBytes) {
-    return { textContent: converted.text, contentIncluded: true, contentBytes: bytes.byteLength, contentTruncated: false };
+    return { textContent: converted.text, contentIncluded: true, sourceBytes: bytes.byteLength, contentTruncated: false };
   }
   return {
     textContent: new TextDecoder().decode(prefix.subarray(0, input.textBudgetBytes)).replace(/\uFFFD$/u, ""),
     contentIncluded: true,
-    contentBytes: bytes.byteLength,
+    sourceBytes: bytes.byteLength,
     contentTruncated: true,
-    contentNotice: `Only the first ${input.textBudgetBytes} bytes of the document's ${converted.text.length}-character text are included`,
+    contentNotice: `Only the first ${input.textBudgetBytes} bytes of the document's ${converted.text.length}-character text are included, and this tool cannot read past them.`,
   };
 }
