@@ -710,14 +710,18 @@ string (mixed bold, a coloured word) into several entries, so every later
 formatted header showed the wrong holder against each ownership figure, with
 nothing in the output to say so.
 
-**Rejected:** Moving the converter into `@rally/connectors`. That package does
+**Considered and rejected:** Moving the converter into `@rally/connectors`. That package does
 not depend on `fflate`, and adding it rewrote about 11,000 lockfile lines,
 because the catalog resolves `vitest` and `zod` as `latest`.
 
-**What a future change must respect:** Any change to conversion output needs a
+**Consequences:** Any change to conversion output needs a
 new extractor version, or stale derivatives keep being served. Connector reads
 are live and unversioned, so they pick up such a change at once. A format added
-to `attachmentTextFormat` becomes readable by every connector too.
+to `attachmentTextFormat` becomes readable by every connector too. The two-million-character
+ceiling guards stored derivatives only: connector reads pass
+`maxTextCharacters: null` and cut the text to their own budget.
+
+Shipped in #1185.
 
 ### 2026-10-08 — A Breakout sees every resource its Channel attached
 

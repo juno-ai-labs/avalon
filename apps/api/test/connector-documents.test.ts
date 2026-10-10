@@ -6,7 +6,7 @@ import {
   type ConnectorAdapter,
 } from "@rally/connectors";
 import { strToU8, zipSync } from "fflate";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { connectorDocumentReader } from "../src/services/connector-document-reader";
 import {
   buildGifStoryboard,
@@ -59,8 +59,9 @@ describe("files read through Google Drive", () => {
     expect(pdf.textContent).toBe("# Page 1\n\nLiquidation preference 1x");
   });
 
-  it("reads a scanned PDF through OCR when its text layer is empty", async () => {
+  it("reads a scanned PDF through OCR, billed to the workspace of the connection it came through", async () => {
     const conversions: string[] = [];
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const result = await driveDownload(
       { name: "Signed Term Sheet.pdf", mimeType: "application/pdf", bytes: textPdf(" ") },
@@ -70,6 +71,14 @@ describe("files read through Google Drive", () => {
 
     expect(conversions).toEqual(["Signed Term Sheet.pdf"]);
     expect(result.textContent).toBe("# Page 1\n\nSigned by both parties");
+    const usage = warned.mock.calls.map(([entry]) => entry as { event?: string; event_id?: string; workspace_id?: string; activity?: string })
+      .filter((entry) => entry.event === "usage_unpriced");
+    warned.mockRestore();
+    expect(usage).toEqual([expect.objectContaining({
+      activity: "document_ocr",
+      workspace_id: "00000000-0000-7000-8000-000000000002",
+      event_id: expect.stringMatching(/^ocr:connection:00000000-0000-7000-8000-000000000003:/u),
+    })]);
   });
 
   it("names why a file that is not really an Office archive could not be read", async () => {
