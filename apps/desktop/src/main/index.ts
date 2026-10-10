@@ -2271,7 +2271,9 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
           throw new Error('This Rally account does not match the active organization');
         }
         desktopAuthAttempts.clear();
+        const displaced = currentAuth.account;
         inMemoryAuthSet = await writeSplitSessionFiles(session, { activate: false });
+        if (displaced) revokeReplacedCredentials({ ...currentAuth, account: displaced, workspaces: [] });
         return publicSession(currentSession);
       }
       // Stored credentials with no organization session to show: an identity
@@ -2284,18 +2286,24 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
       sessionLifecycleEpoch += 1;
       desktopPush.signOut(currentAuth.workspaces);
       await clearStoredSessionUnlocked();
-      void revokeStoredCredentials(currentAuth).then((failures) => {
-        if (failures.length > 0) logWarn('rally', 'could not revoke every replaced session',
-          new AggregateError(failures, 'Rally could not revoke every replaced session'));
-      }).catch((error: unknown) => {
-        logWarn('rally', 'could not revoke replaced sessions', error);
-      });
+      revokeReplacedCredentials(currentAuth);
     }
     // One successful PKCE attempt wins. Late callbacks from any other browser
     // tab must not replace the account that just signed in.
     desktopAuthAttempts.clear();
     await persistSessionUnlocked(session);
     return publicSession(session);
+  });
+}
+
+/** A sign-in that displaces stored credentials must not wait on the server
+ * to end their sessions, nor fail because it could not. */
+function revokeReplacedCredentials(replaced: StoredAuthSet): void {
+  void revokeStoredCredentials(replaced).then((failures) => {
+    if (failures.length > 0) logWarn('rally', 'could not revoke every replaced session',
+      new AggregateError(failures, 'Rally could not revoke every replaced session'));
+  }).catch((error: unknown) => {
+    logWarn('rally', 'could not revoke replaced sessions', error);
   });
 }
 

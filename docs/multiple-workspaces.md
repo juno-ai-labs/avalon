@@ -496,6 +496,8 @@ is the attempt registry alone: creating an attempt retires every earlier one,
 and a completed exchange retires it. A future change that lets an attempt
 outlive a completed sign-in must restore a check here.
 
+Shipped in #1184.
+
 ### 2026-10-08: Organization rows show an activity count, on the Mac and in the browser
 
 **What changed:** The account menu's background rows show
