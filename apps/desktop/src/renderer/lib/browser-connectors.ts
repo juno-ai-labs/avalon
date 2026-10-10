@@ -1,6 +1,5 @@
 import { isCookieSession, type ClientSession } from '@rally/contracts/client-session';
-import type { RallyApi } from './api';
-import { DEFAULT_CLIENT_FEATURE_FLAGS, useClientFeatureFlags } from './use-client-feature-flags';
+import { isDesktopOnlyConnector } from './connector-catalog';
 
 /** The public macOS build, the same one the site and the browser's account rail link to. */
 export const MAC_APP_DOWNLOAD_URL = 'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg';
@@ -23,25 +22,12 @@ export const MAC_APP_CONNECT_NOTE = MAC_APP_DOWNLOADABLE
   : 'Connect this from the Mac app.';
 
 /**
- * Whether a connection asking for `capabilities` can start in a browser: every
- * capability it asks for has to be on the served list. A request is one
- * authorization, so it is offered whole or not at all.
+ * Whether this client may start or refresh a connection of `connectorType`.
+ * The Mac app may do any; a browser tab any but those marked `desktopOnly` in
+ * the catalog, whose authorization needs something only the Mac app has. A new
+ * connector is offered in both unless it is marked. Presentation only: the
+ * connection routes do not read the mark.
  */
-export function browserCanConnect(capabilities: readonly string[], allowed: readonly string[]): boolean {
-  return capabilities.length > 0 && capabilities.every((capability) => allowed.includes(capability));
-}
-
-/**
- * Answers whether this client may start a connection for `capabilities`. The
- * Mac app may start any; a browser tab only what `browserConnectableCapabilities`
- * lists. Presentation only: the connection routes do not read the list.
- */
-export function useConnectorStartAvailable(
-  api: Pick<RallyApi, 'clientFeatureFlags'> | null,
-  session: ClientSession | null,
-): (capabilities: readonly string[]) => boolean {
-  const flags = useClientFeatureFlags(api);
-  const browser = isCookieSession(session);
-  const allowed = (flags.data ?? DEFAULT_CLIENT_FEATURE_FLAGS).browserConnectableCapabilities;
-  return (capabilities) => !browser || browserCanConnect(capabilities, allowed);
+export function connectorStartsHere(session: ClientSession | null, connectorType: string): boolean {
+  return !isCookieSession(session) || !isDesktopOnlyConnector(connectorType);
 }

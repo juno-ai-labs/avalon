@@ -170,15 +170,16 @@ The redirect URI must be registered on Google's identity OAuth client; the
 
 ### Connectors
 
-A member can start the connections the served `browserConnectableCapabilities`
-list names: by default the two Google connections, Gmail with Calendar and Drive
-with Docs and Sheets. A connection is offered only when every capability it asks
-for is listed (`browserCanConnect`). Every other connector, in Settings, account
-onboarding and a conversation's connection card, is shown with its buttons
+A member can start every connection except those whose catalog entry in
+`connector-catalog.ts` is marked `desktopOnly`, which today is Canva alone: its
+OAuth returns to a loopback listener in the Mac app's main process. A new
+connector is offered in both clients unless it is marked. A marked connector, in
+Settings and a conversation's connection card, is shown with its buttons
 disabled and "Download the Mac app to connect this." linking to the Mac build.
-On a phone or tablet (`MAC_APP_DOWNLOADABLE` false) it reads "Connect this from
-the Mac app." with no link, since the build cannot run there.
-The list is presentation only; the connection routes do not read it.
+An installed marked connection's Refresh is disabled too, with the same note as
+its tooltip, since reconnecting takes the same path. On a phone or tablet (`MAC_APP_DOWNLOADABLE` false) it
+reads "Connect this from the Mac app." with no link, since the build cannot run
+there. The mark is presentation only; the connection routes do not read it.
 
 A cookie session's `RallyApi` starts with `?handoff=browser`. The API stores
 `<browser origin>/connections/complete` as the return, accepts exactly that
@@ -592,6 +593,31 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-10-10: Every connector but Canva connects from the browser
+
+**What changed:** The browser offers every connector except those marked
+`desktopOnly` in the connector catalog, where it offered only the ones a served
+`browser-connectable-capabilities` list named (the two Google connections). The
+flag, its resolver and the `browserConnectableCapabilities` client field are
+gone. Canva carries the mark, and its reconnect, from the card or an installed
+connection's Refresh, is now gated too.
+
+**Why:** Every start route already returns to the browser's completion page, so
+the allowlist kept working connectors in the Mac app for no reason, and each new
+connector started hidden until someone edited a flag nobody had created. What
+keeps a connector out of the browser is a fact about its code, Canva's loopback
+listener, so it lives beside the connector rather than in a flag.
+
+**Considered and rejected:** Inverting the flag into a served deny list. A flag
+cannot make a loopback callback work in a tab, so it would only restate the code
+in a second place that can drift from it.
+
+**Consequences:** A connector whose authorization needs the Mac app must be
+marked `desktopOnly` in the change that adds it. Removing Canva's mark waits on
+Canva approving Rally's server callback.
+
+Shipped in #1186.
 
 ### 2026-10-07: Add Rally to the iOS Home Screen
 
