@@ -143,7 +143,8 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
   const members = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
-    enabled: Boolean(api),
+    // The member directory is a member's; a guest's feed names authors as Rally.
+    enabled: Boolean(api) && workspace.currentUser.accessClass !== 'guest',
     staleTime: 60_000,
   });
   const memberById = useMemo(() => new Map((members.data ?? []).map((member) => [member.id, member])), [members.data]);

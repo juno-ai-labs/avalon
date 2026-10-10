@@ -46,7 +46,8 @@ import { DeepLinkErrorScreen } from './screens/deep-link-error';
 import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/guided-onboarding';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
 import { ChannelScreen } from './screens/channel';
-import { channelRoute } from './lib/navigation-routes';
+import { channelRoute, homeChannelId, threadRoute } from './lib/navigation-routes';
+import { useCachedWorkstreamSummary } from './lib/use-workstreams-query';
 import { SidekicksLibraryRoute, SidekicksWindow } from './screens/sidekicks-library';
 import { BrowserImportWindow } from './screens/browser-import';
 import { WorkspaceSettingsScreen } from './screens/workspace-settings';
@@ -354,7 +355,7 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
                 Space. Without this, a stale link would open as a Channel whose
                 id is "new". */}
             <Route element={<Navigate replace to="/" />} path="/workstreams/new" />
-            <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
+            <Route element={<LoneThreadRoute />} path="/workstreams/:id" />
             <Route element={<AutomationScreen />} path="/automations/:id" />
             <Route element={<SidekicksLibraryRoute />} path="/sidekicks" />
             {/* Creating a Sidekick is a member's, as in the Sidekicks window. */}
@@ -366,6 +367,21 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
         </AppShell>
     </SpeechPlaybackProvider>
   );
+}
+
+/**
+ * A thread addressed on its own (search, the menu bar, a deep link): opened
+ * under a Channel it sits in when this device knows one, so the Channel is one
+ * step back; on its own otherwise. The query string (a breakout, a search
+ * target) travels with it.
+ */
+function LoneThreadRoute(): React.JSX.Element {
+  const { id = '' } = useParams();
+  const location = useLocation();
+  const row = useCachedWorkstreamSummary(id);
+  const channelId = row && !row.pending ? homeChannelId(row.spaceIds) : null;
+  if (channelId) return <Navigate replace state={location.state} to={`${threadRoute(id, channelId)}${location.search}`} />;
+  return <WorkstreamScreen />;
 }
 
 /** A Space's old address: the Channel it is now. */
