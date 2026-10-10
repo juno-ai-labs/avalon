@@ -37,6 +37,13 @@ export interface BuildAttachmentDerivativeInput {
   signal?: AbortSignal;
   /** Test seam and emergency lower bound; production uses 30 seconds. */
   timeoutMs?: number;
+  /**
+   * The longest converted text accepted, or null for none. Defaults to the
+   * stored-derivative ceiling, which every later tool read must be able to
+   * hold in memory. A caller that keeps only a bounded prefix of the text —
+   * a connector read — passes null and bounds it itself.
+   */
+  maxTextCharacters?: number | null;
 }
 
 export interface DerivativeMetadata {
@@ -130,7 +137,8 @@ export async function buildAttachmentDerivative(
       input.signal,
     );
     if (!converted) return { status: "unsupported", errorCode: "resource_format_unsupported" };
-    if (converted.text.length > MAX_DERIVATIVE_CHARACTERS) {
+    const maxTextCharacters = input.maxTextCharacters === undefined ? MAX_DERIVATIVE_CHARACTERS : input.maxTextCharacters;
+    if (maxTextCharacters !== null && converted.text.length > maxTextCharacters) {
       return { status: "failed", errorCode: "derivative_too_large" };
     }
     return {
