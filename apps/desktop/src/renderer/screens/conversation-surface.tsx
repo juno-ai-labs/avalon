@@ -5,6 +5,8 @@ import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { skipToken, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
+import { personalColor, personalColorInk } from '../components/personal-avatar';
+import { MemberPresentationContext } from '../lib/member-presentation';
 import {
   AlertTriangle,
   Ellipsis,
@@ -173,12 +175,25 @@ export function workspaceMemberFromSession(session: ClientSession | null): Works
  * opening. The status lives here rather than on the layout so that a rail drawn
  * beside it, placeholder or real, is never read out as part of it.
  */
-function ConversationOpeningFeed({ label, parentKind, caption = false }: {
+function ConversationOpeningFeed({ label, parentKind, caption = false, openingMessage, openingAuthorId }: {
   label: string;
   parentKind: ConversationParentKind;
   /** Show the label above the placeholders, for a wait long enough to explain. */
   caption?: boolean;
+  /**
+   * What the person just sent, for a thread still being created: drawn as the
+   * message it is about to be, so the pane does not swap a placeholder for it.
+   */
+  openingMessage?: string | undefined;
+  /** Who sent it, for their own bubble colour, as the transcript draws it. */
+  openingAuthorId?: string | undefined;
 }): React.JSX.Element {
+  const presentations = useContext(MemberPresentationContext);
+  const profile = openingAuthorId ? presentations.get(openingAuthorId) : undefined;
+  const bubbleStyle = profile ? {
+    '--av-cmp-bubble-human-background': personalColor(profile.color),
+    '--av-cmp-bubble-human-foreground': personalColorInk(profile.color),
+  } as React.CSSProperties : undefined;
   return (
     <div
       aria-label={label}
@@ -200,7 +215,16 @@ function ConversationOpeningFeed({ label, parentKind, caption = false }: {
           </header>
         )}
         <div className="transcript-scroll">
-          <div className="transcript-column conversation-opening-messages">
+          {openingMessage ? <div className="transcript-column conversation-opening-messages">
+            <article className="message-block human-message own-human-message" style={bubbleStyle}>
+              <div className="human-message-content">
+                <div className="human-message-bubble">
+                  <div className="human-message-bubble-body"><div className="markdown-body"><p>{openingMessage}</p></div></div>
+                </div>
+              </div>
+            </article>
+            <p aria-hidden="true" className="conversation-opening-caption">{label}</p>
+          </div> : <div className="transcript-column conversation-opening-messages">
             {caption && <p aria-hidden="true" className="conversation-opening-caption">{label}</p>}
             <div className="conversation-opening-message">
               <div className="conversation-opening-byline">
@@ -239,7 +263,7 @@ function ConversationOpeningFeed({ label, parentKind, caption = false }: {
                 <span className="skeleton-bar conversation-opening-line is-short" />
               </div>
             </div>
-          </div>
+          </div>}
         </div>
         <div className="composer-dock conversation-opening-composer-dock">
           <div className="skeleton-bar conversation-opening-composer" />
@@ -253,14 +277,18 @@ export function ConversationOpeningSkeleton({
   label,
   parentKind,
   caption = false,
+  openingMessage,
+  openingAuthorId,
 }: {
   label: string;
   parentKind: ConversationParentKind;
   caption?: boolean;
+  openingMessage?: string | undefined;
+  openingAuthorId?: string | undefined;
 }): React.JSX.Element {
   return (
     <div className="conversation-layout conversation-opening-skeleton">
-      <ConversationOpeningFeed caption={caption} label={label} parentKind={parentKind} />
+      <ConversationOpeningFeed caption={caption} label={label} openingAuthorId={openingAuthorId} openingMessage={openingMessage} parentKind={parentKind} />
     </div>
   );
 }
