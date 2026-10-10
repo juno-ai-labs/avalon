@@ -2617,6 +2617,29 @@ describe("connectors", () => {
     }
   });
 
+  it("points a Sheets read of a stored Excel file at drive.download instead of relaying the bare 400", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.hostname === "www.googleapis.com") {
+        return googleJson({ mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      }
+      return googleJson({ error: { code: 400, message: "This operation is not supported for this document" } }, 400);
+    };
+    await expect(googleAdapter(fetcher).executeTool(
+      "sheets.read_spreadsheet",
+      { spreadsheetId: "an-xlsx" },
+      {
+        connection: googleConnection(["drive.read", "sheets.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: neverAborts()
+      }
+    )).rejects.toMatchObject({
+      code: "invalid_payload",
+      message: "That id is an excel, not a spreadsheet. Read it with drive.download, which returns every sheet's cells.",
+      details: { reason: "wrong_id_family", expected: "spreadsheet", actual: "excel" }
+    });
+  });
+
   it("names the family on a write before the writability verdict hides it", async () => {
     const fetcher: typeof fetch = async (input) => {
       const url = requestUrl(input);
@@ -2705,7 +2728,10 @@ describe("connectors", () => {
       "form",
       "drawing",
       "folder",
-      "pdf"
+      "pdf",
+      "word",
+      "excel",
+      "powerpoint"
     ]);
   });
 
