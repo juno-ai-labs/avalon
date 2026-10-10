@@ -8,6 +8,8 @@ export const SITE_ORIGIN = 'https://rallywith.ai';
 export interface HelpPageAssets {
   styles: string[];
   scripts: string[];
+  /** `<meta name content>` pairs a page script reads, such as another entry's URL. */
+  meta?: Array<{ name: string; content: string }>;
 }
 
 export interface LayoutInput {
@@ -157,6 +159,7 @@ export function renderLayout({ site, page, html, headings, assets }: LayoutInput
     `<meta name="twitter:title" content="${escapeHtml(title)}">`,
     `<meta name="twitter:description" content="${escapeHtml(description)}">`,
     `<meta name="twitter:image" content="${SITE_ORIGIN}${ogImagePath(page)}">`,
+    ...(assets.meta ?? []).map(({ name, content }) => `<meta name="${escapeHtml(name)}" content="${escapeHtml(content)}">`),
     ...assets.styles.map((href) => `<link rel="stylesheet" href="${href}">`),
     ...assets.scripts.map((src) => `<script type="module" src="${src}"></script>`),
     `<script type="application/ld+json">${structuredData(page)}</script>`,

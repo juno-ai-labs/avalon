@@ -7,7 +7,10 @@ must keep so the reporting keeps working. The mechanism behind it is in
 ## What we track
 
 Three events, all anonymous, sent by the site to `api.rallywith.ai` and
-forwarded to PostHog. The site loads no PostHog script and sets no cookie.
+forwarded to PostHog. These are the source of record for the dashboard.
+
+For a few weeks the page also runs PostHog's session replay and heatmaps; see
+[`public-site-telemetry.md`](public-site-telemetry.md#posthog-browser-sdk-temporary).
 
 | PostHog event | Sent when | Carries |
 | --- | --- | --- |
@@ -39,8 +42,8 @@ session storage before removing the URL field, so refreshing before sign-in
 keeps the landing attribution. Authentication retires it. See
 [`public-site-telemetry.md`](public-site-telemetry.md#browser-signup-attribution).
 
-Not tracked: scrolling, section views, header nav clicks, and the founders'
-LinkedIn, GitHub and Hugging Face links.
+Not reported as site events: scrolling, section views, header nav clicks, and
+the founders' LinkedIn, GitHub and Hugging Face links.
 
 The footer is rendered from `apps/site/src/site-chrome.ts`, so its help@ link and
 its id live there, not in `index.html`. The `/compare/` pages share the header
@@ -76,8 +79,16 @@ Check these on every edit to the landing page:
    must carry the same ID; never prepare a shared ID at page load or remove
    browser reload persistence. Signup reports join separate subjects by flow.
 
+8. **Keep the SDK off pages with credentials in their URL.** Every page
+   records unless its path is in `RECORDING_DENIED_PATHS` in
+   `apps/site/src/posthog-loader.ts`. A new page that receives a token, ticket,
+   grant or resource id in its URL must be added there before it ships.
+
 ## Where to look
 
+- **Replays and heatmaps:** PostHog's Session replay and Heatmaps pages,
+  filtered to `$current_url` on `rallywith.ai`. A recording opens from any of
+  its server `$pageview`s.
 - **Dashboard:** [Landing page & GTM](https://us.posthog.com/project/541600/dashboard/2150285)
   in PostHog. It shows visits, which download link was clicked, weekly download
   rate, conversion by referrer and by campaign, and two complete signup flows:
