@@ -43,6 +43,12 @@ its headers is leftmost. The same happens when the window is too narrow for
 two panes: `onShownChange` reports the thread standing alone, and the thread
 carries the crumb.
 
+Each step is drawn as movement, by `SplitConversationLayout` itself so both
+levels share it. A pane that opens beside another slides in from the right; a
+pane that takes the whole width slides over from where it was (the distance is
+measured at the step, `--split-motion-from`); stepping back reverses that. 240ms
+on the curve the side panel uses, and nothing under `prefers-reduced-motion`.
+
 Selecting the Channel crumb goes back one step: to the Channel and the thread,
 whatever the thread had open. The thread's close button, beside the Channel,
 returns to the Channel alone. A breakout's close button returns to its thread.
