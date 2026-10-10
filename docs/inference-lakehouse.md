@@ -591,6 +591,26 @@ becomes product-state repair authority.
 
 ## Changelog
 
+### 2026-10-09 — A streaming request row carries one of two body shapes
+
+**What changed:** A streaming request row's `request` is a Responses body for
+OpenRouter and a Chat Completions body for Azure, and `metadata.api` says which.
+For a Responses body, `metadata.messageCount` counts `input` items.
+
+**Why:** OpenRouter agent turns moved to the Responses API; the archived body is
+the body sent, so its shape changed with it. The reasoning is in
+[`agent-harness.md`](agent-harness.md#changelog), 2026-10-09.
+
+**Considered and rejected:** Translating the Responses body back into a Chat
+body for the archive. It would archive a request nobody sent.
+
+**Consequences:** `messageCount` is not comparable across `api` values: a tool
+round trip is one assistant message plus one tool message in Chat, and a
+`function_call` plus a `function_call_output` item in Responses. A query over
+request bodies reads `request.input` or `request.messages` by `metadata.api`.
+
+Shipped in #1182.
+
 ### 2026-10-01 — Count the provider's charge on a bring-your-own-key account
 
 **What changed:** Chat usage on OpenRouter records `usage.cost` plus

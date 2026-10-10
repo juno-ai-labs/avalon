@@ -273,7 +273,9 @@ async function main() {
       let titleStatus = "naming";
       while (Date.now() - start < 60_000) {
         const workstream = await api("GET", `/conversations/${workstreamId}`);
-        titleStatus = workstream.body?.workstream?.titleStatus ?? "?";
+        // The conversation boot carries the channel's fields at the top level.
+        // A failed read or a missing field is not a settled title.
+        titleStatus = workstream.status === 200 ? workstream.body?.titleStatus ?? "naming" : "naming";
         if (titleStatus !== "naming") break;
         await new Promise((resolve) => setTimeout(resolve, 2_500));
       }

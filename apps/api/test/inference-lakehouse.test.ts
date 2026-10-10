@@ -230,6 +230,52 @@ describe("inference lakehouse", () => {
     ]));
   });
 
+  it("labels each request body by its API and counts what that body carries", async () => {
+    const { env, objects } = fixture();
+    const context = { source: "workstream", workspaceId: "workspace-1", requestId: "run-1" };
+    const cursor = { structuredOutputAttempt: 0, stageIndex: 0, candidateIndex: 0, endpointAttempt: 0 };
+    // A Responses body: one tool round trip is three input items, not one message.
+    await captureStreamingInferenceRequest(env, context, {
+      inferenceRequestId: "responses-request",
+      turnId: "turn-1",
+      model: "openai/gpt-6.1-sol",
+      provider: "openrouter",
+      providerInvocationModel: "openai/gpt-6.1-sol",
+      cursor,
+      payload: {
+        model: "openai/gpt-6.1-sol",
+        input: [
+          { type: "message", role: "user", content: "weather?" },
+          { type: "function_call", id: "fc_call-1", call_id: "call-1", name: "lookup", arguments: "{}" },
+          { type: "function_call_output", call_id: "call-1", output: "18C" },
+        ],
+        stream: true,
+        usage: { include: true },
+        tools: [{ type: "function", name: "lookup", parameters: null }],
+      },
+    }, Date.parse("2026-10-09T20:00:00.000Z"));
+    await captureStreamingInferenceRequest(env, context, {
+      inferenceRequestId: "chat-request",
+      turnId: "turn-1",
+      model: "x-ai/grok-4.6",
+      provider: "azure",
+      providerInvocationModel: "grok-4.6",
+      cursor,
+      payload: {
+        model: "grok-4.6",
+        messages: [{ role: "user", content: "weather?" }],
+        stream: true,
+        stream_options: { include_usage: true },
+      },
+    }, Date.parse("2026-10-09T20:00:00.000Z"));
+
+    const record = (id: string) => JSON.parse(objects.get(
+      `inference-lakehouse/records/2026-10-09/${id}:request.json`,
+    ) ?? "null") as InferenceLakehouseRecord;
+    expect(record("responses-request").metadata).toMatchObject({ api: "responses", messageCount: 3, toolCount: 1 });
+    expect(record("chat-request").metadata).toMatchObject({ api: "chat_completions", messageCount: 1, toolCount: 0 });
+  });
+
   it("archives the rejection body a classification code cannot describe", async () => {
     const { env, objects, pointers } = fixture();
     // The 2 September Sol failure. `invalid_function_parameters` reached every
