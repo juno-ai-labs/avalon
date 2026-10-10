@@ -43,23 +43,29 @@ async function start(html: string, session?: (() => string) | null) {
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
-// jsdom keeps one `document` per file, so each fresh import of the reporter
-// would stack another click listener on the last test's.
-const listeners: Array<[string, EventListenerOrEventListenerObject, boolean | AddEventListenerOptions | undefined]> = [];
+// jsdom keeps one `document` and `window` per file, so each fresh import of
+// the reporter would stack another click and pagehide listener on the last
+// test's.
+const listeners: Array<[EventTarget, string, EventListenerOrEventListenerObject, boolean | AddEventListenerOptions | undefined]> = [];
 const addListener = document.addEventListener.bind(document);
+const addWindowListener = window.addEventListener.bind(window);
 
 beforeEach(() => {
   vi.resetModules();
   document.body.innerHTML = '';
   history.replaceState(null, '', '/');
   vi.spyOn(document, 'addEventListener').mockImplementation((type, listener, options) => {
-    listeners.push([type, listener, options]);
+    listeners.push([document, type, listener, options]);
     addListener(type, listener, options);
+  });
+  vi.spyOn(window, 'addEventListener').mockImplementation((type, listener, options) => {
+    listeners.push([window, type, listener, options]);
+    addWindowListener(type, listener, options);
   });
 });
 
 afterEach(() => {
-  for (const [type, listener, options] of listeners.splice(0)) document.removeEventListener(type, listener, options);
+  for (const [target, type, listener, options] of listeners.splice(0)) target.removeEventListener(type, listener, options);
 });
 
 describe('site telemetry reporter', () => {
@@ -202,5 +208,22 @@ describe('site telemetry reporter', () => {
     await vi.waitFor(() => expect(api.anonymousIds).toHaveLength(1));
     expect(api.anonymousIds[0]).toBe(givenToPostHog);
     expect(givenToPostHog).toMatch(UUID_V7);
+  });
+
+  it('sends what is queued with the page session when the visitor leaves before PostHog loads', async () => {
+    const api = stubApi();
+    document.body.innerHTML = '<a data-site-action="download-hero" href="#">a</a>';
+    const telemetry = await import('../src/telemetry');
+    // The SDK script never arrives: a slow network, or a click that navigates away first.
+    telemetry.awaitAnalyticsSession();
+    telemetry.initializeSiteTelemetry();
+    document.querySelector<HTMLElement>('a')!.click();
+    window.dispatchEvent(new Event('pagehide'));
+
+    await vi.waitFor(() => expect(api.sent.flatMap((request) => request.events)).toHaveLength(3));
+    const events = api.sent.flatMap((request) => request.events);
+    expect(events.map((event) => event.name).sort()).toEqual(['site_action_selected', 'site_page_left', 'site_page_viewed']);
+    expect(new Set(events.map((event) => event.context.sessionId)).size).toBe(1);
+    expect(events[0]!.context.sessionId).toMatch(UUID_V7);
   });
 });

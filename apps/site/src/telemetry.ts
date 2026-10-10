@@ -365,10 +365,13 @@ export function reportDesktopHandoff(
 /**
  * Holds events until `provideAnalyticsSession` names the session they report
  * under. Called before `initializeSiteTelemetry` on a page that loads PostHog,
- * so even the page view waits for the SDK's session.
+ * so even the page view waits for the SDK's session. A visitor who leaves
+ * before the SDK loads releases the hold with the page's own session, so the
+ * quickest bounces and navigating clicks are still reported.
  */
 export function awaitAnalyticsSession(): void {
   analyticsSession = new Promise((resolve) => { provideSession = resolve; });
+  window.addEventListener('pagehide', () => provideAnalyticsSession(null), { once: true });
 }
 
 /**
