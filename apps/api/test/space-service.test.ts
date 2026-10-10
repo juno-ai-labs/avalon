@@ -366,3 +366,17 @@ describe("Space refusals", () => {
     expect(spaceRefusal("space_not_found", "Company").status).toBe(404);
   });
 });
+
+describe("SpaceService Activity read position", () => {
+  it("given a support session, when Activity is marked seen, then the person's position is not moved", async () => {
+    const markActivitySeen = vi.fn(async () => undefined);
+    const workspace = { ...workspaceDouble(), markActivitySeen };
+
+    await new SpaceService(serviceEnv({ workspace }), { ...auth(), impersonatorUserId: MEMBER })
+      .markActivitySeen(5);
+    expect(markActivitySeen).not.toHaveBeenCalled();
+
+    await new SpaceService(serviceEnv({ workspace }), auth()).markActivitySeen(5);
+    expect(markActivitySeen).toHaveBeenCalledWith({ workspaceId: WORKSPACE_ID, userId: OWNER, seenThrough: 5 });
+  });
+});
