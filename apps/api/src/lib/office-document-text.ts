@@ -1,15 +1,9 @@
 import { unzipSync } from "fflate";
 
 /**
- * Office Open XML (DOCX, PPTX, XLSX) to model-readable text.
- *
- * One converter for every place an Office file reaches the model: an uploaded
- * attachment's derivative and a file read from a provider's storage, such as
- * Google Drive, are the same bytes and must read the same way. The converter
- * is pure — it takes bytes the caller has already authorized and fetched, and
- * owns only the archive and XML guards that make an untrusted file safe to
- * expand inside an isolate. Connectors reach it through the attachment
- * converter, as `connectorDocumentReader`.
+ * Office Open XML (DOCX, PPTX, XLSX) to model-readable text, for the attachment
+ * converter. Pure: it takes bytes the caller already fetched and owns only the
+ * archive and XML guards that make an untrusted file safe to expand.
  */
 
 const MAX_EXPANDED_OFFICE_BYTES = 12 * 1_024 * 1_024;
