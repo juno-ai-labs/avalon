@@ -80,9 +80,13 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
 
 - **Narrow windows:** below two conversation minimums the right pane stands
   alone, with the crumbs: a breakout alone carries its Channel and its thread,
-  each of which `onShownChange` reports at its own level. Below 460px a
-  pane's header (`@container conversation-pane`) shows the crumbs as marks
-  only, so the pane's own pill keeps its room and truncates last.
+  each of which `onShownChange` reports at its own level. There the Channel
+  crumb opens the Channel alone (`onNarrowChange`): the Channel-and-thread
+  route it opens on a wide window would draw the thread again. A header
+  (`@container conversation-pane`) shows the crumbs as marks only below 460px,
+  or below 760px when a breakout carries both its Channel and its thread;
+  above that each crumb ends in an ellipsis rather than run under the pill, so
+  the pane's own pill keeps its room and truncates last.
 - **A thread with no visible Channel** opens on `/workstreams/:id`, alone; it
   has nothing to step back to.
 
@@ -111,4 +115,7 @@ pane, and replaced code that works with code that might; nesting reuses both.
 
 **Consequences:** A deeper level (a breakout of a breakout) would need a third
 nesting, which the product does not allow. A new kind of pane opened from a
-thread belongs in the thread screen's right slot.
+thread belongs in the thread screen's right slot. A crumb's step back depends
+on whether two panes fit: the same route draws two panes on a desktop and one
+on a phone, so a crumb that names a pane has to open it alone where only one
+fits.

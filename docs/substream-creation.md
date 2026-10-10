@@ -99,6 +99,9 @@ What sits above that composer is the branch provenance:
   composing rather than part of the substream, so the keystroke that submits is
   the last frame they are drawn on: anything still above the opening turn —
   collapsing, faded, or merely inert — is height the swap has to take back.
+  From that keystroke a thread's breakout draws what the created breakout opens
+  with instead: its origin card (`BreakoutOrigin`) above the opening turn, and
+  the title pill's placeholder in the 64px row the pill will sit in.
 
 The composer itself is the work-stream launcher's, and carries the same one
 control the launcher does: while Application → Developer → **Debug enabled** is
@@ -574,6 +577,21 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-10-10 — The launch surface draws the breakout it becomes
+
+**What changed:** While a thread's breakout is launching, the launch surface
+draws the created breakout's origin card above the opening turn, and a centred
+title pill placeholder in a 64px header row.
+
+**Why:** Breakouts gained an origin card and a title pill header, and the launch
+surface still drew neither: on creation the opening turn dropped by the card's
+height (about 180px), and the header went from a left-aligned bar in a 44px row
+to a centred pill in a 64px one.
+
+**Consequences:** Whatever the created breakout draws above its first turn, the
+launch surface has to draw too, from the submit keystroke. A Sidekick's
+breakout launch is left as it was; only a thread's was checked in a window.
 
 ### 2026-10-05 — Breakouts start from what was said, Sidekick results included
 

@@ -95,6 +95,9 @@ one already open when it sits there — so a Channel is always one step back.
 The sidebar becomes a sheet behind the list's own header, which is the top
 bar with the menu button; the section switcher is a row of tabs under it. The
 sheet is clipped rather than moved, for the reasons the 2026-10-06 entry gives.
+Opening anything from it closes it, as do Escape and widening past 640px;
+switching sections does not navigate, so the sheet stays open on the list just
+picked.
 
 ### Title pills
 

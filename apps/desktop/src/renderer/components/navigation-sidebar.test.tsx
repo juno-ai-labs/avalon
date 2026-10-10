@@ -91,6 +91,7 @@ describe('the navigation sidebar', () => {
     useUiStore.getState().setSidebarSection('channels');
     useUiStore.getState().setThreadSort('recent');
     useUiStore.getState().setChannelSort('alphabetical');
+    useUiStore.getState().setSidebarOpen(false);
   });
 
   it('lists pinned Channels in the person’s order, then every other Channel A–Z with its thread count', () => {
@@ -141,6 +142,29 @@ describe('the navigation sidebar', () => {
     renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
     fireEvent.click(screen.getByRole('button', { name: /Outbound/u }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound');
+  });
+
+  it('closes the phone sheet when a Channel is opened from it, and keeps it open across sections', () => {
+    renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Activity' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Channels' }));
+    expect(screen.getByRole('button', { name: 'Close navigation' })).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.click(screen.getByRole('button', { name: /Outbound/u }));
+
+    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('closes the phone sheet on Escape and hands focus back to its button', () => {
+    renderSidebar(() => undefined);
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    const toggle = screen.getByRole('button', { name: 'Open navigation' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveFocus();
   });
 
   it('counts what is waiting on the Threads button', () => {

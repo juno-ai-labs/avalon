@@ -16,7 +16,7 @@ import { Button, EmptyState, InlineError, LoadingState, Modal } from '../compone
 import { RelativeTime } from '../components/relative-time';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
-import { ChannelPaneContextValue, threadRoute, type ChannelPaneContext } from '../lib/navigation-routes';
+import { ChannelPaneContextValue, channelRoute, threadRoute, type ChannelPaneContext } from '../lib/navigation-routes';
 import { desktopBridge } from '../lib/platform';
 import { CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY, channelFeedQueryKey } from '../lib/sidebar-list-store';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
@@ -59,6 +59,7 @@ function ChannelStack({ channelId, threadId, workspace }: {
   const space = useChannel(channelId);
   const [threadUsesTwoPanes, setThreadUsesTwoPanes] = useState(false);
   const [shown, setShown] = useState<SplitConversationMode>('split');
+  const [narrow, setNarrow] = useState(false);
   const widthKey = layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', 'thread-width');
   const [threadWidth, setThreadWidth] = useState<number | null>(() => {
     const stored = Number.parseFloat(readLayout(widthKey) ?? '');
@@ -76,12 +77,14 @@ function ChannelStack({ channelId, threadId, workspace }: {
       icon: space ? <SpaceIcon size={18} space={space} /> : null,
       title: space?.name ?? 'Channel',
       label: `Back to ${space?.name ?? 'the channel'}`,
-      // Back one step: the Channel and this thread, whatever the thread had open.
-      onSelect: () => void navigate(threadRoute(threadId, channelId)),
+      // Back one step: the Channel and this thread, whatever the thread had
+      // open. Where only one pane fits, that route draws the thread again, so
+      // the step back is the Channel alone.
+      onSelect: () => void navigate(narrow ? channelRoute(channelId) : threadRoute(threadId, channelId)),
     },
     shifted,
     setThreadUsesTwoPanes,
-  }), [channelId, navigate, shifted, space, threadId]);
+  }), [channelId, narrow, navigate, shifted, space, threadId]);
   return <ChannelPaneContextValue.Provider value={pane}>
     <SplitConversationLayout
       breakout={threadId === null ? null : <WorkstreamRoute key={threadId} />}
@@ -89,6 +92,7 @@ function ChannelStack({ channelId, threadId, workspace }: {
       main={<ChannelPane channelId={channelId} openThreadId={threadId} workspace={workspace} />}
       mode={threadId === null ? 'main' : threadUsesTwoPanes ? 'breakout' : 'split'}
       onBreakoutWidthChange={changeThreadWidth}
+      onNarrowChange={setNarrow}
       onShownChange={setShown}
     />
   </ChannelPaneContextValue.Provider>;
