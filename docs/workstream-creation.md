@@ -18,7 +18,6 @@ attempt at the opposite that the changelog records.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/screens/new-workstream.tsx` | Both states of the screen, the `launching` state that switches between them, the create mutation, and `launchedWorkstreamDetail` — the one place a launched work stream's cached detail is built. |
-| `apps/desktop/src/renderer/components/new-channel-participants.tsx` | The Participants row above the composer: the **+** that widens into the people search, and the pill that opens the list a person is removed from. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The pending-row rule on the shared list: `addPendingWorkstream`, `confirmPendingWorkstream`, `discardPendingWorkstream`, `keepPendingWorkstreams` (applied by every write that replaces the list), and `releasePendingWorkstreams`, the one path that may remove a pending row. |
 | `apps/desktop/src/renderer/lib/launched-conversation.ts` | `optimisticOpeningTranscript`, the one place either launcher's optimistic turn is built, and the detail a launched substream is seeded with. |
 | `packages/ui/src/styles/app.css` | The `.workstream-launch-screen` block at the end of the file: every geometry difference between the two states, and the two keyframes. Shared with the substream launcher, which renders the same three rows inside a work stream's own column ([`substream-creation.md`](substream-creation.md)). |

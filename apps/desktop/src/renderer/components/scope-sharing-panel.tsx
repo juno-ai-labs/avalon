@@ -1,4 +1,3 @@
-import { IconShare2 } from '@tabler/icons-react';
 import { Avatar, Badge, Button, IconButton } from '@rally/ui/components/primitives';
 import { X } from 'lucide-react';
 import { useRef, useState } from 'react';
@@ -129,8 +128,3 @@ export function ShareConversationDialog({ open, onOpenChange, ...props }: Omit<P
   </Modal>;
 }
 
-export function ShareConversationButton({ disabled = false, ...props }: Omit<Parameters<typeof ScopeSharingPanel>[0], 'onShared'> & { disabled?: boolean }): React.JSX.Element {
-  const [open, setOpen] = useState(false);
-  return <><IconButton label="Share" disabled={disabled} aria-haspopup="dialog" aria-expanded={open} data-state={open ? 'open' : 'closed'} onClick={() => setOpen(true)}><IconShare2 aria-hidden="true" size={18} stroke={1.8} /></IconButton>
-    <ShareConversationDialog {...props} open={open} onOpenChange={setOpen} /></>;
-}
