@@ -493,8 +493,11 @@ asked to replace it.
 
 **Consequences:** The guard against a late callback replacing a newer sign-in
 is the attempt registry alone: creating an attempt retires every earlier one,
-and a completed exchange retires it. A future change that lets an attempt
-outlive a completed sign-in must restore a check here.
+and a completed exchange retires it. Attempt creation does not take the
+session lock, so the exchange reads stored state first and checks the attempt
+with nothing that yields between that check and clearing the registry. A
+future change that lets an attempt outlive a completed sign-in, or adds an
+await there, must restore a check here.
 
 Shipped in #1184.
 

@@ -2251,6 +2251,12 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
       desktopAuthAttempts.discard(candidate.attemptId as string);
       throw new Error('Rally was signed out while sign-in was completing');
     }
+    // Read the stored state before checking the attempt. Creating an attempt
+    // does not take this lock, so one can start during any await here; nothing
+    // may yield between the check and clearing the registry, or this older
+    // callback would retire a newer attempt and overwrite its sign-in.
+    const currentAuth = await loadStoredAuthSet();
+    const currentSession = currentAuth ? await loadStoredSession() : null;
     const currentAttempt = desktopAuthAttempts.proof(candidate.attemptId as string);
     if (
       !currentAttempt
@@ -2259,28 +2265,29 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
     ) {
       throw new Error('A newer Rally sign-in attempt replaced this callback');
     }
-    const currentAuth = await loadStoredAuthSet();
+    if (
+      currentSession?.workspace
+      && currentSession.user.email.toLocaleLowerCase('en-US')
+        !== session.user.email.toLocaleLowerCase('en-US')
+    ) {
+      desktopAuthAttempts.discard(candidate.attemptId as string);
+      throw new Error('This Rally account does not match the active organization');
+    }
+    // One successful PKCE attempt wins. Late callbacks from any other browser
+    // tab must not replace the account that just signed in.
+    desktopAuthAttempts.clear();
+    if (currentAuth && currentSession?.workspace) {
+      const displaced = currentAuth.account;
+      inMemoryAuthSet = await writeSplitSessionFiles(session, { activate: false });
+      if (displaced) revokeReplacedCredentials({ ...currentAuth, account: displaced, workspaces: [] });
+      return publicSession(currentSession);
+    }
     if (currentAuth) {
-      const currentSession = await loadStoredSession();
-      if (currentSession?.workspace) {
-        if (
-          currentSession.user.email.toLocaleLowerCase('en-US')
-          !== session.user.email.toLocaleLowerCase('en-US')
-        ) {
-          desktopAuthAttempts.discard(candidate.attemptId as string);
-          throw new Error('This Rally account does not match the active organization');
-        }
-        desktopAuthAttempts.clear();
-        const displaced = currentAuth.account;
-        inMemoryAuthSet = await writeSplitSessionFiles(session, { activate: false });
-        if (displaced) revokeReplacedCredentials({ ...currentAuth, account: displaced, workspaces: [] });
-        return publicSession(currentSession);
-      }
       // Stored credentials with no organization session to show: an identity
       // credential whose profile could not be rebuilt, or an active entry
       // whose profile is gone. The renderer drew the sign-in screen for this
       // state, and refusing the sign-in it asked for strands the person there
-      // with no way back in. The attempt is live, so nothing newer has signed
+      // with no way back in. The attempt was live, so nothing newer has signed
       // in since it began (creating it retired every earlier attempt, and a
       // completed exchange retires it), and replacing the stale set is safe.
       sessionLifecycleEpoch += 1;
@@ -2288,9 +2295,6 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
       await clearStoredSessionUnlocked();
       revokeReplacedCredentials(currentAuth);
     }
-    // One successful PKCE attempt wins. Late callbacks from any other browser
-    // tab must not replace the account that just signed in.
-    desktopAuthAttempts.clear();
     await persistSessionUnlocked(session);
     return publicSession(session);
   });
