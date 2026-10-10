@@ -2261,22 +2261,35 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
     }
     const currentAuth = await loadStoredAuthSet();
     if (currentAuth) {
-      if (currentAuth.account) {
-        desktopAuthAttempts.discard(candidate.attemptId as string);
-        throw new Error('Another Rally sign-in completed first');
-      }
       const currentSession = await loadStoredSession();
-      if (
-        !currentSession?.workspace
-        || currentSession.user.email.toLocaleLowerCase('en-US')
+      if (currentSession?.workspace) {
+        if (
+          currentSession.user.email.toLocaleLowerCase('en-US')
           !== session.user.email.toLocaleLowerCase('en-US')
-      ) {
-        desktopAuthAttempts.discard(candidate.attemptId as string);
-        throw new Error('This Rally account does not match the active organization');
+        ) {
+          desktopAuthAttempts.discard(candidate.attemptId as string);
+          throw new Error('This Rally account does not match the active organization');
+        }
+        desktopAuthAttempts.clear();
+        inMemoryAuthSet = await writeSplitSessionFiles(session, { activate: false });
+        return publicSession(currentSession);
       }
-      desktopAuthAttempts.clear();
-      inMemoryAuthSet = await writeSplitSessionFiles(session, { activate: false });
-      return publicSession(currentSession);
+      // Stored credentials with no organization session to show: an identity
+      // credential whose profile could not be rebuilt, or an active entry
+      // whose profile is gone. The renderer drew the sign-in screen for this
+      // state, and refusing the sign-in it asked for strands the person there
+      // with no way back in. The attempt is live, so nothing newer has signed
+      // in since it began (creating it retired every earlier attempt, and a
+      // completed exchange retires it), and replacing the stale set is safe.
+      sessionLifecycleEpoch += 1;
+      desktopPush.signOut(currentAuth.workspaces);
+      await clearStoredSessionUnlocked();
+      void revokeStoredCredentials(currentAuth).then((failures) => {
+        if (failures.length > 0) logWarn('rally', 'could not revoke every replaced session',
+          new AggregateError(failures, 'Rally could not revoke every replaced session'));
+      }).catch((error: unknown) => {
+        logWarn('rally', 'could not revoke replaced sessions', error);
+      });
     }
     // One successful PKCE attempt wins. Late callbacks from any other browser
     // tab must not replace the account that just signed in.
