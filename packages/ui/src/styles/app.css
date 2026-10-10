@@ -8612,7 +8612,6 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
    One list column with a switcher beside it, never stacked hierarchy rails
    (`docs/desktop-shell.md`). The rail sits under the macOS traffic lights; the
    list keeps the sidebar's own width and resize edge. */
-.navigation-sidebar { --navigation-rail-width: 76px; }
 .navigation-body { display: flex; flex: 1; min-height: 0; }
 .navigation-rail {
   align-items: center;
@@ -8623,7 +8622,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   flex-direction: column;
   gap: 6px;
   padding-bottom: 14px;
-  width: var(--navigation-rail-width);
+  width: 76px;
 }
 .navigation-rail-top { flex: none; height: 46px; width: 100%; }
 .navigation-rail-button {
@@ -8654,10 +8653,10 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .navigation-rail-button.is-active { color: var(--av-sys-color-text-default); font-weight: 600; }
 .navigation-rail-button.is-active .navigation-rail-icon { background: var(--av-sys-color-surface-raised-hover); }
 .navigation-rail-badge {
-  background: var(--av-sys-color-workstream-attention, #d64545);
+  background: var(--av-sys-color-workstream-news);
   border: 2px solid var(--av-sys-color-surface-sunken);
   border-radius: 999px;
-  color: #fff;
+  color: var(--av-sys-color-palette-ink-light);
   font-size: 11px;
   font-weight: 700;
   line-height: 14px;

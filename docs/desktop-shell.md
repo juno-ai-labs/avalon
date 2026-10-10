@@ -1,32 +1,36 @@
 # Desktop and web shell
 
-The shell is everything around a conversation's feed: the one navigation
-sidebar, the floating title pills and their menus, and the split that puts a
-Channel and its open Breakout side by side. The Electron client and the browser
-web app mount the same shell, the desktop renderer's `WorkspaceApp`, for
-members and guests alike; each host supplies its session and its native
-services. What differs by host or by guest is read from `useShellCapabilities()`.
+The shell is everything around a conversation's feed: the navigation sidebar
+(a section switcher beside one list), the floating title pills and their
+menus, and the pane stack that puts a Channel and its open thread, or a thread
+and its open breakout, side by side. The Electron client and the browser web
+app mount the same shell, the desktop renderer's `WorkspaceApp`, for members
+and guests alike; each host supplies its session and its native services. What
+differs by host or by guest is read from `useShellCapabilities()`.
 
-Read this before changing the sidebar's geometry, the Space pills, what a
-Channel row shows, either title menu, how a Breakout opens, or who owns the
-right panel.
+The product words and the code's differ: a **Channel** is a stored Space, a
+**thread** is a stored Channel (`workstream`), and a **breakout** is a
+substream ([the navigation PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)).
+This document uses the product words except where it names code.
+
+Read this before changing the sidebar, what a row shows, either title menu, how
+a thread or a breakout opens, or who owns the right panel.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
 | `packages/ui/src/components/resizable-sidebar.tsx` | `ResizableSidebar`. The shell passes `collapsible={false}`: the edge resizes between `MIN_SIDEBAR_WIDTH` and `MAX_SIDEBAR_WIDTH` and never collapses. |
-| `packages/ui/src/components/space-pills.tsx` | `SidebarTopActions` (the round buttons beside the window controls), `SpacePillStrip`, `SpacePill`, `SpacePillAddButton`, `SpacePillIconButton` (the 28px mark New space is built on). |
-| `packages/ui/src/components/navigation.tsx` | `ChannelRowContent`: glyph, title, time, Space subtitle, activity dot. |
 | `packages/ui/src/components/title-pill.tsx` | `TitlePill`, `TitlePillHeader` (ancestors left, current centred, trailing right), the menu building blocks, `TitlePillClose`. |
 | `packages/ui/src/components/conversation-menus.tsx` | `ChannelMenu` and `BreakoutMenu`: everything the deleted Channel sidebar held, as title-pill menus. Also `ConversationRowActions` and `PENDING_SUBSTREAM_DRAFT_ID`. |
 | `packages/ui/src/components/breakout-marks.tsx` | `BreakoutMark`, `breakoutsByOrigin`, `orderBreakoutsForTicks`, `breakoutHasActivity`, `BreakoutChipRow`, `BreakoutTickBar`. |
 | `packages/ui/src/components/split-conversation.tsx` | `SplitConversationLayout`, `SplitConversationMode`, `clampBreakoutWidth`. |
+| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the section switcher (Threads, Channels, Activity), the account menu under it, and the three lists with their Pinned sections, sort, and drag to reorder. |
+| `apps/desktop/src/renderer/screens/channel.tsx` | The Channel screen: its pill and menu, the feed of threads with locked rows, the composer, and `ChannelStack`, the first two panes of the stack ([`pane-stack.md`](pane-stack.md)). |
+| `apps/desktop/src/renderer/components/channel-composer.tsx` | Starting a thread from a Channel. |
+| `apps/desktop/src/renderer/screens/workstream.tsx` | The thread screen: the thread and breakout panes, both pills, the one-slot rule, breakout creation in the right pane, and the Channel breadcrumb once the thread has shifted left. |
+| `apps/desktop/src/renderer/lib/navigation-routes.ts` | `channelRoute`, `threadRoute`, `homeChannelId`, and the context a thread pane reads its Channel from. |
 | `packages/ui/src/styles/app.css` | The "Single sidebar", "Title pills", "Breakouts in the Channel" and "Split conversation" blocks. |
-| `apps/desktop/src/renderer/components/sidebar.tsx` | The desktop sidebar: top actions, the All filter, pins under All (`allPinPosition`), rows. |
-| `apps/desktop/src/renderer/components/space-pills.tsx` | Desktop pills: A–Z order, drop a Channel on a Space, archive, restore. |
-| `apps/desktop/src/renderer/lib/space-choices.ts` | `useSpaceChoices`: Space picker order and labels, General first as All, then A–Z. |
-| `apps/desktop/src/renderer/screens/workstream.tsx` | The Channel screen: both panes, both pills, the one-slot rule, Breakout creation in the right pane. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | One conversation. Draws chips and ticks for Main, owns its right panel by conversation, honours a scroll-to-turn request. |
 | `apps/desktop/src/renderer/lib/browser-rail-links.ts` | Routes a clicked web link to the pane it was clicked in. |
 | `apps/browser/src/shell.tsx` | The web app: this shell over the browser's cookie session ([`browser-client.md`](browser-client.md#the-shell)). |
@@ -37,128 +41,46 @@ right panel.
 
 One `ResizableSidebar` on the left, at the width in `useUiStore.sidebarWidth`
 (`rally.sidebar-width`; 340px, `SINGLE_SIDEBAR_DEFAULT_WIDTH`, until the person
-drags it), clamped to the shared minimum and maximum and to what
-the window leaves the conversation. Dragging below the minimum stops there.
+drags it), clamped to the shared minimum and maximum. It holds two columns:
 
-Its top bar holds the macOS window controls' inset and the host's actions. The
-actions sit at the bar's end on macOS and at phone width, and at its start where
-no window controls are drawn (the browser). The desktop's are **Restart to update** (only when `useDownloadedUpdate` has
-one), the **attention menu** (a red count, or a bell when nothing is waiting;
-[`attention-menu.md`](attention-menu.md)), **Search organization**, **Import from ChatGPT or Claude** (the browser
-import window, locked to the selected Space), and **New channel** (the Start a
-new channel form, opened directly with `NewWorkstreamMenu trigger="direct"`).
-In a browser tab the import is absent (it needs the native import window). A guest's bar has no search
-and no **New channel**: their sidebar is read-only and filled from the
-shared-navigation directory.
+- **The section switcher**, a 76px rail under the macOS window controls:
+  **Threads**, **Channels** and **Activity**, each an icon over its name, and
+  the account menu at the bottom (its trigger shows only the avatar here).
+  The choice is a device preference (`rally.sidebar-section`). **Threads**
+  carries a red count: every conversation waiting on this person and every
+  access request waiting on them, the same `attentionItems` the dock badge and
+  the macOS menu bar count ([`menu-bar.md`](menu-bar.md)). Channels and
+  Activity carry no badge.
+- **One list**, titled with the section's name, with **Search organization**,
+  **Import** (Mac app only, into any Channel the person may place threads in),
+  and **Restart to update** when one is downloaded.
 
-Under it, the Space pills, whose row fades at whichever edge has pills scrolled past it (the app's scroll-edge fade, on the inline axis). The round **New space** button, a folder with a plus, leads, and its
-right-click offers **Restore archived space**. Then **All**, then each Space by
-name, case-insensitive A to Z (`compareAlphabeticalName`). Pills cannot be
-reordered by drag or keyboard; dragging a Channel onto a pill still places it
-in that Space. **General has no pill.** It is where a Channel lives
-when nobody put it in a Space, and All already shows it. A pill filters the
-list below and navigates only when it hides the open Channel (see below);
-**Open space** is on its right-click menu and
-in the Channel menu. The desktop remembers the filter per device
-(`useUiStore.sidebarSpaceFilter`, `rally.sidebar-space-filter`). Opening a
-Channel the filter would hide, or moving the open Channel out of the filtered
-Space, widens the list to All. Picking a pill that hides the open Channel
-filters as asked and opens the first Channel the filtered list draws, or the
-new-Channel screen for that Space when it holds none; the new-Channel screen of
-another Space counts as hidden too. Restoring an archived Space selects its
-pill the same way, so it can navigate too.
+**Channels**: what the person pinned, in their order (drag to reorder), then
+every other Channel they may see, A to Z. Each row is the Channel's mark, its
+name, a lock when it is private, the time of its newest listable thread, and
+"N threads" — both from `channelStats` on the socket. **+** opens New channel,
+which names one; every Channel starts Organization-wide.
 
-In a browser tab at desktop width, an Organization with no Space but General
-has no pill row: **New space** sits at the end of the top bar's actions, at
-the bar's 32px, and **All** is not drawn, since it would filter nothing. The
-first Space brings the row and All back. The phone sheet always keeps the row,
-since its top bar shows while the sheet is shut.
+**Threads**: what the person pinned (threads, then breakouts), then every
+thread and breakout they take part in (`GET /navigation/threads`), ordered
+**Recent** (default), **A–Z** or **Needs attention** (`rally.sidebar-thread-sort`).
+A row is its status dot, its title, and its Channel chips; a breakout's row
+carries its thread's name instead. A row the socket holds is drawn from the
+socket, so its dot moves live. Right-click pins or unpins.
 
-Every Space picker (the new-Channel screen's, the import window, **Add to
-space**) reads its list through `useSpaceChoices`: General first and named **All**,
-matching the first pill, then the rest A to Z. A new Channel starts in the Space
-the sidebar is filtered to, or in All when it is not, and the screen's picker
-can move it before it is sent.
+**Activity**: requests to join waiting on this person (approve or decline in
+place), then what happened to them, grouped Today, Yesterday and by day
+(`GET /navigation/activity`; [`digests.md`](digests.md#the-activity-tab)).
+Opening it marks it read.
 
-The list is **Pinned**, then every other Channel, A to Z by default. The rest
-is headed **Channels** whenever it has rows, pinned or not, because that heading
-carries the sort toggle; **Pinned** carries a quiet *Drag to reorder* hint when
-there are pins to reorder.
-The toggle cycles the unpinned Channels through **A–Z** (case-insensitive),
-**Recent** (newest `lastActivityAt` first) and **Needs you** (bold rows first,
-then the rest, each newest first). Needs you reads
-`workstreamHasActivityForViewer`, the same input as the bold title; a Channel
-opened while bold stays in the bold half until the reader opens another, so
-reading it does not move it out from under the pointer. The choice
-is per device, in `rally.sidebar-channel-sort`. A row shows the glyph,
-the title and the last activity time. Under them it shows the names of the
-Channel's Spaces, without General; a Channel only in General has a one-line
-row. An unread row has a semibold title and its dot is red; the weight follows the
-same input as the dot, so a Channel whose Breakout needs this reader is bold
-too. A Channel with a scheduled run shows a small clock on the second line,
-under the time. A public Channel has no
-badge on its glyph; the row's description says so. One dot at the leading edge
-shows the ranked marker from
-[`workstream-markers.md`](workstream-markers.md), with `completed` left out. A
-Breakout needing this reader counts as unread on its Channel. The dot replaced
-the numeric badge.
-
-At the bottom, below the list and above the line over the account menu, sit
-the sidebar's **footer items**: rows the host passes as `footerItems`, drawn by
-`SidebarFooterItems` from `@rally/ui`. They stay on screen however long the
-list is, since they are outside its scroll, and each is a `SidebarRow`, so a
-compact rail collapses it to a tile like a Space row. Today the one item is
-**Download the Mac app**, which `AppShell` passes whenever the host is a
-desktop browser tab, for members and guests alike. A phone or tablet browser
-gets none, by `MAC_APP_DOWNLOADABLE` in `lib/browser-connectors.ts`, and neither does the
-Mac app. Tips or tutorials go here too.
+A row opened from any list opens the thread beside one of its Channels — the
+one already open when it sits there — so a Channel is always one step back.
 
 ### At phone width
 
-At 640px and narrower the sidebar becomes a 56px top bar over the
-conversation: the **menu button** at its left, the round top actions at its
-right. The menu button has the same raised round fill as those actions, and
-its glyph is tabler `menu-2` while the sheet is shut and `x` while it is open;
-the two turn into each other over 180ms, and reduced motion swaps them. Everything else in the sidebar (pills, list, footer
-items, account) is a full-screen sheet under the bar. The menu button toggles
-`useUiStore.sidebarOpen`; the sheet drops in and out with a clip over 260ms,
-and reduced motion cuts it. Any route change closes it, whoever navigated (a
-row, a search result, the New channel form), as do Escape, the button, and
-widening past 640px. Picking a pill does not, even one that had to leave the
-open Channel for that Space's first one, and neither does re-sorting, since
-the reader is still choosing. While it is open, `AppShell` makes `.main-pane` `inert`, so Tab and
-a screen reader stay in the sheet, and Escape hands focus back to the button.
-Escape is heard in the capture phase and stands down while a menu or dialog
-is open, so it closes that first; a tooltip does not count, though Radix marks
-its Escape handled.
-
-It is CSS on the same `<aside>`: a `clip-path` hides all but the bar, and
-also stops taps on the closed sheet; `visibility` keeps the sheet out of the
-tab order once the close finishes. `SidebarTopActions` takes the button
-through its `leading` slot. Electron's window has an 860px minimum, so only
-the browser reaches this width. `PHONE_LAYOUT_MAX_WIDTH` in `sidebar.tsx`
-repeats the CSS's 640.
-
-Settings has its own sheet at the same width: the sections list covers the
-page under the header, toggled by a menu button the shell's phone rule styles.
-It starts open unless a link named a section, and its state is local to the
-Settings screen. While open, the page behind it is `inert` and Escape shuts it.
-
-On touch screens text fields render at 16px to stop iOS focus zoom; see the
-rule at the end of `app.css`.
-
-### Pins under All
-
-A pin belongs to one placement, and the server keeps one ordered run per Space
-([`workstream-pinning.md`](workstream-pinning.md)). All has no run of its own,
-so its Pinned section shows every Channel pinned in any Space: General's run
-first, then the rest by their first pin (`allPinPosition`).
-
-- **Pinning under All** writes to General when the Channel is there, and
-  otherwise to its first Space.
-- **Unpinning under All** clears every Space that pins the Channel.
-- **Drag reorder under All** works only while every pinned row is a General
-  pin, because only then is the section one run.
+The sidebar becomes a sheet behind the list's own header, which is the top
+bar with the menu button; the section switcher is a row of tabs under it. The
+sheet is clipped rather than moved, for the reasons the 2026-10-06 entry gives.
 
 ### Title pills
 
@@ -280,9 +202,9 @@ panel of the pane it was clicked in, once.
 
 ## Invariants
 
-- **General is never a pill and never a subtitle.** If it is drawn as a place,
-  every Channel that was never placed reads as placed somewhere. Guard:
-  component tests in `components/sidebar.test.tsx`.
+- **The Threads count is the dock's count.** Both read `attentionItems`; a
+  second definition would let the rail and the dock disagree. Guard:
+  `components/navigation-sidebar.test.tsx`.
 - **A surface touches only the panel scope it owns.** Two surfaces of one
   Channel are mounted at once; one that closed the panel unconditionally would
   close the other's on unmount. Guard: verified visually; the scope comparison
@@ -293,11 +215,12 @@ panel of the pane it was clicked in, once.
   names a Breakout, Main does not honour `?turn=&sequence=`, which only ever
   names a turn in the open Breakout. Guard: `honorsSearchTarget`, verified by
   route behaviour.
-- **The sidebar never collapses.** Nothing may write a collapsed width or hide
-  the pills; the icon rail and its storage keys are gone. Guard: the
-  `collapsible={false}` prop; no toggle exists to call. At phone width the
-  sheet hides the pills and list behind the menu button; that is a different
-  layout, not a collapse, and writes no width.
+- **The sidebar never collapses, and never stacks rails.** It is one list with a
+  switcher beside it; a second list column (a Space rail, a Channel rail) is
+  what the 2026-10-01 change removed, and the switcher answers the same need by
+  replacing the list rather than adding one. Guard: `collapsible={false}`; no
+  toggle exists to call. At phone width the sheet is a different layout, not a
+  collapse, and writes no width.
 
 ## Boundary
 
@@ -329,8 +252,8 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 
 ## Testing
 
-- **Desktop component tests:** `components/sidebar.test.tsx`,
-  `components/space-pills.test.tsx`, `components/message-feed.test.tsx`,
+- **Desktop component tests:** `components/navigation-sidebar.test.tsx`,
+  `screens/channel.test.tsx`, `lib/navigation-routes.test.ts`, `components/message-feed.test.tsx`,
   `components/breakout-marks.test.tsx`, `lib/browser-rail-links.test.ts`. Run
   with `pnpm --filter @rally/desktop exec vitest run <path>`.
 - **A guest in the shell:** `lib/browser-collaboration.test.tsx`.
@@ -341,6 +264,30 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-10 — A section switcher and a pane stack replace the Space sidebar
+
+**What changed:** The sidebar is a rail of three sections (Threads, Channels,
+Activity) beside one list. The Space pills, the All filter, the attention
+pop-out, the Space dashboard and the Space-scoped new-channel screen are
+deleted. A Channel has its own screen, and a thread opens beside it; opening a
+breakout or a panel moves the Channel into the first breadcrumb
+([`pane-stack.md`](pane-stack.md)).
+
+**Why:** The hierarchy became Channel, thread, breakout
+([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)). People need to
+find a Channel quickly and pop into a thread quickly, and a thread list is
+where a person goes back to their own work. The 2026-10-01 entry removed three
+stacked rails because they spent the window on navigation; the switcher keeps
+one list on screen and changes which list it is, so that reasoning holds.
+
+**Considered and rejected:** Keeping the Space pills as a filter over the
+Channels list: Spaces are hidden for now. A Channels list with a Recent sort
+and a "new threads" count: the product owner asked for A–Z only and no count.
+
+**Consequences:** The attention count moved from a pop-out to the Threads
+button; its definition did not change. Old Space links redirect to the
+Channel they now are.
 
 ### 2026-10-08 — Settings sections are a sheet at phone width
 

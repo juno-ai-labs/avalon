@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
-import { asSubstreamId, asWorkspaceId, asWorkstreamId, conversationNeedsViewer, type HarnessStatus } from '@rally/contracts';
+import { asSubstreamId, asWorkspaceId, asWorkstreamId, conversationNeedsViewer, type HarnessStatus, type PinList } from '@rally/contracts';
 import { logError } from '../../common/logger';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { mainOmitted, mainReachable, useConversationDirectory } from '../lib/conversation-directory';
@@ -65,6 +65,7 @@ export {
 
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { channelRoute, useChannelPane } from '../lib/navigation-routes';
+import { PINS_QUERY_KEY } from '../lib/sidebar-list-store';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { normalizeHarnessStatus } from '../lib/api';
 
@@ -662,7 +663,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const railScope = useUiStore((state) => state.railScope);
   const storeRailOpen = useUiStore((state) => state.railOpen);
   const closeRail = useUiStore((state) => state.closeRail);
-  const pinChannel = useUiStore((state) => state.pinChannel);
+  const pins = useQuery<PinList>({ queryKey: PINS_QUERY_KEY, queryFn: async () => [], enabled: false });
   const breakoutScope = openBreakoutId === null ? null : `${id}:${openBreakoutId}`;
   const breakoutOwnsRail = storeRailOpen && breakoutScope !== null && railScope === breakoutScope;
   const mainOwnsRail = storeRailOpen && railScope === id;
@@ -768,9 +769,11 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         openSubstreamId={openBreakoutId}
         participantsPending={context === null && railParticipants === undefined}
         people={context?.people}
-        pinned={pinChannel && row && channelWritable ? {
-          on: (row.spacePins ?? []).some((pin) => row.spaceIds.includes(pin.spaceId)),
-          onChange: (next) => pinChannel(row, next),
+        pinned={api && channelWritable ? {
+          on: (pins.data ?? []).some((pin) => pin.kind === 'thread' && pin.id === id),
+          onChange: (next) => void api.setPinned('thread', id, next)
+            .then((list) => queryClient.setQueryData(PINS_QUERY_KEY, list))
+            .catch(() => undefined),
         } : undefined}
         presentUserIds={context?.presentUserIds ?? []}
         renderAge={breakoutAge}

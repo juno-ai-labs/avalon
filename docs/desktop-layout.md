@@ -17,8 +17,12 @@ the device remembers only the view the person chose.
 
 ## How it works
 
-The renderer keeps the sidebar's width, its Space filter, the Breakout pane's
-width (`breakout-width`), and the first visible Channel row in local storage. The
+The renderer keeps the sidebar's width, its open section
+(`rally.sidebar-section`) and the Threads sort (`rally.sidebar-thread-sort`),
+the width of a thread beside its Channel (`thread-width`) and of a breakout
+beside its thread (`breakout-width`), and the first visible Channel row in
+local storage. The Space filter (`rally.sidebar-space-filter`) is no longer
+read; the sidebar has no Spaces to filter by. The
 sidebar no longer collapses, so there is no collapsed state to keep. The row key is an ID, so a reordered directory
 opens at the same object instead of yesterday's pixel offset. Scroll events are
 coalesced into one layout read per animation frame. A missing saved Channel row
@@ -30,12 +34,12 @@ is scoped to the selected Space. The selected artifact panel is scoped to a
 Channel and Breakout address; its resource is looked up in the freshly loaded
 conversation before the panel is drawn.
 
-The shell records only Space and Channel routes, including a Breakout query; it
-omits transient search-result turn and sequence parameters.
-The root landing checks the saved target against the current directory before
-opening it. A saved Breakout is checked against the Channel's child directory
-before it remains selected. Explicit departures carry route state and keep their existing
-recency-based landing. A missing saved target falls back to that landing.
+The shell records Channel routes (`/channels/:id`, with or without an open
+thread) and lone thread routes (`/workstreams/:id`), including a breakout
+query; it omits transient search-result turn and sequence parameters. The root
+landing reopens the saved route unless a leaving screen named its thread; a
+thread that has gone shows its own unavailable state. Otherwise it opens the
+first pinned Channel, then General, then the first Channel A–Z.
 
 Each detached artifact window has a local main-process record with resource
 identity, version, title, normal bounds, and display ID. Moving or resizing
@@ -87,6 +91,24 @@ The desktop acceptance check opens, moves, quits, and relaunches real Electron
 windows, and checks that rail positions and panels return visibly.
 
 ## Changelog
+
+### 2026-10-10 — Restore Channel routes and the sidebar's section
+
+**What changed:** The saved route is a Channel route or a lone thread; the
+landing falls back to a Channel rather than the most recent thread. The
+section switcher's choice, the Threads sort and the thread-beside-Channel
+width are kept per device.
+
+**Why:** The navigation redesign makes a Channel where Rally opens
+([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)).
+
+**Considered and rejected:** Checking a saved thread against the directory
+before reopening it, as the old landing did: the thread pane already shows
+an unavailable or request-access state, and the check cost a directory walk
+before the first paint.
+
+**Consequences:** A saved route to a thread that was archived opens on that
+thread's own unavailable screen, one step from its Channel.
 
 ### 2026-09-22 — Restore the local desktop reading layout
 

@@ -1,5 +1,12 @@
 # Attention menu
 
+> **Retired as a menu.** The navigation redesign removed the pop-out; its count
+> is now the red badge on the sidebar's **Threads** button, and access requests
+> are answered at the top of the **Activity** tab
+> ([`desktop-shell.md`](desktop-shell.md#the-sidebar)). What counts as needing
+> attention, below, still holds: `attentionItems` decides the badge, the dock
+> and the menu bar.
+
 The button left of search in the sidebar's top bar. While anything in the
 active Organization is waiting for the reader, it shows the number of
 conversations waiting, white on the sidebar's unread red; when nothing is, it is
@@ -139,6 +146,19 @@ Radix opens a dropdown on `pointerdown`, not `click`; the menu test sends
 and are checked in a real window.
 
 ## Changelog
+
+### 2026-10-10 — The pop-out becomes the Threads badge and the Activity tab
+
+**What changed:** `AttentionMenu` is deleted. The same count is the Threads
+button's badge; access requests moved to the Activity tab.
+
+**Why:** The navigation redesign gives activity a tab of its own
+([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)).
+
+**Considered and rejected:** Keeping the pop-out beside the switcher: two
+places listing the same waiting work.
+
+**Consequences:** `attentionItems` is unchanged and still the one definition.
 
 ### 2026-10-07 — Access requests listed first, with approve and decline
 
