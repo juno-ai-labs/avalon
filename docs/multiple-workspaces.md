@@ -80,6 +80,16 @@ or GitHub, needs only its sign-in code: neither the bridge nor the table names
 the providers.
 An older version-1 workspace-only envelope can be reconnected in place after one
 Google exchange, preserving its selected workspace rather than forcing setup.
+A live sign-in attempt that lands on stored credentials with no organization
+session to show (an identity credential whose profile could not be rebuilt, an
+active entry whose profile is gone, or an active selection naming a credential
+that is not stored) takes over: the renderer drew the sign-in screen for that
+state. When the stored identity credential is the same user's, only it is
+replaced and revoked, the organizations stay, and the selection is cleared.
+Otherwise the whole set is cleared, revoked in the background, and the new
+identity stored. A stored organization session for the same email keeps its
+selection and gains the identity credential; one for a different email refuses
+the sign-in. A displaced identity credential is always revoked.
 
 ### Credential renewal
 
@@ -463,6 +473,42 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-10-10: A sign-in replaces stored credentials the app could not show
+
+**What changed:** `exchangeDesktopTicket` no longer refuses a live attempt
+because an identity credential is already stored. When the stored set has no
+organization session to show, a sign-in by the same user replaces only the
+identity credential and clears the selection, keeping their organizations;
+anyone else's sign-in clears the whole set. A stored organization session
+keeps its old rule: same email gains the identity credential, a different
+email is refused. Every displaced credential is revoked in the background.
+
+**Why:** A person was stuck on the sign-in screen with "Another Rally sign-in
+completed first". `session:get` answers null when the identity credential's
+profile is missing and the rebuilding refresh fails without being terminal, so
+the credential stays on disk while the renderer shows sign-in. The exchange
+then read that leftover credential as a competing sign-in and refused every
+attempt, with no path back in short of deleting app data.
+
+**Considered and rejected:** Keeping the refusal and clearing the credential
+in `session:get` instead. A network blip there must not sign anyone out, which
+is why it keeps the credential; the sign-in is the moment the person has
+asked to replace it.
+
+Clearing the whole set for the same user was rejected too: the common way in
+is that person signing back in after a network blip, and dropping their
+organizations costs them every one they had stored.
+
+**Consequences:** The guard against a late callback replacing a newer sign-in
+is the attempt registry alone: creating an attempt retires every earlier one,
+and a completed exchange retires it. Attempt creation does not take the
+session lock, so the exchange reads stored state first and checks the attempt
+with nothing that yields between that check and clearing the registry. A
+future change that lets an attempt outlive a completed sign-in, or adds an
+await there, must restore a check here.
+
+Shipped in #1184.
 
 ### 2026-10-08: Organization rows show an activity count, on the Mac and in the browser
 
