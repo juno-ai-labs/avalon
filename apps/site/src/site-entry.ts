@@ -3,7 +3,7 @@ import { awaitAnalyticsSession, currentSitePage, environment, initializeSiteTele
 
 // Capability pages have no acquisition telemetry, including their fragments.
 if (!/^\/download(?:\/|$)/u.test(location.pathname)) {
-  if (runsPostHog(environment(), currentSitePage())) {
+  if (runsPostHog(environment(), location.pathname, currentSitePage() === 'not_found')) {
     awaitAnalyticsSession();
     loadPostHog();
   }

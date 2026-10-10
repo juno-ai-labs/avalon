@@ -86,10 +86,10 @@ Check these on every edit to the landing page:
    must carry the same ID; never prepare a shared ID at page load or remove
    browser reload persistence. Signup reports join separate subjects by flow.
 
-8. **Keep the SDK off pages with credentials in their URL.** Only the
-   `landing`, `support` and `legal` page classes run it (`runsPostHog` in
-   `apps/site/src/posthog-loader.ts`). A new page that receives a token, ticket
-   or fragment needs its own page class, not `landing`.
+8. **Keep the SDK off pages with credentials in their URL.** Every page
+   records unless its path is in `RECORDING_DENIED_PATHS` in
+   `apps/site/src/posthog-loader.ts`. A new page that receives a token, ticket,
+   grant or resource id in its URL must be added there before it ships.
 
 ## Where to look
 
