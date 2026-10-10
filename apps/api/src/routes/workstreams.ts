@@ -262,6 +262,9 @@ workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
           // The one caller whose `participantUserIds` is people somebody picked
           // by hand, which is what makes telling them the right thing to do.
           notifyParticipants: true,
+          // And the one where a person starts a thread in a Channel, so a
+          // private Channel's thread starts private.
+          narrowInPrivateSpaces: true,
           authorityControl,
           ...(operationId ? { telemetryOperationId: operationId } : {}),
           telemetryRequestReceivedAt: requestReceivedAt,

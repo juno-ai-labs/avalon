@@ -37,7 +37,7 @@ If the page says **This link is incomplete or invalid. Ask the sender for a new 
 
 When you open Rally with a brand-new account, it plays a short animated introduction in three screens. Each one has a small demo you can poke at.
 
-1. **Meet Rally. Work moves forward together.** You, your team and Rally in one conversation. Click **Meet streams** to continue.
+1. **Meet Rally. Work moves forward together.** You, your team and Rally in one conversation. Click **Meet channels** to continue.
 2. **A channel gives your work a home.** Each area of work gets a Channel, and each task in it gets a Thread. Click **Explore breakouts**.
 3. **Explore an idea in a breakout.** Taking a side conversation off the main one. Try **Start breakout** in the demo, then click **Get started**.
 

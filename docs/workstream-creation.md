@@ -325,7 +325,12 @@ names `personal` (a private Slack room, session import, a suggestion shown to
 one person, a digest) gets a private Channel even in General.
 `resolveSpaceWorkstreamStart` keeps the requested scope and participants and
 unions the Spaces' `defaultResourceIds` with the caller's origin resources, so a
-Channel started in a Space begins with what that Space hands down.
+Channel started in a Space begins with what that Space hands down. The one
+exception is `narrowInPrivateSpaces`, which only the person-started route sets
+(and passes to the reservation, so both sides agree): a thread a person starts
+in a private Space starts private. A connector ingress resolved its audience
+from its room, so it is never narrowed; a public Slack channel's thread under a
+private Space would otherwise be one none of the channel's members could open.
 
 **The memberships, the reservation and the provenance commit together.** The
 order between them used to be load-bearing: reserving the main conversation

@@ -9718,6 +9718,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         const spaces = placed.map((entry) => entry.space);
         const start = resolveSpaceWorkstreamStart({
           spaces, scope: request.requestedScope, requestedParticipantUserIds: request.requestedParticipantUserIds,
+          narrowInPrivateSpaces: request.narrowInPrivateSpaces === true,
         });
         const child = parent.reserveChild({
           workspaceId: request.workspaceId,
