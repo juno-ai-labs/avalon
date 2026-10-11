@@ -2,8 +2,7 @@ import type { PinKind, PinList } from '@rally/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 
-import { ApiError } from './api';
-import { useAppSession } from './app-session';
+import { ApiError, type RallyApi } from './api';
 import { fetchThroughOwner } from './fetch-through-owner';
 import { MY_THREADS_QUERY_KEY, PINS_QUERY_KEY } from './sidebar-list-store';
 
@@ -66,9 +65,12 @@ export function usePinWrite(): (write: Promise<PinList>) => void {
   };
 }
 
-/** Pin or unpin, answered with the whole list, which replaces what is held. */
-export function usePinAction(): (kind: PinKind, id: string, pinned: boolean, parentId?: string) => void {
-  const { api } = useAppSession();
+/**
+ * Pin or unpin, answered with the whole list, which replaces what is held.
+ * The caller passes its API client, because the thread screen reads its
+ * session from the collaboration context rather than the app session.
+ */
+export function usePinAction(api: RallyApi | null): (kind: PinKind, id: string, pinned: boolean, parentId?: string) => void {
   const write = usePinWrite();
   return (kind, id, pinned, parentId) => {
     if (api) write(api.setPinned(kind, id, pinned, parentId));

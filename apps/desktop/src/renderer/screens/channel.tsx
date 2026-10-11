@@ -389,7 +389,7 @@ function ChannelHeader({ members, space, workspace }: {
   const [archiving, setArchiving] = useState<'confirm' | 'saving' | null>(null);
   const navigate = useNavigate();
   const pinnedChannels = usePinnedIds('channel');
-  const pin = usePinAction();
+  const pin = usePinAction(api);
   const library = useQuery<AutomationSummary[]>({ queryKey: ['automations'], queryFn: async () => [], enabled: false });
   const member = workspace.currentUser.accessClass !== 'guest';
   const editable = member && space.reach !== 'through_channel';
