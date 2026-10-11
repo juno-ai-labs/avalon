@@ -24,7 +24,7 @@ Tagged links on the landing page, by `data-site-action` id:
 | --- | --- | --- |
 | `sign-in-header` | Header sign-in button, its label rolling between Sign in to Rally and Sign up for Rally, on every device | primary_cta · header |
 | `web-app-hero` | Hero Sign up now (app.rallywith.ai), the left and primary button | secondary_cta · hero |
-| `web-app-offer` | Sign up in the pilot offer card (app.rallywith.ai), which slides in two seconds after the page loads | primary_cta · offer |
+| `web-app-offer` | Sign up in the pilot offer card (app.rallywith.ai, with `pilotOfferFirstSeen`), which slides in two seconds after the page loads | primary_cta · offer |
 | `download-hero` | Hero Download the macOS app, the right and secondary button, hidden on touch-only devices | download · hero |
 | `download-pricing-start` / `-grow` | Start and Grow Start free trial buttons | download · pricing · plan |
 | `contact-pricing-enterprise` | Grown up Contact us (emails Katherine) | founder_contact · pricing · enterprise |
@@ -46,7 +46,9 @@ keeps the landing attribution. Authentication retires it. See
 The pilot offer card is on `/` only, not `/start-fast/`, and gives each visitor
 their own deadline: six days after the day this browser first saw it
 (`rally.site.pilot-offer-first-seen.v1`), shown in the card and kept on later
-visits. After that day the card stops showing. Whoever signs up by their date
+visits. Its Sign up link carries that first-visit date as
+`pilotOfferFirstSeen=YYYY-MM-DD`, which the web app does not read yet. After
+that day the card stops showing. Whoever signs up by their date
 gets the offer. Closing it or following
 its link keeps it away in that browser (`rally.site.pilot-offer-dismissed.v1` in
 local storage); neither its appearance nor its close is reported.
