@@ -27,7 +27,6 @@ h1,h2,h3,p{margin:0}
 .button-outline{background:none;border-color:oklch(.97 0 0/.25);color:var(--paper)}
 .button-outline:hover{opacity:1;background:var(--wash)}
 .button-mark{display:block;flex-shrink:0;pointer-events:none}
-.header-sign-in{display:none}
 /* The two header labels share one cell and roll through it with the app's vertical wheel
    (background-agent-digit in packages/ui app.css), half a cycle apart. */
 .header-sign-in-wheel{display:inline-grid;overflow:hidden;perspective:80px}
@@ -60,8 +59,7 @@ h1,h2,h3,p{margin:0}
 .hero-actions{display:inline-grid;grid-template-columns:1fr 1fr;gap:12px}
 /* A touch-only device (phone, tablet) cannot run the Mac app: offer the web app as the one primary action. */
 @media (hover:none) and (pointer:coarse){
-.header-download,.hero-download{display:none}
-.header-sign-in{display:inline-flex}
+.hero-download{display:none}
 .hero-actions{grid-template-columns:1fr}
 .hero-web-app,.hero-web-app:hover{background:var(--paper);border-color:var(--paper);color:var(--ink)}
 .hero-web-app:hover{opacity:.85}

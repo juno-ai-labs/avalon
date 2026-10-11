@@ -44,9 +44,9 @@ support pages (`/download/` initializes no telemetry). A link opts in with a `da
 `SITE_ACTION_LINKS` in `telemetry.ts` maps each id to a closed action, placement
 and, for pricing actions, plan. One capture-phase click listener reads the id
 and ignores any id not in that table, so markup chooses a combination but never
-supplies a value. Every installer link has its own id (`download-header`,
-`download-hero`, `download-pricing-start|grow`), which is how the landing
-dashboard tells the four identical DMG links apart. The event shares the page
+supplies a value. Every installer link has its own id (`download-hero`,
+`download-pricing-start|grow`), which is how the landing
+dashboard tells the three identical DMG links apart. The event shares the page
 view's anonymous `distinct_id`, so its referrer and campaign come from joining
 to that visit's `$pageview` rather than being copied onto the click. The click
 does carry its own `pathname`, which Global maps to `$pathname` as it does for
@@ -150,7 +150,7 @@ the site to the app by `flowId`.
 
 ## Browser signup attribution
 
-The hero “Use the web app” and header sign-in links mint a new UUIDv7 for each
+The hero “Sign up now” and header sign-in links mint a new UUIDv7 for each
 click, keyboard activation, or middle-click. The same flow is reported in
 `site_action_selected.flowId` and passed to `app.rallywith.ai` as `signupFlowId`.
 Links stay clean before interaction and are restored after navigation dispatch,
@@ -205,6 +205,27 @@ avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
 
 ## Changelog
+
+### 2026-10-11 — Retire the header download link; keep the hero web entry as `secondary_cta`
+
+**What changed:** The shared header no longer carries a download link, so
+`download-header` is gone from `SITE_ACTION_LINKS` and header clicks now land
+only on `sign-in-header`. The hero web app button became the primary, left
+button on `/`, but `web-app-hero` still reports `action: secondary_cta`.
+
+**Why:** Signing up through the web app is the entry the team wants first, and
+it works on every device; the header now shows the rolling sign-in everywhere,
+not only on touch devices.
+
+**Considered and rejected:** Reclassifying `web-app-hero` as `primary_cta`: it
+would split the button's click history at this deploy, and `/start-fast/` uses
+the same id for one of two equal buttons.
+
+**Consequences:** Insights counting `download-header` stop at this deploy.
+If `web-app-hero` is ever reclassified, the API already accepts `primary_cta`,
+but dashboards filtering on `secondary_cta` must move with it.
+
+Shipped in [PR #1189](https://github.com/juno-ai-labs/avalon/pull/1189).
 
 ### 2026-10-10 — Run PostHog's browser SDK on the marketing pages
 
