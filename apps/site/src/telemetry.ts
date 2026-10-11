@@ -308,7 +308,6 @@ function reportSiteAction(link: SiteActionLink): void {
  * closed combinations and never put its own values into an event.
  */
 export const SITE_ACTION_LINKS = {
-  'download-header': { action: 'download', placement: 'header' },
   'sign-in-header': { action: 'primary_cta', placement: 'header' },
   'download-hero': { action: 'download', placement: 'hero' },
   'web-app-hero': { action: 'secondary_cta', placement: 'hero' },

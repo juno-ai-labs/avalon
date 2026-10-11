@@ -22,18 +22,18 @@ Tagged links on the landing page, by `data-site-action` id:
 
 | Id | Link | Action · placement |
 | --- | --- | --- |
-| `download-header` | Header Download for Mac | download · header |
-| `sign-in-header` | Header sign-in button, its label rolling between Sign in to Rally and Sign up for Rally (shown instead of Download for Mac on touch-only devices) | primary_cta · header |
-| `download-hero` | Hero Download the macOS beta | download · hero |
-| `web-app-hero` | Hero Use the web app (app.rallywith.ai) | secondary_cta · hero |
+| `sign-in-header` | Header sign-in button, its label rolling between Sign in to Rally and Sign up for Rally, on every device | primary_cta · header |
+| `web-app-hero` | Hero Sign up now (app.rallywith.ai), the left and primary button | secondary_cta · hero |
+| `download-hero` | Hero Download the macOS beta, the right and secondary button, hidden on touch-only devices | download · hero |
 | `download-pricing-start` / `-grow` | Start and Grow Start free trial buttons | download · pricing · plan |
 | `contact-pricing-enterprise` | Grown up Contact us (emails Katherine) | founder_contact · pricing · enterprise |
 | `demo-request` | Ask for a demo (emails Katherine and Alex) | demo_request · sidekicks |
 | `founder-contact` | Founder photos and names | founder_contact · team |
 | `support-contact-footer` | Footer help@ email | support_contact · footer |
 
-`web-app-hero` reports `secondary_cta · hero` on every device, including
-phones where it is the only hero button, so its clicks cannot be split by device.
+`web-app-hero` still reports `secondary_cta · hero`, though it is now the primary
+hero button on `/`: the value is kept so its history stays comparable, and
+`/start-fast/` shares the id. Its clicks cannot be split by device.
 
 Each activation of `web-app-hero` or `sign-in-header` creates a fresh opaque
 `flowId`, reports it on the action, and sends it to the browser as `signupFlowId`.
@@ -47,7 +47,7 @@ the founders' LinkedIn, GitHub and Hugging Face links.
 
 The footer is rendered from `apps/site/src/site-chrome.ts`, so its help@ link and
 its id live there, not in `index.html`. The `/compare/` pages share the header
-(`download-header` / `sign-in-header`) and the footer, and count as page class `landing` with
+(`sign-in-header`) and the footer, and count as page class `landing` with
 their own `$pathname`; see [`landing-comparisons.md`](landing-comparisons.md).
 
 `/start-fast/` is a variant of the home page with its own hero; everything below

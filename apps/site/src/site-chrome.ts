@@ -26,14 +26,11 @@ export const trustPages: readonly { href: string; name: string }[] = [
 ];
 
 const ORIGIN = 'https://rallywith.ai';
-const DOWNLOAD = 'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg';
 
-/** The header's links and download button, the same on every marketing page. */
+/** The header's links and sign-in button, the same on every marketing page. */
 export function renderSiteNav(): string {
   return '<nav aria-label="Primary"><a class="header-link" href="/#features">Features</a><a class="header-link" href="/#pricing">Pricing</a>'
     + '<a class="header-link" href="/#compare">Compare</a>'
-    + `<a class="button button-small header-download" data-site-action="download-header" href="${DOWNLOAD}" download>Download for Mac</a>`
-    // Shown instead of the download on touch-only devices, which cannot run the Mac app (landing.css).
     // The web app signs in and signs up through one door, so the label rolls between the two.
     + '<a class="button button-small header-sign-in" data-site-action="sign-in-header" href="https://app.rallywith.ai" aria-label="Sign in to Rally or sign up for Rally">'
     + '<span class="header-sign-in-wheel" aria-hidden="true"><span>Sign in to Rally</span><span>Sign up for Rally</span></span></a></nav>';
