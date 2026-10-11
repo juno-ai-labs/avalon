@@ -194,7 +194,7 @@ export function conversationRefusalError(
         { available: refusal.available.slice(0, MAXIMUM_FAILURE_AVAILABLE_VALUES) });
     case "conversation_not_found":
       return new ConversationToolError(refusal.code,
-        `No Channel or Breakout matches "${shown}". Ask the person for its link.`, { field: "conversation" });
+        `No Thread or Breakout matches "${shown}". Ask the person for its link.`, { field: "conversation" });
     case "conversation_archived":
       return new ConversationToolError(refusal.code,
         "That conversation is archived, so it cannot be read or posted to. Tell the person.", resource);
@@ -245,7 +245,7 @@ export function conversationPostArgumentsSchema(home: boolean | null) {
 }
 
 export const ConversationAttachArgumentsSchema = z.strictObject({
-  conversation: ConversationReferenceSchema.describe("The Rally link or id the person gave for a Channel or Breakout, or its exact title."),
+  conversation: ConversationReferenceSchema.describe("The Rally link or id the person gave for a Thread or Breakout, or its exact title. A Channel, which holds threads, cannot be attached."),
 });
 
 const ListCursorSchema = z.strictObject({ offset: z.number().int().nonnegative(), limit: LimitSchema });
@@ -492,7 +492,7 @@ export function createConversationsPlugin(
   const attach: HarnessTool = {
     definition: {
       name: "attach",
-      description: "Let this Sidekick read and post in a Channel or Breakout. Pass the link or id the person gave you. Runs of the Sidekick can then use it.",
+      description: "Let this Sidekick read and post in a Thread or Breakout. Pass the link or id the person gave you. A Channel, which holds threads, cannot be attached to. Runs of the Sidekick can then use it.",
       capability: "rally.conversation.attach",
       mode: "write",
       idempotency: "provider_key",
@@ -533,7 +533,7 @@ export function createConversationsPlugin(
     modelId: "rally_conversations",
     shortWireName: CONVERSATIONS_WIRE_PREFIX,
     displayName: "Conversations",
-    searchAliases: ["channel", "breakout", "messages", "post", "home conversation"],
+    searchAliases: ["thread", "channel", "breakout", "messages", "post", "home conversation"],
     description: "List, read, and post to the Rally conversations this agent can reach.",
     systemMessage: conversationsSystemMessage({ posts, attaches, run: input.automationRun !== undefined,
       home: options.home, breakout: access.scope.kind === "conversation" }),
@@ -558,11 +558,11 @@ function homeSentence(home: boolean | null, lead: string): string {
 export const RUN_POST_INSTRUCTION = "Your final message stays in this run; when the instructions say a conversation should hear something, post it with conversation_post, once, in full, after the work is done.";
 
 /**
- * A Breakout opens on a summary of its Channel, and the summary is not all of
- * it: the whole Channel, and every resource attached there, is this loop's to
+ * A Breakout opens on a summary of its Thread, and the summary is not all of
+ * it: the whole Thread, and every resource attached there, is this loop's to
  * read.
  */
-export const BREAKOUT_CHANNEL_INSTRUCTION = "This conversation is a Breakout of a Channel. When you need more than the summary you started with, conversation_read the Channel's Main conversation; its resources are in list_resources too.";
+export const BREAKOUT_CHANNEL_INSTRUCTION = "This conversation is a Breakout of a Thread. When you need more than the summary you started with, conversation_read the Thread's Main conversation; its resources are in list_resources too.";
 
 /** The plugin's standing instructions; the tool-naming lines are pinned by a test. */
 export function conversationsSystemMessage(options: {
@@ -570,7 +570,7 @@ export function conversationsSystemMessage(options: {
   attaches: boolean;
   run: boolean;
   home: boolean | null;
-  /** A Breakout's own loop, which can read its whole Channel. */
+  /** A Breakout's own loop, which can read its whole Thread. */
   breakout?: boolean;
 }): string {
   return [

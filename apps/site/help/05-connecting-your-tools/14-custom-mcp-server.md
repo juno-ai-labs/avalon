@@ -29,7 +29,7 @@ You can add as many custom servers as you like.
 **Send request headers I provide** is for servers that want a key with every request. Add each header's name (such as `Authorization`) and its value. Click **Add another header** for more. Rally encrypts the values, sends them with every request, and never shows them again. To change one, add the server again with the new value and delete the old connection.
 
 > [!WARNING]
-> Header values are secrets. Type them only into this dialog, never into a Thread, an email or a support message.
+> Header values are secrets. Type them only into this dialog, never into a chat, a Thread, a Channel, an email or a support message.
 
 ### Tools Rally may use
 
