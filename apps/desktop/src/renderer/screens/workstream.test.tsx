@@ -689,7 +689,7 @@ describe('RemoveParticipantDialog', () => {
     );
 
     expect(screen.getByRole('heading', { name: 'Leave the thread?' })).toBeTruthy();
-    expect(screen.getByText('You will be taken off this thread. You keep access only if it’s public or a channel you’re in includes it.')).toBeTruthy();
+    expect(screen.getByText('You will be taken off this thread. You keep access only if it’s public.')).toBeTruthy();
     expect(screen.getByText('You are the last participant.')).toBeTruthy();
   });
 

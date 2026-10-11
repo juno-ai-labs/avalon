@@ -10,6 +10,7 @@ import { IconLock, IconPlus } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { useUiStore } from '../lib/ui-store';
 
 import { ChannelComposer } from '../components/channel-composer';
 import { Button, EmptyState, InlineError, LoadingState, Modal } from '../components/primitives';
@@ -80,9 +81,14 @@ function ChannelStack({ channelId, threadId, workspace }: {
       title: space?.name ?? 'Channel',
       label: `Back to ${space?.name ?? 'the channel'}`,
       // Back one step: the Channel and this thread, whatever the thread had
-      // open. Where only one pane fits, that route draws the thread again, so
-      // the step back is the Channel alone.
-      onSelect: () => void navigate(narrow ? channelRoute(channelId) : threadRoute(threadId, channelId)),
+      // open. A breakout is in the route, which the thread's route drops; a
+      // panel is not, so it is closed here. Where only one pane fits, that
+      // route draws the thread again, so the step back is the Channel alone.
+      onSelect: () => {
+        const ui = useUiStore.getState();
+        if (!narrow && ui.railOpen && ui.railScope === threadId) ui.closeRail();
+        void navigate(narrow ? channelRoute(channelId) : threadRoute(threadId, channelId));
+      },
     },
     shifted,
     setThreadUsesTwoPanes,
@@ -301,7 +307,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
       {feed.isSuccess && rows.length === 0 && <p className="channel-feed-empty">No threads yet. Describe the work below and Rally starts a thread for it.</p>}
       {feed.isError && <InlineError>The threads in this channel couldn’t be loaded.</InlineError>}
     </div>
-    {canStart && <ChannelComposer channelId={channelId} channelName={space.name} channelScope={space.scope} workspace={workspace} />}
+    {canStart && <ChannelComposer channelId={channelId} channelName={space.name} channelScope={space.scope} threadOpen={openThreadId !== null} workspace={workspace} />}
   </div>;
 }
 
@@ -332,7 +338,10 @@ function ThreadCard({ author, onOpen, open, placedAt, thread }: {
   };
   return <li className="channel-feed-item">
     <div className="channel-feed-meta">
-      <strong>{author?.name ?? 'Rally'}</strong>
+      {/* Rally starts a thread only when nobody did; a person this reader
+          cannot look up (a guest has no member list, and a member's loads
+          after the feed) is somebody, not Rally. */}
+      <strong>{author?.name ?? (thread.createdByUserId ? 'Someone' : 'Rally')}</strong>
       <span aria-hidden="true">·</span>
       <RelativeTime value={placedAt} />
     </div>
