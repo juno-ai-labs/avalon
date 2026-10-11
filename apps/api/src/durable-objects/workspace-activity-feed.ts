@@ -14,17 +14,19 @@ import { SPACE_CHANNEL_PAGE_SIZE, type WorkspaceSpaceStorage } from "./workspace
  *
  * - **added** and **mentioned** are events that name the viewer as a target
  *   with that relation;
- * - **thread_started** and **breakout_started** are the opening message of a
- *   conversation the viewer may list, by somebody else;
+ * - **thread_started** and **breakout_started** are a conversation the viewer
+ *   may list, started by somebody else, read from its directory row;
  * - **run_finished** is a thread or breakout the viewer takes part in whose
  *   run is `completed`, at its `completed_at`, so each conversation shows its
  *   latest finish once rather than one row per run.
  *
- * Every row passes the listing rules at read time, a breakout through both of
- * the conversation page's gates, so the tab never names a conversation the
- * viewer cannot list — including a breakout, whose events the digest keeps out
- * of the shared log altogether (`docs/digests.md`). Titles are read now, not
- * from the event's snapshot, so a renamed thread reads under its new name.
+ * Every arm applies the listing rules in its own SQL, a breakout through both
+ * of the conversation page's gates, so neither a row nor the page cursor ever
+ * names a conversation the viewer cannot list. A breakout's mention reaches
+ * the shared log emptied and readable by its author alone
+ * (`breakout-activity.ts`, `docs/digests.md`); the viewer's target edge is
+ * what lists it here. Titles are read now, not from the event's snapshot, so a
+ * renamed thread reads under its new name.
  *
  * Read state is one time per person (`workspace_activity_seen`): opening the
  * tab reads everything above it.
@@ -67,6 +69,19 @@ function newestFirst(left: ActivityKey, right: ActivityKey): number {
   return right.occurred_at - left.occurred_at || (left.id < right.id ? 1 : left.id > right.id ? -1 : 0);
 }
 
+/** The viewer's `channel_viewers` row for `directory`, under its authority generation. */
+const CHANNEL_VIEWER = `LEFT JOIN channel_viewers viewer
+                  ON viewer.workstream_id = directory.workstream_id
+                 AND viewer.user_id = ?1
+                 AND viewer.authority_generation = directory.authority_generation`;
+
+/** The viewer's `breakout_viewers` row for `breakout`, under its authority generation. */
+const BREAKOUT_VIEWER = `LEFT JOIN breakout_viewers breakout_viewer
+                  ON breakout_viewer.workstream_id = breakout.workstream_id
+                 AND breakout_viewer.substream_id = breakout.substream_id
+                 AND breakout_viewer.user_id = ?1
+                 AND breakout_viewer.authority_generation = breakout.authority_generation`;
+
 const AFTER = `(?2 IS NULL OR occurred_at < ?2 OR (occurred_at = ?2 AND id < ?3))`;
 
 export class WorkspaceActivityFeed {
@@ -93,6 +108,12 @@ export class WorkspaceActivityFeed {
       ...binds,
     ).toArray();
     const breakouts = this.spaces.breakoutsReady();
+    // Every arm applies the listing rules itself, before its LIMIT, so a page
+    // and the cursor cut from it only ever hold keys this viewer may list: a
+    // key filtered afterwards would still leak through the cursor, and could
+    // leave a page empty that has more behind it.
+    const threadListed = channelListedSql("directory", "viewer", viewer.accessClass, { breakouts, userId: "?1" });
+    const breakoutListed = breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass);
     const keys = [
       ...arm(`SELECT event.event_id AS id,
                      CASE target.relation WHEN 'added' THEN 'added' ELSE 'mentioned' END AS kind,
@@ -101,23 +122,36 @@ export class WorkspaceActivityFeed {
                      json_extract(event.metadata_json, '$.substreamId') AS substream_id
                 FROM workspace_activity_event_targets target
                 JOIN workspace_activity_events event ON event.event_id = target.event_id
+                JOIN channels directory ON directory.workstream_id = event.subject_id
+                ${CHANNEL_VIEWER}
                WHERE target.user_id = ?1
                  AND target.relation IN ('added', 'mentioned')
                  AND event.subject_type = 'workstream'
-                 AND event.event_type IN ('workstream_participant_added', 'workstream_message_created')`),
+                 AND event.event_type IN ('workstream_participant_added', 'workstream_message_created')
+                 AND directory.archived_at IS NULL
+                 AND ${threadListed}
+                 AND ${breakouts
+                   ? `(COALESCE(json_extract(event.metadata_json, '$.substreamId'), '0') = '0'
+                       OR EXISTS (SELECT 1 FROM breakouts breakout ${BREAKOUT_VIEWER}
+                                   WHERE breakout.workstream_id = event.subject_id
+                                     AND breakout.substream_id = json_extract(event.metadata_json, '$.substreamId')
+                                     AND breakout.archived_at IS NULL
+                                     AND ${breakoutListed}))`
+                   : `COALESCE(json_extract(event.metadata_json, '$.substreamId'), '0') = '0'`}`),
       // A start is read from the thread's and the breakout's own directory
       // rows, as a finish is: the conversation's opening-message event does
       // not reliably reach this object (a breakout's is never forwarded), and
       // the directory row is what every other list here is drawn from. The
-      // listing rules apply in `hydrate`, so a start the viewer may not list
-      // never appears. The starter's name is the client's to resolve.
+      // starter's name is the client's to resolve.
       ...arm(`SELECT 'started:' || directory.workstream_id AS id,
                      'thread_started' AS kind,
                      directory.source_created_at AS occurred_at,
                      directory.created_by_user_id AS actor_user_id, '' AS actor_label,
                      directory.workstream_id AS thread_id, '0' AS substream_id
                 FROM channels directory
-               WHERE directory.created_by_user_id IS NOT NULL
+                ${CHANNEL_VIEWER}
+               WHERE ${threadListed}
+                 AND directory.created_by_user_id IS NOT NULL
                  AND directory.created_by_user_id <> ?1
                  AND directory.source_created_at IS NOT NULL
                  AND directory.archived_at IS NULL
@@ -128,7 +162,12 @@ export class WorkspaceActivityFeed {
                      breakout.created_by_user_id AS actor_user_id, '' AS actor_label,
                      breakout.workstream_id AS thread_id, breakout.substream_id AS substream_id
                 FROM breakouts breakout
-               WHERE breakout.created_by_user_id IS NOT NULL
+                JOIN channels directory ON directory.workstream_id = breakout.workstream_id
+                ${CHANNEL_VIEWER}
+                ${BREAKOUT_VIEWER}
+               WHERE ${threadListed} AND ${breakoutListed}
+                 AND directory.archived_at IS NULL
+                 AND breakout.created_by_user_id IS NOT NULL
                  AND breakout.created_by_user_id <> ?1
                  AND breakout.source_created_at IS NOT NULL
                  AND breakout.archived_at IS NULL`) : []),
@@ -170,9 +209,9 @@ export class WorkspaceActivityFeed {
   }
 
   /**
-   * The page's keys as rows, dropping every key whose conversation this
-   * viewer may not list now. Dropped rows can make a page short; the cursor
-   * still continues from where the keys stopped.
+   * The page's keys as rows, with today's titles. The arms already applied
+   * the listing rules; the title reads keep to them as well, so a key that
+   * somehow passed an arm still never yields a row.
    */
   private hydrate(viewer: Viewer, keys: readonly ActivityKey[]): ActivityItem[] {
     const threadIds = [...new Set(keys.map((key) => key.thread_id))];

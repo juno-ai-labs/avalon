@@ -16,16 +16,28 @@ type ActivityEventEffect = Extract<ConversationEffect, { kind: "activity_event" 
  * still checks at read time that the viewer may list the breakout
  * (`workspace-activity-feed.ts`, `docs/digests.md`).
  */
-export function breakoutMentionActivity(effect: ConversationEffect): ActivityEventEffect | null {
+export function breakoutMentionActivity(
+  effect: ConversationEffect,
+  substreamId: string,
+): ActivityEventEffect | null {
   if (effect.kind !== "activity_event" || effect.actorUserId === null) return null;
   const mentions = effect.targets.filter((target) => target.relation === "mentioned");
   if (mentions.length === 0) return null;
-  return { ...effect, body: "", digestible: false, targets: mentions };
+  // The breakout id is stamped here, by the parent that knows it, rather than
+  // trusted from the producer: WorkspaceDO decides the audience by it, and an
+  // effect a breakout wrote before producers stamped it would otherwise be
+  // stored as the parent thread's.
+  return {
+    ...effect,
+    body: "",
+    digestible: false,
+    targets: mentions,
+    metadata: { ...effect.metadata, substreamId },
+  };
 }
 
 /** Whether an activity event is a breakout's, by the substream its producer stamped. */
-export function isBreakoutActivityEvent(effect: ConversationEffect): boolean {
-  if (effect.kind !== "activity_event") return false;
+export function isBreakoutActivityEvent(effect: ActivityEventEffect): boolean {
   const substreamId = effect.metadata.substreamId;
   return typeof substreamId === "string" && substreamId !== "0";
 }
