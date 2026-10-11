@@ -738,14 +738,13 @@ export function RemoveParticipantDialog({ failure, member, noun, onCancel, onCon
   pending: boolean;
   self: boolean;
 }): React.JSX.Element {
-  // A Space that includes the Channel keeps its members in, so leaving the
-  // Channel's own list ends access only when nothing else grants it.
+  // A Channel grants no reader (`docs/spaces.md`), so being in a Channel that
+  // holds this thread keeps nobody in it: only a public thread does.
   const who = self ? 'You' : member?.name ?? 'They';
   const keeps = self ? 'You keep' : 'They keep';
-  const viaSpace = noun === 'thread' ? ` or a channel ${self ? 'you’re' : 'they’re'} in includes it` : '';
   return (
     <Modal
-      description={`${who} will be taken off this ${noun}. ${keeps} access only if it’s public${viaSpace}.`}
+      description={`${who} will be taken off this ${noun}. ${keeps} access only if it’s public.`}
       footer={<>
         <Button disabled={pending} onClick={onCancel}>Cancel</Button>
         <Button className="button-danger" disabled={pending} onClick={onContinue}>Continue</Button>

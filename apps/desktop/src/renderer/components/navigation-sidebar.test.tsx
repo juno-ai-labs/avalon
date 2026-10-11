@@ -112,6 +112,27 @@ describe('the navigation sidebar', () => {
       .toEqual(['Apple1 thread', 'Zebra0 threads']);
   });
 
+  it('reorders a pinned Channel from the keyboard and from its menu, not only by dragging', async () => {
+    const pins = [
+      { kind: 'channel' as const, id: 'outbound', parentId: null },
+      { kind: 'channel' as const, id: 'growth', parentId: null },
+    ];
+    api.reorderPins.mockResolvedValue(pins);
+    renderSidebar((client) => {
+      client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound'), channel('growth', 'Growth')] });
+      client.setQueryData(PINS_QUERY_KEY, pins);
+    });
+    const pinned = within(screen.getByRole('region', { name: 'Pinned channels' }));
+
+    fireEvent.keyDown(pinned.getByRole('button', { name: /Growth/u }), { key: 'ArrowUp', altKey: true });
+    expect(api.reorderPins).toHaveBeenLastCalledWith('channel', ['growth', 'outbound']);
+
+    fireEvent.contextMenu(pinned.getByRole('button', { name: /Outbound/u }));
+    expect(screen.queryByRole('menuitem', { name: 'Move up' })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Move down' }));
+    expect(api.reorderPins).toHaveBeenLastCalledWith('channel', ['growth', 'outbound']);
+  });
+
   it('says why a pin did not save', async () => {
     api.setPinned.mockRejectedValue(new ApiError('limit', 409, 'pin_limit_reached'));
     renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
@@ -202,6 +223,7 @@ describe('the navigation sidebar', () => {
   });
 
   it('groups Activity by day, marks what is new, and marks it read once shown', async () => {
+    const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(false);
     useUiStore.getState().setSidebarSection('activity');
     const now = new Date();
     api.getActivity.mockResolvedValue({ nextCursor: null, items: [{
@@ -213,7 +235,14 @@ describe('the navigation sidebar', () => {
     const today = within(await screen.findByRole('region', { name: 'Today' }));
     expect(today.getByRole('button')).toHaveTextContent('Maya K added you to Reply-handling playbook');
     expect(today.getByRole('img', { name: 'Unread' })).toBeInTheDocument();
+    // A window in the background is not somebody looking: nothing is marked
+    // until it takes focus.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(api.markActivitySeen).not.toHaveBeenCalled();
+    hasFocus.mockReturnValue(true);
+    window.dispatchEvent(new Event('focus'));
     await waitFor(() => expect(api.markActivitySeen).toHaveBeenCalledWith(now.toISOString()));
+    hasFocus.mockRestore();
   });
 
   describe('the Channels tab’s unread state and sort', () => {
@@ -248,21 +277,21 @@ describe('the navigation sidebar', () => {
       renderSidebar(seed);
       expect(names()).toEqual(['Apple', 'Kiwi', 'Mango', 'Zebra']);
 
-      fireEvent.click(screen.getByRole('button', { name: 'A–Z' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Sorted by A–Z. Sort by Recent' }));
       expect(names()).toEqual(['Zebra', 'Kiwi', 'Mango', 'Apple']);
 
-      fireEvent.click(screen.getByRole('button', { name: 'Recent' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Sorted by Recent. Sort by Needs attention' }));
       expect(names()).toEqual(['Mango', 'Kiwi', 'Zebra', 'Apple']);
-      expect(screen.getByRole('button', { name: 'Needs attention' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Sorted by Needs attention. Sort by A–Z' })).toBeInTheDocument();
     });
 
     it('keeps the chosen order when the sidebar is drawn again', () => {
       const first = renderSidebar(seed);
-      fireEvent.click(screen.getByRole('button', { name: 'A–Z' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Sorted by A–Z. Sort by Recent' }));
       first.unmount();
 
       renderSidebar(seed);
-      expect(screen.getByRole('button', { name: 'Recent' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Sorted by Recent. Sort by Needs attention' })).toBeInTheDocument();
       expect(names()).toEqual(['Zebra', 'Kiwi', 'Mango', 'Apple']);
     });
   });

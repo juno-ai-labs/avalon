@@ -22,7 +22,7 @@ import {
 } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 
@@ -39,6 +39,7 @@ import type { SpaceConversationSummary, Workspace } from '../lib/types';
 import { useUiStore, type SidebarChannelSort, type SidebarSection } from '../lib/ui-store';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
+import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { Button, IconButton, InlineError, Modal, StatusDot, Tip } from './primitives';
 import { RelativeTime } from './relative-time';
 import { ResizableSidebar, SidebarFooterItems, SidebarScroll } from '@rally/ui/components/resizable-sidebar';
@@ -287,14 +288,31 @@ function useOpenThreadId(): string | null {
 function usePinnedDrag(kind: PinKind, ids: readonly string[]): {
   order: readonly string[];
   rowProps: (id: string, index: number) => React.HTMLAttributes<HTMLElement> & { draggable: boolean };
+  moves: (id: string, index: number) => PinMoves;
 } {
   const { api } = useAppSession();
   const write = usePinWrite();
   const [drag, setDrag] = useState<{ id: string; order: string[] } | null>(null);
   const order = drag?.order ?? ids;
+  // Dragging has a keyboard and a menu path too: Option/Alt with an arrow on
+  // a focused row, or Move up / Move down in its menu.
+  const moveTo = (id: string, target: number): (() => void) | null => (
+    api && target >= 0 && target < ids.length
+      ? () => write(api.reorderPins(kind, moveWithin([...ids], id, target)))
+      : null
+  );
   return {
     order,
+    moves: (id, index) => ({ up: moveTo(id, index - 1), down: moveTo(id, index + 1) }),
     rowProps: (id, index) => ({
+      'aria-keyshortcuts': 'Alt+ArrowUp Alt+ArrowDown',
+      onKeyDown: (event) => {
+        if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+        const move = moveTo(id, index + (event.key === 'ArrowUp' ? -1 : 1));
+        if (!move) return;
+        event.preventDefault();
+        move();
+      },
       draggable: true,
       onDragStart: (event) => {
         event.dataTransfer.effectAllowed = 'move';
@@ -316,6 +334,47 @@ function usePinnedDrag(kind: PinKind, ids: readonly string[]): {
       onDragEnd: () => setDrag(null),
     }),
   };
+}
+
+/**
+ * A list's sort, which cycles on each click. The label is the current sort;
+ * the tooltip and the accessible name say it is a sort and what a click
+ * changes it to, which the bare label does not.
+ */
+function SortButton({ onChange, sort, sorts }: {
+  onChange: (sort: SidebarChannelSort) => void;
+  sort: SidebarChannelSort;
+  sorts: ReadonlyArray<{ sort: SidebarChannelSort; label: string }>;
+}): React.JSX.Element {
+  const index = Math.max(0, sorts.findIndex((candidate) => candidate.sort === sort));
+  const current = sorts[index]!;
+  const next = sorts[(index + 1) % sorts.length]!;
+  return <Tip label={`Sort by ${next.label}`}>
+    <button
+      aria-label={`Sorted by ${current.label}. Sort by ${next.label}`}
+      className="navigation-sort"
+      onClick={() => onChange(next.sort)}
+      type="button"
+    >
+      {current.label}
+      <IconArrowsSort aria-hidden="true" size={13} stroke={1.8} />
+    </button>
+  </Tip>;
+}
+
+/** Moving one pinned row a step; null where it is already at that end. */
+interface PinMoves {
+  up: (() => void) | null;
+  down: (() => void) | null;
+}
+
+/** Move up / Move down, for a pinned row's menu. */
+function PinMoveItems({ moves }: { moves: PinMoves | undefined }): React.JSX.Element | null {
+  if (!moves || (!moves.up && !moves.down)) return null;
+  return <>
+    {moves.up && <ContextMenu.Item className="menu-item" onSelect={moves.up}>Move up</ContextMenu.Item>}
+    {moves.down && <ContextMenu.Item className="menu-item" onSelect={moves.down}>Move down</ContextMenu.Item>}
+  </>;
 }
 
 function SectionHeading({ children, trailing }: { children: ReactNode; trailing?: ReactNode }): React.JSX.Element {
@@ -402,10 +461,14 @@ function ThreadsSection(): React.JSX.Element {
     }
     void navigate(threadRoute(row.id, homeChannelId(row.spaceIds, openChannelId)));
   };
-  const nextSort = THREAD_SORTS[(THREAD_SORTS.findIndex((candidate) => candidate.sort === sort) + 1) % THREAD_SORTS.length]!;
-  const renderRow = (row: SpaceConversationSummary, drag?: React.HTMLAttributes<HTMLElement> & { draggable: boolean }): ReactNode => <ThreadRow
+  const renderRow = (
+    row: SpaceConversationSummary,
+    drag?: React.HTMLAttributes<HTMLElement> & { draggable: boolean },
+    moves?: PinMoves,
+  ): ReactNode => <ThreadRow
     active={row.id === openThreadId}
     drag={drag}
+    moves={moves}
     key={row.id}
     onOpen={() => open(row)}
     onPin={(next) => pin(row.kind === 'breakout' ? 'breakout' : 'thread', row.id, next, row.breakoutOf?.workstreamId)}
@@ -418,18 +481,15 @@ function ThreadsSection(): React.JSX.Element {
       <SectionHeading trailing="Drag to reorder">Pinned</SectionHeading>
       {threadDrag.order.map((id, index) => {
         const row = byId.get(id);
-        return row ? renderRow(row, threadDrag.rowProps(id, index)) : null;
+        return row ? renderRow(row, threadDrag.rowProps(id, index), threadDrag.moves(id, index)) : null;
       })}
       {breakoutDrag.order.map((id, index) => {
         const row = byId.get(id);
-        return row ? renderRow(row, breakoutDrag.rowProps(id, index)) : null;
+        return row ? renderRow(row, breakoutDrag.rowProps(id, index), breakoutDrag.moves(id, index)) : null;
       })}
     </section>}
     <section aria-label="Threads" className="navigation-section">
-      <SectionHeading trailing={<button className="navigation-sort" onClick={() => setSort(nextSort.sort)} type="button">
-        {THREAD_SORTS.find((candidate) => candidate.sort === sort)?.label}
-        <IconArrowsSort aria-hidden="true" size={13} stroke={1.8} />
-      </button>}>Threads</SectionHeading>
+      <SectionHeading trailing={<SortButton onChange={setSort} sort={sort} sorts={THREAD_SORTS} />}>Threads</SectionHeading>
       {unpinned.map((row) => renderRow(row))}
       {list.isSuccess && rows.length === 0 && <p className="navigation-empty">Threads you start or are added to appear here.</p>}
       {list.hasNextPage && <button className="navigation-more" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()} type="button">Show more</button>}
@@ -438,9 +498,10 @@ function ThreadsSection(): React.JSX.Element {
   </>;
 }
 
-function ThreadRow({ active, drag, onOpen, onPin, pinned, row, spaces }: {
+function ThreadRow({ active, drag, moves, onOpen, onPin, pinned, row, spaces }: {
   active: boolean;
   drag?: (React.HTMLAttributes<HTMLElement> & { draggable: boolean }) | undefined;
+  moves?: PinMoves | undefined;
   onOpen: () => void;
   onPin: (pinned: boolean) => void;
   pinned: boolean;
@@ -479,6 +540,7 @@ function ThreadRow({ active, drag, onOpen, onPin, pinned, row, spaces }: {
           {pinned ? <IconPinnedOff aria-hidden="true" size={15} stroke={1.8} /> : <IconPin aria-hidden="true" size={15} stroke={1.8} />}
           {pinned ? 'Unpin' : 'Pin'}
         </ContextMenu.Item>
+        <PinMoveItems moves={moves} />
       </ContextMenu.Content>
     </ContextMenu.Portal>
   </ContextMenu.Root>;
@@ -516,10 +578,14 @@ function ChannelsSection({ guest }: { guest: boolean }): React.JSX.Element {
   const pinned = new Set(channelPins);
   const rest = channels.filter((space) => !pinned.has(space.id))
     .sort(compareChannelRows(sort, statsById, openChannelId));
-  const nextSort = CHANNEL_SORTS[(CHANNEL_SORTS.findIndex((candidate) => candidate.sort === sort) + 1) % CHANNEL_SORTS.length]!;
-  const row = (space: SpaceSummary, rowDrag?: React.HTMLAttributes<HTMLElement> & { draggable: boolean }): ReactNode => <ChannelRow
+  const row = (
+    space: SpaceSummary,
+    rowDrag?: React.HTMLAttributes<HTMLElement> & { draggable: boolean },
+    moves?: PinMoves,
+  ): ReactNode => <ChannelRow
     active={space.id === openChannelId}
     drag={rowDrag}
+    moves={moves}
     key={space.id}
     onOpen={() => void navigate(channelRoute(space.id))}
     onPin={(next) => pin('channel', space.id, next)}
@@ -532,15 +598,12 @@ function ChannelsSection({ guest }: { guest: boolean }): React.JSX.Element {
       <SectionHeading trailing="Drag to reorder">Pinned</SectionHeading>
       {drag.order.map((id, index) => {
         const space = byId.get(id);
-        return space ? row(space, drag.rowProps(id, index)) : null;
+        return space ? row(space, drag.rowProps(id, index), drag.moves(id, index)) : null;
       })}
     </section>}
     <section aria-label="All channels" className="navigation-section">
       <SectionHeading trailing={<>
-        <button className="navigation-sort" onClick={() => setSort(nextSort.sort)} type="button">
-          {CHANNEL_SORTS.find((candidate) => candidate.sort === sort)?.label}
-          <IconArrowsSort aria-hidden="true" size={13} stroke={1.8} />
-        </button>
+        <SortButton onChange={setSort} sort={sort} sorts={CHANNEL_SORTS} />
         {!guest && <Tip label="New channel"><button aria-label="New channel" className="navigation-sort" onClick={() => setCreating(true)} type="button">
           <IconPlus aria-hidden="true" size={14} stroke={1.9} />
         </button></Tip>}
@@ -591,9 +654,10 @@ function ArchivedChannels({ channels }: { channels: readonly SpaceSummary[] }): 
   </section>;
 }
 
-function ChannelRow({ active, drag, onOpen, onPin, pinned, space, stats }: {
+function ChannelRow({ active, drag, moves, onOpen, onPin, pinned, space, stats }: {
   active: boolean;
   drag?: (React.HTMLAttributes<HTMLElement> & { draggable: boolean }) | undefined;
+  moves?: PinMoves | undefined;
   onOpen: () => void;
   onPin: (pinned: boolean) => void;
   pinned: boolean;
@@ -630,6 +694,7 @@ function ChannelRow({ active, drag, onOpen, onPin, pinned, space, stats }: {
           {pinned ? <IconPinnedOff aria-hidden="true" size={15} stroke={1.8} /> : <IconPin aria-hidden="true" size={15} stroke={1.8} />}
           {pinned ? 'Unpin' : 'Pin'}
         </ContextMenu.Item>
+        <PinMoveItems moves={moves} />
       </ContextMenu.Content>
     </ContextMenu.Portal>
   </ContextMenu.Root>;
@@ -737,11 +802,20 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
   const items = useMemo(() => (feed.data?.pages ?? []).flatMap((page) => page.items), [feed.data]);
   const markedThrough = useRef<string | null>(null);
   const newest = items[0]?.occurredAt ?? null;
-  useEffect(() => {
+  // On a phone the section stays mounted while the sheet is closed, so a
+  // closed sheet is not the person looking.
+  const sheetOpen = useUiStore((state) => state.sidebarOpen);
+  const acknowledge = useCallback((): void => {
     if (!api || !newest || markedThrough.current === newest) return;
+    if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    if (window.innerWidth <= PHONE_LAYOUT_MAX_WIDTH && !sheetOpen) return;
     markedThrough.current = newest;
     void api.markActivitySeen(newest).catch(() => undefined);
-  }, [api, newest]);
+  }, [api, newest, sheetOpen]);
+  // The same gate a conversation's read takes: the window is in front and
+  // focused, and it is rechecked when either changes, so Activity arriving
+  // in a background window keeps its dots until somebody looks.
+  useVisibleReadAcknowledgement(acknowledge);
   const open = (item: ActivityItem): void => {
     const parent = live.data?.find((candidate) => candidate.id === item.threadId);
     void navigate(threadRoute(item.threadId, homeChannelId(parent?.spaceIds ?? item.channelIds), item.breakout?.substreamId));
