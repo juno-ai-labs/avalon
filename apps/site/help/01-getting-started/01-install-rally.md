@@ -14,7 +14,7 @@ You do not need an invitation to download the app. Downloading it does not put y
 
 ## Download Rally
 
-1. Go to [rallywith.ai](https://rallywith.ai) and click **Download for Mac** at the top of the page. The big button below the headline (**Download the macOS beta**) and the **Start free trial** buttons under the pricing plans fetch the same file.
+1. Go to [rallywith.ai](https://rallywith.ai) and click **Download the macOS beta** below the headline. The **Start free trial** buttons under the pricing plans fetch the same file.
 2. Open the downloaded **Rally.dmg**.
 3. Drag Rally into your **Applications** folder.
 4. Open Rally from Applications or Launchpad.
