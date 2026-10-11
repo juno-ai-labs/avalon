@@ -19,7 +19,7 @@ Both kinds of connection are offered. **Connect for me** makes a webhook whose e
 6. Copy the **Endpoint** (the address) and the **Signing secret** straight away, with **Copy endpoint** and **Copy secret**.
 
 > [!WARNING]
-> Rally shows the signing secret once and never again. Put it straight into the sending system's protected settings. Never paste it into a Thread, an email or a support message: anyone with the secret can send Rally events that look genuine.
+> Rally shows the signing secret once and never again. Put it straight into the sending system's protected settings. Never paste it into a chat, a Thread, a Channel, an email or a support message: anyone with the secret can send Rally events that look genuine.
 
 You can create as many inbound webhooks as you need. One for each sending system keeps things tidy.
 

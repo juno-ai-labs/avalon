@@ -142,7 +142,7 @@ const ADDITIONAL_MEMBER_SAFE_HARNESS_ERRORS = Object.freeze({
   empty_completion: "The model returned an empty response. Try again in a moment",
   model_output_invalid: "The model returned a response Rally could not read. Try again in a moment",
   provider_error: "A connected service returned an error, so this run stopped",
-  run_admission_timeout: "This work stream stayed busy too long to start the run",
+  run_admission_timeout: "This thread stayed busy too long to start the run",
   run_cancelled: "This run was cancelled",
   run_ownership_lost: "This run was superseded by another executor",
   stale_run_reaped: "This run stopped after its execution lease expired",

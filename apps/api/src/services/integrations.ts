@@ -297,7 +297,7 @@ import { createAvalonTerminalPlugin } from "./terminal/plugin";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
 
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
-const WORKSTREAM_PROMPT_VERSION = "workstream-v6-explicit-execution-authority";
+const WORKSTREAM_PROMPT_VERSION = "workstream-v7-thread-hierarchy";
 
 /**
  * A message already supplies the model's immediate context through the durable
@@ -2054,7 +2054,7 @@ function createAvalonAutomationsPlugin(
               workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)),
             )).automationOwner({ workspaceId: asWorkspaceId(input.workspaceId), automationId: target.automationId });
             if (owned.owningWorkstreamId !== input.parentId) {
-              throw new Error("That Sidekick is not one this work stream owns; call sidekicks_list for the ones it can change");
+              throw new Error("That Sidekick is not one this thread owns; call sidekicks_list for the ones it can change");
             }
             targetId = asAutomationId(target.automationId);
           }
@@ -7575,7 +7575,7 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
           systemMessage: [
             "Search memory before writing so you update or invalidate an existing fact instead of duplicating it.",
             "For an update or invalidation, copy the memory item ID and revision exactly from the latest search result and search again after a revision conflict.",
-            "Choose the narrowest durable scope this run authorizes: workstream for this work stream alone, sidekick for future runs of this installed Sidekick, user for one person's durable preferences, and workspace for shared organizational knowledge.",
+            "Choose the narrowest durable scope this run authorizes: workstream for this thread alone, sidekick for future runs of this installed Sidekick, user for one person's durable preferences, and workspace for knowledge shared across the organization.",
             "Not every run authorizes every kind, and nothing here tells you which it has: if a write is refused, the refusal names the kinds this run does have — retry with the narrowest of those, or say the fact could not be stored durably.",
             "Do not store secrets, raw provider data, transient execution state, speculative conclusions, or facts already represented by an authoritative connected system.",
             "Treat recalled memory as fallible context and verify it when correctness matters.",
@@ -7767,7 +7767,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       definition: {
         name: "schedule_wakeup",
         description: [
-          "Schedule this work stream to wake up later and act on a prompt you write now.",
+          "Schedule this thread to wake up later and act on a prompt you write now.",
           "Give exactly one of delay or at.",
           "Relative example: {\"prompt\": \"Check whether the deploy finished and summarize the result\", \"delay\": \"2 hours\"}.",
           "Specific example: {\"prompt\": \"Send the launch recap\", \"at\": \"2026-08-12T17:26\", \"timezone\": \"America/Los_Angeles\"}.",
@@ -7803,7 +7803,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
               type: "string",
               minLength: 1,
               maxLength: 100,
-              description: "IANA timezone the at value is read in, for example America/Los_Angeles. Omit to use this work stream's local zone, and omit whenever at carries an offset.",
+              description: "IANA timezone the at value is read in, for example America/Los_Angeles. Omit to use this thread's local zone, and omit whenever at carries an offset.",
             },
           },
           required: ["prompt"],
@@ -7866,7 +7866,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           const pendingWakeups = await listPendingWorkstreamWakeups(scheduling);
           throw new WakeupInputError(
             "wakeup_limit_reached",
-            `This work stream already has ${pending} pending wake-ups, the maximum of ${MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM}. Cancel one before scheduling another.`,
+            `This thread already has ${pending} pending wake-ups, the maximum of ${MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM}. Cancel one before scheduling another.`,
             "Call list_wakeups, then cancel one pending wake-up before retrying.",
             pendingWakeups.map((wakeup) => wakeup.wakeupId),
           );
@@ -7912,7 +7912,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
     {
       definition: {
         name: "list_wakeups",
-        description: "List this work stream's pending wake-ups with their IDs, due times, and prompts. Check this before scheduling another one so you do not duplicate a wake-up that already exists.",
+        description: "List this thread's pending wake-ups with their IDs, due times, and prompts. Check this before scheduling another one so you do not duplicate a wake-up that already exists.",
         capability: "workstream.wakeup.read",
         mode: "read",
         idempotency: "safe",
@@ -7940,7 +7940,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
     {
       definition: {
         name: "cancel_wakeup",
-        description: "Cancel one pending wake-up in this work stream. Use the wakeupId returned by schedule_wakeup or list_wakeups.",
+        description: "Cancel one pending wake-up in this thread. Use the wakeupId returned by schedule_wakeup or list_wakeups.",
         capability: "workstream.wakeup.write",
         mode: "write",
         idempotency: "provider_key",
@@ -7965,7 +7965,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           const pending = await listPendingWorkstreamWakeups(scheduling);
           throw new WakeupInputError(
             "wakeup_not_found",
-            "No pending wake-up with that ID is available in this work stream. Call list_wakeups and retry with one of its IDs.",
+            "No pending wake-up with that ID is available in this thread. Call list_wakeups and retry with one of its IDs.",
             "Call list_wakeups and use one of the pending wake-up IDs.",
             pending.map((wakeup) => wakeup.wakeupId),
           );

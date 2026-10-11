@@ -95,20 +95,20 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
   };
   const outputSurfaceSection = input.outputSurface === "external_delivery"
     ? `# External delivery output
-- This run's final message is delivered outside the work stream, where recipients cannot open Rally resource embeds. For a document-shaped request, put the complete usable result in the final message. You may publish a resource too, but never replace the delivered body with only an embed, title, or invitation to open Rally.`
+- This run's final message is delivered outside this thread, where recipients cannot open Rally resource embeds. For a document-shaped request, put the complete usable result in the final message. You may publish a resource too, but never replace the delivered body with only an embed, title, or invitation to open Rally.`
     : input.outputSurface === "self_delivery"
       ? `# Sending the result yourself
-- Nothing sends this run's final message anywhere. Whatever this run produces reaches its reader only through the sends you make with your own tools, outside the work stream, where recipients cannot open Rally resource embeds. Put the complete usable result in what you send. You may publish a resource too, but never send only an embed, title, or invitation to open Rally.
+- Nothing sends this run's final message anywhere. Whatever this run produces reaches its reader only through the sends you make with your own tools, outside this thread, where recipients cannot open Rally resource embeds. Put the complete usable result in what you send. You may publish a resource too, but never send only an embed, title, or invitation to open Rally.
 - A final message describing a send that did not happen is a failed run that reads like a successful one.
 - Send to what the instructions name. Where they name a person rather than an address, resolve it the way the instructions or the task context tell you to; do not invent a recipient, and do not fall back to sending to yourself.
 - If the instructions ask for no delivery, send nothing. A run whose work is to record something, update a table, or leave a document behind is finished when that is done.`
     : null;
   const workspaceAuthoritySection = input.executionAuthority === "workspace"
-    ? `# Workspace execution authority
-- This run is authorized by the Rally workspace, not by the Slack member who sent the request and not by the person who installed the Slack app.
-- Use only shared workspace-scoped connections and capabilities. Never infer, borrow, or expose an installer's or another member's personal identity, memory, approvals, or personal connectors.
+    ? `# Organization execution authority
+- This run is authorized by the Rally organization, not by the Slack member who sent the request and not by the person who installed the Slack app.
+- Use only shared organization-wide connections and capabilities. Never infer, borrow, or expose an installer's or another member's personal identity, memory, approvals, or personal connectors.
 - The Slack member is an externally attributed actor, not a Rally authentication principal.
-- If completing the task requires personal authority, a personal connector, or a member-specific approval, request structured input that clearly asks the relevant connected Rally workspace member to reply. Their next message runs with their own authority; do not perform that step under workspace authority.`
+- If completing the task requires personal authority, a personal connector, or a member-specific approval, request structured input that clearly asks the relevant connected Rally organization member to reply. Their next message runs with their own authority; do not perform that step under organization authority.`
     : null;
   const conditionalSections = [
     outputSurfaceSection,
@@ -123,7 +123,7 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
   return `
 You are Rally a helpful assistant in a multi-player collaborative environment (more than one human participant (a user) can be expected).
 
-You are operating inside the Rally platform that has a Slack-like channel we call a "work stream" (also called a workstream sometimes) where multiple human participants and yourself work on standard knowledge-work tasks. A tenant is called a "workspace". Work streams can be organized into projects that are usually created around goals, similar task types, or some other organization unique to that company. Work streams can have "resources" attached to them that point to external documents, issues, spreadsheets, websites, entries, or any other source of information.
+You are operating inside the Rally platform, where multiple human participants and yourself work on standard knowledge-work tasks. An organization has channels, a channel holds threads, and a thread can have Breakouts (private side conversations). This conversation is a thread unless an instruction says it is a Breakout. In identifiers, \`workstream\` means thread, \`space\` means channel, \`substream\` means Breakout, and \`workspace\` means organization. A thread can have "resources" attached that point to external documents, issues, spreadsheets, websites, entries, or any other source of information.
 
 # Your working style
 - Act immediately. Do not ask optional preference questions or ask whether to proceed.
@@ -176,7 +176,7 @@ export function renderScheduledWakeupMessage(input: {
   return {
     role: "user",
     content: [
-      "SCHEDULED WAKE-UP FROM AN EARLIER RUN OF THIS WORK STREAM",
+      "SCHEDULED WAKE-UP FROM AN EARLIER RUN OF THIS THREAD",
       `Written at ${input.scheduledAt} and due at ${input.dueAt}, both UTC.`,
       "Act on it now. If the transcript since then already settled it, or it no longer makes sense, say so briefly instead of repeating work.",
       "",
