@@ -6,6 +6,7 @@ import type {
   TelemetryEventProperties,
   TelemetryRouteResponse,
 } from '@rally/contracts/telemetry';
+import { pageStartSignals, pageTimeZone, watchPageInput } from './traffic-signals';
 
 type SitePage = TelemetryEventProperties<'site_page_viewed'>['page'];
 type SiteActionLink = Omit<TelemetryEventProperties<'site_action_selected'>, 'page'>;
@@ -108,7 +109,12 @@ async function capability(): Promise<CapabilityState> {
   const response = await fetch(`${apiBaseUrl()}/telemetry/bootstrap`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ anonymousEpochId: epochId, routeToken: route.routeToken }),
+    body: JSON.stringify({
+      anonymousEpochId: epochId,
+      routeToken: route.routeToken,
+      timeZone: pageTimeZone(),
+      pageSignals: pageStartSignals(),
+    }),
   });
   if (!response.ok) throw new Error('site_telemetry_bootstrap_failed');
   const value = { ...(await response.json() as TelemetryBootstrapResponse), anonymousEpochId: epochId };
@@ -405,13 +411,16 @@ export function initializeSiteTelemetry(): void {
     ...(campaignValue('utm_campaign') ? { campaignName: campaignValue('utm_campaign') } : {}),
     ...(adClickIdSource() ? { adClickIdSource: adClickIdSource() } : {}),
   });
+  const pageInput = watchPageInput();
   const leave = (): void => {
     if (leaveReported) return;
     leaveReported = true;
+    const pageSignals = pageInput();
     report('site_page_left', {
       page: currentSitePage(),
       pathname: normalizedPathname(),
       duration: durationBucket(Date.now() - pageVisibleAt),
+      ...(pageSignals.length ? { pageSignals } : {}),
     }, true);
   };
   window.addEventListener('pagehide', leave, { once: true });

@@ -24,6 +24,7 @@ import { getIdentityAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
 import { acceptAuthenticatedTelemetry } from "../telemetry/authenticated";
 import { TelemetryBootstrapService } from "../telemetry/bootstrap";
+import { edgeTrafficSignals, type TrafficRequestCf } from "../telemetry/site-traffic";
 import { CrashIngestService } from "../telemetry/crash-ingest";
 import { purgeIneligibleCrashReports } from "../telemetry/crash-delivery";
 import { ProductAnalyticsPreferenceService } from "../telemetry/preference";
@@ -169,11 +170,23 @@ publicTelemetryRoutes.post(
       edgeAddress,
       30,
     )) throw new ApiError(429, 'telemetry_bootstrap_rate_limited', 'Too many telemetry sessions were requested');
+    const body = c.req.valid("json");
+    // Classification reads this request once; the capability carries only codes.
+    const traffic = [
+      ...edgeTrafficSignals({
+        headers: c.req.raw.headers,
+        cf: c.req.raw.cf as TrafficRequestCf | undefined,
+        allowedOrigins: new Set((c.env.ALLOWED_ORIGINS ?? "").split(",").map((value) => value.trim()).filter(Boolean)),
+        pageTimeZone: body.timeZone,
+      }),
+      ...body.pageSignals ?? [],
+    ];
     let response: z.infer<typeof TelemetryBootstrapResponseSchema>;
     try {
       response = await new TelemetryBootstrapService(c.env).bootstrap(
-        c.req.valid("json").anonymousEpochId,
-        c.req.valid("json").routeToken,
+        body.anonymousEpochId,
+        body.routeToken,
+        traffic,
       );
     } catch (error) {
       if (error instanceof z.ZodError) throw error;
