@@ -23,9 +23,9 @@ The installer is signed and checked by Apple, so your Mac should open it without
 
 ### If someone sent you a download link
 
-A teammate, or an invitation email, may give you a personal link that looks like `rallywith.ai/download/#token=…` instead. It opens a page headed **Welcome to Rally** with a **Download the macOS app** button.
+A teammate, or an invitation email, may give you a personal link that looks like `rallywith.ai/download/#token=…` instead. It opens a page headed **Welcome to Rally** with a **Download for macOS** button.
 
-- Click **Download the macOS app**, and keep the page open until the download starts.
+- Click **Download for macOS**, and keep the page open until the download starts.
 - Opening the page does not use up the link. Only clicking the button does, so it is safe to preview it in your email.
 - Some links work once. Others work as many times as you like until a date the sender chose.
 - A link that came with an invitation stops working if that invitation is cancelled, declined or replaced by a newer one.
