@@ -563,6 +563,21 @@ describe("pins", () => {
     });
   });
 
+  it("given two pinned Channels, when the member moves the second up, then the stored order is the new one", async () => {
+    const first = await reserveChannel("First");
+    const second = await reserveChannel("Second");
+    for (const itemId of [first, second]) {
+      await workspace().changePin({ workspaceId: WORKSPACE_ID, userId: MEMBER, kind: "channel", itemId, parentId: null, pinned: true });
+    }
+
+    const moved = await workspace().reorderPins({ workspaceId: WORKSPACE_ID, userId: MEMBER, kind: "channel", ids: [second, first] });
+
+    expect(moved).toEqual({ ok: true, pins: [
+      { kind: "channel", id: second, parentId: null },
+      { kind: "channel", id: first, parentId: null },
+    ] });
+  });
+
   it("given a private Channel, when a member who is not in it pins it, then it is refused", async () => {
     const channelId = await channelWithThreads();
     await workspace().noteSpaceAudience({
