@@ -1344,10 +1344,10 @@ export const TELEMETRY_EVENTS = {
   message_sent: event({
     ...common,
     name: "message_sent",
-    definition: "A person successfully sent a work-stream message or elicitation response without retaining its content.",
+    definition: "The API admitted a work-stream message or elicitation response a person sent from any client, without retaining its content.",
     productQuestion: "How often do people send messages with attachments, mentions, or newly added participants?",
-    sources: ["desktop-renderer"],
-    authoritativeSource: "desktop-renderer",
+    sources: ["api"],
+    authoritativeSource: "api",
     category: "product",
     identityScopes: ["workspace-user"],
     properties: deferredZodSchema(() => z.strictObject({

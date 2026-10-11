@@ -3414,6 +3414,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     span.setAttributes(identityAttributes({
       analyticsWorkspaceId: current.analyticsWorkspaceId,
     }));
+    // Who sends a message or an answer: the verified identity, still marked
+    // with the non-session path it arrived by. A Slack, support, demo-seed or
+    // authorization-callback write is not the member sending it, and the
+    // object needs to tell (`message_sent`, the reserved resource-authorization
+    // message ids).
+    const sender: AuthContext = request.auth.principal
+      ? { ...current, principal: request.auth.principal } : current;
     // Several product reads settle per-reader state, and several mutations do
     // not allocate a realtime sequence. Clearing the one prepared snapshot at
     // this common admitted boundary prevents either kind from being hidden by
@@ -3505,12 +3512,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         return jsonResponse(await this.product.markUnread(current));
       }
       if (request.operation === "create_message") {
-        return jsonResponse(await this.admitMessage(
-          request.auth.principal === "resource_authorization"
-            ? { ...current, principal: "resource_authorization" } : current,
-          request.input,
-          span,
-        ));
+        return jsonResponse(await this.admitMessage(sender, request.input, span));
       }
       if (request.operation === "import_source_get") {
         return jsonResponse({ source: await this.product.importedSessionSource(current) });
@@ -3585,7 +3587,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
       if (request.operation === "answer_elicitation") {
         const result = await this.product.answerElicitation(
-          current,
+          sender,
           request.elicitationId,
           request.input,
           request.slackOrigin,

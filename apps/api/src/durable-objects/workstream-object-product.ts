@@ -85,6 +85,7 @@ import {
 } from "../services/workstream-participant-model-message";
 import type { ModelAttachmentSource } from "../services/attachment-model-content";
 import { memberSafeHarnessError } from "../services/workstream-service";
+import { recordMessageSentTelemetry, type MessageSentObservation } from "../telemetry/message-sent";
 import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
@@ -4500,7 +4501,8 @@ export class WorkstreamObjectProductService {
       envelope: { auth, input },
       now: reservationNow,
     });
-    return this.runInputPreparation(preparation, async () => {
+    const sent: { value?: Omit<MessageSentObservation, "messageId"> } = {};
+    const result = await this.runInputPreparation<WorkstreamObjectCreateMessageResult>(preparation, async () => {
     const root = await authorizedRoot();
 
     const requestedPersonIds = [...new Set(input.mentions.flatMap((mention) =>
@@ -4561,6 +4563,17 @@ export class WorkstreamObjectProductService {
       resourceIds: input.attachmentIds,
       now: preparation.created_at,
     });
+    sent.value = {
+      workspaceId: auth.workspaceId,
+      workstreamId: root.workstream_key,
+      scope: root.scope,
+      origin: new WorkstreamIdentityStorage(this.storage).identity()?.origin_type ?? "ad_hoc",
+      messageKind: "message",
+      attachmentCount: input.attachmentIds.length,
+      mentionCount: prepared.mentions.length,
+      // Counted before the commit seats them, which is what makes them added.
+      participantAddedCount: confirmedParticipantUserIds.filter((userId) => !this.isParticipant(userId)).length,
+    };
 
     const participantCount = Number(first(this.storage.sql.exec<{ count: number }>(
       `SELECT COUNT(*) AS count FROM participants WHERE status = 'active'`,
@@ -5068,6 +5081,10 @@ export class WorkstreamObjectProductService {
       inserted: committed.result.inserted,
     };
     });
+    if (result.inserted && sent.value) {
+      recordMessageSentTelemetry(this.env, auth, { ...sent.value, messageId: result.turn.turnId }, this.defer);
+    }
+    return result;
   }
 
   async answerElicitation(
@@ -5176,7 +5193,8 @@ export class WorkstreamObjectProductService {
       envelope: { auth, elicitationId, input },
       now: reservationNow,
     });
-    return this.runInputPreparation(preparation, async () => {
+    const sent: { value?: Omit<MessageSentObservation, "messageId"> } = {};
+    const result = await this.runInputPreparation<WorkstreamObjectAnswerElicitationResult>(preparation, async () => {
     const root = await authorizedRoot();
     const row = first(this.storage.sql.exec<{
       elicitation_id: string; run_id: string; prompt: string; response_type: string;
@@ -5205,6 +5223,18 @@ export class WorkstreamObjectProductService {
     const skipped = "skipped" in input && input.skipped;
     const answer = skipped ? null : input.answer;
     if (!skipped) this.validateElicitationAnswer(row, input.answer, input.customResponse);
+    if (!skipped) {
+      sent.value = {
+        workspaceId: auth.workspaceId,
+        workstreamId: root.workstream_key,
+        scope: root.scope,
+        origin: new WorkstreamIdentityStorage(this.storage).identity()?.origin_type ?? "ad_hoc",
+        messageKind: "elicitation_response",
+        attachmentCount: 0,
+        mentionCount: 0,
+        participantAddedCount: 0,
+      };
+    }
     const now = preparation.created_at;
     const responsePartId = preparation.input_id;
     const author = (await this.messageUsers([auth.userId])).get(auth.userId);
@@ -5351,6 +5381,10 @@ export class WorkstreamObjectProductService {
       inserted: true,
     };
     });
+    if (result.inserted && sent.value) {
+      recordMessageSentTelemetry(this.env, auth, { ...sent.value, messageId: result.responsePartId }, this.defer);
+    }
+    return result;
   }
 
   private validateElicitationAnswer(

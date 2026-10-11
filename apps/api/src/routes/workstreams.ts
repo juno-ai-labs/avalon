@@ -51,6 +51,7 @@ import { WorkstreamObjectCreationService } from "../services/workstream-object-c
 import { WorkstreamBatchUpdateService } from "../services/workstream-batch-update";
 import { requireOpenWorkstreamAuthority } from "../services/workstream-authority";
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry, telemetryOperationId } from '../telemetry/api-emitter';
+import { recordMessageSentTelemetry } from '../telemetry/message-sent';
 
 const ChannelLinkSpacesSchema = z.strictObject({ spaceIds: z.array(SpaceIdSchema) });
 const idParam = z.object({ id: IdSchema });
@@ -276,6 +277,19 @@ workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
       );
       requestDeferral(c)(emitAuthenticatedApiTelemetry(c.env, auth, event).catch(() => undefined));
     }
+    // The opening message is a message the person sent; later ones are
+    // recorded where the Channel object admits them.
+    recordMessageSentTelemetry(c.env, auth, {
+      workspaceId: auth.workspaceId,
+      workstreamId: created.workstream.id,
+      messageId: created.turnId,
+      scope: "workspace",
+      origin: "ad_hoc",
+      messageKind: "message",
+      attachmentCount: body.attachmentIds?.length ?? 0,
+      mentionCount: body.mentions?.length ?? 0,
+      participantAddedCount: body.participantUserIds?.filter((userId) => userId !== auth.userId).length ?? 0,
+    }, requestDeferral(c));
     return c.json(CreatedWorkstreamSchema.parse(created), 201);
   });
 });

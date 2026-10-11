@@ -293,13 +293,6 @@ export class TelemetryReporter {
     return this.captureProduct('automation_action_completed', 'desktop-renderer', properties, undefined, windowContext);
   }
 
-  messageSent(
-    properties: Omit<Extract<DesktopTelemetryProductIntent, { kind: 'message_sent' }>, 'kind'>,
-    windowContext?: TelemetryWindowContext,
-  ): Promise<void> {
-    return this.captureProduct('message_sent', 'desktop-renderer', properties, undefined, windowContext);
-  }
-
   contentCopied(
     properties: Omit<Extract<DesktopTelemetryProductIntent, { kind: 'content_copied' }>, 'kind'>,
     windowContext?: TelemetryWindowContext,
