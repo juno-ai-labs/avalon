@@ -1,11 +1,14 @@
 /**
  * The pilot offer card on the landing page. It slides in once the visitor has
  * been on the page for a few seconds, and stays away in this browser after
- * they close it or follow its sign-up link.
+ * they close it or follow its sign-up link. It stops showing once the offer
+ * ends.
  */
 const DISMISSED_KEY = 'rally.site.pilot-offer-dismissed.v1';
 // How long the visitor reads the page before the offer appears.
 const SHOW_AFTER_MS = 4_000;
+// The offer runs through October 16, in the visitor's own time zone.
+const OFFER_ENDS = new Date(2026, 9, 17);
 
 function dismissed(): boolean {
   try {
@@ -48,4 +51,4 @@ function initialize(offer: HTMLElement): void {
 }
 
 const offer = document.getElementById('pilot-offer');
-if (offer && !dismissed()) initialize(offer);
+if (offer && Date.now() < OFFER_ENDS.getTime() && !dismissed()) initialize(offer);
