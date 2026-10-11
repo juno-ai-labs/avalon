@@ -119,6 +119,8 @@ function initialize(offer: HTMLElement, firstSeen: string | null): void {
     if (event.button === 1) rememberDismissed();
   });
   setTimeout(() => {
+    // A background tab can run this late, after the deadline has passed.
+    if (firstSeen && ended(firstSeen)) return;
     // The deadline starts when the visitor first sees the card, not when the
     // page loads, so leaving before it appears costs them nothing.
     const day = firstSeen ?? isoDate(new Date());
@@ -126,6 +128,10 @@ function initialize(offer: HTMLElement, firstSeen: string | null): void {
     present(offer, day);
     offer.hidden = false;
     document.addEventListener('keydown', onKey);
+    // A tab left open past the deadline drops the card when the visitor returns to it.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && ended(day)) offer.hidden = true;
+    });
   }, SHOW_AFTER_MS);
 }
 
