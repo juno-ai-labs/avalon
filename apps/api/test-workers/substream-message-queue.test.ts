@@ -111,6 +111,7 @@ async function product(stub: DurableObjectStub, body: unknown): Promise<{
 async function initializeWorkstream(
   stub: DurableObjectStub,
   openingMessage: string,
+  extra: { telemetryJourney?: "workstream_create" } = {},
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   return product(stub, {
     operation: "initialize",
@@ -132,6 +133,7 @@ async function initializeWorkstream(
       modelOverride: MODEL,
       executionPrincipal: { type: "user", userId: USER_ID },
       reason: "user_message",
+      ...extra,
     },
   });
 }
@@ -145,11 +147,12 @@ async function sendMessage(
     telemetryOperationId?: string;
     telemetryRequestReceivedAt?: number;
     telemetryJourney?: "workstream_create" | "substream_create" | "message_send";
+    auth?: AuthContext;
   },
 ): Promise<{ turnId: string; deliveryState: string }> {
   const result = await product(stub, {
     operation: "create_message",
-    auth: AUTH,
+    auth: input.auth ?? AUTH,
     input: {
       text: input.text,
       clientMessageId: input.clientMessageId,
@@ -715,7 +718,100 @@ describe("a message queued behind a live run", () => {
       await restoreProviderFetch(stub);
     }
   });
+
+  it("records one message_sent per message a person sends, however often it is retried", async () => {
+    await createTelemetryTables();
+    const stub = agentStub();
+    // The envelope admits a deployed environment name, and this suite's
+    // configuration says `test`; the object's own env is what it stamps.
+    const restoreEnvironment = await runInDurableObject(stub, (instance) => {
+      const objectEnv = (instance as unknown as { env: { APP_ENV: string } }).env;
+      const previous = objectEnv.APP_ENV;
+      objectEnv.APP_ENV = "development";
+      return previous;
+    });
+    try {
+      await installScriptedProvider(
+        stub,
+        [assistantTurn("answering the opening message"), assistantTurn("answering the support session"),
+          assistantTurn("answering the member")],
+        { primaryModel: MODEL, fallbackModels: [], gateFirstCall: true },
+      );
+      const opening = await initializeWorkstream(stub, "opening message", { telemetryJourney: "workstream_create" });
+      await waitForGatedProviderCall(stub);
+
+      // Support writes as the member without the member sending anything.
+      await sendMessage(stub, {
+        text: "sent by support",
+        clientMessageId: "queue-message-sent-support",
+        auth: { ...AUTH, principal: "impersonation" },
+      });
+      const sent = await sendMessage(stub, { text: "sent by the member", clientMessageId: "queue-message-sent-1" });
+      await sendMessage(stub, { text: "sent by the member", clientMessageId: "queue-message-sent-1" });
+
+      // The support message was admitted first, so by the time the member's
+      // event lands, a support event would have too.
+      await expect.poll(async () => (await acceptedMessageSent())
+        .some((event) => (event.properties as { messageId?: string }).messageId === sent.turnId), {
+        timeout: ADMISSION_SETTLE_TIMEOUT_MS,
+        interval: 25,
+      }).toBe(true);
+      const accepted = await acceptedMessageSent();
+      expect(accepted).toHaveLength(2);
+      // The composer's opening message counts too, recorded where it is admitted.
+      expect(accepted.find((event) => (event.properties as { messageId?: string }).messageId
+        === opening.body.turnId)).toMatchObject({ name: "message_sent", properties: { messageKind: "message" } });
+      expect(accepted.find((event) => (event.properties as { messageId?: string }).messageId
+        === sent.turnId)).toMatchObject({
+        name: "message_sent",
+        identityScope: "workspace-user",
+        properties: {
+          workstreamId: WORKSTREAM_ID,
+          messageId: sent.turnId,
+          visibility: "private",
+          workstreamOrigin: "ad_hoc",
+          messageKind: "message",
+          attachmentCount: 0,
+          mentionCount: 0,
+          participantAddedCount: 0,
+        },
+      });
+    } finally {
+      await openProviderGate(stub).catch(() => undefined);
+      await restoreProviderFetch(stub);
+      await runInDurableObject(stub, (instance) => {
+        (instance as unknown as { env: { APP_ENV: string } }).env.APP_ENV = restoreEnvironment;
+      });
+    }
+  });
 });
+
+/** The regional acceptance tables the telemetry collector writes; this suite's D1 starts empty. */
+async function createTelemetryTables(): Promise<void> {
+  await env.DB.batch([
+    env.DB.prepare("ALTER TABLE users ADD COLUMN analytics_person_id TEXT"),
+    env.DB.prepare("ALTER TABLE users ADD COLUMN product_analytics_enabled INTEGER NOT NULL DEFAULT 1"),
+    env.DB.prepare("ALTER TABLE workspaces ADD COLUMN name TEXT NOT NULL DEFAULT 'Test workspace'"),
+    env.DB.prepare(`CREATE TABLE telemetry_profile_jobs (id TEXT PRIMARY KEY, subject_user_id TEXT, workspace_id TEXT,
+      job_kind TEXT, destination_analytics_id TEXT, anonymous_epoch_id TEXT, properties_json TEXT, version INTEGER,
+      state TEXT, created_at TEXT, delete_at TEXT)`),
+  ]);
+  await env.TELEMETRY_DB.batch([
+    env.TELEMETRY_DB.prepare(`CREATE TABLE telemetry_accepted_events (event_id TEXT PRIMARY KEY, payload_hash TEXT,
+      envelope_json TEXT, route TEXT, routing_basis TEXT, analytics_subject_id TEXT, workspace_analytics_id TEXT,
+      subject_user_id TEXT, accepted_at TEXT, normalized_timestamp TEXT, delete_at TEXT, delivery_state TEXT,
+      terminal_code TEXT)`),
+    env.TELEMETRY_DB.prepare(`CREATE TABLE telemetry_delivery_receipts (event_id TEXT PRIMARY KEY, payload_hash TEXT,
+      route TEXT, result_code TEXT, created_at TEXT, delete_at TEXT)`),
+  ]);
+}
+
+async function acceptedMessageSent(): Promise<Array<Record<string, unknown>>> {
+  const rows = (await env.TELEMETRY_DB.prepare(
+    "SELECT envelope_json FROM telemetry_accepted_events WHERE json_extract(envelope_json, '$.name') = 'message_sent'",
+  ).all<{ envelope_json: string }>()).results;
+  return rows.map((row) => JSON.parse(row.envelope_json) as Record<string, unknown>);
+}
 
 describe("a message queued behind an unsettled admission", () => {
   /**

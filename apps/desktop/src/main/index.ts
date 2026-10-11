@@ -485,10 +485,6 @@ async function reportTelemetryProductIntent(
       await telemetryReporter.automationActionCompleted(telemetryIntentProperties(intent), windowContext);
       return;
     }
-    case 'message_sent': {
-      await telemetryReporter.messageSent(telemetryIntentProperties(intent), windowContext);
-      return;
-    }
     case 'content_copied': {
       await telemetryReporter.contentCopied(telemetryIntentProperties(intent), windowContext);
       return;
