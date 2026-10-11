@@ -24,6 +24,7 @@ Tagged links on the landing page, by `data-site-action` id:
 | --- | --- | --- |
 | `sign-in-header` | Header sign-in button, its label rolling between Sign in to Rally and Sign up for Rally, on every device | primary_cta · header |
 | `web-app-hero` | Hero Sign up now (app.rallywith.ai), the left and primary button | secondary_cta · hero |
+| `web-app-offer` | Sign up in the pilot offer card (app.rallywith.ai), which slides in four seconds after the page loads | primary_cta · offer |
 | `download-hero` | Hero Download the macOS app, the right and secondary button, hidden on touch-only devices | download · hero |
 | `download-pricing-start` / `-grow` | Start and Grow Start free trial buttons | download · pricing · plan |
 | `contact-pricing-enterprise` | Grown up Contact us (emails Katherine) | founder_contact · pricing · enterprise |
@@ -35,12 +36,16 @@ Tagged links on the landing page, by `data-site-action` id:
 hero button on `/`: the value is kept so its history stays comparable, and
 `/start-fast/` shares the id. Its clicks cannot be split by device.
 
-Each activation of `web-app-hero` or `sign-in-header` creates a fresh opaque
+Each activation of `web-app-hero`, `web-app-offer` or `sign-in-header` creates a fresh opaque
 `flowId`, reports it on the action, and sends it to the browser as `signupFlowId`.
 Copied links stay clean. Browser entry validates and retains it in tab-scoped
 session storage before removing the URL field, so refreshing before sign-in
 keeps the landing attribution. Authentication retires it. See
 [`public-site-telemetry.md`](public-site-telemetry.md#browser-signup-attribution).
+
+The pilot offer card is on `/` only, not `/start-fast/`. Closing it or following
+its link keeps it away in that browser (`rally.site.pilot-offer-dismissed.v1` in
+local storage); neither its appearance nor its close is reported.
 
 Not reported as site events: scrolling, section views, header nav clicks, and
 the founders' LinkedIn, GitHub and Hugging Face links.
