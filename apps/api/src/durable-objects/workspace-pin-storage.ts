@@ -69,11 +69,6 @@ export const WORKSPACE_PINS_MIGRATION: readonly string[] = [
   // How far down the Activity tab this person has looked. One time per person
   // rather than a row per item: opening the tab reads everything above it, so
   // a per-item ledger would record the same fact once per row.
-  // The Activity tab's "started" rows: each conversation's opening message,
-  // newest first, without walking every connector event in the log.
-  `CREATE INDEX workspace_activity_events_opening_idx
-    ON workspace_activity_events(occurred_at, event_id)
-    WHERE event_type = 'workstream_message_created' AND subject_sequence_number = 1`,
   `CREATE TABLE workspace_activity_seen (
     user_id TEXT PRIMARY KEY,
     seen_through INTEGER NOT NULL CHECK (seen_through >= 0),

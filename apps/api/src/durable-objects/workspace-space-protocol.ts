@@ -413,22 +413,12 @@ export const WorkspaceChannelStatsResultSchema = z.union([
 ]);
 export type WorkspaceChannelStatsResult = z.infer<typeof WorkspaceChannelStatsResultSchema>;
 
-/**
- * Acknowledge or mark unread one Channel (storage Space) for one viewer. The
- * acknowledgement carries the thread acknowledgement's two fields
- * (`AcknowledgeWorkstreamReadRequestSchema`); a mark-unread carries neither.
- */
+/** Acknowledge one Channel (storage Space) read through a placement, for one viewer. */
 export const WorkspaceSpaceReadRequestSchema = SpaceActorSchema.extend({
   spaceId: SpaceIdSchema,
   readThroughSequenceNumber: z.number().int().nonnegative(),
-  observedManualUnreadGeneration: z.number().int().nonnegative(),
 }).strict();
 export type WorkspaceSpaceReadRequest = z.infer<typeof WorkspaceSpaceReadRequestSchema>;
-
-export const WorkspaceSpaceUnreadRequestSchema = SpaceActorSchema.extend({
-  spaceId: SpaceIdSchema,
-}).strict();
-export type WorkspaceSpaceUnreadRequest = z.infer<typeof WorkspaceSpaceUnreadRequestSchema>;
 
 /** The viewer's `ChannelStats` row after the change, or `space_not_found` for a Channel they cannot list. */
 export const WorkspaceSpaceReadResultSchema = z.union([

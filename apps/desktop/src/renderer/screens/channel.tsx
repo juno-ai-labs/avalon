@@ -122,18 +122,16 @@ type FeedRow =
 /**
  * What to acknowledge for a Channel the reader has open, or null when there is
  * nothing to send: the newest loaded placement, when it is past the cached
- * read position or a manual mark is standing (which this acknowledgement is
- * what retires). The feed is read top to bottom down to now, so the newest
+ * read position. The feed is read top to bottom down to now, so the newest
  * placement is on screen when the Channel opens; there is no per-row
  * visibility tracking, deliberately.
  */
 export function channelReadAcknowledgement(
   newestLoadedSequence: number,
-  stats: Pick<ChannelStats, 'readThroughSequenceNumber' | 'manualUnreadFromSequenceNumber' | 'manualUnreadGeneration'>,
-): { readThroughSequenceNumber: number; observedManualUnreadGeneration: number } | null {
-  if (newestLoadedSequence === 0) return null;
-  if (newestLoadedSequence <= stats.readThroughSequenceNumber && stats.manualUnreadFromSequenceNumber === null) return null;
-  return { readThroughSequenceNumber: newestLoadedSequence, observedManualUnreadGeneration: stats.manualUnreadGeneration };
+  stats: Pick<ChannelStats, 'readThroughSequenceNumber'>,
+): { readThroughSequenceNumber: number } | null {
+  if (newestLoadedSequence === 0 || newestLoadedSequence <= stats.readThroughSequenceNumber) return null;
+  return { readThroughSequenceNumber: newestLoadedSequence };
 }
 
 /** Replace one Channel's row in the channel-stats cache. */
@@ -213,13 +211,13 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
     if (!api || !stats || document.visibilityState !== 'visible' || !document.hasFocus()) return;
     const pending = channelReadAcknowledgement(newestLoadedSequence, stats);
     if (!pending) return;
-    const key = `${channelId}:${pending.readThroughSequenceNumber}:${pending.observedManualUnreadGeneration}`;
+    const key = `${channelId}:${pending.readThroughSequenceNumber}`;
     if (ackInFlight.current === key) return;
     ackInFlight.current = key;
     const previous = stats;
     queryClient.setQueryData<ChannelStatsList>(CHANNEL_STATS_QUERY_KEY, (list) =>
       writeChannelStats(list, channelId, (row) => ({ ...row, hasUnread: false })));
-    void api.acknowledgeChannelRead(channelId, pending.readThroughSequenceNumber, pending.observedManualUnreadGeneration)
+    void api.acknowledgeChannelRead(channelId, pending.readThroughSequenceNumber)
       .then((updated) => {
         queryClient.setQueryData<ChannelStatsList>(CHANNEL_STATS_QUERY_KEY, (list) =>
           writeChannelStats(list, channelId, () => updated));

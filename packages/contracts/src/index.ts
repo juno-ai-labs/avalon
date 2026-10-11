@@ -2894,6 +2894,21 @@ export const WorkspaceSpaceSnapshotEventSchema = z.strictObject({
 });
 
 /**
+ * This person's own navigation state after a write only they made: their pin
+ * list, or their read state in one Channel. Sent to that person's sockets
+ * alone, so a second window follows a pin or a read without the whole Space
+ * snapshot being rebuilt for every socket they have. Each field present
+ * replaces what is held: `pins` the whole list, each `channelStats` row the
+ * row for its Channel. A client that does not know this event ignores it.
+ */
+export const WorkspaceNavigationStateEventSchema = z.strictObject({
+  type: z.literal("workspace_navigation_state"),
+  occurredAt: TimestampSchema,
+  pins: PinListSchema.optional(),
+  channelStats: z.array(ChannelStatsSchema).optional(),
+});
+
+/**
  * The Space dashboards whose page this viewer should read again.
  *
  * A nudge with the current aggregate: it carries no rows or version, only the
@@ -2925,6 +2940,14 @@ export const WorkspaceSpaceConversationsEventSchema = z.strictObject({
     spaceId: SpaceIdSchema,
     count: z.number().int().nonnegative(),
   })).default([]),
+  /**
+   * Whether a thread entered or left one of these Channels, rather than a
+   * thread already in one changing. Only a placement changes which threads a
+   * person's Threads and Activity lists hold, so only a placement re-reads
+   * them; a message in a thread re-reads the open Channel's feed alone.
+   * Absent from a server that predates it, which a client reads as `true`.
+   */
+  placementChanged: z.boolean().optional(),
 }).superRefine((event, context) => {
   const named = new Set(event.spaceIds);
   for (const [index, entry] of event.attentionCounts.entries()) {
@@ -3036,6 +3059,7 @@ export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPag
 export type WorkspaceSidebar = z.infer<typeof WorkspaceSidebarSchema>;
 export type WorkspaceSidebarListEvent = z.infer<typeof WorkspaceSidebarListEventSchema>;
 export type WorkspaceSpaceSnapshotEvent = z.infer<typeof WorkspaceSpaceSnapshotEventSchema>;
+export type WorkspaceNavigationStateEvent = z.infer<typeof WorkspaceNavigationStateEventSchema>;
 export type WorkspaceSpaceConversationsEvent = z.infer<typeof WorkspaceSpaceConversationsEventSchema>;
 export type WorkspaceWorkstreamStateEvent = z.infer<typeof WorkspaceWorkstreamStateEventSchema>;
 export type WorkstreamStateVersion = z.infer<typeof WorkstreamStateVersionSchema>;

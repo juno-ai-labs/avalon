@@ -95,6 +95,7 @@ import {
   WorkspaceAttentionSchema,
   WorkspaceSpaceConversationsEventSchema,
   WorkspaceSpaceSnapshotEventSchema,
+  WorkspaceNavigationStateEventSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceWorkstreamRecencyEventSchema,
   WorkspaceSidebarSchema,
@@ -678,8 +679,6 @@ import {
   type WorkspaceSpaceReadRequest,
   WorkspaceSpaceReadResultSchema,
   type WorkspaceSpaceReadResult,
-  WorkspaceSpaceUnreadRequestSchema,
-  type WorkspaceSpaceUnreadRequest,
   type WorkspaceChannelStatsResult,
   type WorkspaceChannelFeedResult,
   type WorkspaceMyThreadsRequest,
@@ -9419,27 +9418,41 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       viewer,
       request.spaceId,
       request.readThroughSequenceNumber,
-      request.observedManualUnreadGeneration,
     );
     return this.spaceReadAnswer(viewer, request.spaceId, read);
-  }
-
-  /** Mark a Channel unread from its newest placement, for this person alone. */
-  async markSpaceUnread(input: WorkspaceSpaceUnreadRequest): Promise<WorkspaceSpaceReadResult> {
-    await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceUnreadRequestSchema, input, "mark_space_unread");
-    this.assertWorkspace(request.workspaceId);
-    const viewer = await this.spaceReader(request.workspaceId, request.userId);
-    if (!viewer) return { ok: false, code: "space_access_denied" };
-    return this.spaceReadAnswer(viewer, request.spaceId, this.spaceStorage().markUnread(viewer, request.spaceId));
   }
 
   private spaceReadAnswer(viewer: Viewer, spaceId: string, read: ChannelReadState | false): WorkspaceSpaceReadResult {
     if (read === false) return { ok: false, code: "space_not_found" };
     const stats = this.channelStatsFor(viewer, spaceId)[0];
     if (!stats) return { ok: false, code: "space_not_found" };
-    this.publishSpaceSnapshot(viewer.userId);
+    this.publishNavigationState(viewer.userId, { channelStats: [stats] });
     return WorkspaceSpaceReadResultSchema.parse({ ok: true, stats });
+  }
+
+  /**
+   * Tell one person's other windows what a write of their own changed: the
+   * pin list, or one Channel's read state. Only what changed is sent, so a
+   * read or a pin never rebuilds the Space snapshot.
+   */
+  private publishNavigationState(
+    userId: string,
+    state: { pins?: Pin[]; channelStats?: ChannelStats[] },
+  ): void {
+    const message = JSON.stringify(WorkspaceNavigationStateEventSchema.parse({
+      type: "workspace_navigation_state",
+      occurredAt: new Date().toISOString(),
+      ...state,
+    }));
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed || attachment.userId !== userId) continue;
+      try {
+        socket.send(message);
+      } catch {
+        // Reconnect receives the same state in the subscribe payload.
+      }
+    }
   }
 
   /**
@@ -9467,8 +9480,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return pins.pin(request.userId, request.kind, request.itemId, request.parentId, now) ? "changed" : "unchanged";
     });
     if (outcome === "limit") return { ok: false, code: "pin_limit_reached" };
-    if (outcome === "changed") this.publishSpaceSnapshot(request.userId);
-    return WorkspacePinResultSchema.parse({ ok: true, pins: pins.list(request.userId) });
+    const list = pins.list(request.userId);
+    if (outcome === "changed") this.publishNavigationState(request.userId, { pins: list });
+    return WorkspacePinResultSchema.parse({ ok: true, pins: list });
   }
 
   /** Put one kind of pin in this person's order. */
@@ -9479,8 +9493,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const pins = new WorkspacePinStorage(this.state.storage);
     const now = Date.now();
     this.state.storage.transactionSync(() => pins.reorder(request.userId, request.kind, request.ids, now));
-    this.publishSpaceSnapshot(request.userId);
-    return WorkspacePinResultSchema.parse({ ok: true, pins: pins.list(request.userId) });
+    const list = pins.list(request.userId);
+    this.publishNavigationState(request.userId, { pins: list });
+    return WorkspacePinResultSchema.parse({ ok: true, pins: list });
   }
 
   private pinTargetListed(viewer: Viewer, kind: PinKind, itemId: string, parentId: string | null): boolean {
@@ -16700,6 +16715,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       && namedSpaceIds.length === 0 && spaceIdsThroughChannel.size === 0
     ) return;
     const occurredAt = new Date().toISOString();
+    // The `spaceIds` and `spaceIdsThroughChannel` arms are a thread entering
+    // or leaving a Channel, or the Channel itself moving; the Channel arms are
+    // a row already in one changing.
+    const placementChanged = namedSpaceIds.length > 0 || spaceIdsThroughChannel.size > 0;
     const spaces = this.spaceStorage();
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
@@ -16737,6 +16756,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         socket.send(JSON.stringify(WorkspaceSpaceConversationsEventSchema.parse({
           type: "space_conversations_changed",
           occurredAt,
+          placementChanged,
           spaceIds: sortedSpaceIds,
           attentionCounts: sortedSpaceIds.map((spaceId) => ({
             spaceId,
@@ -16759,10 +16779,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (!attachment?.subscribed) continue;
       if (onlyUserId !== undefined && attachment.userId !== onlyUserId) continue;
       try {
+        // No `channelStats`: they are a grouped read over every placement,
+        // per socket, and a snapshot goes to every socket in the
+        // Organization. A client reads them again over REST
+        // (`/navigation/channel-stats`) when a snapshot arrives without them.
         socket.send(JSON.stringify(WorkspaceSpaceSnapshotEventSchema.parse({
           type: "workspace_space_snapshot",
           occurredAt,
-          ...this.spacesFor(attachment),
+          ...this.spacesFor(attachment, { channelStats: false }),
         })));
       } catch {
         // Reconnect receives this same snapshot in the subscribe payload.
@@ -16776,12 +16800,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * A guest is not Organization-wide, so a Space reaches them only through a
    * Channel they may list, with the `through_channel` summary.
    */
-  private spacesFor(attachment: WorkspaceSocketAttachment): {
+  private spacesFor(attachment: WorkspaceSocketAttachment, options: { channelStats: boolean } = { channelStats: true }): {
     spaces: SpaceSnapshot;
     ordering: PersonalOrder;
     pinnedOrder: string[];
     pins: Pin[];
-    channelStats: ChannelStats[];
+    channelStats?: ChannelStats[];
     spacesReady: boolean;
   } {
     const spaces = this.spaceStorage();
@@ -16796,7 +16820,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ordering: spaces.readOrders(attachment.workspaceId, viewer),
       pinnedOrder: spaces.readPinnedOrder(viewer),
       pins: new WorkspacePinStorage(this.state.storage).list(viewer.userId),
-      channelStats: this.channelStatsFor(viewer),
+      ...(options.channelStats ? { channelStats: this.channelStatsFor(viewer) } : {}),
       spacesReady: spaces.bootstrapStatus().ready,
     };
   }

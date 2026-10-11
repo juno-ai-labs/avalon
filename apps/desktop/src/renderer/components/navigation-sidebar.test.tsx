@@ -41,8 +41,7 @@ function channel(id: string, name: string, overrides: Record<string, unknown> = 
 function stats(channelId: string, overrides: Partial<ChannelStats> = {}): ChannelStats {
   return {
     channelId, threadCount: 0, lastActivityAt: null,
-    latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0, manualUnreadFromSequenceNumber: null,
-    manualUnreadGeneration: 0, firstUnreadSequenceNumber: null, hasUnread: false,
+    latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0, firstUnreadSequenceNumber: null, hasUnread: false,
     ...overrides,
   };
 }
