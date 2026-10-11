@@ -21,6 +21,7 @@ draft. See [the navigation PRD](PRDs/2026-10-10_channels-threads-navigation/prd.
 | `apps/desktop/src/renderer/screens/channel.tsx` | `ChannelScreen` and `ChannelStack`: the outer level, a Channel and one of its threads, and the `ChannelPaneContext` the thread reads. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | The inner level: a thread and its breakout or panel. Reports when it uses both its slots, and draws the Channel crumb when the Channel is off screen. |
 | `apps/desktop/src/renderer/lib/navigation-routes.ts` | Routes and `ChannelPaneContext`. |
+| `apps/desktop/src/renderer/lib/pane-visibility.tsx` | `PaneVisibility`: marks a pane the layout keeps mounted but is not drawing as not visible, so nothing inside it acknowledges a read. |
 | `apps/desktop/src/renderer/App.tsx` | One route, `/channels/:channelId/*`, for the Channel with or without a thread, so the Channel pane stays mounted as threads open and close. |
 
 ## How it works
@@ -68,6 +69,13 @@ Widths are stored per pair: the thread beside its Channel under
 - **The crumb is the Channel's, and only when it is off screen.** A crumb for a
   pane on screen is a second way to the same place that looks like a different
   one. Guard: `shifted` in `ChannelStack`.
+- **A hidden pane acknowledges no read.** Both slots stay mounted, so a Channel
+  behind its thread or a thread behind its breakout is still rendered. Each is
+  wrapped in `PaneVisibility`, which turns the conversation visibility off
+  while the layout is not drawing it; without it, a Channel's dot or a
+  thread's unread state cleared for something the person never saw. An outer
+  host that hides the whole conversation still wins. Guard:
+  `lib/pane-visibility.test.tsx`.
 
 ## Boundary
 
@@ -94,6 +102,11 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
 
 - `apps/desktop/src/renderer/screens/channel.test.tsx` (a thread opens beside
   the Channel) and `lib/navigation-routes.test.ts`.
+- `apps/desktop/src/renderer/lib/pane-visibility.test.tsx`: no read is
+  acknowledged in a pane the layout is not drawing, and one is once it is.
+- `apps/desktop/src/renderer/components/split-conversation.test.tsx`: the two
+  slots' minimum widths, both panes kept mounted, the narrow fallback, the
+  keyboard resize, and `onShownChange` telling the host whether two panes fit.
 - Which panes are visible, and where the crumbs sit, is checked in a real
   window under Xvfb, per [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 

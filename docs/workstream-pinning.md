@@ -1,85 +1,98 @@
-# Work-stream pinning
+# Pinning
 
-> **Moving to one pin list per kind.** The navigation redesign
-> ([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)) pins threads,
-> Channels and breakouts in `workspace_pins`, one list per person per kind, read
-> by the new sidebar's Channels and Threads tabs. The per-Space pins below still
-> work for desktops that predate it and are mirrored into the new table; see
-> [One pin list per kind](#one-pin-list-per-kind). "Channel" in the rest of this
-> document is the storage Channel, which the product now calls a thread.
+A person pins what they want to hand: a thread, a Channel or a breakout. Each
+sidebar section (Threads, Channels) has a **Pinned** part above its list,
+arranged by hand, never sorted, and both the pin and the arrangement live on
+the server, so the same person opening Rally on another machine finds their
+list as they left it.
 
-A pinned Channel leaves its selected Space's ordinary Channel order and moves
-into that Space's **Pinned** section, where it stays until it is unpinned there.
-The section is arranged by hand — dragged into order, never sorted — and both the
-pin and the arrangement live on the server, so the same person opening Rally on
-another machine finds their list exactly as they left it.
-
-A pin is **one person's opinion about one placement of a shared Channel**. A
-Channel in two Spaces can be pinned in either, both, or neither, with a different
-position in each. Pinning tells nobody else anything, changes nothing about who
-may read the Channel, and does not appear on anyone else's screen. Read that alongside
+A pin is **one person's opinion about one item**. Pinning tells nobody else
+anything, changes nothing about who may read the item, and does not appear on
+anyone else's screen. Read that alongside
 [`data-model.md`](data-model.md#work-streams), where `workstreams.scope` answers
-the different question of who a work stream is *for*.
+the different question of who a thread is *for*.
+
+**`workspace_pins` is the one source of whether something is pinned.** The new
+sidebar's Pinned parts, the `pinned` state on directory rows, the background
+socket pool and telemetry all read it. The older per-Space pins
+(`workspace_workstream_pins`) and their routes stay only for desktops that
+predate the navigation redesign
+([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)), and what those
+routes write is mirrored one way into `workspace_pins`. "Channel" in the
+storage names below (`channels`, `channel_viewers`) is the stored Channel, which
+the product calls a thread.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/db/migrations/0064_workstream_pins.sql`, `0090_drop_legacy_product_tables.sql` | Historical D1 pin source through 0089, then its final removal after import. |
-| `packages/contracts/src/index.ts` | `WorkstreamSchema.spacePins` — the per-viewer positions keyed by Space — and `ReorderWorkstreamPinsRequestSchema`. `pinPosition` remains the selected-Space desktop projection and is null on server responses. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Authoritative `workspace_workstream_pins`, transactional position rewrites, readability checks, directory waterline, and socket invalidation. |
-| `apps/api/src/services/workstream-directory-service.ts` | Typed Worker-to-WorkspaceDO pin/unpin/reorder adapter used by the existing HTTP command routes. |
-| `apps/api/src/routes/workstreams.ts` | `PUT /workstreams/:id/pin`, `DELETE /workstreams/:id/pin`, `PUT /workstreams/pins`. |
-| `apps/desktop/src/renderer/components/sidebar.tsx` | The **Pinned** section, the right-click **Pin** / **Unpin** item, and the drag-and-keyboard reorder. `orderPinnedWorkstreams` decides what the section renders. |
-| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The flat-array cache key and the only typed write boundary for it. |
-| `apps/desktop/src/renderer/components/app-shell.tsx` | `applyPinnedWorkstreams` derives the new pin positions before handing the list update to the cache boundary. |
-| `apps/desktop/src/renderer/screens/workstream-landing.tsx` | The Space-less root route: resolves to the most recent row, else the composer. |
-| `apps/desktop/src/renderer/lib/sidebar-channel-order.ts` | The order the sidebar draws a Space's Channels in (pins by position, then the reader's sort), and `firstSidebarChannelInSpace`, its top row, for the landing to agree with. The landing applies the same `associativeWorkstreamsForSidebar` rows from `conversation-directory.ts`. |
-| `apps/desktop/src/renderer/lib/workstream-landing.ts` | Shared landing selection and `useOpenFirstWorkstream`, the one way a screen leaves for that route, and the `skipWorkstreamIds` and optional `spaceId` state it carries. |
+| `apps/api/src/durable-objects/workspace-pin-storage.ts` | Migration 97's `workspace_pins` and `WorkspacePinStorage`: the one list and its order. Visibility of the item is the caller's question. |
+| `apps/api/src/routes/navigation.ts` | `GET /navigation/pins`, `PUT /navigation/pins` (reorder one kind), `PUT|DELETE /navigation/pins/:kind/:id`. |
+| `apps/api/src/durable-objects/workspace-do.ts` | The pin RPCs, the visibility check on a pin, the old per-Space `workspace_workstream_pins` with its mirror into `workspace_pins`, and the per-person frame a pin write publishes. |
+| `apps/api/src/routes/workstreams.ts` | The old routes, kept for older desktops: `PUT /workstreams/:id/pin`, `DELETE /workstreams/:id/pin`, `PUT /workstreams/pins`. |
+| `apps/api/src/routes/workspace.ts` | `PUT /workspace/pinned-order`, the old desktop's All order, kept for older desktops. |
+| `packages/contracts/src/navigation.ts` | `Pin`, `PinKind`, `PinList` and the request shapes. |
+| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | The Pinned part of the Threads and Channels tabs, the right-click **Pin** / **Unpin** item, the drag to reorder (`usePinnedDrag`), and the pin-failure line. |
+| `packages/ui/src/components/conversation-menus.tsx` | **Pinned in my sidebar**, the switch in a thread's and a Channel's title menu. |
+| `apps/desktop/src/renderer/screens/workstream-landing.tsx`, `lib/workstream-landing.ts` | The root route, and `useOpenFirstWorkstream`, the one way a screen leaves for it. |
 
-### Pinning
+## How it works
 
-The sidebar's right-click menu offers **Pin** on an unpinned Channel and
-**Unpin** on a pinned one when a Space is selected. Pinning issues
-`PUT /workstreams/:id/pin` with that `spaceId`; the
-Worker invokes the workspace's typed RPC, which requires that the caller can
-read the authoritative directory row and that the Channel has an active
-placement in that Space, then appends a `workspace_workstream_pins` row at the
-end of that Space's list. The end rather than the top: the
-list is arranged by hand, and appending is the only placement that disturbs none
-of that arrangement.
+### One pin list per kind
 
-Unpinning issues `DELETE /workstreams/:id/pin?spaceId=...`, removes
-only that placement's row, and rewrites that Space's survivors so the positions
-stay a dense `0..n-1` run.
+WorkspaceDO migration 97 adds `workspace_pins(user_id, item_kind, item_id,
+parent_id, position, …)`, keyed `(user_id, item_kind, item_id)`, with
+`item_kind` one of `thread`, `channel` (a stored Space) or `breakout` (which
+carries its thread in `parent_id`).
 
-The sidebar's **All** filter has no run of its own. Its Pinned section shows every
-Channel pinned in any Space: General's run first, then the rest by their first
-pin (`allPinPosition` in `sidebar.tsx`), unless the person has arranged All
-themselves: then the ids in their own order come first, in it, and any pin it
-does not name follows. Pinning there writes to General when the Channel is
-placed in General, and otherwise to its first Space. Unpinning there clears
-every Space that pins it. A drag or Alt+Arrow there saves that order whole
-(`PUT /workspace/pinned-order`), and a Channel's own menu pins and unpins by the
-same rule whatever the list is filtered to (`channelPinTargets`).
+- **Routes.** `GET /navigation/pins`, `PUT /navigation/pins` (`{kind, ids}`
+  reorder) and `PUT|DELETE /navigation/pins/:kind/:id` (`parentId` in the body
+  for a breakout), for members and guests. A pin is refused as
+  `pin_target_not_found` for anything the person may not list; an unpin is
+  never refused. The old per-person limit
+  (`MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER`) caps all kinds together. Each
+  route answers with the whole list, which replaces what the client holds.
+- **Delivery.** The list rides the connect payload as `pins`. A pin write sends
+  that person's sockets a small per-person frame carrying the new list, never
+  a Space snapshot, so the person's other windows follow and nobody else's
+  socket hears of it.
+- **Readers.** The sidebar's Pinned parts, the `pinned` state on a directory
+  row, the background socket pool (every pinned thread keeps its feed socket
+  warm) and telemetry's `pinned` section all read `workspace_pins`. A second
+  reader of the old table would answer differently for a pin made on the new
+  client.
+- **Copy and mirror.** The migration copied every `workspace_workstream_pins`
+  row in as a thread pin, once per thread: a thread pinned in two Spaces became
+  one pin, placed by All's arranged order (`workspace_pinned_order`) first and
+  by its earliest Space position after that. The old routes keep writing the
+  old table and also write the new one: a pin adds the thread pin, and an unpin
+  removes it once no Space pins the thread any more. A pin made on the new
+  client is not written back, so an older desktop does not see it.
 
-The section is always drawn once the Organization is open. Empty, it is a
-dashed drop zone reading **Move a channel here to pin it**, which takes the
-accent while a Channel is being dragged; dropping one there pins it.
+The old tables and routes go once the desktops that call them have aged out.
 
-While an unpinned Channel is dragged over the section, a faded copy of its row
-shows where a release would put it, and the pinned rows after it move down to
-make room. A release pins the Channel into that slot.
+### In the sidebar
 
-On a touch screen the drag starts with the same long press that opens a row's
-menu. A row drag closes that menu and keeps it shut until the next press, and
-the channel list's own menu ignores a long press that lands on a row.
+Each tab's Pinned part lists that tab's kinds in the person's order: Channels
+on the Channels tab, threads then breakouts on the Threads tab. Right-click
+**Pin** or **Unpin** on a row, or the title menu's **Pinned in my sidebar**
+switch, writes one pin. A drag inside a Pinned part moves the row under the
+pointer and saves the kind's whole order on drop (`PUT /navigation/pins`). A
+pin or reorder that did not save leaves a line above the open tab saying so,
+and the list keeps what the server answered last. Only the newest write's
+answer is applied, so an older response cannot snap the list back. Rows do not
+animate between sections; [`list-motion.md`](list-motion.md) records why.
 
-All's order lives in `workspace_pinned_order` (WorkspaceDO migration 87) and
-reaches clients as `pinnedOrder` on the sidebar payload and the Space snapshot.
-It names Channels, not pins, and the read keeps only Channels the person can
-still list.
-[`desktop-shell.md`](desktop-shell.md) owns the filter.
+### Older desktops' per-Space pins
+
+A desktop from before the redesign pins a thread in one Space:
+`PUT /workstreams/:id/pin` with a `spaceId` appends a `workspace_workstream_pins`
+row at the end of that Space's list, after checking that the caller can read
+the thread and that it is placed in that Space. Unpinning
+(`DELETE /workstreams/:id/pin?spaceId=...`) removes that placement's row and
+rewrites the survivors as a dense `0..n-1` run. Its **All** filter kept its own
+order in `workspace_pinned_order` (`PUT /workspace/pinned-order`, still
+served), and the snapshot still carries it as `pinnedOrder` for those desktops.
 
 ### Ordering
 
@@ -133,192 +146,45 @@ section ordering. Pins remain manually ordered.
 
 ### Leaving for the first work stream
 
-The root route has no selected Space, so it resolves to the most recent Channel
-by the viewer's access rather than borrowing any Space's first pin. It is where every
-screen goes when what it was showing is no longer there to show: an archived
-work stream, note, or project, a deleted automation or archived draft, a work
-stream the reader left, one they marked unread, the not-found screen's way out,
-the end of onboarding, and the main window's hand-off to the Sidekicks window.
-A workspace with nothing in it lands on starting a Channel in General, or on an
-empty state for a guest, who has no Space directory. The composer is reached by
-the sidebar's **New channel**, or by a Space with no Channel to open, and
-always names the Space the Channel starts in.
-The `workstreams/new` and `automations/new` deep links name no Space, so they
-open the app rather than a composer. The macOS status menu no longer offers
-one — see [`menu-bar.md`](menu-bar.md).
+The root route is where Rally opens and where every screen goes when what it
+was showing is no longer there: an archived thread or Channel, a thread the
+reader left, the not-found screen's way out, the end of onboarding. It lands on
+a Channel, never on a thread, in this order
+(`screens/workstream-landing.tsx`):
+
+1. the route this person last had open on this device, unless it names a
+   thread the leaving screen asked to pass over;
+2. the Channel the leaving screen asked to return to: a thread open beside its
+   Channel returns to that Channel, and one open on its own returns to the
+   Channel its caller names (`useOpenFirstWorkstream`);
+3. their first pinned Channel;
+4. General;
+5. the first Channel A–Z.
+
+With no Channel at all it shows "No channels yet". While the Channels have not
+arrived it waits, and says so when the socket cannot deliver them.
 
 `useOpenFirstWorkstream` is the one way a screen leaves. It always replaces the
 history entry, so Back cannot return to a screen the API refuses, and it names
-the rows the landing must pass over for that one landing. No leaving screen
-patches the directory: the Channel parent's tombstone the socket delivers is what
-removes an archived row, under the directory waterline that orders the removal
-against everything else in flight for it. What a leaving screen does do is
-evict the archived or left work stream's own cache entries, and that eviction
-also drops its row from the list the landing reads. So the skip is doing three
-different jobs. For a single archive or a left personal stream it is a belt
-over that eviction, covering the frame in which a directory page re-delivers
-the row ahead of the tombstone, where it would be the most recent one. For a
-batch archive it is load-bearing: only the open row is evicted, the others the
-batch took stay until their tombstones arrive, and the landing would open the
-next most recent of them. And a row marked unread stays in the list for good
-and is skipped because opening it is what reads it.
-
-The batch's skip list is a reconstruction, `batchArchiveSkipIds`, run over the
-cached rows against the filter the server also evaluated. The response says how
-many went and never which, so a row whose recency crossed the filter's edge
-between the client's snapshot and the server's evaluation lands on the wrong
-side. The two errors are not symmetric: skipping a row that survived costs a
-landing on an older row or a page fetch, while opening a row that went costs
-an error screen. The reconstruction is therefore allowed to be wide, and it
-applies to one landing only, so a live row it wrongly names is passed over
-once rather than for the session.
-
-**Landing opens a work stream, and opening it reads it.** That is true of the
-row the landing chooses after an archive, which is what a mail client does, and
-it is true after mark-as-unread too: leaving the row for later spends the
-unread state of the row landed on instead. That is a deliberate choice and not
-an oversight. The alternative of staying put would re-read the row that was
-just marked, which is the one outcome the action exists to prevent, and the
-composer this used to fall back to was inert only by being nowhere. A reader
-who wants neither can mark the next row unread in turn.
-
-A skip list that empties every loaded page is not an empty workspace: a batch
-can take the whole first page — the day's work streams, say — while older ones
-sit beyond the cursor. The landing then asks the directory query for its next
-page and keeps its opening state until a candidate arrives or the pages run
-out. It requests a page once per change to the list rather than once per
-settled fetch, because `fetchMore` leaves its cursor in place after a failed
-page; re-requesting on settle would retry that page forever. A failed page
-therefore waits, and the socket's own delivery of the archive's tombstones is
-what changes the list and asks again. If the socket is what is down, nothing
-changes the list and the landing keeps its opening state; the sidebar is
-rendered around it and stays usable, which is the way out.
-
-Telemetry names the Space launcher, `/spaces/:spaceId/workstreams/new`, the
-`workspace_home` surface. The name dates from when a Space-less composer was
-the home; it is now the New action, and a funnel keyed on that surface reads
-the leaves above as `workstream` views instead. The name is left alone rather
-than migrated, but the reading changed meaning twice.
+the threads the landing must not reopen from the saved route
+(`skipWorkstreamIds`). No leaving screen patches the directory: the tombstone
+the socket delivers is what removes an archived row, under the directory
+waterline that orders the removal against everything else in flight for it.
 
 The one deliberate exception is the inert `/opening` route a cross-workspace
 deep link parks on while its resource action resolves. Landing there would open and
 record a visit to an unrelated room in the new workspace a moment before the
 link's own destination arrives.
 
-### In the sidebar
-
-`orderPinnedWorkstreams` merges two orders. `pinPosition` is what the server last
-confirmed and the only order that survives a reload. During a drag, the sidebar
-holds a local arrangement that wins, so rows settle under the pointer rather than
-after the round trip; it is discarded once the response lands, whether the
-response accepted the arrangement or refused it. The slot the pointer is over is
-the one laid out there, resolved with `layoutRowAt` from
-[`list-motion.md`](list-motion.md), not the row drawn there — mid-motion the
-row drawn under the pointer is one gliding out of the slot the dragged row just
-took, and reordering against it would send it straight back.
-
-When both kinds are present, a quiet sidebar hairline separates the pinned
-placements from the remaining Channels. It is rendered only at that boundary:
-an all-pinned or all-unpinned Space gets no stranded divider, and compact mode
-keeps equal breathing room on both sides of the same line.
-
-A pinned work stream is shown once. In a member session that means once in
-**Pinned** and, if any of its Spaces are ones the reader can see, again under
-each of them — the placement is what says where the Channel lives, and the pin
-is what says the reader wants it to hand. It is kept out of **Other channels**,
-the flat section for Channels with no visible placement, exactly as it was kept
-out of the recency-grouped list that section replaced. In a guest session,
-which has no Space directory and keeps that recency-grouped list, it is removed
-from it entirely rather than shown in both places — which is the same thing the
-WorkspaceDO page does, so the two agree.
-
-`orderPinnedWorkstreams` is now written in terms of `orderByStoredIds` in
-`lib/personal-order.ts`, the one arrangement rule the Spaces, a Space's
-placements and a Channel's Breakouts are also drawn by. The pin *rows* are still
-this module's — a different table with a different meaning — and only the
-arrangement is shared. `Alt`+`ArrowUp` / `Alt`+`ArrowDown` on a focused pinned row moves
-it one step, and each row announces its position to a screen reader, so the
-order is not reachable by pointer alone. Plain arrows are left to move focus.
-
-In Electron, every pinned row also keeps its substream `0` feed socket
-proactively connected. It joins the active work
-stream, the five most recently active unpinned rows, and any running work stream
-in the socket pool; pin order does not sequence their handshakes. WorkspaceDO
-supplements the first 250-row recent page with every visible running row, so an
-older active run is not omitted from that pool by pagination. A desktop that
-loads Channels a Space at a time holds every Channel once its walk ends, so
-running rows reach the pool from there.
-
-Command-number navigation and its hint overlay are retired. Pinning, pointer
-reordering, and Alt+Arrow keyboard reordering remain unchanged. Historical
-shortcut telemetry schemas remain for older clients; this client emits neither
-shortcut-discovery nor shortcut-use events.
-
-A drag is committed only when something accepted the drop. `dragend` fires
-whatever ended the drag, so the handler reads `dataTransfer.dropEffect`: `none`
-means Escape, or a release outside the pinned list, and the arrangement built
-while the pointer passed over other rows is abandoned. The pinned list is itself
-a drop target, so a release in the gap between two rows still counts as a drop.
-
-### Following the row
-
-Pinning and unpinning both move a row between two sections that can be a whole
-screen apart, so the sidebar scrolls it back into view afterwards — otherwise the
-action reads as the row vanishing from under the cursor, which is the likely case
-rather than the exotic one: somebody pins a work stream *because* they were tired
-of hunting for it, which means they were scrolled down when they did it.
-
-Three details carry the behaviour. `scrollIntoView({ block: 'nearest' })` scrolls
-the least it can, so a row already on screen is not moved at all, and the motion
-is `smooth` unless the reader has asked for reduced motion.
-
-The scroll waits for the *list* to carry the change rather than for the request
-to resolve: the reveal records which side of the sidebar the row was moved to,
-and the effect does nothing until the work stream it is holding actually reports
-that `pinPosition`. The cache write reaches the component through React Query's
-scheduler a tick or more after the action resolves, so a scroll on the first
-render after the await lands on the row's *old* position and is left pointing at
-empty space — the same failure, one render earlier.
-
-And only the action whose response was applied arms the reveal at all.
-`onPinWorkstream` answers whether its response was the one that took the list,
-because the shell discards a response a later pin superseded: without that,
-two pins made close together let the older completion drag the viewport back to
-a row the reader has already finished with. A reveal is also dropped rather than
-held when the row leaves the list entirely, and in any case expires after
-`REVEAL_DEADLINE_MS`, so an intent the list never honours cannot sit armed
-against a later socket invalidation and fire whenever the state happens to match.
-
-**The row travels rather than reappears.** Whichever section it moves to, the
-row slides out of its old slot to the left, the rows between close the gap, and
-it slides in from the left at its new slot — the same motion a message lifting
-a row to the top of its group plays, and the one a drag or an `Alt`+`Arrow`
-move in the pinned list plays, with the row under the pointer placed rather
-than made to leave on every step. [`list-motion.md`](list-motion.md) owns that
-motion; the sidebar only marks its rows and holds the dragged one. The reveal
-and the motion compose: the scroll follows the row to its new section, and the
-row is on its way in as the viewport arrives. The reveal is a layout effect
-declared before the motion's hook, and has to stay one: `scrollIntoView`
-scrolls to the box as transformed, and the motion's first frame puts the row
-back where it came from, so a scroll made after it finds nothing to scroll to.
-
-**Focus moves with the row, not just the viewport.** The two sections are
-separate subtrees, so a row moving between them is unmounted and remounted, and
-the focus Radix restores when the context menu closes has nothing left to
-restore to — it lands on the body, and the next Tab restarts at the top of the
-window. For somebody driving the sidebar from the keyboard, *where I was* is
-focus rather than `scrollTop`, so scrolling alone follows the row for the
-pointer half of the audience and abandons the half with the least other way to
-find it again. The reveal therefore focuses the moved row's link with
-`preventScroll: true` — but only when focus was lost, which is exactly the case
-it repairs. Focus resting anywhere real belongs to whoever put it there.
-
 ## Invariants
 
-- **A pin is per person and Space.** Nothing about `workspace_workstream_pins` is readable by, or
-  visible to, anybody but its owner, and a row in one Space says nothing about
-  the same Channel's placement in another. A surface must select the matching
-  `spacePins` entry before deriving its local `pinPosition`.
+- **`workspace_pins` is the one answer to "is this pinned".** The sidebar,
+  the title menus, the socket pool and telemetry read it, and
+  nothing else. A reader of `workspace_workstream_pins` would disagree with it
+  for every pin made on the new client, which is never written back.
+- **A pin is one person's.** Nothing in either pin table is readable by, or
+  visible to, anybody but its owner, and a pin write reaches only that
+  person's sockets, as a per-person frame.
 - **Positions are ascending per person and Space and rewritten densely.** A tie makes "what order is
   this list in" ambiguous, and the sidebar's sort would then depend on
   row-arrival order. WorkspaceDO's list and pinned-return queries break a tie on
@@ -366,30 +232,27 @@ it repairs. Focus resting anywhere real belongs to whoever put it there.
   is leaving; which rows the list holds is the socket's, under the directory
   waterline. A landing that needs a row gone tells the landing, it does not
   remove the row.
-- **The composer is a create action.** It is reached by an explicit New
-  action or by an empty workspace, never as the place a screen falls back to.
+- **The landing opens a Channel, never a thread.** Opening a thread reads
+  it, so a landing that picked one would spend somebody's unread state on a
+  choice they did not make. Guard: `screens/workstream-landing.test.tsx`.
 
 ## Boundary
 
-This module owns `WorkspaceDO.workspace_workstream_pins`, the three pin endpoints,
-`spacePins` on the Channel contract, and the selected-Space **Pinned** section
-of the desktop sidebar. A surface without a selected Space — the root landing,
-macOS menu bar, and current iOS history — cannot choose one placement's pin and
-therefore treats every Channel as unpinned. It owns no part of
-what a work stream *is* or who may read it.
+This module owns `workspace_pins` and its routes, the old
+`workspace_workstream_pins` with its three endpoints and its mirror, and the
+Pinned parts of the sidebar's Threads and Channels tabs. It owns no part of
+what a thread *is* or who may read it.
 
 It deliberately does not:
 
-- **Broadcast to other users or to a Channel's parent.** A pin changes nothing another
-  person can see. WorkspaceDO does publish `workstream_directory` on its own
-  socket so the same person's other windows converge without polling.
+- **Broadcast to other users or to a thread's parent.** A pin changes nothing
+  another person can see. WorkspaceDO sends a per-person frame to the owner's
+  own sockets so their other windows converge without polling.
 - **Decide workspace membership.** D1 remains current membership authority;
   WorkspaceDO applies its local common/viewer directory to decide whether that
   active member may pin the work stream — see [`data-model.md`](data-model.md#work-streams).
-- **Pin anything but a work stream.** Automations and notes have their own
-  sections and no pin. A breakout is not pinnable and is not in this module's
-  directory at all: its projection lands in `breakouts`,
-  read only by the Space dashboard's conversation page.
+- **Pin anything but a thread, a Channel or a breakout.** Automations and
+  notes have their own sections and no pin.
 
 ## Failure modes and limits
 
@@ -398,10 +261,10 @@ It deliberately does not:
   recent unpinned rows, and every visible live-state row; that combined response
   intentionally has no separate guessed row cap. Pinning the 1,001st row fails
   with `workstream_pin_limit_reached`; existing pins remain unchanged.
-- **A refused drag reverts.** The local arrangement is dropped and the section
-  re-renders from what the server holds, which is what the person's other
-  devices are showing. The dialog says so rather than leaving a list that
-  silently disagrees with the server.
+- **A refused pin or drag reverts.** The section re-renders from what the
+  server holds, which is what the person's other devices are showing, and a
+  line above the open tab says the pin did not save, or that the person has
+  pinned as many items as Rally allows.
 - **A pin whose work stream is gone contributes nothing.** Archived or no longer
   readable, it is filtered out of every read; the row survives, so a work stream
   reopened to the workspace comes back in its old place. An archived one does not
@@ -424,51 +287,25 @@ It deliberately does not:
 | --- | --- |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Real SQLite-backed WorkspaceDO append/idempotency, per-person and per-Space isolation, the same Channel pinned independently in two Spaces, dense unpin, tolerant reorder, pinned-first listing, and hibernating page delivery. |
 | `apps/api/test/workspace-space-pin-migration.test.ts` | The migration discards every legacy Organization-wide pin and recreates the primary key with `space_id`, so no ambiguous placement is carried forward. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams`) | The section appearing only when something is pinned, rows leaving the recent list, stored order beating activity order, absence of retired Command-number hints and navigation, the menu toggle, live reorder during a drag, the keyboard move, both error dialogs, and the row's motion following it into the section and between recency groups. |
-| `apps/desktop/src/renderer/components/app-shell.test.tsx` (`applyPinnedWorkstreams`) | That a pin response rewrites every row's position, including the ones it does not name. |
-| `apps/desktop/src/renderer/screens/workstream-landing.test.tsx` | Pin-then-recency resolution, the pending, empty, and failed states, and that named rows are passed over whatever their rank. |
+| `apps/api/test-workers/channels-threads-navigation.test.ts` | `workspace_pins` on real workerd: a pinned thread the person does not take part in comes back with the first page, a pin of something the person may not list is refused and stores nothing, and migration 97 copies pins from several Spaces into one pin per thread in the arranged order. |
+| `apps/desktop/src/renderer/components/navigation-sidebar.test.tsx` | Pinned Channels in the person's order above every other Channel, and the line that says why a pin did not save. |
+| `apps/desktop/src/renderer/screens/workstream-landing.test.tsx` | The landing order (saved route, the Channel a screen left, first pinned Channel, General, first A–Z), a passed-over thread not reopened, and the waiting, failed and empty states. |
 | `apps/desktop/src/renderer/lib/workstream-landing.test.tsx` | That leaving replaces the entry and carries the skip list, and that a malformed state reads as no skip. |
 
-Two traps in the desktop tests. jsdom implements no `DataTransfer`, so a drag
-event needs the small stub in that file rather than `new DataTransfer()`. And an
-open error dialog hides the sidebar from the accessibility tree, so the pinned
-order can only be read back after the dialog is dismissed. The keyboard reorder
-callback also fires before `commitPinnedOrder` clears its optimistic order in a
-`finally`; a test that clears its spy and sends another key immediately after
-observing the callback races that cleanup. Wait for the rendered order that the
-next assertion is meant to act on.
+One trap in the desktop tests: jsdom implements no `DataTransfer`, so a drag
+event needs a small stub rather than `new DataTransfer()`.
 
 The legacy API suite runs the checked-in D1 migrations against `node:sqlite` in
 memory. Post-cutover ownership assertions belong in the workerd suite; do not
 replace its real Durable Object SQL transaction with a D1 shim.
 
-## One pin list per kind
-
-WorkspaceDO migration 97 (`apps/api/src/durable-objects/workspace-pin-storage.ts`)
-adds `workspace_pins(user_id, item_kind, item_id, parent_id, position, …)`, keyed
-`(user_id, item_kind, item_id)`, with `item_kind` one of `thread`, `channel`
-(a stored Space) or `breakout` (which carries its thread in `parent_id`).
-
-- **Copy.** The migration copies every `workspace_workstream_pins` row in as a
-  thread pin, once per thread: a thread pinned in two Spaces becomes one pin,
-  placed by All's arranged order (`workspace_pinned_order`) first and by its
-  earliest Space position after that.
-- **Mirror.** `pinWorkstream` and `unpinWorkstream` keep writing the old table
-  and also write the new one: a pin adds the thread pin, and an unpin removes it
-  once no Space pins the thread any more. A pin made on the new client is not
-  written back, so an older desktop does not see it.
-- **Routes.** `GET /navigation/pins`, `PUT /navigation/pins` (`{kind, ids}`
-  reorder) and `PUT|DELETE /navigation/pins/:kind/:id` (`parentId` in the body
-  for a breakout), for members and guests. A pin is refused as
-  `pin_target_not_found` for anything the person may not list; an unpin is
-  never refused. The old per-person limit
-  (`MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER`) caps all kinds together.
-- **Delivery.** The list rides the sidebar payload and the Space snapshot as
-  `pins`, and a change republishes the snapshot to that person's sockets.
-
-The old tables and routes go once the desktops that call them have aged out.
-
 ## Data model
+
+`WorkspaceDO.workspace_pins` (migration 97) is keyed `(user_id, item_kind,
+item_id)`, with `parent_id` set exactly when `item_kind = 'breakout'`, and
+ordered by `workspace_pins_order_idx (user_id, item_kind, position, item_id)`.
+It has no foreign key, for the reason `space_invitees` gives; a pin whose item
+is gone is dropped where it is read. The tables below serve older desktops.
 
 `WorkspaceDO.workspace_workstream_pins` is keyed
 `(user_id, space_id, workstream_id)`, references both the Space and Channel
@@ -496,21 +333,34 @@ placements, so the migration intentionally clears all existing pins.
 ### 2026-10-10 — One pin table for threads, Channels and breakouts
 
 **What changed:** Migration 97 adds `workspace_pins`, copied from the per-Space
-pins, with routes under `/navigation/pins`. The old routes mirror into it.
+pins, with routes under `/navigation/pins`. It is the one source of whether
+something is pinned: the sidebar, the title menus, the background
+socket pool and telemetry read it. The old routes stay for older desktops and
+mirror one way into it. A pin write sends the person's own sockets a small
+frame rather than a Space snapshot. A directory row's `spacePins` and the
+snapshot's `pinnedOrder` are the old per-Space pins, read only by older
+desktops. The landing now returns to the Channel a screen left, then the
+first pinned Channel, then General, and never opens a thread.
 
 **Why:** The new sidebar has a Channels tab and a Threads tab, each with a
 Pinned section that is the person's alone and not tied to a Space
 ([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)). A thread pinned in
-two Spaces is one pin there.
+two Spaces is one pin there. Two tables read by different consumers gave two
+answers for any pin made on the new client, which is never written back. The
+old landing picked a thread by recency, which read a thread the person had not
+chosen, and its Space-scoped rules had no Space left to scope to.
 
 **Considered and rejected:** A table per kind: three of every read, write and
 delivery for one question. A new `container_kind` in
 `workspace_container_order`: a shipped desktop drops an order kind it does not
-know, the reason All's order got a table of its own.
+know, the reason All's order got a table of its own. Writing new pins back to
+the per-Space table: a thread pin has no Space to file it under.
 
 **Consequences:** Until the old routes are removed, an unpin on an old desktop
 keeps the thread pinned while any other Space still pins it, and a pin made on
-the new client does not appear on an old desktop.
+the new client does not appear on an old desktop. A new reader of pin state
+reads `workspace_pins`. The sidebar's row motion between sections is gone with
+the old sidebar.
 
 ### 2026-10-08 — A touch drag no longer opens the row menus over itself
 

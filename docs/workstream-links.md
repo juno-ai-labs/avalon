@@ -32,7 +32,7 @@ changing the Slack unfurl card or the sweep that keeps it current.
 | Authoritative title/status/recency lookup | `WorkspaceDO.lookupWorkstreamDirectory`, batched per workspace by the posting and refresh paths |
 | Slack blocks, DMs, and person-notification email (a mention, and being added) | `slack-agent-service.ts`, `slack-notification-service.ts`, `mention-email-service.ts`, `participant-email-service.ts` |
 | Shared desktop clipboard and telemetry primitive | `apps/desktop/src/renderer/lib/copy-workstream-link.ts` |
-| Copy work-stream link | `apps/desktop/src/renderer/screens/workstream.tsx`, `apps/desktop/src/renderer/components/sidebar.tsx` |
+| Copy thread link | `apps/desktop/src/renderer/screens/workstream.tsx` (the title menu's **Copy link** tile) |
 | Open the deep link | `emitDeepLink` in `apps/desktop/src/main/index.ts`, `apps/desktop/src/renderer/lib/app-session.tsx` |
 | The registered unfurl domains | `config/provider-apps/slack.json` |
 

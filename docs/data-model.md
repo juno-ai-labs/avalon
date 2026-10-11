@@ -531,6 +531,24 @@ SQL joins.
   `space_invitees` (migration 96) holds the addresses of Organization invitees a
   Space lists until they accept and are seated as participants; see
   [`spaces.md`](spaces.md#participants).
+  `workspace_pins` (migration 97) is one person's pins of every kind, keyed
+  `(user_id, item_kind, item_id)` with `item_kind` `thread`, `channel` or
+  `breakout` and the breakout's thread in `parent_id`, and is the one source of
+  pin state; see [`workstream-pinning.md`](workstream-pinning.md). The same
+  migration adds `workspace_activity_seen(user_id, seen_through)`, how far each
+  person has read the Activity tab
+  ([`digests.md`](digests.md#the-activity-tab)), the `(user_id,
+  is_participant)` indexes on `channel_viewers` and `breakout_viewers`, and the
+  `(space_id, state, joined_at, workstream_id)` index the Channel feed pages by.
+  Migration 98 gives a Space (the product's Channel) the unread columns a thread
+  and a breakout carry: `spaces.latest_attention_ordinal` (the waterline,
+  advanced only by a placement), `spaces.unread_tracking_start_ordinal`,
+  `space_channel_memberships.attention_ordinal` (the ordinal a placement took),
+  and `space_reads(space_id, user_id, seen_attention_ordinal, updated_at)`,
+  each person's read position, in a table of its own because most readers of
+  an Organization-wide Space have no `space_viewers` row. No foreign key on
+  either new table, for the reason `space_invitees` gives; see
+  [`spaces.md`](spaces.md#the-channels-read-state).
   `space_channel_memberships` is keyed by Space and Channel with **no**
   uniqueness on the Channel, because a Channel belongs to as many Spaces as it
   was added to. `space_intents` is one row per staged cross-object operation

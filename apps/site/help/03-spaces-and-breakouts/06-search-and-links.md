@@ -57,7 +57,8 @@ Every shortcut in Rally is collected in
   have access to, and checks again when you open one.
 - **Channels and Threads by name.** Search looks inside conversations, not at
   their titles. To find a Thread by name, open the **Threads** list and sort it
-  **A–Z**. Channels are listed from A to Z under **Channels**.
+  **A–Z**. To find a Channel by name, open **Channels**, where the list starts
+  A to Z (or switch its sort back to **A–Z**).
 - **Anything, while you are signed out.** The Search button is greyed out and the
   shortcut does nothing until you are signed in.
 

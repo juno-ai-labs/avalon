@@ -1106,7 +1106,11 @@ cannot be delivered before that person's directory row has landed.
 A Channel forwards Main effects, plus mention and participant-added
 notifications addressed to current private-child members. It stamps these with
 the child ID, preserving the child's title and notification identity. Child
-activity and viewer state do not enter shared surfaces, and a child common
+viewer state does not enter shared surfaces, and child activity enters in one
+shape only: a breakout message that mentions somebody is forwarded emptied (no
+body, not digestible, targets the mentions alone) with `metadata.substreamId`
+stamped, and WorkspaceDO stores it with the author as its only audience
+([`digests.md`](digests.md#the-activity-tab)). A child common
 projection still updates only the private-child title registry — it is never
 merged into Main's. Before forwarding a person notification, it ensures an
 unchanged Main viewer projection (or a neutral nonparticipant projection)

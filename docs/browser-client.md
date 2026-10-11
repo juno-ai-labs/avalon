@@ -119,19 +119,18 @@ Failed network requests remain visible and can recover on focus or reconnect;
 generation used for sign-out and cross-tab restoration. Long session deadlines
 are split into timer-range-safe waits by `session-timer.ts`.
 
-A guest's sidebar is the desktop sidebar fed by the workspace socket, the same
-Space and Channel lists a member gets, by the same rules
-([`listing-rules.md`](listing-rules.md)): the Channels with a conversation the
-guest may open, and the Spaces those Channels sit in. Organization-wide scope
-admits only members, so a guest is told nothing of an Organization-wide Channel
-they are not in. The shared-navigation directory adds no rows; it says which
+A guest's sidebar is the desktop sidebar fed by the workspace socket, listed
+by the same rules a member's is ([`listing-rules.md`](listing-rules.md)): the
+threads with a conversation the guest may open, and the Organization-wide
+Channels those threads sit in. Organization-wide scope admits only members, so
+a guest is told nothing of an Organization-wide thread they are not in. The shared-navigation directory adds no rows; it says which
 conversations of a Channel the guest holds. A child-only share still omits Main
 and every unshared Breakout; such a Breakout opens alone, in Main's place. The
 Channel's canonical parent in WorkspaceDO independently re-authorizes every
-Channel and Breakout. Selecting a Space pill filters the Channel list. The
-Organization root and a Space link open the same landing route and Space
-dashboard a member's do; the dashboard is read-only for a guest. A guest's
-shell holds background Channel sockets as a member's does, for every Channel
+thread and Breakout. The Organization root and a Channel link open the same
+landing route and Channel screen a member's do; a guest's Channel screen lists
+only the threads they may open, with no locked rows and no composer. A guest's
+shell holds background thread sockets as a member's does, for every thread
 whose Main is theirs (`mainReachable`).
 
 ### Google sign-in
@@ -241,7 +240,11 @@ sign-out and account change.
 
 The cookie adapter forwards the member route families (`spaces`, `projects`,
 `onboarding/account`, `work-opportunities`, `digest`, `push-devices`,
-`workspaces`) in addition to the ones guests use. Each route keeps its own role
+`workspaces`) in addition to the ones guests use, which include `navigation`
+(the Threads tab, Channel stats, pins and Activity). The list is
+`BROWSER_ROUTE_FAMILIES` in `apps/api/src/routes/browser.ts`: a new route family
+the browser calls must be added there, or the browser's request for it is not
+forwarded. Each route keeps its own role
 checks; the adapter adds no permission of its own. The rest of `onboarding`
 stays out: creating, activating or joining a workspace there answers with a
 bearer session, and a browser holds only its HttpOnly cookie.
