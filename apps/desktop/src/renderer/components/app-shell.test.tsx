@@ -182,14 +182,20 @@ describe('activeRealtimeWorkstreamId', () => {
 });
 
 describe('backgroundRealtimeWorkstreamIds', () => {
-  it('opens every pinned pair, five recent unpinned pairs, and any other running pair', () => {
+  it('opens every pinned thread, the five most recent unpinned ones, and any other running one', () => {
     const running = summary('running');
     const scheduled = summary('scheduled', '00000000-0000-7000-8000-000000000002');
     const completed = summary('completed', '00000000-0000-7000-8000-000000000003');
     const pinned = {
       ...summary('completed', '00000000-0000-7000-8000-000000000004'),
-      spacePins: [{ spaceId: '00000000-0000-7000-8000-0000000000f2', position: 0 }],
       lastActivityAt: '2025-01-01T00:00:00.000Z',
+    };
+    // Pinned only through an old desktop's per-Space pin, which no surface
+    // here shows: it is one more unpinned thread, and too old to open.
+    const legacyPinned = {
+      ...summary('completed', '00000000-0000-7000-8000-000000000013'),
+      spacePins: [{ spaceId: '00000000-0000-7000-8000-0000000000f2', position: 0 }],
+      lastActivityAt: '2025-01-02T00:00:00.000Z',
     };
     const unpinned = Array.from({ length: 7 }, (_, index) => ({
       ...summary('completed', `00000000-0000-7000-8000-${String(index + 5).padStart(12, '0')}`),
@@ -209,8 +215,9 @@ describe('backgroundRealtimeWorkstreamIds', () => {
       scheduled,
       finishedOld,
       pinned,
+      legacyPinned,
       ...unpinned,
-    ])).toEqual([
+    ], new Set([pinned.id]))).toEqual([
       oldButRunning.id,
       pinned.id,
       ...unpinned.slice(2).map((workstream) => workstream.id),

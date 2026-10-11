@@ -246,7 +246,6 @@ export interface MentionIdentity {
   endOffset?: number;
 }
 
-const wirePinnedWorkstreamsSchema = z.object({ items: z.array(WireWorkstreamSchema) });
 const wireResourcePageSchema = CursorPageSchema(WireResourceSchema).extend({ complete: z.boolean().optional() });
 const wireMemberPageSchema = z.object({ items: z.array(WireWorkspaceMemberSchema) });
 const wireInvitationPageSchema = z.object({ items: z.array(WireWorkspaceInvitationSchema) });
@@ -1707,48 +1706,6 @@ export class RallyApi {
       schema: WireWorkstreamSchema,
     });
     return mapWorkstreamSummary(workstream);
-  }
-
-  /**
-   * Pin a Channel placement for the signed-in person, across every device they use.
-   *
-   * All three pin calls answer with the selected Space's whole pinned list in
-   * its stored order, so the caller replaces only that Space's positions rather
-   * than reasoning about which row moved — see {@link ApiClient.reorderWorkstreamPins}.
-   */
-  async pinWorkstream(id: string, spaceId: string): Promise<WorkstreamSummary[]> {
-    return this.readPinnedWorkstreams(`/workstreams/${encodeURIComponent(id)}/pin`, 'PUT', { spaceId });
-  }
-
-  async unpinWorkstream(id: string, spaceId: string): Promise<WorkstreamSummary[]> {
-    return this.readPinnedWorkstreams(
-      `/workstreams/${encodeURIComponent(id)}/pin?spaceId=${encodeURIComponent(spaceId)}`,
-      'DELETE',
-    );
-  }
-
-  /**
-   * Send the pinned list's new order after a drag.
-   *
-   * The whole arrangement travels, not the row that moved: the server writes it
-   * as dense positions, and the list it sends back is the one to render. Ids
-   * that have been unpinned elsewhere are ignored rather than refused.
-   */
-  async reorderWorkstreamPins(spaceId: string, workstreamIds: string[]): Promise<WorkstreamSummary[]> {
-    return this.readPinnedWorkstreams('/workstreams/pins', 'PUT', { spaceId, workstreamIds });
-  }
-
-  private async readPinnedWorkstreams(
-    path: string,
-    method: 'PUT' | 'DELETE',
-    body?: unknown,
-  ): Promise<WorkstreamSummary[]> {
-    const page = await this.request(path, {
-      method,
-      ...(body === undefined ? {} : { body }),
-      schema: wirePinnedWorkstreamsSchema,
-    });
-    return page.items.map(mapWorkstreamSummary);
   }
 
   /** Reserve a Channel for a conversation import and start the agent that reads it. */

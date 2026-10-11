@@ -289,7 +289,7 @@ describe("a hosted parent's write", () => {
           // Written by a breakout before producers stamped their id: the parent
           // stamps it, so it still lands as the author's alone.
           childEnvelope(3, { ...message("breakout-unstamped", [{ userId: OTHER_USER_ID, relation: "mentioned" }]),
-            eventId: "00000000-0000-7000-8000-000000000f23", metadata: {} }, BREAKOUT_ID),
+            eventId: "00000000-0000-7000-8000-000000000f23", metadata: {} } as ConversationEffect, BREAKOUT_ID),
         ],
       });
       const sql = state.storage.sql;
