@@ -27,7 +27,7 @@ embedded in the renderer or a source of product truth.
 | `apps/api/src/middleware/api-operation-telemetry.ts` | Content-free timing/outcome signals for an explicit API operation allowlist. |
 | `apps/api/src/telemetry/tool-usage.ts` | Content-free, durably admitted agent-tool usage for user-owned and personless workspace-owned runs. |
 | `apps/api/src/telemetry/workstream-creation.ts` | Server-authoritative, idempotent work-stream creation state and connector attribution across user, Slack, suggestion, and automation paths. |
-| `apps/api/src/telemetry/message-sent.ts` | `message_sent` for a message or elicitation answer a person sent from any client, recorded where the Channel object admits it and, for a new Channel's opening message, by `POST /workstreams`. |
+| `apps/api/src/telemetry/message-sent.ts` | `message_sent` for a message or elicitation answer a person sent from any client, recorded where the Channel object admits it, including a composer-created Channel's opening message in `initialize`. |
 | `apps/api/src/telemetry/product-usage.ts`, `apps/api/src/telemetry/run-outcome.ts` | Shared bounded dimensions, idempotent resource event IDs, and authoritative run/tool journey outcomes. |
 | `apps/site/src/telemetry.ts`, `apps/site/src/site-entry.ts` | Region-before-identity public-site page, action, acquisition, and browser-to-desktop handoff reporting. |
 | `apps/api/src/crash-symbolicator*.ts`, `apps/api/crash-symbolicator/` | Private Cloudflare Container boundary and pinned native stack-walking image. |
@@ -2038,8 +2038,8 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 **What changed:** `message_sent` moved from a desktop-renderer intent to an API
 outcome. The Channel object records it when it admits a person's message or
-elicitation answer, and `POST /workstreams` records a new Channel's opening
-message. The desktop intent, its allowlist entry and reporter method are gone.
+elicitation answer, and in `initialize` for an opening message that arrived
+with the composer's `workstream_create` journey. The desktop intent, its allowlist entry and reporter method are gone.
 SubstreamAgent now keeps the caller's non-session principal on the identity it
 admits a message or answer with.
 
@@ -2057,10 +2057,14 @@ answers.
 
 **Consequences:** Only a member's own session counts. Connector, demo-seed,
 resource-authorization and support writes are excluded by principal or by the
-socket's impersonator. A support session sending through the HTTP message route
-or a Breakout's opening reaches the object without its impersonator and is
-still counted. The workerd suite sets `APP_ENV` to `test`, which the envelope
-rejects, so a test there must set a deployed environment name on the object.
+impersonator the object reads from its own session lookup. An opening message
+counts only with the `workstream_create` journey, so another creator that
+should count must carry it. Counts are taken from what the object admits, not
+the request: deduplicated, and before parent-owned seating projects new people.
+The workerd suite sets `APP_ENV` to `test`, which the envelope rejects, so a
+test there must set a deployed environment name on the object.
+
+Shipped in [PR #1190](https://github.com/juno-ai-labs/avalon/pull/1190).
 
 ### 2026-10-07 — Connect browser and fresh-install entry to signup
 
