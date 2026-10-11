@@ -73,13 +73,16 @@ describe('pilot offer', () => {
 });
 
 describe('pilot offer close animation', () => {
-  it('stays on screen until its own exit animation ends, not one of its children\'s', async () => {
+  it('stays on screen until its own exit animation ends, not an entry animation inside it', async () => {
     vi.stubGlobal('matchMedia', () => ({ matches: false }));
     const card = await visit(new Date(2026, 9, 11, 9, 30));
     card.querySelector<HTMLButtonElement>('.pilot-offer-close')!.click();
-    card.querySelector('p')!.dispatchEvent(new Event('animationend', { bubbles: true }));
+    const ended = (name: string): Event => Object.assign(new Event('animationend', { bubbles: true }), { animationName: name });
+    // A line of text finishing its entry, then the card's top rule (a pseudo-element, so the card is its target).
+    card.querySelector('p')!.dispatchEvent(ended('pilot-offer-rise'));
+    card.dispatchEvent(ended('pilot-offer-rule'));
     expect(card.hidden).toBe(false);
-    card.dispatchEvent(new Event('animationend', { bubbles: true }));
+    card.dispatchEvent(ended('pilot-offer-out'));
     expect(card.hidden).toBe(true);
   });
 });
