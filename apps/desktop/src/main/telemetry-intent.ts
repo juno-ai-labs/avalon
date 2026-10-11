@@ -191,7 +191,6 @@ export function parseTelemetryProductIntent(value: unknown): DesktopTelemetryPro
     || semanticKind === 'workstream_action_completed'
     || semanticKind === 'automation_created'
     || semanticKind === 'automation_action_completed'
-    || semanticKind === 'message_sent'
     || semanticKind === 'content_copied'
     || semanticKind === 'surface_viewed'
     || semanticKind === 'automation_builder_started'
