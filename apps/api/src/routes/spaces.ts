@@ -1,5 +1,5 @@
 import {
-  AcknowledgeWorkstreamReadRequestSchema,
+  AcknowledgeChannelReadRequestSchema,
   ChannelFeedPageSchema,
   ChannelStatsSchema,
   CreateSpaceRequestSchema,
@@ -92,29 +92,20 @@ spaceReadRoutes.get(
 
 /**
  * A Channel's read position for the person asking: acknowledge through a
- * placement, or mark it unread from the newest one. Both answer the person's
- * `ChannelStats` row. Read routes, because reading is not changing the
- * Channel: anybody who may list it has a position in it.
+ * placement, answered with the person's `ChannelStats` row. A read route,
+ * because reading is not changing the Channel: anybody who may list it has a
+ * position in it.
  */
 spaceReadRoutes.patch(
   "/:id/read-state",
   requireWorkspaceAuth,
   zValidator("param", idParam),
-  zValidator("json", AcknowledgeWorkstreamReadRequestSchema),
+  zValidator("json", AcknowledgeChannelReadRequestSchema),
   async (c) => c.json(ChannelStatsSchema.parse(
     await new SpaceService(c.env, getWorkspaceAuth(c)).acknowledgeRead(
       c.req.valid("param").id,
       c.req.valid("json"),
     ),
-  )),
-);
-
-spaceReadRoutes.post(
-  "/:id/read-state/mark-unread",
-  requireWorkspaceAuth,
-  zValidator("param", idParam),
-  async (c) => c.json(ChannelStatsSchema.parse(
-    await new SpaceService(c.env, getWorkspaceAuth(c)).markUnread(c.req.valid("param").id),
   )),
 );
 

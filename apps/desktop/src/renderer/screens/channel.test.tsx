@@ -46,8 +46,7 @@ const plan: WorkstreamSummary = {
 function outboundStats(overrides: Partial<ChannelStats> = {}): ChannelStats {
   return {
     channelId: 'outbound', threadCount: 2, lastActivityAt: '2026-10-03T00:00:00.000Z',
-    latestAttentionSequenceNumber: 2, readThroughSequenceNumber: 1, manualUnreadFromSequenceNumber: null,
-    manualUnreadGeneration: 3, firstUnreadSequenceNumber: 2, hasUnread: true,
+    latestAttentionSequenceNumber: 2, readThroughSequenceNumber: 1, firstUnreadSequenceNumber: 2, hasUnread: true,
     ...overrides,
   };
 }
@@ -134,7 +133,7 @@ describe('a Channel', () => {
       }));
       const { client } = renderChannel('/channels/outbound', (seeded) => seeded.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats()]));
 
-      await waitFor(() => expect(api.acknowledgeChannelRead).toHaveBeenCalledWith('outbound', 2, 3));
+      await waitFor(() => expect(api.acknowledgeChannelRead).toHaveBeenCalledWith('outbound', 2));
       expect(api.acknowledgeChannelRead).toHaveBeenCalledTimes(1);
       await waitFor(() => expect(client.getQueryData<ChannelStats[]>(CHANNEL_STATS_QUERY_KEY)?.[0])
         .toMatchObject({ readThroughSequenceNumber: 2, hasUnread: false }));
@@ -155,7 +154,7 @@ describe('a Channel', () => {
       api.acknowledgeChannelRead.mockRejectedValue(new Error('offline'));
       const { client } = renderChannel('/channels/outbound', (seeded) => seeded.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats()]));
 
-      await waitFor(() => expect(api.acknowledgeChannelRead).toHaveBeenCalledWith('outbound', 2, 3));
+      await waitFor(() => expect(api.acknowledgeChannelRead).toHaveBeenCalledWith('outbound', 2));
       await waitFor(() => expect(client.getQueryData<ChannelStats[]>(CHANNEL_STATS_QUERY_KEY)?.[0]?.hasUnread).toBe(true));
       await new Promise((resolve) => setTimeout(resolve, 400));
       expect(api.acknowledgeChannelRead).toHaveBeenCalledTimes(1);

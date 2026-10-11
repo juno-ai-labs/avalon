@@ -65,12 +65,20 @@ export const ChannelStatsSchema = z.strictObject({
    */
   latestAttentionSequenceNumber: z.number().int().nonnegative(),
   readThroughSequenceNumber: z.number().int().nonnegative(),
-  manualUnreadFromSequenceNumber: z.number().int().positive().nullable(),
-  manualUnreadGeneration: z.number().int().nonnegative(),
   firstUnreadSequenceNumber: z.number().int().positive().nullable(),
   hasUnread: z.boolean(),
 });
 export type ChannelStats = z.infer<typeof ChannelStatsSchema>;
+
+/**
+ * Acknowledge a Channel read through a placement. A Channel has no "mark
+ * unread", so unlike a thread's acknowledgement there is no generation to
+ * compare against.
+ */
+export const AcknowledgeChannelReadRequestSchema = z.strictObject({
+  readThroughSequenceNumber: z.number().int().nonnegative(),
+});
+export type AcknowledgeChannelReadRequest = z.infer<typeof AcknowledgeChannelReadRequestSchema>;
 
 export const ChannelStatsListSchema = z.array(ChannelStatsSchema);
 export type ChannelStatsList = z.infer<typeof ChannelStatsListSchema>;

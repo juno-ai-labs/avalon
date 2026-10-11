@@ -1509,29 +1509,14 @@ export class RallyApi {
   }
 
   /**
-   * Tell a Channel how far this person has read its feed: through the
-   * placement whose attention sequence number is given. The answer is the
-   * Channel's whole stats row, which the caller writes back over its entry in
-   * the channel-stats cache. A generation that no longer matches the stored
-   * one (the Channel was marked unread elsewhere since) leaves the stored
-   * position where it is, and the answer says so.
+   * Acknowledge a Channel read through a placement, answered with the
+   * person's whole `ChannelStats` row for it, which replaces the row held in
+   * the channel-stats cache.
    */
-  acknowledgeChannelRead(
-    channelId: string,
-    readThroughSequenceNumber: number,
-    observedManualUnreadGeneration: number,
-  ): Promise<ChannelStats> {
+  acknowledgeChannelRead(channelId: string, readThroughSequenceNumber: number): Promise<ChannelStats> {
     return this.request(`/spaces/${encodeURIComponent(channelId)}/read-state`, {
       method: 'PATCH',
-      body: { readThroughSequenceNumber, observedManualUnreadGeneration },
-      schema: ChannelStatsSchema,
-    });
-  }
-
-  /** By hand: mark a Channel unread from its newest placement. */
-  markChannelUnread(channelId: string): Promise<ChannelStats> {
-    return this.request(`/spaces/${encodeURIComponent(channelId)}/read-state/mark-unread`, {
-      method: 'POST',
+      body: { readThroughSequenceNumber },
       schema: ChannelStatsSchema,
     });
   }
