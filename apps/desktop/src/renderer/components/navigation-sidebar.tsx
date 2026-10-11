@@ -417,7 +417,7 @@ function ThreadsSection(): React.JSX.Element {
   const live = useWorkstreamsQuery();
   const spaces = useSpaceMap();
   const pins = usePins();
-  const pin = usePinAction();
+  const pin = usePinAction(api);
   const openChannelId = useOpenChannelId();
   const openThreadId = useOpenThreadId();
   const list = useInfiniteQuery({
@@ -565,7 +565,7 @@ function ChannelsSection({ guest }: { guest: boolean }): React.JSX.Element {
     staleTime: Infinity,
   });
   const pins = usePins();
-  const pin = usePinAction();
+  const pin = usePinAction(api);
   const openChannelId = useOpenChannelId();
   const sort = useUiStore((state) => state.channelSort);
   const setSort = useUiStore((state) => state.setChannelSort);
