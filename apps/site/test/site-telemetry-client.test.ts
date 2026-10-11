@@ -89,6 +89,18 @@ describe('site telemetry reporter', () => {
     expect(mac.href).toBe('https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg');
   });
 
+  it('starts a signup flow from the pilot offer and reports it under its own placement', async () => {
+    const api = stubApi();
+    await start('<a data-site-action="web-app-offer" href="https://app.rallywith.ai">Sign up</a>');
+    const link = document.querySelector<HTMLAnchorElement>('a')!;
+    link.addEventListener('click', (event) => event.preventDefault());
+    link.click();
+    const flowId = new URL(link.href).searchParams.get('signupFlowId');
+    expect(flowId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+    await vi.waitFor(() => expect(api.clicks()).toHaveLength(1));
+    expect(api.clicks()[0]?.properties).toEqual({ page: 'landing', pathname: '/', action: 'primary_cta', placement: 'offer', flowId });
+  });
+
   it('mints distinct matched flows for repeated and middle-click activations and restores a clean copyable link', async () => {
     const api = stubApi();
     await start('<a data-site-action="web-app-hero" href="https://app.rallywith.ai/?keep=yes#anchor">Use the web app</a>');
