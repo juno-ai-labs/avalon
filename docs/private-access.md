@@ -318,7 +318,7 @@ or numerical retention period is configured.
 ### 2026-10-11 — Pilot offer card with a per-visitor deadline
 
 **What changed:** The landing shows a pilot offer card two seconds after load:
-first four months on us, with a Sign up link into the web app. Each visitor's
+first two months on us, with a Sign up link into the web app. Each visitor's
 deadline is six days after the day the card first appeared in their browser,
 stored as that local date and kept on later visits; after it the card stops
 showing. The Sign up link carries the first-visit date as `pilotOfferFirstSeen`.
