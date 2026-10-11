@@ -2013,6 +2013,11 @@ export const TELEMETRY_EVENTS = {
       campaignSource: safeTelemetryTaxonomyValue.optional(),
       campaignMedium: safeTelemetryTaxonomyValue.optional(),
       campaignName: safeTelemetryTaxonomyValue.optional(),
+      // Which ad platform's click identifier the landing URL carried, never
+      // the identifier itself. It tells a paid click apart from a copied link
+      // that still has the campaign tags, and joins visits to the platform's
+      // click counts. `x` is X's `twclid`.
+      adClickIdSource: z.enum(["x"]).optional(),
     })),
   }),
   site_page_left: productEvent({
