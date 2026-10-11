@@ -379,6 +379,15 @@ describe("telemetry registry", () => {
     }).success).toBe(false);
   });
 
+  it("rejects an ad click identifier's value where only its platform may go", () => {
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...envelope("site_page_viewed", {
+        page: "landing", pathname: "/", adClickIdSource: "23opevjt88psuo13lu8d020qkn",
+      }),
+      source: "site",
+    }).success).toBe(false);
+  });
+
   it("rejects unknown application settings and icon values", () => {
     expect(TelemetryEnvelopeSchema.safeParse({
       ...envelope("application_settings_state", {
@@ -615,6 +624,9 @@ describe("telemetry registry", () => {
     }],
     ["site_page_viewed", "site", "anonymous-epoch", {
       page: "landing", pathname: "/", referringDomain: "example.com", campaignSource: "launch",
+    }],
+    ["site_page_viewed", "site", "anonymous-epoch", {
+      page: "landing", pathname: "/", campaignSource: "x", adClickIdSource: "x",
     }],
     ["site_page_left", "site", "anonymous-epoch", {
       page: "landing", pathname: "/", duration: "30s_2m",
