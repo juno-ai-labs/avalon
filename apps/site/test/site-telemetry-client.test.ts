@@ -194,6 +194,8 @@ describe('site telemetry reporter', () => {
     const view = api.sent[0]!.events[0]!;
     expect(view.properties).toMatchObject({ campaignSource: 'x', campaignMedium: 'paid_social', adClickIdSource: 'x' });
     expect(JSON.stringify(view)).not.toContain('23opevjt88psuo13lu8d020qkn');
+    // Gone from the address bar too, before PostHog's SDK could read it; the campaign tags stay.
+    expect(location.search).toBe('?utm_source=x&utm_medium=paid_social');
   });
 
   it.each([
@@ -241,6 +243,63 @@ describe('site telemetry reporter', () => {
     await vi.waitFor(() => expect(api.sent.flatMap((request) => request.events)).toHaveLength(2));
     const left = api.sent.flatMap((request) => request.events).find((event) => event.name === 'site_page_left')!;
     expect(left.properties.pageSignals).toEqual(['untrusted_input']);
+  });
+
+  describe('swipes that scroll nothing', () => {
+    let top = 0;
+    // jsdom lays nothing out, so the page is given a height and a scroll position.
+    const page = document.documentElement;
+    beforeEach(() => {
+      top = 0;
+      Object.defineProperty(page, 'scrollHeight', { configurable: true, get: () => 3_000 });
+      Object.defineProperty(page, 'clientHeight', { configurable: true, get: () => 800 });
+      Object.defineProperty(page, 'scrollTop', { configurable: true, get: () => top });
+    });
+    afterEach(() => {
+      for (const property of ['scrollHeight', 'clientHeight', 'scrollTop']) Reflect.deleteProperty(page, property);
+    });
+
+    /** One finger from `from` to `to`, made the way a page script makes it. */
+    function swipe(from: { x: number; y: number }, to: { x: number; y: number }): void {
+      const touch = (point: { x: number; y: number }) => ({ clientX: point.x, clientY: point.y });
+      document.body.dispatchEvent(Object.assign(new Event('touchstart', { bubbles: true }), { touches: [touch(from)] }));
+      document.body.dispatchEvent(Object.assign(new Event('touchend', { bubbles: true }), { changedTouches: [touch(to)] }));
+    }
+
+    async function leaveSignals(api: ReturnType<typeof stubApi>): Promise<unknown> {
+      // Past the swipe's settle window, so its verdict is in.
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      window.dispatchEvent(new Event('pagehide'));
+      await vi.waitFor(() => expect(api.sent.flatMap((request) => request.events)).toHaveLength(2));
+      return api.sent.flatMap((request) => request.events).find((event) => event.name === 'site_page_left')!.properties.pageSignals;
+    }
+
+    it('reports a vertical swipe the page could have answered and did not', async () => {
+      const api = stubApi();
+      await start('');
+      swipe({ x: 200, y: 600 }, { x: 205, y: 300 });
+      expect(await leaveSignals(api)).toEqual(['swipe_no_scroll', 'untrusted_input']);
+    });
+
+    it('does not report a swipe the page scrolled for', async () => {
+      const api = stubApi();
+      await start('');
+      swipe({ x: 200, y: 600 }, { x: 205, y: 300 });
+      top = 300;
+      document.dispatchEvent(new Event('scroll'));
+      expect(await leaveSignals(api)).toEqual(['untrusted_input']);
+    });
+
+    it.each([
+      ['starts at the screen edge, where back and forward gestures live', { x: 10, y: 600 }, { x: 15, y: 300 }],
+      ['pulls down at the top of the page, which has nowhere to go', { x: 200, y: 300 }, { x: 205, y: 600 }],
+      ['moves sideways more than down', { x: 200, y: 600 }, { x: 600, y: 500 }],
+    ])('ignores a swipe that %s', async (_case, from, to) => {
+      const api = stubApi();
+      await start('');
+      swipe(from, to);
+      expect(await leaveSignals(api)).toEqual(['untrusted_input']);
+    });
   });
 
   it('sends no page signals for a visit with no input', async () => {

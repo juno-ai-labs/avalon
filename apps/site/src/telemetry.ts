@@ -285,9 +285,23 @@ function campaignValue(name: string): string | undefined {
 // Only whether one is present is reported; its value identifies one ad click.
 const AD_CLICK_ID_PARAMETERS = [['twclid', 'x']] as const;
 
-function adClickIdSource(): TelemetryEventProperties<'site_page_viewed'>['adClickIdSource'] {
-  const search = new URLSearchParams(location.search);
-  return AD_CLICK_ID_PARAMETERS.find(([parameter]) => search.get(parameter))?.[1];
+let adClickIdSource: TelemetryEventProperties<'site_page_viewed'>['adClickIdSource'];
+let adClickIdTaken = false;
+
+/**
+ * Notes which ad platform's click identifier the landing URL carried, then
+ * removes the identifier from the address bar. It runs before PostHog's SDK
+ * loads, because the SDK reports the full URL with every event and replay,
+ * and the identifier names one ad click.
+ */
+export function takeAdClickId(): void {
+  if (adClickIdTaken) return;
+  adClickIdTaken = true;
+  const url = new URL(location.href);
+  adClickIdSource = AD_CLICK_ID_PARAMETERS.find(([parameter]) => url.searchParams.get(parameter))?.[1];
+  if (!AD_CLICK_ID_PARAMETERS.some(([parameter]) => url.searchParams.has(parameter))) return;
+  for (const [parameter] of AD_CLICK_ID_PARAMETERS) url.searchParams.delete(parameter);
+  history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
 }
 
 function referringDomain(): string | undefined {
@@ -402,6 +416,7 @@ export function provideAnalyticsSession(session: (() => string) | null): void {
 }
 
 export function initializeSiteTelemetry(): void {
+  takeAdClickId();
   report('site_page_viewed', {
     page: currentSitePage(),
     pathname: normalizedPathname(),
@@ -409,7 +424,7 @@ export function initializeSiteTelemetry(): void {
     ...(campaignValue('utm_source') ? { campaignSource: campaignValue('utm_source') } : {}),
     ...(campaignValue('utm_medium') ? { campaignMedium: campaignValue('utm_medium') } : {}),
     ...(campaignValue('utm_campaign') ? { campaignName: campaignValue('utm_campaign') } : {}),
-    ...(adClickIdSource() ? { adClickIdSource: adClickIdSource() } : {}),
+    ...(adClickIdSource ? { adClickIdSource } : {}),
   });
   const pageInput = watchPageInput();
   const leave = (): void => {
