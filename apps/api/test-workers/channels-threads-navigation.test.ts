@@ -36,6 +36,8 @@ import {
 
 import { WORKSPACE_CHANNEL_READS_MIGRATION } from "../src/durable-objects/workspace-channel-read-storage";
 import { WORKSPACE_PINS_MIGRATION } from "../src/durable-objects/workspace-pin-storage";
+import { WorkspaceRegionalEffectApplyRequestSchema } from "../src/durable-objects/workspace-directory-protocol";
+import { applyWorkstreamRegionalEnvelope } from "../src/durable-objects/workspace-regional-effect-storage";
 import { hostedParentStub } from "./helpers/hosted-parent";
 import { placeMembership, removeMembership } from "./helpers/space-membership";
 
@@ -302,26 +304,43 @@ describe("private Channels", () => {
 });
 
 describe("archiving a Channel", () => {
-  it("given a thread that lives only in a Channel, when the Channel is archived, then the thread moves to General and a restore puts it back", async () => {
+  async function openGeneral(): Promise<SpaceId> {
     const general = await workspace().openGeneralSpace({
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId("00000000-0000-7000-8000-00000000e1aa"),
     });
     if (!general.ok || "absent" in general) throw new Error("openGeneralSpace refused");
-    const generalId = asSpaceId(general.space.id);
-    const channelId = await channelWithThreads();
+    return asSpaceId(general.space.id);
+  }
+  const placedIn = async (channelId: SpaceId) => (await feed(channelId, OWNER)).items
+    .map((item) => item.kind === "thread" ? item.thread.id : item.threadId);
+
+  it("given an Organization-wide thread that lives only in a Channel, when the Channel is archived, then the thread moves to General and a restore puts it back", async () => {
+    const generalId = await openGeneral();
+    const channelId = await reserveChannel("Outbound");
+    await openThreadObject(OPEN_THREAD);
+    await publish(OPEN_THREAD, [threadEffect("Cold outreach"), viewerEffect(OWNER)]);
+    await place(channelId, OPEN_THREAD);
 
     await expect(workspace().archiveSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId }))
       .resolves.toMatchObject({ ok: true, space: { status: "archived" } });
-
-    // Both threads, the private one included: an archive strands neither.
-    const inGeneral = (await feed(generalId, OWNER)).items
-      .map((item) => item.kind === "thread" ? item.thread.id : item.threadId);
-    expect(inGeneral).toEqual(expect.arrayContaining([OPEN_THREAD, PRIVATE_THREAD]));
+    expect(await placedIn(generalId)).toEqual([OPEN_THREAD]);
 
     await expect(workspace().restoreSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId }))
       .resolves.toMatchObject({ ok: true, space: { status: "active" } });
-    expect((await feed(channelId, OWNER)).items.map((item) => item.kind === "thread" ? item.thread.id : item.threadId))
-      .toEqual(expect.arrayContaining([OPEN_THREAD, PRIVATE_THREAD]));
+    expect(await placedIn(channelId)).toEqual([OPEN_THREAD]);
+  });
+
+  it("given a private thread that lives only in a Channel, when the Channel is archived, then the archive is refused and nothing moved to General", async () => {
+    const generalId = await openGeneral();
+    const channelId = await channelWithThreads();
+
+    // General shows a row to every member, so a private thread never moves
+    // there; it keeps the archive refused, and the Organization-wide thread
+    // that would have moved rolls back with the refusal.
+    await expect(workspace().archiveSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId }))
+      .resolves.toMatchObject({ ok: false, code: "space_membership_final" });
+    expect(await placedIn(generalId)).toEqual([]);
+    expect(await placedIn(channelId)).toEqual(expect.arrayContaining([OPEN_THREAD, PRIVATE_THREAD]));
   });
 });
 
@@ -611,6 +630,77 @@ describe("Activity tab", () => {
     expect(await mentions()).toEqual([expect.objectContaining({
       kind: "mentioned", threadId: OPEN_THREAD, breakout: expect.objectContaining({ substreamId: BREAKOUT }),
     })]);
+  });
+
+  it("given more hidden starts than a page holds, when a member reads Activity, then the page holds what they may list and its cursor names nothing hidden", async () => {
+    await channelWithThreads();
+    // A page's worth and one more private threads the owner started after the
+    // open one. Filtered after the LIMIT, they would fill the page and its
+    // cursor with threads the member may not list, and push the open one off.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const sql = state.storage.sql;
+      const columns = sql.exec<{ name: string }>("PRAGMA table_info(channels)").toArray().map((column) => column.name);
+      const source = columns.map((column) => (
+        column === "workstream_id" ? "?1 || substr(workstream_id, length(?1) + 1)"
+          : column === "source_created_at" ? "?2"
+            : column === "source_event_id" ? "source_event_id || ?2"
+              : column
+      ));
+      for (let index = 0; index <= 250; index += 1) {
+        sql.exec(
+          `INSERT INTO channels (${columns.join(", ")}) SELECT ${source.join(", ")} FROM channels WHERE workstream_id = ?3`,
+          `00000000-0000-7000-8000-${String(index + 1000).padStart(4, "0")}`,
+          Date.parse("2026-11-01T00:00:00.000Z") + index,
+          PRIVATE_THREAD,
+        );
+      }
+    });
+
+    const page = await activity(MEMBER);
+    expect(page.items.map((item) => [item.kind, item.threadId])).toEqual([["thread_started", OPEN_THREAD]]);
+    expect(page.nextCursor).toBeNull();
+  });
+
+  it("given a breakout's mention whose author is unknown, when it is applied, then it is not stored at all rather than shown to the parent thread", async () => {
+    await channelWithThreads();
+    const effect: ParentEffect = {
+      kind: "activity_event",
+      eventId: "00000000-0000-7000-8000-00000000e1f1",
+      eventType: "workstream_message_created",
+      subjectSequenceNumber: 4,
+      actorType: "user",
+      actorUserId: OWNER,
+      actorLabel: "Owner",
+      title: "Side work",
+      body: "",
+      canonicalUrl: null,
+      digestible: false,
+      occurredAt: "2026-10-05T00:00:00.000Z",
+      sourceKind: "workstream_message",
+      sourceId: "breakout-turn",
+      dedupeKey: "message:breakout-turn",
+      metadata: { substreamId: BREAKOUT },
+      targets: [{ userId: MEMBER, relation: "mentioned" }],
+    } as ParentEffect;
+    await runInDurableObject(workspace(), (_instance, state) => {
+      // The Queue re-reads the author from D1, and a deleted account reads back
+      // as null: the one way this arrives with no author.
+      applyWorkstreamRegionalEnvelope(state.storage, WorkspaceRegionalEffectApplyRequestSchema.parse({
+        workspaceId: WORKSPACE_ID,
+        envelope: ParentEffectEnvelopeSchema.parse({
+          kind: "parent_effect", contractVersion: 1, region: "global", workspaceId: WORKSPACE_ID,
+          parentKind: "workstream", parentId: OPEN_THREAD, generation: 1, messageId: messageId(),
+          partitionKey: "common", sourceVersion: 1, requiredProjectionVersion: null,
+          payloadHash: conversationEffectHash(effect), effect,
+        }),
+        actorUserId: null,
+        targetUserIds: [MEMBER],
+        recipientIsActiveMember: false,
+      }), Date.now());
+      expect(state.storage.sql.exec(
+        "SELECT audience_kind FROM workspace_activity_events WHERE dedupe_key = 'message:breakout-turn'",
+      ).toArray()).toEqual([]);
+    });
   });
 
   it("given a finished run in a thread the person takes part in, when they read Activity, then Rally's finish appears once and marking it seen clears its dot", async () => {
