@@ -2038,7 +2038,7 @@ export const TELEMETRY_EVENTS = {
     properties: deferredZodSchema(() => z.strictObject({
       page: z.enum(["landing", "download", "support"]),
       action: z.enum(["download", "primary_cta", "secondary_cta", "faq_opened", "connector_setup", "support_contact", "demo_request", "founder_contact"]),
-      placement: z.enum(["header", "hero", "body", "footer", "faq", "connector", "unknown", "sidekicks", "team", "pricing"]),
+      placement: z.enum(["header", "hero", "body", "footer", "faq", "connector", "unknown", "sidekicks", "team", "pricing", "offer"]),
       // Which page the click happened on, so variants of one page (such as
       // /start-fast/ beside /) can be compared. Optional: a tab opened before
       // the site deploy still sends clicks without it.
