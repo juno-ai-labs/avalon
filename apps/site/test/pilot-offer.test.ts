@@ -52,3 +52,15 @@ describe('pilot offer', () => {
     expect(again.hidden).toBe(true);
   });
 });
+
+describe('pilot offer close animation', () => {
+  it('stays on screen until its own exit animation ends, not one of its children\'s', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const card = await visit(new Date(2026, 9, 11, 9, 30));
+    card.querySelector<HTMLButtonElement>('.pilot-offer-close')!.click();
+    card.querySelector('p')!.dispatchEvent(new Event('animationend', { bubbles: true }));
+    expect(card.hidden).toBe(false);
+    card.dispatchEvent(new Event('animationend', { bubbles: true }));
+    expect(card.hidden).toBe(true);
+  });
+});
