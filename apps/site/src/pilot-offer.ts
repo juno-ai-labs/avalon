@@ -6,7 +6,7 @@
  */
 const DISMISSED_KEY = 'rally.site.pilot-offer-dismissed.v1';
 // How long the visitor reads the page before the offer appears.
-const SHOW_AFTER_MS = 4_000;
+const SHOW_AFTER_MS = 2_000;
 // The offer runs through October 16, in the visitor's own time zone.
 const OFFER_ENDS = new Date(2026, 9, 17);
 

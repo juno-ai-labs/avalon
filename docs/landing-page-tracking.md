@@ -24,7 +24,7 @@ Tagged links on the landing page, by `data-site-action` id:
 | --- | --- | --- |
 | `sign-in-header` | Header sign-in button, its label rolling between Sign in to Rally and Sign up for Rally, on every device | primary_cta · header |
 | `web-app-hero` | Hero Sign up now (app.rallywith.ai), the left and primary button | secondary_cta · hero |
-| `web-app-offer` | Sign up in the pilot offer card (app.rallywith.ai), which slides in four seconds after the page loads | primary_cta · offer |
+| `web-app-offer` | Sign up in the pilot offer card (app.rallywith.ai), which slides in two seconds after the page loads | primary_cta · offer |
 | `download-hero` | Hero Download the macOS app, the right and secondary button, hidden on touch-only devices | download · hero |
 | `download-pricing-start` / `-grow` | Start and Grow Start free trial buttons | download · pricing · plan |
 | `contact-pricing-enterprise` | Grown up Contact us (emails Katherine) | founder_contact · pricing · enterprise |
