@@ -45,6 +45,25 @@ describe('pilot offer', () => {
     expect(after.hidden).toBe(true);
   });
 
+  it('starts the deadline when the card appears, not when the page loads', async () => {
+    vi.setSystemTime(new Date(2026, 9, 11, 9, 30));
+    document.body.innerHTML = CARD;
+    vi.resetModules();
+    await import('../src/pilot-offer');
+    // The visitor leaves before the card appears.
+    vi.advanceTimersByTime(1_000);
+    const later = await visit(new Date(2026, 9, 20, 9, 30));
+    expect(later.hidden).toBe(false);
+    expect(later.querySelector('time')?.textContent).toBe('October 26');
+  });
+
+  it('stays away after the visitor middle-clicks Sign up', async () => {
+    const card = await visit(new Date(2026, 9, 11, 9, 30));
+    card.querySelector('a')!.dispatchEvent(new MouseEvent('auxclick', { button: 1, bubbles: true }));
+    const again = await visit(new Date(2026, 9, 12, 9, 30));
+    expect(again.hidden).toBe(true);
+  });
+
   it('stays away after the visitor closes it', async () => {
     const card = await visit(new Date(2026, 9, 11, 9, 30));
     card.querySelector<HTMLButtonElement>('.pilot-offer-close')!.click();
