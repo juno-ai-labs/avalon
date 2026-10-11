@@ -32,8 +32,10 @@ and destination mechanics remain in [`telemetry.md`](telemetry.md).
   landing and handoff pages can form one anonymous acquisition path.
 
 `site_page_viewed` carries a closed page class, a lowercased bounded pathname,
-an external referring domain, and allowlisted `utm_source`, `utm_medium`, and
-`utm_campaign` values. `site_page_left` carries the page/path and a bounded
+an external referring domain, allowlisted `utm_source`, `utm_medium`, and
+`utm_campaign` values, and `adClickIdSource`: which ad platform's click
+identifier the URL carried (`x` for X's `twclid`), never the identifier.
+`site_page_left` carries the page/path and a bounded
 visible-duration bucket. Global maps these observations one-for-one to PostHog
 `$pageview` and `$pageleave`, with URL/host/path properties derived from the
 already validated site context. Electron screen events never impersonate web
@@ -146,7 +148,8 @@ the site to the app by `flowId`.
   usable; only cross-page attribution is reduced.
 
 - Campaign fields are 160-character allowlisted taxonomy values. The reporter
-  ignores arbitrary query keys and never sends a complete URL.
+  ignores arbitrary query keys and never sends a complete URL. Ad click
+  identifiers are reduced to a closed platform name before they leave the page.
 
 ## Browser signup attribution
 
@@ -205,6 +208,26 @@ avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
 
 ## Changelog
+
+### 2026-10-11 — Report which ad platform's click identifier a landing carried
+
+**What changed:** `site_page_viewed` gains an optional `adClickIdSource`, a
+closed enum. The reporter sets it to `x` when the landing URL has a non-empty
+`twclid`; the identifier itself is read and dropped in the page.
+
+**Why:** Paid X traffic could not be split into people and bots
+([traffic classification PRD](PRDs/2026-10-11_site-traffic-classification/prd.md)).
+X appends `twclid` to real ad clicks, so its presence tells a paid click apart
+from a copied link that still carries the campaign tags, and lets landings be
+counted against X's own `url_clicks` and Cloudflare's count of landing requests.
+
+**Considered and rejected:** Sending the identifier, which names one ad click
+and would join our anonymous visit to X's records; a boolean named for X, which
+would need a new field for each further platform.
+
+**Consequences:** Another platform is a new enum value and one entry in
+`AD_CLICK_ID_PARAMETERS`. The enum must never widen to a free string: the
+contract test rejects an identifier in this field.
 
 ### 2026-10-11 — Retire the header download link; keep the hero web entry as `secondary_cta`
 

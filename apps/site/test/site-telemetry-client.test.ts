@@ -182,6 +182,29 @@ describe('site telemetry reporter', () => {
     expect(api.sent[1]!.capability).not.toBe(api.sent[0]!.capability);
   });
 
+  it('names the ad platform whose click id the landing URL carried, never the id', async () => {
+    history.replaceState(null, '', '/?utm_source=x&utm_medium=paid_social&twclid=23opevjt88psuo13lu8d020qkn');
+    const api = stubApi();
+    await start('');
+
+    await vi.waitFor(() => expect(api.sent).toHaveLength(1));
+    const view = api.sent[0]!.events[0]!;
+    expect(view.properties).toMatchObject({ campaignSource: 'x', campaignMedium: 'paid_social', adClickIdSource: 'x' });
+    expect(JSON.stringify(view)).not.toContain('23opevjt88psuo13lu8d020qkn');
+  });
+
+  it.each([
+    ['/?utm_source=x'],
+    ['/?utm_source=x&twclid='],
+  ])('reports no ad click id for %s', async (url) => {
+    history.replaceState(null, '', url);
+    const api = stubApi();
+    await start('');
+
+    await vi.waitFor(() => expect(api.sent).toHaveLength(1));
+    expect(api.sent[0]!.events[0]!.properties).not.toHaveProperty('adClickIdSource');
+  });
+
   it("reports each event under PostHog's session at the moment it is made", async () => {
     const api = stubApi();
     let current = '019a0000-0000-7000-8000-000000000001';

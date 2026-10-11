@@ -275,6 +275,15 @@ function campaignValue(name: string): string | undefined {
   return value && /^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/u.test(value) ? value : undefined;
 }
 
+// Ad platforms' click-identifier parameters, by the source the event names.
+// Only whether one is present is reported; its value identifies one ad click.
+const AD_CLICK_ID_PARAMETERS = [['twclid', 'x']] as const;
+
+function adClickIdSource(): TelemetryEventProperties<'site_page_viewed'>['adClickIdSource'] {
+  const search = new URLSearchParams(location.search);
+  return AD_CLICK_ID_PARAMETERS.find(([parameter]) => search.get(parameter))?.[1];
+}
+
 function referringDomain(): string | undefined {
   if (!document.referrer) return undefined;
   try {
@@ -394,6 +403,7 @@ export function initializeSiteTelemetry(): void {
     ...(campaignValue('utm_source') ? { campaignSource: campaignValue('utm_source') } : {}),
     ...(campaignValue('utm_medium') ? { campaignMedium: campaignValue('utm_medium') } : {}),
     ...(campaignValue('utm_campaign') ? { campaignName: campaignValue('utm_campaign') } : {}),
+    ...(adClickIdSource() ? { adClickIdSource: adClickIdSource() } : {}),
   });
   const leave = (): void => {
     if (leaveReported) return;
