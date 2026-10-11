@@ -4550,6 +4550,9 @@ export class WorkstreamObjectProductService {
     }
     // Most messages change no participation. Stay synchronous on that path,
     // without reading identity/transfer state or contacting the grant owner.
+    // Counted before anything seats them: once participant authority has
+    // moved to the parent, preparation below projects them into the roster.
+    const participantAddedCount = confirmedParticipantUserIds.filter((userId) => !this.isParticipant(userId)).length;
     const missingParticipantUserIds = [...new Set([auth.userId, ...confirmedParticipantUserIds])]
       .filter((userId) => !this.isParticipant(userId));
     if (missingParticipantUserIds.length > 0) {
@@ -4571,8 +4574,7 @@ export class WorkstreamObjectProductService {
       messageKind: "message",
       attachmentCount: input.attachmentIds.length,
       mentionCount: prepared.mentions.length,
-      // Counted before the commit seats them, which is what makes them added.
-      participantAddedCount: confirmedParticipantUserIds.filter((userId) => !this.isParticipant(userId)).length,
+      participantAddedCount,
     };
 
     const participantCount = Number(first(this.storage.sql.exec<{ count: number }>(
