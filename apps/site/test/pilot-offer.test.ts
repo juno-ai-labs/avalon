@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const CARD = '<aside id="pilot-offer" hidden><button class="pilot-offer-close"></button><p>till <time class="pilot-offer-deadline"></time></p><a class="pilot-offer-cta" href="#">Sign up</a></aside>';
+const CARD = '<aside id="pilot-offer" hidden><button class="pilot-offer-close"></button><p>till <time class="pilot-offer-deadline"></time></p><a class="pilot-offer-cta" href="https://app.rallywith.ai/">Sign up</a></aside>';
 
 /** Loads the landing page at `now` and returns the card once its delay has passed. */
 async function visit(now: Date): Promise<HTMLElement> {
@@ -32,6 +32,8 @@ describe('pilot offer', () => {
 
     const later = await visit(new Date(2026, 9, 14, 18, 0));
     expect(later.querySelector('time')?.textContent).toBe('October 17');
+    // The sign-up link names the first visit, not this one.
+    expect(later.querySelector('a')?.href).toBe('https://app.rallywith.ai/?pilotOfferFirstSeen=2026-10-11');
 
     const lastDay = await visit(new Date(2026, 9, 17, 23, 59));
     expect(lastDay.hidden).toBe(false);
