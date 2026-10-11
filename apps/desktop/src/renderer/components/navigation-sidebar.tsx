@@ -1,5 +1,5 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import type { ActivityItem, ConversationAccessRequestItem, PinKind, PinList, SpaceSummary } from '@rally/contracts';
+import type { ActivityItem, ConversationAccessRequestItem, PinKind, SpaceSummary } from '@rally/contracts';
 import { SpaceIcon } from '@rally/ui/components/space-icon';
 import { markColors } from '@rally/ui/lib/project-palette';
 import {
@@ -27,14 +27,14 @@ import { createPortal } from 'react-dom';
 import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 
 import type { AttentionItem } from '../lib/attention-items';
-import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { formatSidebarActivityTime, workstreamMarkerStatus } from '../lib/format';
 import { channelRoute, homeChannelId, threadRoute } from '../lib/navigation-routes';
 import { moveWithin } from '../lib/personal-order';
 import { compareChannels } from '../lib/sidebar-channel-order';
-import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, MY_THREADS_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
+import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, MY_THREADS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
+import { usePinAction, usePinFailure, usePins, usePinWrite } from '../lib/pins';
 import type { SpaceConversationSummary, Workspace } from '../lib/types';
 import { useUiStore, type SidebarChannelSort, type SidebarSection } from '../lib/ui-store';
 import { useSpaceDirectories } from '../lib/use-space-directories';
@@ -277,56 +277,6 @@ function useOpenThreadId(): string | null {
   return matchPath('/channels/:channelId/threads/:id', location.pathname)?.params.id
     ?? matchPath('/workstreams/:id', location.pathname)?.params.id
     ?? null;
-}
-
-/** The last pin or reorder that did not save, shown above whichever tab is open. */
-const PIN_FAILURE_QUERY_KEY = ['navigation', 'pin-failure'] as const;
-
-function pinFailureCopy(error: unknown): string {
-  return error instanceof ApiError && error.code === 'pin_limit_reached'
-    ? 'You’ve pinned as many items as Rally allows. Unpin one first.'
-    : 'That pin didn’t save. Try again.';
-}
-
-function usePinFailure(): string | null {
-  return useQuery<string | null>({ queryKey: PIN_FAILURE_QUERY_KEY, queryFn: () => null, enabled: false }).data ?? null;
-}
-
-/** How many pin writes this window has started; only the newest one's answer is held. */
-let pinWritesStarted = 0;
-
-/**
- * Hold a pin write's answer, or say why it failed. Each answer is the whole
- * list, and two writes in flight can answer in either order, so an answer is
- * held only when no later write has started; the later one's answer, or the
- * snapshot every write republishes, carries what the older one would have.
- */
-function usePinWrite(): (write: Promise<PinList>) => void {
-  const queryClient = useQueryClient();
-  return (write) => {
-    const issued = ++pinWritesStarted;
-    void write.then((list) => {
-      if (issued !== pinWritesStarted) return;
-      queryClient.setQueryData(PINS_QUERY_KEY, list);
-      queryClient.setQueryData(PIN_FAILURE_QUERY_KEY, null);
-      // A pin can add a thread this person does not take part in, which only
-      // the Threads list's own read brings.
-      void queryClient.invalidateQueries({ queryKey: MY_THREADS_QUERY_KEY });
-    }, (error: unknown) => queryClient.setQueryData(PIN_FAILURE_QUERY_KEY, pinFailureCopy(error)));
-  };
-}
-
-function usePins(): PinList {
-  return useQuery<PinList>({ queryKey: PINS_QUERY_KEY, queryFn: async () => [], enabled: false }).data ?? [];
-}
-
-/** Pin or unpin, answered with the whole list, which replaces what is held. */
-function usePinAction(): (kind: PinKind, id: string, pinned: boolean, parentId?: string) => void {
-  const { api } = useAppSession();
-  const write = usePinWrite();
-  return (kind, id, pinned, parentId) => {
-    if (api) write(api.setPinned(kind, id, pinned, parentId));
-  };
 }
 
 /**
