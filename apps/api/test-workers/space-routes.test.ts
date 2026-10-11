@@ -924,3 +924,52 @@ describe("a Channel's Space membership, driven from WorkspaceDO", () => {
     expect(await intentStates(workstreamId, "remove")).toEqual([]);
   });
 });
+
+describe("the navigation routes", () => {
+  it("answers a member's threads, Channel stats, pins and Activity, and keeps a pin across reads", async () => {
+    const space = await createSpace("Outbound");
+
+    const threads = await request("/navigation/threads", MEMBER_AUTH);
+    expect(threads).toMatchObject({ status: 200, body: { items: [], pinned: [], nextCursor: null } });
+    const stats = await request("/navigation/channel-stats", MEMBER_AUTH);
+    expect(stats.status).toBe(200);
+    expect(stats.body).toEqual(expect.arrayContaining([expect.objectContaining({ channelId: space.id, threadCount: 0 })]));
+
+    expect(await request(`/navigation/pins/channel/${space.id}`, MEMBER_AUTH, {}, "PUT"))
+      .toEqual({ status: 200, body: [{ kind: "channel", id: space.id, parentId: null }] });
+    expect(await request("/navigation/pins", MEMBER_AUTH))
+      .toEqual({ status: 200, body: [{ kind: "channel", id: space.id, parentId: null }] });
+    // One person's pin, and nobody else's.
+    expect(await request("/navigation/pins", OWNER_AUTH)).toEqual({ status: 200, body: [] });
+
+    expect(await request("/navigation/activity", MEMBER_AUTH)).toMatchObject({ status: 200, body: { items: [] } });
+  });
+
+  it("refuses what its schemas do not admit, naming no internal detail", async () => {
+    const space = await createSpace("Outbound");
+    const breakoutWithoutParent = await request(
+      "/navigation/pins/breakout/00000000-0000-7000-8000-00000000d2f1", MEMBER_AUTH, {}, "PUT",
+    );
+    expect(breakoutWithoutParent.status).toBe(404);
+    expect((await request("/navigation/pins/folder/00000000-0000-7000-8000-00000000d2f1", MEMBER_AUTH, {}, "PUT")).status)
+      .toBe(400);
+    expect((await request("/navigation/activity/seen", MEMBER_AUTH, { seenThrough: "x" }, "PUT")).status).toBe(400);
+    expect((await request(`/navigation/threads?cursor=${"a".repeat(201)}`, MEMBER_AUTH)).status).toBe(400);
+    expect((await request(`/spaces/${space.id}/read-state`, MEMBER_AUTH, {
+      readThroughSequenceNumber: 0, observedManualUnreadGeneration: 0,
+    }, "PATCH")).status).toBe(400);
+  });
+
+  it("reads a Channel's feed and acknowledges it for the person asking", async () => {
+    const space = await createSpace("Outbound");
+    expect(await request(`/spaces/${space.id}/feed`, MEMBER_AUTH))
+      .toMatchObject({ status: 200, body: { items: [], nextCursor: null } });
+    expect(await request(`/spaces/${space.id}/read-state`, MEMBER_AUTH, { readThroughSequenceNumber: 0 }, "PATCH"))
+      .toMatchObject({ status: 200, body: { channelId: space.id, hasUnread: false } });
+  });
+
+  it("answers nobody who is not signed in", async () => {
+    const response = await app.request("/navigation/threads", {}, routeEnv(), createExecutionContext());
+    expect(response.status).toBe(401);
+  });
+});

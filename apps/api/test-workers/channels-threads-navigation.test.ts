@@ -156,6 +156,7 @@ async function publish(
   workstreamId: WorkstreamId,
   effects: readonly ParentEffect[],
   substreamId?: string,
+  sourceVersion = 1,
 ): Promise<void> {
   await workspace().applyWorkstreamDirectoryEffects({
     workspaceId: WORKSPACE_ID,
@@ -170,7 +171,7 @@ async function publish(
       generation: 1,
       messageId: messageId(),
       partitionKey: effect.kind === "directory_user" ? `user:${effect.userId}` : "common",
-      sourceVersion: 1,
+      sourceVersion,
       requiredProjectionVersion: null,
       payloadHash: conversationEffectHash(effect),
       effect,
@@ -262,6 +263,18 @@ describe("Channel feed", () => {
     ]);
     // The owner opens both, so neither is locked for them.
     expect((await feed(channelId, OWNER)).items.map((item) => item.kind)).toEqual(["thread", "thread"]);
+  });
+});
+
+describe("Channel feed for a guest", () => {
+  it("given a guest added to one thread in a Channel, when they read its feed, then they see that thread and no locked rows", async () => {
+    const channelId = await channelWithThreads();
+    await publish(OPEN_THREAD, [viewerEffect(GUEST)]);
+
+    const page = await feed(channelId, GUEST);
+
+    expect(page.items.map((item) => item.kind === "thread" ? ["thread", item.thread.id] : ["locked", item.threadId]))
+      .toEqual([["thread", OPEN_THREAD]]);
   });
 });
 
@@ -530,6 +543,48 @@ describe("pins", () => {
         { kind: "thread", id: OPEN_THREAD, parentId: null },
       ],
     });
+  });
+
+  it("given a breakout private to its owner, when a member pins it, then it is refused until they are in it, and only under its own thread", async () => {
+    await channelWithThreads();
+    await publish(OPEN_THREAD, [breakoutEffect("Side work"), viewerEffect(OWNER)], BREAKOUT);
+    const pinBreakout = (parentId: WorkstreamId) => workspace().changePin({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, kind: "breakout", itemId: BREAKOUT, parentId, pinned: true,
+    });
+
+    // The member may list the thread, which is not the breakout.
+    await expect(pinBreakout(OPEN_THREAD)).resolves.toEqual({ ok: false, code: "pin_target_not_found" });
+
+    await publish(OPEN_THREAD, [viewerEffect(MEMBER)], BREAKOUT);
+    // Named under another thread, it is still not there.
+    await expect(pinBreakout(PRIVATE_THREAD)).resolves.toEqual({ ok: false, code: "pin_target_not_found" });
+    await expect(pinBreakout(OPEN_THREAD)).resolves.toEqual({
+      ok: true, pins: [{ kind: "breakout", id: BREAKOUT, parentId: OPEN_THREAD }],
+    });
+  });
+
+  it("given a private Channel, when a member who is not in it pins it, then it is refused", async () => {
+    const channelId = await channelWithThreads();
+    await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId,
+      audience: { scope: "personal", participantUserIds: [OWNER] },
+    });
+
+    await expect(workspace().changePin({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, kind: "channel", itemId: channelId, parentId: null, pinned: true,
+    })).resolves.toEqual({ ok: false, code: "pin_target_not_found" });
+  });
+
+  it("given a pinned thread made private, when the member reads their threads, then the pin no longer lists it", async () => {
+    await channelWithThreads();
+    await workspace().changePin({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, kind: "thread", itemId: OPEN_THREAD, parentId: null, pinned: true,
+    });
+    expect((await myThreads(MEMBER)).pinned.map((item) => item.id)).toEqual([OPEN_THREAD]);
+
+    await publish(OPEN_THREAD, [threadEffect("Cold outreach", { scope: "personal" })], undefined, 2);
+
+    expect((await myThreads(MEMBER)).pinned).toEqual([]);
   });
 
   it("given pins in several old Spaces and an arranged order, when migration 97 copies them, then each thread is pinned once in the arranged order", async () => {
