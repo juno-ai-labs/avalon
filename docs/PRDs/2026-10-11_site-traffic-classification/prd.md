@@ -159,7 +159,7 @@ inference or undocumented Cloudflare or browser behaviour; see
 | 4 | `declared_bot` | edge | a self-declared crawler, preview fetcher or HTTP library pattern matches the UA | class | confirmed |
 | 4 | `headless_ua` | edge | `HeadlessChrome` in the UA or `Sec-CH-UA` | hard | confirmed |
 | 4 | `signed_agent` | edge | `Signature-Agent` header present (Web Bot Auth) | class | confirmed |
-| 5 | `untrusted_input` | page | any pointer, touch, key or wheel event with `isTrusted === false` | hard | confirmed |
+| 5 | `untrusted_input` | page | any pointer, touch, key or wheel event with `isTrusted === false` | soft (browser extensions fire synthetic input) | confirmed |
 | 5 | `swipe_no_scroll` | page | mostly vertical touch travel on a scrollable page and the page did not move | soft | mechanism confirmed; threshold open |
 | 6 | `webdriver` | page | `navigator.webdriver` is true | hard | confirmed |
 | 6 | `automation_globals` | page | Playwright's `__playwright__binding__` or `__pwInitScripts` exists | hard | confirmed |
@@ -180,7 +180,7 @@ First match wins.
 | Class | Rule |
 |---|---|
 | `declared_bot` | `declared_bot` or `signed_agent` |
-| `automated` | any hard code, or two soft codes from different layers (edge, page start, page leave) |
+| `automated` | any hard code, or two soft codes from different groups: network, path (transport and time zone, which one corporate proxy or VPN moves together), headers, engine, behavior |
 | `datacenter` | `hosting_network` alone |
 | `human` | trusted touch, pointer, wheel or key input that produced a consequence (the page scrolled, or a link or control activated) while visible |
 | `unverified` | anything else: JavaScript ran, nothing a person did was seen |
@@ -352,8 +352,9 @@ soft to hard.
 - Playwright Chromium emulating an iPhone on a cloud VM with an LA timezone is
   `automated`, with at least `engine_mismatch`, `hosting_network` and
   `tz_offset_mismatch`.
-- A page whose only input is script-dispatched touch events is `automated`
-  with `untrusted_input`.
+- A page whose only input is script-dispatched touch events, from a cloud
+  network, is `automated` with `hosting_network` and `untrusted_input`; from a
+  home connection it stays `unverified`, since extensions fire such events too.
 - `curl` against bootstrap is `declared_bot` or `automated` with `origin_bad`.
 - An iCloud Private Relay visitor is never `datacenter`.
 - No event in PostHog or D1 contains an ASN, network name, IP, user agent,

@@ -29,54 +29,26 @@ The events it rides on belong to [public-site telemetry](public-site-telemetry.m
 
 ## How it works
 
-1. **Page start.** Before bootstrap the page runs `pageStartSignals()`:
-   `webdriver`, `automation_globals` (Playwright's injected globals), and
-   `engine_mismatch` (an iOS user agent on a page that runs V8 or exposes
-   `navigator.userAgentData`; every iOS browser runs WebKit). It sends those
-   codes and its IANA time zone in the bootstrap body.
+1. **Page start.** Before bootstrap the page runs `pageStartSignals()` and
+   sends those codes and its IANA time zone in the bootstrap body.
 2. **Edge.** The bootstrap route runs `edgeTrafficSignals` on the request:
-   - `declared_bot`: empty user agent, a crawler or preview fetcher naming
-     itself, or an HTTP library leading the user agent.
-   - `signed_agent`: a `Signature-Agent` header (Web Bot Auth).
-   - `headless_ua`: `HeadlessChrome` in the user agent or `Sec-CH-UA`.
-   - `origin_bad`: `Origin` missing or not in `ALLOWED_ORIGINS`.
-   - `fetch_metadata_bad`: `Sec-Fetch-*` present with values a browser never
-     sends for this fetch (`cors`, `empty`, `same-site` or `cross-site`).
-   - `accept_language_bad`: missing or `*`.
-   - `ch_contradiction`: client hints under a Safari, Firefox or iOS user agent,
-     none of which send them.
-   - `hosting_network` / `private_relay`: `cf.asn` against the two sets.
-   - `transport_legacy`: HTTP/1.x or TLS below 1.3 under a browser user agent.
-   - `tz_offset_mismatch`: the page's and `cf.timezone`'s current UTC offsets
-     differ by 60 minutes or more.
-   - `x_in_app`: X's app token in the user agent. Context only.
+   its network, headers and transport, and the page's time zone against the
+   address's.
 3. **Capability.** Edge and start codes, sorted and deduplicated, go into the
    signed capability's `traffic` claim. Nothing else about the request is kept.
-4. **Page leave.** `watchPageInput()` reports `human_input` (a scroll that
-   begins within a second of a trusted press, touch, key or wheel, or a
-   trusted click on a link or control; pointer movement alone never counts),
-   `untrusted_input` (any input event with `isTrusted === false`),
-   `swipe_no_scroll` (a vertical swipe, away from the screen edges, on a page
-   that could move that way, and no scroll within 500 ms) and `never_visible`.
+4. **Page leave.** `watchPageInput()` reports what the visitor's input did, as
+   `pageSignals` on `site_page_left`.
 5. **Acceptance.** `withTrafficClass` merges the capability's codes with a page
    leave's `pageSignals`, runs `classifySiteTraffic`, and writes `trafficClass`
-   and `trafficReasons` over whatever the page sent.
+   and `trafficReasons` over whatever the page sent, dropping `pageSignals`.
 
-`classifySiteTraffic` is a precedence rule, first match wins:
-
-| Class | Rule |
-|---|---|
-| `declared_bot` | `declared_bot` or `signed_agent` |
-| `automated` | any hard code (`headless_ua`, `origin_bad`, `fetch_metadata_bad`, `webdriver`, `automation_globals`, `untrusted_input`), or soft codes from two different groups |
-| `datacenter` | `hosting_network` |
-| `human` | `human_input` |
-| `unverified` | anything else |
-
-Soft groups: network (`hosting_network`), headers (`transport_legacy`,
-`accept_language_bad`, `ch_contradiction`), clock (`tz_offset_mismatch`),
-engine (`engine_mismatch`), behavior (`swipe_no_scroll`). Two codes from one
-group are one piece of evidence: a corporate proxy trips several header codes
-at once.
+What each code checks is commented beside it in `apps/api/src/telemetry/site-traffic.ts`
+and `apps/site/src/traffic-signals.ts`; the code lists are in the contract. The
+class rule is the `HARD` and `SOFT_GROUP` tables and `classifySiteTraffic` in
+`site-traffic.ts`: first match wins, from `declared_bot` through `automated`
+(any hard code, or soft codes from two groups), `datacenter`, `human` and
+`unverified`. Those tables are the source of truth; this document does not
+repeat them.
 
 A pageview carries the class its bootstrap earned, which can never be `human`:
 it is accepted before the visitor has done anything, and an accepted event is
@@ -122,8 +94,11 @@ analysis outside this module.
   another code catches them. Catching them needs fingerprinting, which this
   module refuses.
 - **Residential proxies** pass the network check.
-- **Cloudflare's own network** is on the Private Relay list, so a script
-  running on Cloudflare Workers or WARP is exempt from the hosting check.
+- **Cloudflare's own network** is labelled Private Relay and is not on the
+  hosting list, so a script running on Cloudflare Workers or WARP is never
+  `datacenter`.
+- **Browser extensions** fire synthetic input, so `untrusted_input` is soft
+  and needs a second, independent code.
 - **No page leave** (a killed webview, a crash) leaves the pageview's class,
   which is at best `unverified`.
 - **Tabs opened before deploy** send no start codes and no time zone; their
