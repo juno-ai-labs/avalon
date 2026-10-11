@@ -31,7 +31,7 @@ A teammate, or an invitation email, may give you a personal link that looks like
 - A link that came with an invitation stops working if that invitation is cancelled, declined or replaced by a newer one.
 - If the download breaks halfway, start it again from the button. It cannot pick up where it left off.
 
-If the page says **This link is incomplete or invalid. Ask the sender for a new link.**, do exactly that. The same goes for a link that has been used up or has expired. If the page says it is busy or the installer is briefly unavailable, wait a moment and use its retry button. If nothing works, the public **Download for Mac** button on [rallywith.ai](https://rallywith.ai) gets you the same app.
+If the page says **This link is incomplete or invalid. Ask the sender for a new link.**, do exactly that. The same goes for a link that has been used up or has expired. If the page says it is busy or the installer is briefly unavailable, wait a moment and use its retry button. If nothing works, the public **Download the macOS app** button below the headline on [rallywith.ai](https://rallywith.ai) gets you the same app.
 
 ## The introduction
 
