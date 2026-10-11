@@ -3,6 +3,8 @@ import type { ActivityItem, ConversationAccessRequestItem, PinKind, SpaceSummary
 import { SpaceIcon } from '@rally/ui/components/space-icon';
 import { markColors } from '@rally/ui/lib/project-palette';
 import {
+  IconArrowDown,
+  IconArrowUp,
   IconArrowsSort,
   IconBell,
   IconCancel,
@@ -372,8 +374,14 @@ interface PinMoves {
 function PinMoveItems({ moves }: { moves: PinMoves | undefined }): React.JSX.Element | null {
   if (!moves || (!moves.up && !moves.down)) return null;
   return <>
-    {moves.up && <ContextMenu.Item className="menu-item" onSelect={moves.up}>Move up</ContextMenu.Item>}
-    {moves.down && <ContextMenu.Item className="menu-item" onSelect={moves.down}>Move down</ContextMenu.Item>}
+    {moves.up && <ContextMenu.Item className="menu-item" onSelect={moves.up}>
+      <IconArrowUp aria-hidden="true" size={15} stroke={1.8} />
+      Move up
+    </ContextMenu.Item>}
+    {moves.down && <ContextMenu.Item className="menu-item" onSelect={moves.down}>
+      <IconArrowDown aria-hidden="true" size={15} stroke={1.8} />
+      Move down
+    </ContextMenu.Item>}
   </>;
 }
 
