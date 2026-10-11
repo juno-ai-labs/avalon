@@ -34,10 +34,11 @@ export const HOSTING_ASNS: ReadonlySet<number> = new Set([
 ]);
 
 /**
- * The networks iCloud Private Relay egresses through. A relay visitor is a
- * person on an iPhone or Mac whose address Apple has swapped, so these never
- * count as hosting. Cloudflare's network also carries WARP and Workers, so a
- * script running there is exempted too; that miss is accepted.
+ * The networks iCloud Private Relay egresses through, labelled `private_relay`
+ * as context. None is in `HOSTING_ASNS`, so a relay visitor (a person whose
+ * address Apple has swapped) is never `datacenter`; keep it that way when the
+ * hosting list grows. Cloudflare's network also carries WARP and Workers, so
+ * a script running there is never `datacenter` either; that miss is accepted.
  */
 export const PRIVATE_RELAY_ASNS: ReadonlySet<number> = new Set([
   36183, // Akamai, Private Relay

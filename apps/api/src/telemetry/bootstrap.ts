@@ -55,7 +55,9 @@ const CLASSIFIED_SITE_EVENTS = new Set(["site_page_viewed", "site_page_left"]);
  */
 function withTrafficClass(event: TelemetryEnvelope, traffic: readonly SiteTrafficReason[]): TelemetryEnvelope {
   if (event.source !== "site" || !CLASSIFIED_SITE_EVENTS.has(event.name)) return event;
-  const pageSignals = event.properties["pageSignals"];
+  // The page's input facts are merged into the reasons, so they are not kept
+  // twice: `trafficReasons` is the one property to query.
+  const { pageSignals, ...properties } = event.properties;
   const reasons = normalizedTrafficReasons([
     ...traffic,
     ...(Array.isArray(pageSignals) ? pageSignals as SiteTrafficReason[] : []),
@@ -63,7 +65,7 @@ function withTrafficClass(event: TelemetryEnvelope, traffic: readonly SiteTraffi
   return {
     ...event,
     properties: {
-      ...event.properties,
+      ...properties,
       trafficClass: classifySiteTraffic(reasons),
       trafficReasons: reasons,
     },
