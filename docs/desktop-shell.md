@@ -28,6 +28,7 @@ a thread or a breakout opens, or who owns the right panel.
 | `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the section switcher (Threads, Channels, Activity), the account menu under it, and the three lists with their Pinned sections, sort, and drag to reorder. |
 | `apps/desktop/src/renderer/screens/channel.tsx` | The Channel screen: its pill and menu, the feed of threads with locked rows, the composer, and `ChannelStack`, the first two panes of the stack ([`pane-stack.md`](pane-stack.md)). |
 | `apps/desktop/src/renderer/components/channel-composer.tsx` | Starting a thread from a Channel. |
+| `apps/desktop/src/renderer/lib/thread-channels.tsx` | `useThreadChannels`: the thread menu's Channels level, where a thread is added to or taken out of a Channel. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | The thread screen: the thread and breakout panes, both pills, the one-slot rule, breakout creation in the right pane, and the Channel breadcrumb once the thread has shifted left. |
 | `apps/desktop/src/renderer/lib/navigation-routes.ts` | `channelRoute`, `threadRoute`, `homeChannelId`, and the context a thread pane reads its Channel from. |
 | `packages/ui/src/styles/app.css` | The "Single sidebar", "Title pills", "Breakouts in the Channel" and "Split conversation" blocks. |
@@ -90,6 +91,45 @@ Opening it marks it read.
 A row opened from any list opens the thread beside one of its Channels — the
 one already open when it sits there — so a Channel is always one step back.
 
+Rows in these lists do not animate when they move: a row that changes place
+(a pin, a new activity time, a re-sort) is simply drawn in its new slot. The
+old sidebar's list motion ([`list-motion.md`](list-motion.md)) was not carried
+over.
+
+### The Channel screen
+
+`screens/channel.tsx` draws a Channel: its pill and menu at the top, a feed of
+its threads, and a composer at the foot.
+
+- **Feed.** `GET /spaces/:id/feed`, newest nearest the composer; it opens at
+  the newest row and stays there as threads arrive unless the reader has
+  scrolled up, and **Show earlier threads** loads the next page without moving
+  what they were reading. Each row is who started the thread and when, its
+  description in a line or two, and one breakout-style chip that opens it
+  beside the Channel. A row the socket holds is drawn from the socket, so its
+  dot and title move live, and a thread started here a moment ago shows at
+  once.
+- **Locked rows.** A thread a member may not open shows as **Private thread**,
+  when it was placed, and a **Request access** chip, which opens the thread's
+  address, where the access request flow takes over
+  ([`channel-access-requests.md`](channel-access-requests.md)). The client holds
+  nothing else about it. A guest gets no locked rows.
+- **Composer.** `ChannelComposer` starts a thread
+  ([`workstream-creation.md`](workstream-creation.md)). A guest, and a reader
+  who reaches the Channel only through a thread in it, get no composer.
+- **Empty and failed.** An empty feed says "No threads yet. Describe the work
+  below and Rally starts a thread for it." A failed page says "The threads in
+  this channel couldn't be loaded." A Channel the person cannot see (archived,
+  made private, or access lost) is "Channel not found".
+- **Menu.** The Channel menu above. **Archive channel** asks first and says
+  which threads move to General
+  ([`spaces.md`](spaces.md#invariants)); then the window leaves for the
+  landing.
+- **Archived list.** Under the Channels list, a folded **Archived** heading
+  (**Show N**) lists archived Channels A–Z, each with **Restore**. A restore
+  brings back the threads the archive took out; any it moved to General stay
+  there too. A guest has no archived list.
+
 ### At phone width
 
 The sidebar becomes a sheet behind the list's own header, which is the top
@@ -101,9 +141,9 @@ picked.
 
 ### Title pills
 
-Every conversation pane's header is a `TitlePillHeader`: its own pill centred,
-the pane's controls at the right, and ancestors stacked at the left. A
-Channel pill's icon is its appearance picker; the rest of the pill opens its
+Every pane's header is a `TitlePillHeader`: its own pill centred, the pane's
+controls at the right, and ancestors stacked at the left. A thread pill's icon
+is its appearance picker; the rest of the pill opens its
 menu, and its chevron points right while a Breakout is open beside it. A
 Breakout pill wears the breakout arrow (`BreakoutPillIcon`) and, once its
 whole history is loaded, its reply count (`ConversationHeaderContext.replyCount`,
@@ -113,7 +153,7 @@ solid and drops its lift to the bare ring.
 
 Each menu has a root and levels. The root is a row of action tiles (Add people,
 Rename, Copy link, More), under a header on a Breakout, and one row each for People,
-Sidekicks and, on a Channel, Breakouts, with a count beside each. A row, or the
+Sidekicks and, on a thread, Breakouts and Channels, with a count beside each. A row, or the
 Add people and More tiles, opens its level in place (`useTitleMenuNav`), and the
 pill becomes a breadcrumb, the title quietened and the level after it. The
 title, Escape or the left arrow step back to the root before anything closes,
@@ -122,7 +162,7 @@ and travels the popout's width and height between them over 320ms while the
 level's rows arrive on a 22ms stagger, sliding in from the side the move came
 from; reduced motion turns both off.
 
-- **Channel menu:** no header; the tiles come first. People is a search, the
+- **Thread menu** (`ChannelMenu` in code): no header; the tiles come first. People is a search, the
   participants (members and guests), invitations still waiting, and
   suggestions to add inline (`TitleMenuPeople`). Enter in the search takes
   addresses separated by spaces, commas or semicolons: an address someone in
@@ -135,18 +175,29 @@ from; reduced motion turns both off.
   wait for them, since they decide who is already invited; a failed load
   shows **Try again**. Enter that finishes an input method's composition does
   not submit. Each participant's dots menu offers
-  **Remove from channel**, or **Leave the channel** on the reader's own row,
+  **Remove from thread**, or **Leave the thread** on the reader's own row,
   disabled for the last participant; the host confirms in a Cancel/Continue
   dialog before it removes. A waiting invitation's dots menu offers **Cancel
   invite**. Sidekicks is the Sidekick section. Breakouts
-  is the list, newest activity first, filtered past six. More is **Icon and
+  is the list, newest activity first, filtered past six. **Channels**
+  (`lib/thread-channels.tsx`) lists the Channels the thread sits in, each with
+  **Remove from this channel** (disabled on the last one, since a thread always
+  has a home), then **Add to a channel** listing every other Channel the person
+  may start a thread in, with a search past eight; a guest sees the list and
+  changes nothing. More is **Icon and
   color** (the same choice as the pill's icon), **Pinned in
   my sidebar** (the sidebar's own pin action, lent through `useUiStore.pinChannel`),
   **Public to organization** (a switch both ways; a refusal to make it private
-  names what holds it public), Import updates, host extras, the Channel's artifacts, and
-  **Archive channel** last.
-- **Breakout menu:** root header is the Channel it belongs to (with **Show in
-  channel**) and the message it started from. People (inviting to the
+  names what holds it public), Import updates, host extras, the thread's artifacts, and
+  **Archive thread** last.
+- **Channel menu** (`ChannelContainerMenu`, on the Channel screen): tiles for
+  Add people, Rename and Copy link; People (the Channel's members, with
+  **Remove from channel** or **Leave the channel**) and Sidekicks (the
+  Channel's Sidekick defaults, each with **Remove from this channel**); then
+  **Private to its members**, **Pinned in my sidebar**, and **Archive channel**
+  last, which asks first.
+- **Breakout menu:** root header is the thread it belongs to (with **Show in
+  thread**) and the message it started from. People (inviting to the
   Breakout alone) and Sidekicks as above;
   More is Icon and color, **Public to organization**, and **Archive breakout** last.
 
@@ -160,12 +211,12 @@ route's `?substream=` names it and it opens in the right pane beside Main. The
 route contract is unchanged: deep links, the restored last route and search
 hits land in the pane.
 
-Each Breakout row the Channel receives carries `originTurnId` and
+Each Breakout row the thread receives carries `originTurnId` and
 `lastActivityAt` ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)).
 
-- **Origin card:** the top of a Breakout's feed shows the Channel message it
+- **Origin card:** the top of a Breakout's feed shows the thread message it
   started from as a card, with up to three messages before it, each a step
-  fainter the further back (`BreakoutOrigin`). It reads the Channel's own
+  fainter the further back (`BreakoutOrigin`). It reads the thread's own
   transcript cache, so it draws only when the origin is loaded there, and only
   above the Breakout's first message, never above a window with earlier pages.
 - **Chips:** `MessageFeed` draws a chip row after the last row of each origin
@@ -180,7 +231,7 @@ Each Breakout row the Channel receives carries `originTurnId` and
   Hovering a tick names it; pressing it opens the Breakout and scrolls Main to
   the origin. At phone width (640px and narrower) the bar is hidden, since it
   would sit on the text, and the transcript keeps even 24px side padding.
-- **Show in channel:** the Breakout menu sends Main a `scrollToTurn` request,
+- **Show in thread:** the Breakout menu sends Main a `scrollToTurn` request,
   which waits until that turn is in the loaded transcript.
 
 ### One right slot
@@ -195,20 +246,20 @@ surface only closes, fades or restores a panel it owns.
 | State | Panes |
 | --- | --- |
 | No Breakout open | `main` |
-| Breakout open, no panel | `split`: Channel, resize edge, Breakout |
-| Breakout opened a panel | `breakout`: the Breakout takes the Channel's place, the panel takes the right |
-| Channel opened a panel | `main`: the Breakout is hidden |
-| Reader cannot open Main | `breakout`, always, and no Channel pill is stacked: a Breakout grant says nothing about Main |
+| Breakout open, no panel | `split`: thread, resize edge, Breakout |
+| Breakout opened a panel | `breakout`: the Breakout takes the thread's place, the panel takes the right |
+| Thread opened a panel | `main`: the Breakout is hidden |
+| Reader cannot open Main | `breakout`, always, and no thread pill is stacked: a Breakout grant says nothing about Main |
 
 A hidden pane stays mounted, so returning to the split neither reconnects nor
-loses scroll. When the Breakout has the Channel's place, the Channel's pill
+loses scroll. When the Breakout has the thread's place, the thread's pill
 stacks at the left of the Breakout's header, and pressing its title closes the
-panel to return to the split. Opening a Breakout while the Channel holds a
+panel to return to the split. Opening a Breakout while the thread holds a
 panel closes that panel first. The split's width is device-local under
 `layoutKey(…, 'breakout-width')` and clamps both panes to the conversation
 minimum. A split too narrow for two minimums (under 848px of content) shows
 the Breakout alone instead, measured by `SplitConversationLayout` itself; its
-close button returns to the Channel.
+close button returns to the thread.
 
 ### Web links
 
@@ -258,12 +309,12 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 
 - **No `originTurnId`:** a Breakout made before origins were recorded, or a
   server older than the field, has no chip. Its tick sorts after the placed
-  ones, and it stays reachable from the Channel menu.
+  ones, and it stays reachable from the thread menu.
 - **Origin turn not loaded:** the chip draws once the page holding the turn
-  loads. Show in channel waits for it rather than fetching the range.
-- **Breakout list not answered yet:** the Channel menu says "Loading
+  loads. Show in thread waits for it rather than fetching the range.
+- **Breakout list not answered yet:** the thread menu says "Loading
   breakouts…", and there are no chips or ticks.
-- **Display counts:** the Channel menu lists six Breakouts before "Show N
+- **Display counts:** the thread menu lists six Breakouts before "Show N
   more", and the filter field appears past six. These are display choices, not
   limits.
 
@@ -307,7 +358,12 @@ back with A–Z as its default so the list still opens in the order asked for.
 
 **Consequences:** The attention count moved from a pop-out to the Threads
 button; its definition did not change. Old Space links redirect to the
-Channel they now are.
+Channel they now are. The sidebar's list motion was not carried over: rows in
+the three lists move without animating, a scope cut made to ship the switch,
+and [`list-motion.md`](list-motion.md) says what bringing it back takes. Menu
+copy follows the product words: the thread menu ends with **Archive thread**,
+a breakout's header offers **Show in thread**, and a thread menu gained a
+**Channels** level, since a thread may sit in several Channels.
 
 ### 2026-10-08 — Settings sections are a sheet at phone width
 
