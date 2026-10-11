@@ -233,7 +233,7 @@ describe("telemetry registry", () => {
       visibility: "private",
       status: "draft",
     }],
-    ["message_sent", "desktop-renderer", {
+    ["message_sent", "api", {
       workstreamId: "00000000-0000-4000-8000-000000000101",
       messageId: "00000000-0000-4000-8000-000000000103",
       visibility: "private",

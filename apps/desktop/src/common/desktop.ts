@@ -221,17 +221,6 @@ export type DesktopTelemetryProductIntent =
     status: 'draft' | 'active' | 'paused' | 'error';
   }
   | {
-    kind: 'message_sent';
-    workstreamId: string;
-    messageId?: string;
-    visibility: 'private' | 'public';
-    workstreamOrigin: 'ad_hoc' | 'automation';
-    messageKind: 'message' | 'elicitation_response';
-    attachmentCount: number;
-    mentionCount: number;
-    participantAddedCount: number;
-  }
-  | {
     kind: 'content_copied';
     contentType: 'workstream_link' | 'workstream_email' | 'workstream_id' | 'message_response' | 'code_block'
       | 'note_summary' | 'note_transcript' | 'note_id' | 'automation_email' | 'automation_id';
