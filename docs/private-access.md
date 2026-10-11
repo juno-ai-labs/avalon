@@ -315,6 +315,30 @@ or numerical retention period is configured.
 
 ## Changelog
 
+### 2026-10-11 — Pilot offer card with a per-visitor deadline
+
+**What changed:** The landing shows a pilot offer card two seconds after load:
+first four months on us, with a Sign up link into the web app. Each visitor's
+deadline is six days after the day the card first appeared in their browser,
+stored as that local date and kept on later visits; after it the card stops
+showing. The Sign up link carries the first-visit date as `pilotOfferFirstSeen`.
+
+**Why:** The product owner wanted urgency for pilot signups. A date that always
+reads six days out was asked for and declined: it is a false deadline, the kind
+the EU bans and the FTC pursues, and a returning visitor would see it move. A
+per-visitor date that is honored gives the same urgency truthfully.
+
+**Considered and rejected:** One fixed campaign end date, which an earlier
+commit in this change used; the product owner preferred a rolling window.
+Storing the first visit as an instant, which shifts the date by a day for a
+visitor who later browses from another time zone. Recording it on page load,
+which spent the window of a visitor who left before the card appeared.
+
+**What a future change must respect:** The deadline is only true if signups are
+held to it. Nothing reads `pilotOfferFirstSeen` yet; until the follow-up records
+it, every pilot who signs up through the card qualifies. Without local storage
+every visit is a first visit, so the date moves forward for that visitor.
+
 ### 2026-09-29 — Dark multi-section landing from the agency design
 
 **What changed:** Rebuilt the landing on the agency's design: a dark theme set in

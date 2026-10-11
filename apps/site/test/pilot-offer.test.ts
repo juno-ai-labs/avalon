@@ -64,6 +64,13 @@ describe('pilot offer', () => {
     expect(again.hidden).toBe(true);
   });
 
+  it('drops the card when the visitor returns to a tab left open past the deadline', async () => {
+    const card = await visit(new Date(2026, 9, 11, 9, 30));
+    vi.setSystemTime(new Date(2026, 9, 18, 8, 0));
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(card.hidden).toBe(true);
+  });
+
   it('stays away after the visitor closes it', async () => {
     const card = await visit(new Date(2026, 9, 11, 9, 30));
     card.querySelector<HTMLButtonElement>('.pilot-offer-close')!.click();
@@ -73,8 +80,11 @@ describe('pilot offer', () => {
 });
 
 describe('pilot offer close animation', () => {
-  it('stays on screen until its own exit animation ends, not an entry animation inside it', async () => {
+  beforeEach(() => {
     vi.stubGlobal('matchMedia', () => ({ matches: false }));
+  });
+
+  it('stays on screen until its own exit animation ends, not an entry animation inside it', async () => {
     const card = await visit(new Date(2026, 9, 11, 9, 30));
     card.querySelector<HTMLButtonElement>('.pilot-offer-close')!.click();
     const ended = (name: string): Event => Object.assign(new Event('animationend', { bubbles: true }), { animationName: name });
