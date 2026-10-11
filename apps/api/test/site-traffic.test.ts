@@ -45,14 +45,21 @@ describe('site traffic classification', () => {
     [['human_input'], 'human'],
     [['declared_bot', 'human_input'], 'declared_bot'],
     [['signed_agent'], 'declared_bot'],
-    [['untrusted_input', 'human_input'], 'automated'],
+    // Extensions fire synthetic input into real people's pages, so it needs a partner.
+    [['untrusted_input', 'human_input'], 'human'],
+    [['untrusted_input', 'swipe_no_scroll'], 'unverified'],
+    [['hosting_network', 'untrusted_input'], 'automated'],
     [['origin_bad'], 'automated'],
     [['hosting_network', 'human_input'], 'datacenter'],
     [['hosting_network', 'tz_offset_mismatch'], 'automated'],
     [['hosting_network', 'swipe_no_scroll'], 'automated'],
-    // Two soft codes that observe the same thing are still one piece of evidence.
-    [['transport_legacy', 'accept_language_bad', 'human_input'], 'human'],
+    // Two soft codes from one source are still one piece of evidence.
+    [['accept_language_bad', 'ch_contradiction', 'human_input'], 'human'],
+    // An old transport with no language header is a script's request, not a proxy's.
+    [['transport_legacy', 'accept_language_bad', 'human_input'], 'automated'],
     [['tz_offset_mismatch', 'human_input'], 'human'],
+    // A corporate proxy on a VPN downgrades the transport and moves the time zone at once.
+    [['transport_legacy', 'tz_offset_mismatch', 'human_input'], 'human'],
     [['private_relay', 'x_in_app', 'never_visible'], 'unverified'],
   ])('classifies %j as %s', (reasons, expected) => {
     expect(classifySiteTraffic(reasons)).toBe(expected);
@@ -205,5 +212,7 @@ describe('site traffic through bootstrap and acceptance', () => {
     });
     expect(stored.site_page_viewed).toMatchObject({ trafficClass: 'unverified', trafficReasons: [] });
     expect(stored.site_page_left).toMatchObject({ trafficClass: 'human', trafficReasons: ['human_input'] });
+    // Merged into the reasons, not kept twice.
+    expect(stored.site_page_left).not.toHaveProperty('pageSignals');
   });
 });

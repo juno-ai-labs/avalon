@@ -11,21 +11,26 @@ const HARD: ReadonlySet<SiteTrafficReason> = new Set([
   "fetch_metadata_bad",
   "webdriver",
   "automation_globals",
-  "untrusted_input",
 ]);
 
 /**
- * Codes with a known population of innocent triggers (VPNs, travellers,
- * corporate proxies, carousels), grouped by what they observe. Two from
- * different groups make a visit `automated`; one alone never does.
+ * Codes with a known population of innocent triggers, grouped by what produces
+ * them. Two from different groups make a visit `automated`; one alone, or
+ * several from one group, never does.
+ *
+ * - path: a corporate proxy or VPN downgrades the transport and moves the
+ *   address's time zone at once, so the two are one piece of evidence.
+ * - behavior: browser extensions (password managers, writing tools) fire
+ *   synthetic input into the page, and carousels swallow swipes.
  */
 const SOFT_GROUP: Readonly<Partial<Record<SiteTrafficReason, string>>> = {
   hosting_network: "network",
-  transport_legacy: "headers",
+  transport_legacy: "path",
+  tz_offset_mismatch: "path",
   accept_language_bad: "headers",
   ch_contradiction: "headers",
-  tz_offset_mismatch: "clock",
   engine_mismatch: "engine",
+  untrusted_input: "behavior",
   swipe_no_scroll: "behavior",
 };
 
