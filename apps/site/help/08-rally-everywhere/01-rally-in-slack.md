@@ -185,8 +185,8 @@ settings (**Integrations → Add apps**).
 
 When Rally joins, it creates a matching [Channel](../03-spaces-and-breakouts/01-spaces.md)
 in your Organization for that Slack room, and posts one line: "Rally is here.
-Mention @Rally in a thread to start work on it; each thread becomes a thread in
-this conversation's Rally channel." From then on, every Slack thread where
+Mention @Rally in a Slack thread to start work on it; each Slack thread becomes
+its own Rally thread in the Rally channel linked to this conversation." From then on, every Slack thread where
 someone mentions Rally becomes its own Thread inside that Channel, one Thread
 per job.
 

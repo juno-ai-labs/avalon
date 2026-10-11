@@ -114,7 +114,7 @@ function fixture(options: {
     prompts.push({
       system: request.messages.find((message) => message.role === "system")?.content ?? "",
       user: request.messages.find(
-        (message) => message.role === "user" && message.content.includes("WORK STREAM UNDER REVIEW"),
+        (message) => message.role === "user" && message.content.includes("THREAD UNDER REVIEW"),
       )?.content ?? "",
     });
     const resolved = typeof proposal === "function" ? proposal() : proposal;
