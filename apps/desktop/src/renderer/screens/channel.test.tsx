@@ -19,7 +19,9 @@ vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session: nul
 const spaces = vi.hoisted(() => ({ data: undefined as unknown }));
 vi.mock('../lib/use-space-directories', () => ({ useSpaceDirectories: () => ({ active: spaces, inactive: { data: undefined } }) }));
 vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ data: [] }) }));
-vi.mock('../components/channel-composer', () => ({ ChannelComposer: () => <div>composer</div> }));
+vi.mock('../components/channel-composer', () => ({
+  ChannelComposer: ({ threadOpen }: { threadOpen?: boolean }) => <div data-thread-open={String(threadOpen)}>composer</div>,
+}));
 vi.mock('./workstream', () => ({ WorkstreamScreen: () => <div>thread pane</div> }));
 
 const workspace: Workspace = {
@@ -96,6 +98,22 @@ describe('a Channel', () => {
     expect(await screen.findByText('thread pane')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Request access' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/secret');
+  });
+
+  it('hands the composer focus and paste back while a thread is open beside it', async () => {
+    renderChannel();
+    expect(await screen.findByText('composer')).toHaveAttribute('data-thread-open', 'false');
+    fireEvent.click(await screen.findByRole('button', { name: 'Q4 plan' }));
+    expect(await screen.findByText('composer')).toHaveAttribute('data-thread-open', 'true');
+  });
+
+  it('names somebody it cannot look up as someone, not Rally', async () => {
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [
+      { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, createdByUserId: 'gone' } },
+    ] });
+    renderChannel();
+    const feed = within(await screen.findByRole('list', { name: 'Threads in Outbound' }));
+    expect((await feed.findAllByRole('listitem'))[0]).toHaveTextContent('Someone');
   });
 
   it('offers no composer to somebody who reaches the Channel only through a thread in it', async () => {

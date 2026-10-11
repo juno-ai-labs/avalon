@@ -1,6 +1,7 @@
 import { asSubstreamId, asWorkspaceId, asWorkstreamId, MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useMemo, useRef, useState } from 'react';
+import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import { useNavigate } from 'react-router-dom';
 
 import { logError } from '../../common/logger';
@@ -87,14 +88,21 @@ function launchedThreadDetail(
  * a private one it is visible only to the person who started it and whoever
  * they mention (`resolveSpaceWorkstreamStart` on the server decides).
  */
-export function ChannelComposer({ channelId, channelName, channelScope, workspace }: {
+export function ChannelComposer({ channelId, channelName, channelScope, threadOpen = false, workspace }: {
   channelId: string;
   channelName: string;
   /** A private Channel's threads start private; an Organization-wide one's, Organization-wide. */
   channelScope: 'personal' | 'workspace';
+  /**
+   * A thread is open beside this Channel. That thread's composer is where the
+   * person is writing, so this one neither takes focus nor claims a paste: a
+   * reply typed or pasted there would otherwise start a new thread here.
+   */
+  threadOpen?: boolean;
   workspace: Workspace;
 }): React.JSX.Element {
   const { api } = useAppSession();
+  const visible = useContext(ConversationVisibilityContext);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -103,7 +111,7 @@ export function ChannelComposer({ channelId, channelName, channelScope, workspac
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const [tooLong, setTooLong] = useState(false);
   const attachmentDraft = useFileAttachments(api, draftKey);
-  useWindowFilePaste(attachmentDraft.addFiles);
+  useWindowFilePaste(attachmentDraft.addFiles, !visible || threadOpen);
   const members = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
@@ -270,7 +278,7 @@ export function ChannelComposer({ channelId, channelName, channelScope, workspac
           api={api ?? undefined}
           ariaLabel={`Start a thread in ${channelName}`}
           attachments={attachmentDraft.attachments}
-          autoFocus
+          autoFocus={!threadOpen}
           draftKey={draftKey}
           error={(tooLong ? MESSAGE_TOO_LONG_MESSAGE : undefined) ?? create.error?.message ?? attachmentDraft.error}
           fileInputRef={fileInputRef}
