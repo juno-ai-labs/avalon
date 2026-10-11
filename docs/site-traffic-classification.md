@@ -52,8 +52,9 @@ The events it rides on belong to [public-site telemetry](public-site-telemetry.m
    - `x_in_app`: X's app token in the user agent. Context only.
 3. **Capability.** Edge and start codes, sorted and deduplicated, go into the
    signed capability's `traffic` claim. Nothing else about the request is kept.
-4. **Page leave.** `watchPageInput()` reports `human_input` (a trusted input
-   followed by a scroll, or a trusted click on a link or control),
+4. **Page leave.** `watchPageInput()` reports `human_input` (a scroll that
+   begins within a second of a trusted press, touch, key or wheel, or a
+   trusted click on a link or control; pointer movement alone never counts),
    `untrusted_input` (any input event with `isTrusted === false`),
    `swipe_no_scroll` (a vertical swipe, away from the screen edges, on a page
    that could move that way, and no scroll within 500 ms) and `never_visible`.
@@ -77,9 +78,12 @@ engine (`engine_mismatch`), behavior (`swipe_no_scroll`). Two codes from one
 group are one piece of evidence: a corporate proxy trips several header codes
 at once.
 
-A pageview carries the class its bootstrap earned, which can never be `human`.
-The page leave carries the final class. A visit with no page leave keeps the
-pageview's.
+A pageview carries the class its bootstrap earned, which can never be `human`:
+it is accepted before the visitor has done anything, and an accepted event is
+never rewritten. The page leave carries the final class. **Count visits by class
+from `$pageleave`**, and add pageviews whose session has no page leave under
+their own (at best `unverified`) class. A chart of `$pageview` by
+`trafficClass` alone shows no humans by construction.
 
 ## Invariants
 
@@ -97,8 +101,9 @@ pageview's.
   travellers, proxies, carousels). Promoting a code to hard is a table edit
   that needs evidence from the PRD's validation plan.
 - **`human` needs a consequence.** Input injected by a page script is
-  untrusted, but a script can scroll the page itself; requiring a trusted input
-  before the scroll closes that route.
+  untrusted, but a script or the browser can scroll the page itself. Only a
+  scroll that begins within `SCROLL_AFTER_INPUT_MS` of a trusted, deliberate
+  input counts; an input long past vouches for nothing.
 
 ## Boundary
 
@@ -152,7 +157,7 @@ falls back to edge codes.
 
 The numbers below are starting points the team owns, not measurements:
 the hosting ASN list, the 60-minute time zone gap, the 30 px swipe, the 24 px
-edge margin and the 500 ms scroll wait. The Cookie Notice still describes
+edge margin, the 500 ms swipe scroll wait and the 1 s input-to-scroll window. The Cookie Notice still describes
 request signals as used "to prevent abuse", not to label analytics.
 
 ## Changelog
