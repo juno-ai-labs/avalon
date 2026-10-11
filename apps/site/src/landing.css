@@ -289,8 +289,7 @@ h1{white-space:pre-line;max-width:56rem;margin:0 auto;font-size:4.5rem}
 .pilot-offer-close{position:absolute;top:12px;right:12px;z-index:1;display:grid;place-items:center;width:32px;height:32px;padding:0;border:0;border-radius:2px;background:none;color:var(--muted);cursor:pointer;transition:color .15s,background .15s}
 .pilot-offer-close:hover{color:var(--paper);background:var(--wash)}
 .pilot-offer-close:focus-visible{outline:2px solid var(--paper);outline-offset:2px}
-.pilot-offer-eyebrow{display:flex;padding-right:32px;align-items:center;gap:10px;font-family:var(--mono);font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:oklch(.78 .12 160)}
-.pilot-offer-eyebrow::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;box-shadow:0 0 0 4px oklch(.5 .12 160/.25)}
+.pilot-offer-eyebrow{padding-right:32px;font-family:var(--mono);font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:oklch(.78 .12 160)}
 .pilot-offer-title{margin-top:18px;font-size:40px;line-height:.95}
 .pilot-offer-title em{display:block;font-style:normal;color:oklch(.78 .12 160)}
 .pilot-offer-body{margin-top:14px;font-size:var(--small);line-height:1.6;color:var(--soft)}
