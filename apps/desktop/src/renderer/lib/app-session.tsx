@@ -1031,7 +1031,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         return activeSession;
       };
       if (intent.kind === 'new-workstream') {
-        if (!requireActiveWorkspace('Sign in before starting a channel.')) return;
+        if (!requireActiveWorkspace('Sign in before starting a thread.')) return;
         setDeepLinkError(null);
         markSurfaceEntrypoint(navigation.entrypoint);
         // A Channel is started from a Space, which this link does not name, so
@@ -1046,7 +1046,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           window.location.hash = `/spaces/${intent.spaceId}`;
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openSpace);
-        else if (requireActiveWorkspace('Sign in before opening this Space link.')) openSpace();
+        else if (requireActiveWorkspace('Sign in before opening this channel link.')) openSpace();
         return;
       }
       if (intent.kind === 'workstream') {
@@ -1060,7 +1060,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           window.location.hash = `/workstreams/${intent.workstreamId}${query.size ? `?${query}` : ''}`;
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openWorkstream);
-        else if (requireActiveWorkspace('Sign in before opening this channel link.')) openWorkstream();
+        else if (requireActiveWorkspace('Sign in before opening this thread link.')) openWorkstream();
         return;
       }
       if (intent.kind === 'sidekick') {

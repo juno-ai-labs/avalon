@@ -16,11 +16,11 @@ words while you make the Sidekick, and you can change it the same way.
 
 A Sidekick can deliver its work:
 
-- **into its home Channel or Breakout.** A Channel Sidekick posts into the
+- **into its home Thread or Breakout.** A Thread Sidekick posts into the
   conversation it belongs to unless you tell it otherwise. "Post the summary
   here" is all it takes.
 - **into other conversations you attach to it.** Ask the drafting assistant
-  to attach another Channel, and the Sidekick can post there too.
+  to attach another Thread, and the Sidekick can post there too.
 - **out through your connected tools.** "Send me a Slack DM", "email the
   team", "add a comment to the Linear issue". Anything Rally can do with a
   connected tool, a run can do (see

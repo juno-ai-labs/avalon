@@ -107,7 +107,7 @@ Write like a person who likes the reader and has used the product a lot.
   row, never in a warning or anything about data, privacy, money or access.
   The joke has to be about the thing on the page.
 - **Name things exactly as the app does.** Bold UI labels: **Settings →
-  Connections**. Use today's names: Organization, Space, Channel, Breakout,
+  Connections**. Use today's names: Organization, Channel, Thread, Breakout,
   Sidekick.
 - **Say what happens, then why it matters.** Every feature gets: what it is,
   why you'd want it, how to do it, and what to watch out for.

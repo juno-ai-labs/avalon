@@ -5058,7 +5058,7 @@ async function openBrowserImportWindow(context: BrowserImportContext): Promise<v
     minHeight: 560,
     show: false,
     backgroundColor: windowBackgroundColor(),
-    title: 'Import Channel',
+    title: 'Import Thread',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 18, y: 17 },
     ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),

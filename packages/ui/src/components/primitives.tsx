@@ -356,15 +356,15 @@ export function StatusDot({
 const socketStateCopy: Record<SocketState, { label: string; description: string }> = {
   idle: {
     label: 'Live updates are loading',
-    description: 'Live updates are waiting for this channel to load.',
+    description: 'Live updates are waiting for this thread to load.',
   },
   connecting: {
     label: 'Connecting to live updates',
-    description: 'Rally is connecting to live channel updates.',
+    description: 'Rally is connecting to live thread updates.',
   },
   connected: {
     label: 'Live updates connected',
-    description: 'Live channel updates are connected.',
+    description: 'Live thread updates are connected.',
   },
   reconnecting: {
     label: 'Reconnecting live updates',
@@ -463,7 +463,7 @@ export function AvatarStack({
   const present = new Set(presentUserIds);
   const named = members.map((member) => (
     present.has(member.id) && member.id !== currentUserId
-      ? `${member.name} is viewing this workstream.`
+      ? `${member.name} is viewing this thread.`
       : member.name
   ));
   if (overflow > 0) named.push(`and ${overflow} more`);
@@ -476,7 +476,7 @@ export function AvatarStack({
       {visible.map((member) => {
         const showingPresence = present.has(member.id) && member.id !== currentUserId;
         const tooltip = showingPresence
-          ? `${member.name} is viewing this workstream.`
+          ? `${member.name} is viewing this thread.`
           : member.name;
         const presenceColor = (presentations.get(member.id) ?? member.presentation)?.color;
         const item = (
@@ -666,7 +666,7 @@ export function Meter({
 export function TitleSkeleton({ className }: { className?: string }): React.JSX.Element {
   return (
     <span className={clsx('title-skeleton', className)}>
-      <span className="sr-only">Rally is naming this channel</span>
+      <span className="sr-only">Rally is choosing a name</span>
     </span>
   );
 }

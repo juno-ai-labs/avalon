@@ -92,8 +92,8 @@ behind. A voice recording is a file you keep, play again, download and share.
 
 ## Where the results go
 
-Pictures and recordings are saved as files in the Channel, the same as any
-other file Rally makes, so everyone in the Channel can open them. To preview,
+Pictures and recordings are saved as files in the Thread, the same as any
+other file Rally makes, so everyone in the Thread can open them. To preview,
 keep one open beside the chat, or save it to your Mac, see
 [Opening, docking and downloading](../06-things-rally-makes/02-opening-and-downloading.md).
 

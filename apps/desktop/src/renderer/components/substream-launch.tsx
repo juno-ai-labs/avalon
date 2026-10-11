@@ -10,6 +10,7 @@ import { useFileAttachments } from '../lib/use-file-attachments';
 import type { Message, MessageAttachment, WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { RallyRegion } from '../../common/desktop';
 import { AgentWorkTiming } from './agent-work-timing';
+import { BreakoutOrigin } from './breakout-origin';
 import { ConnectingCardSlot } from './connecting-card';
 import type { AttachmentPreview } from './attachments';
 import { IconButton, TitleSkeleton } from './primitives';
@@ -109,6 +110,14 @@ export interface SubstreamLaunchProps {
     modelOverride: AgentModelOverride | null;
   }) => Promise<void>;
   onOpenAttachment: (preview: AttachmentPreview) => void;
+  /**
+   * The origin card the created breakout opens with (`BreakoutOrigin`), drawn
+   * from the submit keystroke so the opening turn lands where the breakout
+   * will draw it.
+   */
+  origin?: { channelTitle: string; context: Message[]; origin: Message };
+  /** The created conversation's header is a title pill: a thread's breakout, not a Sidekick's. */
+  titlePill?: boolean;
   workspaceId: string;
   workspaceRegion: RallyRegion;
 }
@@ -138,7 +147,9 @@ export function SubstreamLaunchSurface({
   onCancel,
   onCreate,
   onOpenAttachment,
+  origin,
   sendBlocked = false,
+  titlePill = false,
   workspaceId,
   workspaceRegion,
 }: SubstreamLaunchProps): React.JSX.Element {
@@ -236,20 +247,31 @@ export function SubstreamLaunchSurface({
     : null;
 
   return <>
-    <header className="launch-header workstream-header window-drag">
-      {launching && (
-        <div className="workstream-header-left window-no-drag">
-          <div className="workstream-title-block">
-            {/* The same skeleton the created substream shows while the naming
-                pass answers, so the header does not change hands at the swap:
-                it is already waiting for the same name. */}
-            <div className="workstream-title-line">
-              <h1><TitleSkeleton className="title-skeleton-header" /></h1>
+    {launching && titlePill ? (
+      // The pill a starting thread shows (`ConversationOpeningSkeleton`), in
+      // the 64px row the created breakout's title pill sits in, so the header
+      // neither moves nor changes shape when the breakout takes over.
+      <header className="launch-header title-pill-header window-drag conversation-opening-header">
+        <div className="title-pill-ancestors" />
+        <div className="title-pill-current"><span className="skeleton-bar title-pill-skeleton" /></div>
+        <div className="title-pill-trailing" />
+      </header>
+    ) : (
+      <header className="launch-header workstream-header window-drag">
+        {launching && (
+          <div className="workstream-header-left window-no-drag">
+            <div className="workstream-title-block">
+              {/* The same skeleton the created substream shows while the naming
+                  pass answers, so the header does not change hands at the swap:
+                  it is already waiting for the same name. */}
+              <div className="workstream-title-line">
+                <h1><TitleSkeleton className="title-skeleton-header" /></h1>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </header>
+        )}
+      </header>
+    )}
 
     <div className="launch-body">
       <div className="launch-transcript-layer transcript-scroll">
@@ -261,7 +283,8 @@ export function SubstreamLaunchSurface({
               the created child holds: leaving the turns in it — collapsing,
               faded, or inert — leaves the opening turn displaced by whatever
               height they still have, and creation can finish before any
-              transition does. */}
+              transition does. What the child holds includes its origin card,
+              so that takes their place on the keystroke. */}
           {launching === null && draft.provenance.length > 0 && (
             <section aria-label="Branching from" className="substream-branch-context">
               {draft.provenance.map((message) => (
@@ -275,6 +298,9 @@ export function SubstreamLaunchSurface({
                 />
               ))}
             </section>
+          )}
+          {launching && origin && (
+            <BreakoutOrigin channelTitle={origin.channelTitle} context={origin.context} origin={origin.origin} />
           )}
           {openingTurn && (
             <div className="launch-arrival" style={{ '--arrival-index': 0 } as React.CSSProperties}>

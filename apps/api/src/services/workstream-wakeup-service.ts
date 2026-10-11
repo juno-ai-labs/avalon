@@ -101,7 +101,7 @@ export function canonicalWakeupTimezone(timezone: string): string {
     throw new WakeupInputError(
       "wakeup_timezone_invalid",
       `Invalid IANA timezone: ${timezone}`,
-      "Pass an IANA timezone such as America/Los_Angeles, or omit timezone to use this work stream's local zone.",
+      "Pass an IANA timezone such as America/Los_Angeles, or omit timezone to use this thread's local zone.",
     );
   }
 }

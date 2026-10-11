@@ -4062,12 +4062,13 @@ describe('useWorkstreamSocket', () => {
       createdAt: '2026-08-06T05:00:00.000Z',
     });
     // Cross-workstream serving belongs to the WorkspaceDO socket. A substream
-    // recovery invalidates that query but never merges a parallel REST list.
+    // recovery patches this row and leaves the list to that socket: it neither
+    // merges a parallel REST list nor walks every Space again.
     expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([{
       ...cachedSummary,
       harnessStatus: 'running',
     }]);
-    expect(queryClient.getQueryState(['workstreams'])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(['workstreams'])?.isInvalidated).toBe(false);
   });
 
   it('pushes a status change into the sidebar list without waiting for a refetch', async () => {

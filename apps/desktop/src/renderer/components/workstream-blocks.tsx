@@ -2005,7 +2005,7 @@ function DraftProposedCard({
   failed?: boolean | undefined;
 }): React.JSX.Element {
   const scope = detail.suggestedScope === 'workstream'
-    ? 'This channel'
+    ? 'This thread'
     : detail.suggestedScope === 'workspace' ? 'The organization' : 'You';
   return (
     <div className="system-message automation-draft-card" id={`message-${messageId}`} role="group">

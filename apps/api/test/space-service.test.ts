@@ -358,11 +358,25 @@ describe("Space refusals", () => {
       status: 409,
       message: expect.stringContaining("1 of its readers"),
     });
-    // Without a name in hand the sentence says "this Space" rather than
+    // Without a name in hand the sentence says "this channel" rather than
     // rendering an empty pair of quotation marks.
-    expect(spaceRefusal("space_membership_final", "").message).toContain("this Space");
+    expect(spaceRefusal("space_membership_final", "").message).toContain("this channel");
     expect(spaceRefusal("space_access_denied", "Company")).toBeInstanceOf(ApiError);
     expect(spaceRefusal("space_access_denied", "Company").status).toBe(403);
     expect(spaceRefusal("space_not_found", "Company").status).toBe(404);
+  });
+});
+
+describe("SpaceService Activity read position", () => {
+  it("given a support session, when Activity is marked seen, then the person's position is not moved", async () => {
+    const markActivitySeen = vi.fn(async () => undefined);
+    const workspace = { ...workspaceDouble(), markActivitySeen };
+
+    await new SpaceService(serviceEnv({ workspace }), { ...auth(), impersonatorUserId: MEMBER })
+      .markActivitySeen(5);
+    expect(markActivitySeen).not.toHaveBeenCalled();
+
+    await new SpaceService(serviceEnv({ workspace }), auth()).markActivitySeen(5);
+    expect(markActivitySeen).toHaveBeenCalledWith({ workspaceId: WORKSPACE_ID, userId: OWNER, seenThrough: 5 });
   });
 });

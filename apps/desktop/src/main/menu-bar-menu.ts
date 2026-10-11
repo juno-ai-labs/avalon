@@ -222,7 +222,7 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
     // read, and "still loading" under rows that may not be all of them.
     const attention = [...requests, ...conversations];
     const attentionTrailing = !content.attentionComplete
-      ? 'Still loading channels'
+      ? 'Still loading threads'
       : attention.length === 0 ? 'Nothing needs your attention' : null;
     pushSection(ATTENTION_HEADER, attention, attentionTrailing);
 
@@ -230,7 +230,7 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
       label: menuBarLabel(workstream.title),
       click: tracked('recent_workstream', () => actions.openConversation(workstream.id, workstream.substreamId)),
     }));
-    pushSection(RECENT_HEADER, recents, recents.length === 0 ? 'No recent channels' : null);
+    pushSection(RECENT_HEADER, recents, recents.length === 0 ? 'No recent threads' : null);
   }
 
   pushSeparator();

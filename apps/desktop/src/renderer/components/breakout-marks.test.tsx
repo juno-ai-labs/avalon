@@ -98,7 +98,7 @@ describe('BreakoutTickBar', () => {
         openSubstreamId={openSubstreamId}
       />
     </Tooltip.Provider>);
-    return { bar: screen.getByRole('navigation', { name: 'Breakouts in this channel' }), onOpen };
+    return { bar: screen.getByRole('navigation', { name: 'Breakouts in this thread' }), onOpen };
   }
 
   it('marks the open tick as current and names a tick with news', () => {
@@ -120,7 +120,7 @@ describe('BreakoutTickBar', () => {
   it('draws nothing for a channel without breakouts', () => {
     render(<Tooltip.Provider><BreakoutTickBar breakouts={[]} onOpen={vi.fn()} openSubstreamId={null} /></Tooltip.Provider>);
 
-    expect(screen.queryByRole('navigation', { name: 'Breakouts in this channel' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: 'Breakouts in this thread' })).not.toBeInTheDocument();
   });
 });
 

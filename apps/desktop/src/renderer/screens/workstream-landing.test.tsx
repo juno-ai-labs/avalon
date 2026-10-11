@@ -1,332 +1,108 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { WorkstreamSummary } from '../lib/types';
-import { WorkstreamLandingScreen } from './workstream-landing';
+
 import { layoutKey } from '../lib/desktop-layout';
-import { useUiStore } from '../lib/ui-store';
-import type * as ConversationDirectoryModule from '../lib/conversation-directory';
+import { PINS_QUERY_KEY } from '../lib/sidebar-list-store';
+import { WorkstreamLandingScreen } from './workstream-landing';
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({
   session: { user: { id: 'person' }, workspace: { id: 'org', accessClass: 'member' } },
 }) }));
-const spaces = vi.hoisted(() => ({ data: undefined as { items: { id: string; systemRole?: string | null; channelCount?: number }[] } | undefined }));
+const spaces = vi.hoisted(() => ({
+  data: undefined as { items: { id: string; name: string; systemRole?: string | null }[] } | undefined,
+}));
 vi.mock('../lib/use-space-directories', () => ({ useSpaceDirectories: () => ({ active: spaces, inactive: { data: undefined } }) }));
-
 const socket = vi.hoisted(() => ({
   state: 'connecting',
-  sidebarConnect: null as { spacesLive: boolean; channelsBySpace?: boolean } | null,
-  loadedSpaceIds: new Set<string>(),
+  sidebarConnect: null as { spacesLive: boolean } | null,
 }));
 vi.mock('../lib/workspace-socket', () => ({ useWorkspaceSocket: () => socket }));
-
-const directory = vi.hoisted(() => ({
-  data: undefined as WorkstreamSummary[] | undefined,
-  error: null as Error | null,
-  hasMore: false,
-  isFetchingMore: false,
-  fetchMore: vi.fn(),
-}));
-const conversationDirectory = vi.hoisted(() => ({ data: undefined as unknown }));
-vi.mock('../lib/conversation-directory', async (importOriginal) => ({
-  ...await importOriginal<typeof ConversationDirectoryModule>(),
-  useConversationDirectory: () => conversationDirectory.data,
-}));
-
-vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => directory }));
-
-function stream(id: string, pinPosition: number | null, lastActivityAt: string): WorkstreamSummary {
-  return {
-    id, pinPosition, lastActivityAt, title: id, titleStatus: 'settled', scope: 'workspace',
-    harnessStatus: 'completed', latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0,
-    manualUnreadFromSequenceNumber: null, manualUnreadGeneration: 0, hasUnread: false,
-    firstUnreadSequenceNumber: null, nextPendingWakeup: null, participantUserIds: [], participantExtraCount: 0,
-    spaceIds: [],
-  };
-}
 
 function Destination(): React.JSX.Element {
   const location = useLocation();
   return <div data-testid="destination">{location.pathname}{location.search}</div>;
 }
 
-function Router({ initial = '/' }: { initial?: string | { pathname: string; state: unknown } }): React.JSX.Element {
-  return <MemoryRouter initialEntries={[initial]}><Routes>
-    <Route element={<WorkstreamLandingScreen />} path="/" />
-    <Route element={<Destination />} path="*" />
-  </Routes></MemoryRouter>;
+function Router({ initial = '/', pins = [] }: {
+  initial?: string | { pathname: string; state: unknown };
+  pins?: { kind: 'thread' | 'channel' | 'breakout'; id: string; parentId: string | null }[];
+}): React.JSX.Element {
+  const queryClient = new QueryClient();
+  queryClient.setQueryData(PINS_QUERY_KEY, pins);
+  return <QueryClientProvider client={queryClient}>
+    <MemoryRouter initialEntries={[initial]}><Routes>
+      <Route element={<WorkstreamLandingScreen />} path="/" />
+      <Route element={<Destination />} path="*" />
+    </Routes></MemoryRouter>
+  </QueryClientProvider>;
 }
 
-describe('default channel landing', () => {
+const general = { id: 'general', name: 'General', systemRole: 'general' };
+
+describe('the root landing', () => {
   beforeEach(() => {
     localStorage.clear();
     spaces.data = undefined;
-    directory.data = undefined;
-    directory.error = null;
-    directory.hasMore = false;
-    directory.fetchMore = vi.fn();
     socket.state = 'connecting';
     socket.sidebarConnect = null;
-    socket.loadedSpaceIds = new Set();
-    conversationDirectory.data = undefined;
-    useUiStore.getState().setSidebarChannelSort('recent');
   });
 
-  it('resumes the last reachable breakout and ignores a stale Channel', async () => {
-    directory.data = [stream('recent', null, '2026-09-05'), stream('saved', null, '2026-08-01')];
-    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/workstreams/saved?substream=child');
+  it('reopens the thread and breakout this device last had open', async () => {
+    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/channels/outbound/threads/plan?substream=child');
+    render(<Router />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent('/channels/outbound/threads/plan?substream=child');
+  });
+
+  it('does not reopen a thread a leaving screen names, and lands on a Channel instead', async () => {
+    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/channels/outbound/threads/left');
+    spaces.data = { items: [general] };
+    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: ['left'] } }} />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/channels\/general$/u);
+  });
+
+  it('returns a screen that just left a thread to the Channel it was in, ahead of a pin', async () => {
+    spaces.data = { items: [general, { id: 'outbound', name: 'Outbound' }, { id: 'growth', name: 'Growth' }] };
+    render(<Router
+      initial={{ pathname: '/', state: { skipWorkstreamIds: ['left'], spaceId: 'outbound' } }}
+      pins={[{ kind: 'channel', id: 'growth', parentId: null }]}
+    />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/channels\/outbound$/u);
+  });
+
+  it('opens the first pinned Channel ahead of General', async () => {
+    spaces.data = { items: [general, { id: 'outbound', name: 'Outbound' }, { id: 'growth', name: 'Growth' }] };
+    render(<Router pins={[
+      { kind: 'thread', id: 'a-thread', parentId: null },
+      { kind: 'channel', id: 'growth', parentId: null },
+      { kind: 'channel', id: 'outbound', parentId: null },
+    ]} />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/channels\/growth$/u);
+  });
+
+  it('opens General when nothing is pinned, and the first Channel A–Z when there is no General', async () => {
+    spaces.data = { items: [{ id: 'zebra', name: 'Zebra' }, general, { id: 'apple', name: 'Apple' }] };
     const view = render(<Router />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/saved?substream=child');
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/channels\/general$/u);
     view.unmount();
-    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/workstreams/gone');
+    spaces.data = { items: [{ id: 'zebra', name: 'Zebra' }, { id: 'apple', name: 'Apple' }] };
     render(<Router />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/recent');
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/channels\/apple$/u);
   });
 
-  it('lands a leave in its Space, skipping the left Channel and other Spaces', async () => {
-    directory.data = [
-      { ...stream('elsewhere', null, '2026-09-09'), spaceIds: ['other'] },
-      { ...stream('left', null, '2026-09-08'), spaceIds: ['design'] },
-      { ...stream('older', null, '2026-09-01'), spaceIds: ['design'] },
-    ];
-    spaces.data = { items: [{ id: 'design' }, { id: 'other' }] };
-    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: ['left'], spaceId: 'design' } }} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/older\?space=design$/u);
-  });
-
-  it('lands a leave on the Space’s first pin, ahead of more recent Channels', async () => {
-    directory.data = [
-      { ...stream('recent', null, '2026-09-09'), spaceIds: ['design'] },
-      { ...stream('second-pin', null, '2026-09-05'), spaceIds: ['design'], spacePins: [{ spaceId: 'design', position: 2 }] },
-      { ...stream('first-pin', null, '2026-09-01'), spaceIds: ['design', 'other'], spacePins: [{ spaceId: 'design', position: 1 }] },
-      { ...stream('pinned-elsewhere', null, '2026-08-01'), spaceIds: ['design', 'other'], spacePins: [{ spaceId: 'other', position: 0 }] },
-    ];
-    spaces.data = { items: [{ id: 'design' }, { id: 'other' }] };
-    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: [], spaceId: 'design' } }} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/first-pin\?space=design$/u);
-  });
-
-  it('lands a leave in a Space with no pins on the first row of the reader’s sort', async () => {
-    useUiStore.getState().setSidebarChannelSort('alphabetical');
-    directory.data = [
-      { ...stream('zebra', null, '2026-09-09'), title: 'Zebra', spaceIds: ['design'] },
-      { ...stream('apple', null, '2026-09-01'), title: 'Apple', spaceIds: ['design'] },
-    ];
-    spaces.data = { items: [{ id: 'design' }] };
-    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: [], spaceId: 'design' } }} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/apple\?space=design$/u);
-  });
-
-  it('lands a leave on the Breakout the sidebar row opens when Main is not the reader’s', async () => {
-    directory.data = [{ ...stream('shared', null, '2026-09-09'), spaceIds: ['design'], mainWithheld: true }];
-    spaces.data = { items: [{ id: 'design' }] };
-    conversationDirectory.data = { spaces: [], workstreams: [{
-      parentId: 'shared', title: 'shared', scope: 'personal', archived: false,
-      conversations: [{ substreamId: 'risks', title: 'Risks', scope: 'personal', archived: false }],
-    }] };
-    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: [], spaceId: 'design' } }} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/shared\?substream=risks&space=design$/u);
-  });
-
-  it('waits for a Space loaded a Space at a time to finish before picking its first pin', async () => {
-    socket.sidebarConnect = { spacesLive: true, channelsBySpace: true };
-    directory.data = [{ ...stream('recent', null, '2026-09-09'), spaceIds: ['design'] }];
-    spaces.data = { items: [{ id: 'design', channelCount: 2 }] };
-    const initial = { pathname: '/', state: { skipWorkstreamIds: [], spaceId: 'design' } };
-    const view = render(<Router initial={initial} />);
-    expect(screen.getByRole('status')).toHaveTextContent('Opening channels');
-    directory.data = [
-      ...directory.data,
-      { ...stream('pinned', null, '2026-08-01'), spaceIds: ['design'], spacePins: [{ spaceId: 'design', position: 0 }] },
-    ];
-    socket.loadedSpaceIds = new Set(['design']);
-    view.rerender(<Router initial={initial} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/pinned\?space=design$/u);
-  });
-
-  it('pages the directory until a Space’s rows are all in before picking its first row', () => {
-    directory.data = [{ ...stream('recent', null, '2026-09-09'), spaceIds: ['design'] }];
-    directory.hasMore = true;
-    spaces.data = { items: [{ id: 'design', channelCount: 2 }] };
-    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: [], spaceId: 'design' } }} />);
-    expect(screen.getByRole('status')).toHaveTextContent('Opening channels');
-    expect(directory.fetchMore).toHaveBeenCalled();
-  });
-
-  it('opens starting a Channel when a leave empties its Space', async () => {
-    directory.data = [
-      { ...stream('elsewhere', null, '2026-09-09'), spaceIds: ['other'] },
-      { ...stream('left', null, '2026-09-08'), spaceIds: ['design'] },
-    ];
-    spaces.data = { items: [{ id: 'design' }, { id: 'other' }] };
-    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: ['left'], spaceId: 'design' } }} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/spaces\/design\/workstreams\/new$/u);
-  });
-
-  it('waits for the Space directory before landing a leave in its Space', async () => {
-    directory.data = [
-      { ...stream('elsewhere', null, '2026-09-09'), spaceIds: ['other'] },
-      { ...stream('older', null, '2026-09-01'), spaceIds: ['design'] },
-    ];
-    const initial = { pathname: '/', state: { skipWorkstreamIds: [], spaceId: 'design' } };
-    const view = render(<Router initial={initial} />);
-    expect(screen.getByRole('status')).toHaveTextContent('Opening spaces');
-    spaces.data = { items: [{ id: 'design' }, { id: 'other' }] };
-    view.rerender(<Router initial={initial} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/older\?space=design$/u);
-  });
-
-  it('waits for the Space directory before resuming a saved Space', async () => {
-    directory.data = [stream('recent', null, '2026-09-05')];
-    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/spaces/saved');
-    const view = render(<Router />);
-    expect(screen.getByRole('status')).toHaveTextContent('Opening spaces');
-    spaces.data = { items: [{ id: 'saved' }] };
-    view.rerender(<Router />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent('/spaces/saved');
-  });
-
-  it('opens a saved Space that has emptied on starting a Channel there', async () => {
-    directory.data = [stream('recent', null, '2026-09-05')];
-    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/spaces/saved');
-    spaces.data = { items: [{ id: 'saved', channelCount: 0 }] };
-    render(<Router />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/spaces\/saved\/workstreams\/new$/u);
-  });
-
-  it('falls back when an older socket cannot deliver Spaces', async () => {
-    directory.data = [stream('recent', null, '2026-09-05')];
-    socket.sidebarConnect = { spacesLive: false };
-    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/spaces/saved');
-    render(<Router />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/recent');
-  });
-
-  it('pages the Channel directory after a saved Space has disappeared', () => {
-    directory.data = [];
-    directory.hasMore = true;
-    spaces.data = { items: [] };
-    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/spaces/gone');
-    render(<Router />);
-    expect(directory.fetchMore).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('status')).toHaveTextContent('Opening channels');
-  });
-
-  it('resumes a Breakout from a route with transient search parameters', async () => {
-    directory.data = [stream('saved', null, '2026-09-05')];
-    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/workstreams/saved?substream=child&turn=old&sequence=7');
-    render(<Router />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/saved?substream=child');
-  });
-
-  it('pages to a saved Channel beyond the opening directory page', async () => {
-    directory.data = [stream('recent', null, '2026-09-05')];
-    directory.hasMore = true;
-    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/workstreams/saved');
+  it('waits for the Channels, and says so when the socket cannot deliver them', () => {
     const view = render(<Router />);
     expect(screen.getByRole('status')).toHaveTextContent('Opening channels');
-    expect(directory.fetchMore).toHaveBeenCalledTimes(1);
-    directory.data = [stream('recent', null, '2026-09-05'), stream('saved', null, '2026-08-01')];
-    view.rerender(<Router />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/saved');
-  });
-
-  it('waits for the directory and opens the most recent Channel even if cached legacy pins remain', async () => {
-    const view = render(<Router />);
-    expect(screen.getByRole('status')).toHaveTextContent('Opening channels');
-    expect(screen.queryByTestId('destination')).toBeNull();
-    directory.data = [stream('recent', null, '2026-09-05'), stream('second-pin', 1, '2026-09-04'), stream('first-pin', 0, '2026-08-01')];
-    view.rerender(<Router />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/recent');
-    directory.data = [stream('different-pin', 0, '2026-09-06')];
-    view.rerender(<Router />);
-    expect(screen.getByTestId('destination')).toHaveTextContent('/workstreams/recent');
-  });
-
-  it('uses sidebar recency order when there are no pins', async () => {
-    directory.data = [stream('older', null, '2026-08-01'), stream('newest', null, '2026-09-05')];
-    render(<Router />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/newest');
-  });
-
-  it('opens the last visited channel ahead of newer shared activity', async () => {
-    directory.data = [
-      { ...stream('noisy', null, '2026-09-08'), createdAt: '2026-08-01', lastAccessedAt: null },
-      { ...stream('visited', null, '2026-08-01'), createdAt: '2026-08-01', lastAccessedAt: '2026-09-07' },
-    ];
-    render(<Router />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/visited');
-  });
-
-  it('opens General once the Spaces arrive, for a loaded empty directory', async () => {
-    directory.data = [];
-    const view = render(<Router />);
-    expect(screen.getByRole('status')).toHaveTextContent('Opening spaces');
-    spaces.data = { items: [{ id: 'team', systemRole: null }, { id: 'general', systemRole: 'general' }] };
-    view.rerender(<Router />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/spaces\/general\/workstreams\/new$/u);
-  });
-
-  it('says there is nothing to open when an empty directory has no Spaces to fall back to', () => {
-    directory.data = [];
-    socket.sidebarConnect = { spacesLive: false };
-    render(<Router />);
-    expect(screen.getByText('No channels yet')).toBeVisible();
-    expect(screen.queryByTestId('destination')).toBeNull();
-  });
-
-  it('passes over the rows a leaving screen names, whatever their rank', async () => {
-    // The row that was just archived or marked unread is still in the
-    // directory — the tombstone or refetch has not landed — and it is the
-    // most recent row precisely because it was just open.
-    directory.data = [stream('archived-pin', 0, '2026-09-06'), stream('unread', null, '2026-09-05'), stream('next', null, '2026-08-01')];
-    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: ['archived-pin', 'unread'] } }} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/next');
-  });
-
-  it('opens General when every listed row is one to pass over', async () => {
-    directory.data = [stream('only', null, '2026-09-05')];
-    spaces.data = { items: [{ id: 'general', systemRole: 'general' }] };
-    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: ['only'] } }} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent('/spaces/general');
-  });
-
-  it('asks for the next page when every loaded row is passed over and more exist', async () => {
-    // A batch archive can take a whole loaded page while older, unmatched rows
-    // sit beyond the cursor. That is not an empty workspace.
-    directory.data = [stream('taken', null, '2026-09-05')];
-    directory.hasMore = true;
-    const initial = { pathname: '/', state: { skipWorkstreamIds: ['taken'] } };
-    const view = render(<Router initial={initial} />);
-    expect(screen.getByRole('status')).toHaveTextContent('Opening channels');
-    expect(screen.queryByTestId('destination')).toBeNull();
-    expect(directory.fetchMore).toHaveBeenCalledTimes(1);
-    // A page that settled without changing the list — it failed — is not
-    // asked for again on its own; only a changed list requests the next one.
-    view.rerender(<Router initial={initial} />);
-    expect(directory.fetchMore).toHaveBeenCalledTimes(1);
-    directory.data = [stream('taken', null, '2026-09-05'), stream('older', null, '2026-08-01')];
-    view.rerender(<Router initial={initial} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/older');
-  });
-
-  it('ignores state that is not a skip list', async () => {
-    directory.data = [stream('only', null, '2026-09-05')];
-    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: 'only' } }} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/only');
-  });
-
-  it('surfaces a failed opening socket before the directory query is enabled', () => {
+    view.unmount();
     socket.state = 'unavailable';
     render(<Router />);
-    expect(screen.getByText(/Unable to connect to your organization/u)).toBeVisible();
-    expect(screen.queryByTestId('destination')).toBeNull();
+    expect(screen.getByText(/Unable to connect to your organization/u)).toBeInTheDocument();
   });
 
-  it('does not treat a directory failure as an empty organization', () => {
-    directory.error = new Error('Directory unavailable');
+  it('says there is nothing to open when the person may see no Channel', () => {
+    spaces.data = { items: [] };
     render(<Router />);
-    expect(screen.getByText('Directory unavailable')).toBeVisible();
-    expect(screen.queryByTestId('destination')).toBeNull();
+    expect(screen.getByText('No channels yet')).toBeInTheDocument();
   });
 });

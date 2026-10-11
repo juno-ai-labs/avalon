@@ -6,7 +6,9 @@ import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useLocation, useParams, useSearchParams } from 'react-router-dom';
+import { fetchThroughOwner } from '../lib/fetch-through-owner';
+import { PaneVisibility } from '../lib/pane-visibility';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import { asSubstreamId, asWorkspaceId, asWorkstreamId, conversationNeedsViewer, type HarnessStatus } from '@rally/contracts';
 import { logError } from '../../common/logger';
@@ -64,6 +66,9 @@ export {
 } from './conversation-surface';
 
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
+import { channelRoute, useChannelPane } from '../lib/navigation-routes';
+import { useThreadChannels } from '../lib/thread-channels';
+import { usePinAction, usePinnedIds } from '../lib/pins';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { normalizeHarnessStatus } from '../lib/api';
 
@@ -139,11 +144,11 @@ function failureCopyOf(failure: WorkstreamSidebarFailure | FailureCopy): Failure
 
 const workstreamSidebarFailureCopy: Record<WorkstreamSidebarFailure, FailureCopy> = {
   copy_link: { title: 'The link couldn’t be copied', copy: 'The link couldn’t be copied. Try again.' },
-  make_public: { title: 'The channel couldn’t be updated', copy: 'The channel couldn’t be made public. Try again.' },
-  make_private: { title: 'The channel couldn’t be updated', copy: 'The channel couldn’t be made private. Try again.' },
-  rename_workstream: { title: 'The channel couldn’t be renamed', copy: 'The channel couldn’t be renamed. Try again.' },
+  make_public: { title: 'The thread couldn’t be updated', copy: 'The thread couldn’t be made public. Try again.' },
+  make_private: { title: 'The thread couldn’t be updated', copy: 'The thread couldn’t be made private. Try again.' },
+  rename_workstream: { title: 'The thread couldn’t be renamed', copy: 'The thread couldn’t be renamed. Try again.' },
   rename_substream: { title: 'The breakout couldn’t be renamed', copy: 'The breakout couldn’t be renamed. Try again.' },
-  archive_workstream: { title: 'The channel couldn’t be archived', copy: 'The channel couldn’t be archived. Try again.' },
+  archive_workstream: { title: 'The thread couldn’t be archived', copy: 'The thread couldn’t be archived. Try again.' },
   archive_substream: { title: 'The breakout couldn’t be archived', copy: 'The breakout couldn’t be archived. Try again.' },
 };
 
@@ -159,7 +164,9 @@ export function WorkstreamScreen(): React.JSX.Element {
     return (
       <ConversationOpeningSkeleton
         caption
-        label={row.pendingOrigin === 'import' ? 'Importing conversation…' : 'Creating channel…'}
+        label={row.pendingOrigin === 'import' ? 'Importing conversation…' : 'Starting…'}
+        openingAuthorId={row.createdByUserId}
+        openingMessage={row.pendingOrigin === 'import' ? undefined : row.objective}
         parentKind="workstream"
       />
     );
@@ -168,6 +175,7 @@ export function WorkstreamScreen(): React.JSX.Element {
 }
 
 function OpenWorkstreamScreen(): React.JSX.Element {
+  const pinnedThreads = usePinnedIds('thread');
   const { id = '' } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
@@ -196,7 +204,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const mainVisible = selectedSubstreamId === '0' || !conversationScoped;
   const mainConnection = useRetainedWorkstreamSocket(api, id, Boolean(api && id && !conversationScoped), 'workstream', '0');
   const parent = useQuery<WorkstreamDetail | undefined>({
-    queryKey: ['workstream', id], queryFn: async () => undefined, enabled: false,
+    queryKey: ['workstream', id], queryFn: fetchThroughOwner, enabled: false,
   });
   const importedSource = useQuery({
     queryKey: ['workstream-import-source', session?.user.id, id],
@@ -211,7 +219,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   // that entry is what retires the picker's own preview.
   const rowAppearance = useCachedWorkstreamAppearance(id);
   const children = useQuery<WorkstreamChildDirectory | undefined>({
-    queryKey: ['workstream-children', id], queryFn: async () => undefined, enabled: false,
+    queryKey: ['workstream-children', id], queryFn: fetchThroughOwner, enabled: false,
   });
   const sharedParent = conversationScoped ? directoryEntry : undefined;
   const linkSpaceIds = parent.data?.spaceIds ?? conversationDirectory?.spaces
@@ -225,7 +233,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   // and the header's are then one value rather than two that agree eventually.
   const openChild = useQuery<WorkstreamDetail | undefined>({
     queryKey: workstreamDetailQueryKey(id, selectedSubstreamId),
-    queryFn: async () => undefined,
+    queryFn: fetchThroughOwner,
     enabled: false,
   });
   /**
@@ -357,7 +365,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     reportTelemetryProductIntent({
       kind: 'workstream_action_completed', workstreamId: workstream.id, action,
       visibility: telemetryVisibility(workstream.scope),
-      origin: workstream.systemKind ? 'system' : 'ad_hoc', pinned: (workstream.spacePins?.length ?? 0) > 0,
+      origin: workstream.systemKind ? 'system' : 'ad_hoc', pinned: pinnedThreads.has(workstream.id),
     });
   };
   const menuOperation = useRef(0);
@@ -489,7 +497,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
    */
   const createSubstream = async (opening: Parameters<SubstreamLaunchProps['onCreate']>[0]): Promise<void> => {
     const attempt = creationRef.current;
-    if (!api || !attempt) throw new Error('This channel is not ready for a new breakout.');
+    if (!api || !attempt) throw new Error('This thread is not ready for a new breakout.');
     const createdAt = new Date().toISOString();
     const trace = startPerfTrace('substream_create', { operationId: attempt.operationId });
     const startedAt = performance.now();
@@ -661,18 +669,35 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const railScope = useUiStore((state) => state.railScope);
   const storeRailOpen = useUiStore((state) => state.railOpen);
   const closeRail = useUiStore((state) => state.closeRail);
-  const pinChannel = useUiStore((state) => state.pinChannel);
+  const pinThread = usePinAction(api);
   const breakoutScope = openBreakoutId === null ? null : `${id}:${openBreakoutId}`;
   const breakoutOwnsRail = storeRailOpen && breakoutScope !== null && railScope === breakoutScope;
   const mainOwnsRail = storeRailOpen && railScope === id;
   const splitMode: SplitConversationMode = !breakoutPaneOpen ? 'main'
     : !mainVisible || breakoutOwnsRail ? 'breakout'
       : mainOwnsRail ? 'main' : 'split';
+  // What the layout shows, which is the breakout alone in a window too narrow
+  // for the split: the thread then rides as the breakout's breadcrumb.
+  const [shownMode, setShownMode] = useState<SplitConversationMode>(splitMode);
   const breakoutWidthKey = layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', 'breakout-width');
   const [breakoutWidth, setBreakoutWidth] = useState<number | null>(() => {
     const stored = Number.parseFloat(readLayout(breakoutWidthKey) ?? '');
     return Number.isFinite(stored) ? stored : null;
   });
+  // Beside a Channel, this thread is the right of two panes. Opening a
+  // breakout or a panel needs both panes for itself, so the Channel steps off
+  // screen and rides as the first breadcrumb instead
+  // (`docs/pane-stack.md`).
+  const channelPane = useChannelPane();
+  const navigate = useNavigate();
+  const threadChannels = useThreadChannels(id, row?.spaceIds ?? parent.data?.spaceIds ?? [], channelWritable);
+  const threadUsesTwoPanes = breakoutPaneOpen || mainOwnsRail;
+  const setThreadUsesTwoPanes = channelPane?.setThreadUsesTwoPanes;
+  useEffect(() => {
+    setThreadUsesTwoPanes?.(threadUsesTwoPanes);
+  }, [setThreadUsesTwoPanes, threadUsesTwoPanes]);
+  useEffect(() => () => setThreadUsesTwoPanes?.(false), [setThreadUsesTwoPanes]);
+  const channelCrumbs = channelPane?.shifted ? [channelPane.crumb] : [];
   const changeBreakoutWidth = useCallback((width: number): void => {
     setBreakoutWidth(width);
     writeLayout(breakoutWidthKey, String(width));
@@ -728,7 +753,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         />,
       } : {}),
       title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
-      label: `Channel menu: ${title}`,
+      label: `Thread menu: ${title}`,
       ...(onSelect ? { onSelect } : {}),
       // Beside an open Breakout the Channel's pill points at it.
       ...(!onSelect && breakoutPaneOpen ? { chevron: 'right' as const } : {}),
@@ -744,6 +769,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         /> : undefined}
         addSidekick={(context || channelRail) && <SidekickPicker substreamId="0" workstreamId={id} />}
         breakouts={breakoutMarks}
+        channels={conversationScoped ? undefined : threadChannels}
         // The update re-runs the import in the embedded browser, which only the Mac app has.
         onImportUpdates={api && desktopServicesAvailable() && importedSourceUpdatable(importedSource.data) ? () => setImportUpdateOpen(true) : undefined}
         onOpenArtifact={context?.openArtifact}
@@ -754,9 +780,9 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         openSubstreamId={openBreakoutId}
         participantsPending={context === null && railParticipants === undefined}
         people={context?.people}
-        pinned={pinChannel && row && channelWritable ? {
-          on: (row.spacePins ?? []).some((pin) => row.spaceIds.includes(pin.spaceId)),
-          onChange: (next) => pinChannel(row, next),
+        pinned={api && channelWritable ? {
+          on: pinnedThreads.has(id),
+          onChange: (next) => pinThread('thread', id, next),
         } : undefined}
         presentUserIds={context?.presentUserIds ?? []}
         renderAge={breakoutAge}
@@ -826,7 +852,13 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     openBreakoutId={openBreakoutId}
     parentId={id}
     parentKind="workstream"
-    renderHeader={(context) => <TitlePillHeader current={channelLevel(context)} />}
+    renderHeader={(context) => <TitlePillHeader
+      ancestors={channelCrumbs}
+      current={channelLevel(context)}
+      trailing={channelPane && !channelPane.shifted
+        ? <TitlePillClose label="Close thread" onClose={() => void navigate(channelRoute(channelPane.channelId))} />
+        : undefined}
+    />}
     scrollToTurn={scrollToTurn}
     sidebarScope={conversationScoped ? 'conversation' : 'workstream'}
     substreamId="0"
@@ -854,7 +886,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     parentId={id}
     parentKind="workstream"
     renderHeader={(context) => <TitlePillHeader
-      ancestors={splitMode === 'breakout' && mainVisible ? [channelLevel(null, closeRail)] : []}
+      ancestors={shownMode === 'breakout' && mainVisible ? [...channelCrumbs, channelLevel(null, splitMode === 'breakout' ? closeRail : () => selectSubstream('0'))] : []}
       current={breakoutLevel(context)}
       trailing={mainVisible ? closeBreakout : undefined}
     />}
@@ -871,9 +903,10 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     <SplitConversationLayout
       breakout={breakoutPane}
       breakoutWidth={breakoutWidth}
-      main={mainPane}
+      main={mainPane && <PaneVisibility visible={shownMode !== 'breakout'}>{mainPane}</PaneVisibility>}
       mode={splitMode}
       onBreakoutWidthChange={changeBreakoutWidth}
+      onShownChange={setShownMode}
     />
     <Modal
       footer={<>
@@ -886,7 +919,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       </>}
       onOpenChange={(open) => { if (!open && !substreamPending) { setRenameTarget(null); setSubstreamMenuFailure(null); } }}
       open={Boolean(renameTarget)}
-      title={renameTarget?.substreamId === '0' ? 'Rename channel' : 'Rename breakout'}
+      title={renameTarget?.substreamId === '0' ? 'Rename thread' : 'Rename breakout'}
     >
       {substreamMenuFailure && <InlineError>{failureCopyOf(substreamMenuFailure).copy}</InlineError>}
       <form onSubmit={(event) => { event.preventDefault(); void submitSubstreamRename(); }}>
@@ -903,7 +936,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       </>}
       onOpenChange={(open) => { if (!open && !substreamPending) { setArchiveTarget(null); setSubstreamMenuFailure(null); } }}
       open={Boolean(archiveTarget)}
-      title={archiveTarget?.substreamId === '0' ? 'Archive channel' : 'Archive breakout'}
+      title={archiveTarget?.substreamId === '0' ? 'Archive thread' : 'Archive breakout'}
     >
       <p className="modal-copy">
         <strong>{archiveTarget?.title}</strong> leaves the sidebar for everyone in it, and stops

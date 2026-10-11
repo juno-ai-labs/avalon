@@ -529,10 +529,10 @@ describe('AvatarStack', () => {
 
     fireEvent.pointerMove(collaboratorItem, { pointerType: 'mouse' });
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
-      'Ari Collaborator is viewing this workstream.',
+      'Ari Collaborator is viewing this thread.',
     );
     expect(container.querySelector('.avatar-stack')).toHaveAccessibleName(
-      'Current User; Ari Collaborator is viewing this workstream.; Casey Observer',
+      'Current User; Ari Collaborator is viewing this thread.; Casey Observer',
     );
     const ping = collaboratorItem.querySelector('.avatar-presence-ping');
     const collaboratorAvatar = collaboratorItem.querySelector('.avatar');
@@ -618,7 +618,7 @@ describe('AvatarStack', () => {
     if (!item) throw new Error('avatar stack item missing');
     fireEvent.pointerMove(item, { pointerType: 'mouse' });
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
-      'Ari Collaborator is viewing this workstream.',
+      'Ari Collaborator is viewing this thread.',
     );
   });
 
@@ -777,7 +777,7 @@ describe('Modal', () => {
             </DropdownMenu.Trigger>
             <DropdownMenu.Portal>
               <DropdownMenu.Content className="menu-content">
-                <DropdownMenu.Item className="menu-item">Remove from channel</DropdownMenu.Item>
+                <DropdownMenu.Item className="menu-item">Remove from thread</DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
@@ -789,7 +789,7 @@ describe('Modal', () => {
       button: 0,
       ctrlKey: false,
     });
-    const remove = await screen.findByRole('menuitem', { name: 'Remove from channel' });
+    const remove = await screen.findByRole('menuitem', { name: 'Remove from thread' });
     fireEvent.pointerDown(remove, { button: 0 });
     fireEvent.click(remove);
     expect(onOpenChange).not.toHaveBeenCalled();

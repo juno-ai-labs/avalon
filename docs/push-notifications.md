@@ -52,12 +52,13 @@ Payload bodies reduce Markdown formatting and Rally's internal citation and
 person-mention references to readable plain text before carrying the first
 1,000 Unicode code points with an ellipsis when shortened, fitted further to
 Apple's 4,096-byte ceiling. Every alert also sets APNs `badge` to the number
-the sidebar's attention menu shows ([`attention-menu.md`](attention-menu.md)):
+the sidebar's **Threads** button counts, less pending access requests
+([`attention-menu.md`](attention-menu.md)):
 each Main the recipient may open and each Breakout they may list, in an
 unarchived, non-system Channel, that is unread, unseen or mentions them. The
 directory `attention` read returns it as `readerAttentionCount`
 (`WorkspaceSpaceStorage.readerAttentionCount`). A run in `needs_input` is not
-counted, as the menu does not list it. A send from one workspace does not sum
+counted, as the Threads count does not include it. A send from one workspace does not sum
 other workspaces: iOS holds one session, and a global inbox is out of scope.
 Omitting `badge` would leave the previous icon count in place; `0` clears it.
 

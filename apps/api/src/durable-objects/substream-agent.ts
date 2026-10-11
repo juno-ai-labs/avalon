@@ -3366,7 +3366,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       span.setError("conversation_parent_kind_mismatch");
       return jsonResponse({
         error: "conversation_parent_kind_mismatch",
-        message: "Work stream not found",
+        message: "Thread not found",
       }, 404);
     }
     // Two principals, two verifications. A login session is checked against
@@ -3397,7 +3397,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         : nonSessionPrincipal ? "connector_member_revoked" : "session_revoked";
       span.setError(refusal);
       // The message rides to `WorkstreamObjectClient.decode`, whose fallback
-      // ("The work stream could not be loaded") misdescribes a refused send.
+      // ("The thread could not be loaded") misdescribes a refused send.
       return jsonResponse({
         error: refusal,
         message: nonSessionPrincipal
@@ -3537,8 +3537,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           actorUserId: current.userId, userId: UserIdSchema.parse(request.userId), active,
           target: { kind: "conversation", workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId } });
         if (result.status === "denied") {
-          if (result.reason === "inherited_access") throw new ApiError(409, "participant_inherited_access", "This person has work stream access. Remove that share from work stream sharing first.");
-          if (result.reason === "participant_required") throw new ApiError(409, "workstream_participant_required", "At least one participant must remain in this work stream");
+          if (result.reason === "inherited_access") throw new ApiError(409, "participant_inherited_access", "This person has thread access. Remove that share from thread sharing first.");
+          if (result.reason === "participant_required") throw new ApiError(409, "workstream_participant_required", "At least one participant must remain in this thread");
           if (result.reason === "migration_pending") throw new ApiError(409, "participant_migration_pending", "Participant authority is moving; retry this operation");
           throw new ApiError(403, "participant_grant_forbidden", "This participant change is not allowed");
         }
@@ -3629,7 +3629,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const diagnostic = zodDiagnosticCode(error, "workstream_product");
       const safe = error instanceof ApiError
         ? error
-        : new ApiError(500, diagnostic ?? "workstream_object_request_failed", "The work stream could not be loaded");
+        : new ApiError(500, diagnostic ?? "workstream_object_request_failed", "The thread could not be loaded");
       if (!(error instanceof ApiError)) {
         // Report schema shape, never rejected values or adapter prose. The
         // same field code survives the RPC hop into demo preparation's status.
@@ -6322,7 +6322,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   ): Promise<void> {
     try {
       if (!this.objectStore.isRealtimeWritable()) {
-        throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
+        throw new ApiError(503, "workstream_maintenance", "Threads are temporarily unavailable");
       }
       assertParentWritable(attachment);
       this.assertPrivateChildNotArchived();
@@ -6332,7 +6332,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         return;
       }
       const identity = this.objectStore.identity();
-      if (!identity) throw new ApiError(404, "workstream_not_found", "Work stream not found");
+      if (!identity) throw new ApiError(404, "workstream_not_found", "Thread not found");
 
       if (command.type === "answer_elicitation") {
         const result = await this.product.answerElicitationForAdmittedSocket(
@@ -6506,7 +6506,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }, async (span) => {
       try {
         if (!this.objectStore.isRealtimeWritable()) {
-          throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
+          throw new ApiError(503, "workstream_maintenance", "Threads are temporarily unavailable");
         }
         assertParentWritable(attachment);
         this.assertPrivateChildNotArchived();

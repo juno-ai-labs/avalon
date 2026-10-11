@@ -1,4 +1,4 @@
-import type { ContainerOrder, PersonalOrder, PinnedOrder, SpaceSnapshot } from '@rally/contracts';
+import type { ChannelStats, ContainerOrder, PersonalOrder, PinList, PinnedOrder, SpaceSnapshot } from '@rally/contracts';
 import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 
 import { sameContainer } from './personal-order';
@@ -28,22 +28,6 @@ export const SIDEBAR_LIST_QUERY_KEYS = {
   automations: ['automations'],
 } as const satisfies Record<SidebarList, readonly unknown[]>;
 
-/**
- * The Space dashboard's page of conversations, one entry per Space.
- *
- * Declared here rather than in the screen because the screen is not the only
- * thing that names it: the workspace socket invalidates it when WorkspaceDO
- * nudges, and the screen invalidates it again after a reconnect. A key spelled
- * in two places is a refetch that silently stops happening the day one of the
- * spellings changes.
- *
- * Unlike the entries around it this one is *not* socket-owned — it is fetched,
- * paginated, and only ever told to read itself again.
- */
-export function spaceConversationsQueryKey(spaceId: string | undefined): readonly unknown[] {
-  return ['space-channels', spaceId];
-}
-
 export const SPACES_QUERY_KEY = ['spaces'] as const;
 export const INACTIVE_SPACES_QUERY_KEY = ['spaces-inactive'] as const;
 /**
@@ -72,6 +56,41 @@ export const SPACES_READY_QUERY_KEY = ['spaces-ready'] as const;
 export const PERSONAL_ORDER_QUERY_KEY = ['personal-order'] as const;
 /** All's Pinned order; see `PinnedOrderSchema`. */
 export const PINNED_ORDER_QUERY_KEY = ['pinned-order'] as const;
+/** Every pin this person has, each kind in their order: the Channels and Threads tabs' Pinned sections. */
+export const PINS_QUERY_KEY = ['pins'] as const;
+/** Each listed Channel's thread count and last activity, for the Channels tab. */
+export const CHANNEL_STATS_QUERY_KEY = ['channel-stats'] as const;
+/** The Threads tab's server list: threads and breakouts this person takes part in or pinned. */
+export const MY_THREADS_QUERY_KEY = ['my-threads'] as const;
+/** The Activity tab's first page. */
+export const ACTIVITY_QUERY_KEY = ['activity'] as const;
+/** One Channel's feed. */
+/**
+ * A write this person made in another window: the whole pin list, or the
+ * rows of the Channels whose read state moved (`workspace_navigation_state`).
+ */
+export function applyNavigationState(
+  queryClient: QueryClient,
+  state: { pins?: PinList | undefined; channelStats?: ChannelStats[] | undefined },
+): void {
+  if (state.pins) queryClient.setQueryData(PINS_QUERY_KEY, state.pins);
+  const rows = state.channelStats;
+  if (!rows || rows.length === 0) return;
+  queryClient.setQueryData<ChannelStats[]>(CHANNEL_STATS_QUERY_KEY, (current) => {
+    if (!current) return current;
+    const changed = new Map(rows.map((row) => [row.channelId, row]));
+    const merged = current.map((row) => changed.get(row.channelId) ?? row);
+    const held = new Set(current.map((row) => row.channelId));
+    return [...merged, ...rows.filter((row) => !held.has(row.channelId))];
+  });
+}
+
+/** Every Channel feed held, the prefix each `channelFeedQueryKey` starts with. */
+export const CHANNEL_FEEDS_QUERY_KEY = ['channel-feed'] as const;
+
+export function channelFeedQueryKey(channelId: string): readonly ['channel-feed', string] {
+  return ['channel-feed', channelId];
+}
 
 const SIDEBAR_LIST_WATERLINES_KEY = ['sidebar-list-waterlines'] as const;
 
@@ -152,8 +171,18 @@ export function applyVersionedSpaceSnapshot(
   spacesReady: boolean,
   /** All's Pinned order; a payload from a server without it reads as none. */
   pinnedOrder: PinnedOrder = [],
+  /** Absent from a server before the navigation redesign; leaves what is held. */
+  navigation: { pins?: PinList | undefined; channelStats?: ChannelStats[] | undefined } = {},
 ): boolean {
   pinWaterlineLedger(queryClient);
+  // Not under the Space waterline: both are this person's own state, sent in
+  // order on one socket, so the newest frame is the current one. Only the
+  // connect payload carries Channel stats; a broadcast snapshot leaves them
+  // out, and a Space change is when they may have moved, so they are read
+  // again instead.
+  if (navigation.pins) queryClient.setQueryData(PINS_QUERY_KEY, navigation.pins);
+  if (navigation.channelStats) queryClient.setQueryData(CHANNEL_STATS_QUERY_KEY, navigation.channelStats);
+  else void queryClient.invalidateQueries({ queryKey: CHANNEL_STATS_QUERY_KEY });
   const waterlines = queryClient.getQueryData<Partial<Record<SidebarWaterline, number>>>(
     SIDEBAR_LIST_WATERLINES_KEY,
   ) ?? {};
@@ -168,20 +197,6 @@ export function applyVersionedSpaceSnapshot(
   queryClient.setQueryData(PINNED_ORDER_QUERY_KEY, pinnedOrder);
   queryClient.setQueryData(SPACES_READY_QUERY_KEY, spacesReady);
   return true;
-}
-
-/**
- * All's Pinned order as the write answered it, ahead of the snapshot that
- * carries it, for the reason `applyContainerOrder` gives.
- */
-export function applyPinnedOrder(
-  queryClient: QueryClient,
-  order: PinnedOrder,
-  expectedCurrent?: PinnedOrder,
-): void {
-  queryClient.setQueryData<PinnedOrder>(PINNED_ORDER_QUERY_KEY, (current = []) => (
-    expectedCurrent !== undefined && current !== expectedCurrent ? current : order
-  ));
 }
 
 /**

@@ -3,14 +3,14 @@ title: The message box
 description: Write to Rally and your teammates, with mentions, lists, slash commands and your voice.
 ---
 
-Everything you say in a Channel starts in the message box at the bottom of the
+Everything you say in a Thread starts in the message box at the bottom of the
 window. It is where you ask Rally for work, answer its questions and talk to the
 people in the room. It looks like an ordinary chat box, and it mostly behaves
 like one, with a few extras.
 
 ## Writing and sending
 
-Open a Channel and click the box that says **Message the channel…**. Type your
+Open a Thread and click the box that says **Message the thread…**. Type your
 message and press <kbd>Return</kbd> to send it.
 
 - <kbd>Shift</kbd> <kbd>Return</kbd> starts a new line without sending.
@@ -19,7 +19,7 @@ message and press <kbd>Return</kbd> to send it.
   conversation off the screen.
 - The send button is the up arrow on the right. It is always there, and it is
   greyed out when there is nothing to send, while a file is still uploading, or
-  while the Channel is still connecting.
+  while the Thread is still connecting.
 
 The wording in the box changes with the place you are in. A brand-new Breakout
 says **What should this breakout work on?** and a Sidekick's own conversation
@@ -41,9 +41,9 @@ it and try again, or attach the long material as a file instead (see
 
 ## Your draft waits for you
 
-If you are halfway through a message and switch to another Channel, close the
+If you are halfway through a message and switch to another Thread, close the
 window or quit Rally, the draft is still there when you come back. That includes
-the text, the files you attached and the people you mentioned. Each Channel and
+the text, the files you attached and the people you mentioned. Each Thread and
 each Breakout keeps its own draft.
 
 Some things to know about drafts:
@@ -71,7 +71,7 @@ Organization, each marked **Person**, with their email address.
 Press <kbd>Esc</kbd> to close the list without picking anyone.
 
 Mention a teammate when you want them to notice a message. Mention **@Rally**
-when you want to be sure Rally answers. In a busy Channel, Rally decides for
+when you want to be sure Rally answers. In a busy Thread, Rally decides for
 itself which messages are meant for it, and
 [People in the room](05-people-in-the-room.md#does-rally-answer-every-message)
 explains how.
@@ -79,12 +79,12 @@ explains how.
 Things that catch people out:
 
 - Someone in the list marked **not participating** is in your Organization but
-  not in this Channel yet. If you mention them in a private Channel, Rally asks
+  not in this Thread yet. If you mention them in a private Thread, Rally asks
   whether to add them first. [People in the room](05-people-in-the-room.md) has
   the details.
 - Only people and Rally can be mentioned here. Your connected tools and your
-  Sidekicks are not in the list. Sidekicks join a Channel another way, covered in
-  [Sidekicks in a Channel](../07-sidekicks/06-sidekicks-in-channels.md).
+  Sidekicks are not in the list. Sidekicks join a Thread another way, covered in
+  [Sidekicks in a Thread](../07-sidekicks/06-sidekicks-in-channels.md).
 - If you edit the middle of an **@Name** after picking it, it turns back into
   plain text and no longer points at that person. Delete it and mention them
   again.
@@ -157,7 +157,7 @@ Things to know about dictation:
   and try again.** Open **System Settings → Privacy & Security → Microphone** and
   turn Rally on.
 - If Rally heard nothing, it says so and sends nothing.
-- In a Channel there is no microphone picker. Rally uses the microphone you chose
+- In a Thread there is no microphone picker. Rally uses the microphone you chose
   last, or your Mac's default. If that one has been unplugged, you see **The
   selected microphone is unavailable.**
 - The microphone is available only once Rally is signed in and connected.

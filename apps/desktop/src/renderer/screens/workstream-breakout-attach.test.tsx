@@ -221,12 +221,12 @@ describe('attaching a breakout artifact to its channel', () => {
     api.attachResource.mockResolvedValue({ ...attached, transcript: undefined });
     renderScreen({ breakout: true });
     await openCardMenu();
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Attach to channel' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Attach to thread' }));
     await waitFor(() => expect(api.attachResource).toHaveBeenCalledWith(channelId, site.id));
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
 
     await openCardMenu();
-    await waitFor(async () => expect(await screen.findByRole('menuitem', { name: 'Attach to channel' }))
+    await waitFor(async () => expect(await screen.findByRole('menuitem', { name: 'Attach to thread' }))
       .toHaveAttribute('aria-disabled', 'true'));
   });
 
@@ -234,11 +234,11 @@ describe('attaching a breakout artifact to its channel', () => {
     api.attachResource.mockReturnValue(new Promise(() => undefined));
     renderScreen({ breakout: true });
     await openCardMenu();
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Attach to channel' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Attach to thread' }));
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
 
     await openCardMenu();
-    const item = await screen.findByRole('menuitem', { name: 'Attach to channel' });
+    const item = await screen.findByRole('menuitem', { name: 'Attach to thread' });
     await waitFor(() => expect(item).toHaveAttribute('aria-disabled', 'true'));
     fireEvent.click(item);
     expect(api.attachResource).toHaveBeenCalledOnce();
@@ -247,7 +247,7 @@ describe('attaching a breakout artifact to its channel', () => {
   it('offers no menu in the channel itself', async () => {
     renderScreen({ breakout: false });
     await openCardMenu();
-    expect(screen.queryByRole('menuitem', { name: 'Attach to channel' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Attach to thread' })).toBeNull();
   });
 
   it('offers no menu to somebody whose conversations leave Main out, who has no channel to attach to', async () => {
@@ -260,6 +260,6 @@ describe('attaching a breakout artifact to its channel', () => {
       }],
     } });
     await openCardMenu();
-    expect(screen.queryByRole('menuitem', { name: 'Attach to channel' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Attach to thread' })).toBeNull();
   });
 });

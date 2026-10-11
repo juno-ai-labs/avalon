@@ -13,9 +13,9 @@ be one of the people who built Rally, and you should be getting back to work.
 
 ## Writing
 
-- **Your drafts survive almost anything.** Switch Channels, close the window or
+- **Your drafts survive almost anything.** Switch Threads, close the window or
   quit halfway through a sentence, and what you typed, the files you attached and
-  the people you mentioned are waiting when you come back. Each Channel and
+  the people you mentioned are waiting when you come back. Each Thread and
   Breakout keeps its own draft, on this Mac, for 12 hours after your last edit.
   See [The message box](../02-working-in-a-channel/01-the-message-box.md).
 - **Type a slash for commands.** In an empty message box, type <kbd>/</kbd> and a
@@ -56,7 +56,7 @@ be one of the people who built Rally, and you should be getting back to work.
   you also get **Look Up** and **Share**. See
   [Reading Rally's answers](../02-working-in-a-channel/04-reading-rallys-answers.md).
 - **Ask for a diagram.** Ask Rally for a flowchart or a sequence diagram and it
-  draws a real one in the Channel, in your colours, once the answer has finished
+  draws a real one in the Thread, in your colours, once the answer has finished
   writing. See
   [Reading Rally's answers](../02-working-in-a-channel/04-reading-rallys-answers.md).
 - **Hover a time for the exact time.** "7 minutes ago" is friendly, but rest
@@ -66,30 +66,29 @@ be one of the people who built Rally, and you should be getting back to work.
   answers, **Copy as CSV** in its stored data puts a table straight into your
   spreadsheet. See [Live sites](../06-things-rally-makes/03-live-sites.md).
 
-## Keeping the sidebar tidy
+## Getting around the sidebar
 
-- **Drag to pin or move.** Drag a Channel onto the **Pinned** section to pin it,
-  or onto a Space's pill to move it there. See
-  [Arranging your Channels](../03-spaces-and-breakouts/02-arranging-channels.md).
-- **One Channel, several Spaces.** **Add to space** in a Channel's right-click
-  menu puts it in a second Space without taking it out of the first. See
-  [One Channel, several Spaces](../03-spaces-and-breakouts/02-arranging-channels.md#one-channel-several-spaces).
-- **Reorder with the keyboard.** Select a pinned Channel, hold <kbd>⌥</kbd>
-  and press <kbd>↑</kbd> or <kbd>↓</kbd>. For a Space's pill, use <kbd>⌥</kbd>
-  with <kbd>←</kbd> or <kbd>→</kbd>.
-- **Open a Space's page from its pill.** Clicking a pill only filters the list.
-  Right-click it and choose **Open space** to see the Space's own page.
+- **Drag to reorder your pins.** Pinned Threads, Breakouts and Channels can be
+  dragged into any order you like. See
+  [Arranging your Threads](../03-spaces-and-breakouts/02-arranging-channels.md#pinning).
+- **Sort by what needs you.** Click the sort label beside the **Threads**
+  heading to switch to **Needs attention**, and whatever is waiting on you rises
+  to the top. See
+  [Sorting the Threads list](../03-spaces-and-breakouts/02-arranging-channels.md#sorting-the-threads-list).
+- **Step back with a breadcrumb.** When a Breakout pushes a Channel off screen,
+  the Channel's name waits in the header as a breadcrumb. Click it to go back.
+  See [A tour of the window](../01-getting-started/04-a-tour-of-the-window.md#panes-side-by-side).
 
 ## Making room
 
 - **Resize the sidebar.** Drag its right edge to make it wider or narrower. It
   does not fold away.
-- **Resize a Breakout.** Drag the line between a Channel and the Breakout
+- **Resize a Breakout.** Drag the line between a Thread and the Breakout
   open beside it. See
-  [Breakouts](../03-spaces-and-breakouts/03-breakouts.md#a-breakout-beside-its-channel).
+  [Breakouts](../03-spaces-and-breakouts/03-breakouts.md#a-breakout-beside-its-thread).
 - **Resize the right-hand panel.** Drag the thin line on the left edge of the
   panel beside the conversation (the browser or an artifact). Rally
-  remembers the width for each Channel. Double-click the line to put it back.
+  remembers the width for each Thread. Double-click the line to put it back.
 - **Pop an artifact out.** **Open in a new window** in an artifact's header
   gives it a window of its own, ideal for a second screen. Rally reopens it where
   you left it next time. See
@@ -97,18 +96,18 @@ be one of the people who built Rally, and you should be getting back to work.
 
 ## Getting things in and out
 
-- **Every Channel has an email address.** Forward an email or mail a file
+- **Every Thread has an email address.** Forward an email or mail a file
   straight into the conversation. See
   [Email into Rally](../08-rally-everywhere/03-email-into-rally.md).
 - **Links open the app.** The links you copy with **Copy link** in a title pill's menu, and the
   ones in invitation emails, are web addresses that begin `rallywith.ai/app/`.
-  With Rally installed, they open it on your Mac at the right Channel,
+  With Rally installed, they open it on your Mac at the right Thread,
   Breakout or Sidekick, switching Organization first if they need to. Behind the
   scenes the last hop is a `rallywithai://` link, which you will rarely see.
   Old links that start `avalon://` still work: Avalon was Rally's name when
   it was a prototype. See [Search and links](../03-spaces-and-breakouts/06-search-and-links.md).
-- **Your recent Channels are in the menu bar.** Click the Rally mark at the top
-  of the screen to jump back into any of your last ten Channels from whatever
+- **Your recent Threads are in the menu bar.** Click the Rally mark at the top
+  of the screen to jump back into any of your last ten Threads from whatever
   app you are in. See [Rally on your Mac](03-rally-on-your-mac.md#rally-in-the-menu-bar).
 
 ## The spelling and edit menu

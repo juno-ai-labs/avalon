@@ -132,7 +132,7 @@ function decode(response: DurableObjectRpcResult): unknown {
   throw new ApiError(
     apiStatus(response.status),
     typeof body?.error === "string" ? body.error : "workstream_object_request_failed",
-    typeof body?.message === "string" ? body.message : "The work stream could not be loaded",
+    typeof body?.message === "string" ? body.message : "The thread could not be loaded",
     body?.details && typeof body.details === "object"
       ? body.details as Record<string, unknown>
       : undefined,

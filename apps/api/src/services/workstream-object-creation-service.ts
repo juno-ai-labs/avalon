@@ -106,6 +106,12 @@ interface CreateOptions {
    */
   notifyParticipants?: boolean;
   /**
+   * A person started this thread from a Channel, so a private Channel makes
+   * it private (`resolveSpaceWorkstreamStart`). Like `notifyParticipants`,
+   * the caller's to state: a connector ingress never sets it.
+   */
+  narrowInPrivateSpaces?: boolean;
+  /**
    * The external thread this Channel is created for (a Slack thread addressed
    * to Rally under a linked room). Claimed `pending` inside
    * `reserveChannelInSpaces`, activated once the creation receipt completes,
@@ -333,7 +339,7 @@ export class WorkstreamObjectCreationService {
     ).run());
     const receipt = await span.step("workstream.create.receipt.read", () => this.receipt(body.clientMessageId));
     if (!receipt && body.workstreamId) {
-      throw new ApiError(409, "workstream_id_unavailable", "This workstream id is already in use");
+      throw new ApiError(409, "workstream_id_unavailable", "This thread id is already in use");
     }
     if (!receipt || (receipt.request_hash !== requestHash && receipt.request_hash !== legacyRequestHash
       && !legacyScopeHashes.includes(receipt.request_hash))) {
@@ -394,7 +400,7 @@ export class WorkstreamObjectCreationService {
     const workstreamId = asWorkstreamId(receipt.workstream_id);
     const objective = body.objective
       ?? provisionalWorkstreamDescription(body.openingMessage, "Review the attached files");
-    const title = body.title ?? provisionalWorkstreamTitle(objective, "New work stream");
+    const title = body.title ?? provisionalWorkstreamTitle(objective, "New thread");
     const routeInput = {
       region: this.env.AVALON_REGION,
       workspaceId: this.auth.workspaceId,
@@ -425,6 +431,7 @@ export class WorkstreamObjectCreationService {
         spaceIds: [...body.spaceIds],
         requestedScope,
         requestedParticipantUserIds: body.participantUserIds.map(asUserId),
+        ...(options.narrowInPrivateSpaces ? { narrowInPrivateSpaces: true } : {}),
         authorityGeneration: control.generation,
         directory: {
           title,
@@ -441,6 +448,7 @@ export class WorkstreamObjectCreationService {
       scope: requestedScope,
       requestedParticipantUserIds: body.participantUserIds,
       originResourceIds: options.originResourceIds ?? [],
+      narrowInPrivateSpaces: options.narrowInPrivateSpaces === true,
     });
     const scope = start.scope;
     const participantUserIds = start.participantUserIds;

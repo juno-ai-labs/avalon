@@ -42,7 +42,7 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
   });
   if (!preview.data || preview.data.access !== 'requestable') return fallback;
   const { kind, title, appearance, markId } = preview.data;
-  const noun = kind === 'breakout' ? 'breakout' : 'channel';
+  const noun = kind === 'breakout' ? 'breakout' : 'thread';
   return (
     <div className="screen-error-state screen-with-titlebar">
       <div className="screen-drag-strip window-drag" />

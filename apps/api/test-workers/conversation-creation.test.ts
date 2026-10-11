@@ -309,9 +309,9 @@ describe("creating a work stream", () => {
     const otherClient = new WorkstreamObjectClient(importEnv, { ...AUTH, userId: otherUserId, sessionId: otherSessionId }, created.workstream.id);
     await expect(otherClient.boot()).resolves.toBeDefined();
     expect(await otherClient.importedSessionSource()).toBeNull();
-    await expect(otherClient.importedSessionCheckpoint()).rejects.toThrow("Only the original importer can update this channel");
+    await expect(otherClient.importedSessionCheckpoint()).rejects.toThrow("Only the original importer can update this thread");
     await expect(otherClient.updateImportedSession(crypto.randomUUID(), prepared))
-      .rejects.toThrow("Only the original importer can update this channel");
+      .rejects.toThrow("Only the original importer can update this thread");
   });
 
   it("re-imports only source changes after Rally turns and projects the new source reply into the next run", async () => {

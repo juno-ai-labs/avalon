@@ -49,7 +49,7 @@ Clicking **Connect Rally** on Rally's Home tab in Slack can carry straight on in
 The list of things Rally can do with your personal connection comes live from Slack, so it can change without a Rally update. If you connected before Rally combined these steps, your connection may have fewer permissions than a new one. Click **Refresh** on its row to get the full set.
 
 > [!WARNING]
-> Your personal Slack connection can read your private messages. If you ask Rally to look something up in them inside a shared Channel, everyone in that Channel can read the answer. Ask in a Channel only you are in when it is private.
+> Your personal Slack connection can read your private messages. If you ask Rally to look something up in them inside a shared Thread, everyone in that Thread can read the answer. Ask in a Thread only you are in when it is private.
 
 ## Slack as a place for results
 

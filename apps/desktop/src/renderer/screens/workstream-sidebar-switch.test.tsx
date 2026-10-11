@@ -206,23 +206,23 @@ describe('the right sidebar does not follow a channel switch', () => {
 
   it('closes the inspector rail, and drops the document it was showing', async () => {
     renderScreen();
-    await screen.findByRole('button', { name: 'Channel menu: First channel' });
+    await screen.findByRole('button', { name: 'Thread menu: First channel' });
 
     act(() => { useUiStore.setState({ railOpen: true, inspector: { type: 'resource', id: 'resource-in-the-first-stream' } }); });
 
     switchWorkstream();
 
-    await screen.findByRole('button', { name: 'Channel menu: Second channel' });
+    await screen.findByRole('button', { name: 'Thread menu: Second channel' });
     expect(useUiStore.getState().railOpen).toBe(false);
     expect(useUiStore.getState().inspector).toBeNull();
   });
 
   it('does not offer resource management before or after switching channels', async () => {
     renderScreen();
-    await screen.findByRole('button', { name: 'Channel menu: First channel' });
+    await screen.findByRole('button', { name: 'Thread menu: First channel' });
     expect(screen.queryByRole('button', { name: 'Manage resources' })).toBeNull();
     act(() => switchWorkstream());
-    await screen.findByRole('button', { name: 'Channel menu: Second channel' });
+    await screen.findByRole('button', { name: 'Thread menu: Second channel' });
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Manage resources' })).toBeNull();
   });
@@ -232,13 +232,13 @@ describe('the right sidebar does not follow a channel switch', () => {
   // as long as it lasted.
   it('keeps the retained inspector dormant even with stale open state and across a route switch', async () => {
     renderScreen();
-    await screen.findByRole('button', { name: 'Channel menu: First channel' });
+    await screen.findByRole('button', { name: 'Thread menu: First channel' });
     act(() => { useUiStore.setState({ railOpen: true, inspector: null }); });
     expect(document.querySelector('.rail-surface')).toBeNull();
 
     switchWorkstream();
 
-    await screen.findByRole('button', { name: 'Channel menu: Second channel' });
+    await screen.findByRole('button', { name: 'Thread menu: Second channel' });
     expect(document.querySelector('.rail-surface')).toBeNull();
     // What AppShell lays the feed out against, so a leaking value here reserves
     // the sidebar's width over a work stream that has no sidebar.
