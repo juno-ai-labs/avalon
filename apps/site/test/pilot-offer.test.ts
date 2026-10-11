@@ -1,0 +1,52 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const CARD = '<aside id="pilot-offer" hidden><button class="pilot-offer-close"></button><p>till <time class="pilot-offer-deadline"></time></p><a class="pilot-offer-cta" href="#">Sign up</a></aside>';
+
+/** Loads the landing page at `now` and returns the card once its delay has passed. */
+async function visit(now: Date): Promise<HTMLElement> {
+  vi.setSystemTime(now);
+  document.body.innerHTML = CARD;
+  vi.resetModules();
+  await import('../src/pilot-offer');
+  vi.advanceTimersByTime(2_000);
+  return document.getElementById('pilot-offer')!;
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  localStorage.clear();
+  vi.stubGlobal('matchMedia', () => ({ matches: true }));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('pilot offer', () => {
+  it('gives a visitor a deadline six days after their first visit and keeps it on later visits', async () => {
+    const first = await visit(new Date(2026, 9, 11, 9, 30));
+    expect(first.hidden).toBe(false);
+    expect(first.querySelector('time')?.textContent).toBe('October 17');
+    expect(first.querySelector('time')?.dateTime).toBe('2026-10-17');
+
+    const later = await visit(new Date(2026, 9, 14, 18, 0));
+    expect(later.querySelector('time')?.textContent).toBe('October 17');
+
+    const lastDay = await visit(new Date(2026, 9, 17, 23, 59));
+    expect(lastDay.hidden).toBe(false);
+  });
+
+  it('stops showing once the visitor\'s deadline has passed', async () => {
+    await visit(new Date(2026, 9, 11, 9, 30));
+    const after = await visit(new Date(2026, 9, 18, 0, 1));
+    expect(after.hidden).toBe(true);
+  });
+
+  it('stays away after the visitor closes it', async () => {
+    const card = await visit(new Date(2026, 9, 11, 9, 30));
+    card.querySelector<HTMLButtonElement>('.pilot-offer-close')!.click();
+    const again = await visit(new Date(2026, 9, 12, 9, 30));
+    expect(again.hidden).toBe(true);
+  });
+});
