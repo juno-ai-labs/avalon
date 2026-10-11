@@ -82,7 +82,9 @@ A pageview carries the class its bootstrap earned, which can never be `human`:
 it is accepted before the visitor has done anything, and an accepted event is
 never rewritten. The page leave carries the final class. **Count visits by class
 from `$pageleave`**, and add pageviews whose session has no page leave under
-their own (at best `unverified`) class. A chart of `$pageview` by
+their own (at best `unverified`) class. A page leave carries no campaign
+tags; join it to its pageview on `$session_id`, which both share, to get
+`$utm_campaign` and `adClickIdSource`. A chart of `$pageview` by
 `trafficClass` alone shows no humans by construction.
 
 ## Invariants
@@ -186,3 +188,5 @@ lockfile), canvas, audio and WebGL fingerprints, and the DevTools
 Promoting a soft code to hard, or changing a threshold, should come with
 replay or device evidence. The TLS extension-order check and the X
 reconciliation funnel in the PRD are not built yet.
+
+Shipped in [PR #1192](https://github.com/juno-ai-labs/avalon/pull/1192); see the [traffic classification PRD](PRDs/2026-10-11_site-traffic-classification/prd.md).

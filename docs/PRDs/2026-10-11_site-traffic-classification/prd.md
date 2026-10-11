@@ -134,8 +134,8 @@ edit. Any anonymous producer that starts through a bootstrap call can reuse it.
    [Signals](#signals) that can run before first paint.
 2. **At bootstrap, in the API.** The Worker reads `request.cf` (all plans:
    `asn`, `timezone`, `httpProtocol`, `tlsVersion`, TLS hashes) and request
-   headers, computes the edge codes, and compares the client address against
-   Apple's published iCloud Private Relay egress list. Raw values are dropped.
+   headers, computes the edge codes, and recognises iCloud Private Relay by
+   the networks Apple egresses through. Raw values are dropped.
 3. **Into the capability.** The codes go into the signed telemetry
    capability. The collector stamps the class and codes onto every site event
    that capability sends, so a script cannot set its own class.
@@ -156,7 +156,7 @@ inference or undocumented Cloudflare or browser behaviour; see
 | 2 | `engine_mismatch` | page | the UA claims iOS, yet Chromium-only APIs exist or `Error().stack` has V8's format | soft until tested, then hard | needs test |
 | 3 | `fetch_metadata_bad` | edge | `Sec-Fetch-Site/Mode/Dest` are not `same-site`/`cors`/`empty` | hard | needs capture of exact values |
 | 3 | `origin_bad` | edge | `Origin` is missing or not a site origin | hard | confirmed |
-| 4 | `declared_bot` | edge | `isbot` matches the UA | class | confirmed |
+| 4 | `declared_bot` | edge | a self-declared crawler, preview fetcher or HTTP library pattern matches the UA | class | confirmed |
 | 4 | `headless_ua` | edge | `HeadlessChrome` in the UA or `Sec-CH-UA` | hard | confirmed |
 | 4 | `signed_agent` | edge | `Signature-Agent` header present (Web Bot Auth) | class | confirmed |
 | 5 | `untrusted_input` | page | any pointer, touch, key or wheel event with `isTrusted === false` | hard | confirmed |
@@ -231,7 +231,9 @@ The final class rides on the page leave; a pageview is accepted before the
 visitor does anything, so it can never be `human`. One PostHog insight counts X
 landing `$pageleave` events for the last 30 days, broken down by
 `trafficClass`, one bar per `campaignName`, plus pageviews whose session sent
-no page leave under their own class. A second insight shows the same for all
+no page leave under their own class. A page leave carries no campaign tags, so
+it is joined to its pageview on `$session_id` for `$utm_campaign` and
+`adClickIdSource`. A second insight shows the same for all
 traffic. A third, outside PostHog, joins the hourly funnel above.
 
 ## Impact on the product contract
@@ -292,9 +294,11 @@ are wrong for a fetch. These checks cost nothing.
   properties. No new column, no migration.
 - **Contracts:** `packages/contracts/src/telemetry.ts` gains closed enums for
   class and codes. The schemas stay `strictObject`.
-- **Hosting ASN list:** a vendored file built from X4BNet `lists_vpn` (MIT),
-  refreshed at deploy. Apple's Private Relay egress CSV is fetched on the same
-  schedule.
+- **Hosting ASN list:** a checked-in starter set of large cloud and VPS
+  networks in `apps/api/src/telemetry/hosting-networks.ts`, edited by hand.
+  Private Relay is recognised by its egress networks (Akamai's relay ASN,
+  Cloudflare, Fastly), not Apple's address CSV, which is too large to ship in
+  the Worker.
 
 ## Security and trust model
 

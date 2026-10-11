@@ -216,7 +216,9 @@ is allowed.
 
 **What changed:** `site_page_viewed` gains an optional `adClickIdSource`, a
 closed enum. The reporter sets it to `x` when the landing URL has a non-empty
-`twclid`; the identifier itself is read and dropped in the page.
+`twclid`; the identifier itself is read and dropped in the page, and
+`takeAdClickId` removes it from the address bar before the PostHog SDK loads,
+since the SDK reports the full URL with every event and replay.
 
 **Why:** Paid X traffic could not be split into people and bots
 ([traffic classification PRD](PRDs/2026-10-11_site-traffic-classification/prd.md)).
@@ -230,7 +232,10 @@ would need a new field for each further platform.
 
 **Consequences:** Another platform is a new enum value and one entry in
 `AD_CLICK_ID_PARAMETERS`. The enum must never widen to a free string: the
-contract test rejects an identifier in this field.
+contract test rejects an identifier in this field. Anything that reads the
+landing URL after `takeAdClickId` no longer sees the identifier.
+
+Shipped in [PR #1192](https://github.com/juno-ai-labs/avalon/pull/1192); see the [traffic classification PRD](PRDs/2026-10-11_site-traffic-classification/prd.md).
 
 ### 2026-10-11 — Retire the header download link; keep the hero web entry as `secondary_cta`
 
