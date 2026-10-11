@@ -227,9 +227,12 @@ query strings and click IDs, so it is the fallback, not the default.
 
 ### The report
 
-One PostHog insight: X landing pageviews for the last 30 days, broken down by
-`trafficClass`, one bar per `campaignName`. A second insight shows the same for
-all traffic. A third, outside PostHog, joins the hourly funnel above.
+The final class rides on the page leave; a pageview is accepted before the
+visitor does anything, so it can never be `human`. One PostHog insight counts X
+landing `$pageleave` events for the last 30 days, broken down by
+`trafficClass`, one bar per `campaignName`, plus pageviews whose session sent
+no page leave under their own class. A second insight shows the same for all
+traffic. A third, outside PostHog, joins the hourly funnel above.
 
 ## Impact on the product contract
 
