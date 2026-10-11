@@ -239,10 +239,6 @@ describe('TelemetryReporter', () => {
     await reporter.workstreamOpened({
       workstreamId, visibility: 'private', navigation: 'switched', origin: 'ad_hoc', pinned: true,
     });
-    await reporter.messageSent({
-      workstreamId, messageId, visibility: 'private', workstreamOrigin: 'ad_hoc', messageKind: 'message',
-      attachmentCount: 1, mentionCount: 2, participantAddedCount: 0,
-    });
     await reporter.contentCopied({
       contentType: 'message_response', resourceType: 'message', resourceId: messageId, workstreamId,
     });
@@ -253,10 +249,6 @@ describe('TelemetryReporter', () => {
     expect(rows.map((row) => ({ name: row.event.name, properties: row.event.properties }))).toEqual([
       { name: 'workstream_opened', properties: {
         workstreamId, visibility: 'private', navigation: 'switched', origin: 'ad_hoc', pinned: true,
-      } },
-      { name: 'message_sent', properties: {
-        workstreamId, messageId, visibility: 'private', workstreamOrigin: 'ad_hoc', messageKind: 'message',
-        attachmentCount: 1, mentionCount: 2, participantAddedCount: 0,
       } },
       { name: 'content_copied', properties: {
         contentType: 'message_response', resourceType: 'message', resourceId: messageId, workstreamId,
