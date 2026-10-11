@@ -43,8 +43,11 @@ session storage before removing the URL field, so refreshing before sign-in
 keeps the landing attribution. Authentication retires it. See
 [`public-site-telemetry.md`](public-site-telemetry.md#browser-signup-attribution).
 
-The pilot offer card is on `/` only, not `/start-fast/`, and stops showing after
-October 16, 2026 in the visitor's time zone; remove it once that date passes. Closing it or following
+The pilot offer card is on `/` only, not `/start-fast/`, and gives each visitor
+their own deadline: six days after the day this browser first saw it
+(`rally.site.pilot-offer-first-seen.v1`), shown in the card and kept on later
+visits. After that day the card stops showing. Whoever signs up by their date
+gets the offer. Closing it or following
 its link keeps it away in that browser (`rally.site.pilot-offer-dismissed.v1` in
 local storage); neither its appearance nor its close is reported.
 
