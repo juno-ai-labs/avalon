@@ -78,7 +78,7 @@ describe("channel mention email", () => {
     expect(String(body.text)).toContain("https://with-avalon.com/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/");
     expect(String(body.text)).not.toContain("avalon://");
     expect(String(body.html)).toContain("https://with-avalon.com/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/");
-    expect(String(body.text)).toContain("Reply to this email to continue the channel.");
+    expect(String(body.text)).toContain("Reply to this email to continue the thread.");
     expect(String(body.html)).toContain("Sam &amp; Team");
     expect(String(body.html)).toContain("Adam &lt;Admin&gt; Injected");
     expect(String(body.html)).toContain("Quarterly &lt;script&gt;alert(1)&lt;/script&gt; planning");

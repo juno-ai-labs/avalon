@@ -6,7 +6,7 @@ import type { MenuBarContent, MenuBarWorkstream } from './menu-bar-menu';
 /** Shown for a Channel Rally has not finished naming. The renderer draws a
  * skeleton in that state; a menu row cannot, and the placeholder title on the
  * wire is not written to be read. */
-const UNNAMED_WORKSTREAM_LABEL = 'Untitled channel';
+const UNNAMED_WORKSTREAM_LABEL = 'Untitled thread';
 
 /**
  * The menu's content, derived from the Channel directory the main process

@@ -62,6 +62,7 @@ import {
   type ParentEffect,
   type ParentEffectEnvelope,
 } from "@rally/contracts/conversation-effects";
+import { breakoutMentionActivity } from "./breakout-activity";
 import {
   BeginPrivateChildPreparationRequestSchema,
   ClaimPrivateChildConfirmationRequestSchema,
@@ -846,13 +847,17 @@ export class HostedParent {
     }
   }
 
-  /** A Space forwards only its directory; a Channel its main conversation and person notifications. */
+  /**
+   * A Space forwards only its directory; a Channel its main conversation,
+   * person notifications, and a breakout's mentions emptied for the Activity
+   * tab (`breakout-activity.ts`).
+   */
   private forwardsChildEffect(substreamId: string, effect: ConversationEffect): boolean {
     if (!this.role.forwardsFeedEffects) {
       return effect.kind === "directory_common" || effect.kind === "directory_user";
     }
     if (substreamId === "0") return true;
-    return isPersonNotificationEffect(effect);
+    return isPersonNotificationEffect(effect) || breakoutMentionActivity(effect, substreamId) !== null;
   }
 
   /**
@@ -1192,7 +1197,8 @@ export class HostedParent {
     const identity = this.parentIdentity();
     if (!identity) throw new Error("conversation_parent_missing");
     const effect = isPersonNotificationEffect(source.effect) && identity.parentKind === "workstream" && substreamId !== "0"
-      ? { ...source.effect, substreamId: asSubstreamId(substreamId) } : source.effect;
+      ? { ...source.effect, substreamId: asSubstreamId(substreamId) }
+      : substreamId !== "0" ? breakoutActivity(source.effect, substreamId) : source.effect;
     let requiredProjectionVersion: number | null = null;
     if (isPersonNotificationEffect(source.effect)) {
       if (substreamId !== "0") this.prepareNotificationProjection(source.effect.recipientUserId, now);
@@ -3244,3 +3250,15 @@ export function parseParentOutboxEnvelope(payloadJson: string): ParentEffectEnve
 
 /** Guard an envelope's effect against the parent effect union; kept for the drain's own checks. */
 export const HostedParentEffectSchema = ParentEffectSchema;
+
+/**
+ * The only form a breakout's own activity event leaves its parent in. Anything
+ * else reaching here is a forwarding bug, and passing it on whole would carry
+ * the breakout's text into the shared log, so it throws instead.
+ */
+function breakoutActivity(effect: ConversationEffect, substreamId: string): ConversationEffect {
+  if (effect.kind !== "activity_event") return effect;
+  const emptied = breakoutMentionActivity(effect, substreamId);
+  if (emptied === null) throw new Error("breakout_activity_not_forwardable");
+  return emptied;
+}

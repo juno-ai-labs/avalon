@@ -53,7 +53,7 @@ sources and check them, as described in
 
 ## The built-in browser
 
-When you click a web link inside a Channel, it does not throw you out to
+When you click a web link inside a Thread, it does not throw you out to
 Safari or Chrome. It opens in a browser panel on the right of the Rally window,
 beside the conversation. You can read the page and the chat at the same time,
 and copy from one into the other without hunting for windows.
@@ -116,7 +116,7 @@ CAPTCHA, for example). Signing in to Rally itself, and connecting an app in
 
 - **Mac only.** On iPhone and in the web browser version, links open in a
   normal browser.
-- **Only in a Channel or Breakout.** Elsewhere in the app, including a
+- **Only in a Thread or Breakout.** Elsewhere in the app, including a
   conversation with a Sidekick, links open in your Mac's normal browser.
 - **Only web addresses.** Links starting `http` or `https` open here. Anything
   else does not.
@@ -136,7 +136,7 @@ page or document needs more room, make it wider.
   is selected, to go back to the standard width.
 
 The panel has a minimum width, and how wide it can go depends on the size of
-your window. Rally remembers the width separately for each Channel, so a
-research Channel can have a wide panel and a chatty one a narrow one.
+your window. Rally remembers the width separately for each Thread, so a
+research Thread can have a wide panel and a chatty one a narrow one.
 
 Next: [Code, data and the Terminal](03-code-files-and-the-terminal.md).

@@ -1,9 +1,18 @@
 # Spaces
 
+> **A Space is now the product's Channel.** The navigation redesign
+> ([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)) shows each Space
+> as a **Channel**: a list of threads (the stored Channels) that a person starts
+> from its composer. The rows, ids, links and Slack bindings are the same; only
+> the product words moved, and this document keeps the storage ones. What the
+> redesign added on the server is under
+> [The Channel's reads](#the-channels-reads) and
+> [A Space may be private again](#a-space-may-be-private-again).
+
 A **Space** is how an Organization groups its Channels. It carries a name, an
-icon and colour, an Organization-wide audience, a participant list, resources and
-Sidekick recommendations, and every Channel in the Organization belongs to at
-least one. A Channel may belong to several at once; each is a *placement* of the
+icon and colour, a scope (Organization-wide, or private to its participants), a
+participant list, resources and Sidekick recommendations, and every Channel in
+the Organization belongs to at least one. A Channel may belong to several at once; each is a *placement* of the
 same Channel rather than a copy, so opening any of them opens the same
 transcript.
 
@@ -38,15 +47,13 @@ them; the product design is in
 | `apps/api/src/services/space-bootstrap-service.ts` | The one-time cutover, the fallback that opens a new Organization's General when `initializeWorkspace` could not, and the placement the two creation paths outside the coordinator take for themselves. A new Organization's General is normally made by `initializeWorkspace` itself (see [General](#general)). |
 | `apps/api/src/services/workstream-object-creation-service.ts` | Where a Channel is born into its Spaces. [`workstream-creation.md`](workstream-creation.md) owns it. |
 | `apps/api/src/routes/spaces.ts` | `/spaces` mutations and the two paginated reads. |
-| `apps/api/src/routes/workspace.ts` | `PUT /workspace/order`, the one write for all three hand-arranged lists, and `PUT /workspace/pinned-order` for All's Pinned order. It is a workspace route because two of the three containers are not Spaces. |
+| `apps/api/src/routes/workspace.ts` | `PUT /workspace/pinned-order`, the old desktop's Pinned order, kept for older desktops; pins themselves are [`workstream-pinning.md`](workstream-pinning.md)'s. |
+| `apps/api/src/routes/navigation.ts` | The new client's reads: `GET /navigation/threads`, `GET /navigation/channel-stats`, the pin routes and the Activity tab. |
 | `apps/api/src/queues/activity-consumer.ts` | The `space_default`, `space_intent_resume` and `space_bootstrap` handlers. |
-| `packages/ui/src/components/space-icon.tsx`, `space-dashboard.tsx`, `space-pills.tsx` | The shared presentation both hosts draw a Space with. `docs/shared-ui.md` owns the split. |
-| `apps/desktop/src/renderer/components/space-pills.tsx`, `sidebar.tsx` | The Space pills across the top of the one sidebar, and the Channel list they filter. **All** lists every Channel; General has no pill. See [`desktop-shell.md`](desktop-shell.md). |
+| `packages/ui/src/components/space-icon.tsx` | The mark both hosts draw a Space with. `docs/shared-ui.md` owns the split. |
+| `apps/desktop/src/renderer/components/navigation-sidebar.tsx`, `screens/channel.tsx` | The Channels list and the Channel screen (feed, locked rows, composer, menu). [`desktop-shell.md`](desktop-shell.md) owns both. |
 | `apps/desktop/src/renderer/lib/deep-link-navigation.ts` | The renderer-local signal that distinguishes an externally opened Channel from ordinary in-app navigation so the sidebar reveals it once. |
-| `apps/desktop/src/renderer/screens/space-dashboard.tsx` | The `/spaces/:spaceId` dashboard. |
-| `apps/desktop/src/renderer/components/manage-access-dialog.tsx` | **Manage access**: `GET /workstreams/:id/access`: the Channel's own audience, and its Spaces as placements. |
-| `apps/desktop/src/renderer/lib/sidebar-list-store.ts`, `use-space-directories.ts`, `workspace-socket.tsx`, `workspace-directory-cache.ts` | The client's Space state: one versioned receiver, the two socket-owned directories, `spacesReady`, this person's whole ordering, and the local cache slice. |
-| `apps/desktop/src/renderer/lib/personal-order.ts` | `orderByStoredIds`, the one rule every hand-arranged list in the client is drawn by, and `storedOrderFor`, which finds one container's arrangement in it. |
+| `apps/desktop/src/renderer/lib/sidebar-list-store.ts`, `use-space-directories.ts`, `workspace-socket.tsx`, `workspace-directory-cache.ts` | The client's Space state: one versioned receiver, the two socket-owned directories, and the local cache slice. |
 | `packages/ui/src/components/conversation-menus.tsx` | The Channel menu's Breakout list, newest activity first; a Breakout opens beside Main. |
 
 ## How it works
@@ -74,7 +81,7 @@ the list a Channel created in the Space reads, in the same call. Nothing outside
 WorkspaceDO holds a copy.
 
 **Each Channel owns its own audience.** A Space grants none (see
-[Every Space is Organization-wide](#every-space-is-organization-wide)), so a
+[A Space starts Organization-wide and grants no reader](#a-space-starts-organization-wide-and-grants-no-reader)), so a
 membership, an archive and a restore change only WorkspaceDO's Space tables
 and never reach a Channel. The code that once applied a Space's audience to its
 Channels is gone; [`space-access-sources.md`](space-access-sources.md) keeps
@@ -148,23 +155,40 @@ not, and skips the icon in its "same Space?" comparison, because the first
 attempt's pass may already have written one. The desktop sidebar's **New
 space** sends no icon; a caller that sends one keeps it.
 
-### Every Space is Organization-wide
+### A Space may be private again
 
-A product decision: a Space can only be Organization-wide, and it grants no
-reader to the Channels in it. A Channel's audience is its own scope and
-participants, so a private Channel can sit in any Space, and **Make private**
-works on a Channel in General. The Space's participants are its listed members,
-not who reads its Channels: a Space never adds, removes or acts as a Channel
-participant, and every Channel starts with only its creator plus whoever the
-creator adds. Like any Organization-wide Space, any active member
-may edit one, so migration 94 also opened editing of formerly private Spaces to
-every member.
+The section below described the rule from migration 94 to the navigation
+redesign. A Space may now be private (`personal`) through an audience change:
+`UpdateSpaceAudienceRequest.scope` accepts both values again, while
+`CreateSpaceRequest.scope` still reads every creation as `workspace`, so every
+Space starts Organization-wide — including one created by an older desktop
+that sends `personal`. A private Space is listed to its participants alone; the
+rule is in [`listing-rules.md`](listing-rules.md). General refuses `personal`
+with `space_protected`, because it is every Channel's fallback home. Making a
+Space private still grants and removes no reader of any Channel in it, and only
+a participant may place a Channel into it (`canEdit`). Guests are shown only
+Organization-wide Spaces through `sharedNavigationSpaces`.
 
-The contract enforces it: `CreateSpaceRequest.scope` and
-`UpdateSpaceAudienceRequest.scope` accept only `workspace`
-(`SpaceRequestScopeSchema`). `SpaceScopeSchema` still reads `personal` for rows
-written before WorkspaceDO migration 94 (`SPACE_PUBLIC_ONLY_MIGRATION`), which
-widened every Space, archived ones included, and touched no Channel: a Channel
+### A Space starts Organization-wide and grants no reader
+
+A Space (the product's Channel) starts Organization-wide and becomes private
+only through an audience change, and in either state it grants no reader to the
+threads in it. A thread's audience is its own scope and participants, so a
+private thread can sit in any Space, and **Make private** works on a thread in
+General. The Space's participants are its listed members, not who reads its
+threads: a Space never adds, removes or acts as a thread participant, and every
+thread starts with only its creator plus whoever the creator adds. Any active
+member may edit an Organization-wide Space; a private one is edited by its
+participants.
+
+The contract says so: `CreateSpaceRequest.scope` is `SpaceCreationScopeSchema`,
+which reads `personal` from an older desktop as `workspace`, so a creation is
+always Organization-wide. `UpdateSpaceAudienceRequest.scope` is
+`SpaceRequestScopeSchema`, which accepts both. History: WorkspaceDO migration 94
+(`SPACE_PUBLIC_ONLY_MIGRATION`) had widened every Space and opened editing of
+formerly private ones to every member, before private Spaces came back as
+private Channels. That migration widened every Space, archived ones included,
+and touched no Channel: a Channel
 that was private through a private Space keeps its seated participants and stays
 private. Those seats are ordinary grants now, and removing one revokes it. The
 widening does not step a Space's revision, so an add staged against it still
@@ -205,7 +229,7 @@ place that names it; a refusal the object *chose* keeps its own code.
 ### Membership
 
 A membership records where a Channel is placed and changes no reader, because
-[a Space grants none](#every-space-is-organization-wide). Adding a Channel that
+[a Space grants none](#a-space-starts-organization-wide-and-grants-no-reader). Adding a Channel that
 already exists is one call, `addSpaceChannel`, and one WorkspaceDO transaction
 (`WorkspaceSpaceStorage.addMembership`): it checks the caller may edit the
 Space, writes the membership active, and stages every current default for the
@@ -222,6 +246,16 @@ Removing one is the same shape in reverse (`removeSpaceChannel`,
 `WorkspaceSpaceStorage.removeMembership`), with one refusal in front of it:
 `space_membership_final` preserves the invariant that every Channel has a home.
 A move, an archive and a restore are likewise one transaction each.
+
+**An archive re-homes rather than refuses.** A thread started from a Channel's
+composer lives in that Channel alone, so the invariant would refuse nearly
+every archive. `WorkspaceSpaceStorage.archive` first adds each live thread
+whose only active Space is the one being archived to General
+(`rehomeStrandedInGeneral`, through `addMembership`, defaults included), then
+archives, in one transaction; WorkspaceDO publishes General's change for the
+threads it moved. A restore reactivates the archived Space's memberships, so a
+re-homed thread ends up in both. Without a General (an Organization still
+opening), or for General itself, `space_membership_final` still refuses.
 
 **Legacy intents.** Before the Space-source code was removed, these operations
 staged a `space_intents` row and finished in a second transaction. A row
@@ -264,175 +298,28 @@ one disappears without a write.
 
 ### Per-person ordering
 
-The stored ordering capability was built as **one mechanism rather than
-three**: the Organization's Spaces, the Channels placed in one Space, and the
-Breakouts under one Channel. Each row answers the same question — in what
-order did *this* person put the items of *this* container — so
-`workspace_container_order` is keyed by `(user_id, container_kind, container_id,
-item_id)` with a `position`. `container_kind` is one of `organization`, `space`
-and `channel`; `container_id` is the workspace id, the Space id, or the Channel
-id, so a row says what it is about without the object it is stored in being part
-of its key.
+**No list is arranged by hand except Pinned.** The Channels list sorts A–Z,
+Recent or Needs attention, a Channel menu lists its Breakouts by latest
+activity, and the Pinned parts of each sidebar section are ordered in
+`workspace_pins` ([`workstream-pinning.md`](workstream-pinning.md)). The
+current client reads none of the snapshot's `ordering`, `pinnedOrder` or
+`spacesReady`, and never calls `PUT /workspace/order`. The server still sends
+them and still serves the route, because released desktops parse the snapshot
+with `ordering` and `spacesReady` required and would drop every snapshot
+without them. They go when no build that reads them is in the field.
 
-The Pinned section under **All** keeps a fourth order that is deliberately not
-a fourth kind: `workspace_pinned_order` (migration 87), sent as `pinnedOrder`
-beside `ordering` and written through `PUT /workspace/pinned-order`. Shipped
-desktops parse `ordering` strictly and would drop a whole snapshot holding a
-kind they do not know; `workstream-pinning.md` owns it.
+`workspace_container_order` stays. It is keyed by `(user_id, container_kind,
+container_id, item_id)` with a `position`, one mechanism for the three
+containers a person once arranged by hand (`organization`, `space`,
+`channel`). The Space directory still reads through the `organization` rows,
+so every visible Space is appended there on read and a cancelled Space
+reservation deletes its row. A Channel leaving a Space deletes that Space's
+`space`-kind row for it. Archiving takes nothing. No shipped client reads
+the stored order any more, and nothing but the directory's own append writes
+it, so a later change may drop the table with the directory join it feeds.
 
-That is the durable capability, not the current navigation policy. The desktop
-applies none of the three today: the Space pills sort by name, case-insensitive,
-with **All** first. Unpinned Channels
-in the selected Space and Breakouts under a Channel ignore stored `space` and
-`channel` arrangements and sort by title with case-insensitive comparison.
-Pinned Channels remain manually ordered in their separate pinned section; an
-unpinned alphabetical row may be dragged into that section to pin it. When the
-section is empty, starting that drag reveals a drop surface directly beneath
-the **Pinned** heading. Rows cannot be rearranged inside either alphabetical list. The broader wire
-and storage shapes remain accepted so this presentation change does not
-require a destructive migration or a coordinated compatibility cutover.
-
-**On the wire, `organization` carries no id at all.** A request is already
-addressed to one Organization — the authority takes the workspace from the
-caller's session — so an id there is a second answer to a settled question, and
-a wrong one used to be accepted: `writeOrder` ignored it and the result echoed
-it back, which is the key the desktop then filed the answer under. The request
-shape is a discriminated union, so the field only exists where there is a
-container to name; the *stored* row still keys on the workspace id, because a
-row wants to say what it is about. `sameContainer` in `personal-order.ts` is the
-one comparison every client reader goes through, for the same reason: a caller
-writing it by hand would either read an id that is not there or invent one.
-
-**What may be in each list is the only thing that differs by kind**, and each
-answer is one this object already holds:
-
-- `organization` keeps the Space ordering's original semantics exactly. Every
-  visible Space is appended first, on the read as well as on the write, because
-  the Space directory is read *through* these rows and a Space with no row is
-  one the join cannot answer with. "Visible" is
-  [all three ways](#who-may-see-a-space-and-why), so a Space somebody reaches
-  only through a Channel in it is in their list and is theirs to drag: an
-  arrangement is one person's view preference and no part of it is visible to
-  anybody else, which is why it is the one Space write a `through_channel`
-  reach does not refuse. The request is then filtered to the Spaces
-  this viewer can see, and the ids nobody mentioned keep their relative order
-  behind the ones that were — which is what a sidebar sends when a search has
-  hidden rows.
-- `space` keeps the Channels actually placed in that Space that this viewer can
-  read. `spaceIdsByChannel` — the read the sidebar payload already makes for
-  every row it draws — answers the active membership and the Space's own
-  visibility, and `listableChannelIds` — which a Space refusal already uses to
-  decide what it may name — answers the Channel's. A membership cannot answer
-  the second: a placement is the Organization's fact about a Channel, and
-  visibility is the reader's.
-- `channel` **is stored as given.** Nothing checks the ids against the
-  Channel's Breakouts. The client drops the ids it is not drawing. Storing an id
-  that names nothing costs this person one row and nobody else anything: the
-  rows are theirs, and the only reader is their own sidebar.
-
-**A write merges; it never deletes a position it was not about.** All three
-kinds put the ids the request named first, in the order it named them, and every
-other id this person already holds for that container behind them in the order it
-already had. A request is not a picture of the list. The only client there is
-sends the ids it is *drawing*, which is what is left after the client's own
-helper has dropped an archived Channel, a Breakout on a page this device never
-loaded, or a Channel past the sidebar's first page of 250 — so reading that
-silence as "delete the rest" meant one nudge on a laptop that had loaded one page
-threw away the arrangement made on a desktop that had loaded four, everywhere,
-with no error and no signal. `mergedOrder` is the one function all three go
-through.
-
-The `space` filter runs over the merge rather than over the request, so the rule
-that decides what may arrive also decides what stays: a Channel that has left the
-Space loses the position it was keeping only because nobody mentioned it. An
-archived Channel is not one of those — neither `spaceIdsByChannel` nor
-`listableChannelIds` reads `archived_at` — so it keeps its place and a restore
-brings the arrangement back.
-
-The Organization's list is additionally *updated in place* rather than rewritten,
-because its rows are what the directory join needs to exist at all.
-
-**Authorization is what every other Space write has**: an active non-guest
-member of this Organization, through `spaceRefusalCode(..., "write")`. Legacy
-Space- and Channel-container arrangements remain accepted behind that same gate
-for compatibility, although the desktop no longer uses them to arrange its
-alphabetical Channel list or the Channel menu's Breakouts.
-
-**One delivery shape.** The whole ordering rides the per-viewer
-`workspace_space_snapshot` and the connect payload that seeds it, as one
-`ordering` field: a list of `{ container, itemIds }`, one entry per container
-this person has arranged. A list rather than a map because the key is a *pair*,
-and a map would have to encode it into a string every reader parses back. The
-Organization's own list is in there too, although the Space directory beside it
-already arrives sorted by the same rows. All three kinds remain in the payload
-as compatibility data; the desktop's Space pills, alphabetical Channel list and
-the Channel menu's Breakouts ignore them. A write republishes the whole ordering
-to every socket this person holds, so an arrangement made in one window reaches
-the others without a reload.
-
-**It republishes to that person's sockets and to nobody else's, and it still
-advances the Organization's one waterline.** The two look inconsistent and are
-not. A snapshot is built per viewer — `list()` is a transaction, and every Space
-is serialized again — so publishing one person's view preference to a 60-person
-Organization is that work sixty times for a payload identical to the one
-everybody already holds, once per step of a held `Alt`+`Arrow`. The waterline is
-the other half: there is one for the whole Space authority, the client's
-versioned receiver refuses a snapshot at or below the waterline it already has,
-and the actor's *other* sessions are the ones that have to accept this one. What
-everybody else pays for the bump is re-applying an unchanged directory the next
-time anything republishes to them — a comparison, not a redraw — which is the
-standing price of one waterline rather than one per person.
-
-**What takes an order row away.** Three things, and archive is deliberately not
-one of them:
-
-- A Channel **leaving a Space** deletes that Space's `space`-kind row for it, for
-  everybody, when the removal finalizes. The placement is the Organization's
-  fact, so once it is gone no sidebar draws that row under that Space and the
-  position describes nothing. A later write to the container would filter it out
-  anyway — `spaceIdsByChannel` answers only active memberships — but only for
-  the next person who happens to arrange that Space.
-- A **cancelled Space reservation** (the version-zero form only) deletes both directions: the Space leaves
-  everybody's `organization` list, and the `space` container it was is deleted
-  whole.
-- **Archiving a Space or a Channel takes nothing.** `directory()` filters
-  `archived_at IS NULL`, so the row is already invisible, and a restore is meant
-  to put the Channel back where this person had it rather than at the top of a
-  recency list. The `space` filter is what makes that true: neither
-  `spaceIdsByChannel` nor `listableChannelIds` reads `archived_at`, so an
-  archived Channel survives the merge of the next write to that container.
-
-**Nothing prunes a `channel` container, because nothing deletes a Channel.** A
-Channel is archived, never removed: there is no delete path on
-`channels` outside migration 64's one-time automation
-sweep, and there is no foreign key to cascade from if there were. So a person's
-Breakout arrangements accumulate one container per Channel they have ever
-arranged Breakouts in, and are read whole onto every socket payload. That is a
-row-count with no bound, and the bound is the team's: it is in "Numbers handed to
-the team" above with what deciding it needs.
-
-**One client helper.** Where a surface still applies a stored order,
-`orderByStoredIds` puts the stored ids first in stored
-order, then everything the arrangement never mentioned in the order the list
-already had, and drops a stored id the list is not carrying. It is also what
-`orderPinnedWorkstreams` is built on, so the pinned section keeps that one
-arrangement rule. A drag writes its arrangement locally
-first and drops it if the server refuses; the list then shows what the
-Organization holds, which is what this person's other windows are showing.
-
-**The Space dashboard's paginated Channel list is not ordered per person.** It
-is a server-paged read, and arranging a list whose later pages have not arrived
-is a different feature from arranging one the client holds whole — the client
-could only ever order the page in front of it, and the stored ids would name
-Channels no page had fetched. It keeps its server order.
-
-The per-person pinned Channel order (`workspace_workstream_pins`) is also scoped
-to this container: one row identifies a person, Space, and Channel. It remains a
-separate table because pin membership and pin order are one fact, while
-`workspace_container_order` only arranges the membership another authority
-already owns. Removing a Channel from a Space deletes only that placement's pin;
-the same Channel's pin in another Space survives. See
-[`workstream-pinning.md`](workstream-pinning.md).
+`PUT /workspace/pinned-order` (`workspace_pinned_order`, migration 87) stays
+for older desktops; [`workstream-pinning.md`](workstream-pinning.md) owns it.
 
 ### Defaults
 
@@ -729,9 +616,11 @@ in-memory single-flight keyed by operation id, `spaceIntentRuns`).
 
 A requester who has left the Organization has nothing run as them: the alarm
 and the Queue consumer both leave the intent pending with
-`space_intent_requester_inactive` on the row. There is no reach check beyond
-that, because every Space is Organization-wide and any active member may edit
-one. A resume that fails for any other reason records its code on the row and
+`space_intent_requester_inactive` on the row. Every such intent was staged
+before migration 94, and nothing stages one now. An `archive` intent still asks
+`canEdit` as it finishes, so one whose Space has gone private since finishes
+only for a participant and is otherwise taken back as `archive_abandoned`. A
+resume that fails for any other reason records its code on the row and
 logs `space_intent_resume_failed`, and the advanced retry gate brings it back.
 
 Nothing publishes `space_intent_resume` any more. The consumer still accepts
@@ -744,13 +633,15 @@ in-place path.
 Space state comes down the workspace socket, not over HTTP, and there is no
 second read path for a test to use either — the directory is asserted through
 the same payload a client is handed. The connect payload
-carries `spaces` — both directories at one waterline, shaped for the viewer —
-and `spacesReady`, and every Space write republishes the same pair to every
-subscribed socket. There is deliberately no `GET /spaces`: a client that fetched
+carries `spaces`, both directories at one waterline and shaped for the
+viewer, and every Space write republishes them to every subscribed socket. A
+read acknowledgement or a pin write changes one person's view only, so it
+sends that person's sockets a small per-person frame rather than a whole Space
+snapshot, and `channelStats` do not ride the broadcast snapshot at all. There is deliberately no `GET /spaces`: a client that fetched
 one would hold a second answer to a question the socket already answers, and the
 two would disagree across a mutation.
 
-Both payloads are shaped for the viewer in two ways beyond ordering. **A guest
+Both payloads are shaped for the viewer in two ways. **A guest
 gets the same directories by the same rules**, with Organization-wide scope
 admitting nobody: the Spaces they take part in or reach through a Channel they
 may list ([`listing-rules.md`](listing-rules.md)). The relationship is read at
@@ -1058,15 +949,18 @@ publishes a breakout row to the sidebar socket; no surface draws one there.
 
 ### The refresh signal
 
-A Space has no socket, and the dashboard's page is the one thing on that screen
-the socket cannot replace. An activity-ordered, state-filtered list changes on
-far more than a membership: a message in a member Channel or breakout reorders
-it, a run finishing drops a row out of it, and this reader opening one takes it
-off their list and nobody else's.
+A Space has no socket, and a Channel's feed (and the older desktop's dashboard
+page) is the one list on that screen the socket cannot replace. It changes on
+more than a membership: a thread's description or audience changes what its
+row shows, and a thread placed or removed changes which rows there are.
 
 So WorkspaceDO sends a **nudge**: `space_conversations_changed`, carrying
 nothing but the Space ids whose page may have moved *for the socket it is sent
-to*. The dashboard re-reads the page it is holding; nothing else reacts to it.
+to*. The client re-reads each named Channel's feed. Only a nudge that reports
+a placement change also re-reads the Threads tab (`GET /navigation/threads`)
+and Activity, because a placement is how a thread arrives in either; a nudge
+about a message or a read leaves them alone. A reconnect re-reads every loaded
+feed, the Threads tab and Activity, since the socket may have missed a nudge.
 It goes out when a directory batch changes a member Channel's shared row, when
 a breakout's forwarded projection changes its, when one person's viewer row on
 either changes, and when a membership settles, is removed, or is taken away and
@@ -1093,7 +987,7 @@ viewer can list that Channel — the same `scope = 'workspace' OR is_participant
 test the page applies, from the one code-owned text both render — and about a
 Space only if its viewer can see that Space. A Channel id never leaves the
 publisher; only the Spaces it is placed in do. That keeps two people's fast
-exchange in a private Channel off every other member's dashboard. A guest's socket carries the Space snapshot the listing rules give
+exchange in a private Channel off every other member's screen. A guest's socket carries the Space snapshot the listing rules give
 them, and the same nudges.
 
 **"Can see that Space" is the wrong address for a membership, because of the
@@ -1121,11 +1015,11 @@ Space that holds it, and would put breakouts on a socket nothing else draws
 them on.
 
 The nudge **subsumes `channelCount`** as a staleness signal, because a settled
-membership sends one too — so the dashboard has one refetch trigger rather than
+membership sends one too — so a feed has one refetch trigger rather than
 one for Channels and a second for breakouts. `channelCount` stays on the
 summary for what it is actually good at: telling the two empty states apart.
 
-**A refetch reloads every page the reader has scrolled to.** The dashboard's
+**A refetch reloads every page the reader has scrolled to.** A feed's
 query is a React Query infinite query, and invalidating one refetches all its
 loaded pages; a reader three pages into General pays three page reads per
 nudge. That is left as it is. The coalescing that exists is React Query's own
@@ -1136,176 +1030,152 @@ query shape, not to add a timer.
 
 ### The desktop surfaces
 
-The sidebar's **Spaces** section sits where Projects were and is drawn in every
-shell the host hands a directory to, the conversation-only one included: every
-Channel belongs to at least one Space, so a sidebar without it cannot say where
-anything lives. General is in the directory like any other Space and the section
-has no case for it.
+The client draws a Space as the product's Channel: a row in the sidebar's
+Channels list and a Channel screen with a feed of its threads and a composer.
+[`desktop-shell.md`](desktop-shell.md) owns both. This section keeps what they
+take from the Space authority.
 
 Every shell, member or guest, on either host, is handed the socket's Space
-directory. A guest's holds only the Spaces the listing rules give them, each a
-`through_channel` or `participant` summary, and the sidebar draws it read-only:
-no Space write is a guest's.
+directory. A guest's holds only the Organization-wide Spaces the listing rules
+give them, each a `through_channel` or `participant` summary, and nothing a
+guest is shown carries a Space write.
 
-A placement is not a copy. The rows under an expanded Space are the Channel list
-the sections below already render, filtered by the Channel's own `spaceIds`, and
-they go through the same row — so a Channel in two Spaces is one record shown
-twice, with one unread state, one running state and one destination. Dropping a
-Channel from the sidebar's list onto another Space's pill is one server-side
-move request. When both Spaces grant the same scope and participant roster, it
-is one `moveSpaceMembership` RPC: in one WorkspaceDO transaction the Channel's
-hosted parent replaces the source Space id while preserving the exact
-supplied-reader attribution, the target placement becomes active (inheriting
-the target's defaults if it is new), and the source placement is retired with
-its undelivered defaults, pins and arrangement. The Channel's effective audience
-never changes, so the path neither reads its conversation nor runs the
-plan/apply/confirm audience protocol. If the audiences differ, the target
-already has an add of its own staged, or the Channel's recorded source is not at
-the Spaces' current revision and generation, the transaction is rolled back,
-the RPC answers `moved: false`, and the server takes the destination-first
-add/remove composition: establish the destination before
-withdrawing the source, preserving the invariant that every Channel has a home
-if the second operation is interrupted. Realtime republication, directory
-nudges, default delivery and recovery-alarm cleanup converge asynchronously.
-**Add to space** remains explicitly additive.
+**A placement is not a copy.** A thread in two Channels is one record listed in
+both feeds, with one unread state, one running state and one destination. The
+thread menu's **Channels** level (`lib/thread-channels.tsx`) shows where it
+sits, adds it to any Channel the person reaches as more than a reader of one
+thread in it, and takes it out of any Channel but its last; the server refuses
+the last with `space_membership_final`. The move RPC (`moveSpaceMembership`)
+stays for older desktops' drag between Space pills: when both Spaces grant the
+same scope and roster it switches both placements in one WorkspaceDO
+transaction, and otherwise it answers `moved: false` and the server adds the
+destination before it removes the source, so a thread always has a home if the
+second step is interrupted.
 
-**A Space this reader reaches only through a Channel in it is an ordinary
-row.** Mark, colour, name, expansion, and its alphabetical placements — limited
-to the Channels this reader can see, because that is what `spaceIds` on each
-row says. What it does not carry is a control: no **+**, no row action that
-writes, and it is not a drop target. A
-Channel released on it is ignored the way one released on a Space it is already
-in is ignored — the gesture changed nothing, and there is nothing here for a
-refusal to name. **Add to space** is the exception in presentation, not in
-authority: its submenu is the visible Space directory, so this Space remains in
-the list as a keyboard-focusable disabled choice whose tooltip says that only
-its participants may add Channels. Existing placements use checked-item
-semantics, put their checkmark immediately before the Space name, and remain
-keyboard-focusable in the same list. The list sorts by name, case-insensitive,
-matching the Space pills rather than the directory's arrival order, and the
-creation and import selectors use the same order.
-The server still refuses either write by name; the disabled rows explain the
-boundary without pretending that a visible Space disappeared.
-
-`SpaceRow` carries no creation action: Channel and Space creation live in the
-one sidebar plus menu, and the row does not reserve a column for a control no
-host renders. That is why
 `spaceIds` travels on the *common* half of `workspace_workstream_state`: it is
-the Organization's fact about the Channel, not the reader's, and WorkspaceDO
-republishes the row after every membership settlement.
+the Organization's fact about the thread, not the reader's, and WorkspaceDO
+republishes the row after every membership settlement. **That republication is
+at the waterline the row already had**, because a placement changes nothing the
+thread's own authority projects. The client's versioned receiver reads an
+unadvanced waterline as a duplicate, so `applyVersionedWorkstreamState` takes
+the placements off a row it is otherwise rejecting. Without that the thread
+stayed under the Channels it had for the session, and the local cache carried
+the stale row through a reload.
 
-**That republication is at the waterline the row already had**, because a
-placement changes nothing the Channel's own authority projects — adding an
-already Organization-wide Channel to a second Organization-wide Space moves no
-audience. The client's versioned receiver reads an unadvanced waterline as a
-duplicate, so `applyVersionedWorkstreamState` takes the placements off a row it
-is otherwise rejecting, exactly as it fills an empty participant pile at a
-pinned waterline. Without that the Channel stayed under the Spaces it had for
-the session, and the local cache carried the stale row through a reload.
+**A Space this reader reaches only through a thread in it is drawn, never
+changed.** Its Channel screen shows the threads they may open and no composer;
+the menu carries no write, and the thread menu does not offer it as a place to
+add a thread. The server refuses every write by name either way.
 
-The Space dashboard's own conversation page is the one thing on that screen the
-socket cannot replace, so it is refetched when a `space_conversations_changed`
-nudge names its Space, and again after a reconnect — `sidebarConnect.generation`
-is the client's only evidence that it may have missed one, and it is what the
-directory query already reads a reconnect from. Between them those cover the
-membership changing somewhere else — **Add to space** on a sidebar row, a drag
-— and everything else that reorders or empties an activity-ordered,
-state-filtered list. [The refresh signal](#the-refresh-signal) is the
-mechanism.
-
-The sidebar holds one page of the Organization's Channels, so an expanded Space
-lists the placements this device has and says nothing about the rest. It does
-not print the Space's `channelCount`: that total is not viewer-scoped, so a
-number drawn from it would count Channels the reader may not read. The count is
-still what keeps an expansion holding no rows from claiming the Space is empty.
-
-**Manage access** reads `GET /workstreams/:id/access`, which answers the
-Channel's own scope and readers with `spaces: []`. The Channel row is the whole
-answer to who can read it, with **Make private** or **Make public to
-organization** beside it; no Space can refuse either. Each Space the Channel is
-placed in (the answer's `spaceIds`) is a row that says only "Placed in this
-space.", because a Space grants no reader. A Space the reader reaches only
-*through this Channel* is named but carries no **Remove from space**: leaving
-is not theirs to do and the server refuses it by name. One the viewer's
-directory does not hold (a race, or one archived since) is "A space you can't
-see".
-
-Every Space refusal on every one of these surfaces goes through one copy table,
+Every Space refusal on every surface goes through one copy table,
 `lib/space-failure-copy.ts`, exhaustive over the closed `SpaceErrorCode` plus an
 `unavailable` fallback, so a refusal names what has to change first rather than
 printing the diagnostic a Worker wrote for a log. A surface that knows what was
-being attempted supplies its own sentence for a refusal that carried no code —
-"Spaces couldn't be reordered" also accounts for the row that snapped back.
-The placement menu has one product-copy exception: `space_membership_final`
-uses **A channel must be in at least one space.** in its modal. Every other
-named refusal still uses the shared table. `space_audience_incompatible` remains
-in the wire vocabulary for older deployments but current membership removal,
-archive and Channel creation no longer emit it; associative ancestor visibility
-makes its old discoverability premise false.
+being attempted supplies its own sentence for a refusal that carried no code.
+`space_audience_incompatible` remains in the wire vocabulary for older
+deployments, and nothing current emits it.
 
-**A `through_channel` viewer's dashboard is the header and the conversation
-list.** Mark, colour, name — and that list, which is already filtered to the
-Channels they can read by the same predicate that let them see the Space at
-all. The lifecycle, audience, participant and Channel-management controls are
-the Space's own and are withheld. The rename is withheld as an interaction
-rather than as a control — the field never opens — because that is the shape it
-has. Resources and Sidekicks are absent from every Space landing page, not just
-this restricted view.
-
-Each dashboard action reports into its own slot, so a refused rename stays with
-the name instead of appearing inside every modal that is opened afterwards. The
-slots are cleared when the screen changes Space: one component draws every
-Space, so a refusal about the Space somebody just left would otherwise be read
-as being about the one they just opened.
-
-While `spacesReady` is false the Space pills and the dashboard show the
-Organization-opening card *instead of* Space rows: a directory missing General,
-or a Channel with no Space, is not a state any surface may render. The
-Channel list remains the temporary route to every Channel already in hand, but
-its rows are not draggable and receive no Space placement controls, and the
-global creation launcher is unavailable because it cannot name a valid
-destination yet. The flag is optional on the wire and read as ready when absent,
-so a client talking to a server without the cutover is not permanently opening.
-
-A Channel row is draggable exactly while a pinned reorder, a cross-Space
-placement, or an unpinned-to-pinned drop is possible; a system Channel offers neither Space control,
-because the subsystem that writes it decides both its audience and its home.
-
-**There is no time-grouped list of Channels for a member.** Every Channel
-belongs to a Space, so the Space pill is the filter for the Channel list. A Channel in several Spaces is the same row in each selection,
-never two simultaneous copies. A Channel whose `spaceIds` name no visible Space
-is omitted once opening is complete: the reach rule makes that an invalid
-directory state rather than a fourth navigation section. While opening is in
-progress, the Channel list deliberately shows every Channel already in hand so
-the cutover never makes navigation disappear.
-
-**The Channel list pages the member's list.** It uses the existing
-workstream loader when its own scroll approaches the end. There is no second
-endpoint: this is the same `['workstreams']` page the former flat list used.
-
-**A member with no Channels at all sees the empty sections, not a line.** The
-sidebar draws the empty Pinned section, the Channels heading with its sort
-toggle, and one ghost row under it: the glyph's pebble dashed and unfilled with
-no symbol, and still skeleton bars for the title and time. There is no "No
-channels yet" line, except as screen-reader text. The heading is hidden when
-every Channel is pinned. A guest, who cannot create a Channel, still sees "No
-channels yet" instead.
-
-**A Channel reached only through a Breakout is a socket row like any other**,
+**A thread reached only through a Breakout is a socket row like any other**,
 for a member or a guest. The conversation directory (`/sharing/navigation`)
 adds no rows; it says which conversation such a row opens on. It opens on the
-first one listed and never on Main, and the Channel socket pool does not hold
-its Main.
+first one listed and never on Main, and the socket pool does not hold its Main.
 
-**A guest's Spaces are read-only.** Selecting one filters the Channel list, and
-its dashboard opens as it does for a member, with nothing to change and no
-member directory: Space writes and `/workspace/members` stay a member's.
+### The Channel's reads
 
-**Only manually ordered lists advertise reordering.** Pinned Channels keep drag
-plus Alt with the up or down arrow. Space pills and ordinary Channels are alphabetical,
-and a Channel menu lists its Breakouts by latest activity; neither exposes a
-reorder gesture.
-An ordinary Channel can still be dragged onto a Space pill to move its placement or into the pinned section to pin it.
+Three reads serve the new sidebar and Channel screen, each one synchronous SQL
+read over the listing rules:
+
+- **`feedPage`** (`GET /spaces/:id/feed`, `listChannelFeed`): the Channels
+  placed in a Space, newest placement first, ordered by migration 97's
+  `space_channel_memberships(space_id, state, joined_at, workstream_id)` index.
+  A Channel the viewer may open comes back whole, with its description as the
+  one-to-two-line summary; one a member may not open is a locked row with its id
+  and placement time only. A guest gets no locked rows. Archived and system
+  Channels are left out. Every row, locked or not, carries its placement's
+  `attentionSequenceNumber` ([read state](#the-channels-read-state)).
+- **`participatingPage`** (`GET /navigation/threads`, `listMyThreads`): the
+  Channels and breakouts a person takes part in or pinned, newest activity
+  first — the conversation page's two-arm shape started from the person, through
+  migration 97's `(user_id, is_participant)` indexes on both viewer tables.
+- **`channelStats`**: per listed Space, how many Channels in it the viewer may
+  list, when the newest of those last moved, and the viewer's
+  [read state](#the-channels-read-state) in it. It rides the connect payload
+  as `channelStats`, beside the Spaces rather than on `SpaceSummary`, which
+  shipped desktops parse strictly. It does not ride the broadcast Space
+  snapshot: that goes to every member, and the stats are one person's. After
+  connect `GET /navigation/channel-stats` (`listChannelStats`) reads it on its
+  own, which the desktop does on the same placement nudge that rereads a feed.
+
+`listSpaceChannels` and `listMyThreads` share one projection,
+`conversationRows` in `workspace-do.ts`. The feed and the stats each cost one
+pass over a Space's active memberships, which for General is every Channel in
+the Organization, as the older desktop's dashboard page already did.
+
+### The Channel's read state
+
+A product Channel (a stored Space) has an unread waterline and a per-person read
+position, in the **same columns and with the same meaning** a thread and a
+breakout carry, so the client draws one unread dot from one set of fields and a
+future Channel SubstreamAgent could write them through directory effects
+unchanged. Migration 98 (`workspace-channel-read-storage.ts`) adds them:
+
+- `spaces.latest_attention_ordinal` and `spaces.unread_tracking_start_ordinal`,
+  the waterline and where unread tracking began.
+- `space_channel_memberships.attention_ordinal`, the ordinal a placement took.
+- `space_reads(space_id, user_id, seen_attention_ordinal, updated_at)`, each
+  person's position. There is no manual-unread pair: a Channel cannot be marked
+  unread. It is a table of its own rather than columns on
+  `space_viewers` because a member reaches an Organization-wide Space with no
+  viewer row at all, and that table is the Space authority's projection: a row
+  is deleted when the projection goes inactive and replaced at each newer
+  source version, which would erase a read position on an unrelated audience
+  change. No foreign key, for the reason `space_invitees` gives.
+
+**Only a placement advances the waterline.** Every transition of a membership
+into `active` — `enterMembershipAtBirth`, `finalizeMembership` (and so
+`addMembership` and an archive's re-home into General), a move's target, a
+restore, an abandoned archive putting its rows back, a legacy `add` intent —
+goes through one private helper, `stampPlacements`, which in the same
+transaction increments the Space's `latest_attention_ordinal` and stamps the new
+value on that membership. An idempotent settle of a row that was already active
+takes no ordinal, a re-add after a removal takes a fresh, higher one, and a
+removal never lowers the waterline. The placer's own position rises to the new
+ordinal: your own placement is not news to you. Activity inside a placed thread
+does not move the Channel; the thread carries its own unread state.
+
+**Derivation.** `channelStats` answers `latestAttentionSequenceNumber`,
+`readThroughSequenceNumber`, `firstUnreadSequenceNumber` and `hasUnread` per
+Channel, from `unreadState` in `unread-state.ts` — the one helper
+`directoryWorkstream` and `breakoutConversation` use too. `seen` falls back to
+the tracking start when the person has no `space_reads` row, which is why a
+Channel nobody has opened is not unread to everyone. **A guest is never
+unread**: they reach a Channel only through threads they may list and see no
+locked rows, so their read position is reported as the waterline.
+
+**Acknowledgement.** `PATCH /spaces/:id/read-state` (body
+`AcknowledgeWorkstreamReadRequestSchema`, RPC `acknowledgeSpaceRead`) moves the
+position to `MAX(old, MIN(requested, latest))` — clamped rather than refused,
+unlike a thread's, because a feed row can outlive the waterline it was read
+from by a moment. It refuses a Channel the person cannot list as
+`space_not_found`, answers the person's `ChannelStats` row, and sends that
+person's sockets a small per-person frame carrying the row (the path a pin
+change takes too), so another window's dot follows without rebuilding a whole
+Space snapshot. There is no mark-unread route. A support session reads without moving the
+person's position (`docs/impersonation.md`).
+
+**What the reader acknowledges.** The feed's first page carries
+`latestAttentionSequenceNumber`, the Channel's waterline read in the same
+synchronous turn as the page. Every placement at or below it is on that page or
+no longer listed, so the client acknowledges the higher of it and the newest
+row it holds. Acknowledging only listed rows left the dot standing for good
+once the newest placement was removed or its thread archived. Neither a Channel
+hidden behind its thread or a breakout nor a thread hidden behind its breakout
+acknowledges anything (`PaneVisibility`).
+
+**Backfill.** Migration 98 numbers each Space's active placements by
+`(joined_at, workstream_id)` from one and sets both the waterline and the
+tracking start to the count, so nothing is unread on deploy. Rows that were not
+active keep `NULL`, which the feed reports as zero.
 
 ## Invariants
 
@@ -1335,12 +1205,10 @@ An ordinary Channel can still be dragged onto a Space pill to move its placement
   PRD gives that conversation no product surface at all — so without this,
   `PATCH /workstreams/<spaceId>` archives General behind the Space authority's
   back.
-- **One person's order for one container is stored under that container, and
-  delivered to nobody else.** The rows are per viewer and reach only that
-  viewer's own sockets. Compatibility Channel-container order is accepted
-  unchecked; the current
-  sidebar and Channel menu ignore it, and any future consumer must continue to treat ids absent
-  from its own authorized directory as nonexistent.
+- **One person's view state reaches that person's sockets and nobody else's.**
+  A read acknowledgement and a pin write publish a per-person frame, never the
+  broadcast Space snapshot. Broadcasting one person's change rebuilt every
+  directory for every member on every read.
 - **A membership is invisible until it is active.** A `joining` row (only a
   legacy intent can leave one) is not counted, not listed, and not on the
   snapshot.
@@ -1348,21 +1216,33 @@ An ordinary Channel can still be dragged onto a Space pill to move its placement
   operations**, from the Worker, which is where the retained-content
   containment preflight and its SQL triggers run. Nothing in the Space code
   writes one.
-- **A Space grants no reader.** Every Space is Organization-wide: joining,
-  leaving, archiving and restoring change nobody's access to a Channel. The
-  Channel's own scope and participants are its whole audience. A feature that
-  lets a Space grant readers again should start from
+- **A Space grants no reader, Organization-wide or private.** Joining,
+  leaving, making private, archiving and restoring change nobody's access to a
+  thread. The thread's own scope and participants are its whole audience. A
+  Space's scope decides only who lists the Space. A feature that lets a Space
+  grant readers again should start from
   [`space-access-sources.md`](space-access-sources.md).
-- **Every live Channel has at least one active Space.** Removal from the
-  last one, and an archive that would produce one, are refused. An archived
-  Channel keeps its membership so restoring the Space returns it, but no list
-  renders it, so it is not a stranded home that has to move first. A Channel
-  the directory has not yet named is treated as live: the archive guard fails
-  closed until that Channel is known archived.
-- **A reader who keeps access must keep a way to find it.** After a removal,
-  every remaining reader has to be able to discover one of the Spaces the
-  Channel stays in — an Organization-wide Space is discoverable by any active
-  member, and every Space is Organization-wide.
+- **Every live thread has at least one active Space.** Removal from the last
+  one is refused `space_membership_final`. An archive first moves into General
+  each thread it would strand that is Organization-wide and that the archiver
+  can list; any other stranded thread (private, or one the archiver cannot
+  list) keeps the archive refused `space_membership_final`. The moves and the
+  archive are one WorkspaceDO transaction, so a refused archive rolls back
+  whole and moves nothing. Moving a private thread would put its existence in
+  front of every General reader as a locked row, and moving one the archiver
+  cannot list would let them act on work they cannot see. An archived thread
+  keeps its membership so restoring the Space returns it, but no list renders
+  it, so it is not a stranded home that has to move first. A thread the
+  directory has not yet named is treated as live: the guard fails closed until
+  that thread is known archived. Guard: `channels-threads-navigation.test.ts`
+  "given a thread that lives only in a Channel, when the Channel is archived,
+  then the thread moves to General and a restore puts it back", and the
+  refused archives in `space-authority.test.ts`.
+- **A private Space is not found through a thread in it.** A reader of one
+  thread in a private Space does not list the Space, so a thread's `spaceIds`
+  can name fewer Spaces than it sits in. A reader who keeps access to a thread
+  finds it through the Threads tab, a link or search, not necessarily through
+  a Channel; [`listing-rules.md`](listing-rules.md#invariants) holds the rule.
 - **General is one per Organization and cannot be archived.**
   The unique partial index on `system_role` is what makes a race between two
   idempotent creators produce one Space rather than two fallbacks. Its name may
@@ -1373,10 +1253,11 @@ An ordinary Channel can still be dragged onto a Space pill to move its placement
   and no notification anyone asked for.
 - **Space attachments are monotonic.** Leaving a Space, removing a default, or
   archiving a Space stops future delivery; it never removes a resource or Sidekick a Channel already has.
-- **No product surface opens a Space's conversation.** The dashboard carries no
-  composer, transcript, feed socket, Main link or Breakout list.
-- **The dashboard page's filter is the SQL, and the contracts predicate is a
-  copy of it.** Two implementations of one decision exist because the page is
+- **No product surface opens a Space's conversation.** The Channel screen's
+  composer starts a new thread; it never posts into the Space, and the screen
+  has no transcript, feed socket, Main link or Breakout list of its own.
+- **The older desktop's dashboard page filter is the SQL, and the contracts
+  predicate is a copy of it.** Two implementations of one decision exist because the page is
   decided on the server and drawn on the client; the only thing keeping them
   equal is the combination walk in
   `space-conversation-page.test.ts`. A change to either without the other is a
@@ -1517,8 +1398,9 @@ Space write in the Organization. So a publication costs
 plus two indexed lookups per row scanned. A Space the viewer *can* reach costs
 almost nothing: `EXISTS` stops at the first visible member. The whole of the
 cost is the Spaces they cannot reach, because proving a negative means looking
-at every member. Every Space is Organization-wide now, so that is a guest's
-view of the Spaces that hold none of their Channels.
+at every member. A member reaches every Organization-wide Space by its scope,
+and the thread clause never applies to a private Space, so that is a guest's
+view of the Organization-wide Spaces that hold none of their threads.
 
 **What bounds it is the index, and only as far as one Space.**
 `space_channel_memberships_space_state_idx` on `(space_id, state,
@@ -1583,11 +1465,8 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/api/test/workspace-space-retirement-migration.test.ts` | Migration 62 against the real ledger: a queued Project default settled before the drops rather than dropped under, an applied default leaving the Channel's own attachment alone, and the consumer's tombstone acknowledging a redelivered Project message by name. |
 | `apps/api/test/client-contract.test.ts` | Which builds the cutover still answers: a browser build that declares nothing or declares an older contract is told to update; a native client that declares nothing is admitted. |
 | `packages/contracts/src/spaces.test.ts` | The closed schemas, the appearance registry, and the container address: a Space's and a Channel's need an id, the Organization's is refused one. |
-| `apps/desktop/src/renderer/components/space-pills.test.tsx` | The Space pills: order, General left out, filtering without navigating, A–Z order with no drag or Alt+Arrow reorder, Open and Archive space, New and Restore space, and dropping a Channel on a pill. |
-| `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | The **Needs attention** section; the absence of Resources, Sidekicks, **Add channel**, the new-Channel plus, row **Remove**, and their data dependencies; the two empty states; the refetch after a reconnect and the one it does not do for the connection it opened on; the blocked-archive copy; General's protections; that one refusal appears once; and that a refused participant roster leaves the dialog open with its sentence in it. |
-| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | That a dashboard nudge invalidates the named Spaces' pages and no others. |
-| `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | Who reads the Channel from the Channel alone, each Space listed as a placement, an unseen or reached-through Space named but not removable, both scope changes, and each actionable refusal. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The single sidebar: the All filter and the pills it sits beside, the Space subtitle with General left out, pins under All, a guest's read-only Spaces, and the rows' markers. |
+| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | That a nudge invalidates the named Channels' feeds and no others. |
+| `apps/desktop/src/renderer/screens/channel.test.tsx` | The Channel screen over the feed: thread rows, locked rows, the composer's absence for a reader who reaches the Channel only through a thread, and the read acknowledgement. [`desktop-shell.md`](desktop-shell.md) owns the screen. |
 | `apps/desktop/src/renderer/lib/browser-collaboration.test.tsx` | The cookie-scoped browser's single sidebar and split Breakout pane; selected-Space filtering and accessibility state; multi-Space route stability; active-before-archived selection; and the local fallback that keeps an admitted Channel reachable when no visible Space is returned. |
 | `apps/desktop/src/renderer/lib/personal-order.test.ts` | The one arrangement rule: stored ids first, the rest in their natural order, an id the list does not carry dropped, an empty arrangement as the identity, and a container addressed by both halves of its key. |
 
@@ -1736,6 +1615,10 @@ other row in it. What a new WorkspaceDO table does owe is a routing decision in
 `apps/api/test/workspace-runtime-database.test.ts`, and both are declared there
 as reached by typed RPC only.
 
+**Migration 98 adds a Channel's read state**: two waterline columns on
+`spaces`, `attention_ordinal` on `space_channel_memberships`, and the
+`space_reads` table; see [The Channel's read state](#the-channels-read-state).
+
 **Migration 64 deletes the eight Project tables**, after the invalidation
 described under [Operations](#operations) and children-before-parents, because
 `PRAGMA foreign_keys = OFF` is a no-op once a Durable Object event has touched
@@ -1803,7 +1686,7 @@ Channels' readers will see.
 
 WorkspaceDO's directory and membership projections are discovery and
 coordination state. **They never authorize Channel content**:
-[a Space grants no reader](#every-space-is-organization-wide). A grant a Space
+[a Space grants no reader](#a-space-starts-organization-wide-and-grants-no-reader). A grant a Space
 seated before migration 94 keeps that provenance and is never published to the
 shared scope-grant directory. A direct add of such a reader promotes the grant
 to `direct` and publishes it, and an ordinary removal revokes it.
@@ -1911,6 +1794,74 @@ whoever reads it afterwards; `space_default_delivery_failed` does the same for a
 default target.
 
 ## Changelog
+
+### 2026-10-10: A Space is the product's Channel, and may be private again
+
+**What changed:** A Space's audience may be `personal` again, by audience
+change only; a private Space is listed to its participants alone; General
+cannot be made private. The feed, participating and stats reads serve the new
+navigation. Archiving a Space moves into General each thread it would strand
+that is Organization-wide and that the archiver can list; any other stranded
+thread keeps the archive refused, and a refused archive rolls back whole. A
+Space now has an unread waterline that only a thread's placement advances and
+a per-person read position in `space_reads`, in breakout-identical columns
+(migration 98), with an acknowledge route and no mark-unread. The desktop's
+Space pills, single sidebar and Space dashboard are deleted, and with them
+every reader of the hand-arranged order; the snapshot keeps `ordering`,
+`pinnedOrder` and `spacesReady`, and `PUT /workspace/order` stays, for
+released desktops that require them. A read or a pin write publishes a small
+per-person frame (`workspace_navigation_state`) rather than a Space snapshot,
+`channelStats` leave the broadcast snapshot, and `space_conversations_changed`
+says whether a placement moved, so a message re-reads only the open feed.
+
+**Why:** The navigation redesign turns each Space into a Channel and lets a
+Channel be private
+([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)). Every Space
+already had the parts a Channel needs: rows with no conversation of their own,
+many-to-many placement, General, Slack room bindings and canonical links. A
+thread started from a Channel's composer has that Channel as its only home, so
+refusing every archive that strands one would have made archive unusable, and
+General is where every member already looks. The move stops at threads that
+are Organization-wide and listable by the archiver: moving a private thread
+would show it as a locked row to every General reader, and moving one the
+archiver cannot list would let them act on work they cannot see. The
+waterline exists because the redesign asks for an unread dot on Channel rows
+and Recent and Needs-attention sorts, and a Channel's news is a thread
+arriving in it. Republishing a whole Space snapshot for one person's read
+rebuilt every directory on every acknowledgement, and re-reading the Threads
+and Activity lists on every message cost each open client a full read per
+message in the Organization. Dropping the order fields from the wire was
+considered and deferred: a released desktop's snapshot schema requires
+`ordering` and `spacesReady`, so removing them would have stopped those
+desktops hearing any Space change.
+
+**Considered and rejected:** A new channel table, which would copy rows,
+re-key pins, move hosted parents and D1 anchors, re-point Slack bindings and
+rewrite links for no product gain. Delta member routes beside the audience
+route: `noteSpaceAudience` already sets the scope and the whole participant set
+in one transaction. Moving every stranded thread into General, private ones
+included, for the disclosure above. Advancing the waterline on activity inside
+placed threads, which would make every Channel unread whenever any thread in
+it moved and duplicate the thread's own unread state. Read-position columns on
+`space_viewers`: most readers of an Organization-wide Space have no viewer row,
+and that table is a projection that deletes rows. A Channel SubstreamAgent of
+its own: the feed is a per-viewer projection of mutable placements, and
+WorkspaceDO already owns the listing rules, so an agent would add a hop and a
+second authority over the same fact. Channel mark-unread, cut with its columns
+and route: nothing in the product asked for it, and two unused columns in a
+new table are cheaper never to add than to drop.
+
+**Consequences:** Migration 94's "every Space is Organization-wide" no longer
+holds; its migration is not touched. Only a placement may advance a Channel's
+waterline, and only through `stampPlacements`; a new path into `active` that
+skips it is a Channel that never turns unread. The columns are spelled as a
+breakout spells them, so a future Channel SubstreamAgent under the Space's
+existing parent (`hostedParent(spaceId)`) can write them through directory
+effects; revisit the WorkspaceDO decision when Channels gain chat, mentions or
+typing. An archive that rehomes must stay one transaction with the archive
+itself. `workspace_container_order` is kept only because the directory still
+reads through its `organization` rows. Storage names stay, and the product
+words differ from them.
 
 ### 2026-10-08: A Space lists Organization invitees until they join
 

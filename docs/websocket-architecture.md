@@ -661,6 +661,18 @@ open transport as success.
   An automation's feed follows its page. Retaining it for five minutes the way a
   work-stream feed is retained would hold a conversation open after its author
   navigated away, for a latency nobody is waiting on.
+- **A reader of a socket-owned cache entry never brings its own fetcher.** An
+  observer that only reads an entry the socket fills passes `fetchThroughOwner`
+  (`lib/fetch-through-owner.ts`), which runs the fetcher of the observer that
+  has a real one. TanStack copies each observer's options onto the query as it
+  renders, so a placeholder `async () => undefined` became the query's fetcher
+  whenever its reader rendered last, failed the next invalidation ("Query data
+  cannot be undefined"), and left the list never read again. Guard:
+  `lib/fetch-through-owner.test.ts`.
+- **A change that arrives as a push does not invalidate the work-stream
+  list.** Invalidating it is a whole Space walk, and a walk answered before
+  WorkspaceDO had a thread's new title put the old one back. Keep it for the
+  debug toggle, a connect that carried no rows, imports and Sidekick runs.
 
 ## Boundary
 
@@ -844,6 +856,31 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-10-10 — Readers of a socket-owned entry no longer replace its fetcher
+
+**What changed:** Observers that only read a cache entry pass
+`fetchThroughOwner` (`lib/fetch-through-owner.ts`) instead of a placeholder
+`async () => undefined`. It runs the fetcher of the observer that has a real
+one. A thread's send, retry, elicitation answer and transcript snapshot, and
+the Channel composer's create, no longer invalidate the work-stream list.
+`useCachedWorkstreams` listens only to that entry's data events.
+
+**Why:** TanStack copies each observer's options onto the query when it
+renders, so an invalidation ran whichever observer rendered last. When that was
+a reader, the placeholder's `undefined` failed the query ("Query data cannot be
+undefined") and the list was never read again. Fixing that made those
+invalidations walk every Space on each send. A walk answered before WorkspaceDO
+had a thread's new title put the old one back for a moment. The rows those
+paths change already arrive as pushes. The whole-cache subscription took events
+that observers raise while mounting during another component's render, and
+updated the sockets pool from there (React's setState-in-render warning).
+
+**Consequences:** A new reader of a socket-owned or shared entry passes
+`fetchThroughOwner`, never its own placeholder. Invalidating the work-stream
+list is a whole Space walk: keep it for the debug toggle, a connect that
+carried no rows, imports and Sidekick runs, not for a change that arrives as a
+push.
 
 ### 2026-10-06 — The main process holds a workspace socket for the menu bar
 

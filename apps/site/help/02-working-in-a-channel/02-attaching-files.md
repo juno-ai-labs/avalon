@@ -5,7 +5,7 @@ description: Give Rally a PDF, a spreadsheet, a screenshot or a whole folder of 
 
 Describing a spreadsheet to Rally is slow, and you will get a column wrong.
 Attach the spreadsheet instead. Rally reads what you attach, and so does everyone
-else in the Channel.
+else in the Thread.
 
 ## Four ways to attach
 
@@ -20,7 +20,7 @@ else in the Channel.
    is over it. Selecting a pile of files in a folder and dragging them all at
    once works too.
 4. **Paste.** Copy a file or an image and press <kbd>⌘</kbd> <kbd>V</kbd>. You do
-   not have to click into the box first. Pasting works anywhere in the Channel
+   not have to click into the box first. Pasting works anywhere in the Thread
    as long as you are not typing in some other field or dialog.
 
 ## The tiles above the box
@@ -35,7 +35,7 @@ Each file you add shows as a small tile above the message box.
 
 You cannot send while a file is still uploading. Wait for the ring to finish,
 then press <kbd>Return</kbd> as usual. Attachments are part of your draft, so
-they come back with it if you leave the Channel and return later (see
+they come back with it if you leave the Thread and return later (see
 [The message box](01-the-message-box.md#your-draft-waits-for-you)).
 
 ### Pasted screenshots get a sensible name
@@ -102,7 +102,7 @@ open a file at all, it will not state facts from it.
 
 ## Rally always answers a message with a file
 
-In a Channel full of people, Rally sometimes stays quiet and lets the humans talk
+In a Thread full of people, Rally sometimes stays quiet and lets the humans talk
 (see [People in the room](05-people-in-the-room.md)). A message with an
 attachment is different. Rally always responds to it, on the reasonable guess
 that you did not attach a contract for decoration.
@@ -114,10 +114,10 @@ that you did not attach a contract for decoration.
 - "What's wrong in this screenshot? The button should be blue."
 - "Compare these two PDFs and tell me what changed."
 
-## Files that stay with the Channel
+## Files that stay with the Thread
 
 An attachment belongs to the message you sent it with. If you want a file to be
-part of the Channel itself, where Rally and your teammates can always find it,
+part of the Thread itself, where Rally and your teammates can always find it,
 add it as a resource. That is covered in
 [Resources: things you bring in](../06-things-rally-makes/04-resources.md).
 

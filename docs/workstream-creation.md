@@ -1,24 +1,22 @@
 # Starting a work stream
 
-Between pressing enter in the launcher and a work stream existing, Rally does
-real work: it reserves an email address, writes the work stream and its opening
-message, and starts a harness run. This document covers what the person who
-pressed enter sees while that happens, and what the server does and does not make
-them wait for.
+Between pressing enter in a Channel's composer and a thread (a stored work
+stream) existing, Rally does real work: it reserves an email address, writes
+the thread and its opening message, and starts a harness run. This document
+covers what the person who pressed enter sees while that happens, and what the
+server does and does not make them wait for.
 
-The promise is that starting a work stream looks like opening one. The launcher
-and the work stream being created are one element tree in one component, so the
-change between them is a change of geometry rather than a change of screen, and
-the composer is never unmounted across it. On the server, everything the response
-does not depend on still waits for it anyway — deliberately, and after one
-attempt at the opposite that the changelog records.
+The promise is that starting a thread looks like opening one. The thread opens
+beside its Channel on the keystroke, as a pending row whose pane already shows
+the opening turn, and becomes the real thread when the create answers. On the
+server, everything the response does not depend on still waits for it anyway,
+deliberately, and after one attempt at the opposite that the changelog records.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/screens/new-workstream.tsx` | Both states of the screen, the `launching` state that switches between them, the create mutation, and `launchedWorkstreamDetail` — the one place a launched work stream's cached detail is built. |
-| `apps/desktop/src/renderer/components/new-channel-participants.tsx` | The Participants row above the composer: the **+** that widens into the people search, and the pill that opens the list a person is removed from. |
+| `apps/desktop/src/renderer/components/channel-composer.tsx` | `ChannelComposer`, the one place a person starts a thread: the composer at the foot of a Channel screen, the create mutation, and `launchedThreadDetail`, the one place a launched thread's cached detail is built. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The pending-row rule on the shared list: `addPendingWorkstream`, `confirmPendingWorkstream`, `discardPendingWorkstream`, `keepPendingWorkstreams` (applied by every write that replaces the list), and `releasePendingWorkstreams`, the one path that may remove a pending row. |
 | `apps/desktop/src/renderer/lib/launched-conversation.ts` | `optimisticOpeningTranscript`, the one place either launcher's optimistic turn is built, and the detail a launched substream is seeded with. |
 | `packages/ui/src/styles/app.css` | The `.workstream-launch-screen` block at the end of the file: every geometry difference between the two states, and the two keyframes. Shared with the substream launcher, which renders the same three rows inside a work stream's own column ([`substream-creation.md`](substream-creation.md)). |
@@ -32,120 +30,39 @@ attempt at the opposite that the changelog records.
 | `apps/api/src/services/workstream-service.ts` | The fenced pre-cutover create path retained until Durable Object authority opens. |
 | `apps/api/src/observability/tracing.ts` | The custom spans every step of the create is measured with; the names and the queries are in [`performance-tracing.md`](performance-tracing.md). |
 
-### The launcher and the work stream are one screen
+### A thread starts from its Channel's composer
 
-`NewWorkstreamScreen` holds a `launching: LaunchingWorkstream | null` state. It is
-set **in the same commit as the create request**, from what the person typed, and
-it is what makes the work stream appear to open on the keystroke rather than on
-the response.
+A person starts a thread in one place: the composer at the foot of a Channel
+screen (`ChannelComposer`). There is no separate launcher screen and no other
+route to one; Sidekick runs, connectors and Slack rooms keep creating threads
+on their own paths. The composer sends `POST /workstreams` with `spaceIds` set
+to that Channel alone, so the thread's home is the Channel it was started in.
+It is shown only to someone who may start a thread there: not to a guest, and
+not to a reader who reaches the Channel only through a thread in it.
 
-The component renders one tree in both states, a three-row grid of header, body,
-and composer dock:
+On the keystroke the thread is listed as a pending row under the id the
+composer chose, and it opens in the right pane beside the Channel
+(`threadRoute(threadId, channelId)`), seeded with `launchedThreadDetail` and the
+optimistic opening turn from `optimisticOpeningTranscript`. Nothing waits on
+the round trip before the person sees their thread. If the create fails, the
+pane goes back to the Channel, where the composer has restored the draft and
+names the failure. The unsent draft and its attachments are cached per Channel
+(`newWorkstreamDraftKey` with the Channel's id).
 
-- **Not launching** — the header is collapsed, the body row is empty, and the
-  dock carries the Channel's setup above the composer: the **Participants**
-  row (`NewChannelParticipants`), then the Space picker and the Channel name.
-  The dock spans the body and dock rows and centres itself in them, so the
-  composer sits in the middle of the pane with its setup directly above it.
-  The mention and command lists, which open upward,
-  cap their height at the room left above it, so a short window scrolls them
-  rather than running them under the bar. The retired Welcome back dashboard,
-  attention list, and suggested-work shelf no longer sit between opening Rally
-  and starting a work stream.
-- **Launching** — the root additionally carries `workstream-screen`, the header
-  is 44px around the Channel name (or a title skeleton), and the body holds a
-  transcript. The setup rows leave with the resting state. 44px because that is the row the conversation this
-  becomes actually uses: `.grokbot-workstream-header`, which every conversation
-  renders, takes the screen's header track down from the base 55px. The header
-  takes that height on the frame the class lands rather than growing into it;
-  only the collapse back, which the failure path takes, is eased.
+**A thread started in a private Channel starts private.** The route passes
+`narrowInPrivateSpaces`, and `resolveSpaceWorkstreamStart` in
+`lib/channel-audience.ts` narrows the thread to `personal` when any Space it is
+born in is private: only its starter and whoever they mention can read it. In
+an Organization-wide Channel the thread is Organization-wide. Only the
+person-started route narrows: a connector resolves its audience from its room,
+and narrowing it would leave a public Slack channel's thread unreadable to that
+channel's members.
 
-The launching state deliberately declares no geometry of its own. Because its
-root carries `workstream-screen`, it inherits that screen's dock padding and
-column width from the same rules the real screen uses. Anything restyled for the
-launcher is written under `:not(.is-launching)` instead, so the moment the class
-lands the element is already dressed as the screen it is about to become and the
-navigation that follows changes only the data. The composer is no longer one of
-those things: it is the same message capsule at the same width on both sides of
-the hand-off, per
-[`conversation-surfaces.md`](conversation-surfaces.md).
-
-The sidebar's **New channel** opens the launcher at
-`/spaces/:spaceId/workstreams/new` at once, on the Space the sidebar is filtered
-to, or on General (listed as **All**) when it is not. There is no dialog first:
-the Space and the name are set on the screen itself, and nothing is created until
-the opening message is sent. That is the only route to the launcher: there is no
-Space-less one, because every Channel is started from a Space. A Space with no
-Channel to open lands here too (`emptySpaceRoute` in `lib/workstream-landing.ts`):
-an empty Organization opens it on General, as does a last-viewed Space that has
-emptied since, a pill picked for a Space with no
-Channels opens it on that Space, as does a newly created Space and a Channel
-moved out of the last placement in its Space. A reader who cannot start Channels
-gets the Space's dashboard instead.
-
-The setup above the composer is three controls:
-
-- **Participants.** The creator's avatar leads one pill summing up who is in
-  the Channel; the pill opens the full list, which is where a person is taken
-  back out, and the creator has no remove control. The dashed **+** widens in
-  place into the search field, its results opening upward. The field also
-  takes email addresses, separated by spaces, commas or semicolons, as the
-  Channel's People level does: Enter adds the member an address belongs to and
-  holds any other address as an invitee, shared the Channel once it exists. A
-  guest creator gets the search alone. A Space's
-  participants are its listed members, not who is in its Channels, so the row
-  never starts from them.
-- **Space.** The shared `DropdownSelect`, in its `pill` variant and opening
-  upward, listing the Spaces a Channel can be started in through
-  `useSpaceChoices`. Changing it is local state rather than a navigation, because
-  a navigation remounts the launcher and would drop the people and name already
-  chosen. The draft key stays the route's Space, so the words in the composer
-  never swap for another Space's draft. If the picked Space is archived while
-  the screen is open, the launcher falls back to the route's Space.
-- **Name.** Optional; a Channel sent without one is titled by the server, as
-  before.
-
-Every change of state on the screen moves rather than jumps: the **+** box
-eases its width into the search field, the lists rise into place, and a person
-added arrives in the avatar stack. `prefers-reduced-motion` is cut by the
-global kill-switch.
-
-The launcher starts with focus in the opening-message text input.
-`NewWorkstreamScreen` remounts the whole launcher for every navigation that
-opens it, because React would otherwise keep one instance across a change of
-Space or a second opening of the same one: the people picked for one Channel
-were sent with the next, and the composer's autofocus did not run again. Each
-opening therefore starts with nobody picked and focus in the message box. The
-unsent draft and its attachments are cached by Space, so the remount loses
-nothing typed, and the key stays stable throughout the launch hand-off. The
-sidebar lists existing work streams without a placeholder row for the unsent
-draft.
-
-### What moves
-
-Two things change, and they are the whole transition:
-
-- **The composer drops to the dock.** It is the same DOM element throughout,
-  the same width and the same capsule on both sides. Its one change is place:
-  on the keystroke it leaves the middle of the pane for the dock row, without a
-  transition, for the reason the header does not ease open — creation can
-  finish before a transition would. It used to settle instead — dock padding, stack
-  width, background, border, radius, shadow and text height each transitioning
-  from a launcher treatment to the conversation's — and the transitions that
-  carried it are gone with the difference they existed for.
-- **The transcript assembles.** The opening turn and the work timer each rise
-  7px into place on a 70ms stagger, so the transcript reads as being built rather
-  than revealed.
-
-Nothing here is bespoke motion: `prefers-reduced-motion` is cut globally by the
-`*, *::before, *::after` kill-switch block in `app.css`, which flattens every
-duration *and every delay* to a single 0.001ms iteration.
-
-The composer is `WorkstreamComposer`, the one a Channel's own feed uses, so
+The composer is `WorkstreamComposer`, the one a thread's own feed uses, so
 the opening message gets the same `@` list (Rally and the Organization's
 members), slash commands and draft handling as every message after it. It is
-handed a `ComposerConversation` standing for the Channel about to exist: the
-Participants bar's people, Organization-wide, and no run. Mentioning a person
+handed a `ComposerConversation` standing for the thread about to exist, with
+the Channel's scope and no run. Mentioning a person
 seats them in the Channel: `submit` unions the mentioned people into the
 request's `participantIds`, because a name that only reached the text would
 arrive with nobody attached to it. The
@@ -230,7 +147,7 @@ order by `created_at`.
 ### The swap
 
 On success the destination is seeded before `navigate`: a `WorkstreamDetail`
-built by `launchedWorkstreamDetail` and one canonical ordered-transcript
+built by `launchedThreadDetail` and one canonical ordered-transcript
 snapshot.
 The work-stream screen shows its full-screen `Opening work stream…` state
 whenever *either* of those two queries is loading, so seeding one is not enough —
@@ -318,15 +235,21 @@ means General** — `SpaceService.ensureGeneral` makes the Organization's Genera
 Space if this is the first thing that ever needed it.
 
 **A Channel is born with the scope its caller asked for**, whichever Spaces it
-is born in: every Space is Organization-wide and grants no reader
-([`spaces.md`](spaces.md#every-space-is-organization-wide)). `POST /workstreams`
-asks for `workspace`, so a Channel somebody starts in Rally is public. An
+is born in, Organization-wide or private, because a Space grants no reader
+([`spaces.md`](spaces.md#a-space-starts-organization-wide-and-grants-no-reader)). `POST /workstreams`
+asks for `workspace`, so a Channel somebody starts in an Organization-wide
+Space is public. An
 internal caller that names nothing gets the fail-closed `personal`, and one that
 names `personal` (a private Slack room, session import, a suggestion shown to
 one person, a digest) gets a private Channel even in General.
 `resolveSpaceWorkstreamStart` keeps the requested scope and participants and
 unions the Spaces' `defaultResourceIds` with the caller's origin resources, so a
-Channel started in a Space begins with what that Space hands down.
+Channel started in a Space begins with what that Space hands down. The one
+exception is `narrowInPrivateSpaces`, which only the person-started route sets
+(and passes to the reservation, so both sides agree): a thread a person starts
+in a private Space starts private. A connector ingress resolved its audience
+from its room, so it is never narrowed; a public Slack channel's thread under a
+private Space would otherwise be one none of the channel's members could open.
 
 **The memberships, the reservation and the provenance commit together.** The
 order between them used to be load-bearing: reserving the main conversation
@@ -376,19 +299,6 @@ than whichever rejection landed first.
 
 ## Invariants
 
-- **The composer is one element across the hand-off.** Rendering it from two
-  branches would remount it, restarting its internal state and splitting the
-  transition into two elements swapping places — which is the thing the animation
-  exists to avoid. `carries the same composer across the hand-off` in the screen's
-  test asserts node identity for exactly this reason.
-- **The launching state states no geometry of its own.** Every launcher-specific
-  rule is written under `:not(.is-launching)`. A rule added the other way round —
-  styling `.is-launching` directly — will drift from `.workstream-screen` and
-  reintroduce a visible jump at the navigation, which no component test can see.
-  The header's height is the single exception, because a grid track sized `auto`
-  cannot take a number from the screen it becomes: the header names the
-  destination's row itself, and the test that holds it there has to read the row
-  that *applies* to the destination rather than the one underneath it.
 - **Nothing the optimistic turn's position depends on may be eased into place.**
   The surface does not decide when the swap happens — creation can finish in one
   round trip — so a transition the turn's geometry rides is a jump whose size is
@@ -451,7 +361,7 @@ than whichever rejection landed first.
   reaches the object as an argument rather than a hardcoded `'workspace'`, and
   an internal create path that omits it gets `personal`. The request body
   carries no scope; `POST /workstreams` itself passes `workspace`, because [a
-  Space grants no reader](spaces.md#every-space-is-organization-wide) and a
+  Space grants no reader](spaces.md#a-space-starts-organization-wide-and-grants-no-reader) and a
   Channel a person starts in Rally is public. A create receipt the previous
   Worker hashed as `personal` is replayed by that `workspace` retry, never the
   other way round. An ingress reading a Slack room passes the room's privacy.
@@ -476,7 +386,8 @@ than whichever rejection landed first.
   that; a change that moves the guard below `onKeyDown?.(event)` hands every
   host the keys the IME still owns, and each of them would have to learn the
   rule again.
-- **Both launchers seed both queries, through `launchedWorkstreamDetail`.** The
+- **Both launchers seed both queries, through `launchedThreadDetail` (and the
+  substream launcher's own).** The
   work-stream screen loads on either query being absent, so seeding one of the
   two still lands on the full-screen orb; and two hand-built details would drift
   into one path quietly losing its work timer at the navigation.
@@ -517,9 +428,10 @@ see
 
 ## Failure modes and limits
 
-- **The create fails.** `launching` is cleared, the launcher comes back with the
-  typed message restored into the composer unless a newer draft has replaced it,
-  and the error renders under the composer. No work stream is left on screen.
+- **The create fails.** The pending row is discarded, the pane goes back to
+  the Channel with the typed message restored into its composer unless a newer
+  draft has replaced it, and the error renders under the composer. No thread is
+  left on screen.
 - **The workflow start fails.** The run is marked `failed`, the work stream's
   `harness_status` is set to `failed`, a `harness_status_changed` event is
   published so anyone already watching is not left on a `running` row, and the
@@ -541,7 +453,8 @@ see
   truncated on either side: the person is told to shorten it and keeps every
   character while they do.
 - **Typing during the launch window.** The composer stays live; anything typed
-  lands in the `new-workstream:<workspaceId>` draft and is not carried into the
+  lands in that Channel's draft (`newWorkstreamDraftKey` plus `:space:<id>`)
+  and is not carried into the
   created work stream. Attachment tiles and the file input are frozen for the
   window, because the files they stand for are already on their way into a
   message.
@@ -561,12 +474,14 @@ see
   source write rolls back the membership, the parent and the directory row; a
   failure after the commit keeps the placement and a retry under the same key
   finishes on it; a Space's defaults are staged by the placing call.
-- `apps/desktop/src/renderer/screens/new-workstream.test.tsx` —
-  `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/new-workstream.test.tsx`.
-  Covers the surface appearing on the keystroke, composer node identity across
-  the hand-off, and the optimistic turn being taken back when the create fails.
-  The suite clears the draft cache in `beforeEach` and stubs `ResizeObserver`;
-  a test that skips either will see a restored draft from its predecessor.
+- `apps/desktop/src/renderer/screens/channel.test.tsx`:
+  `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/channel.test.tsx`.
+  Covers the Channel screen around its composer, including that a reader who
+  reaches the Channel only through a thread gets no composer.
+- `apps/api/test/workstream-space-start.test.ts`:
+  `pnpm --filter @rally/api exec vitest run test/workstream-space-start.test.ts`.
+  The audience a thread is born with, including the narrowing in a private
+  Space and its absence for a connector.
 - The pending row: `lib/workstreams-cache.test.ts` (kept across a replacing
   write, described by its server row and still pending, confirmed with and
   without a row and under a different id, evicted, discarded),
@@ -629,6 +544,32 @@ see
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-10 — A thread starts from its Channel's composer, and starts private in a private Channel
+
+**What changed:** The full-pane launcher (`new-workstream.tsx`) is deleted. A
+person starts a thread only from the composer at the foot of a Channel screen,
+and it opens beside that Channel. The person-started route passes
+`narrowInPrivateSpaces`, so a thread started in a private Channel is born
+`personal`, readable by its starter and whoever they mention; one started in
+an Organization-wide Channel stays Organization-wide.
+
+**Why:** The navigation redesign makes a Channel the home of every thread, and
+lets a Channel be private
+([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)). A thread started
+in a private Channel and born Organization-wide would be readable by everyone
+from a link or search, which is not what anyone starting work in a private
+Channel expects. The product owner chose private.
+
+**Considered and rejected:** Narrowing every creator that names a private
+Space. It was shipped first and withdrawn within the change: a connector such
+as Slack resolves its audience from its room, and narrowing it left a public
+Slack channel's thread unreadable to that channel's members.
+
+**Consequences:** A new person-started creation path must pass
+`narrowInPrivateSpaces` or its threads in private Channels start public. A
+connector path must not. `resolveSpaceWorkstreamStart` is the one place the
+rule lives, and both the reservation and the coordinator call it.
 
 ### 2026-10-08 — The Participants row invites by email address
 

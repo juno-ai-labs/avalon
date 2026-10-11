@@ -5,7 +5,7 @@ import type { Region } from "@rally/contracts/regions";
 import { QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { Cable, RefreshCcw } from 'lucide-react';
 import { type PropsWithChildren, useEffect, useRef, useState } from 'react';
-import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { HashRouter, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { desktopWorkspaceIdentityKey } from '../common/desktop';
 import { logError } from '../common/logger';
 import { AppShell } from './components/app-shell';
@@ -44,9 +44,10 @@ import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
 import { AutomationScreen } from './screens/automation';
 import { DeepLinkErrorScreen } from './screens/deep-link-error';
 import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/guided-onboarding';
-import { NewWorkstreamScreen } from './screens/new-workstream';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
-import { SpaceDashboardScreen } from './screens/space-dashboard';
+import { ChannelScreen } from './screens/channel';
+import { channelRoute, homeChannelId, threadRoute } from './lib/navigation-routes';
+import { useCachedWorkstreamSummary } from './lib/use-workstreams-query';
 import { SidekicksLibraryRoute, SidekicksWindow } from './screens/sidekicks-library';
 import { BrowserImportWindow } from './screens/browser-import';
 import { WorkspaceSettingsScreen } from './screens/workspace-settings';
@@ -108,7 +109,7 @@ function NotFoundScreen(): React.JSX.Element {
     <div className="screen-error-state screen-with-titlebar">
       <div className="screen-drag-strip window-drag" />
       <EmptyState
-        action={<Button onClick={() => openFirstWorkstream()}>Go to your channels</Button>}
+        action={<Button onClick={() => openFirstWorkstream()}>Go to your threads</Button>}
         description="This Rally view does not exist or is no longer available."
         title="Nothing here"
       />
@@ -339,9 +340,13 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
                 its destination resolves, rather than on the landing route,
                 which would open an unrelated conversation first. */}
             <Route element={<LoadingState label="Opening…" />} path="/opening" />
-            <Route element={<SpaceDashboardScreen workspace={workspace} />} path="/spaces/:spaceId" />
-            {/* Starting a Channel is a member's; a guest who lands here goes home. */}
-            <Route element={guest ? <Navigate replace to="/" /> : <NewWorkstreamScreen workspace={workspace} />} path="/spaces/:spaceId/workstreams/new" />
+            {/* A Channel and a thread open beside it: the first two panes of
+                the stack (`docs/pane-stack.md`). A stored Space is a Channel. */}
+            {/* One route for both, so the Channel pane stays mounted as a
+                thread opens and closes beside it. */}
+            <Route element={<ChannelScreen workspace={workspace} />} path="/channels/:channelId/*" />
+            {/* A Space's old addresses open the Channel it now is. */}
+            <Route element={<SpaceRedirect />} path="/spaces/:spaceId/*" />
             {/* Projects are gone and their ids mean nothing here; the landing
                 route picks whatever this person should be looking at instead of
                 a dead screen naming an object that no longer exists. */}
@@ -350,7 +355,7 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
                 Space. Without this, a stale link would open as a Channel whose
                 id is "new". */}
             <Route element={<Navigate replace to="/" />} path="/workstreams/new" />
-            <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
+            <Route element={<LoneThreadRoute />} path="/workstreams/:id" />
             <Route element={<AutomationScreen />} path="/automations/:id" />
             <Route element={<SidekicksLibraryRoute />} path="/sidekicks" />
             {/* Creating a Sidekick is a member's, as in the Sidekicks window. */}
@@ -362,6 +367,27 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
         </AppShell>
     </SpeechPlaybackProvider>
   );
+}
+
+/**
+ * A thread addressed on its own (search, the menu bar, a deep link): opened
+ * under a Channel it sits in when this device knows one, so the Channel is one
+ * step back; on its own otherwise. The query string (a breakout, a search
+ * target) travels with it.
+ */
+function LoneThreadRoute(): React.JSX.Element {
+  const { id = '' } = useParams();
+  const location = useLocation();
+  const row = useCachedWorkstreamSummary(id);
+  const channelId = row && !row.pending ? homeChannelId(row.spaceIds) : null;
+  if (channelId) return <Navigate replace state={location.state} to={`${threadRoute(id, channelId)}${location.search}`} />;
+  return <WorkstreamScreen />;
+}
+
+/** A Space's old address: the Channel it is now. */
+function SpaceRedirect(): React.JSX.Element {
+  const { spaceId = '' } = useParams();
+  return <Navigate replace to={channelRoute(spaceId)} />;
 }
 
 function WorkspaceOnboardingGate(): React.JSX.Element {

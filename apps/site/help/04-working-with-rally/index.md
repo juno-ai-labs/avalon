@@ -15,7 +15,7 @@ do, and does it.
 
 ## A colleague, not a search box
 
-Every Channel has its own Rally. It remembers what was said earlier in that
+Every Thread has its own Rally. It remembers what was said earlier in that
 conversation, knows which files are in it, and picks up where it left off when
 you come back tomorrow. A search box forgets you the moment you press Return.
 Rally is closer to a colleague who sat in on the meeting.

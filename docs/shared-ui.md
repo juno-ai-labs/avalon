@@ -8,11 +8,10 @@ drawing a second design.
 ## Where the code lives
 
 - `packages/ui/src/components`: the shell pieces ([`desktop-shell.md`](desktop-shell.md):
-  title pills, the Channel and Breakout menus, Space pills, Breakout chips and
+  title pills, the thread, Channel and Breakout menus, Breakout chips and
   ticks, the split layout), navigation frame and rows, resource rows, Sidekick
   section/picker, account trigger, glyphs, avatars and visual primitives — and
-  the Space surfaces: `space-icon.tsx` (`SpaceIcon`),
-  `space-dashboard.tsx` (`SpaceDashboardHeader`, `SpaceDashboardSection`). A measured share is drawn
+  a Channel's mark, `space-icon.tsx` (`SpaceIcon`). A measured share is drawn
   by `Meter` in `primitives.tsx`: a track and a fill, `role="meter"` (or
   `progressbar` for a task moving towards done) with its value attributes, a required label, and a `normal` or `warning` tone, painted
   from the `cmp.meter.*` tokens. The Organization usage line and the onboarding
@@ -68,14 +67,11 @@ release nothing accepted, including Escape and release outside the list.
 The shared Breakout rail, `SpaceRow` and `SpacePlacementList` were removed with
 the shell redesign. Breakouts are listed in the Channel title menu
 (`ChannelMenu`'s Breakouts level), newest activity first with
-`compareAlphabeticalTitle` breaking ties, and Spaces are drawn as
-`space-pills.tsx` pills. `SpaceDashboardHeader` owns the rename *interaction*
-(double-click, F2, Enter to commit, Escape to abandon, blur to commit) because
-that is presentation; the host only ever learns the committed name. Nothing here
-fetches, and no component infers a capability from an omitted prop: a Space with
-no audience control is a host that decided not to draw one. The Space
-dashboard's Channel and breakout entries are host-owned links, not shared
-removable rows.
+`compareAlphabeticalTitle` breaking ties. The Space pills and the Space
+dashboard were deleted with the navigation redesign; a Channel's row and screen
+are the desktop host's ([`desktop-shell.md`](desktop-shell.md)). Nothing here
+fetches, and no component infers a capability from an omitted prop: a Channel
+menu with no privacy switch is a host that decided not to draw one.
 
 The guest browser supplies its bounded sharing projection to the same
 `ResizableSidebar`, rows, scroll regions and resize geometry as Electron. It

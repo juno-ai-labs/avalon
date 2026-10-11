@@ -68,7 +68,7 @@ export class SubstreamCreationService {
   private async parent(parentId: string, substreamId?: string) {
     const parent = await new ConversationService(this.env, this.auth).authorizeViewer(parentId, substreamId);
     if (parent.kind !== "workstream" || (parent.archived && !substreamId)) {
-      throw new ApiError(409, "substream_parent_unavailable", "Substreams require an active work stream.");
+      throw new ApiError(409, "substream_parent_unavailable", "Breakouts require an active thread.");
     }
     return durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
@@ -308,7 +308,7 @@ export class SubstreamCreationService {
       });
       if (!admitted.authorized) {
         throw new ApiError(409, "substream_guest_requires_share",
-          "Share this work stream with this guest before adding them to a substream.");
+          "Share this thread with this guest before adding them to a breakout.");
       }
     }
   }
@@ -418,7 +418,7 @@ export class SubstreamCreationService {
         throw new ApiError(409,"participant_migration_pending","Participant access is being upgraded. Try again shortly.");
       }
       if (error.message.includes("workstream_archived")) {
-        throw new ApiError(409, "substream_parent_unavailable", "Restore the work stream before changing this substream.");
+        throw new ApiError(409, "substream_parent_unavailable", "Restore the thread before changing this breakout.");
       }
       if (error.message.includes("private_child_guest_requires_share")) {
         throw new ApiError(409, "substream_guest_requires_share", "Share this substream with a guest instead of adding them.");
@@ -460,7 +460,7 @@ export class SubstreamCreationService {
       });
     } catch (error) {
       if (error instanceof Error && error.message.includes("workstream_archived")) {
-        throw new ApiError(409, "substream_parent_unavailable", "Restore the work stream before changing this substream.");
+        throw new ApiError(409, "substream_parent_unavailable", "Restore the thread before changing this breakout.");
       }
       if (error instanceof Error && error.message.includes("private_child_participant_required")) {
         throw new ApiError(403, "substream_participant_required", "Only a participant can archive this substream.");

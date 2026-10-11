@@ -6,6 +6,13 @@ import {
   CreateSpaceRequestSchema,
   IdSchema,
   ScopeSchema,
+  ActivityPageSchema,
+  ChannelFeedPageSchema,
+  ChannelStatsListSchema,
+  ChannelStatsSchema,
+  MyThreadsPageSchema,
+  PinKindSchema,
+  PinListSchema,
   SpaceChannelPageSchema,
   SpaceErrorCodeSchema,
   SpaceIconKeySchema,
@@ -154,7 +161,7 @@ export const WorkspaceSpacePresentationRequestSchema = SpaceActorSchema.extend({
 }).strict();
 export type WorkspaceSpacePresentationRequest = z.infer<typeof WorkspaceSpacePresentationRequestSchema>;
 
-/** A Space's participants; its scope is always Organization-wide. */
+/** A Space's scope and participants. */
 export const WorkspaceSpaceAudienceNoteRequestSchema = SpaceActorSchema.extend({
   spaceId: SpaceIdSchema,
   audience: z.strictObject({
@@ -248,6 +255,8 @@ export const WorkspaceChannelReservationRequestSchema = SpaceActorSchema.extend(
   spaceIds: z.array(SpaceIdSchema),
   requestedScope: ScopeSchema,
   requestedParticipantUserIds: z.array(UserIdSchema),
+  /** A person started it from a Channel; see `resolveSpaceWorkstreamStart`. */
+  narrowInPrivateSpaces: z.boolean().optional(),
   authorityGeneration: z.number().int().positive(),
   directory: ConversationParentReserveChildRequestSchema.shape.directory.unwrap().omit({
     scope: true,
@@ -340,6 +349,83 @@ export const WorkspaceSpaceChannelPageResultSchema = z.union([
   SpaceFailureSchema,
 ]);
 export type WorkspaceSpaceChannelPageResult = z.infer<typeof WorkspaceSpaceChannelPageResultSchema>;
+
+/** A Channel's feed: the threads placed in it. Same request as the conversation page. */
+export const WorkspaceChannelFeedResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), page: ChannelFeedPageSchema }),
+  SpaceFailureSchema,
+]);
+export type WorkspaceChannelFeedResult = z.infer<typeof WorkspaceChannelFeedResultSchema>;
+
+/** The Threads tab: what one person takes part in. */
+export const WorkspaceMyThreadsRequestSchema = SpaceActorSchema.extend({
+  cursor: z.string().min(1).max(200).nullable(),
+}).strict();
+export type WorkspaceMyThreadsRequest = z.infer<typeof WorkspaceMyThreadsRequestSchema>;
+
+export const WorkspaceMyThreadsResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), page: MyThreadsPageSchema }),
+  SpaceFailureSchema,
+]);
+export type WorkspaceMyThreadsResult = z.infer<typeof WorkspaceMyThreadsResultSchema>;
+
+/** The Activity tab: same request as the Threads tab. */
+export const WorkspaceActivityResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), page: ActivityPageSchema }),
+  SpaceFailureSchema,
+]);
+export type WorkspaceActivityResult = z.infer<typeof WorkspaceActivityResultSchema>;
+
+export const WorkspaceActivitySeenRequestSchema = SpaceActorSchema.extend({
+  seenThrough: z.number().int().nonnegative(),
+}).strict();
+export type WorkspaceActivitySeenRequest = z.infer<typeof WorkspaceActivitySeenRequestSchema>;
+
+/** Pin or unpin one item. `parentId` is a breakout's thread and nothing else's. */
+export const WorkspacePinChangeRequestSchema = SpaceActorSchema.extend({
+  kind: PinKindSchema,
+  itemId: IdSchema,
+  parentId: WorkstreamIdSchema.nullable(),
+  pinned: z.boolean(),
+}).strict();
+export type WorkspacePinChangeRequest = z.infer<typeof WorkspacePinChangeRequestSchema>;
+
+export const WorkspacePinOrderRequestSchema = SpaceActorSchema.extend({
+  kind: PinKindSchema,
+  ids: z.array(IdSchema),
+}).strict();
+export type WorkspacePinOrderRequest = z.infer<typeof WorkspacePinOrderRequestSchema>;
+
+/**
+ * Every pin after the change, or why it was refused: `pin_target_not_found`
+ * for an item this person may not list, `pin_limit_reached` at the limit the
+ * old per-Space pins already had.
+ */
+export const WorkspacePinResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), pins: PinListSchema }),
+  z.strictObject({ ok: z.literal(false), code: z.enum(["pin_target_not_found", "pin_limit_reached"]) }),
+]);
+export type WorkspacePinResult = z.infer<typeof WorkspacePinResultSchema>;
+
+export const WorkspaceChannelStatsResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), stats: ChannelStatsListSchema }),
+  z.strictObject({ ok: z.literal(false), code: z.literal("space_access_denied") }),
+]);
+export type WorkspaceChannelStatsResult = z.infer<typeof WorkspaceChannelStatsResultSchema>;
+
+/** Acknowledge one Channel (storage Space) read through a placement, for one viewer. */
+export const WorkspaceSpaceReadRequestSchema = SpaceActorSchema.extend({
+  spaceId: SpaceIdSchema,
+  readThroughSequenceNumber: z.number().int().nonnegative(),
+}).strict();
+export type WorkspaceSpaceReadRequest = z.infer<typeof WorkspaceSpaceReadRequestSchema>;
+
+/** The viewer's `ChannelStats` row after the change, or `space_not_found` for a Channel they cannot list. */
+export const WorkspaceSpaceReadResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), stats: ChannelStatsSchema }),
+  z.strictObject({ ok: z.literal(false), code: z.enum(["space_access_denied", "space_not_found"]) }),
+]);
+export type WorkspaceSpaceReadResult = z.infer<typeof WorkspaceSpaceReadResultSchema>;
 
 export const WorkspaceChannelSpacesRequestSchema = SpaceActorSchema.extend({
   workstreamId: WorkstreamIdSchema,

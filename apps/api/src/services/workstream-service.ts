@@ -142,7 +142,7 @@ const ADDITIONAL_MEMBER_SAFE_HARNESS_ERRORS = Object.freeze({
   empty_completion: "The model returned an empty response. Try again in a moment",
   model_output_invalid: "The model returned a response Rally could not read. Try again in a moment",
   provider_error: "A connected service returned an error, so this run stopped",
-  run_admission_timeout: "This work stream stayed busy too long to start the run",
+  run_admission_timeout: "This thread stayed busy too long to start the run",
   run_cancelled: "This run was cancelled",
   run_ownership_lost: "This run was superseded by another executor",
   stale_run_reaped: "This run stopped after its execution lease expired",
@@ -262,7 +262,7 @@ export async function launchWorkstreamHarness(
     now: Date.parse(at),
   });
   if (admission.outcome === "stale") {
-    throw new ApiError(409, "terminal_repository_request_stale", "A newer run replaced this Terminal repository request. Reload the work stream before continuing.");
+    throw new ApiError(409, "terminal_repository_request_stale", "A newer run replaced this Terminal repository request. Reload the thread before continuing.");
   }
   if (admission.outcome === "exists") {
     const existing = await runs.run({ runId: id });
@@ -524,7 +524,7 @@ async function appendWakeupSystemMessage(env: Env, row: WorkstreamWakeupRow): Pr
     authorUserId: null,
     externalActorJson: null,
     messageType: "system",
-    text: `Avalon woke this work stream up as scheduled: ${wakeupPromptPreview(row.prompt)}`,
+    text: `Rally woke this thread up as scheduled: ${wakeupPromptPreview(row.prompt)}`,
     structuredContentJson: null,
     producedByRunId: null,
     now: Date.now(),
@@ -668,7 +668,7 @@ export class WorkstreamService {
     if (removeId) await conversation.writableClient(id, substreamId);
     else await conversation.client(id, false, substreamId);
     if ((await conversation.resolveParent(id)).kind !== "workstream") {
-      throw new ApiError(422, "sidekick_attachment_parent_kind_unsupported", "Sidekick attachments belong to workstreams");
+      throw new ApiError(422, "sidekick_attachment_parent_kind_unsupported", "Sidekick attachments belong to threads");
     }
     if (removeId) await this.requireSidekickParticipant(id, substreamId);
     const agent = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
@@ -709,7 +709,7 @@ export class WorkstreamService {
     const conversation = new ConversationService(this.env,this.auth);
     const parent = await conversation.authorizeViewer(id, substreamId);
     if (parent.kind !== "workstream") {
-      throw new ApiError(422,"sidekick_attachment_parent_kind_unsupported","Sidekick recommendations belong to workstreams");
+      throw new ApiError(422,"sidekick_attachment_parent_kind_unsupported","Sidekick recommendations belong to threads");
     }
     const items = await this.conversationSidekickSummaries(id,substreamId,{ channelId:id });
     await conversation.client(id,false,substreamId);
@@ -737,7 +737,7 @@ export class WorkstreamService {
     const conversation = new ConversationService(this.env, this.auth);
     const parent = await conversation.authorizeViewer(id, substreamId);
     if (parent.kind !== "workstream") {
-      throw new ApiError(422, "sidekick_attachment_parent_kind_unsupported", "Sidekick recommendations belong to workstreams");
+      throw new ApiError(422, "sidekick_attachment_parent_kind_unsupported", "Sidekick recommendations belong to threads");
     }
     const relationship = await readWorkspaceRelationship(this.env.DB, this.auth.workspaceId, this.auth.userId);
     if (relationship?.status !== "active") throw new ApiError(403, "workspace_membership_required", "Workspace access is required");
@@ -821,10 +821,10 @@ export class WorkstreamService {
         throw new ApiError(422, "sidekick_attachment_scope_invalid", "Choose a workspace Sidekick");
       }
       if (error instanceof Error && error.message === "sidekick_attachment_participant_required") {
-        throw new ApiError(403, "sidekick_attachment_forbidden", "Workstream management access is required");
+        throw new ApiError(403, "sidekick_attachment_forbidden", "Thread management access is required");
       }
       if (error instanceof Error && error.message === "sidekick_attachment_workstream_archived") {
-        throw new ApiError(409, "sidekick_attachment_workstream_archived", "The workstream is archived");
+        throw new ApiError(409, "sidekick_attachment_workstream_archived", "The thread is archived");
       }
       throw error;
     }
@@ -952,7 +952,7 @@ export class WorkstreamService {
   /** Gate socket credentials on WorkspaceDO's authoritative viewer state. */
   private async requireVisibleWorkstream(id: string): Promise<void> {
     if (!await new WorkstreamDirectoryService(this.env, this.auth).visible(id)) {
-      throw new ApiError(404, "workstream_not_found", "Work stream not found");
+      throw new ApiError(404, "workstream_not_found", "Thread not found");
     }
   }
 

@@ -80,6 +80,23 @@ describe("starting a Channel inside a Space", () => {
     });
   });
 
+  it("given a person starting an Organization-wide thread in a private Space, when creation resolves its start, then the thread starts private to whom it named", () => {
+    expect(resolveSpaceWorkstreamStart({
+      spaces: [space({ scope: "workspace" }), space({ id: "00000000-0000-7000-8000-00000000020c", scope: "personal" })],
+      scope: "workspace",
+      requestedParticipantUserIds: [participantId],
+      narrowInPrivateSpaces: true,
+    })).toMatchObject({ scope: "personal", participantUserIds: [participantId] });
+  });
+
+  it("given a connector's Organization-wide thread in a private Space, when creation resolves its start, then the audience it resolved stands", () => {
+    expect(resolveSpaceWorkstreamStart({
+      spaces: [space({ scope: "personal" })],
+      scope: "workspace",
+      requestedParticipantUserIds: [],
+    }).scope).toBe("workspace");
+  });
+
   it("given two Spaces, when creation resolves its start, then the origin resources are both Spaces' defaults", () => {
     expect(resolveSpaceWorkstreamStart({
       spaces: [

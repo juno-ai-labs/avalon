@@ -84,20 +84,25 @@ export const SpaceScopeSchema = z.enum(["personal", "workspace"]);
 export type SpaceScope = z.infer<typeof SpaceScopeSchema>;
 
 /**
- * The only audience a Space may be given: every Space is Organization-wide.
+ * The audience a Space may be given: Organization-wide, or private to its
+ * participants.
  *
- * A product decision, not a default. `SpaceScopeSchema` still reads
- * `personal` because rows written before WorkspaceDO migration 94 said so;
- * nothing may write it again. A Space's audience also grants nothing to the
- * Channels in it: each Channel owns its own (see `docs/spaces.md#every-space-is-organization-wide`).
+ * A Space is the product's **Channel** (`docs/PRDs/2026-10-10_channels-threads-navigation/prd.md`),
+ * and a Channel may be private. Migration 94 had made every Space
+ * Organization-wide; private comes back only through an audience change, never
+ * at creation (see {@link SpaceCreationScopeSchema}), so every Channel starts
+ * Organization-wide. General stays Organization-wide. A Space's audience still
+ * grants nothing to the threads in it: each owns its own.
  */
-export const SpaceRequestScopeSchema = z.literal("workspace");
+export const SpaceRequestScopeSchema = SpaceScopeSchema;
 
 /**
- * A creation's scope. A desktop released before migration 94 sends
- * `personal` for every Space its sidebar makes, and nothing refuses a client by
- * version, so the old value is read as the only one there is rather than
- * failing every creation from a build that has not updated.
+ * A creation's scope, which is always Organization-wide: every Channel starts
+ * public, and becomes private only by an audience change. A desktop released
+ * before migration 94 sends `personal` for every Space its sidebar makes, and
+ * nothing refuses a client by version, so the old value is read as the only
+ * one a creation may have rather than failing every creation from a build that
+ * has not updated.
  */
 const SpaceCreationScopeSchema = z.enum(["personal", "workspace"]).transform((): "workspace" => "workspace");
 

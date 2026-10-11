@@ -27,6 +27,7 @@ import { healthRoutes } from "./routes/health";
 import { onboardingRoutes } from "./routes/onboarding";
 import { projectRoutes } from "./routes/projects";
 import { spaceReadRoutes, spaceRoutes } from "./routes/spaces";
+import { navigationRoutes } from "./routes/navigation";
 import { pushDeviceRoutes } from "./routes/push-devices";
 import { realtimeRoutes } from "./routes/realtime";
 import { resendInboundRoutes } from "./routes/resend";
@@ -179,6 +180,7 @@ export function createApp(): Hono<HonoAppEnv> {
   identityApi.route("/search", searchRoutes);
   identityApi.route("/speech", speechRoutes);
   identityApi.route("/spaces", spaceReadRoutes);
+  identityApi.route("/navigation", navigationRoutes);
   app.route("/", identityApi);
 
   const protectedApi = new Hono<HonoAppEnv>();

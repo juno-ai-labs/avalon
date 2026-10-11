@@ -1,192 +1,193 @@
 ---
-title: Spaces
-description: Create Spaces to group related Channels, and decide who belongs in each.
+title: Channels
+description: Create Channels for your teams and projects, start Threads in them, and decide who belongs in each.
 ---
 
-A Space holds a set of related Channels and decides who can see them. You met
-the Space pills in [A tour of the window](../01-getting-started/04-a-tour-of-the-window.md#the-space-pills).
-This page is about making Spaces, looking after them, and putting them away when
-the work is done.
+A Channel is a team's list of Threads: a stable, named place for an ongoing
+area of work, such as a team, a client or an open role. You met the Channels
+list in [A tour of the window](../01-getting-started/04-a-tour-of-the-window.md#the-channels-list).
+This page is about making Channels, finding your way around one, and deciding
+who belongs in it.
 
-## The General Space
+## The General Channel
 
-Every Organization starts with one Space, **General**. Everyone in the
-Organization can see it, and it is where Channels land when they have nowhere
-more specific to go. General has no pill in the sidebar, since **All** already
-shows its Channels, and a Channel's row never names it.
+Every Organization starts with one Channel, **General**. Everyone in the
+Organization can see it, and it sits in the Channels list in its alphabetical
+place like any other.
 
-General is a little different from the Spaces you make yourself:
+General is a little different from the Channels you make yourself:
 
-- You can rename it and change its icon and colour.
-- You cannot change who sees it. It is always open to the whole Organization,
-  and its page has no audience or participants controls.
-- You cannot archive it. It is the Organization's home address, and it stays.
+- You cannot make it private. It is always open to the whole Organization.
+- You cannot rename it. It is the Organization's home address, and it stays.
 
-## Create a Space
+## Create a Channel
 
-1. Click **New space**, the round button with a folder and a plus at the start
-   of the Space pills.
-2. In **Create a new space**, type a **Name of space** and click **Create**.
+1. Click **Channels** at the left edge of the window.
+2. Click **+** beside **All channels**. Its tooltip says **New channel**.
+3. Type a **Name**, up to 180 characters, and click **Create channel**.
 
-Rally opens the new Space's page straight away. A new Space starts private to
-its participants, which at that moment means you, with a blue briefcase for an
-icon. Give it a better icon and decide who else belongs from its page, as
-described below.
+Rally opens the new Channel straight away. Every Channel starts open to the
+whole Organization. If it should be private, make it so from its menu, as
+described [below](#private-channels).
 
-Any active member of the Organization can create a Space. Guests (people shared
+Any active member of the Organization can create a Channel. Guests (people shared
 into a single conversation, see
 [Sharing with people outside your Organization](05-sharing-with-guests.md))
 cannot.
 
-## The Space page
+## A Channel's screen
 
-Clicking a Space's pill only narrows the Channel list. To open the Space's own
-page, right-click its pill and choose **Open space**, or open any of its
-Channels, click the Channel's name in its title pill and click **Open space**
-beside the Space's name. The Space's page fills the window. A Space
-has no conversation of its own. Its page is the answer to one question: what in
-here needs me?
+Click a Channel in the Channels list and its screen fills the window. A Channel
+has no conversation of its own. Nobody chats there and Rally never replies
+there. Its screen answers one question: what work is going on in here?
 
-Across the top sit the Space's controls:
+### The feed
 
-- **The icon.** Click it to open **Space icon and color**, and pick an icon and a
-  colour. They show wherever the Space is named, so pick something you can spot at a glance.
-- **The name.** Double-click it to rename the Space. From the keyboard, focus
-  the name and press <kbd>F2</kbd> or <kbd>Return</kbd>. Press <kbd>Return</kbd>
-  to save or <kbd>Esc</kbd> to cancel; clicking away also saves. Names can be up
-  to 180 characters, which is plenty, even for a committee.
-- **The audience menu** (**Space participants** or **Everyone in the
-  organization**). See [Who belongs in a Space](#who-belongs-in-a-space).
-- **The avatar stack** shows the Space's participants. Click it to change them.
-- **Copy space link** puts a link to this Space on your clipboard. Links are
-  covered in [Search and links](06-search-and-links.md).
-- **Archive space** puts the Space away. See
-  [Archive and restore a Space](#archive-and-restore-a-space).
+The middle of the screen is the Channel's feed, with one entry for each Thread
+in the Channel. It reads from the top down: the oldest Thread is at the top and
+the newest is at the bottom, beside the message box. If there are a lot, a
+**Show earlier threads** button at the top fetches more.
 
-If Rally is still connecting, or you are offline, the page shows what it last
-knew with a card saying **Editing is available once Rally connects**. The
-controls wake up once the connection is back.
+Each entry shows:
 
-### Needs attention
+- who started the Thread, and when;
+- a line or two saying what the Thread is for;
+- a chip with the Thread's name. Click it to open the Thread.
 
-Below the header is a list headed **Needs attention**. It shows the Channels and
-Breakouts in this Space that want something from you right now:
+Every entry looks the same, whatever kind of work the Thread holds, so a feed
+reads quickly.
 
-- Rally is running, or waiting to run, in it.
-- It needs your input, such as a question from Rally.
-- It has messages you have not read, or someone mentioned you.
-- It is new to you.
+Some entries say **Private thread** instead, with a lock, the time it started,
+and a **Request access** chip. Those are Threads in this Channel that you cannot
+open. Rally shows you that they exist so you can ask to join work you would
+otherwise never know about, and nothing more: no name, no summary and no
+people. Click **Request access** to ask whoever started it. See
+[Asking to join from a link](04-who-can-see-what.md#asking-to-join-from-a-link)
+for what happens next.
 
-Each row has a status dot, the Channel's name (a Breakout shows which Channel it
-is in), a preview of the latest activity and a time. Click a row to open it. The
-list keeps itself up to date as messages arrive and runs finish, and a **Load
-more** button appears at the bottom when there are a lot. The dots are explained
-in [Status dots](../02-working-in-a-channel/06-status-dots-and-badges.md).
+A Channel with no Threads yet says **No threads yet. Describe the work below and
+Rally starts a thread for it.**
 
-Once you have read something and Rally has finished, it drops off the list. The
-list is for things waiting on you. Every Channel is still in the sidebar
-and in search. When nothing is waiting, the page
-says **Nothing here needs you right now**, which is the nicest thing a piece of
-software can say to you. A Space with no Channels at all says **No channels
-yet**.
+### Start a Thread
 
-## Who belongs in a Space
+The message box at the bottom of a Channel's screen starts a new Thread in that
+Channel. It says **Start a thread in** and the Channel's name.
 
-Every Space has an **audience**, chosen from the menu under its name:
+1. Type what you want Rally to do. Attach files or mention teammates as you
+   would in any message.
+2. Press <kbd>Return</kbd> or click **Start thread**.
 
-| Audience | Who can see the Space and its Channels |
-| --- | --- |
-| **Space participants** | Only the people listed as the Space's participants. |
-| **Everyone in the organization** | Everyone in the Organization. |
+Your message becomes the Thread's first message, the Thread opens in a pane
+beside the Channel, and Rally starts work. Rally names the Thread for you, as
+described in [Your first Thread](../01-getting-started/05-your-first-channel.md#names-and-icons).
 
-The audience covers every Channel in the Space as well as the Space's page. A
-Channel in an Organization-wide Space can be seen and found by
-everyone in the Organization. The full rules, including what happens when a
-Channel sits in more than one Space, are in
-[Who can see what](04-who-can-see-what.md).
+This is the only way to start a Thread yourself, so every Thread has a home and
+its results have somewhere to go back to. Sidekicks, Slack and email can still
+start Threads of their own, in the Channel they are set up for or in General.
 
-### Change the audience
+In a private Channel only its members see the message box.
 
-1. Open the Space's page and choose a new audience from the menu under its name.
-2. Rally asks **Change who can see this space?** and explains what will happen.
-3. Click **Continue**, or **Cancel** to leave things as they were.
+### Opening a Thread beside its Channel
 
-> [!WARNING]
-> Choosing **Everyone in the organization** makes the Space and every Channel in
-> it visible to everyone in the Organization, straight away. Check what the
-> Channels hold before you widen a Space. Narrowing it again later stops new
-> reading, but it cannot take back what people have already read.
+A Thread you open from the feed opens in a pane on the right, with the Channel
+still on the left, so you can keep an eye on both. Click the close button on the
+Thread's title pill to go back to the Channel on its own. Opening a Breakout
+from the Thread moves everything one step left, and the Channel becomes a
+breadcrumb you can click to come back. [A tour of the window](../01-getting-started/04-a-tour-of-the-window.md#panes-side-by-side)
+walks through it.
 
-Narrowing a Space back to **Space participants** does not automatically make
-every Channel in it private. A Channel that is open to the Organization in its
-own right, or through another Space, stays open. The dialog says so: **Channels
-stay public if another source still says so.**
+## The Channel's menu
 
-Rally may refuse to widen a Space if one of its Channels holds something the
-wider audience is not allowed to read. The message names the problem. Move that
-Channel out of the Space first.
+At the top of the Channel's screen is its name in a rounded pill. Click it for
+the Channel's menu:
 
-### Add and remove participants
+- **Add people** and **People** list the Channel's members and let you add or
+  remove them. The **People** row also says whether the Channel is **Public** or
+  **Private**. See [Who belongs in a Channel](#who-belongs-in-a-channel).
+- **Rename** opens **Rename channel**. Names can be up to 180 characters, which
+  is plenty, even for a committee.
+- **Sidekicks** lists the Channel's Sidekicks. See
+  [The Channel's Sidekicks](#the-channels-sidekicks).
+- **Private to its members** is the privacy switch. See
+  [Private channels](#private-channels).
+- **Pinned in my sidebar** pins the Channel to the top of your Channels list. You
+  can also right-click the Channel in the list and choose **Pin**.
+- **Archive channel** takes the Channel out of everyone's Channels list, after
+  asking. Its Threads keep going, and any that sit in no other Channel move to
+  General so nobody loses them. See [Archiving](02-arranging-channels.md#archiving).
 
-1. Click the avatar stack on the Space's page. The **Space participants** window
-   lists the members of your Organization.
-2. Tick the people who should be in the Space and untick those who should not.
-3. Click **Save**.
+General's menu has no privacy switch, no **Rename** and no **Archive channel**. A Channel you can see but
+not change (see below) shows its people but offers nothing to change.
 
-The rules:
+## Who belongs in a Channel
 
-- Any member can add people. Taking someone else out needs an Organization
-  owner or administrator. For everyone else, a ticked box beside another person
-  cannot be unticked.
-- You cannot take yourself out of a private Space. Rally refuses with **You
-  can’t make a space private without yourself in it.**
-- A Space must keep at least one participant.
+A Channel has members: the people listed under **People** in its menu. To add
+someone, open the menu, choose **Add people** and pick them. To take someone
+out, open **People** and choose **Remove from channel** beside their name, or
+**Leave the channel** beside your own.
 
-In an Organization-wide Space, the participant list is mostly a record of who
-belongs to it, since everyone can see it anyway. Current participants stay
-participants if you narrow it later.
+In a Channel open to the whole Organization, the member list is mostly a record
+of who belongs to it, since everyone can see it anyway. In a private Channel,
+the members are the only people who can see it at all.
 
-### Spaces you can see but not change
+### Private channels
 
-Sometimes a Space appears in your sidebar even though you are not one of its
-participants. That happens when someone added you to a Channel that lives in a
-private Space. Rally shows you the Space's name, icon and colour so the Channel
-has somewhere to sit, but nothing else: no audience, no participants and no
-other Channels. You cannot edit or archive it.
+Every Channel starts open to the whole Organization. To make one private, open
+its menu and turn on **Private to its members**. Turn it off to open the Channel
+to the Organization again.
 
-## Archive and restore a Space
+A private Channel:
 
-When a project is finished, archive its Space to take its pill out of the
-sidebar.
+- shows up only for its members. Everyone else does not see it in their
+  Channels list, and a link to it tells them **Channel not found**;
+- keeps you in it when you make it private, so it is never left with nobody in
+  it;
+- starts each new Thread private to the person who started it, and to anyone
+  they mention in the first message, until they add more people.
 
-1. Right-click the Space's pill and choose **Archive space**, or click
-   **Archive space** on its page.
-2. Rally asks **Archive space?** Click **Archive space** to confirm.
+> [!IMPORTANT]
+> A Channel decides who can see the Channel, not who can read each Thread in it.
+> Every Thread keeps its own setting. A Thread that is public to the
+> Organization can still be opened from a link or found in search by anyone in
+> the Organization, even if it sits in a private Channel. Making a Channel
+> private does not make its Threads private. [Who can see what](04-who-can-see-what.md)
+> explains how a Thread's own setting works.
 
-What archiving does and does not do:
+### Channels you can see but not change
 
-- The Space's pill leaves the sidebar. Its Channels are not archived. They keep their
-  artifacts, resources and Sidekicks, and they stay in every other Space they
-  belong to.
-- Every Channel must live in at least one Space, so a Channel whose only home is
-  this Space blocks the archive. The dialog lists them under **Channels to move
-  first**. Add each one to another Space (see
-  [Arranging your Channels](02-arranging-channels.md)), then try again.
-- General cannot be archived, and neither can a Space you only see through one
-  of its Channels. The menu item does not appear for them.
+Sometimes a Channel appears in your list even though you are not one of its
+members. That happens when someone added you to a Thread that sits in a private
+Channel. Rally shows you the Channel so the Thread has somewhere to sit, but
+you cannot rename it, change its people, or start a Thread in it.
 
-To bring a Space back, right-click **New space** at the start of the Space
-pills and choose **Restore archived space**. It only works while at least one
-archived Space exists. Pick the Space from the list. If you have an archived Space's page open, its
-**Restore space** button does the same.
+## The Channel's Sidekicks
 
-> [!NOTE]
-> There is no way to delete a Space in Rally. Archiving is as far as it goes,
-> and an archived Space can always be restored.
+A Channel can suggest Sidekicks for the work done in it. Open the Channel's menu
+and choose **Sidekicks** to see them. Choose **Add Sidekick** to add one from
+your Organization. To take one off the list, right-click it.
 
-If you open a link to a Space that has been archived, or one you no longer have
-access to, Rally shows **Space not found** and **It may have been archived or
-you may no longer have access.** Rally deliberately does not say which.
+A Sidekick added here is recommended in every Thread in the Channel, including
+Threads started later. Removing it stops it being added from then on; Threads
+that already have it keep it. [Sidekicks in a Thread](../07-sidekicks/06-sidekicks-in-channels.md)
+explains what a recommendation does.
 
-Next: [Arranging your Channels](02-arranging-channels.md), to put the right
-Channels on the right shelves.
+## A Thread in several Channels
+
+A Thread can sit in more than one Channel. It shows in each Channel's feed, and
+its row in your Threads list carries a chip for each, so work that belongs to
+two teams does not need copying.
+
+To change where a Thread sits, click its name in its title pill and choose
+**Channels**. The list shows the Channels it is in; under **Add to a channel**,
+click another to add it there. To take it out of one, click **…** beside that
+Channel and choose **Remove from this channel**. A Thread always keeps at least
+one Channel, so the last one cannot be removed. You can add a Thread to any
+Channel you could start a Thread in.
+
+If you open a link to a Channel that has been archived, that has been made
+private, or that you no longer have access to, Rally shows **Channel not found**
+and **It may have been archived, made private, or you may no longer have
+access.** Rally deliberately does not say which.
+
+Next: [Arranging your Threads](02-arranging-channels.md), to keep the work you
+care about within reach.

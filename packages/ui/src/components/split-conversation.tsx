@@ -32,12 +32,25 @@ export function clampBreakoutWidth(requested: number, containerWidth: number): n
  * single pane neither reconnects a conversation nor loses its scroll. The host
  * owns persistence of the width; null means half.
  */
-export function SplitConversationLayout({ breakout, breakoutWidth, main, mode, onBreakoutWidthChange }: {
+export function SplitConversationLayout({ breakout, breakoutWidth, main, mode, onBreakoutWidthChange, onNarrowChange, onShownChange }: {
   breakout: ReactNode | null;
   breakoutWidth: number | null;
   main: ReactNode | null;
   mode: SplitConversationMode;
   onBreakoutWidthChange: (width: number) => void;
+  /**
+   * Which mode is actually drawn, which differs from `mode` when the window is
+   * too narrow for a split. A host nesting this layout one level up (a Channel
+   * beside its thread) reads it to know when the right pane stands alone and
+   * has to carry the left one as a breadcrumb.
+   */
+  onShownChange?: (shown: SplitConversationMode) => void;
+  /**
+   * Whether the layout is too narrow for two panes, whatever `mode` asks for.
+   * A breadcrumb back to the left pane reads it: where only one pane fits,
+   * stepping back means showing the left pane alone.
+   */
+  onNarrowChange?: (narrow: boolean) => void;
 }): React.JSX.Element {
   const container = useRef<HTMLDivElement>(null);
   const [resizing, setResizing] = useState(false);
@@ -82,10 +95,46 @@ export function SplitConversationLayout({ breakout, breakoutWidth, main, mode, o
     };
   }, [onBreakoutWidthChange, resizing]);
   const shown: SplitConversationMode = mode === 'split' && narrow ? 'breakout' : mode;
+  useEffect(() => { onShownChange?.(shown); }, [onShownChange, shown]);
+  useEffect(() => { onNarrowChange?.(narrow); }, [onNarrowChange, narrow]);
+  // Moving along the stack is drawn as movement: the pane that opens slides in
+  // from the right, a pane taking the whole width slides over from where it
+  // was, and stepping back reverses that. Measured, not assumed, so a resized
+  // split moves by its real offset. Nested layouts (a Channel beside its
+  // thread, the thread beside its breakout) each animate their own step.
+  const breakoutPane = useRef<HTMLDivElement>(null);
+  const lastBreakoutLeft = useRef(0);
+  const previousShown = useRef(shown);
+  type Motion = { kind: 'enter' | 'shift'; from: number };
+  const [motion, setMotion] = useState<{ main?: Motion; breakout?: Motion } | null>(null);
+  useLayoutEffect(() => {
+    const before = previousShown.current;
+    previousShown.current = shown;
+    const left = (breakoutPane.current?.getBoundingClientRect().left ?? 0)
+      - (container.current?.getBoundingClientRect().left ?? 0);
+    const wasLeft = lastBreakoutLeft.current;
+    lastBreakoutLeft.current = left;
+    if (before === shown) return;
+    if (before === 'main' && shown === 'split') setMotion({ breakout: { kind: 'enter', from: 0 } });
+    else if (before === 'split' && shown === 'breakout') setMotion({ breakout: { kind: 'shift', from: wasLeft - left } });
+    else if (before === 'breakout' && shown === 'split') {
+      setMotion({ main: { kind: 'enter', from: 0 }, breakout: { kind: 'shift', from: wasLeft - left } });
+    } else setMotion(null);
+  }, [shown]);
+  const motionProps = (pane: 'main' | 'breakout') => {
+    const own = motion?.[pane];
+    return own ? {
+      'data-motion': own.kind,
+      style: { '--split-motion-from': `${own.from}px` } as CSSProperties,
+      onAnimationEnd: (event: React.AnimationEvent) => {
+        if (event.target === event.currentTarget) setMotion((current) => current && { ...current, [pane]: undefined });
+      },
+    } : {};
+  };
   const split = shown === 'split' && main !== null && breakout !== null;
   const style = breakoutWidth === null ? undefined : { '--split-breakout-width': `${breakoutWidth}px` } as CSSProperties;
   return <div className={clsx('split-conversation', resizing && 'is-resizing')} ref={container} style={style}>
-    {main !== null && <div className="split-conversation-pane is-main" hidden={shown === 'breakout'}>{main}</div>}
+    {main !== null && <div className="split-conversation-pane is-main" hidden={shown === 'breakout'} {...motionProps('main')}>{main}</div>}
     {split && <div
       aria-label="Resize breakout"
       aria-orientation="vertical"
@@ -113,6 +162,8 @@ export function SplitConversationLayout({ breakout, breakoutWidth, main, mode, o
     {breakout !== null && <div
       className={clsx('split-conversation-pane is-breakout', (shown === 'breakout' || main === null) && 'is-alone')}
       hidden={shown === 'main'}
+      ref={breakoutPane}
+      {...motionProps('breakout')}
     >{breakout}</div>}
   </div>;
 }

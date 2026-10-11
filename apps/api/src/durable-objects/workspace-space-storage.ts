@@ -11,6 +11,8 @@ import {
   SpaceDirectorySchema,
   SpaceSummarySchema,
   asSpaceId,
+  asUserId,
+  asWorkspaceId,
   asWorkstreamId,
   STORABLE_APPEARANCE_ICON_KEYS,
   SPACE_COLOR_KEYS_STORABLE,
@@ -24,11 +26,13 @@ import {
 } from "@rally/contracts";
 
 import { boundParameterChunks } from "./bound-parameters";
+import { channelReadState, type ChannelReadRow, type ChannelReadState } from "./workspace-channel-read-storage";
 import {
   breakoutListedSql,
   mainOpenableSql,
   member,
   channelListedSql,
+  organizationWide,
   organizationWideSql,
   spaceListedSql,
   type AccessClass,
@@ -790,6 +794,7 @@ const EMPTY_DIRECTORY: SpaceDirectory = SpaceDirectorySchema.parse({ waterline: 
 export class WorkspaceSpaceStorage {
   private tablesPresent: boolean | null = null;
   private breakoutTablesPresent: boolean | null = null;
+  private readTablesPresent: boolean | null = null;
   /** Sidekick defaults this instance wrote onto a Channel in place; the caller refreshes the rails when nonzero. */
   sidekickDefaultsApplied = 0;
 
@@ -852,6 +857,18 @@ export class WorkspaceSpaceStorage {
       sql: spaceListedSql(space, spaceViewer, viewer.accessClass, { breakouts }),
       binds: breakouts ? [viewer.userId, viewer.userId] : [viewer.userId],
     };
+  }
+
+  /**
+   * Whether this object has reached migration 98, which gave a Channel its
+   * waterline. Asked for the reason {@link ready} is: an object can hold Space
+   * tables on a schema that stops short of the newest migration.
+   */
+  readsReady(): boolean {
+    this.readTablesPresent ??= this.storage.sql.exec<{ name: string } & Record<string, SqlStorageValue>>(
+      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'space_reads'`,
+    ).toArray().length === 1;
+    return this.readTablesPresent;
   }
 
   breakoutsReady(): boolean {
@@ -1726,6 +1743,340 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
+   * One page of a Channel's feed: the threads placed in it, newest placement
+   * first, each marked whether this viewer may open it.
+   *
+   * A Channel is the storage `space`, and a thread the storage Channel. Rows a
+   * member may not open come back too, as `openable: false`, and the caller
+   * renders them as locked rows with nothing but an id and a time — the one
+   * place the listing rules let a thread be named to somebody it is not listed
+   * to (`docs/listing-rules.md`). A guest gets no locked rows: they reach a
+   * Channel only through the threads they may list, and the rest of an
+   * Organization's work is none of theirs to count. Archived threads and
+   * system conversations are left out.
+   *
+   * Ordered by `(joined_at, workstream_id)`, which migration 97's index on the
+   * membership table serves directly; the cursor is the conversation cursor
+   * with the placement time where the activity time would be.
+   */
+  feedPage(
+    viewer: Viewer,
+    spaceId: string,
+    cursor: string | null,
+  ): {
+    items: Array<{ workstreamId: string; placedAt: number; attentionOrdinal: number; openable: boolean }>;
+    nextCursor: string | null;
+    /** The Channel's latest placement ordinal as this first page was read; null on a later page. */
+    latestAttentionOrdinal: number | null;
+  } | "invalid_cursor" | false {
+    if (this.reach(viewer, spaceId) === null) return false;
+    const after = cursor === null ? null : decodeConversationCursor(cursor);
+    if (cursor !== null && after === null) return "invalid_cursor";
+    const attention = this.readsReady() ? "COALESCE(membership.attention_ordinal, 0)" : "0";
+    const rows = this.storage.sql.exec<{
+      workstream_id: string;
+      joined_at: number;
+      attention_ordinal: number;
+      openable: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT membership.workstream_id, membership.joined_at, ${attention} AS attention_ordinal,
+              CASE WHEN ${mainOpenableSql("directory", "viewer", viewer.accessClass)} THEN 1 ELSE 0 END AS openable
+         FROM space_channel_memberships membership
+         JOIN channels directory
+           ON directory.workstream_id = membership.workstream_id
+         LEFT JOIN channel_viewers viewer
+           ON viewer.workstream_id = directory.workstream_id
+          AND viewer.user_id = ?1
+          AND viewer.authority_generation = directory.authority_generation
+        WHERE membership.space_id = ?2 AND membership.state = 'active'
+          AND directory.archived_at IS NULL
+          AND directory.system_kind IS NULL
+          AND (?5 = 1 OR ${mainOpenableSql("directory", "viewer", viewer.accessClass)})
+          AND (?3 IS NULL
+               OR membership.joined_at < ?3
+               OR (membership.joined_at = ?3 AND membership.workstream_id > ?4))
+        ORDER BY membership.joined_at DESC, membership.workstream_id
+        LIMIT ?6`,
+      viewer.userId,
+      spaceId,
+      after?.lastActivityAt ?? null,
+      after?.conversationId ?? "",
+      viewer.accessClass === "member" ? 1 : 0,
+      SPACE_CHANNEL_PAGE_SIZE + 1,
+    ).toArray();
+    const hasMore = rows.length > SPACE_CHANNEL_PAGE_SIZE;
+    if (hasMore) rows.pop();
+    const last = rows.at(-1);
+    // Read with the page, in the same synchronous turn: every placement at or
+    // below it is on this page or gone, so reading the page reads the Channel
+    // through it, including a newest placement since removed or archived.
+    const latestAttentionOrdinal = cursor !== null || !this.readsReady() ? null
+      : this.storage.sql.exec<{ latest_attention_ordinal: number } & Record<string, SqlStorageValue>>(
+        "SELECT latest_attention_ordinal FROM spaces WHERE space_id = ?",
+        spaceId,
+      ).toArray()[0]?.latest_attention_ordinal ?? null;
+    return {
+      latestAttentionOrdinal,
+      items: rows.map((row) => ({
+        workstreamId: row.workstream_id,
+        placedAt: row.joined_at,
+        attentionOrdinal: row.attention_ordinal,
+        openable: row.openable === 1,
+      })),
+      nextCursor: hasMore && last
+        ? encodeConversationCursor({ lastActivityAt: last.joined_at, kind: "channel", conversationId: last.workstream_id })
+        : null,
+    };
+  }
+
+  /**
+   * One page of the threads and breakouts this person takes part in or has
+   * pinned, newest activity first: the Threads tab.
+   *
+   * The conversation page's two-arm shape, started from the person rather than
+   * from a Space: migration 97's `(user_id, is_participant)` index on each
+   * viewer table drives each arm, and the pin table adds what the person
+   * pinned without taking part. A breakout is listed only under a thread this
+   * person may list, the same two gates the conversation page asks. Archived
+   * and system conversations are left out; stale ones are not, because this is
+   * the list of a person's work, not of what needs them.
+   */
+  participatingPage(
+    viewer: Viewer,
+    cursor: string | null,
+    /**
+     * Every thread and breakout this person pinned and may still list, in one
+     * answer: the Pinned section, which a page of the whole list cannot be
+     * trusted to hold. Bounded by the pin limit rather than the page size.
+     */
+    { pinnedOnly = false }: { pinnedOnly?: boolean } = {},
+  ): SpaceConversationPage | "invalid_cursor" {
+    const breakouts = this.breakoutsReady();
+    const pins = this.storage.sql.exec(
+      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_pins'`,
+    ).toArray().length === 1;
+    if (pinnedOnly && !pins) return { items: [], nextCursor: null };
+    const after = cursor === null ? null : decodeConversationCursor(cursor);
+    if (cursor !== null && after === null) return "invalid_cursor";
+    const pinned = (kind: "thread" | "breakout", id: string) => (pins
+      ? `EXISTS (SELECT 1 FROM workspace_pins pin
+                  WHERE pin.user_id = ?1 AND pin.item_kind = '${kind}' AND pin.item_id = ${id})`
+      : "0");
+    const rows = this.storage.sql.exec<{
+      kind: "channel" | "breakout";
+      workstream_id: string;
+      substream_id: string | null;
+      conversation_id: string;
+      last_activity_at: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT kind, workstream_id, substream_id, conversation_id, last_activity_at FROM (
+         SELECT * FROM (
+           SELECT 'channel' AS kind,
+                  directory.workstream_id AS workstream_id,
+                  NULL AS substream_id,
+                  directory.workstream_id AS conversation_id,
+                  directory.last_activity_at AS last_activity_at
+             FROM channels directory
+             LEFT JOIN channel_viewers viewer
+               ON viewer.workstream_id = directory.workstream_id
+              AND viewer.user_id = ?1
+              AND viewer.authority_generation = directory.authority_generation
+            WHERE directory.archived_at IS NULL
+              AND directory.system_kind IS NULL
+              AND (${pinnedOnly ? "0" : "viewer.is_participant = 1"} OR ${pinned("thread", "directory.workstream_id")})
+              AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
+              AND ${afterCursorSql("channel", "directory.last_activity_at", "directory.workstream_id")}
+            ORDER BY directory.last_activity_at DESC, directory.workstream_id
+            LIMIT ?6
+         )
+         ${breakouts ? `UNION ALL
+         SELECT * FROM (
+           SELECT 'breakout' AS kind,
+                  breakout.workstream_id AS workstream_id,
+                  breakout.substream_id AS substream_id,
+                  breakout.substream_id AS conversation_id,
+                  breakout.last_activity_at AS last_activity_at
+             FROM breakouts breakout
+             LEFT JOIN breakout_viewers breakout_viewer
+               ON breakout_viewer.workstream_id = breakout.workstream_id
+              AND breakout_viewer.substream_id = breakout.substream_id
+              AND breakout_viewer.user_id = ?1
+              AND breakout_viewer.authority_generation = breakout.authority_generation
+             JOIN channels directory
+               ON directory.workstream_id = breakout.workstream_id
+             LEFT JOIN channel_viewers viewer
+               ON viewer.workstream_id = directory.workstream_id
+              AND viewer.user_id = ?1
+              AND viewer.authority_generation = directory.authority_generation
+            WHERE breakout.archived_at IS NULL
+              AND directory.archived_at IS NULL
+              AND (${pinnedOnly ? "0" : "breakout_viewer.is_participant = 1"} OR ${pinned("breakout", "breakout.substream_id")})
+              AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts, userId: "?1" })}
+              AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass)}
+              AND ${afterCursorSql("breakout", "breakout.last_activity_at", "breakout.substream_id")}
+            ORDER BY breakout.last_activity_at DESC, breakout.substream_id
+            LIMIT ?6
+         )` : ""}
+       )
+       ORDER BY last_activity_at DESC, kind, conversation_id
+       LIMIT ?6`,
+      viewer.userId,
+      null,
+      after?.lastActivityAt ?? null,
+      after?.kind ?? "",
+      after?.conversationId ?? "",
+      // SQLite reads a negative LIMIT as none; the pin limit bounds the rows.
+      pinnedOnly ? -1 : SPACE_CHANNEL_PAGE_SIZE + 1,
+    ).toArray();
+    const hasMore = !pinnedOnly && rows.length > SPACE_CHANNEL_PAGE_SIZE;
+    if (hasMore) rows.pop();
+    const last = rows.at(-1);
+    return {
+      items: rows.map((row) => ({
+        kind: row.kind,
+        workstreamId: row.workstream_id,
+        substreamId: row.substream_id,
+      })),
+      nextCursor: hasMore && last
+        ? encodeConversationCursor({
+          lastActivityAt: last.last_activity_at,
+          kind: last.kind,
+          conversationId: last.conversation_id,
+        })
+        : null,
+    };
+  }
+
+  /**
+   * For each Space this viewer may list, how many threads in it they may list,
+   * when the newest of those last moved, and the viewer's read state in it:
+   * the Channels tab's second line and its unread dot.
+   *
+   * One grouped pass over the active memberships of the listed Spaces, the
+   * same cost {@link attentionCounts} pays, plus the listing query reading the
+   * waterline columns beside each Space id. A Space with nothing listable in
+   * it is still answered, with zero and no time.
+   */
+  channelStats(viewer: Viewer, onlySpaceId?: string): Array<{
+    spaceId: string;
+    threadCount: number;
+    lastActivityAt: number | null;
+    read: ChannelReadState;
+  }> {
+    if (!this.ready()) return [];
+    const reads = this.visibleSpaceReads(viewer, onlySpaceId);
+    const spaceIds = [...reads.keys()];
+    if (spaceIds.length === 0) return [];
+    const listed = this.channelListing(viewer);
+    const counted = new Map<string, { count: number; last: number | null }>();
+    for (const chunk of boundParameterChunks(spaceIds)) {
+      for (const row of this.storage.sql.exec<{
+        space_id: string;
+        count: number;
+        last_activity_at: number | null;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT membership.space_id, COUNT(*) AS count, MAX(directory.last_activity_at) AS last_activity_at
+           FROM space_channel_memberships membership
+           JOIN channels directory
+             ON directory.workstream_id = membership.workstream_id
+           LEFT JOIN channel_viewers viewer
+             ON viewer.workstream_id = directory.workstream_id
+            AND viewer.user_id = ?
+            AND viewer.authority_generation = directory.authority_generation
+          WHERE membership.state = 'active'
+            AND directory.archived_at IS NULL
+            AND directory.system_kind IS NULL
+            AND ${listed.sql}
+            AND membership.space_id IN (${chunk.map(() => "?").join(", ")})
+          GROUP BY membership.space_id`,
+        viewer.userId,
+        ...listed.binds,
+        ...chunk,
+      ).toArray()) {
+        counted.set(row.space_id, { count: row.count, last: row.last_activity_at });
+      }
+    }
+    return spaceIds.map((spaceId) => ({
+      spaceId,
+      threadCount: counted.get(spaceId)?.count ?? 0,
+      lastActivityAt: counted.get(spaceId)?.last ?? null,
+      read: reads.get(spaceId) as ChannelReadState,
+    }));
+  }
+
+  /**
+   * {@link visibleSpaceIds} with each Space's read state for this viewer, in
+   * the same order. On an object short of migration 98 every Channel reads as
+   * caught up at zero.
+   */
+  private visibleSpaceReads(viewer: Viewer, onlySpaceId?: string): Map<string, ChannelReadState> {
+    const listed = this.spaceListing(viewer);
+    const columns = this.readsReady()
+      ? `space.latest_attention_ordinal, space.unread_tracking_start_ordinal,
+         reads.seen_attention_ordinal`
+      : `0 AS latest_attention_ordinal, 0 AS unread_tracking_start_ordinal,
+         NULL AS seen_attention_ordinal`;
+    const join = this.readsReady()
+      ? "LEFT JOIN space_reads reads ON reads.space_id = space.space_id AND reads.user_id = ?1"
+      : "";
+    const rows = this.storage.sql.exec<{ space_id: string } & ChannelReadRow & Record<string, SqlStorageValue>>(
+      `SELECT space.space_id, ${columns}
+         FROM spaces space
+         LEFT JOIN space_viewers viewer
+           ON viewer.space_id = space.space_id
+          AND viewer.user_id = ?1 AND viewer.is_participant = 1
+         ${join}
+        WHERE space.archived_at IS NULL
+          AND (?2 IS NULL OR space.space_id = ?2)
+          AND ${listed.sql}
+        ORDER BY space.created_at, space.space_id`,
+      viewer.userId,
+      onlySpaceId ?? null,
+      ...listed.binds,
+    ).toArray();
+    return new Map(rows.map((row) => [row.space_id, channelReadState(row, viewer.accessClass === "guest")]));
+  }
+
+  /**
+   * Move this viewer's read position in a Channel forward, never back.
+   *
+   * The thread acknowledgement's rule (`acknowledgeRead` in
+   * `workstream-object-product.ts`) against this Channel's columns, except
+   * that a position past the waterline is clamped rather than refused: a
+   * client can hold a feed row a moment longer than the waterline it read, and
+   * the answer is the same either way. `false` for a Channel this viewer
+   * cannot list, the same refusal the feed gives.
+   */
+  acknowledgeRead(
+    viewer: Viewer,
+    spaceId: string,
+    readThrough: number,
+    now = Date.now(),
+  ): ChannelReadState | false {
+    if (!this.ready() || !this.readsReady()) return false;
+    return this.storage.transactionSync(() => {
+      const current = this.visibleSpaceReads(viewer, spaceId).get(spaceId);
+      if (!current) return false;
+      const seen = Math.min(readThrough, current.latestAttentionSequenceNumber);
+      this.storage.sql.exec(
+        `INSERT INTO space_reads (space_id, user_id, seen_attention_ordinal, updated_at)
+         SELECT ?1, ?2, MAX(space.unread_tracking_start_ordinal, ?3), ?4
+           FROM spaces space WHERE space.space_id = ?1
+         ON CONFLICT(space_id, user_id) DO UPDATE SET
+           seen_attention_ordinal = MAX(
+             COALESCE(space_reads.seen_attention_ordinal, excluded.seen_attention_ordinal),
+             excluded.seen_attention_ordinal),
+           updated_at = excluded.updated_at`,
+        spaceId,
+        viewer.userId,
+        seen,
+        now,
+      );
+      return this.visibleSpaceReads(viewer, spaceId).get(spaceId) ?? false;
+    });
+  }
+
+  /**
    * Every Channel and Breakout in one Space that the dashboard would list for
    * this viewer. This is the dashboard query's admission predicate without its
    * page bound or ordering, so a sidebar badge never counts a different state.
@@ -1996,7 +2347,9 @@ export class WorkspaceSpaceStorage {
    *
    * The caller supplies only Channels already re-read from their hosted parents.
    * This read therefore exposes the Space's presentation and containment edge,
-   * even when the guest is not a Space participant. The candidate Channel is
+   * even when the guest is not a Space participant — for an Organization-wide
+   * Space only. A private Space is named to its participants alone, and a guest
+   * who is one already lists it by the ordinary rule. The candidate Channel is
    * the associative permission; no roster, defaults, lifecycle or writes leave.
    */
   sharedNavigationSpaces(workstreamIds: readonly string[]): SharedNavigationSpace[] {
@@ -2021,6 +2374,7 @@ export class WorkspaceSpaceStorage {
            FROM space_channel_memberships membership
            JOIN spaces space ON space.space_id = membership.space_id
            WHERE membership.state = 'active' AND space.archived_at IS NULL
+            AND space.scope = 'workspace'
             AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})
           ORDER BY space.created_at, space.space_id, membership.workstream_id`,
         ...chunk,
@@ -2203,6 +2557,9 @@ export class WorkspaceSpaceStorage {
       request.workstreamId,
       request.targetMembershipGeneration,
     );
+    if (targetState !== "active") {
+      this.stampPlacements(request.targetSpaceId, [request.workstreamId], request.userId, now);
+    }
     this.storage.sql.exec(
       `UPDATE space_channel_memberships
           SET state = 'removed', generation = generation + 1, updated_at = ?, removed_at = ?
@@ -2350,6 +2707,13 @@ export class WorkspaceSpaceStorage {
       ).toArray()[0];
       if (!space) return false;
       if (space.revision !== request.spaceRevision) return "conflict";
+      // Read before the update so an idempotent re-add of a row that is
+      // already active does not take a fresh ordinal: only a placement does.
+      const wasActive = this.storage.sql.exec<{ state: string } & Record<string, SqlStorageValue>>(
+        `SELECT state FROM space_channel_memberships WHERE space_id = ? AND workstream_id = ?`,
+        request.spaceId,
+        request.workstreamId,
+      ).toArray()[0]?.state === "active";
       // `active` as well as `joining`, at the *same* generation. `prepareMembership`
       // answers an already-active row with its current generation rather than
       // staging a new one, so re-adding a Channel a Space already holds arrives
@@ -2368,6 +2732,7 @@ export class WorkspaceSpaceStorage {
         request.membershipGeneration,
       ).toArray()[0];
       if (!activated) return false;
+      if (!wasActive) this.stampPlacements(request.spaceId, [request.workstreamId], request.userId, now);
       this.advanceWaterline(now);
       return this.space(request.spaceId, member(request.userId));
     });
@@ -2434,6 +2799,7 @@ export class WorkspaceSpaceStorage {
           now,
           now,
         );
+        this.stampPlacements(request.spaceId, [request.workstreamId], request.userId, now);
         this.advanceWaterline(now);
       }
       const space = this.space(request.spaceId, member(request.userId));
@@ -2585,16 +2951,77 @@ export class WorkspaceSpaceStorage {
     });
   }
 
-  /** Archive a Space that strands no live Channel, in one transaction. */
-  archive(userId: string, spaceId: string, now = Date.now()): WorkspaceSpaceMutationResult {
-    return this.storage.transactionSync((): WorkspaceSpaceMutationResult => {
-      const prepared = this.prepareArchive(userId, spaceId, now);
-      if (!prepared.ok) return prepared;
-      const space = this.finalizeArchive(userId, spaceId, now);
-      if (space === "protected") return { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] };
-      if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
-      return { ok: true, space };
-    });
+  /**
+   * Archive a Channel container, first adding to General every live thread
+   * that would otherwise be left in no Channel, all in one transaction.
+   * Only Organization-wide threads the archiver may list move; any other
+   * stranded thread keeps the archive refused.
+   *
+   * A thread started from a Channel's composer lives in that Channel alone,
+   * so refusing those (`space_membership_final`) would refuse nearly every
+   * archive. General is where every member already looks, and a restore puts
+   * the thread back in this Channel too. Without a General (an Organization
+   * still opening) the refusal stands. Answers which threads moved, so the
+   * caller can publish General's change.
+   */
+  archive(
+    workspaceId: string,
+    userId: string,
+    spaceId: string,
+    now = Date.now(),
+  ): { result: WorkspaceSpaceMutationResult; rehomed: string[] } {
+    // A refusal throws out of the transaction so the threads already added
+    // to General roll back with it: a refused archive changes nothing.
+    try {
+      return this.storage.transactionSync(() => {
+        const rehomed = this.rehomeStrandedInGeneral(workspaceId, userId, spaceId, now);
+        const prepared = this.prepareArchive(userId, spaceId, now);
+        if (!prepared.ok) throw new ArchiveRefused(prepared);
+        const space = this.finalizeArchive(userId, spaceId, now);
+        if (space === "protected") {
+          throw new ArchiveRefused({ ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] });
+        }
+        if (space === false) {
+          throw new ArchiveRefused({ ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] });
+        }
+        return { result: { ok: true, space }, rehomed };
+      });
+    } catch (error) {
+      if (error instanceof ArchiveRefused) return { result: error.result, rehomed: [] };
+      throw error;
+    }
+  }
+
+  private rehomeStrandedInGeneral(workspaceId: string, userId: string, spaceId: string, now: number): string[] {
+    const general = this.generalSpaceId();
+    if (general === null || general === spaceId || !this.canEdit(userId, spaceId, true)) return [];
+    const stranded = this.liveMemberWorkstreamIds(spaceId)
+      .filter((workstreamId) => this.otherActiveSpaceIds(workstreamId, spaceId).length === 0);
+    // Only a thread every member may already read moves, and only one the
+    // archiver may list: General shows a row to every member, so moving a
+    // private thread there would tell the Organization it exists. The rest
+    // stay where they are and keep the archive refused.
+    const listable = new Set(this.listableChannelIds(member(userId), stranded));
+    const rehomed: string[] = [];
+    for (const workstreamId of stranded) {
+      if (!listable.has(workstreamId) || !this.organizationWideThread(workstreamId)) continue;
+      const added = this.addMembership({
+        workspaceId: asWorkspaceId(workspaceId),
+        userId: asUserId(userId),
+        spaceId: asSpaceId(general),
+        workstreamId: asWorkstreamId(workstreamId),
+      }, now);
+      if (added.ok) rehomed.push(workstreamId);
+    }
+    return rehomed;
+  }
+
+  private organizationWideThread(workstreamId: string): boolean {
+    const row = this.storage.sql.exec<{ scope: string }>(
+      `SELECT scope FROM channels WHERE workstream_id = ?`,
+      workstreamId,
+    ).toArray()[0];
+    return row !== undefined && organizationWide(row.scope, "member");
   }
 
   /**
@@ -2623,6 +3050,7 @@ export class WorkspaceSpaceStorage {
             now, intent.spaceId, workstreamId, generation,
           ).toArray()[0];
           if (activated) {
+            this.stampPlacements(intent.spaceId, [workstreamId], intent.requestedByUserId, now);
             this.stageDefaultsForMember(intent.spaceId, workstreamId, generation, intent.requestedByUserId, now);
             this.advanceWaterline(now);
           }
@@ -2655,11 +3083,13 @@ export class WorkspaceSpaceStorage {
             // The archive cannot finish as its requester, so it is taken back:
             // the memberships it staged return rather than sit `removing`
             // under a Space that is still live.
-            this.storage.sql.exec(
+            const returned = this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
               `UPDATE space_channel_memberships SET state = 'active', generation = generation + 1, updated_at = ?
-                WHERE space_id = ? AND state = 'removing'`,
+                WHERE space_id = ? AND state = 'removing'
+                RETURNING workstream_id`,
               now, intent.spaceId,
-            );
+            ).toArray().map((row) => row.workstream_id);
+            this.stampPlacements(intent.spaceId, returned, intent.requestedByUserId, now);
             this.advanceWaterline(now);
             settle("archive_abandoned");
           } else {
@@ -2786,13 +3216,15 @@ export class WorkspaceSpaceStorage {
         spaceId,
       ).toArray()[0];
       if (!restored) return false;
-      this.storage.sql.exec(
+      const returned = this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
         `UPDATE space_channel_memberships
             SET state = 'active', generation = generation + 1, updated_at = ?
-          WHERE space_id = ? AND state = 'removing'`,
+          WHERE space_id = ? AND state = 'removing'
+          RETURNING workstream_id`,
         now,
         spaceId,
-      );
+      ).toArray().map((row) => row.workstream_id);
+      this.stampPlacements(spaceId, returned, userId, now);
       this.appendOrder(workspaceId, userId, spaceId, now);
       this.advanceWaterline(now);
       return this.space(spaceId, member(userId));
@@ -4354,10 +4786,69 @@ export class WorkspaceSpaceStorage {
     ).toArray().map((row) => row.target_id);
   }
 
+  /**
+   * Give each newly active placement the Channel's next attention ordinal, in
+   * the caller's transaction, and count it read for whoever placed it.
+   *
+   * The one place a Channel's waterline moves. Called only on a transition
+   * into `active` — a fresh placement, a re-add of a removed one, a move's
+   * target, a restore — never on an idempotent settle of a row that was
+   * already active, so a re-add after a removal takes a higher ordinal than
+   * the one it had and a removal never lowers the waterline. Ordered by
+   * `(joined_at, workstream_id)` so a restore numbers its rows the way the
+   * migration 98 backfill does.
+   *
+   * The placer's read position rises to the newest ordinal: your own placement
+   * is not news to you, the way your own message is not unread to you.
+   */
+  private stampPlacements(spaceId: string, workstreamIds: readonly string[], placerUserId: string, now: number): void {
+    if (workstreamIds.length === 0 || !this.readsReady()) return;
+    const ordered = this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT workstream_id FROM space_channel_memberships
+        WHERE space_id = ? AND workstream_id IN (SELECT value FROM json_each(?))
+        ORDER BY joined_at, workstream_id`,
+      spaceId,
+      JSON.stringify(workstreamIds),
+    ).toArray().map((row) => row.workstream_id);
+    let latest = 0;
+    for (const workstreamId of ordered) {
+      latest = this.storage.sql.exec<{ latest_attention_ordinal: number } & Record<string, SqlStorageValue>>(
+        `UPDATE spaces SET latest_attention_ordinal = latest_attention_ordinal + 1
+          WHERE space_id = ? RETURNING latest_attention_ordinal`,
+        spaceId,
+      ).one().latest_attention_ordinal;
+      this.storage.sql.exec(
+        `UPDATE space_channel_memberships SET attention_ordinal = ? WHERE space_id = ? AND workstream_id = ?`,
+        latest,
+        spaceId,
+        workstreamId,
+      );
+    }
+    if (latest === 0) return;
+    this.storage.sql.exec(
+      `INSERT INTO space_reads (space_id, user_id, seen_attention_ordinal, updated_at)
+       VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT(space_id, user_id) DO UPDATE SET
+         seen_attention_ordinal = MAX(COALESCE(space_reads.seen_attention_ordinal, 0), excluded.seen_attention_ordinal),
+         updated_at = excluded.updated_at`,
+      spaceId,
+      placerUserId,
+      latest,
+      now,
+    );
+  }
+
   private advanceWaterline(now: number): void {
     this.storage.sql.exec(
       "UPDATE workspace_space_state SET waterline = waterline + 1, updated_at = ? WHERE id = 1",
       now,
     );
+  }
+}
+
+/** A refused archive, thrown so its transaction rolls back. */
+class ArchiveRefused extends Error {
+  constructor(readonly result: WorkspaceSpaceMutationResult) {
+    super(result.ok ? "space_archive_refused" : result.code);
   }
 }

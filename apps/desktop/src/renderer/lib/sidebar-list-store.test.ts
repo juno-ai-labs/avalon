@@ -1,6 +1,7 @@
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  applyNavigationState,
   applyContainerOrder,
   applyVersionedSpaceSnapshot,
   applyVersionedSidebarList,
@@ -69,6 +70,32 @@ describe('applyVersionedSidebarList', () => {
     // The ordering rides the same waterline: a late payload that lost the
     // arrangement must not take it off the screen either.
     expect(queryClient.getQueryData(['personal-order'])).toEqual(arranged);
+  });
+
+  // A pin or a Channel read republishes the snapshot without moving the Space
+  // waterline; that republication is how a person's other windows hear of it.
+  it('takes pins and Channel stats from a snapshot whose Space waterline did not move', () => {
+    const queryClient = new QueryClient();
+    const spaces = {
+      active: { waterline: 4, items: [] },
+      inactive: { waterline: 4, items: [] },
+    } satisfies SpaceSnapshot;
+    applyVersionedSpaceSnapshot(queryClient, spaces, [], true, [], { pins: [], channelStats: [] });
+
+    const pins = [{ kind: 'channel' as const, id: SPACE_ID, parentId: null }];
+    const channelStats = [{
+      channelId: SPACE_ID,
+      threadCount: 2,
+      lastActivityAt: '2026-10-10T18:00:00.000Z',
+      latestAttentionSequenceNumber: 3,
+      readThroughSequenceNumber: 3,
+      firstUnreadSequenceNumber: null,
+      hasUnread: false,
+    }];
+    expect(applyVersionedSpaceSnapshot(queryClient, spaces, [], true, [], { pins, channelStats })).toBe(false);
+
+    expect(queryClient.getQueryData(['pins'])).toEqual(pins);
+    expect(queryClient.getQueryData(['channel-stats'])).toEqual(channelStats);
   });
 
   // `spacesReady` has no ledger of its own: a write can be the write that
@@ -141,5 +168,23 @@ describe('applyVersionedSidebarList', () => {
     expect(queryClient.getQueryData(['personal-order'])).toEqual([
       { container: { kind: 'space', id: SPACE_ID }, itemIds: [] },
     ]);
+  });
+});
+
+describe('applyNavigationState', () => {
+  const row = (channelId: string, hasUnread: boolean) => ({
+    channelId, threadCount: 1, lastActivityAt: null, latestAttentionSequenceNumber: 1,
+    readThroughSequenceNumber: hasUnread ? 0 : 1, firstUnreadSequenceNumber: hasUnread ? 1 : null, hasUnread,
+  });
+
+  it('replaces the pin list and only the Channel rows another window read', () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(['pins'], [{ kind: 'thread', id: CHANNEL_ID, parentId: null }]);
+    queryClient.setQueryData(['channel-stats'], [row(SPACE_ID, true), row(CHANNEL_ID, true)]);
+
+    applyNavigationState(queryClient, { pins: [], channelStats: [row(SPACE_ID, false)] });
+
+    expect(queryClient.getQueryData(['pins'])).toEqual([]);
+    expect(queryClient.getQueryData(['channel-stats'])).toEqual([row(SPACE_ID, false), row(CHANNEL_ID, true)]);
   });
 });

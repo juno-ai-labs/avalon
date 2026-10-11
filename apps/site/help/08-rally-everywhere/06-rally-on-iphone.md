@@ -1,9 +1,9 @@
 ---
 title: Rally on your iPhone
-description: "Follow and join your Channels from your phone: read, reply, branch, dictate and chat with Sidekicks."
+description: "Follow and join your Threads from your phone: read, reply, branch, dictate and chat with Sidekicks."
 ---
 
-The Rally app for iPhone (it runs on iPad too) puts your Channels in your
+The Rally app for iPhone (it runs on iPad too) puts your Threads in your
 pocket. It is a companion to the Mac app rather than a copy, made for following
 work and joining in: checking how a job is going, answering a question Rally
 asked you, replying to a mention, or sending a quick request while you are away
@@ -11,7 +11,7 @@ from your desk. Setting things up stays on the Mac, and the [next
 page](07-iphone-settings-and-limits.md#what-stays-on-the-mac) lists exactly what
 that covers.
 
-Everything you do on the phone happens in the same Channels your teammates see
+Everything you do on the phone happens in the same Threads your teammates see
 on their Macs. Reply from the bus, and the reply is there when they look.
 
 ## Getting started
@@ -46,12 +46,15 @@ back to this screen. The guided setup you met on the Mac in [chapter
 
 ## The Channels tab
 
-The first tab lists your Channels, grouped by when you last opened them: **Last
+The first tab, **Channels**, lists your Threads. The iPhone app has not caught
+up with the new names yet, so it still calls a Thread a channel: what the Mac
+calls a Thread, the phone calls a channel, in the tab, its menus and its
+messages. The list is grouped by when you last opened them: **Last
 hour**, **Today**, **Yesterday**, **This week**, **This month** and **Before
-this month**. A Channel with something new has an unread dot, a preview of the
+this month**. A Thread with something new has an unread dot, a preview of the
 latest message and its time.
 
-- Pull down to refresh. Scroll to the bottom and older Channels load by
+- Pull down to refresh. Scroll to the bottom and older Threads load by
   themselves.
 - Swipe a row to the left for **Archive** and **Unread**.
 - Press and hold a row for **Rename**, **Make private** or **Make public to
@@ -60,13 +63,13 @@ latest message and its time.
   [Settings](07-iphone-settings-and-limits.md).
 
 The order is by when *you* last looked, not by the latest message. The phone
-also has no Spaces, so there is no pinned section and Mac pins do not show
-here. And there is no button to start a new Channel: new Channels begin on the
-Mac, or in Slack.
+has no list of Mac Channels, so there is no pinned section and Mac pins do not
+show here. And there is no button to start a new Thread: new Threads begin in a
+Channel on the Mac, or in Slack.
 
-## Inside a Channel
+## Inside a Thread
 
-Tapping a Channel shows its **Main** conversation, each of your
+Tapping a Thread shows its **Main** conversation, each of your
 [Breakouts](../03-spaces-and-breakouts/03-breakouts.md), and a **New breakout**
 row. Tap **Main** or a Breakout to open the conversation.
 
@@ -82,12 +85,13 @@ works](../02-working-in-a-channel/03-while-rally-works.md):
   a down-arrow button, **Jump to latest**, takes you to the bottom. Scroll to the
   top and older messages load by themselves.
 
-The info button at the top right opens **Details**: the Channel's title, its
+The info button at the top right opens **Details**: the Thread's title, its
 [email address](03-email-into-rally.md), whether it is public or private, and
 the people in it.
 
 Press and hold **Main** or a Breakout in the list for **Rename**, **Copy channel
-link** or **Copy breakout link**, and **Archive**. On **Main** you can also
+link** or **Copy breakout link**, and **Archive channel** or **Archive
+breakout**. On **Main** you can also
 choose **Make public to organization**.
 
 > [!NOTE]
@@ -98,7 +102,7 @@ choose **Make public to organization**.
 ### Starting a Breakout
 
 Under any finished message in **Main**, tap the branch arrow (**New breakout**).
-Or tap **New breakout** in the Channel's list. A **New breakout** screen opens,
+Or tap **New breakout** in the Thread's list. A **New breakout** screen opens,
 and your first message creates the Breakout. Until you send that first message,
 nothing exists, so backing out costs nothing. When you branch from a message,
 that message and the ones before it come along, faded, as context.
@@ -172,15 +176,14 @@ Sidekick happen on the Mac. A Sidekick chat has no Breakouts.
 
 ## Opening Rally links on your phone
 
-Tap a link to a Rally Channel or Breakout (one that starts with
+Tap a link to a Rally Thread or Breakout (one that starts with
 `https://rallywith.ai/app/`) and it opens in the iPhone app. To share one, press
-and hold a Channel or Breakout and choose **Copy channel link** or **Copy
-breakout link**.
+and hold **Main** or a Breakout inside a Thread and choose **Copy channel link**
+or **Copy breakout link**.
 
-Links to things the phone does not have open a page instead. A link to a Space
-says "Space dashboards are available in Rally for Mac." and a link to a Sidekick
-says "Sidekicks are available in Rally for Mac.", even though the phone has a
-Sidekicks tab. If the app is not installed, the page says "If the app does not
+Links to things the phone does not have, such as a Mac Channel, open a page
+instead
+that points you to Rally for Mac. If the app is not installed, the page says "If the app does not
 open, install Rally first." And if the thing the link points to has gone, the
 app tells you the view does not exist or is no longer available.
 

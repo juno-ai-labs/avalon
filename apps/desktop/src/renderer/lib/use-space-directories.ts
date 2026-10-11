@@ -1,11 +1,9 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
-import type { PersonalOrder, PinnedOrder, SpaceDirectory } from '@rally/contracts';
+import type { PersonalOrder, SpaceDirectory } from '@rally/contracts';
 import {
   INACTIVE_SPACES_QUERY_KEY,
   PERSONAL_ORDER_QUERY_KEY,
-  PINNED_ORDER_QUERY_KEY,
   SPACES_QUERY_KEY,
-  SPACES_READY_QUERY_KEY,
 } from './sidebar-list-store';
 
 function useSocketOwnedSpaceDirectory(
@@ -33,25 +31,6 @@ export function useSpaceDirectories(): {
 }
 
 /**
- * Whether the Organization has finished opening.
- *
- * `true` until a payload says otherwise, which is what a server without the
- * cutover produces: the flag is optional on the wire, and reading its absence
- * as "still opening" would leave such a build showing the opening state
- * forever.
- */
-export function useSpacesReady(): boolean {
-  return useQuery<boolean>({
-    queryKey: SPACES_READY_QUERY_KEY,
-    queryFn: () => {
-      throw new Error('spaces-ready is pushed by the organization socket, never fetched');
-    },
-    enabled: false,
-    staleTime: Number.POSITIVE_INFINITY,
-  }).data ?? true;
-}
-
-/**
  * Every list this person has arranged by hand, as the workspace socket last
  * delivered it.
  *
@@ -70,15 +49,3 @@ export function usePersonalOrder(): PersonalOrder {
   }).data ?? [];
 }
 
-/** All's Pinned order, pushed with `usePersonalOrder`'s and empty until it arrives. */
-export function usePinnedOrder(): PinnedOrder {
-  return useQuery<PinnedOrder>({
-    queryKey: PINNED_ORDER_QUERY_KEY,
-    queryFn: () => {
-      throw new Error('pinned-order is pushed by the organization socket, never fetched');
-    },
-    enabled: false,
-    staleTime: Number.POSITIVE_INFINITY,
-  }).data ?? EMPTY_PINNED_ORDER;
-}
-const EMPTY_PINNED_ORDER: PinnedOrder = [];

@@ -101,7 +101,7 @@ export class WorkstreamEmailRoutingService {
 
   async reserve(input: WorkstreamEmailRouteInput): Promise<WorkstreamEmailRoute> {
     if (input.region !== this.env.AVALON_REGION) {
-      throw new ApiError(422, "workstream_email_region_mismatch", "The work stream belongs to a different data region");
+      throw new ApiError(422, "workstream_email_region_mismatch", "The thread belongs to a different data region");
     }
     if (this.env.AVALON_REGION !== "global") {
       if (this.env.GLOBAL_EMAIL_ROUTER) {
@@ -117,7 +117,7 @@ export class WorkstreamEmailRoutingService {
     if (inputs.length === 0) return [];
     for (const input of inputs) {
       if (input.region !== this.env.AVALON_REGION) {
-        throw new ApiError(422, "workstream_email_region_mismatch", "The work stream belongs to a different data region");
+        throw new ApiError(422, "workstream_email_region_mismatch", "The thread belongs to a different data region");
       }
     }
     if (this.env.AVALON_REGION !== "global") {
@@ -205,20 +205,20 @@ export class WorkstreamEmailRoutingService {
     const identity = createIdentityObjectPort(this.env, input.workspaceId, input.workstreamId);
     const current = await identity.identity();
     if (!current) {
-      throw new ApiError(404, "workstream_not_found", "Work stream not found");
+      throw new ApiError(404, "workstream_not_found", "Thread not found");
     }
     const route = current.email_address
       ? await this.claim({ ...input, emailAddress: current.email_address })
       : await this.reserve(input);
     if (current.email_address && current.email_address.toLowerCase() !== route.emailAddress.toLowerCase()) {
-      throw new ApiError(409, "workstream_email_address_conflict", "The work stream already has a different email address");
+      throw new ApiError(409, "workstream_email_address_conflict", "The thread already has a different email address");
     }
     if (!current.email_address) {
       await identity.adoptEmailAddress({ emailAddress: route.emailAddress, now: Date.now() });
     }
     const stored = await identity.identity();
     if (!stored?.email_address || stored.email_address.toLowerCase() !== route.emailAddress.toLowerCase()) {
-      throw new ApiError(409, "workstream_email_address_conflict", "The work stream already has a different email address");
+      throw new ApiError(409, "workstream_email_address_conflict", "The thread already has a different email address");
     }
     return route;
   }
@@ -243,7 +243,7 @@ export class WorkstreamEmailRoutingService {
     // 404ed a genuinely missing work stream, so reaching this with no row means
     // the two reads disagreed — which is the case least worth failing open on.
     if (!owner || owner.archived_at) {
-      throw new ApiError(409, "workstream_email_owner_archived", "An archived work stream cannot receive email");
+      throw new ApiError(409, "workstream_email_owner_archived", "An archived thread cannot receive email");
     }
     return route;
   }
@@ -466,7 +466,7 @@ export class WorkstreamEmailRoutingService {
     const existing = await this.loadLegacyDestination(input);
     if (existing) {
       if (existing.local_part.toLowerCase() !== claimed.localPart) {
-        throw new ApiError(409, "workstream_email_address_conflict", "The work stream already has a different email address");
+        throw new ApiError(409, "workstream_email_address_conflict", "The thread already has a different email address");
       }
       return { ...input, localPart: claimed.localPart, emailAddress: claimed.emailAddress };
     }
@@ -479,7 +479,7 @@ export class WorkstreamEmailRoutingService {
     ).bind(claimed.localPart, input.region, input.workspaceId, input.workstreamId, at, at).run();
     const reserved = await this.loadLegacyDestination(input);
     if (!reserved || reserved.local_part.toLowerCase() !== claimed.localPart) {
-      throw new ApiError(409, "workstream_email_address_conflict", "The work stream already has a different email address");
+      throw new ApiError(409, "workstream_email_address_conflict", "The thread already has a different email address");
     }
     return { ...input, localPart: claimed.localPart, emailAddress: claimed.emailAddress };
   }
@@ -627,7 +627,7 @@ export class WorkstreamEmailRoutingService {
         409,
         kind === "workstream" ? "workstream_email_address_conflict" : "sidekick_email_address_conflict",
         kind === "workstream"
-          ? "The work stream already has a different email address"
+          ? "The thread already has a different email address"
           : "The automation already has a different email address",
       );
     }
@@ -727,7 +727,7 @@ export class WorkstreamEmailRoutingService {
 
   private assertRegionalOwner(input: WorkstreamEmailRouteInput): void {
     if (input.region !== this.env.AVALON_REGION) {
-      throw new ApiError(422, "workstream_email_region_mismatch", "The work stream belongs to a different data region");
+      throw new ApiError(422, "workstream_email_region_mismatch", "The thread belongs to a different data region");
     }
   }
 

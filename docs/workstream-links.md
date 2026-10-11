@@ -32,13 +32,22 @@ changing the Slack unfurl card or the sweep that keeps it current.
 | Authoritative title/status/recency lookup | `WorkspaceDO.lookupWorkstreamDirectory`, batched per workspace by the posting and refresh paths |
 | Slack blocks, DMs, and person-notification email (a mention, and being added) | `slack-agent-service.ts`, `slack-notification-service.ts`, `mention-email-service.ts`, `participant-email-service.ts` |
 | Shared desktop clipboard and telemetry primitive | `apps/desktop/src/renderer/lib/copy-workstream-link.ts` |
-| Copy work-stream link | `apps/desktop/src/renderer/screens/workstream.tsx`, `apps/desktop/src/renderer/components/sidebar.tsx` |
+| Copy thread link | `apps/desktop/src/renderer/screens/workstream.tsx` (the title menu's **Copy link** tile) |
 | Open the deep link | `emitDeepLink` in `apps/desktop/src/main/index.ts`, `apps/desktop/src/renderer/lib/app-session.tsx` |
 | The registered unfurl domains | `config/provider-apps/slack.json` |
 
 ## How it works
 
 Breakout links append `/b/<breakout-base58>` to the canonical HTTPS path. Writers omit the suffix for Main (`0`). Both parsers preserve the child ID; desktop workspace activation navigates to the existing internal conversation route. The header's Copy link and child notifications use the same contract. Email reply routing is unchanged.
+
+Since the navigation redesign a stored Space is the product's **Channel** and a
+stored Channel is a **thread** ([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)).
+The link shapes below did not change: `/s/<space>/c/<channel>/b/<breakout>`
+already reads Channel, thread, breakout, so every link already shared still
+opens what it named. Inside the app, a Space route (`/spaces/:id/*`) redirects
+to `/channels/:id`, and a lone thread route (`/workstreams/:id`) redirects to
+`/channels/:channel/threads/:id` when the device knows a Channel the thread
+sits in ([`pane-stack.md`](pane-stack.md)).
 
 ## The two forms
 
@@ -391,6 +400,23 @@ new path. Push clicks
 use the same adapter with notification attribution. See [push](push-notifications.md).
 
 ## Changelog
+
+### 2026-10-10 — Links keep their shape; the app's routes say Channel and thread
+
+**What changed:** In-app Space routes redirect to the Channel they now are, and
+a thread opened on its own lands under one of its Channels. No link a writer
+mints changed.
+
+**Why:** The navigation redesign renamed the levels
+([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)); the HTTPS and deep
+link paths already carried them in the right order.
+
+**Considered and rejected:** New `/ch/` and `/t/` path segments: every link
+already in Slack, email and push would need a reader for both, for words a
+person never reads in a URL.
+
+**Consequences:** The `s`, `c` and `b` segments now mean Channel, thread and
+breakout. Do not rename them.
 
 ### 2026-10-07 — Deploys no longer re-check live link readers
 

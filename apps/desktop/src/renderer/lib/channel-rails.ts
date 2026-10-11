@@ -1,5 +1,6 @@
 import { CHANNEL_RAILS_NAMED_LIMIT, type ChannelRail, type WorkspaceChannelRailsEvent } from '@rally/contracts';
 import { useQuery, type QueryClient } from '@tanstack/react-query';
+import { fetchThroughOwner } from './fetch-through-owner';
 import type { WorkstreamSummary } from './types';
 
 /**
@@ -118,7 +119,7 @@ export function seedChannelRails(queryClient: QueryClient, rails: Record<string,
 export function useChannelRail(workstreamId: string | null): ChannelRail | undefined {
   return useQuery<HeldChannelRail | undefined, Error, ChannelRail | undefined>({
     queryKey: channelRailQueryKey(workstreamId ?? ''),
-    queryFn: async () => undefined,
+    queryFn: fetchThroughOwner,
     enabled: false,
     subscribed: workstreamId !== null,
     select: (held) => held?.rail ?? undefined,

@@ -22,6 +22,8 @@ export interface SidekickRow {
   appearance?: WorkstreamAppearance | undefined;
   /** Present only where the caller may detach it; a room's own row has none. */
   onRemove?: (() => void) | undefined;
+  /** What `onRemove` is called on screen; a breakout's list is the default. */
+  removeLabel?: string | undefined;
   onRemoveRecommendation?: (() => void) | undefined;
   onRecommend?: (() => void) | undefined;
 }
@@ -90,7 +92,7 @@ export function SidekickSection({ items, failure, onOpen, onMenuOpen, onRefresh,
         </SidebarRow>
         </ContextMenu.Trigger>
       </Tip>
-      {item.recommended && <Tip className="sidekick-recommendation-tooltip" label="Recommended for every breakout in this channel. Agents can load it when relevant; it isn’t automatically loaded." side="right">
+      {item.recommended && <Tip className="sidekick-recommendation-tooltip" label="Recommended for every breakout in this thread. Agents can load it when relevant; it isn’t automatically loaded." side="right">
         <span className="sidekick-recommendation" role="img" aria-label="Recommended Sidekick" tabIndex={0}>
           <IconCarambola size={14} stroke={1.5} aria-hidden="true" />
         </span>
@@ -98,9 +100,9 @@ export function SidekickSection({ items, failure, onOpen, onMenuOpen, onRefresh,
       {(item.managementPending || item.onRemove || item.onRemoveRecommendation || item.onRecommend) && <ContextMenu.Portal>
         <ContextMenu.Content className="menu-content">
           {item.managementPending && <ContextMenu.Label className="menu-label">Loading Sidekick options…</ContextMenu.Label>}
-          {item.onRemove && <ContextMenu.Item className="menu-item" onSelect={item.onRemove}>Remove from this breakout</ContextMenu.Item>}
-          {item.onRemoveRecommendation && <ContextMenu.Item className="menu-item" onSelect={item.onRemoveRecommendation}>Remove channel recommendation</ContextMenu.Item>}
-          {item.onRecommend && <ContextMenu.Item className="menu-item" onSelect={item.onRecommend}>Recommend for this channel</ContextMenu.Item>}
+          {item.onRemove && <ContextMenu.Item className="menu-item" onSelect={item.onRemove}>{item.removeLabel ?? 'Remove from this breakout'}</ContextMenu.Item>}
+          {item.onRemoveRecommendation && <ContextMenu.Item className="menu-item" onSelect={item.onRemoveRecommendation}>Remove thread recommendation</ContextMenu.Item>}
+          {item.onRecommend && <ContextMenu.Item className="menu-item" onSelect={item.onRecommend}>Recommend for this thread</ContextMenu.Item>}
         </ContextMenu.Content>
       </ContextMenu.Portal>}
     </li></ContextMenu.Root>)}</ul>

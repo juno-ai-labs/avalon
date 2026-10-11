@@ -1007,7 +1007,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
             scopeKind: {
               type: "string",
               enum: MEMORY_SCOPE_KINDS,
-              description: "How widely the fact should be remembered, narrowest first: `workstream` for this work stream alone, `sidekick` for future runs of this installed Sidekick, `user` for one person's durable preferences, `workspace` for shared organizational knowledge. Not every run authorizes every kind; a refusal names the ones this run does have, so retry with the narrowest of those.",
+              description: "How widely the fact should be remembered, narrowest first: `workstream` for this thread alone, `sidekick` for future runs of this installed Sidekick, `user` for one person's durable preferences, `workspace` for knowledge shared across the organization. Not every run authorizes every kind; a refusal names the ones this run does have, so retry with the narrowest of those.",
             },
             text: {
               type: "string",

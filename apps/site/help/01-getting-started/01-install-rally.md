@@ -37,14 +37,11 @@ If the page says **This link is incomplete or invalid. Ask the sender for a new 
 
 When you open Rally with a brand-new account, it plays a short animated introduction in three screens. Each one has a small demo you can poke at.
 
-1. **Meet Rally. Work moves forward together.** You, your team and Rally in one conversation. Click **Meet streams** to continue.
-2. **A stream gives your work a home.** Each piece of work gets its own conversation. Click **Explore breakouts**.
+1. **Meet Rally. Work moves forward together.** You, your team and Rally in one conversation. Click **Meet channels** to continue.
+2. **A channel gives your work a home.** Each area of work gets a Channel, and each task in it gets a Thread. Click **Explore breakouts**.
 3. **Explore an idea in a breakout.** Taking a side conversation off the main one. Try **Start breakout** in the demo, then click **Get started**.
 
 **Back** goes back a screen. If you would rather skip it, the skip button on the first two screens reads **Sign in** before you have signed in, and **Skip intro** afterwards.
-
-> [!NOTE]
-> The introduction still says **stream**, which is the old name for a Channel. Wherever it says stream, think Channel. The rest of this book uses the new word.
 
 Once you finish or skip it, Rally remembers that on your account, so you will not see it again, even on another Mac. People whose accounts already existed when the introduction was added never see it. If your Mac has **Reduce motion** turned on in its accessibility settings, the animations show their final frame instead of moving.
 
@@ -68,6 +65,6 @@ The Mac app does not ask where in the world to keep your data. Every Organizatio
 
 ## Other ways in
 
-The Mac app is the place to begin, and it is the one this chapter describes. Once you are set up, you can also follow your Channels from [your iPhone](../08-rally-everywhere/06-rally-on-iphone.md), and people you share a conversation with can join it from [a web browser](../08-rally-everywhere/08-rally-in-a-browser.md).
+The Mac app is the place to begin, and it is the one this chapter describes. Once you are set up, you can also follow your Threads from [your iPhone](../08-rally-everywhere/06-rally-on-iphone.md), and people you share a conversation with can join it from [a web browser](../08-rally-everywhere/08-rally-in-a-browser.md).
 
 Once you are signed in, [create or join an Organization](02-create-or-join-an-organization.md).

@@ -1,4 +1,5 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
+import { fetchThroughOwner } from './fetch-through-owner';
 import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
 import type { WorkstreamSummary } from './types';
 import { useOptionalCollaborationSession } from './collaboration-session';
@@ -53,7 +54,7 @@ export function useConversationDirectoryQuery(): UseQueryResult<SharedNavigation
   const session = useOptionalCollaborationSession()?.session;
   return useQuery<SharedNavigationDirectory | undefined>({
     queryKey: conversationDirectoryQueryKey(session?.workspace?.id),
-    queryFn: async () => undefined,
+    queryFn: fetchThroughOwner,
     enabled: false,
   });
 }
