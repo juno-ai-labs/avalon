@@ -40,8 +40,9 @@ There is no button here for a new Thread. Threads start inside a Channel, which 
 A Channel is a team's list of Threads: one for a team, a client or a long-running project. A new Organization has one, **General**, so this list looks a little lonely at first.
 
 - **Pinned** comes first, once you have pinned a Channel. Drag pinned Channels up and down to put them in your own order.
-- **All channels** follows, with every other Channel you can see, from A to Z.
+- **All channels** follows, with every other Channel you can see. It starts A to Z. Click the sort button beside **All channels** to switch between **A–Z**, **Recent** (newest activity first) and **Needs attention** (Channels with something new for you first). Rally remembers your choice.
 - Each row shows the Channel's icon and name, a lock if the Channel is private, when it last had activity, and how many Threads are in it, such as **12 threads**.
+- A red dot and a bold name mean a Thread was added to that Channel since you last opened it. Opening the Channel clears it.
 - Click a row to open the Channel. Right-click it for **Pin** or **Unpin**.
 - The **+** beside **All channels** opens **New channel**. Type a name and click **Create channel**.
 
@@ -113,7 +114,7 @@ Rally shows at most two things side by side, and slides them along as you go dee
 2. **Open a Breakout from that Thread** and everything moves one step left: the Thread is now on the left, the Breakout on the right, and the Channel becomes a small breadcrumb in the header above the Thread. See [Breakouts](../03-spaces-and-breakouts/03-breakouts.md).
 3. **Open a file or document from the Breakout** and everything moves left again. The Thread joins the breadcrumbs. [Opening, docking and downloading](../06-things-rally-makes/02-opening-and-downloading.md) has the details on files.
 
-Click a breadcrumb to step back to it. The close button on a Thread's title pill takes you back to its Channel on its own. A Thread you open from the Threads list or Activity starts afresh, on the left, with nothing beside it.
+Click a breadcrumb to step back to it. The close button on a Thread's title pill takes you back to its Channel on its own. A Thread you open from the Threads list or Activity opens beside its home Channel, so the Channel is always one step back. A Thread in no Channel you can see opens on its own.
 
 Drag the edge between two panes to make one wider and the other narrower. If the window is too narrow for two panes, Rally shows one and keeps the rest as breadcrumbs.
 

@@ -27,6 +27,9 @@ mention, or changing what a connector can deliver to a person.
 | Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs` |
 | Settings screen | `apps/desktop/src/renderer/components/digest-settings.tsx` |
 | The work-stream list every renderer surface shares | `apps/desktop/src/renderer/lib/use-workstreams-query.ts`, served by `WorkspaceDO` |
+| The Activity tab's read over the log and the directory, and its read mark | `apps/api/src/durable-objects/workspace-activity-feed.ts` |
+| A breakout mention's emptied shape and its author-only audience | `apps/api/src/durable-objects/breakout-activity.ts` |
+| `GET /navigation/activity` and `PUT /navigation/activity/seen` | `apps/api/src/routes/navigation.ts` |
 
 ### Why a second activity table exists
 
@@ -51,8 +54,10 @@ happened, for this person, since this instant" reads one table.
 ### Private child notifications
 
 Substream mentions and participant additions use the existing direct Slack/email
-notification pipeline with child-addressed links. Their activity events remain
-inside the parent and are excluded from the shared activity log and digests.
+notification pipeline with child-addressed links. A breakout's activity stays
+inside the parent with one exception: a message that mentions somebody enters
+the shared log emptied, with no body, `digestible: false`, and its author as the
+only audience (see [The Activity tab](#the-activity-tab)). No digest reads it.
 Direct notification delivery does not require publishing child activity or
 aggregating its unread count into the work stream.
 
@@ -182,7 +187,6 @@ target ahead of the `participant` targets (`activityTargets` in
 `workstream-object-product.ts`, cut at the effect schema's hundred). The
 Activity tab reads these; see [The Activity tab](#the-activity-tab).
 
-
 ### The Activity tab
 
 `WorkspaceActivityFeed` (`apps/api/src/durable-objects/workspace-activity-feed.ts`)
@@ -197,23 +201,30 @@ for one person, newest first:
   each thread and breakout they take part in, read from the directory rather
   than from an event.
 
-Every row passes the listing rules at read time, a breakout through both of the
-conversation page's gates, and is dropped when the person may not list its
-conversation now.
+The listing rules apply inside each SQL arm, a breakout through both of the
+conversation page's gates, so a row the person may not list now is never read
+at all. A page and its cursor therefore never carry a thread or breakout the
+viewer cannot list; filtering after the read would have let a page come back
+short, or empty with a cursor that names a hidden row.
 
 **A breakout's mentions** reach the log in one narrow shape
 (`breakout-activity.ts`). A breakout is private to the people in it, and a
 `workstream`-audience event reaches every participant of the parent thread
-through `listActivityEvents`. So the parent forwards a breakout's message event
-only when it names somebody, and forwards it emptied: no body, `digestible:
-false`, its targets the mentions alone. WorkspaceDO stores it with the author as
-its `user` audience, the one reader who could already see it, and sends it to
-no further consumer. The work-opportunity lookup needs a thread audience and
-finds none. The Activity tab reads its target edge, and the breakout listing
-check above decides whether the person named sees it. Nothing here changes what
-a digest reads. Read state is one time per
-person (`workspace_activity_seen`, migration 97), moved forward by
-`PUT /navigation/activity/seen`.
+through `listActivityEvents`. So the parent (`HostedParent`) forwards a
+breakout's message event only when it names somebody, stamps
+`metadata.substreamId` on it, and forwards it emptied: no body, `digestible:
+false`, its targets the mentions alone. WorkspaceDO stores any event that
+carries a `substreamId` with its author as the only (`user`) audience, the one
+reader who could already see it. One with no author is skipped, never stored
+under the parent thread's audience, because that audience is exactly the set of
+people the breakout is private from. It is kept out of the work-opportunity
+outbox and sent to no further consumer. The Activity tab reads its target edge,
+and the breakout listing check above decides whether the person named sees it.
+Nothing here changes what a digest reads.
+
+**Read state is one time per person** (`workspace_activity_seen`, migration
+97), moved forward by `PUT /navigation/activity/seen` when the tab is opened.
+An item is unread when it is newer than that time.
 
 Starts are not read from the opening message's event. Driving the local stack
 showed that event does not reliably reach WorkspaceDO (only a handful of
@@ -581,6 +592,20 @@ cannot change a saved schedule, cursor, or settlement.
 
 ## Invariants
 
+- **Every reader of the log keeps to the audience columns.** A breakout's
+  emptied mention sits in the shared log with its author as its only audience;
+  a reader that skips the audience columns (a new feed, an export, a count)
+  shows it to the whole parent thread, which is the set the breakout is private
+  from. Guard: `channels-threads-navigation.test.ts` "given a mention in a
+  breakout, when the person named reads Activity, then it appears only once
+  they may list the breakout".
+- **A producer of a breakout's events stamps `metadata.substreamId`.** It is
+  how WorkspaceDO tells a breakout's event from its thread's and narrows the
+  audience to the author. An unstamped breakout event is stored under the
+  thread's audience and leaks to every thread participant. Guard:
+  `channels-threads-navigation.test.ts` "given a breakout's mention whose
+  author is unknown, when it is applied, then it is not stored at all rather
+  than shown to the parent thread".
 - **Audience is resolved against the reader at read time**, in
   `listActivityEventsForUser` and nowhere else. Storing recipients instead freezes
   the audience at write time, so someone added to a work stream today would never
@@ -759,25 +784,38 @@ owns device registration, provider delivery and retry receipts.
 
 **What changed:** Conversation events carry `metadata.substreamId` and
 `mentioned` targets, and `WorkspaceActivityFeed` reads the log for the new
-Activity tab with the listing rules applied per row.
+Activity tab, with the listing rules applied inside each SQL arm so a page and
+its cursor never carry a thread or breakout the viewer cannot list. A
+breakout's mentions now enter the shared log, emptied and with the author as
+the only audience; one with no author is skipped. Read state is one time per
+person.
 
 **Why:** The navigation redesign replaces the attention pop-out with an Activity
 tab of things that happened to a person
 ([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)). The log already
-held most of it; a second log would be a second answer to the same question.
+held most of it; a second log would be a second answer to the same question. A
+mention in a breakout is one of those things, and the log had none, because
+child activity stayed inside the parent. Filtering rows after the SQL read let
+a page come back short, or empty with a cursor naming a row the viewer could
+not see.
 
 **Considered and rejected:** New `thread.started`, `breakout.started` and
 `run.finished` events. Starts were first read from the opening message's
 event; they are read from the directory row instead, because that event did
-not reliably reach WorkspaceDO on the live stack. The directory's completion
-already say each of those, so new producers would only duplicate them.
+not reliably reach WorkspaceDO on the live stack. The directory rows and their
+completion times already say each of those, so new producers would only
+duplicate them. Storing a breakout mention under the parent thread's audience
+when it has no author: that audience is the set of people the breakout is
+private from. Forwarding the breakout mention with its body: the shared log
+would then carry breakout text for any reader that slips.
 
 **Consequences:** A digest is unchanged: it ignores the new metadata and reads
 `mentioned` targets as involvement, as it always read `involved`. A run that
-finishes twice shows once, at its latest finish. A breakout's mention reaches the
-log emptied and readable by its author alone, so the Activity tab can show it
-without the shared log carrying breakout text. Any future reader of the log
-must keep to the audience columns, or it will see these rows.
+finishes twice shows once, at its latest finish. Any future reader of the log
+must keep to the audience columns, and any producer of a breakout's events must
+stamp `substreamId`, or a breakout mention reaches the whole parent thread. A
+per-item read state can come later as a second table without moving the
+one-time mark.
 
 ### 2026-09-14 — Share notification eligibility with Apple push
 

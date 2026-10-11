@@ -5,7 +5,7 @@ before the socket that owns it answers. The desktop keeps one IndexedDB
 database, `rally-local-cache`, holding the last first page of the workspace
 directory and the last canonical state of every conversation the reader opened
 or the socket pool warmed. On the next launch, or the next open of a room whose
-socket is still cold, the sidebar, the Space dashboard, and the transcript are
+socket is still cold, the sidebar, the Channel screen, and the transcript are
 on screen immediately; a small floating card says the live connection is on its
 way, and the composer accepts a draft but does not send until it has arrived.
 
@@ -40,7 +40,6 @@ socket hooks' first frame.
 | `apps/desktop/src/renderer/components/substream-launch.tsx` | Carries the parent's card and send gate while a substream is branched off a seed. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Reads the seed marker: shows the card, gates sending, and holds range loads and read acknowledgements until the feed is live. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` (`useChannelRail`) | Feeds the Channel title-pill menu's people, Sidekicks and artifacts from the Channel's rail while the conversation has no detail yet. |
-| `apps/desktop/src/renderer/screens/space-dashboard.tsx` | Shows the card over a Space painted from the seeded directory. |
 | `apps/desktop/src/renderer/components/workstream-composer.tsx` | `sendBlocked`: everything but sending. |
 
 ## How it works

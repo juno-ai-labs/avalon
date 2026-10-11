@@ -108,8 +108,7 @@ that showed what a nested layout costs.
    inference and its own PRD.
 4. **Unread dots and new-thread counts on Channels are rejected for now** by the
    product owner. Channels are a place to find things, not a second queue. The
-   Threads count is the one number to watch. *Reversed for the dot: see the
-   decision log, "Channels get an unread dot from placements only".*
+   Threads count is the one number to watch.
 5. **Nested breakouts are rejected.** A breakout cannot have its own breakout.
    The pane stack stays two deep for any piece of work, and a breakout is
    already a sub-task.
@@ -355,7 +354,7 @@ answer that can disagree with the first.
 
 **Changes:** Narrows the Data model's activity sketch. Starts written before
 deploy carry no `substreamId`, so they do not appear. A run that finishes twice
-shows once, at its latest finish. Shipped in PR A.
+shows once, at its latest finish. Shipped in #1188.
 
 ### 2026-10-10 — Activity read state is one time per person
 
@@ -366,7 +365,7 @@ when the tab is opened. No per-item read rows.
 that fact once per row. Supersedes the Data model's per-item reads.
 
 **Changes:** Unread is "newer than the last time you opened Activity". Shipped
-in PR A.
+in #1188.
 
 ### 2026-10-10 — Private channels use the existing audience route
 
@@ -380,7 +379,7 @@ a second write path to the same rows.
 
 **Changes:** Nothing in scope. The old desktop's `SpaceScopeSchema` already
 accepted `personal`, so a private channel parses there (rollout's check).
-Shipped in PR A.
+Shipped in #1188.
 
 ### 2026-10-10 — Guests get no locked rows; pins mirror one way
 
@@ -395,7 +394,7 @@ has.
 
 **Changes:** Narrows Product behavior's locked rows to members, and Rollout's
 "pin dual-write keeps both clients in step" to the old-to-new direction. Shipped
-in PR A.
+in #1188.
 
 ### 2026-10-10 — Sidekicks live in the title pill; a private channel's threads start private
 
@@ -412,7 +411,7 @@ never held a Sidekick list, so nothing moves out of it.
 
 **Changes:** Resolves both open questions. Space Sidekick defaults are kept
 rather than retired in the cleanup PR. `resolveSpaceWorkstreamStart` narrows a
-thread a person starts in a private channel to private. Shipped in PR B for
+thread a person starts in a private channel to private. Shipped in #1188 for
 every creator, then limited to the person-started route
 (`narrowInPrivateSpaces`): a connector such as Slack resolves its own audience
 from its room, and narrowing it left a public Slack channel's thread unreadable
@@ -447,6 +446,144 @@ effects.
 ([`spaces.md`](../../spaces.md#the-channels-read-state)). Revisit the
 WorkspaceDO decision when Channels gain chat, mentions or typing.
 
+### 2026-10-11 — Activity reads starts from directory rows, not the opening event
+
+**Decided:** A thread or breakout start in Activity is read from its directory
+row (`created_by_user_id`, `source_created_at`), not from the opening message's
+event. This reverses the start half of "Activity reads the existing log; no new
+event types"; finished runs were already read from the directory.
+
+**Why:** Driving the local stack showed the opening message's event does not
+reliably reach WorkspaceDO (a handful of thread-level receipts for dozens of
+threads), and a breakout's is not forwarded unless it names somebody. The
+directory row is what every other list is drawn from, so a start now appears
+exactly when the thread does.
+
+**Changes:** Starts written before deploy now appear, which the first entry
+gave up. Still no new event type. Shipped in #1188.
+
+### 2026-10-11 — A mention in a breakout reaches Activity, emptied and readable by its author alone
+
+**Decided:** The parent forwards a breakout message that mentions somebody,
+stamped with `metadata.substreamId` and emptied: no body, not digestible,
+targets the mentions alone. WorkspaceDO stores it with its author as the only
+audience and skips one with no author, never falling back to the parent
+thread's audience. It stays out of the work-opportunity outbox.
+
+**Why:** Goal 4 lists mentions, and a breakout's stayed inside the parent. A
+breakout is private to its people, and the parent thread's audience is exactly
+the set it is private from, so the stored row carries nothing a slip could
+leak.
+
+**Changes:** Narrows key design decision 6: the per-viewer breakout check at
+read time still decides whether the person named sees it. Shipped in #1188.
+
+### 2026-10-11 — Threads and Activity open a thread beside its Channel
+
+**Decided:** A thread opened from the Threads list or Activity opens beside
+one of its Channels (the one already open, when it sits there), not alone as
+the left pane.
+
+**Why:** So a Channel is always one step back, whichever list a thread was
+opened from. A thread's Channel is where its result goes back to, and a thread
+opened alone had nothing to step back to.
+
+**Changes:** Supersedes Panes' "starts a new stack with the thread on the left"
+and the Threads section's "with nothing to its right". A thread with no Channel
+the person may see still opens alone. Shipped in #1188.
+
+### 2026-10-11 — Activity shows starts of any thread the person may list
+
+**Decided:** Activity lists every thread and breakout somebody else started
+that the person may list, not only threads started in Channels they are in.
+
+**Why:** Starts are read from directory rows under the listing rules (see the
+first 2026-10-11 entry), and those rules have no notion of "a Channel you are
+in": an Organization-wide Channel has no member list. Beyond that the reasoning
+was not recorded.
+
+**Changes:** Widens Product behavior's fifth Activity event. The listing rules
+apply inside each SQL arm, so a page and its cursor never carry a thread the
+viewer cannot list. Shipped in #1188.
+
+### 2026-10-11 — Archiving a Channel moves its Organization-wide threads to General; a thread can sit in more Channels
+
+**Decided:** Archiving a Channel first moves into General each thread it would
+leave with no Channel, if that thread is Organization-wide and the archiver can
+list it. Any other such thread keeps the archive refused, and a refused
+archive rolls back whole. A thread's title menu gains a Channels level to add
+it to more Channels or take it out of one, never its last.
+
+**Why:** A thread started from a Channel's composer lives in that Channel
+alone, so the old refusal would have refused nearly every archive. Moving a
+private thread would show it as a locked row to all of General, and moving one
+the archiver cannot list would act on work they cannot see. With the Space
+pills gone, the drag that placed a thread in a second Space went too, and
+Scope and access still promises a thread can sit in several Channels.
+
+**Changes:** Nothing in the goals. Restoring the Channel brings its threads
+back; any moved to General stay there too. Shipped in #1188.
+
+### 2026-10-11 — Server and client ship together in #1188
+
+**Decided:** The server and client changes ship in one pull request, #1188,
+not the three of Rollout. The web client and the API deploy in parallel.
+
+**Why:** Both halves were built on one branch. The split existed so a client
+never met a server it could not use; old desktops keep that, because every
+route they call stays. The new web client and the API are the only pair left
+exposed, for the length of a deploy.
+
+**Changes:** Supersedes Rollout's A, B and C. For the minutes between the two
+deploys a new web client can call a `/navigation` route an old API does not
+have; the list shows its load error and recovers once the API is live. That
+race is accepted. The cleanup (step C) remains a later change once old
+desktops age out. Shipped in #1188.
+
+### 2026-10-11 — Hand-arranged Space and Channel order is removed
+
+**Decided:** Only Pinned is arranged by hand; the new client reads no stored
+Space or Channel order. The snapshot keeps `ordering`, `pinnedOrder` and
+`spacesReady`, and `PUT /workspace/order` stays, because released desktops
+require them; they go once no such build is in the field. A read
+acknowledgement or a pin write publishes a small per-person frame instead of a
+whole Space snapshot, and Channel stats leave the broadcast snapshot.
+
+**Why:** Nothing in the new client reads a stored order: the Channels list is
+A–Z, Recent or Needs attention. Rebuilding every directory for every member
+on one person's read was paying for state nobody else needed.
+
+**Changes:** Nothing in scope. The `workspace_container_order` table stays
+because the directory still reads through its Organization rows. Shipped in
+#1188.
+
+### 2026-10-11 — Channel mark-unread is cut
+
+**Decided:** A Channel cannot be marked unread. Migration 98 adds no
+manual-unread columns, and there is no mark-unread route.
+
+**Why:** The product owner asked for the dot and two sorts, not for marking a
+Channel unread, and nothing in the client offered it. Columns in a new table
+are cheaper never to add than to drop.
+
+**Changes:** Narrows "Channels get an unread dot from placements only", which
+listed the manual-unread pair and `POST /spaces/:id/read-state/mark-unread`.
+Shipped in #1188.
+
+### 2026-10-11 — `workspace_pins` is the one source of pin state; old pin writes mirror one way
+
+**Decided:** The sidebar, the title menus, the background socket
+pool and telemetry all read `workspace_pins`. The old per-Space routes still
+write `workspace_workstream_pins` and mirror into `workspace_pins`; nothing
+writes back.
+
+**Why:** Two tables read by different consumers gave two answers for any pin
+made on the new client, which "Guests get no locked rows; pins mirror one way"
+already chose not to write back.
+
+**Changes:** Corrects key design decision 5 and Rollout, which said pin writes
+go to both tables and keep both clients in step. Shipped in #1188.
+
 ## Key design decisions
 
 1. **Today's Space container is the new Channel.** It keeps the same rows
@@ -473,7 +610,8 @@ WorkspaceDO decision when Channels gain chat, mentions or typing.
 5. **Pins move to one per-person table keyed by item kind.** One table,
    `workspace_pins`, holds thread, channel, and breakout pins, so the Pinned
    part of each section reads one place. Old per-Space pins are copied into
-   thread pins, and pin writes go to both tables until old desktops age out.
+   thread pins, and the old routes' pin writes are mirrored one way into
+   `workspace_pins` until old desktops age out (see the decision log).
    Keeping per-Space pins was rejected: a thread pin no longer belongs to one
    place.
 6. **Activity reuses the WorkspaceDO activity event log.** Digests already
@@ -538,20 +676,23 @@ boundary.
 
 ## Rollout
 
+> Server and client shipped together in #1188, and pins mirror one way; see
+> the decision log.
+
 This ships to everyone on merge, with no flag (key design decision 7). It lands
 in three pull requests, and the server deploys before the client.
 
 1. **A: server, add-only.** The new tables, indexes, scope value, feed and
-   Threads list reads, activity events and read state, and pin dual-writes. No
+   Threads list reads, activity events and read state, and the pin mirror. No
    current client calls any of it, so it is invisible.
 2. **B: client, the whole switch.** Section switcher, the three sections,
    channel screen, panes, and every copy change, on macOS and in the browser
    together. It needs A deployed in every region first.
 3. **C: cleanup.** Once the declared minimum client version is past B's
-   release, remove the legacy Space and pin routes, stop the dual-write, and
+   release, remove the legacy Space and pin routes, stop the mirror, and
    drop `workspace_workstream_pins` and `workspace_pinned_order`.
 
-To back out B, revert it; A keeps serving the old client, and the pin
-dual-write keeps both clients' pins in step. A channel made private after B
+To back out B, revert it; A keeps serving the old client, whose pins still
+reach `workspace_pins`, while pins made on the new client do not reach it. A channel made private after B
 shipped stays private, and the old client must show it as a personal Space;
 A checks that its Space contract still parses that value before B merges.

@@ -19,7 +19,7 @@ the attachment hook, or the cache itself.
 | `apps/desktop/src/renderer/lib/use-draft-text.ts` | The text half: hydration, the debounce, the two commits, `releaseDraft`. |
 | `apps/desktop/src/renderer/lib/use-file-attachments.ts` | The attachment half: restore, re-upload, the ten-file settle. |
 | `apps/desktop/src/renderer/lib/app-session.tsx` | Watches the session and calls `clearAllDrafts` on a scope change. |
-| `apps/desktop/src/renderer/components/workstream-composer.tsx`, `screens/new-workstream.tsx`, `screens/conversation-surface.tsx` | The surfaces that cache: the composer of an existing conversation (a work stream's or an automation's, keyed by the parent id) and the **New work stream** launcher. |
+| `apps/desktop/src/renderer/components/workstream-composer.tsx`, `components/channel-composer.tsx`, `screens/conversation-surface.tsx` | The surfaces that cache: the composer of an existing conversation (a thread's or an automation's, keyed by the parent id) and a Channel's composer, which starts a thread. |
 
 ### Which surfaces cache a draft
 
@@ -28,7 +28,7 @@ Two surfaces cache a draft, and they are the only ones that do:
 | Surface | Component | Cache key |
 | --- | --- | --- |
 | A conversation's composer, a work stream's or an automation's | `ConversationSurface` through `WorkstreamComposer` | `workspace:<region>:<workspaceId>:workstream:<parentId>`, the parent being the work stream or the automation |
-| **New work stream** | `NewWorkstreamScreen` | `workspace:<region>:<workspaceId>:new-workstream` |
+| A Channel's composer | `ChannelComposer` | `workspace:<region>:<workspaceId>:new-workstream:space:<channelId>`, `newWorkstreamDraftKey` plus the Channel's id |
 
 `lib/draft-keys.ts` is the single place those strings are built. A draft's text and
 its attachments share one key, so the two halves of a composer can never drift

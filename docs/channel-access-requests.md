@@ -1,16 +1,19 @@
 # Channel access requests
 
-What an Organization member sees when they open a link to a Channel or Breakout
-they are not in, and how they get in. They see its name, color and icon, the
-line "You're not in this channel, ask for access below", and a primary
+What an Organization member sees when they open a link to a thread (a stored
+Channel) or Breakout they are not in, and how they get in. They reach it from a
+link, or from the **Request access** chip on a locked row in a Channel's feed,
+which opens the thread's address. They see its name, color and icon, the line
+"You're not in this thread, ask for access below" ("breakout" for a Breakout),
+and a primary
 **Request access** button. The button records a request addressed to the
 conversation's creator and emails them. The creator can answer it in any of
 these places, and every one settles the same stored request:
 
 - **Approve access** in the email: one click, no sign-in.
-- The **check** and **cancel** icon buttons on the request's row in the
-  sidebar's attention menu (Tabler `check` and `cancel`, tooltips **Approve**
-  and **Decline**).
+- The **check** and **cancel** icon buttons on the request's row at the top
+  of the sidebar's **Activity** tab (Tabler `check` and `cancel`, tooltips
+  **Approve** and **Decline**).
 - Choosing the row itself, which opens a dialog with **Decline** and
   **Approve**.
 - The same two buttons under **Asked to join**, above **Suggested**, on the
@@ -32,7 +35,8 @@ The person who asked gets an email when the request is approved or declined.
 | `apps/api/src/routes/conversation-access.ts` | The public `GET` and `POST /conversation-access/approve` pages behind the email's button. |
 | `apps/desktop/src/renderer/components/conversation-access-request.tsx` | The requester's screen, shown in place of "Channel could not be opened". |
 | `apps/desktop/src/renderer/lib/access-requests.ts` | The approver's list in the query cache (written only by the workspace socket) and the approve/decline mutation, which drops the row at once and restores it if refused. |
-| `apps/desktop/src/renderer/components/attention-menu.tsx` | Request rows above the waiting conversations, with the two icon buttons; the row opens the dialog. |
+| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | Request rows at the top of the Activity tab, with the two icon buttons; the row opens the dialog. The Threads badge counts them. |
+| `apps/desktop/src/renderer/screens/channel.tsx` | The **Request access** chip on a locked row in a Channel's feed, which opens the thread's address and so this screen. |
 | `packages/ui/src/components/conversation-menus.tsx` | The People level's **Asked to join** section (`TitleMenuPeople.requests`); a requester is left out of **Suggested**. `conversation-surface.tsx` passes the requests for the conversation on screen. |
 | `packages/ui/src/styles/app.css` | `.decision-button`, the approve and decline buttons both surfaces share: green (`sys.color.success.tint`) and red (`sys.color.danger.tint`) on hover. |
 | `apps/desktop/src/renderer/components/access-request-dialog.tsx` | The dialog, opened from a row or from the menu bar's deep link. |
@@ -62,8 +66,8 @@ The person who asked gets an email when the request is approved or declined.
 4. **The approver's list.** The subscribe answer carries `accessRequests` on
    every connect, and each change sends `workspace_access_requests` with the
    whole list to that approver's sockets alone. Neither is on the waterline.
-   The renderer and the main process each keep it, so the attention menu, the
-   dock badge and the menu bar count it with no request of their own. The list
+   The renderer and the main process each keep it, so the Threads badge, the
+   Activity tab, the dock badge and the menu bar count it with no request of their own. The list
    names each conversation as it is now: a rename or an archive sends the list
    again to every approver with a request pending there, and a request for a
    conversation since archived drops out.
@@ -120,8 +124,8 @@ decision email as `conversation_access_decision_dev_email`.
 Owns: the preview, the stored request, the emails, the approve page, and the
 request rows and dialog. Does not own who may add a participant (the add paths
 in [`workstream-durable-object.md`](workstream-durable-object.md) and
-[`substream-creation.md`](substream-creation.md)), what the attention menu
-lists otherwise ([`attention-menu.md`](attention-menu.md)), the menu bar
+[`substream-creation.md`](substream-creation.md)), what the Activity tab lists
+otherwise ([`digests.md`](digests.md#the-activity-tab)), the menu bar
 ([`menu-bar.md`](menu-bar.md)), or link parsing
 ([`workstream-links.md`](workstream-links.md)).
 
@@ -172,7 +176,8 @@ the approver's inbox, and it acts only as the approver.
 pnpm --filter @rally/api exec vitest run test/conversation-access-approval.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/conversation-access-requests.test.ts
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/conversation-access-request.test.tsx \
-  src/renderer/components/attention-menu.test.tsx src/renderer/components/access-request-dialog.test.tsx \
+  src/renderer/components/navigation-sidebar.test.tsx src/renderer/components/access-request-dialog.test.tsx \
+  src/renderer/screens/channel.test.tsx \
   src/main/menu-bar-menu.test.ts src/main/channel-directory-watch.test.ts
 pnpm --filter @rally/contracts exec vitest run src/desktop-deep-link-intent.test.ts
 ```

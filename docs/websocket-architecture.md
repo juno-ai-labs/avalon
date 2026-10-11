@@ -661,6 +661,18 @@ open transport as success.
   An automation's feed follows its page. Retaining it for five minutes the way a
   work-stream feed is retained would hold a conversation open after its author
   navigated away, for a latency nobody is waiting on.
+- **A reader of a socket-owned cache entry never brings its own fetcher.** An
+  observer that only reads an entry the socket fills passes `fetchThroughOwner`
+  (`lib/fetch-through-owner.ts`), which runs the fetcher of the observer that
+  has a real one. TanStack copies each observer's options onto the query as it
+  renders, so a placeholder `async () => undefined` became the query's fetcher
+  whenever its reader rendered last, failed the next invalidation ("Query data
+  cannot be undefined"), and left the list never read again. Guard:
+  `lib/fetch-through-owner.test.ts`.
+- **A change that arrives as a push does not invalidate the work-stream
+  list.** Invalidating it is a whole Space walk, and a walk answered before
+  WorkspaceDO had a thread's new title put the old one back. Keep it for the
+  debug toggle, a connect that carried no rows, imports and Sidekick runs.
 
 ## Boundary
 

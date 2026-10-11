@@ -21,6 +21,11 @@ A **Project** became a **Space** and grew in scope.
 A **Work stream** became a **Channel**.
 A **Substream** became a **Breakout**.
 
+Then, in the navigation redesign ([PRD](docs/PRDs/2026-10-10_channels-threads-navigation/prd.md)),
+a **Space** became a **Channel** and a **Channel** became a **Thread**.
+Storage names did not change: `spaces` holds Channels, and `channels` and
+`workstream` hold Threads.
+
 ## How we build
 
 **We design using a platform mindset**. We build simple & generic re-usable building blocks that are combined into complex and emergent behavior. For example: Lego Blocks are simple in that they have a set number of modular sizes but these simple shapes can be combined to build anything as they are modular.
