@@ -45,7 +45,7 @@ keeps the landing attribution. Authentication retires it. See
 
 The pilot offer card is on `/` only, not `/start-fast/`, and gives each visitor
 their own deadline: six days after the day this browser first saw it
-(`rally.site.pilot-offer-first-seen.v1`), shown in the card and kept on later
+(`rally.site.pilot-offer-first-seen.v1`, stored as that local date), shown in the card and kept on later
 visits. Its Sign up link carries that first-visit date as
 `pilotOfferFirstSeen=YYYY-MM-DD`, which the web app does not read yet. After
 that day the card stops showing. Whoever signs up by their date

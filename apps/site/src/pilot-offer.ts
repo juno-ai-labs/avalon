@@ -4,7 +4,7 @@
  * they close it or follow its sign-up link.
  *
  * Each visitor gets their own deadline, six days after the day they first saw
- * the page, and keeps it on every later visit; the card stops showing once it
+ * the card, and keeps it on every later visit; the card stops showing once it
  * passes. The deadline is real: whoever signs up by it gets the offer.
  */
 const DISMISSED_KEY = 'rally.site.pilot-offer-dismissed.v1';
@@ -31,30 +31,48 @@ function rememberDismissed(): void {
   }
 }
 
-/** When this browser first saw the offer, recorded now if it never has. */
-function firstSeen(): Date {
-  const now = new Date();
-  try {
-    const stored = Number(localStorage.getItem(FIRST_SEEN_KEY));
-    if (Number.isFinite(stored) && stored > 0 && stored <= now.getTime()) return new Date(stored);
-    localStorage.setItem(FIRST_SEEN_KEY, String(now.getTime()));
-  } catch {
-    // Without storage every visit is a first visit.
-  }
-  return now;
-}
-
 /** A local calendar date as `YYYY-MM-DD`. */
 function isoDate(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-/** The last day of the offer, in the visitor's time zone. */
-function lastDay(seen: Date): Date {
-  return new Date(seen.getFullYear(), seen.getMonth(), seen.getDate() + OFFER_DAYS);
+/**
+ * The day this browser first saw the offer, or null if it never has. Kept as
+ * the calendar date the visitor saw rather than an instant, so a later visit
+ * from another time zone still shows the same deadline.
+ */
+function storedFirstSeen(): string | null {
+  try {
+    const stored = localStorage.getItem(FIRST_SEEN_KEY);
+    return stored && /^\d{4}-\d{2}-\d{2}$/u.test(stored) && stored <= isoDate(new Date()) ? stored : null;
+  } catch {
+    return null;
+  }
 }
 
-function initialize(offer: HTMLElement, seen: Date, last: Date): void {
+function rememberFirstSeen(day: string): void {
+  try {
+    localStorage.setItem(FIRST_SEEN_KEY, day);
+  } catch {
+    // Without storage every visit is a first visit.
+  }
+}
+
+/** The last day of the offer that began on `firstSeen`, at local midnight. */
+function lastDay(firstSeen: string): Date {
+  const [year, month, day] = firstSeen.split('-').map(Number);
+  return new Date(year!, month! - 1, day! + OFFER_DAYS);
+}
+
+/** Whether the whole of the offer's last day has passed. */
+function ended(firstSeen: string): boolean {
+  const last = lastDay(firstSeen);
+  return Date.now() >= new Date(last.getFullYear(), last.getMonth(), last.getDate() + 1).getTime();
+}
+
+/** Fills in the deadline and the sign-up link for an offer first seen on `firstSeen`. */
+function present(offer: HTMLElement, firstSeen: string): void {
+  const last = lastDay(firstSeen);
   const deadline = offer.querySelector<HTMLTimeElement>('.pilot-offer-deadline');
   if (deadline) {
     deadline.dateTime = isoDate(last);
@@ -65,9 +83,13 @@ function initialize(offer: HTMLElement, seen: Date, last: Date): void {
   const cta = offer.querySelector<HTMLAnchorElement>('.pilot-offer-cta');
   if (cta) {
     const destination = new URL(cta.href);
-    destination.searchParams.set(FIRST_SEEN_PARAM, isoDate(seen));
+    destination.searchParams.set(FIRST_SEEN_PARAM, firstSeen);
     cta.href = destination.href;
   }
+}
+
+function initialize(offer: HTMLElement, firstSeen: string | null): void {
+  const cta = offer.querySelector<HTMLAnchorElement>('.pilot-offer-cta');
   const close = (): void => {
     rememberDismissed();
     document.removeEventListener('keydown', onKey);
@@ -92,7 +114,16 @@ function initialize(offer: HTMLElement, seen: Date, last: Date): void {
   offer.querySelector('.pilot-offer-close')?.addEventListener('click', close);
   // Following the link is an answer too; it opens in this tab, so only remember it.
   cta?.addEventListener('click', rememberDismissed);
+  // A middle-click opens the link without firing `click`.
+  cta?.addEventListener('auxclick', (event) => {
+    if (event.button === 1) rememberDismissed();
+  });
   setTimeout(() => {
+    // The deadline starts when the visitor first sees the card, not when the
+    // page loads, so leaving before it appears costs them nothing.
+    const day = firstSeen ?? isoDate(new Date());
+    if (!firstSeen) rememberFirstSeen(day);
+    present(offer, day);
     offer.hidden = false;
     document.addEventListener('keydown', onKey);
   }, SHOW_AFTER_MS);
@@ -100,11 +131,8 @@ function initialize(offer: HTMLElement, seen: Date, last: Date): void {
 
 const offer = document.getElementById('pilot-offer');
 if (offer && !dismissed()) {
-  const seen = firstSeen();
-  const last = lastDay(seen);
-  // The offer runs through the whole of its last day.
-  const ended = Date.now() >= new Date(last.getFullYear(), last.getMonth(), last.getDate() + 1).getTime();
-  if (!ended) initialize(offer, seen, last);
+  const firstSeen = storedFirstSeen();
+  if (!firstSeen || !ended(firstSeen)) initialize(offer, firstSeen);
 }
 
 // A module, so the test can load it fresh for each visit.
