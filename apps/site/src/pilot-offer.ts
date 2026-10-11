@@ -77,7 +77,14 @@ function initialize(offer: HTMLElement, seen: Date, last: Date): void {
       return;
     }
     offer.classList.add('is-closing');
-    offer.addEventListener('animationend', () => { offer.hidden = true; }, { once: true });
+    // The text inside has entry animations of its own whose end events bubble
+    // here; only the card's own exit may hide it.
+    const hide = (event: AnimationEvent): void => {
+      if (event.target !== offer) return;
+      offer.hidden = true;
+      offer.removeEventListener('animationend', hide);
+    };
+    offer.addEventListener('animationend', hide);
   };
   const onKey = (event: KeyboardEvent): void => {
     if (event.key === 'Escape') close();
