@@ -206,6 +206,27 @@ is allowed.
 
 ## Changelog
 
+### 2026-10-11 — Retire the header download link; keep the hero web entry as `secondary_cta`
+
+**What changed:** The shared header no longer carries a download link, so
+`download-header` is gone from `SITE_ACTION_LINKS` and header clicks now land
+only on `sign-in-header`. The hero web app button became the primary, left
+button on `/`, but `web-app-hero` still reports `action: secondary_cta`.
+
+**Why:** Signing up through the web app is the entry the team wants first, and
+it works on every device; the header now shows the rolling sign-in everywhere,
+not only on touch devices.
+
+**Considered and rejected:** Reclassifying `web-app-hero` as `primary_cta`: it
+would split the button's click history at this deploy, and `/start-fast/` uses
+the same id for one of two equal buttons.
+
+**Consequences:** Insights counting `download-header` stop at this deploy.
+If `web-app-hero` is ever reclassified, the API already accepts `primary_cta`,
+but dashboards filtering on `secondary_cta` must move with it.
+
+Shipped in [PR #1189](https://github.com/juno-ai-labs/avalon/pull/1189).
+
 ### 2026-10-10 — Run PostHog's browser SDK on the marketing pages
 
 **What changed:** Public pages run PostHog's browser SDK with replay and
