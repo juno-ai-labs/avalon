@@ -32,6 +32,7 @@ import {
   mainOpenableSql,
   member,
   channelListedSql,
+  organizationWide,
   organizationWideSql,
   spaceListedSql,
   type AccessClass,
@@ -2986,10 +2987,11 @@ export class WorkspaceSpaceStorage {
     });
   }
 
-  /** Archive a Space that strands no live Channel, in one transaction. */
   /**
    * Archive a Channel container, first adding to General every live thread
    * that would otherwise be left in no Channel, all in one transaction.
+   * Only Organization-wide threads the archiver may list move; any other
+   * stranded thread keeps the archive refused.
    *
    * A thread started from a Channel's composer lives in that Channel alone,
    * so refusing those (`space_membership_final`) would refuse nearly every
@@ -3004,19 +3006,26 @@ export class WorkspaceSpaceStorage {
     spaceId: string,
     now = Date.now(),
   ): { result: WorkspaceSpaceMutationResult; rehomed: string[] } {
-    return this.storage.transactionSync(() => {
-      const rehomed = this.rehomeStrandedInGeneral(workspaceId, userId, spaceId, now);
-      const prepared = this.prepareArchive(userId, spaceId, now);
-      if (!prepared.ok) return { result: prepared, rehomed: [] };
-      const space = this.finalizeArchive(userId, spaceId, now);
-      if (space === "protected") {
-        return { result: { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] }, rehomed: [] };
-      }
-      if (space === false) {
-        return { result: { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] }, rehomed: [] };
-      }
-      return { result: { ok: true, space }, rehomed };
-    });
+    // A refusal throws out of the transaction so the threads already added
+    // to General roll back with it: a refused archive changes nothing.
+    try {
+      return this.storage.transactionSync(() => {
+        const rehomed = this.rehomeStrandedInGeneral(workspaceId, userId, spaceId, now);
+        const prepared = this.prepareArchive(userId, spaceId, now);
+        if (!prepared.ok) throw new ArchiveRefused(prepared);
+        const space = this.finalizeArchive(userId, spaceId, now);
+        if (space === "protected") {
+          throw new ArchiveRefused({ ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] });
+        }
+        if (space === false) {
+          throw new ArchiveRefused({ ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] });
+        }
+        return { result: { ok: true, space }, rehomed };
+      });
+    } catch (error) {
+      if (error instanceof ArchiveRefused) return { result: error.result, rehomed: [] };
+      throw error;
+    }
   }
 
   private rehomeStrandedInGeneral(workspaceId: string, userId: string, spaceId: string, now: number): string[] {
@@ -3024,8 +3033,14 @@ export class WorkspaceSpaceStorage {
     if (general === null || general === spaceId || !this.canEdit(userId, spaceId, true)) return [];
     const stranded = this.liveMemberWorkstreamIds(spaceId)
       .filter((workstreamId) => this.otherActiveSpaceIds(workstreamId, spaceId).length === 0);
+    // Only a thread every member may already read moves, and only one the
+    // archiver may list: General shows a row to every member, so moving a
+    // private thread there would tell the Organization it exists. The rest
+    // stay where they are and keep the archive refused.
+    const listable = new Set(this.listableChannelIds(member(userId), stranded));
     const rehomed: string[] = [];
     for (const workstreamId of stranded) {
+      if (!listable.has(workstreamId) || !this.organizationWideThread(workstreamId)) continue;
       const added = this.addMembership({
         workspaceId: asWorkspaceId(workspaceId),
         userId: asUserId(userId),
@@ -3035,6 +3050,14 @@ export class WorkspaceSpaceStorage {
       if (added.ok) rehomed.push(workstreamId);
     }
     return rehomed;
+  }
+
+  private organizationWideThread(workstreamId: string): boolean {
+    const row = this.storage.sql.exec<{ scope: string }>(
+      `SELECT scope FROM channels WHERE workstream_id = ?`,
+      workstreamId,
+    ).toArray()[0];
+    return row !== undefined && organizationWide(row.scope, "member");
   }
 
   /**
@@ -4857,5 +4880,12 @@ export class WorkspaceSpaceStorage {
       "UPDATE workspace_space_state SET waterline = waterline + 1, updated_at = ? WHERE id = 1",
       now,
     );
+  }
+}
+
+/** A refused archive, thrown so its transaction rolls back. */
+class ArchiveRefused extends Error {
+  constructor(readonly result: WorkspaceSpaceMutationResult) {
+    super(result.ok ? "space_archive_refused" : result.code);
   }
 }

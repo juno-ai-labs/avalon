@@ -286,12 +286,20 @@ describe("a hosted parent's write", () => {
             { userId: OTHER_USER_ID, relation: "mentioned" }, { userId: USER_ID, relation: "participant" },
           ]), BREAKOUT_ID),
           childEnvelope(2, message("breakout-chatter", [{ userId: USER_ID, relation: "participant" }]), BREAKOUT_ID),
+          // Written by a breakout before producers stamped their id: the parent
+          // stamps it, so it still lands as the author's alone.
+          childEnvelope(3, { ...message("breakout-unstamped", [{ userId: OTHER_USER_ID, relation: "mentioned" }]),
+            eventId: "00000000-0000-7000-8000-000000000f23", metadata: {} }, BREAKOUT_ID),
         ],
       });
       const sql = state.storage.sql;
       expect(sql.exec(`SELECT dedupe_key, body, digestible, audience_kind, audience_user_id, audience_workstream_id
-                         FROM workspace_activity_events WHERE dedupe_key LIKE 'breakout-%'`).toArray()).toEqual([{
+                         FROM workspace_activity_events WHERE dedupe_key LIKE 'breakout-%'
+                        ORDER BY dedupe_key`).toArray()).toEqual([{
         dedupe_key: "breakout-mention", body: "", digestible: 0,
+        audience_kind: "user", audience_user_id: USER_ID, audience_workstream_id: null,
+      }, {
+        dedupe_key: "breakout-unstamped", body: "", digestible: 0,
         audience_kind: "user", audience_user_id: USER_ID, audience_workstream_id: null,
       }]);
       expect(sql.exec(`SELECT target.user_id, target.relation FROM workspace_activity_event_targets target
