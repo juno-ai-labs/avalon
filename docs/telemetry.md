@@ -27,6 +27,7 @@ embedded in the renderer or a source of product truth.
 | `apps/api/src/middleware/api-operation-telemetry.ts` | Content-free timing/outcome signals for an explicit API operation allowlist. |
 | `apps/api/src/telemetry/tool-usage.ts` | Content-free, durably admitted agent-tool usage for user-owned and personless workspace-owned runs. |
 | `apps/api/src/telemetry/workstream-creation.ts` | Server-authoritative, idempotent work-stream creation state and connector attribution across user, Slack, suggestion, and automation paths. |
+| `apps/api/src/telemetry/message-sent.ts` | `message_sent` for a message or elicitation answer a person sent from any client, recorded where the Channel object admits it, including a composer-created Channel's opening message in `initialize`. |
 | `apps/api/src/telemetry/product-usage.ts`, `apps/api/src/telemetry/run-outcome.ts` | Shared bounded dimensions, idempotent resource event IDs, and authoritative run/tool journey outcomes. |
 | `apps/site/src/telemetry.ts`, `apps/site/src/site-entry.ts` | Region-before-identity public-site page, action, acquisition, and browser-to-desktop handoff reporting. |
 | `apps/api/src/crash-symbolicator*.ts`, `apps/api/crash-symbolicator/` | Private Cloudflare Container boundary and pinned native stack-walking image. |
@@ -2032,6 +2033,38 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-10-11 — `message_sent` is recorded by the API for every client
+
+**What changed:** `message_sent` moved from a desktop-renderer intent to an API
+outcome. The Channel object records it when it admits a person's message or
+elicitation answer, and in `initialize` for an opening message that arrived
+with the composer's `workstream_create` journey. The desktop intent, its allowlist entry and reporter method are gone.
+SubstreamAgent now keeps the caller's non-session principal on the identity it
+admits a message or answer with.
+
+**Why:** The event was registered and wired in main, but no renderer code ever
+reported it, so PostHog never received one. The browser bridge discards every
+product intent, so a renderer producer would still have missed the web app. The
+server sees every send from both clients, and a retried send is one event
+because the id derives from the message.
+
+**Considered and rejected:** Adding the missing renderer call and a browser
+telemetry path. That is two producers for one fact, and the client cannot know
+the send was admitted. `human_message_created`, also registered and never
+emitted, was left alone: it has no browser channel and excludes elicitation
+answers.
+
+**Consequences:** Only a member's own session counts. Connector, demo-seed,
+resource-authorization and support writes are excluded by principal or by the
+impersonator the object reads from its own session lookup. An opening message
+counts only with the `workstream_create` journey, so another creator that
+should count must carry it. Counts are taken from what the object admits, not
+the request: deduplicated, and before parent-owned seating projects new people.
+The workerd suite sets `APP_ENV` to `test`, which the envelope rejects, so a
+test there must set a deployed environment name on the object.
+
+Shipped in [PR #1190](https://github.com/juno-ai-labs/avalon/pull/1190).
 
 ### 2026-10-07 — Connect browser and fresh-install entry to signup
 
