@@ -47,16 +47,23 @@ export function pageTimeZone(): string | undefined {
 const SWIPE_MIN_PX = 30;
 const SWIPE_EDGE_PX = 24;
 const SWIPE_SETTLE_MS = 500;
+// How soon after a deliberate input a scroll must begin to count as its
+// consequence. Also a starting point the team owns.
+const SCROLL_AFTER_INPUT_MS = 1_000;
 
 const INPUT_EVENTS = ['pointerdown', 'pointerup', 'pointermove', 'touchstart', 'touchmove', 'touchend', 'keydown', 'wheel'] as const;
+// Inputs that can cause a scroll. A pointer merely moving over the page causes
+// nothing, so it never vouches for a scroll that follows it.
+const DELIBERATE_INPUTS: ReadonlySet<string> = new Set(['pointerdown', 'touchstart', 'touchmove', 'keydown', 'wheel']);
 const CONTROLS = 'a[href],button,summary,input,select,textarea,label,[role="button"]';
 
 /**
  * Watches this page's input until it is left, and returns what it saw.
  *
- * - `human_input`: a trusted input that did something — the page scrolled
- *   after it, or it activated a link or control. Trusted alone is not enough:
- *   a script can scroll the page itself.
+ * - `human_input`: a trusted input that did something — the page began
+ *   scrolling within a second of a press, touch, key or wheel, or a click
+ *   activated a link or control. Trusted alone is not enough: a script, or the
+ *   browser restoring a position, can scroll the page itself.
  * - `untrusted_input`: an input event the page's own script made.
  * - `swipe_no_scroll`: a vertical swipe on a page that could move in that
  *   direction, and nothing scrolled.
@@ -64,7 +71,8 @@ const CONTROLS = 'a[href],button,summary,input,select,textarea,label,[role="butt
  */
 export function watchPageInput(): () => LeaveSignal[] {
   const seen = new Set<LeaveSignal>();
-  let trustedInput = false;
+  // When the last trusted, deliberate input happened; a scroll counts only shortly after it.
+  let deliberateInputAt = Number.NEGATIVE_INFINITY;
   let lastScrollAt = 0;
   let wasVisible = document.visibilityState === 'visible';
   let swipe: { x: number; y: number; top: number; at: number } | null = null;
@@ -73,13 +81,13 @@ export function watchPageInput(): () => LeaveSignal[] {
 
   const onInput = (event: Event): void => {
     if (!event.isTrusted) seen.add('untrusted_input');
-    else if (document.visibilityState === 'visible') trustedInput = true;
+    else if (document.visibilityState === 'visible' && DELIBERATE_INPUTS.has(event.type)) deliberateInputAt = performance.now();
   };
   for (const type of INPUT_EVENTS) document.addEventListener(type, onInput, options);
 
   document.addEventListener('scroll', () => {
     lastScrollAt = performance.now();
-    if (trustedInput) seen.add('human_input');
+    if (lastScrollAt - deliberateInputAt <= SCROLL_AFTER_INPUT_MS) seen.add('human_input');
   }, options);
 
   document.addEventListener('click', (event) => {
