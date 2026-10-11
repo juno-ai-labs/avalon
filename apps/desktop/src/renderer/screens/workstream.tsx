@@ -10,7 +10,7 @@ import { fetchThroughOwner } from '../lib/fetch-through-owner';
 import { PaneVisibility } from '../lib/pane-visibility';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
-import { asSubstreamId, asWorkspaceId, asWorkstreamId, conversationNeedsViewer, type HarnessStatus, type PinList } from '@rally/contracts';
+import { asSubstreamId, asWorkspaceId, asWorkstreamId, conversationNeedsViewer, type HarnessStatus } from '@rally/contracts';
 import { logError } from '../../common/logger';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { mainOmitted, mainReachable, useConversationDirectory } from '../lib/conversation-directory';
@@ -68,7 +68,7 @@ export {
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { channelRoute, useChannelPane } from '../lib/navigation-routes';
 import { useThreadChannels } from '../lib/thread-channels';
-import { PINS_QUERY_KEY } from '../lib/sidebar-list-store';
+import { usePinAction, usePinnedIds } from '../lib/pins';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { normalizeHarnessStatus } from '../lib/api';
 
@@ -175,6 +175,7 @@ export function WorkstreamScreen(): React.JSX.Element {
 }
 
 function OpenWorkstreamScreen(): React.JSX.Element {
+  const pinnedThreads = usePinnedIds('thread');
   const { id = '' } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
@@ -364,7 +365,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     reportTelemetryProductIntent({
       kind: 'workstream_action_completed', workstreamId: workstream.id, action,
       visibility: telemetryVisibility(workstream.scope),
-      origin: workstream.systemKind ? 'system' : 'ad_hoc', pinned: (workstream.spacePins?.length ?? 0) > 0,
+      origin: workstream.systemKind ? 'system' : 'ad_hoc', pinned: pinnedThreads.has(workstream.id),
     });
   };
   const menuOperation = useRef(0);
@@ -668,7 +669,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const railScope = useUiStore((state) => state.railScope);
   const storeRailOpen = useUiStore((state) => state.railOpen);
   const closeRail = useUiStore((state) => state.closeRail);
-  const pins = useQuery<PinList>({ queryKey: PINS_QUERY_KEY, queryFn: async () => [], enabled: false });
+  const pinThread = usePinAction();
   const breakoutScope = openBreakoutId === null ? null : `${id}:${openBreakoutId}`;
   const breakoutOwnsRail = storeRailOpen && breakoutScope !== null && railScope === breakoutScope;
   const mainOwnsRail = storeRailOpen && railScope === id;
@@ -780,10 +781,8 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         participantsPending={context === null && railParticipants === undefined}
         people={context?.people}
         pinned={api && channelWritable ? {
-          on: (pins.data ?? []).some((pin) => pin.kind === 'thread' && pin.id === id),
-          onChange: (next) => void api.setPinned('thread', id, next)
-            .then((list) => queryClient.setQueryData(PINS_QUERY_KEY, list))
-            .catch(() => undefined),
+          on: pinnedThreads.has(id),
+          onChange: (next) => pinThread('thread', id, next),
         } : undefined}
         presentUserIds={context?.presentUserIds ?? []}
         renderAge={breakoutAge}

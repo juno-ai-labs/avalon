@@ -19,7 +19,8 @@ import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { ChannelPaneContextValue, channelRoute, threadRoute, type ChannelPaneContext } from '../lib/navigation-routes';
 import { PaneVisibility } from '../lib/pane-visibility';
 import { desktopBridge } from '../lib/platform';
-import { CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY, channelFeedQueryKey } from '../lib/sidebar-list-store';
+import { CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY, channelFeedQueryKey } from '../lib/sidebar-list-store';
+import { usePinAction, usePinnedIds } from '../lib/pins';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { WORKSTREAM_LANDING_ROUTE } from '../lib/workstream-landing';
 import type { AutomationSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
@@ -27,7 +28,7 @@ import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { WorkstreamScreen } from './workstream';
-import type { PinList, SpaceDirectory } from '@rally/contracts';
+import type { SpaceDirectory } from '@rally/contracts';
 
 /**
  * A Channel: a list of threads, and a composer that starts one. There is no
@@ -380,7 +381,8 @@ function ChannelHeader({ members, space, workspace }: {
   const [adding, setAdding] = useState(false);
   const [archiving, setArchiving] = useState<'confirm' | 'saving' | null>(null);
   const navigate = useNavigate();
-  const pins = useQuery<PinList>({ queryKey: PINS_QUERY_KEY, queryFn: async () => [], enabled: false });
+  const pinnedChannels = usePinnedIds('channel');
+  const pin = usePinAction();
   const library = useQuery<AutomationSummary[]>({ queryKey: ['automations'], queryFn: async () => [], enabled: false });
   const member = workspace.currentUser.accessClass !== 'guest';
   const editable = member && space.reach !== 'through_channel';
@@ -433,7 +435,7 @@ function ChannelHeader({ members, space, workspace }: {
       setFailure(spaceFailureSentence(cause, 'This channel couldn’t be archived.'));
     }
   };
-  const pinned = (pins.data ?? []).some((pin) => pin.kind === 'channel' && pin.id === space.id);
+  const pinned = pinnedChannels.has(space.id);
   const recommended = new Set(space.defaultSidekickIds);
   const sidekicks: SidekickRow[] = (library.data ?? [])
     .filter((sidekick) => recommended.has(sidekick.id))
@@ -483,9 +485,7 @@ function ChannelHeader({ members, space, workspace }: {
       } : undefined}
       pinned={api ? {
         on: pinned,
-        onChange: (next) => void api.setPinned('channel', space.id, next)
-          .then((list) => queryClient.setQueryData(PINS_QUERY_KEY, list))
-          .catch(() => setFailure('This channel couldn’t be pinned.')),
+        onChange: (next) => pin('channel', space.id, next),
       } : undefined}
       privacy={editable && !general ? {
         on: space.scope === 'personal',

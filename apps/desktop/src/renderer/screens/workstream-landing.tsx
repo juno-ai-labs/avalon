@@ -1,12 +1,10 @@
-import type { PinList } from '@rally/contracts';
-import { useQuery } from '@tanstack/react-query';
 import { Navigate, useLocation } from 'react-router-dom';
 
 import { EmptyState, InlineError, LoadingState } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout } from '../lib/desktop-layout';
 import { channelRoute } from '../lib/navigation-routes';
-import { PINS_QUERY_KEY } from '../lib/sidebar-list-store';
+import { usePins } from '../lib/pins';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { landingSpaceId, skippedWorkstreamIds } from '../lib/workstream-landing';
@@ -22,7 +20,7 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   const { session } = useAppSession();
   const { active } = useSpaceDirectories();
   const { state, sidebarConnect } = useWorkspaceSocket();
-  const pins = useQuery<PinList>({ queryKey: PINS_QUERY_KEY, queryFn: async () => [], enabled: false });
+  const pins = usePins();
   const routeState: unknown = useLocation().state;
   const skipped = skippedWorkstreamIds(routeState);
   const savedRoute = routeState == null && session?.workspace && session.user
@@ -38,7 +36,7 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
     }
     return <LoadingState label="Opening channels…" />;
   }
-  const pinned = (pins.data ?? []).find((pin) => pin.kind === 'channel' && channels.some((channel) => channel.id === pin.id));
+  const pinned = pins.find((pin) => pin.kind === 'channel' && channels.some((channel) => channel.id === pin.id));
   const returnTo = landingSpaceId(routeState);
   const first = channels.find((channel) => channel.id === returnTo)?.id
     ?? pinned?.id

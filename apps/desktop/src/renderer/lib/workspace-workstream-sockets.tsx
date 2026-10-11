@@ -6,19 +6,27 @@ import { useCachedWorkstreams } from './use-workstreams-query';
 import { mainReachable, useConversationDirectory } from './conversation-directory';
 import { firstLandingWorkstream, openWorkstreamId, skippedWorkstreamIds } from './workstream-landing';
 import { WorkstreamSocketPool } from './workstream-socket-pool';
+import { usePinnedIds } from './pins';
 
 export const PROACTIVE_RECENT_WORKSTREAM_COUNT = 5;
 
+/**
+ * The threads kept connected in the background: every pinned one, the five
+ * most recent unpinned ones, and any other that is running. `pinnedIds` are
+ * this person's thread pins (`usePinnedIds('thread')`), the one list every
+ * surface shows; a row's legacy `spacePins` is what only old desktops write.
+ */
 export function backgroundRealtimeWorkstreamIds(
   activeWorkstreamId: string | null,
   workstreams: WorkstreamSummary[] | undefined,
+  pinnedIds: ReadonlySet<string>,
 ): string[] {
   // A pending row is a create still in flight: there is no room to connect to.
   const candidates = (workstreams ?? []).filter((workstream) => (
     workstream.id !== activeWorkstreamId && !workstream.pending
   ));
   const recentUnpinned = new Set(candidates
-    .filter((workstream) => (workstream.spacePins?.length ?? 0) === 0)
+    .filter((workstream) => !pinnedIds.has(workstream.id))
     .sort((left, right) => {
       const activityOrder = Date.parse(right.lastActivityAt) - Date.parse(left.lastActivityAt);
       return activityOrder || left.id.localeCompare(right.id);
@@ -27,7 +35,7 @@ export function backgroundRealtimeWorkstreamIds(
     .map((workstream) => workstream.id));
   return candidates.flatMap((workstream) => (
     workstream.harnessStatus === 'running'
-      || (workstream.spacePins?.length ?? 0) > 0
+      || pinnedIds.has(workstream.id)
       || recentUnpinned.has(workstream.id)
       ? [workstream.id]
       : []
@@ -49,6 +57,7 @@ export function WorkspaceWorkstreamSockets({ api, children }: PropsWithChildren<
 }>): React.JSX.Element {
   const location = useLocation();
   const workstreams = useCachedWorkstreams();
+  const pinnedIds = usePinnedIds('thread');
   const directory = useConversationDirectory();
   // The pool dials Main, so it leaves out a Channel whose Main is not this
   // person's (`mainReachable`), whether they are a member or a guest.
@@ -56,12 +65,12 @@ export function WorkspaceWorkstreamSockets({ api, children }: PropsWithChildren<
   const routed = activeRealtimeWorkstreamId(openWorkstreamId(location.pathname), workstreams);
   const activeWorkstreamId = routed !== null && reachable(routed) ? routed : null;
   const backgroundIds = useMemo(() => {
-    const selected = backgroundRealtimeWorkstreamIds(activeWorkstreamId, workstreams);
+    const selected = backgroundRealtimeWorkstreamIds(activeWorkstreamId, workstreams, pinnedIds);
     if (location.pathname !== '/' || !workstreams) return selected.filter(reachable);
     const skipped = skippedWorkstreamIds(location.state);
     const first = firstLandingWorkstream(workstreams.filter((row) => !skipped.has(row.id)));
     return (first ? [...new Set([first.id, ...selected])] : selected).filter(reachable);
     // `reachable` reads only `workstreams` and `directory`.
-  }, [activeWorkstreamId, directory, location.pathname, location.state, workstreams]);
+  }, [activeWorkstreamId, directory, location.pathname, location.state, pinnedIds, workstreams]);
   return <WorkstreamSocketPool api={api} activeWorkstreamId={activeWorkstreamId} backgroundWorkstreamIds={backgroundIds}>{children}</WorkstreamSocketPool>;
 }

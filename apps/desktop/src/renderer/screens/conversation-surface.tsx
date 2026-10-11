@@ -5,6 +5,7 @@ import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { skipToken, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchThroughOwner } from '../lib/fetch-through-owner';
+import { usePinnedIds } from '../lib/pins';
 import clsx from 'clsx';
 import { personalColor, personalColorInk } from '../components/personal-avatar';
 import { MemberPresentationContext } from '../lib/member-presentation';
@@ -1406,6 +1407,7 @@ export function ConversationSurface({
     staleTime: Number.POSITIVE_INFINITY,
   });
   const telemetryOpenedWorkstreamRef = useRef<string | null>(null);
+  const pinnedThreads = usePinnedIds('thread');
   useEffect(() => {
     const detail = workstream.data;
     if (parentKind !== 'workstream') return;
@@ -1417,9 +1419,9 @@ export function ConversationSurface({
       visibility: telemetryVisibility(detail.scope),
       navigation: workstreamNavigation(detail.id),
       origin: detail.systemKind ? 'system' : 'ad_hoc',
-      pinned: (detail.spacePins?.length ?? 0) > 0,
+      pinned: pinnedThreads.has(detail.id),
     });
-  }, [id, parentKind, workstream.data]);
+  }, [id, parentKind, pinnedThreads, workstream.data]);
   const payloadBelongsToRoute = workstreamPayloadBelongsToRoute(
     id,
     workstream.data,
