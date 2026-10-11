@@ -8,9 +8,9 @@
  * passes. The deadline is real: whoever signs up by it gets the offer.
  */
 const DISMISSED_KEY = 'rally.site.pilot-offer-dismissed.v1';
+const FIRST_SEEN_KEY = 'rally.site.pilot-offer-first-seen.v1';
 // How long the visitor reads the page before the offer appears.
 const SHOW_AFTER_MS = 2_000;
-const FIRST_SEEN_KEY = 'rally.site.pilot-offer-first-seen.v1';
 const FIRST_SEEN_PARAM = 'pilotOfferFirstSeen';
 // How many days after their first visit a visitor has to take the offer.
 const OFFER_DAYS = 6;
@@ -99,10 +99,10 @@ function initialize(offer: HTMLElement, firstSeen: string | null): void {
       return;
     }
     offer.classList.add('is-closing');
-    // The text inside has entry animations of its own whose end events bubble
-    // here; only the card's own exit may hide it.
+    // The text inside and the card's top rule have entry animations of their
+    // own whose end events also reach the card; only its exit may hide it.
     const hide = (event: AnimationEvent): void => {
-      if (event.target !== offer) return;
+      if (event.animationName !== 'pilot-offer-out') return;
       offer.hidden = true;
       offer.removeEventListener('animationend', hide);
     };
