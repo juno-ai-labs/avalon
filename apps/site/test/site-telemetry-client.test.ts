@@ -8,6 +8,7 @@ function stubApi(options: { statuses?: number[]; bootstrapped?: Promise<void> } 
   const statuses = [...(options.statuses ?? [])];
   const sent: Sent[] = [];
   const anonymousIds: string[] = [];
+  const bootstrapBodies: Array<Record<string, unknown>> = [];
   let bootstraps = 0;
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith('/telemetry/route')) {
@@ -15,7 +16,9 @@ function stubApi(options: { statuses?: number[]; bootstrapped?: Promise<void> } 
     }
     if (url.endsWith('/telemetry/bootstrap')) {
       await options.bootstrapped;
-      anonymousIds.push((JSON.parse(String(init?.body)) as { anonymousEpochId: string }).anonymousEpochId);
+      const body = JSON.parse(String(init?.body)) as { anonymousEpochId: string };
+      anonymousIds.push(body.anonymousEpochId);
+      bootstrapBodies.push(body);
       bootstraps += 1;
       return Response.json({
         journeyId: '01a0ee73-d366-7fb9-b5c0-3ceb3156f70a',
@@ -28,7 +31,7 @@ function stubApi(options: { statuses?: number[]; bootstrapped?: Promise<void> } 
     sent.push({ keepalive: init?.keepalive === true, ...JSON.parse(String(init?.body)) as Omit<Sent, 'keepalive'> });
     return new Response(null, { status: statuses.shift() ?? 202 });
   }));
-  return { sent, anonymousIds, clicks: () => sent.flatMap((request) => request.events).filter((event) => event.name === 'site_action_selected') };
+  return { sent, anonymousIds, bootstrapBodies, clicks: () => sent.flatMap((request) => request.events).filter((event) => event.name === 'site_action_selected') };
 }
 
 async function start(html: string, session?: (() => string) | null) {
@@ -203,6 +206,51 @@ describe('site telemetry reporter', () => {
 
     await vi.waitFor(() => expect(api.sent).toHaveLength(1));
     expect(api.sent[0]!.events[0]!.properties).not.toHaveProperty('adClickIdSource');
+  });
+
+  it("sends the page's time zone and its start checks with bootstrap", async () => {
+    const api = stubApi();
+    await start('');
+
+    await vi.waitFor(() => expect(api.bootstrapBodies).toHaveLength(1));
+    expect(api.bootstrapBodies[0]).toMatchObject({
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      pageSignals: [],
+    });
+  });
+
+  it('reports an iPhone user agent running on V8 as an engine mismatch', async () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 26_3_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/144.0.7559.95 Mobile/15E148 Safari/604.1',
+    );
+    const api = stubApi();
+    await start('');
+
+    await vi.waitFor(() => expect(api.bootstrapBodies).toHaveLength(1));
+    expect(api.bootstrapBodies[0]!.pageSignals).toEqual(['engine_mismatch']);
+  });
+
+  it('reports input the page made itself when the visitor leaves', async () => {
+    const api = stubApi();
+    await start('<main>page</main>');
+    const main = document.querySelector('main')!;
+    main.dispatchEvent(new Event('touchstart', { bubbles: true }));
+    main.dispatchEvent(new Event('touchend', { bubbles: true }));
+    window.dispatchEvent(new Event('pagehide'));
+
+    await vi.waitFor(() => expect(api.sent.flatMap((request) => request.events)).toHaveLength(2));
+    const left = api.sent.flatMap((request) => request.events).find((event) => event.name === 'site_page_left')!;
+    expect(left.properties.pageSignals).toEqual(['untrusted_input']);
+  });
+
+  it('sends no page signals for a visit with no input', async () => {
+    const api = stubApi();
+    await start('');
+    window.dispatchEvent(new Event('pagehide'));
+
+    await vi.waitFor(() => expect(api.sent.flatMap((request) => request.events)).toHaveLength(2));
+    const left = api.sent.flatMap((request) => request.events).find((event) => event.name === 'site_page_left')!;
+    expect(left.properties).not.toHaveProperty('pageSignals');
   });
 
   it("reports each event under PostHog's session at the moment it is made", async () => {
