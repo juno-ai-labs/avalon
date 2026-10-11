@@ -43,15 +43,15 @@ session storage before removing the URL field, so refreshing before sign-in
 keeps the landing attribution. Authentication retires it. See
 [`public-site-telemetry.md`](public-site-telemetry.md#browser-signup-attribution).
 
-The pilot offer card is on `/` only, not `/start-fast/`, and gives each visitor
-their own deadline: six days after the day this browser first saw it
-(`rally.site.pilot-offer-first-seen.v1`, stored as that local date), shown in the card and kept on later
-visits. Its Sign up link carries that first-visit date as
-`pilotOfferFirstSeen=YYYY-MM-DD`, which the web app does not read yet. After
-that day the card stops showing. Whoever signs up by their date
-gets the offer. Closing it or following
-its link keeps it away in that browser (`rally.site.pilot-offer-dismissed.v1` in
-local storage); neither its appearance nor its close is reported.
+The pilot offer card is on `/` only, not `/start-fast/`. It gives each visitor
+their own deadline: six days after the day this browser first showed the card,
+stored as that local date in `rally.site.pilot-offer-first-seen.v1` and kept on
+later visits. After that day the card stops showing; whoever signs up by their
+date gets the offer. Its Sign up link carries the first-visit date as
+`pilotOfferFirstSeen=YYYY-MM-DD`, which the web app does not read yet. Closing
+the card or following its link keeps it away in that browser
+(`rally.site.pilot-offer-dismissed.v1` in local storage). Neither its
+appearance nor its close is reported.
 
 Not reported as site events: scrolling, section views, header nav clicks, and
 the founders' LinkedIn, GitHub and Hugging Face links.
