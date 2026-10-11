@@ -311,6 +311,7 @@ export const SITE_ACTION_LINKS = {
   'sign-in-header': { action: 'primary_cta', placement: 'header' },
   'download-hero': { action: 'download', placement: 'hero' },
   'web-app-hero': { action: 'secondary_cta', placement: 'hero' },
+  'web-app-offer': { action: 'primary_cta', placement: 'offer' },
   'download-pricing-start': { action: 'download', placement: 'pricing', plan: 'start' },
   'download-pricing-grow': { action: 'download', placement: 'pricing', plan: 'grow' },
   'contact-pricing-enterprise': { action: 'founder_contact', placement: 'pricing', plan: 'enterprise' },
@@ -318,6 +319,9 @@ export const SITE_ACTION_LINKS = {
   'founder-contact': { action: 'founder_contact', placement: 'team' },
   'support-contact-footer': { action: 'support_contact', placement: 'footer' },
 } satisfies Record<string, SiteActionLink>;
+
+// Links into the web app, each activation of which starts a signup flow.
+const WEB_ENTRY_LINKS = new Set(['web-app-hero', 'web-app-offer', 'sign-in-header']);
 
 export function siteActionForLink(id: string | undefined): SiteActionLink | null {
   if (!id || !Object.hasOwn(SITE_ACTION_LINKS, id)) return null;
@@ -331,7 +335,7 @@ function initializeSiteActions(): void {
     const action = siteActionForLink(id);
     if (!action || !link) return;
     let flowId: string | undefined;
-    if (id === 'web-app-hero' || id === 'sign-in-header') {
+    if (id && WEB_ENTRY_LINKS.has(id)) {
       flowId = uuidV7();
       const destination = new URL(link.href);
       destination.searchParams.set('signupFlowId', flowId);
