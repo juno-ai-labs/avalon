@@ -604,7 +604,7 @@ signup began. Desktop-issued email links redeemed in a browser retain both.
 `source: api` names the producer. Desktop offers Google; browser offers Google
 and email. Native PostHog funnels count flow attempts, not unique people.
 Public-site acquisition retains a separate anonymous subject. The landing
-page's “Use the web app” and header sign-in links mint a fresh opaque UUIDv7
+page's “Sign up now” and header sign-in links mint a fresh opaque UUIDv7
 on each activation and carry it in `signupFlowId`; `site_action_selected.flowId` and all subsequent signup stages
 share it. Browser entry validates and saves it in tab-scoped session storage before
 removing it from the address bar. Reloads retain the attempt; a new incoming

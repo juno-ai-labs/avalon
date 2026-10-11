@@ -127,13 +127,13 @@ describe('site telemetry reporter', () => {
 
   it('sends no plan for a link that has none, and nothing for untagged or unknown links', async () => {
     const api = stubApi();
-    await start('<a id="plain" href="#">x</a><a id="unknown" data-site-action="download-footer" href="#">y</a><a id="header" data-site-action="download-header" href="#">z</a>');
+    await start('<a id="plain" href="#">x</a><a id="unknown" data-site-action="download-footer" href="#">y</a><a id="header" data-site-action="download-hero" href="#">z</a>');
     document.querySelector<HTMLElement>('#plain')!.click();
     document.querySelector<HTMLElement>('#unknown')!.click();
     document.querySelector<HTMLElement>('#header')!.click();
 
     await vi.waitFor(() => expect(api.clicks()).toHaveLength(1));
-    expect(api.clicks()[0]!.properties).toEqual({ page: 'landing', pathname: '/', action: 'download', placement: 'header' });
+    expect(api.clicks()[0]!.properties).toEqual({ page: 'landing', pathname: '/', action: 'download', placement: 'hero' });
   });
 
   it('sends a click made before bootstrap with keepalive and never an empty batch', async () => {
