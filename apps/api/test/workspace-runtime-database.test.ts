@@ -224,6 +224,8 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_batch_dispatches",
   "workspace_container_order",
   "workspace_pinned_order", // All's Pinned order; read and written only by the Space authority.
+  "workspace_pins", // Every pin; read and written only by the pin RPCs.
+  "workspace_activity_seen", // How far each person read Activity; only the Activity RPCs.
   "member_personal_system_prompts", // Read and written only by the personal system prompt RPCs.
   "member_preferences", // Read and written only by the member preference RPCs.
   "conversation_access_requests", // Read and written only by the access request RPCs.
@@ -236,6 +238,7 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_space_state",
   "space_viewers",
   "space_invitees", // Read and written only by the Space audience and invitee RPCs.
+  "space_reads", // Each person's Channel read position; only the Space read RPCs.
   "workspace_sidebar_list_state",
   "workspace_socket_ticket_receipts",
   "workspace_socket_unheard", // The first-frame watch's ledger; socket paths and the alarm only.

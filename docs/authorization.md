@@ -172,7 +172,7 @@ operations remain member-gated.
 
 ### Space-derived access
 
-[A Space grants no reader](spaces.md#every-space-is-organization-wide), and the
+[A Space grants no reader](spaces.md#a-space-starts-organization-wide-and-grants-no-reader), and the
 code that once applied a Space's audience to its Channels is gone
 ([`space-access-sources.md`](space-access-sources.md)). What is left of
 Space-derived access is the readers a Space seated before WorkspaceDO migration
@@ -316,7 +316,7 @@ not a switch controlling which authorization implementation serves the request.
 - A Space's own visibility is discovery only. A readable Channel discloses its
   Space's mark and name, which confers no read on the Space's other Channels and
   no write on the Space.
-- [A Space grants no reader](spaces.md#every-space-is-organization-wide). A
+- [A Space grants no reader](spaces.md#a-space-starts-organization-wide-and-grants-no-reader). A
   Channel's audience is its own scope and participants.
 - The scope-grant directory is complete for direct grants and deliberately
   incomplete for Space-derived ones. Anything that treats an absent directory

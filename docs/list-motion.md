@@ -1,7 +1,14 @@
 # List motion
 
+> **No list uses it today.** The navigation redesign
+> ([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)) deleted the
+> sidebar that was this module's only caller, and the new sidebar's Threads,
+> Channels and Activity lists were shipped without motion: a row that moves is
+> drawn in its new slot. The planner and the hook are kept, tested, so a list
+> can take them back. See the 2026-10-10 changelog entry for what that needs.
+
 How a row that changes place in a list travels there instead of reappearing.
-The sidebar's work-stream rows move constantly and for reasons the reader did
+The old sidebar's work-stream rows moved constantly and for reasons the reader did
 not cause — a message arriving lifts a row to the top of its group, a pin moves
 it into a different section, a drag or an `Alt`+`Arrow` rearranges the pinned
 list — and a row that simply vanishes from one slot and materialises in another
@@ -12,8 +19,8 @@ departure is itself the change — a Channel whose create is still in flight
 (`PendingWorkstreamRow`) — plays the same two halves on their own: in from the left when it appears, and out to the
 left, through a stand-in, when it is removed.
 
-Nothing in it knows what a work stream is: the sidebar's Channel list is its
-caller, and it is written against a small contract — keyed rows under a
+Nothing in it knows what a work stream is: the old sidebar's Channel list was
+its caller, and it is written against a small contract — keyed rows under a
 scroll box — so another list could take it without a second implementation. The
 transcript's own arrival motion in `message-feed.tsx` (`data-arrival-id`) is a
 different thing, an entrance for a new message rather than a move, and stays
@@ -31,8 +38,6 @@ choreography takes, or before adding motion to another list.
 | --- | --- |
 | [`apps/desktop/src/renderer/lib/list-motion.ts`](../apps/desktop/src/renderer/lib/list-motion.ts) | The arithmetic, pure over measured positions: `planListMotion` decides which rows moved and which were displaced, `exitKeyframes` and `enterKeyframes` are the two halves a removed and an inserted row play, `moverKeyframes` composes them for a row that did both, `shifterKeyframes` is what a displaced row plays, `LIST_MOTION` holds every duration, stagger, and easing, and `layoutRowAt` answers which row is laid out under a pointer while rows are in motion. Owns no timer. |
 | [`apps/desktop/src/renderer/lib/use-list-motion.ts`](../apps/desktop/src/renderer/lib/use-list-motion.ts) | `useListMotion(containerRef, layoutKey?, layoutSettling?)`: measures the rows after every commit, plans against the positions it last saw, and plays the plan through the Web Animations API; plays a marked row's entrance, its exit on a stand-in, and honors `data-motion-move` when the product action identifies a mover whose old and new boxes coincide. Owns the interruption handling. |
-| [`apps/desktop/src/renderer/components/sidebar.tsx`](../apps/desktop/src/renderer/components/sidebar.tsx) | Marks each work-stream and note row with `data-motion-key`, marks the **Pinned** heading and every recency-group heading as a held row so they travel with the column, holds the row being dragged, resolves a drag's target through `layoutRowAt`, passes `compact` (now always false) as the layout key and reports — from the aside's own transition events — whether the rows are still travelling, and attaches the hook to the scroll box. A pin action marks its known mover with `data-motion-move` so a Channel can travel between equal vertical slots. A Channel's pending row, drawn while its create is in flight, is marked `data-motion-insert` so its arrival plays, and shares the real row's motion key, so the real row replacing it is not a move. |
-| [`apps/desktop/src/renderer/components/project-sidebar-section.tsx`](../apps/desktop/src/renderer/components/project-sidebar-section.tsx) | Gives each project's member list its own `data-motion-scope`, since a member is the same row the recent list shows, and marks each project row as held so a reordered project glides with its members. |
 
 ### The contract a list makes
 
@@ -373,7 +378,6 @@ step.
 | --- | --- |
 | `apps/desktop/src/renderer/lib/list-motion.test.ts` | The planner's classification — one mover, two movers together, a held row, a heading never being the mover, scopes ranked apart so a block shifts as one, a row that moved between containers, an interrupted offset — and the exact keyframes and options each kind plays, the exit and the entrance on their own included. |
 | `apps/desktop/src/renderer/lib/use-list-motion.test.tsx` | The hook under jsdom: the exit distance measured against the container, shifters starting on the first frame, a row followed across a remount, a held row shifted instead of moved, a render that moved nothing leaving every animation alone, interruption touching only the rows that moved and reading a pending animation's own start, a late cancel not clearing its successor's record, reduced motion and a hidden window both remembering positions while playing nothing, measurement through the container's scroll, a focused row held only while it keeps its element, a row with no layout neither measured nor remembered, a changed layout key measuring afresh, scopes keeping shared keys apart, nothing playing on the first commit, a marked row entering after the gap opens and leaving through a stand-in whose inherited grid placement is cleared and which is removed when its exit settles, reduced motion leaving no stand-in, a settling layout measuring afresh until the render after it settles, and an entrance surviving a relayout that cancels a move. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams` › `list motion`) | That the sidebar wires it: a pin moves the row's animation with it into the **Pinned** section, a touch moves it with the row from one recency group into another, the reveal's scroll lands before the motion starts, a drag's target is the slot laid out under the pointer while the dragged row is held, a project's members are scoped apart from the recent list under a held project row, a Channel row moves between the selected Space's motion scopes, and the aside's own `transitionrun` for `--sidebar-compact` holds the motion until its `transitionend`. |
 
 jsdom lays nothing out and implements neither `Element.prototype.animate` nor
 `getAnimations`. The hook tests install `getBoundingClientRect` and `animate`
@@ -389,13 +393,38 @@ Run them with:
 pnpm --filter @rally/desktop exec vitest run src/renderer/lib/list-motion.test.ts src/renderer/lib/use-list-motion.test.tsx
 ```
 
-The motion itself is judged in a real window, per
-[`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it): pin a
-work stream from its right-click menu, then pause every animation with
+Once a list uses it again, the motion is judged in a real window, per
+[`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it): move a
+row (a pin from its right-click menu, say), then pause every animation with
 `document.getAnimations()` and step `currentTime` through the phases to capture
 each one.
 
 ## Changelog
+
+### 2026-10-10 — The sidebar's lists ship without motion
+
+**What changed:** The sidebar that called `useListMotion` is deleted, and the
+new Threads, Channels and Activity lists do not call it. A row that moves is
+drawn in its new slot. `list-motion.ts`, `use-list-motion.ts` and their tests
+stay.
+
+**Why:** A scope cut to ship the navigation redesign
+([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)) in one change. The
+old wiring was specific to the old sidebar: its recency groups, its per-Space
+motion scopes, its compact layout and its reveal-on-pin. None of those exist
+in the new lists, so carrying it over meant rewiring, not moving it.
+
+**Considered and rejected:** Deleting the module. The planner and hook hold
+the hard parts (interruption, stand-in exits, the pointer guard) and know
+nothing about the sidebar, so keeping them costs only their tests.
+
+**Consequences:** Bringing motion back to a list means marking its rows with
+`data-motion-key` (and `data-motion-hold` for headings that should travel with
+them), giving each section its own `data-motion-scope` where a row can appear
+twice (a pin above its own list row), attaching `useListMotion` to the scroll
+box, and resolving a Pinned drag's target through `layoutRowAt`. Then judge it
+in a real window. Until then a pin, a re-sort or new activity moves a row
+without a transition.
 
 ### 2026-09-21 — A named mover can travel between equal slots
 

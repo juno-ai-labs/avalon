@@ -1,17 +1,18 @@
 ---
 title: Notifications
-description: Get told on your Mac or iPhone when someone mentions you or adds you to a Channel.
+description: Get told on your Mac or iPhone when someone mentions you or adds you to a Thread.
 ---
 
 Rally does not ping you about everything. It notifies you in exactly two
 situations:
 
-- Someone @mentions you in a Channel or a Breakout.
-- Someone adds you to a Channel. (If you created the Channel yourself,
+- Someone @mentions you in a Thread or a Breakout.
+- Someone adds you to a Thread. (If you created the Thread yourself,
   Rally assumes you already know.)
 
 That is the whole list. Rally finishing a job, a teammate posting, a Sidekick
-running: none of those send you a notification. For those, look at the
+running: none of those send you a notification. For those, look at
+**Activity** and the
 [status dots](../02-working-in-a-channel/06-status-dots-and-badges.md)
 in the app, or let the [digest](05-the-digest.md) round them up for you.
 
@@ -28,7 +29,7 @@ Rally tries the quickest route it has for you, in this order:
 3. Email, as a last resort. Only if neither Slack nor a device took the
    notification, Rally emails you from **Rally <notifications@rallywith.ai>**,
    with a subject such as "Sam mentioned you in Q3 plan" and an **Open in Rally**
-   link. You can reply to that email to post into the Channel, as
+   link. You can reply to that email to post into the Thread, as
    [Email into Rally](03-email-into-rally.md#replying-to-a-notification-email)
    explains.
 
@@ -48,9 +49,9 @@ Open **Settings → Notifications**. Under **On this Mac** there is one switch:
 turn it off.
 
 - Alerts arrive even when Rally is closed.
-- Click an alert and Rally opens the exact Channel or Breakout it is about.
-- Alerts are grouped by Channel, with its Breakouts in the same group, so one
-  busy Channel does not bury the rest.
+- Click an alert and Rally opens the exact Thread or Breakout it is about.
+- Alerts are grouped by Thread, with its Breakouts in the same group, so one
+  busy Thread does not bury the rest.
 - The first time, macOS asks whether Rally may send notifications. If you said
   no, the settings page says **Notifications are turned off in macOS.** with an
   **Open System Settings** button to change your mind.
@@ -65,17 +66,18 @@ mentioning you the old-fashioned way, loudly, across the office.
 
 ### The number on the app icon
 
-Rally's icon in the Dock carries a badge: the number of Channels in your
-Organization that are unread or waiting for your input. Each Channel counts once,
-however many messages it has. If you belong to several Organizations, the badge
+Rally's icon in the Dock carries a badge: the same number as the **Threads**
+button in the sidebar, counting the Threads in your Organization that are
+waiting on you, plus any requests to join that you can approve. Each Thread
+counts once, however many messages it has. If you belong to several Organizations, the badge
 shows the count for whichever one notified you most recently, not a total.
 
 ## Notifications on your iPhone
 
 The [iPhone app](06-rally-on-iphone.md) sends the same alerts. Tap your avatar
-at the top left of the **Channels** tab to open Settings, and use **Notify me on
+at the top left of the **Threads** tab to open Settings, and use **Notify me on
 this iPhone about mentions and additions** under **Notifications**. Tap an alert
-and the app opens that Channel or Breakout.
+and the app opens that Thread or Breakout.
 
 If you turned notifications off for Rally in iOS, the switch says
 **Notifications are turned off in iOS Settings.** with an **Open Settings**

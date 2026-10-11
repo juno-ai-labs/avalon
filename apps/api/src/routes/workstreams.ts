@@ -214,15 +214,15 @@ workstreamRoutes.post("/:id/import/update", zValidator("param", idParam),
     const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
     const checkpoint = await client.importedSessionCheckpoint();
     const recorded = await client.importedSessionSource();
-    if (!recorded) throw new ApiError(409, "session_import_source_missing", "This channel has no updateable source session");
+    if (!recorded) throw new ApiError(409, "session_import_source_missing", "This thread has no updateable source session");
     if (body.source.provider !== recorded.provider || body.source.sessionId !== recorded.sessionId
       || body.source.url !== recorded.url) {
-      throw new ApiError(409, "session_import_source_mismatch", "Select the original source conversation for this channel");
+      throw new ApiError(409, "session_import_source_mismatch", "Select the original source conversation for this thread");
     }
     const ids = body.content.messages.map((message) => message.sourceMessageId!);
     if (new Set(ids).size !== ids.length) throw new ApiError(422, "session_import_duplicate_message", "The source contains duplicate message IDs");
     if (checkpoint.some((entry, index) => ids[index] !== entry.sourceMessageId)) {
-      throw new ApiError(409, "session_import_branch_changed", "The source removed or reordered earlier messages. Import this branch into a new channel");
+      throw new ApiError(409, "session_import_branch_changed", "The source removed or reordered earlier messages. Import this branch into a new thread");
     }
     const conversation = await prepareSessionImport(c.env, getAuth(c), body, body.clientMessageId,
       new Map(checkpoint.map((message) => [message.sourceMessageId, message.sourceRevision])));
@@ -251,15 +251,20 @@ workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
       new WorkstreamObjectCreationService(c.env, auth, requestDeferral(c)).create({
           ...body,
           descriptionSource: body.objective ? "authored" : "derived",
-          // A Channel somebody starts in Rally is Organization-wide. A Space
-          // no longer grants its audience, so the route says it rather than
-          // leaving the fail-closed default to make every new Channel private.
+          // A thread somebody starts in Rally is Organization-wide, unless it
+          // starts in a private Channel, where `resolveSpaceWorkstreamStart`
+          // narrows it to private. A Space grants no audience, so the route
+          // says it rather than leaving the fail-closed default to make every
+          // new thread private.
           scope: "workspace",
         }, {
           span,
           // The one caller whose `participantUserIds` is people somebody picked
           // by hand, which is what makes telling them the right thing to do.
           notifyParticipants: true,
+          // And the one where a person starts a thread in a Channel, so a
+          // private Channel's thread starts private.
+          narrowInPrivateSpaces: true,
           authorityControl,
           ...(operationId ? { telemetryOperationId: operationId } : {}),
           telemetryRequestReceivedAt: requestReceivedAt,

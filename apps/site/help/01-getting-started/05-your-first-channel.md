@@ -1,31 +1,28 @@
 ---
-title: Your first Channel
-description: Start a Channel, ask Rally for something, and watch it get to work.
+title: Your first Thread
+description: Start a Thread, ask Rally for something, and watch it get to work.
 ---
 
-Time to give Rally a job. A Channel is one conversation about one piece of work, so the first thing to decide is what that work is. It can be small. "Plan the team offsite" is a Channel. So is "Why is the invoice from March wrong?"
+Time to give Rally a job. A Thread is one conversation about one piece of work, so the first thing to decide is what that work is. It can be small. "Plan the team offsite" is a Thread. So is "Why is the invoice from March wrong?"
 
-## Start a Channel
+## Start a Thread
 
-1. Click **New channel** (a speech bubble with a plus) at the top of the sidebar.
-2. In the **Start a new channel** dialog, pick a **Space** from the list. In a new Organization the only choice is **General**, which makes this the easiest decision you will make all day. If you have a Space's pill selected, the new Channel goes in that Space.
-3. Type a **Name of channel**, up to 180 characters. A few words is plenty.
-4. Click **Create**.
+Every Thread starts in a Channel, so begin with one. In a new Organization the only Channel is **General**, which makes this the easiest decision you will make all day.
 
-You can also right-click an empty part of the Channel list and choose **Start New Channel**. The same menu has **Import Channel from Claude or ChatGPT**, which brings in a conversation you had elsewhere, covered in [Bring in a conversation from Claude or ChatGPT](../02-working-in-a-channel/08-import-from-claude-or-chatgpt.md). New Spaces have a button of their own, covered in [Spaces](../03-spaces-and-breakouts/01-spaces.md).
+1. Click **Channels** at the left edge of the window, then click **General**.
+2. At the bottom of the Channel's screen is a message box that says **Start a thread in General**. Type what you want Rally to do.
+3. Press <kbd>Return</kbd>, or click **Start thread**. <kbd>⇧ Shift</kbd> <kbd>Return</kbd> gives you a new line instead.
 
-## Write the opening message
+That is the only way to start a Thread, and it is quicker than it sounds. There is no name to think up and no form to fill in: your message becomes the Thread's first message, and the Thread comes into being the moment you send it. Nothing is saved before then, so a half-typed idea you change your mind about leaves no empty Thread lying around.
 
-Clicking **Create** does not make the Channel yet. It opens a starting screen with your Channel's name at the top, and the Channel comes into being the moment you send its first message. Until then, nothing has been saved, and you can close the screen without leaving an empty Channel lying around.
+The new Thread opens in a pane beside the Channel, Rally starts on your message straight away, and the Thread joins the Channel's feed and your **Threads** list.
 
-The starting screen has two parts.
+You can attach files to that first message, just as you would to any other. Mentioning a teammate by name adds them to the Thread too. [People in the room](../02-working-in-a-channel/05-people-in-the-room.md) has more on who is in a Thread.
 
-- **Participants** at the top, for bringing teammates in from the start. Click **Add people** and type a name. Matches are numbered, so <kbd>⌘</kbd> <kbd>1</kbd> to <kbd>⌘</kbd> <kbd>9</kbd> picks one without reaching for the mouse. If the Space is private, this bar says **Managed by the space** instead, because the Space decides who is in its Channels. On your own in a brand new Organization, you can leave it alone.
-- A message box that says **Describe what this channel will be used for**. Type what you want Rally to do. Press <kbd>Return</kbd> to create the Channel and send, or <kbd>⇧ Shift</kbd> <kbd>Return</kbd> for a new line.
+> [!NOTE]
+> In a Channel that is open to the whole Organization, a new Thread is open to the whole Organization too. In a private Channel, a new Thread is private to you and anyone you mention, until you add more people. [Who can see what](../03-spaces-and-breakouts/04-who-can-see-what.md) has the details.
 
-Mentioning a teammate by name in that first message adds them to the Channel too. [People in the room](../02-working-in-a-channel/05-people-in-the-room.md) has more on who is in a Channel.
-
-The new Channel appears in the sidebar as soon as you press <kbd>Return</kbd>, and Rally starts on your message straight away.
+To bring in a conversation you had elsewhere instead, see [Bring in a conversation from Claude or ChatGPT](../02-working-in-a-channel/08-import-from-claude-or-chatgpt.md). New Channels are covered in [Channels](../03-spaces-and-breakouts/01-spaces.md).
 
 ### What to ask
 
@@ -50,13 +47,11 @@ The answer itself appears as Rally writes it, a few words at a time, with a smal
 > [!NOTE]
 > If Rally's AI provider is having a slow moment, a notice says **The model is currently slowed down. Responses might take longer.** Nothing is wrong on your side; the answer is still coming.
 
-Some jobs take a few seconds and some take much longer. You do not have to watch. Go and do something else, and the Channel's status dot in the sidebar will tell you when it is done or needs you. [While Rally works](../02-working-in-a-channel/03-while-rally-works.md) covers following along, steering, stopping and what to do if a run fails.
+Some jobs take a few seconds and some take much longer. You do not have to watch. Go and do something else. The Thread's status dot in your **Threads** list, and the count on the **Threads** button, will tell you when it needs you. [While Rally works](../02-working-in-a-channel/03-while-rally-works.md) covers following along, steering, stopping and what to do if a run fails.
 
 ## Names and icons
 
-The Channel you just started keeps the name you gave it. Rally does not rename a Channel that someone has named.
-
-Some conversations start without a name, though: a Breakout you branch off from a message, a Channel started from Slack, or a conversation you import. For those, Rally names them itself.
+You did not give your Thread a name, and you do not need to. Rally names it for you, as it does for a Breakout you branch off from a message, a Thread started from Slack, or a conversation you import.
 
 - At first, a shimmering grey bar sits where the name will go. That is Rally reading the opening request.
 - A few seconds later, a short name of two to four words replaces it, in the language of your request, and Rally picks an icon to suit the subject.
@@ -65,14 +60,14 @@ Some conversations start without a name, though: a Breakout you branch off from 
 
 Renaming a conversation yourself settles the matter: Rally never overwrites a name a person chose. The same goes for an icon you pick yourself.
 
-Every Channel gets an icon and colour, even if nobody chooses one. To change them, click the icon at the left of the Channel's title pill, pick a colour, then an icon. [Names, icons and colours](../02-working-in-a-channel/07-name-icon-and-colour.md) covers renaming and everything else about how a Channel looks. A Channel with a nice icon is not more productive, but it is easier to find, which is nearly the same thing.
+Every Thread gets an icon and colour, even if nobody chooses one. To change them, click the icon at the left of the Thread's title pill, pick a colour, then an icon. [Names, icons and colours](../02-working-in-a-channel/07-name-icon-and-colour.md) covers renaming and everything else about how a Thread looks. A Thread with a nice icon is not more productive, but it is easier to find, which is nearly the same thing.
 
-## An empty Channel
+## An empty Thread
 
-If you open a Channel that has no messages in it yet, it says **Ready to begin** and **Send a message to start work in this stream.** That is the old word "stream" again, meaning this Channel. Type in the box at the bottom and Rally gets going.
+If you open a Thread that has no messages in it yet, it says **Ready to begin** and **Send a message to start work in this thread.** Type in the box at the bottom and Rally gets going.
 
 ## Where to go from here
 
-That is the whole loop: start a Channel, say what you need, and work on it together.
+That is the whole loop: start a Thread, say what you need, and work on it together.
 
-The next chapter, [Working in a Channel](../02-working-in-a-channel/index.md), is about doing that well: writing messages, attaching files, steering Rally while it works, and bringing your teammates into the conversation.
+The next chapter, [Working in a Thread](../02-working-in-a-channel/index.md), is about doing that well: writing messages, attaching files, steering Rally while it works, and bringing your teammates into the conversation.

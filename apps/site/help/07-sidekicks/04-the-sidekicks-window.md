@@ -9,13 +9,13 @@ paused ones, and it is where you open a Sidekick to check on it or change it.
 
 ## Opening the window
 
-Click your name at the bottom of the sidebar to open the account menu, then
+Click your avatar at the bottom left of the window to open the account menu, then
 **Sidekicks**. The window title is **Rally Sidekicks**. Opening it again brings
 the same window to the front rather than starting a second one.
 
-A Channel's own Sidekicks are also listed in the Channel itself: click its name
+A Thread's own Sidekicks are also listed in the Thread itself: click its name
 in the title pill and choose **Sidekicks**. Click one there to open it in the
-Sidekicks window. See [Sidekicks in a Channel](06-sidekicks-in-channels.md).
+Sidekicks window. See [Sidekicks in a Thread](06-sidekicks-in-channels.md).
 
 ## The library
 
@@ -26,7 +26,7 @@ little help that knows how you work."
   [Make a Sidekick](02-make-a-sidekick.md)).
 - **Search Sidekicks** finds Sidekicks by name or description.
 - The filter buttons **Everyone**, **Only you**, **Organization** and
-  **Channels** narrow the list by who a Sidekick belongs to.
+  **Threads** narrow the list by who a Sidekick belongs to.
 
 Below them is the list, titled **Your Sidekicks** (or **Search results**
 while you search) with a count. Each row shows the Sidekick's hexagon, its
@@ -40,7 +40,7 @@ it belongs to:
 | **Available in conversations** | Instructions only. Rally can load it in conversations. |
 | **Delegated work** | Has triggers and runs by itself. |
 
-The second part is the scope: **Only you**, **Organization** or **Channel**.
+The second part is the scope: **Only you**, **Organization** or **Thread**.
 Click a row to open the Sidekick.
 
 If you have none yet, the list says **No Sidekicks yet**. If a search finds
@@ -60,7 +60,7 @@ The details panel shows:
 - the hexagon (click it to change the icon and colour);
 - the name;
 - a lifecycle badge: **Draft**, **Active** or **Paused**;
-- the scope badge: **Only you**, **Organization** or **Channel**;
+- the scope badge: **Only you**, **Organization** or **Thread**;
 - the description;
 - the controls: **Pause** or **Resume**, and a **…** button with the rest;
 - **When to expect it**: the triggers in plain words, and **Next** with how
@@ -131,10 +131,10 @@ It does not catch up on the runs it would have made while paused, and it
 ignores events that happened in the meantime. A Sidekick on holiday does not
 come back with a fortnight of postcards.
 
-A paused Sidekick shows **Paused** in the library and in a Channel's
+A paused Sidekick shows **Paused** in the library and in a Thread's
 **Sidekicks** list until you resume it.
 
-If you archive the Channel or Breakout that owns a Channel Sidekick, Rally
+If you archive the Thread or Breakout that owns a Thread Sidekick, Rally
 pauses that Sidekick for you, and it cannot be resumed while the room stays
 archived. Unarchiving the room resumes it again, but only if the archive was
 what paused it. A Sidekick a person paused stays paused.

@@ -99,7 +99,7 @@ export async function claimParentAnchor(
     ).bind(parentId)] : []),
   ]);
   if (claims && (results[2]?.results?.length ?? 0) > 0) {
-    throw new ApiError(409, "workstream_id_unavailable", "This conversation id is already claimed by a channel create");
+    throw new ApiError(409, "workstream_id_unavailable", "This conversation id is already claimed by a thread create");
   }
   return authority;
 }

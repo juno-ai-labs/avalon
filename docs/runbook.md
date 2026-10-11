@@ -902,7 +902,7 @@ to be signed in.
    placed.
 
 3. **Remediate blockers.** Placing a Channel in General changes nobody's access
-   ([a Space grants no reader](spaces.md#every-space-is-organization-wide)), so
+   ([a Space grants no reader](spaces.md#a-space-starts-organization-wide-and-grants-no-reader)), so
    the one blocker is `space_bootstrap_no_active_actor`: every participant of a
    private Channel has left the Organization. Re-activating one member, or
    deleting the Channel, are the two that move it; leaving it as it is keeps the

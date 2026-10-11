@@ -870,7 +870,7 @@ describe("firing a due wake-up", () => {
     // The cut lands between words, never inside one.
     expect(message.text_content.replace(/…$/u, "")).toMatch(/\w$/u);
     expect(prompt).toContain(
-      message.text_content.replace("Avalon woke this work stream up as scheduled: ", "").replace(/…$/u, ""),
+      message.text_content.replace("Rally woke this thread up as scheduled: ", "").replace(/…$/u, ""),
     );
   });
 

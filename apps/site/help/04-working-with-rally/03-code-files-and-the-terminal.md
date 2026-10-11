@@ -47,13 +47,13 @@ command**, **Writing a file** and **Copying an attachment into the sandbox**
 computer so it can work on it).
 
 When Rally makes something you will want, such as a chart, a cleaned-up file
-or a report, it brings it back into the Channel as a file. If it makes the same
+or a report, it brings it back into the Thread as a file. If it makes the same
 file again later, you get a new version of that file rather than a second copy.
 Files are covered in [Artifacts](../06-things-rally-makes/01-artifacts.md).
 
 ## One computer per conversation
 
-Each conversation gets its own sandbox. The Channel has one, each Breakout has
+Each conversation gets its own sandbox. The Thread has one, each Breakout has
 its own, and each Sidekick run has its own. Helpers that Rally starts from a
 conversation share that conversation's sandbox (helpers come up in
 [Helpers, other conversations and receipts](06-helpers-and-receipts.md)).
@@ -65,8 +65,8 @@ a test web server, does not.
 
 > [!WARNING]
 > The sandbox is a workshop, not a filing cabinet. It is deleted after 30 days.
-> Anything worth keeping should come back into the Channel as a file, so ask
-> Rally to "save that into the Channel" if it has not already.
+> Anything worth keeping should come back into the Thread as a file, so ask
+> Rally to "save that into the Thread" if it has not already.
 
 ## What it cannot do
 
@@ -127,7 +127,7 @@ Some ground rules Rally keeps to:
   read-only access. It can still edit and commit on its sandbox, but it cannot
   push anything to GitHub. It asks for write access only when the job is to
   push.
-- **It works on one branch per Channel.** It pushes only that branch, never
+- **It works on one branch per Thread.** It pushes only that branch, never
   your main branch.
 - **It does not touch your automated build setup.** Rally cannot change files
   in the repository's `.github/workflows` folder.

@@ -4,6 +4,7 @@ import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceSpaceConversationsEventSchema,
   WorkspaceSpaceSnapshotEventSchema,
+  WorkspaceNavigationStateEventSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceWorkstreamRecencyEventSchema,
   WorkspaceFeatureFlagsEventSchema,
@@ -62,9 +63,14 @@ import {
   PERSONAL_ORDER_QUERY_KEY,
   PINNED_ORDER_QUERY_KEY,
   SIDEBAR_LIST_QUERY_KEYS,
+  applyNavigationState,
   applyVersionedSpaceSnapshot,
+  CHANNEL_FEEDS_QUERY_KEY,
   applyVersionedSidebarList,
-  spaceConversationsQueryKey,
+  CHANNEL_STATS_QUERY_KEY,
+  MY_THREADS_QUERY_KEY,
+  ACTIVITY_QUERY_KEY,
+  channelFeedQueryKey,
 } from './sidebar-list-store';
 import { realtimeSocketTelemetry } from './socket-telemetry';
 import { reportTelemetryProductIntent, telemetryJourneyDuration, uuidV7 } from './telemetry';
@@ -293,7 +299,8 @@ function invalidateTopic(
     // REST read.
     projects: [],
     resources: [['resources'], ['workstream-context']],
-    activity: [['work-opportunities']],
+    // A mention or a finished run is a new row in the Activity tab too.
+    activity: [['work-opportunities'], ACTIVITY_QUERY_KEY],
     work_opportunities: [['work-opportunities']],
     workstream_directory: [WORKSTREAMS_QUERY_KEY],
     viewer_preferences: [['telemetry-preference'], ['member-preferences']],
@@ -557,6 +564,11 @@ export function WorkspaceSocketProvider({
      */
     const applyConnectedSidebar = (sidebar: WorkspaceSidebar): boolean => {
       channelsBySpace = sidebar.channelsBySpace === true;
+      // The lists the socket does not carry. A nudge missed while the socket
+      // was away is never sent again, so a connect is when they are read again.
+      void queryClient.invalidateQueries({ queryKey: CHANNEL_FEEDS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: MY_THREADS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: ACTIVITY_QUERY_KEY });
       if (channelsBySpace) {
         // Every Space is loading again: the walk this starts is what says
         // what the socket missed while it was away.
@@ -571,7 +583,7 @@ export function WorkspaceSocketProvider({
           sidebar.automations.items.map(mapAutomationSummary),
         );
         if (sidebar.spaces) {
-          applyVersionedSpaceSnapshot(queryClient, sidebar.spaces, sidebar.ordering ?? [], sidebar.spacesReady ?? true, sidebar.pinnedOrder);
+          applyVersionedSpaceSnapshot(queryClient, sidebar.spaces, sidebar.ordering ?? [], sidebar.spacesReady ?? true, sidebar.pinnedOrder, { pins: sidebar.pins, channelStats: sidebar.channelStats });
         }
         directoryLive = true;
         setSidebarConnect((current) => ({
@@ -613,6 +625,7 @@ export function WorkspaceSocketProvider({
           sidebar.ordering ?? [],
           sidebar.spacesReady ?? true,
           sidebar.pinnedOrder,
+          { pins: sidebar.pins, channelStats: sidebar.channelStats },
         );
       }
       directoryLive = true;
@@ -669,7 +682,7 @@ export function WorkspaceSocketProvider({
         const requestId = uuidV7();
         const timeout = window.setTimeout(() => {
           pendingRailRequests.delete(requestId);
-          reject(new ApiError('Channel details could not be loaded.', 0, 'workspace_channel_rails_timeout'));
+          reject(new ApiError('Thread details could not be loaded.', 0, 'workspace_channel_rails_timeout'));
         }, COMMAND_TIMEOUT_MS);
         pendingRailRequests.set(requestId, { resolve, reject, timeout, named: new Set() });
         const command = WorkspaceSocketClientEventSchema.parse({ type: 'channel_rails', requestId, workstreamIds });
@@ -694,7 +707,7 @@ export function WorkspaceSocketProvider({
         const timeout = window.setTimeout(() => {
           pendingSpaceRequests.delete(requestId);
           reject(new ApiError(
-            'The channel directory could not be loaded. Try again.',
+            'The thread list could not be loaded. Try again.',
             0,
             'workspace_space_channels_timeout',
           ));
@@ -1204,12 +1217,18 @@ export function WorkspaceSocketProvider({
               spaceSnapshot.data.ordering,
               spaceSnapshot.data.spacesReady,
               spaceSnapshot.data.pinnedOrder,
+              { pins: spaceSnapshot.data.pins, channelStats: spaceSnapshot.data.channelStats },
             );
             setSidebarConnect((current) => current ? { ...current, spacesLive: true } : current);
             // Guest hierarchy is a separately authorized associative read.
             // The snapshot is still the realtime nudge for a membership
             // change, but it must never carry private Space rows itself.
             void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
+            return;
+          }
+          const navigationState = safeParseSocketEvent(WorkspaceNavigationStateEventSchema, decoded);
+          if (navigationState.success) {
+            applyNavigationState(queryClient, navigationState.data);
             return;
           }
           const accessRequests = safeParseSocketEvent(WorkspaceAccessRequestsEventSchema, decoded);
@@ -1237,16 +1256,25 @@ export function WorkspaceSocketProvider({
             WorkspaceSpaceConversationsEventSchema, decoded,
           );
           if (spaceConversations.success) {
-            // The Space dashboard's page is the one list on that screen the
-            // socket does not carry, so the named Spaces are read again. The
+            // A Channel's feed is the one list on its screen the socket does
+            // not carry, so the named Channels' feeds are read again. The
             // count beside each id updates the sidebar without rebuilding the
             // whole Space directory. The only
             // coalescing is React Query's own in-flight dedupe — a burst of
             // messages in one Space costs one refetch while it is in flight,
             // and there is no timer here to tune.
             for (const spaceId of spaceConversations.data.spaceIds) {
-              void queryClient.invalidateQueries({ queryKey: spaceConversationsQueryKey(spaceId) });
+              void queryClient.invalidateQueries({ queryKey: channelFeedQueryKey(spaceId) });
             }
+            // Only a placement changes which threads the Threads tab, Activity
+            // and the Channel counts hold, so only a placement re-reads them
+            // now. A message in a thread already placed marks them stale,
+            // read again the next time one is shown, rather than re-reading
+            // every loaded page for every message in the Organization.
+            const refetchType = spaceConversations.data.placementChanged === false ? 'none' : 'active';
+            void queryClient.invalidateQueries({ queryKey: MY_THREADS_QUERY_KEY, refetchType });
+            void queryClient.invalidateQueries({ queryKey: CHANNEL_STATS_QUERY_KEY, refetchType });
+            void queryClient.invalidateQueries({ queryKey: ACTIVITY_QUERY_KEY, refetchType });
             if (spaceConversations.data.attentionCounts.length > 0) {
               const counts = new Map(spaceConversations.data.attentionCounts.map((entry) => [
                 entry.spaceId,
@@ -1385,7 +1413,7 @@ export function WorkspaceSocketProvider({
       const timeout = window.setTimeout(() => {
         pendingDirectoryRequests.delete(requestId);
         reject(new ApiError(
-          'The channel directory could not be loaded. Try again.',
+          'The thread list could not be loaded. Try again.',
           0,
           'workspace_directory_timeout',
         ));
@@ -1409,13 +1437,13 @@ export function WorkspaceSocketProvider({
       setState('unavailable');
       setPresenceUserIdsByWorkstream({});
       rejectPendingDirectoryRequests(new ApiError(
-        'The channel directory cannot be loaded while offline.',
+        'The thread list cannot be loaded while offline.',
         0,
         'workspace_directory_offline',
       ));
-      rejectPendingRailRequests(new ApiError('Channel details cannot be loaded while offline.', 0, 'workspace_directory_offline'));
+      rejectPendingRailRequests(new ApiError('Thread details cannot be loaded while offline.', 0, 'workspace_directory_offline'));
       rejectPendingSpaceRequests(new ApiError(
-        'The channel directory cannot be loaded while offline.',
+        'The thread list cannot be loaded while offline.',
         0,
         'workspace_directory_offline',
       ));

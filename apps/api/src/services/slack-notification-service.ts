@@ -557,7 +557,7 @@ function slackParticipantAddedChunks(
   const opening = input.titleIsProvisional
     ? [
       ...escapedSlackTokens(input.actorName),
-      " started a channel with you in ",
+      " started a thread with you in ",
       ...escapedSlackTokens(input.workspaceName),
       ".\n\n",
     ]

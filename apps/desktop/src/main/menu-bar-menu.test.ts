@@ -146,7 +146,7 @@ describe('menu bar menu', () => {
       'Nothing needs your attention',
       '—',
       'Most recent',
-      'No recent channels',
+      'No recent threads',
       '—',
       'Open Rally',
       'Quit Rally',
@@ -157,11 +157,11 @@ describe('menu bar menu', () => {
   it('never claims nothing is waiting before every Channel has been read', () => {
     const loading = labels(template({ attention: [], attentionComplete: false }));
     expect(loading).not.toContain('Nothing needs your attention');
-    expect(loading).toContain('Still loading channels');
+    expect(loading).toContain('Still loading threads');
 
     // Rows read so far are real, and the line under them says they may not be all.
     const partial = labels(template({ attention: [main('a', 'Acme')], attentionComplete: false }));
-    expect(partial.slice(0, 3)).toEqual(['Needs attention', 'Acme', 'Still loading channels']);
+    expect(partial.slice(0, 3)).toEqual(['Needs attention', 'Acme', 'Still loading threads']);
   });
 
   it('shows the signed-out state once, with nothing to list', () => {

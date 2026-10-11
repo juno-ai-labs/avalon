@@ -250,7 +250,7 @@ conversationRoutes.patch("/:parentId/substreams/:substreamId", zValidator("param
     const param = c.req.valid("param");
     const body = c.req.valid("json");
     if (param.substreamId === "0" && body.archived !== undefined) {
-      throw new ApiError(400, "private_substream_required", "Address the work stream itself to change its main conversation.");
+      throw new ApiError(400, "private_substream_required", "Address the thread itself to change its main conversation.");
     }
     if (body.archived !== undefined) {
       await new SubstreamCreationService(c.env, getWorkspaceAuth(c)).archive(param.parentId, param.substreamId, body.archived);

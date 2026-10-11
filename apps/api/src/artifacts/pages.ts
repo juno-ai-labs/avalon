@@ -41,7 +41,7 @@ export function neutralPage(): string {
   return page(
     "Rally",
     "<h1>Open this from Rally</h1>"
-    + "<p>This page is part of a Rally work stream. Open it from the work stream to view it.</p>",
+    + "<p>This page is part of a Rally thread. Open it from the thread to view it.</p>",
   );
 }
 

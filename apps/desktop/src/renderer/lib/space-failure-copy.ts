@@ -35,30 +35,30 @@ export const spaceFailureCopy: Record<SpaceFailure, string> = {
   // removed member who cannot see a space at all, and somebody who reaches one
   // through a channel in it and cannot change it. Naming only the change told
   // the first the wrong thing.
-  space_access_denied: 'Your access to that space doesn’t allow this.',
-  space_not_found: 'That space no longer exists.',
+  space_access_denied: 'Your access to that channel doesn’t allow this.',
+  space_not_found: 'That channel no longer exists.',
   space_protected: 'General’s audience can’t be changed.',
-  space_membership_final: 'Every channel needs a space, and this would leave one with none. Add it to another space first.',
-  space_audience_incompatible: 'Some people who can read the channel would be left with no space to find it in. Add it to a space they can see first.',
-  channel_scope_locked_by_space: 'An organization-wide space still makes this channel public. Remove it from that space first.',
-  space_membership_content_fence: 'The channel holds content the wider audience isn’t allowed to read.',
-  space_default_audience_mismatch: 'Everyone who can read the channel must be able to use that resource or Sidekick.',
-  space_revision_conflict: 'The space changed while this was being applied. Try again.',
+  space_membership_final: 'Every thread needs a channel, and this would leave one with none. Add it to another channel first.',
+  space_audience_incompatible: 'Some people who can read the thread would be left with no channel to find it in. Add it to a channel they can see first.',
+  channel_scope_locked_by_space: 'An organization-wide channel still makes this thread public. Remove it from that channel first.',
+  space_membership_content_fence: 'The thread holds content the wider audience isn’t allowed to read.',
+  space_default_audience_mismatch: 'Everyone who can read the thread must be able to use that resource or Sidekick.',
+  space_revision_conflict: 'The channel changed while this was being applied. Try again.',
   space_bootstrap_pending: 'Rally is still opening this organization. Try again in a moment.',
-  space_conversation_unreachable: 'One of the channels couldn’t be reached to check whether the new audience may read it. Try again in a moment.',
+  space_conversation_unreachable: 'One of the threads couldn’t be reached to check whether the new audience may read it. Try again in a moment.',
   // Its own sentence rather than `unavailable`'s, because the two are not the
   // same news: `unavailable` is "we don't know what happened", and this is the
   // space's own authority saying nothing — nothing about the request, the
   // organization or the channels needs changing before a retry.
-  space_authority_unreachable: 'That space couldn’t be reached to make the change. Try again in a moment.',
+  space_authority_unreachable: 'That channel couldn’t be reached to make the change. Try again in a moment.',
   // Named rather than folded into `space_access_denied`: nothing is wrong with
   // this person's permission, and the fix is one word of the request — put
   // themselves back on the list.
-  space_audience_self_excluded: 'You can’t make a space private without yourself in it. Add yourself back to keep access.',
+  space_audience_self_excluded: 'You can’t make a channel private without yourself in it. Add yourself back to keep access.',
   // Nothing a person did, and nothing they can fix: a stale cursor is the
   // client asking for a page of an ordering that has moved on. The sentence is
   // what the reader should do, which is look at the list again.
-  space_cursor_invalid: 'That list has moved on. Reopen the space to see it from the top.',
+  space_cursor_invalid: 'That list has moved on. Reopen the channel to see it from the top.',
   unavailable: 'That change couldn’t be saved. Try again in a moment.',
 };
 
@@ -109,5 +109,5 @@ export function blockedChannelLabel(
   catalogs: readonly { id: string; title: string }[],
 ): string {
   return catalogs.find((item) => item.id === channelId)?.title
-    ?? 'A channel that isn’t showing here';
+    ?? 'A thread that isn’t showing here';
 }

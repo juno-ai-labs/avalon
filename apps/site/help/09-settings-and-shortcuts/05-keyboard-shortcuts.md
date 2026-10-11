@@ -42,13 +42,13 @@ straight over it.
 
 ## In the message box
 
-These work in the message box of any Channel or Breakout, and when you start a
-new one. [The message box](../02-working-in-a-channel/01-the-message-box.md)
+These work in the message box of any Thread or Breakout, and in a Channel's
+message box when you start a new Thread. [The message box](../02-working-in-a-channel/01-the-message-box.md)
 covers lists, mentions and slash commands in more detail.
 
 | Keys | What they do |
 | --- | --- |
-| <kbd>Return</kbd> | Send the message (or create the Channel or Breakout, on the new one screen). |
+| <kbd>Return</kbd> | Send the message. In a Channel's message box, start the Thread; on a new Breakout's screen, create the Breakout. |
 | <kbd>⇧</kbd> <kbd>Return</kbd> | Start a new line without sending. |
 | <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>8</kbd> | Turn the line, or the selected lines, into a bulleted list. |
 | <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>7</kbd> | Turn them into a numbered list. |
@@ -66,17 +66,6 @@ so they work on keyboards laid out for other languages too.
 If you type in a language that uses an input method, such as Japanese or
 Chinese, <kbd>Return</kbd> finishes the word you are composing rather than sending
 the message half-written.
-
-## Adding people to a new Channel
-
-On the new Channel screen, in the **Add people** box:
-
-| Keys | What they do |
-| --- | --- |
-| <kbd>⌘</kbd> <kbd>1</kbd> to <kbd>⌘</kbd> <kbd>9</kbd> | Add the first to ninth suggested person. Each suggestion shows its key hint. |
-| <kbd>↑</kbd> <kbd>↓</kbd> and <kbd>Return</kbd> | Move through the suggestions and add the highlighted one. |
-| <kbd>Backspace</kbd> | In an empty box, remove the last person you added. |
-| <kbd>Esc</kbd> | Close the list of suggestions. Press it again to close the new Channel. |
 
 ## Answering Rally's questions
 
@@ -117,21 +106,19 @@ With a tab button selected, <kbd>←</kbd> and <kbd>→</kbd> move between tabs,
 <kbd>Home</kbd> and <kbd>End</kbd> jump to the first and last, and
 <kbd>Delete</kbd> or <kbd>Backspace</kbd> closes that tab.
 
-## In the sidebar and panels
+## Resizing panels
 
 | Keys | What they do |
 | --- | --- |
-| <kbd>⌥</kbd> <kbd>↑</kbd> / <kbd>⌥</kbd> <kbd>↓</kbd> | Move a selected pinned Channel up or down. See [Arranging your Channels](../03-spaces-and-breakouts/02-arranging-channels.md). |
-| <kbd>⌥</kbd> <kbd>←</kbd> / <kbd>⌥</kbd> <kbd>→</kbd> | Move a selected Space pill left or right. |
 | <kbd>←</kbd> <kbd>→</kbd>, on a panel's edge | With the edge of the right-hand panel selected, <kbd>←</kbd> makes the panel wider and <kbd>→</kbd> narrower. |
 | <kbd>Return</kbd>, on a panel's edge | Put the right-hand panel back to its usual width. |
 
-The arrows on their own only move the selection up and down the sidebar. Only
-pinned Channels can be reordered; the rest keep their own order.
+Pins are reordered by dragging; there is no key for it. See
+[Arranging your Threads](../03-spaces-and-breakouts/02-arranging-channels.md#pinning).
 
 ## In a title pill's menu
 
-Once you have clicked a Channel's or Breakout's name to open its menu:
+Once you have clicked a Thread's or Breakout's name to open its menu:
 
 | Keys | What they do |
 | --- | --- |
@@ -143,5 +130,4 @@ Once you have clicked a Channel's or Breakout's name to open its menu:
 
 Rally is made for the Mac, and this page is written for it. If you meet Rally on
 another kind of computer, <kbd>Ctrl</kbd> takes the place of <kbd>⌘</kbd> for
-most of these shortcuts. One exception uses the Command key only and does
-nothing elsewhere: <kbd>⌘</kbd> <kbd>1</kbd> to <kbd>9</kbd> in **Add people**.
+most of these shortcuts.

@@ -62,7 +62,8 @@ and both read a Channel's Breakout list only when its row's
 `breakoutAttentionCount` says one needs the reader. A second definition —
 `GET /workspace/attention`'s counts, say, which include `needs_input` and
 exclude Breakouts — would show one number in the menu bar and another in the
-window. See [`attention-menu.md`](attention-menu.md) for what is counted.
+window, or beside the sidebar's **Threads** button, which counts the same
+list. See [`attention-menu.md`](attention-menu.md) for what is counted.
 
 ### The menu
 
@@ -78,18 +79,16 @@ immediately. In order:
    ([`channel-access-requests.md`](channel-access-requests.md)). The
    conversations follow, the first of the attention list, in its order
    (unseen, mentioned, unread; newest first within each). Each row's
-   `sublabel` is the sidebar menu's detail line — the state, and "in
-   *Channel*" for a Breakout. Under it, **Still loading channels** until the
+   `sublabel` is the state, and "in *thread*" for a Breakout. Under it, **Still loading threads** until the
    first walk of every Space has finished, and **Nothing needs your attention**
    only after it has, so a partly read list is never called empty.
-2. **Most recent**: the first five Channels in `compareRecentChannels` order —
-   newest `lastActivityAt` first, ties A to Z — over every listed Channel,
-   archived and system rows excluded. This is the sidebar's Recent sort under
-   All: no Space filter, and no pins, which belong to one Space placement
-   ([`workstream-pinning.md`](workstream-pinning.md)). A Channel listed to the
+2. **Most recent**: the first five threads in `compareRecentChannels` order
+   (newest `lastActivityAt` first, ties A to Z) over every listed thread,
+   archived and system rows excluded. This is the Threads tab's Recent sort
+   with no pins ([`workstream-pinning.md`](workstream-pinning.md)). A Channel listed to the
    reader only through a Breakout (`mainWithheld`) opens its first Breakout,
    since Main is not theirs; until its Breakout list arrives it is left out
-   rather than opening Main. **No recent channels** when there are none.
+   rather than opening Main. **No recent threads** when there are none.
 3. A separator, then **Open Rally** and **Quit Rally**.
 
 Signed out, both sections collapse to one **Needs attention** header over
@@ -347,9 +346,9 @@ rather than beside either one.
 | Situation | Behavior |
 | --- | --- |
 | The socket drops | `watchWorkspaceSocket` redials with the shared backoff and logs the close. The rows already held stay on screen; the next subscribe walks again and reconciles them. |
-| The socket drops mid-walk | The walk's requests are rejected, the list stays marked incomplete (**Still loading channels**), and the next subscribe walks again. |
+| The socket drops mid-walk | The walk's requests are rejected, the list stays marked incomplete (**Still loading threads**), and the next subscribe walks again. |
 | The server ends the session's access | The watch stops redialling (`stopped`), logs it, and forgets every row, so no title or count outlives the access. The next session change opens it again. |
-| The active workspace is a guest's | No socket. The directory is reported complete and empty, so the menu says **Nothing needs your attention** and **No recent channels** rather than loading forever. |
+| The active workspace is a guest's | No socket. The directory is reported complete and empty, so the menu says **Nothing needs your attention** and **No recent threads** rather than loading forever. |
 | Signed out | One **Needs attention** header over a disabled **Sign in to Rally** row, a rule, and the two trailing controls. No number beside the icon. |
 | A label runs long | Truncated to 60 characters at the last word boundary in the final 20, hard otherwise. |
 | Nothing waiting, or nothing recent | The section's header over one disabled line saying so. |

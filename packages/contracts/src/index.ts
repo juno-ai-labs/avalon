@@ -26,6 +26,7 @@ import {
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { PersonalPresentationSchema } from './onboarding';
 import { PersonalOrderSchema, PinnedOrderSchema, SpaceIdSchema, SpaceSnapshotSchema } from "./spaces";
+import { ChannelStatsSchema, PinListSchema } from "./navigation";
 import {
   ResourceDirectionSchema,
   WireResourceRelationshipTypeSchema,
@@ -69,6 +70,7 @@ export * from "./palette";
 export * from "./projects";
 export * from "./resource-relationships";
 export * from "./spaces";
+export * from "./navigation";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 export { parseDesktopDeepLinkIntent,type DesktopDeepLinkIntent } from "./desktop-deep-link-intent";
@@ -1237,6 +1239,63 @@ export const SpaceChannelPageSchema = z.strictObject({
   nextCursor: z.string().min(1).nullable(),
 });
 export type SpaceChannelPage = z.infer<typeof SpaceChannelPageSchema>;
+
+/**
+ * One row of a Channel's feed: a thread placed in it, newest placement first.
+ *
+ * `locked` is a thread the viewer may not open. The feed says it is there and
+ * when it arrived, so a Channel's members see the whole shape of the work in
+ * it, and says nothing else: no title, no summary, no participants. Its id is
+ * what a request for access addresses. This is the one place a thread is named
+ * to somebody it is not listed to; `docs/listing-rules.md` records why.
+ */
+export const ChannelFeedItemSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("thread"),
+    placedAt: TimestampSchema,
+    /** The placement's position in the Channel's unread order (`ChannelStats`). */
+    attentionSequenceNumber: z.number().int().nonnegative(),
+    thread: WorkstreamSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("locked"),
+    placedAt: TimestampSchema,
+    attentionSequenceNumber: z.number().int().nonnegative(),
+    threadId: WorkstreamIdSchema,
+  }),
+]);
+export type ChannelFeedItem = z.infer<typeof ChannelFeedItemSchema>;
+
+/** One page of a Channel's feed. Opaque cursor, as on every Space read. */
+export const ChannelFeedPageSchema = z.strictObject({
+  items: z.array(ChannelFeedItemSchema),
+  nextCursor: z.string().min(1).nullable(),
+  /**
+   * The Channel's latest attention sequence number as the first page was read
+   * (`ChannelStats.latestAttentionSequenceNumber`); null on a later page. Every
+   * placement at or below it is on that page or no longer listed, so a reader
+   * of the first page has read the Channel through it.
+   */
+  latestAttentionSequenceNumber: z.number().int().nonnegative().nullable(),
+});
+export type ChannelFeedPage = z.infer<typeof ChannelFeedPageSchema>;
+
+/**
+ * One page of the threads and breakouts this person takes part in, newest
+ * activity first: the Threads tab. Rows are the dashboard's conversation rows,
+ * so a breakout carries its thread for the chip it prints.
+ */
+export const MyThreadsPageSchema = z.strictObject({
+  items: z.array(SpaceConversationSchema),
+  nextCursor: z.string().min(1).nullable(),
+  /**
+   * On the first page, every thread and breakout this person pinned and may
+   * still list, whatever page its activity would put it on; empty on a later
+   * page. The Pinned section is drawn from this.
+   */
+  pinned: z.array(SpaceConversationSchema),
+});
+export type MyThreadsPage = z.infer<typeof MyThreadsPageSchema>;
 
 export const WorkstreamDetailSchema = WorkstreamSchema.extend({
   /** Durable safe-boundary stop request for the one substream-owned loop. */
@@ -2629,6 +2688,14 @@ export const WorkspaceSidebarSchema = z.strictObject({
    */
   pinnedOrder: PinnedOrderSchema.optional(),
   /**
+   * This viewer's pins of every kind, each kind in their order: the Pinned
+   * sections of the Channels and Threads tabs. A key of its own, absent from a
+   * server that predates it, for the reason `pinnedOrder` is.
+   */
+  pins: PinListSchema.optional(),
+  /** Each listed Channel's thread count and last activity, for the Channels tab. */
+  channelStats: z.array(ChannelStatsSchema).optional(),
+  /**
    * False while the Organization has not finished creating General and placing
    * every Channel in it.
    *
@@ -2820,7 +2887,25 @@ export const WorkspaceSpaceSnapshotEventSchema = z.strictObject({
   ordering: PersonalOrderSchema,
   /** All's Pinned order, beside `ordering` for the reason the sidebar payload gives. */
   pinnedOrder: PinnedOrderSchema.optional(),
+  /** Every pin, beside `pinnedOrder` for the reason the sidebar payload gives. */
+  pins: PinListSchema.optional(),
+  channelStats: z.array(ChannelStatsSchema).optional(),
   spacesReady: z.boolean(),
+});
+
+/**
+ * This person's own navigation state after a write only they made: their pin
+ * list, or their read state in one Channel. Sent to that person's sockets
+ * alone, so a second window follows a pin or a read without the whole Space
+ * snapshot being rebuilt for every socket they have. Each field present
+ * replaces what is held: `pins` the whole list, each `channelStats` row the
+ * row for its Channel. A client that does not know this event ignores it.
+ */
+export const WorkspaceNavigationStateEventSchema = z.strictObject({
+  type: z.literal("workspace_navigation_state"),
+  occurredAt: TimestampSchema,
+  pins: PinListSchema.optional(),
+  channelStats: z.array(ChannelStatsSchema).optional(),
 });
 
 /**
@@ -2855,6 +2940,14 @@ export const WorkspaceSpaceConversationsEventSchema = z.strictObject({
     spaceId: SpaceIdSchema,
     count: z.number().int().nonnegative(),
   })).default([]),
+  /**
+   * Whether a thread entered or left one of these Channels, rather than a
+   * thread already in one changing. Only a placement changes which threads a
+   * person's Threads and Activity lists hold, so only a placement re-reads
+   * them; a message in a thread re-reads the open Channel's feed alone.
+   * Absent from a server that predates it, which a client reads as `true`.
+   */
+  placementChanged: z.boolean().optional(),
 }).superRefine((event, context) => {
   const named = new Set(event.spaceIds);
   for (const [index, entry] of event.attentionCounts.entries()) {
@@ -2966,6 +3059,7 @@ export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPag
 export type WorkspaceSidebar = z.infer<typeof WorkspaceSidebarSchema>;
 export type WorkspaceSidebarListEvent = z.infer<typeof WorkspaceSidebarListEventSchema>;
 export type WorkspaceSpaceSnapshotEvent = z.infer<typeof WorkspaceSpaceSnapshotEventSchema>;
+export type WorkspaceNavigationStateEvent = z.infer<typeof WorkspaceNavigationStateEventSchema>;
 export type WorkspaceSpaceConversationsEvent = z.infer<typeof WorkspaceSpaceConversationsEventSchema>;
 export type WorkspaceWorkstreamStateEvent = z.infer<typeof WorkspaceWorkstreamStateEventSchema>;
 export type WorkstreamStateVersion = z.infer<typeof WorkstreamStateVersionSchema>;

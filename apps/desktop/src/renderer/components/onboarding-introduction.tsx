@@ -8,16 +8,16 @@ import { ResourceEmbedCard } from './markdown-citations';
 import '../styles/onboarding-introduction.css';
 
 const slides = [
-  { scene: 3, title: 'Meet Rally. Work moves forward together.', description: 'Bring your team and Rally into the same stream. Share context, give direction, and build on each other’s work.', next: 'Meet streams' },
-  { scene: 1, title: 'A stream gives your work a home.', description: 'Give each area of work its own stream. As your team and Rally make progress, active work rises to the top.', next: 'Explore breakouts' },
-  { scene: 2, title: 'Explore an idea in a breakout.', description: 'Take a focused conversation off Main, with context from your stream.', next: 'Get started' },
+  { scene: 3, title: 'Meet Rally. Work moves forward together.', description: 'Bring your team and Rally into the same thread. Share context, give direction, and build on each other’s work.', next: 'Meet channels' },
+  { scene: 1, title: 'A channel gives your work a home.', description: 'Give each area of work its own channel, and start a thread there for each task. Your team sees every thread in the channel as it starts.', next: 'Explore breakouts' },
+  { scene: 2, title: 'Explore an idea in a breakout.', description: 'Take a focused conversation off Main, with context from your thread.', next: 'Get started' },
 ] as const;
 
 const sidebarStreams = [
   { id: 'pilot', title: 'Customer pilot', color: 'blue', detail: 'Harper added feedback' },
   { id: 'launch', title: 'Product launch', color: 'purple', detail: 'Rally updated the launch plan' },
-  { id: 'feedback', title: 'Customer feedback', color: 'cyan', detail: 'Aspen started a channel' },
-  { id: 'hiring', title: 'Growing our team', color: 'green', detail: 'Harper started a channel' },
+  { id: 'feedback', title: 'Customer feedback', color: 'cyan', detail: 'Aspen started a thread' },
+  { id: 'hiring', title: 'Growing our team', color: 'green', detail: 'Harper started a thread' },
 ] as const;
 const sidebarOrders = [
   ['pilot', 'launch'], ['feedback', 'pilot', 'launch'],
@@ -44,7 +44,7 @@ function SidebarStory(): React.JSX.Element {
   const arrival = sidebarArrivals[phase];
   const destination = sidebarOrders[phase + 1]?.[0];
   const landingRow = Math.max(0, destination ? order.indexOf(destination) : 0);
-  return <div className="onboarding-sidebar-preview" aria-label="Workstreams organized by recent activity">
+  return <div className="onboarding-sidebar-preview" aria-label="Threads organized by recent activity">
     <div className="onboarding-sidebar-brand"><RallyMark /><strong>Rally</strong><Plus size={18} aria-hidden="true" /></div>
     <div className="onboarding-sidebar-search"><Search size={17} /><span>Search</span></div>
     <small className="onboarding-sidebar-label">Today</small>
@@ -113,7 +113,7 @@ function Story({ step }: { step: number }): React.JSX.Element {
       {(step === 3 || step === 1) && <div className="onboarding-stream-preview">
 
         <div className="onboarding-preview-feed">
-          <div className="onboarding-preview-message"><span className="onboarding-story-person"><strong>Aspen</strong>{ongoing && <small>Last week</small>}</span><p>{ongoing ? "Let’s use this stream to plan our customer pilot." : "Rally, help us plan a welcome session for our new customers."}</p></div>
+          <div className="onboarding-preview-message"><span className="onboarding-story-person"><strong>Aspen</strong>{ongoing && <small>Last week</small>}</span><p>{ongoing ? "Let’s use this thread to plan our customer pilot." : "Rally, help us plan a welcome session for our new customers."}</p></div>
           <div className="onboarding-preview-message onboarding-preview-rally"><span className="onboarding-story-person"><RallyMark /><strong>Rally</strong></span><p>{ongoing ? "Here’s a starting plan. We can keep building on it as the pilot progresses." : "Let’s do a short walkthrough, then Q&A. Who can host?"}</p></div>
           <div className="onboarding-preview-message onboarding-preview-sam"><span className="onboarding-story-person"><strong>Harper</strong>{ongoing && <small>Today</small>}</span><p>{ongoing ? "The first five customers are in. Add a feedback session for Friday." : "I can host on Tuesday. Let’s leave time for questions."}</p></div>
           <div className="onboarding-preview-message onboarding-preview-rally"><span className="onboarding-story-person"><RallyMark /><strong>Rally</strong></span><p>{ongoing ? "Updated the same plan with Friday’s feedback session and our next steps." : "Here’s the plan for Tuesday, with Harper hosting and time for Q&A."}</p><ResourceEmbedCard label={fileTitle} resource={{ id: 'onboarding-example-plan', title: `${fileTitle}.md`, resourceType: 'file', mimeType: 'text/markdown' }} onOpen={() => setPreviewOpen((open) => !open)} />{previewOpen && (ongoing ? <p>First cohort · 5 customers<br />Feedback session · Friday<br />Next · Review feedback and update the plan</p> : <p>Welcome &amp; introductions · 5 min<br />Product walkthrough · 15 min<br />Questions &amp; next steps · 10 min</p>)}</div>

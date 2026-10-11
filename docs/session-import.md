@@ -27,20 +27,14 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 | `apps/desktop/src/renderer/screens/browser-import.tsx` | The import window: Import, the name-and-Space sheet, the run's progress modal and Cancel. |
 | `apps/desktop/src/renderer/lib/browser-import-progress.tsx` | The main window's half: lists the Channel as pending, shows "Importing conversation…", and settles or discards it. |
 | `packages/agent-harness/src/evaluation.ts` | Scenario/checkpoint evaluation using the production Rally runtime. |
-| `apps/desktop/src/renderer/components/new-workstream-menu.tsx`, `session-import-update-dialog.tsx` | The menu item that opens the import window, and the explicit update control. |
+| `apps/desktop/src/renderer/components/navigation-sidebar.tsx`, `session-import-update-dialog.tsx` | The sidebar's **Import a conversation** button that opens the import window, and the explicit update control. |
 
 ## How it works
 
 Every import goes through Rally's own browser, read by an agent. The sidebar's
-plus menu offers **Start New Channel**, **Import Channel from Claude or
-ChatGPT**, and **Create New Space**; the import item opens the [import
-window](embedded-browser.md), and only the desktop host, which has that browser,
-offers it. The web host still draws the sidebar's import button, disabled, with
-a tooltip saying import needs the macOS app. Right-clicking empty space in a Space's channel list opens the same
-menu without **Create New Space**; from there a new Channel starts in that
-Space and the import sheet is locked to it (`spaceLocked` in the import window's
-context). The round **New space** button at the head of the Space pills opens
-**Create New Space** directly. The person opens a conversation in the window — their own, signed in,
+**Import a conversation** button, beside **Search organization**, opens the
+[import window](embedded-browser.md); only the desktop host, which has that
+browser, offers it, and a guest never does. The person opens a conversation in the window — their own, signed in,
 or a shared link — and clicks Import. A sheet asks for the Space and a Channel
 name, prefilled with the tab's title; only Spaces the person may edit are
 offered, and names stop at the server's 180-character limit. The entered name is

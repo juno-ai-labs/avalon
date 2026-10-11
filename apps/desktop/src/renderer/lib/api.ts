@@ -3,6 +3,19 @@ import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationR
 import { SharedDirectorySchema, SharedNavigationDirectorySchema, WorkspaceRelationshipSchema, PromoteWorkspaceGuestSchema } from "@rally/contracts/scope-grants";
 import { MemberPreferencesSchema, PersonalSystemPromptSchema, SessionImportRunSchema, type MemberPreferences, type SessionImportPreview } from "@rally/contracts";
 import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepartureOutcome } from "@rally/contracts";
+import {
+  ActivityPageSchema,
+  ChannelFeedPageSchema,
+  MyThreadsPageSchema,
+  ChannelStatsListSchema,
+  ChannelStatsSchema,
+  type ChannelStats,
+  type ChannelStatsList,
+  PinListSchema,
+  type ActivityPage,
+  type PinKind,
+  type PinList,
+} from "@rally/contracts";
 import { WebPushConfigurationSchema, type RegisterPushDeviceRequest } from "@rally/contracts/push-notifications";
 import { AccountOnboardingSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type UpdateAccountOnboarding } from "@rally/contracts";
 import { ConversationAccessDecisionResultSchema, ConversationAccessPreviewSchema, ConversationAccessRequestResultSchema, type ConversationAccessDecisionResult, type ConversationAccessPreview } from "@rally/contracts";
@@ -67,9 +80,7 @@ import {
   type WorkstreamDetail as WireWorkstreamDetail,
   type GitHubRepositoryAccessSettings as WireGitHubRepositoryAccessSettings,
   ChannelAccessSchema as WireChannelAccessSchema,
-  SpaceChannelPageSchema as WireSpaceChannelPageSchema,
   ContainerOrderSchema as WireContainerOrderSchema,
-  PinnedOrderWriteSchema,
   SpaceSummarySchema as WireSpaceSummarySchema,
   MoveChannelBetweenSpacesResultSchema as WireMoveChannelBetweenSpacesResultSchema,
   type ChannelAccess,
@@ -87,7 +98,7 @@ import {
   SidekickAttachmentsSchema,
   SidekickRecommendationOptionsSchema,
   type SidekickAttachment,
-  type UpdateOnboardingJourney,
+  type UpdateOnboardingJourney
 } from '@rally/contracts';
 import { MutatePrivateChildParticipantResultSchema } from '@rally/contracts/conversation-parent';
 import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from '@rally/contracts/http-headers';
@@ -235,7 +246,6 @@ export interface MentionIdentity {
   endOffset?: number;
 }
 
-const wirePinnedWorkstreamsSchema = z.object({ items: z.array(WireWorkstreamSchema) });
 const wireResourcePageSchema = CursorPageSchema(WireResourceSchema).extend({ complete: z.boolean().optional() });
 const wireMemberPageSchema = z.object({ items: z.array(WireWorkspaceMemberSchema) });
 const wireInvitationPageSchema = z.object({ items: z.array(WireWorkspaceInvitationSchema) });
@@ -1396,6 +1406,22 @@ export class RallyApi {
     });
   }
 
+  /** Recommend a Sidekick to every thread started in this Channel (a Space default). */
+  addSpaceSidekick(id: string, sidekickId: string): Promise<SpaceSummary> {
+    return this.request(`/spaces/${encodeURIComponent(id)}/defaults`, {
+      method: 'POST',
+      body: { kind: 'sidekick', targetId: sidekickId },
+      schema: WireSpaceSummarySchema,
+    });
+  }
+
+  removeSpaceSidekick(id: string, sidekickId: string): Promise<SpaceSummary> {
+    return this.request(
+      `/spaces/${encodeURIComponent(id)}/defaults/sidekick/${encodeURIComponent(sidekickId)}`,
+      { method: 'DELETE', schema: WireSpaceSummarySchema },
+    );
+  }
+
   archiveSpace(id: string): Promise<SpaceSummary> {
     return this.request(`/spaces/${encodeURIComponent(id)}/archive`, {
       method: 'POST',
@@ -1429,53 +1455,90 @@ export class RallyApi {
   }
 
   /**
-   * Save this person's order for **All**'s Pinned section, in full. Answers
-   * with what was stored: only Channels they can list, each once.
+   * One page of a Channel's feed (a stored Space's threads), newest placement
+   * first. A thread this person may not open is a locked row with its id and
+   * time only; see `docs/listing-rules.md`.
    */
-  async reorderAllPinned(itemIds: string[]): Promise<string[]> {
-    return (await this.request('/workspace/pinned-order', {
-      method: 'PUT',
-      body: { itemIds },
-      schema: PinnedOrderWriteSchema,
-    })).itemIds;
+  async getChannelFeed(channelId: string, cursor: string | null, signal?: AbortSignal): Promise<ChannelFeedPageView> {
+    const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
+    const page = await this.request(`/spaces/${encodeURIComponent(channelId)}/feed${query}`, {
+      schema: ChannelFeedPageSchema,
+      ...(signal ? { signal } : {}),
+    });
+    return {
+      items: page.items.map((item) => item.kind === 'thread'
+        ? {
+            kind: 'thread' as const,
+            placedAt: item.placedAt,
+            attentionSequenceNumber: item.attentionSequenceNumber,
+            thread: mapWorkstreamSummary(item.thread),
+          }
+        : {
+            kind: 'locked' as const,
+            placedAt: item.placedAt,
+            attentionSequenceNumber: item.attentionSequenceNumber,
+            threadId: item.threadId,
+          }),
+      nextCursor: page.nextCursor,
+      latestAttentionSequenceNumber: page.latestAttentionSequenceNumber,
+    };
+  }
+
+  /** One page of the threads and breakouts this person takes part in or pinned, newest activity first. */
+  async getMyThreads(cursor: string | null, signal?: AbortSignal): Promise<{
+    items: SpaceConversationSummary[];
+    nextCursor: string | null;
+    /** Every pinned row this person may list, on the first page; empty after it. */
+    pinned: SpaceConversationSummary[];
+  }> {
+    const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
+    const page = await this.request(`/navigation/threads${query}`, {
+      schema: MyThreadsPageSchema,
+      ...(signal ? { signal } : {}),
+    });
+    const row = (conversation: (typeof page.items)[number]): SpaceConversationSummary => ({
+      ...mapWorkstreamSummary(conversation),
+      kind: conversation.kind,
+      breakoutOf: conversation.breakoutOf,
+    });
+    return { items: page.items.map(row), nextCursor: page.nextCursor, pinned: page.pinned.map(row) };
+  }
+
+  getChannelStats(signal?: AbortSignal): Promise<ChannelStatsList> {
+    return this.request('/navigation/channel-stats', { schema: ChannelStatsListSchema, ...(signal ? { signal } : {}) });
   }
 
   /**
-   * One page of the conversations in a Space that currently need this viewer:
-   * its member Channels and their breakouts, newest activity first.
-   *
-   * The one Space read that is not on the socket: General holds every Channel
-   * in the Organization, so the answer is paginated and the opening sidebar
-   * payload carries a count instead. The cursor is opaque — the ordering is
-   * the authority's — and so is the filtering: the server decides which
-   * conversations still need this reader, because a filter applied here would
-   * make every page arbitrarily short and the cursor a promise about rows the
-   * client had already thrown away.
-   *
-   * The path still says `channels`. It answers conversations.
+   * Acknowledge a Channel read through a placement, answered with the
+   * person's whole `ChannelStats` row for it, which replaces the row held in
+   * the channel-stats cache.
    */
-  async listSpaceChannels(
-    spaceId: string,
-    cursor: string | null,
-    signal?: AbortSignal,
-  ): Promise<{ items: SpaceConversationSummary[]; nextCursor: string | null }> {
-    const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
-    const page = await this.request(`/spaces/${encodeURIComponent(spaceId)}/channels${query}`, {
-      schema: WireSpaceChannelPageSchema,
-      ...(signal ? { signal } : {}),
+  acknowledgeChannelRead(channelId: string, readThroughSequenceNumber: number): Promise<ChannelStats> {
+    return this.request(`/spaces/${encodeURIComponent(channelId)}/read-state`, {
+      method: 'PATCH',
+      body: { readThroughSequenceNumber },
+      schema: ChannelStatsSchema,
     });
-    // Through the same mapper every other Channel row goes through, so a
-    // placement on the dashboard and the same Channel in the sidebar are one
-    // shape rather than two that drift. A breakout adds two fields to it and
-    // changes none.
-    return {
-      items: page.items.map((conversation) => ({
-        ...mapWorkstreamSummary(conversation),
-        kind: conversation.kind,
-        breakoutOf: conversation.breakoutOf,
-      })),
-      nextCursor: page.nextCursor,
-    };
+  }
+
+  setPinned(kind: PinKind, id: string, pinned: boolean, parentId?: string): Promise<PinList> {
+    const path = `/navigation/pins/${kind}/${encodeURIComponent(id)}`;
+    return pinned
+      ? this.request(path, { method: 'PUT', body: parentId ? { parentId } : {}, schema: PinListSchema })
+      : this.request(path, { method: 'DELETE', schema: PinListSchema });
+  }
+
+  reorderPins(kind: PinKind, ids: readonly string[]): Promise<PinList> {
+    return this.request('/navigation/pins', { method: 'PUT', body: { kind, ids }, schema: PinListSchema });
+  }
+
+  getActivity(cursor: string | null, signal?: AbortSignal): Promise<ActivityPage> {
+    const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
+    return this.request(`/navigation/activity${query}`, { schema: ActivityPageSchema, ...(signal ? { signal } : {}) });
+  }
+
+  markActivitySeen(seenThrough: string): Promise<void> {
+    return this.requestVoid('/navigation/activity/seen', { method: 'PUT', body: { seenThrough } });
   }
 
   addChannelToSpace(spaceId: string, workstreamId: string): Promise<SpaceSummary> {
@@ -1628,48 +1691,6 @@ export class RallyApi {
       schema: WireWorkstreamSchema,
     });
     return mapWorkstreamSummary(workstream);
-  }
-
-  /**
-   * Pin a Channel placement for the signed-in person, across every device they use.
-   *
-   * All three pin calls answer with the selected Space's whole pinned list in
-   * its stored order, so the caller replaces only that Space's positions rather
-   * than reasoning about which row moved — see {@link ApiClient.reorderWorkstreamPins}.
-   */
-  async pinWorkstream(id: string, spaceId: string): Promise<WorkstreamSummary[]> {
-    return this.readPinnedWorkstreams(`/workstreams/${encodeURIComponent(id)}/pin`, 'PUT', { spaceId });
-  }
-
-  async unpinWorkstream(id: string, spaceId: string): Promise<WorkstreamSummary[]> {
-    return this.readPinnedWorkstreams(
-      `/workstreams/${encodeURIComponent(id)}/pin?spaceId=${encodeURIComponent(spaceId)}`,
-      'DELETE',
-    );
-  }
-
-  /**
-   * Send the pinned list's new order after a drag.
-   *
-   * The whole arrangement travels, not the row that moved: the server writes it
-   * as dense positions, and the list it sends back is the one to render. Ids
-   * that have been unpinned elsewhere are ignored rather than refused.
-   */
-  async reorderWorkstreamPins(spaceId: string, workstreamIds: string[]): Promise<WorkstreamSummary[]> {
-    return this.readPinnedWorkstreams('/workstreams/pins', 'PUT', { spaceId, workstreamIds });
-  }
-
-  private async readPinnedWorkstreams(
-    path: string,
-    method: 'PUT' | 'DELETE',
-    body?: unknown,
-  ): Promise<WorkstreamSummary[]> {
-    const page = await this.request(path, {
-      method,
-      ...(body === undefined ? {} : { body }),
-      schema: wirePinnedWorkstreamsSchema,
-    });
-    return page.items.map(mapWorkstreamSummary);
   }
 
   /** Reserve a Channel for a conversation import and start the agent that reads it. */
@@ -2683,4 +2704,15 @@ export class RallyApi {
     return result.url;
   }
 
+}
+
+/** A Channel feed page with its threads in the client's row shape. */
+export interface ChannelFeedPageView {
+  items: Array<
+    | { kind: 'thread'; placedAt: string; attentionSequenceNumber: number; thread: WorkstreamSummary }
+    | { kind: 'locked'; placedAt: string; attentionSequenceNumber: number; threadId: string }
+  >;
+  nextCursor: string | null;
+  /** The Channel's latest attention sequence number as the first page was read; null on a later page. */
+  latestAttentionSequenceNumber: number | null;
 }

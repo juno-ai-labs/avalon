@@ -54,7 +54,7 @@ vi.mock('./screens/onboarding', () => ({
   SignInScreen: () => <div>sign in screen</div>,
 }));
 vi.mock('./components/app-shell', () => ({ AppShell: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
-vi.mock('./screens/new-workstream', () => ({ NewWorkstreamScreen: () => <div>new channel launcher</div> }));
+vi.mock('./screens/channel', () => ({ ChannelScreen: () => <div>channel screen</div> }));
 vi.mock('./screens/workstream', () => ({ WorkstreamScreen: () => <div>workstream</div> }));
 vi.mock('./screens/automation', () => ({ AutomationScreen: () => <div>automation</div> }));
 vi.mock('./screens/workspace-settings', () => ({
@@ -175,8 +175,9 @@ describe('SessionGate identity-first ordering', () => {
     expect(sessionState.api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
     expect(screen.getByText('Opening organization…')).toBeVisible();
     await act(async () => { finishProfile(profile); });
-    expect(await screen.findByText('workstream')).toBeVisible();
-    expect(window.location.hash).toBe(`#/workstreams/${id}`);
+    // The landing opens a Channel, so it waits on the Channel list the socket
+    // has not delivered here; the thread sockets above were warmed regardless.
+    expect(await screen.findByText('Opening channels…')).toBeVisible();
     expect(sessionState.api.getWorkspaceSocketTicket).toHaveBeenCalledTimes(1);
     expect(sessionState.api.getSocketTicket).toHaveBeenCalledTimes(6);
     expect(sessionState.api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
@@ -233,7 +234,7 @@ describe('SessionGate identity-first ordering', () => {
   });
 
   it.each([
-    ['/spaces/00000000-0000-7000-8000-00000000a001/workstreams/new', 'new channel launcher'],
+    ['/channels/00000000-0000-7000-8000-00000000a001', 'channel screen'],
     ['/workstreams/00000000-0000-7000-8000-000000000031', 'workstream'],
   ])('preserves explicit route %s', async (route, destination) => {
     window.history.replaceState({}, '', `/#${route}`);

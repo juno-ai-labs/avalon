@@ -4782,7 +4782,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .member-picker-row.is-invited strong,
 .title-menu-person.is-invited .title-menu-person-name,
 .new-channel-popover-row.is-invited .new-channel-popover-name { color: var(--av-sys-color-text-muted); font-style: italic; }
-.new-channel-popover-kind { color: var(--av-sys-color-text-muted); flex: 0 0 auto; font-size: 12px; margin-left: auto; }
 .mention-confirm-person { align-items: center; display: flex; gap: 10px; }
 .mention-confirm-person > span { display: flex; flex-direction: column; }
 .mention-confirm-person small { color: var(--av-sys-color-text-muted); font-size: 11px; }
@@ -5445,16 +5444,8 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    widths, and a second style is how the two drift. */
 .space-opening-card { align-items: center; background: var(--av-sys-color-surface-subtle); border: 1px solid var(--av-sys-color-border-subtle); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-muted); display: flex; font-size: 12px; gap: 8px; margin: 4px; padding: 10px 12px; }
 .space-opening-card > span { min-width: 0; }
-/* Manage access: one block per source, the Channel's own first. */
-.manage-access-list { display: grid; gap: 10px; margin: 0; padding: 0; }
-.manage-access-source { align-items: center; background: var(--av-sys-color-surface-subtle); border: 1px solid transparent; border-radius: var(--av-cmp-control-radius); display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) auto; padding: 10px 12px; }
-.manage-access-source > div { display: grid; gap: 2px; min-width: 0; }
-.manage-access-source strong { align-items: center; display: flex; font-size: 13px; font-weight: 560; gap: 6px; min-width: 0; }
-.manage-access-source small { color: var(--av-sys-color-text-muted); font-size: 11px; }
-.manage-access-source .inline-error { grid-column: 1 / -1; }
 /* The read failed and there is nothing to list: the message and its retry take
    the place of the sources rather than standing over a spinner. */
-.manage-access-failed,
 .scope-sharing-guests-failed { display: grid; gap: 10px; justify-items: start; }
 
 @media (max-width: 560px) {
@@ -6928,6 +6919,12 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .workstream-launch-screen.is-launching > .launch-header {
   height: 44px;
 }
+/* A thread's breakout settles into a title pill, whose row is 64px
+   (`.workstream-screen:has(> .title-pill-header)`); the 44px above stays
+   for a header that is not a title pill. */
+.workstream-launch-screen.is-launching > .launch-header.title-pill-header {
+  height: 64px;
+}
 
 /* Both layers share one grid cell, so the home content can fade out over the
    transcript that replaced it without being taken out of flow first. */
@@ -7103,241 +7100,37 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 /* The setup rows above the new-Channel composer. Optical left edge: a round
    end reads 2–3px inside its box, so the pill sits 1px and the label 2px in
    from the composer. 9px between rows is the composer stack's own gap. */
-.new-channel-setup {
-  display: grid;
-  gap: 9px;
-  padding: 0 6px 0 1px;
-}
 
-.new-channel-participants {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-  min-width: 0;
-  padding-left: 1px;
-}
 
-.new-channel-participants-label {
-  color: var(--av-sys-color-text-muted);
-  flex: 0 0 auto;
-  font-size: 13px;
-  line-height: 18px;
-}
 
 /* One box for both states, so the widening is the box's own width easing
    rather than one control swapped for another. */
-.new-channel-add {
-  align-items: center;
-  border: 1px dashed var(--av-ref-color-line-5);
-  border-radius: 999px;
-  display: inline-flex;
-  flex: 0 0 auto;
-  height: 30px;
-  position: relative;
-  transition:
-    width 220ms cubic-bezier(.32, .72, 0, 1),
-    border-color 160ms ease,
-    background-color 160ms ease;
-  width: 30px;
-}
 
-.new-channel-add.is-searching {
-  background: var(--av-sys-color-surface-default);
-  border-color: var(--av-cmp-composer-border-color-focus);
-  border-style: solid;
-  width: 240px;
-}
 
-.new-channel-add-button {
-  align-items: center;
-  animation: new-channel-fade 160ms ease both;
-  background: transparent;
-  border: 0;
-  border-radius: 50%;
-  color: var(--av-sys-color-text-muted);
-  display: flex;
-  height: 100%;
-  justify-content: center;
-  padding: 0;
-  transition: color 150ms ease, background-color 150ms ease;
-  width: 100%;
-}
 
-.new-channel-add-button:hover { background: var(--av-cmp-row-background-selected); color: var(--av-sys-color-text-default); }
 
-.new-channel-add-icon {
-  animation: new-channel-fade 160ms 60ms ease both;
-  color: var(--av-sys-color-text-muted);
-  flex: 0 0 auto;
-  margin-left: 10px;
-}
 
-.new-channel-add > input {
-  animation: new-channel-fade 160ms 60ms ease both;
-  background: transparent;
-  border: 0;
-  color: var(--av-sys-color-text-default);
-  flex: 1;
-  font-size: 13px;
-  line-height: 18px;
-  min-width: 0;
-  outline: 0;
-  padding: 0 10px 0 6px;
-}
 
-.new-channel-roster-anchor {
-  display: flex;
-  min-width: 0;
-  position: relative;
-}
 
-.new-channel-roster {
-  align-items: center;
-  background: var(--av-sys-color-surface-elevated-hover);
-  border: 0;
-  border-radius: 999px;
-  color: var(--av-sys-color-text-default);
-  display: inline-flex;
-  font-size: 13px;
-  font-weight: 500;
-  gap: 7px;
-  height: 30px;
-  line-height: 18px;
-  max-width: 100%;
-  min-width: 0;
-  padding: 0 12px 0 5px;
-  transition: background-color 150ms ease;
-}
 
-button.new-channel-roster:hover,
-button.new-channel-roster[aria-expanded='true'] { background-image: var(--hover-layer); }
-.new-channel-roster:has(> .new-channel-roster-chevron) { padding-right: 10px; }
-[data-theme='dark'] .new-channel-roster { background: var(--av-sys-color-surface-subtle); }
 
-.new-channel-roster .avatar-stack { flex: 0 0 auto; }
-.new-channel-roster .avatar-stack-item { animation: new-channel-arrive 220ms cubic-bezier(.32, .72, 0, 1) both; }
-.new-channel-roster > .avatar-small { height: 20px; width: 20px; }
 
-.new-channel-roster-names {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.new-channel-roster-chevron { color: var(--av-sys-color-text-muted); flex: 0 0 auto; }
 
 /* Both lists open upward; `fitAbove` in new-channel-participants.tsx caps
    each at the room above it, which depends on the draft's height. */
-.new-channel-popover {
-  animation: new-channel-pop 180ms cubic-bezier(.32, .72, 0, 1) both;
-  background: var(--av-sys-color-surface-default);
-  border: .5px solid var(--av-cmp-composer-border-color);
-  border-radius: 14px;
-  bottom: calc(100% + 8px);
-  box-shadow: var(--av-sys-elevation-shadow-md);
-  display: grid;
-  gap: 2px;
-  left: 0;
-  max-height: 280px;
-  overflow-y: auto;
-  padding: 6px;
-  position: absolute;
-  transform-origin: bottom left;
-  width: 260px;
-  z-index: 30;
-  /* One column the popover's width, so a long address ellipsizes rather than
-     widening the track and pushing a row's controls out of view. */
-  grid-template-columns: minmax(0, 1fr);
-}
 
-[data-theme='dark'] .new-channel-popover { background: var(--av-sys-color-surface-elevated); }
 
-.new-channel-popover-row {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 10px;
-  color: var(--av-sys-color-text-default);
-  display: flex;
-  font-size: 14px;
-  gap: 10px;
-  min-height: 40px;
-  padding: 6px 10px;
-  text-align: left;
-  transition: background-color 120ms ease;
-  width: 100%;
-}
 
-button.new-channel-popover-row.is-selected,
-button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-selected); }
 
-.new-channel-popover-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.new-channel-popover-remove {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  color: var(--av-sys-color-text-muted);
-  display: flex;
-  height: 22px;
-  justify-content: center;
-  padding: 0;
-  transition: color 120ms ease, background-color 120ms ease;
-  width: 22px;
-}
 
-.new-channel-popover-remove:hover { background: var(--av-cmp-row-background-selected); color: var(--av-sys-color-text-default); }
 
-.new-channel-popover-empty {
-  color: var(--av-sys-color-text-muted);
-  font-size: 13px;
-  line-height: 18px;
-  margin: 0;
-  padding: 10px 12px;
-  text-align: center;
-}
 
-.new-channel-popover-error {
-  color: var(--av-sys-color-danger-base);
-  font-size: 13px;
-  line-height: 18px;
-  margin: 0;
-  padding: 8px 12px;
-}
 
-.new-channel-placement {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-  min-width: 0;
-}
 
-.new-channel-placement-divider { color: var(--av-sys-color-text-muted); flex: 0 0 auto; font-size: 16px; opacity: .6; }
 
-.new-channel-name {
-  background: var(--av-sys-color-surface-sunken);
-  border: 1px solid var(--av-cmp-composer-border-color);
-  border-radius: 9px;
-  color: var(--av-sys-color-text-default);
-  flex: 1;
-  font-size: 14px;
-  height: 32px;
-  min-width: 0;
-  outline: 0;
-  padding: 0 12px;
-  transition: border-color 160ms ease, background-color 160ms ease;
-}
 
-.new-channel-name::placeholder { color: var(--av-sys-color-text-muted); }
-.new-channel-name:focus { background: var(--av-sys-color-surface-default); border-color: var(--av-cmp-composer-border-color-focus); }
 
 /* The shared Space picker, drawn as a pill inline with the name. */
 .dropdown-select-trigger-pill {
@@ -8076,9 +7869,60 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   position: relative;
   z-index: 3;
 }
-.title-pill-ancestors { align-items: center; display: flex; gap: 6px; justify-self: start; min-width: 0; }
+.title-pill-ancestors { align-items: center; display: flex; gap: 6px; justify-self: start; max-width: 100%; min-width: 0; }
+/* Breadcrumbs give way rather than run under the centred pill: each shrinks
+   to its mark, its title ending in an ellipsis. A Channel's name is short and
+   says where you are, so the thread beside it gives way first. */
+.title-pill-ancestor { display: flex; min-width: 0; }
+.title-pill-ancestor:first-child:not(:last-child) { flex-shrink: 0; max-width: 45%; }
+.title-pill.is-ancestor,
+.title-pill.is-ancestor .title-pill-select { min-width: 0; }
 .title-pill-current { justify-self: center; min-width: 0; }
 .title-pill-trailing { align-items: center; display: flex; gap: 8px; justify-self: end; }
+/*
+ * A breakout's Channel and thread crumbs need about twice the room of one, so
+ * a pane short of desktop width shows both as marks while the pill stays
+ * centred.
+ */
+@container conversation-pane (width < 760px) {
+  .title-pill-ancestors:has(> .title-pill-ancestor + .title-pill-ancestor) .title-pill-menu-trigger { display: none; }
+  .title-pill-ancestors:has(> .title-pill-ancestor + .title-pill-ancestor) .title-pill.is-ancestor :is(
+    .title-pill-title,
+    .title-pill-meta,
+    .title-pill-chevron,
+    .title-pill-crumb-separator
+  ) {
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+}
+/*
+ * A pane too narrow to centre its pill between full ancestors (a breakout
+ * standing alone on a phone, with its Channel and thread as breadcrumbs):
+ * ancestors keep only their marks, and the pill takes what is left and
+ * truncates. The pane is the container because a query cannot restyle the
+ * element it measures.
+ */
+@container conversation-pane (width < 460px) {
+  .title-pill-header { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .title-pill-current { display: flex; justify-content: center; justify-self: stretch; }
+  .title-pill.is-ancestor .title-pill-menu-trigger { display: none; }
+  .title-pill.is-ancestor .title-pill-title,
+  .title-pill.is-ancestor .title-pill-meta,
+  .title-pill.is-ancestor .title-pill-chevron,
+  .title-pill.is-ancestor .title-pill-crumb-separator {
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+}
 .title-pill {
   align-items: center;
   background: var(--av-sys-color-surface-raised);
@@ -8247,6 +8091,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .title-menu-people-search { height: 40px; margin-bottom: 6px; border-radius: 10px; }
 .title-menu-person { align-items: center; display: flex; gap: 12px; min-height: 52px; padding: 4px 8px; }
 .title-menu-person .avatar { height: 34px; width: 34px; }
+.title-menu-channel-mark { align-items: center; display: inline-flex; flex: none; height: 34px; justify-content: center; width: 34px; }
 .title-menu-person-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .title-menu-person-name { align-items: center; color: var(--av-sys-color-text-default); display: flex; font-size: 14.5px; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .title-menu-person-detail { color: var(--av-sys-color-text-muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -8525,7 +8370,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
    right panel opened from either pane takes the other pane's place: the pane
    that opened it stays, the other is hidden but kept mounted. */
 .split-conversation { display: flex; height: 100%; min-width: 0; position: relative; }
-.split-conversation-pane { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; position: relative; }
+.split-conversation-pane { container: conversation-pane / inline-size; display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; position: relative; }
 .split-conversation-pane.is-breakout { flex: 0 0 var(--split-breakout-width, 50%); max-width: calc(100% - var(--conversation-min-width)); }
 .split-conversation-pane.is-breakout::before {
   background: var(--av-sys-color-border-subtle);
@@ -8541,6 +8386,13 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .split-conversation-pane.is-breakout.is-alone { flex: 1 1 0; max-width: none; }
 .split-conversation-pane.is-breakout.is-alone::before { content: none; }
 .split-conversation-pane[hidden] { display: none; }
+.split-conversation-pane[data-motion='enter'] { animation: split-pane-enter 240ms cubic-bezier(.22, 1, .36, 1); }
+.split-conversation-pane[data-motion='shift'] { animation: split-pane-shift 240ms cubic-bezier(.22, 1, .36, 1); }
+@keyframes split-pane-enter { from { opacity: 0; transform: translateX(24px); } }
+@keyframes split-pane-shift { from { transform: translateX(var(--split-motion-from, 0px)); } }
+@media (prefers-reduced-motion: reduce) {
+  .split-conversation-pane[data-motion] { animation: none; }
+}
 .split-conversation-pane > .conversation-layout { flex: 1; min-height: 0; }
 .split-conversation-resizer {
   cursor: col-resize;
@@ -8607,3 +8459,234 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   select,
   .workstream-composer .composer-highlight { font-size: 16px !important; }
 }
+
+/* ── Navigation: the section switcher and its one list ─────────────────────
+   One list column with a switcher beside it, never stacked hierarchy rails
+   (`docs/desktop-shell.md`). The rail sits under the macOS traffic lights; the
+   list keeps the sidebar's own width and resize edge. */
+.navigation-body { display: flex; flex: 1; min-height: 0; }
+.navigation-rail {
+  align-items: center;
+  background: var(--av-sys-color-surface-sunken);
+  border-right: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 14px;
+  width: 76px;
+}
+.navigation-rail-top { flex: none; height: 46px; width: 100%; }
+.navigation-rail-button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--av-sys-color-text-subtle);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  gap: 4px;
+  padding: 0;
+  width: 64px;
+}
+.navigation-rail-icon {
+  align-items: center;
+  border-radius: 12px;
+  display: flex;
+  height: 40px;
+  justify-content: center;
+  position: relative;
+  width: 44px;
+}
+.navigation-rail-button:hover .navigation-rail-icon { background: var(--av-sys-color-state-hover); }
+.navigation-rail-button.is-active { color: var(--av-sys-color-text-default); font-weight: 600; }
+.navigation-rail-button.is-active .navigation-rail-icon { background: var(--av-sys-color-surface-raised-hover); }
+.navigation-rail-badge {
+  background: var(--av-sys-color-workstream-news);
+  border: 2px solid var(--av-sys-color-surface-sunken);
+  border-radius: 999px;
+  color: var(--av-sys-color-palette-ink-light);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 14px;
+  min-width: 18px;
+  padding: 0 4px;
+  position: absolute;
+  right: -2px;
+  text-align: center;
+  top: -2px;
+}
+.navigation-rail-spacer { flex: 1; }
+.navigation-rail-account { flex: none; justify-content: center; }
+.navigation-rail-account .account-trigger { justify-content: center; padding: 0; width: auto !important; }
+.navigation-rail-account .account-copy,
+.navigation-rail-account .account-trigger > :not(.avatar):not(.account-avatar) { display: none; }
+.navigation-panel { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.navigation-panel-header { align-items: center; display: flex; flex: none; gap: 8px; height: 56px; padding: 14px 12px 0 18px; }
+.navigation-panel-title { flex: 1; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0; min-width: 0; }
+.navigation-panel-actions { display: flex; gap: 2px; }
+.navigation-panel-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 8px 16px; }
+.navigation-section { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
+.navigation-section-heading {
+  align-items: center;
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  font-size: 13px;
+  font-weight: 600;
+  justify-content: space-between;
+  min-height: 26px;
+  padding: 0 8px 0 10px;
+}
+.navigation-section-trailing { align-items: center; display: inline-flex; font-weight: 500; gap: 2px; }
+.navigation-sort {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--av-sys-color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  gap: 4px;
+  padding: 2px 4px;
+}
+.navigation-sort:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
+.navigation-row {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+  color: var(--av-sys-color-text-default);
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 10px;
+  padding: 8px 10px;
+  text-align: left;
+  width: 100%;
+}
+.navigation-row:hover { background: var(--av-sys-color-state-hover); }
+.navigation-row.is-active { background: var(--av-sys-color-surface-raised-hover); }
+.navigation-row[draggable='true'] { cursor: grab; }
+.navigation-thread-row { grid-template-columns: 12px minmax(0, 1fr); }
+.navigation-channel-row { grid-template-columns: 40px minmax(0, 1fr); }
+.navigation-row-marker { align-self: start; display: flex; justify-content: center; padding-top: 6px; }
+.navigation-row-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.navigation-row-line { align-items: baseline; display: flex; gap: 6px; min-width: 0; }
+.navigation-row-title { flex: 1; font-size: 14.5px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.navigation-thread-row .navigation-row-title { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.navigation-thread-row.has-activity .navigation-row-title { font-weight: 650; }
+.navigation-channel-row.is-unread .navigation-row-title { font-weight: 650; }
+/* The Activity tab's unread dot, centred on the name line rather than hung from its top. */
+.navigation-row-unread-dot { align-self: center; background: var(--av-sys-color-workstream-news); border-radius: 999px; flex: none; height: 8px; width: 8px; }
+.navigation-row-time { color: var(--av-sys-color-text-muted); flex: none; font-size: 12.5px; }
+.navigation-row-lock { color: var(--av-sys-color-text-muted); flex: none; }
+.navigation-row-detail { color: var(--av-sys-color-text-muted); font-size: 13px; }
+.navigation-channel-mark { align-items: center; border-radius: 999px; display: flex; height: 40px; justify-content: center; width: 40px; }
+.navigation-channel-mark.is-small { height: 34px; width: 34px; }
+.navigation-archived-row { align-items: center; display: flex; gap: 10px; padding: 6px 10px; }
+.navigation-archived-name { color: var(--av-sys-color-text-muted); flex: 1; font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.navigation-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.navigation-chip {
+  align-items: center;
+  border-radius: 999px;
+  box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong);
+  color: var(--av-sys-color-text-subtle);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 8px;
+}
+.navigation-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.navigation-empty { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 8px 10px; }
+.navigation-more { background: transparent; border: 0; color: var(--av-sys-color-text-muted); cursor: pointer; font: inherit; font-size: 13px; padding: 6px 10px; text-align: left; }
+.navigation-more:hover { color: var(--av-sys-color-text-default); }
+
+/* Activity: one row per thing that happened to this person. */
+.activity-row {
+  align-items: flex-start;
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+  color: var(--av-sys-color-text-default);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 10px;
+  padding: 8px 10px;
+  text-align: left;
+  width: 100%;
+}
+.activity-row:hover { background: var(--av-sys-color-state-hover); }
+.activity-request { align-items: center; box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong); cursor: default; }
+.activity-request .activity-row-body { background: transparent; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; text-align: left; }
+.activity-request-actions { display: flex; flex: none; gap: 2px; }
+.activity-avatar {
+  align-items: center;
+  background: var(--av-sys-color-accent-wash);
+  border-radius: 999px;
+  color: var(--av-sys-color-accent-strong);
+  display: flex;
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+.activity-avatar.is-rally { background: var(--av-sys-color-text-default); color: var(--av-sys-color-surface-default); }
+.activity-row-body { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
+.activity-row-text { font-size: 14px; line-height: 19px; }
+.activity-row-text strong { font-weight: 650; }
+.activity-row-detail { color: var(--av-sys-color-text-muted); font-size: 12.5px; }
+.activity-chip { align-self: flex-start; cursor: inherit; height: 26px; }
+.activity-unread-dot { background: var(--av-sys-color-workstream-news); border-radius: 999px; flex: none; height: 8px; margin-top: 6px; width: 8px; }
+
+@media (max-width: 640px) {
+  /* The phone sheet shows the list's header as its top bar and the switcher
+     as a row of tabs under it. */
+  .app-shell .navigation-sidebar > .navigation-body { flex-direction: column; opacity: 1; transform: none; visibility: visible; }
+  .app-shell .navigation-sidebar .navigation-panel { display: contents; }
+  .app-shell .navigation-sidebar .navigation-panel-header { height: var(--phone-top-bar-height); order: -2; padding: 0 12px; }
+  .app-shell .navigation-sidebar .navigation-rail {
+    border-bottom: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
+    border-right: 0;
+    flex-direction: row;
+    justify-content: space-around;
+    order: -1;
+    padding: 6px 8px;
+    width: auto;
+  }
+  .app-shell .navigation-sidebar .navigation-rail-top,
+  .app-shell .navigation-sidebar .navigation-rail-spacer { display: none; }
+}
+
+/* ── A Channel: its feed of threads and the composer that starts one ─────── */
+.channel-screen { display: grid; grid-template-rows: 55px minmax(0, 1fr) auto; height: 100%; min-width: 0; position: relative; }
+.channel-header { align-items: center; display: flex; padding: 0 12px; }
+.channel-header .title-pill-header { flex: 1; }
+.channel-feed { display: flex; flex-direction: column; padding: 8px 0 24px; }
+.channel-feed-list { display: flex; flex-direction: column; gap: 6px; list-style: none; margin: auto auto 0; max-width: 760px; padding: 0 24px; width: 100%; }
+.channel-feed-more { display: flex; justify-content: center; padding: 8px 0; }
+.channel-feed-item { border-radius: 14px; display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; }
+.channel-feed-item:hover { background: var(--av-sys-color-state-hover); }
+.channel-feed-meta { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 12.5px; gap: 6px; }
+.channel-feed-meta strong { color: var(--av-sys-color-text-default); font-weight: 600; }
+.channel-feed-summary {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--av-sys-color-text-default);
+  display: -webkit-box;
+  font-size: 14.5px;
+  line-height: 21px;
+  margin: 0;
+  overflow: hidden;
+}
+.channel-feed-item.is-locked .channel-feed-meta { color: var(--av-sys-color-text-subtle); }
+.channel-feed-empty { color: var(--av-sys-color-text-muted); margin: auto; max-width: 420px; padding: 24px; text-align: center; }
+.channel-composer-dock { position: relative; }
+.channel-composer-dock .composer-stack { margin: 0 auto; max-width: 760px; }

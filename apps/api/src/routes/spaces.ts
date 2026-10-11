@@ -1,4 +1,7 @@
 import {
+  AcknowledgeChannelReadRequestSchema,
+  ChannelFeedPageSchema,
+  ChannelStatsSchema,
   CreateSpaceRequestSchema,
   MoveChannelBetweenSpacesRequestSchema,
   MoveChannelBetweenSpacesResultSchema,
@@ -69,6 +72,39 @@ spaceReadRoutes.get(
     await new SpaceService(c.env, getWorkspaceAuth(c)).listChannels(
       c.req.valid("param").id,
       c.req.valid("query").cursor ?? null,
+    ),
+  )),
+);
+
+/** A Channel's feed: the threads placed in it, newest first; see `ChannelFeedItemSchema`. */
+spaceReadRoutes.get(
+  "/:id/feed",
+  requireWorkspaceAuth,
+  zValidator("param", idParam),
+  zValidator("query", channelPageQuery),
+  async (c) => c.json(ChannelFeedPageSchema.parse(
+    await new SpaceService(c.env, getWorkspaceAuth(c)).listFeed(
+      c.req.valid("param").id,
+      c.req.valid("query").cursor ?? null,
+    ),
+  )),
+);
+
+/**
+ * A Channel's read position for the person asking: acknowledge through a
+ * placement, answered with the person's `ChannelStats` row. A read route,
+ * because reading is not changing the Channel: anybody who may list it has a
+ * position in it.
+ */
+spaceReadRoutes.patch(
+  "/:id/read-state",
+  requireWorkspaceAuth,
+  zValidator("param", idParam),
+  zValidator("json", AcknowledgeChannelReadRequestSchema),
+  async (c) => c.json(ChannelStatsSchema.parse(
+    await new SpaceService(c.env, getWorkspaceAuth(c)).acknowledgeRead(
+      c.req.valid("param").id,
+      c.req.valid("json"),
     ),
   )),
 );

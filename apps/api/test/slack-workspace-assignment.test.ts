@@ -2167,7 +2167,7 @@ describe("Slack public channel membership", () => {
     // Between this event's resolution and its reservation, another event for
     // the same thread bound it: the reservation refuses the claim.
     vi.spyOn(SlackWorkspaceWorkstreamService.prototype, "create").mockRejectedValue(
-      new ApiError(409, "external_binding_bound", "This conversation is already bound to a Channel"),
+      new ApiError(409, "external_binding_bound", "This conversation is already bound to a thread"),
     );
     const posted: Array<Record<string, unknown>> = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

@@ -230,7 +230,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
   },
   checkout_repository: {
     name: "checkout_repository",
-    description: "Choose and materialize one exact GitHub repository for this work stream. The model chooses within connector policy; Rally backs up recoverable workspace state before replacement. read_only remote access still permits local edits and commits but never push or remote mutation.",
+    description: "Choose and materialize one exact GitHub repository for this thread. The model chooses within connector policy; Rally backs up recoverable workspace state before replacement. read_only remote access still permits local edits and commits but never push or remote mutation.",
     capability: "terminal.repository.checkout",
     mode: "write",
     idempotency: "record_before_execute",

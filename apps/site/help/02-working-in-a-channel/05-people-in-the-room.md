@@ -1,30 +1,30 @@
 ---
 title: People in the room
-description: Bring teammates into a Channel, see who is here, and know when Rally will chime in.
+description: Bring teammates into a Thread, see who is here, and know when Rally will chime in.
 ---
 
-A Channel is better with company. This page covers who is in a Channel, how to
+A Thread is better with company. This page covers who is in a Thread, how to
 bring someone in, and how Rally behaves when the room gets busy.
 
-## Who is in this Channel
+## Who is in this Thread
 
-The people in a Channel are its **participants**. To see them, click the
-Channel's name in its title pill and choose **People**. (The row shows how many
-there are, and whether the Channel is **Public** or **Private**.)
+The people in a Thread are its **participants**. To see them, click the
+Thread's name in its title pill and choose **People**. (The row shows how many
+there are, and whether the Thread is **Public** or **Private**.)
 
-The list opens with who can read the Channel: **Private** (only people added
+The list opens with who can read the Thread: **Private** (only people added
 here) or **Public to organization**. Then come the participants, each with
 their email and whether they are a **Member**, an **Admin** or a **Guest**. A
-small dot beside a name means that person has this Channel open right now, so
+small dot beside a name means that person has this Thread open right now, so
 if you ask a question, someone may be there to answer it. Who can see which
-Channels, and why, is explained in
+Threads, and why, is explained in
 [Who can see what](../03-spaces-and-breakouts/04-who-can-see-what.md).
 
 ## Adding and removing people
 
 The quickest way is the menu itself:
 
-1. Click the Channel's name in its title pill and choose **Add people** (or
+1. Click the Thread's name in its title pill and choose **Add people** (or
    **People**).
 2. Type in **Add someone by name or email**, or pick from **Suggested**.
 3. Click **Add** beside the person.
@@ -39,7 +39,7 @@ A Breakout's title pill has the same **Add people** and **People**.
 
 A few rules:
 
-- Opening or reading a Channel does not make you a participant. You join when
+- Opening or reading a Thread does not make you a participant. You join when
   someone adds you.
 - You cannot remove the last participant. Someone has to keep the lights on.
 - Only people whose membership in the Organization is active appear in the list.
@@ -52,27 +52,27 @@ mentioning someone, as described in
 
 ## Mentioning someone who is not here yet
 
-In a private Channel, if you @-mention someone who is not a participant, Rally
+In a private Thread, if you @-mention someone who is not a participant, Rally
 stops before sending and asks: **Add participant?** (or **Add participants?** for
 several people). The message explains that the person is not currently a
 participant, and that if you do not add them, they will not be able to see the
-mention or the Channel.
+mention or the Thread.
 
 - **Add and mention** (or **Add all and mention**) adds them and sends your
   message.
 - **Cancel** sends nothing, so you can think again.
 
 > [!IMPORTANT]
-> Adding someone lets them read the whole Channel, not only your message. If the
-> Channel holds anything they should not see, cancel and start a separate
+> Adding someone lets them read the whole Thread, not only your message. If the
+> Thread holds anything they should not see, cancel and start a separate
 > conversation with them instead.
 
 This saves you from the awkward moment of tagging a colleague in a conversation
-they cannot open, and from sharing a private Channel by accident.
+they cannot open, and from sharing a private Thread by accident.
 
 ## Does Rally answer every message?
 
-No, and you would not want it to. When several people are talking in a Channel,
+No, and you would not want it to. When several people are talking in a Thread,
 not every message is a request for Rally. "Can you send me the deck, Priya?" is
 for Priya.
 
@@ -85,13 +85,13 @@ humans, or both:
 - People chatting among themselves, or telling a mentioned teammate something,
   are usually left alone.
 - If Rally cannot tell, it replies only when it is already in the middle of
-  some work in the Channel.
+  some work in the Thread.
 
 Rally makes this call by looking at the last ten or so messages, and it does not
 show you its decision. When you want to be sure, mention **@Rally**.
 
 Messages Rally did not answer are not ignored. Rally still reads them the next
-time it works in the Channel, so a decision your team made in passing becomes
+time it works in the Thread, so a decision your team made in passing becomes
 part of what it knows.
 
 ## Who said what, and when

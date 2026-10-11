@@ -88,7 +88,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "e8009eb8477530550eb4b3826c1c77ea1bd8339bd0b2b2e4516ad645c7bc39af",
+        hash: "56dc7ec5d5d504b83440d4c0b806a73aca4a0e8918cbe3682deedef9c76bed08",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -96,14 +96,14 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "0364720b2da989fc6ebffd834fc63bf2b79d407484e38fb0955f3626aac5cc48",
+        hash: "180eb046ad33df25cfea9af8d40482787397b34d0596d15ed5e8e57cf4afc06d",
       },
       workstreamName: {
         actual: renderWorkstreamNameMessages({
           objective: "Draft an email to Danny sharing the Rally download link.",
           openingMessage: "Draft an email to Danny sharing the Rally download link, and ask him to add Alex to the Tuesday call.",
         }),
-        hash: "cc655acaa60ed8897217f6f6d8b590deeb29a61d2f27686d5b79a0ef59ac3478",
+        hash: "273649a17663e365e01dc5a2e53f673b2e2cfff2410a2d0315ee5847fb5e34e7",
       },
       workstreamNameFromConversation: {
         actual: renderWorkstreamNameMessages({
@@ -114,7 +114,7 @@ describe("prompt renderers", () => {
             { author: "person", text: "Use danny@mucker.com and mention the Tuesday call." },
           ],
         }),
-        hash: "2626bd0f9c69542e0db3085840c1b64f7b44e30e181caceb574fcfa83089b79d",
+        hash: "63693dc522769c3b3865577d1f7355c0af7a145c455b3a9cb853c90a750f6c78",
       },
       workstreamDescription: {
         actual: renderWorkstreamDescriptionMessages({
@@ -143,7 +143,7 @@ describe("prompt renderers", () => {
             },
           ],
         }),
-        hash: "9607124da9ca9a7f6f5d485f68fdd564b89152d9e82536396cf73e63b039ef26",
+        hash: "2c315f9bf08f9066862777bdc704ae60fc8d158a64b0349d7e2c58b7074f93d7",
       },
       sessionImportSystem: {
         actual: renderSessionImportSystemPrompt(),
@@ -585,10 +585,10 @@ describe("prompt renderers", () => {
       executionAuthority: "workspace",
     });
 
-    expect(prompt).toContain("authorized by the Rally workspace");
+    expect(prompt).toContain("authorized by the Rally organization");
     expect(prompt).toContain("not by the Slack member");
     expect(prompt).toContain("not by the person who installed the Slack app");
-    expect(prompt).toContain("Use only shared workspace-scoped connections");
+    expect(prompt).toContain("Use only shared organization-wide connections");
     expect(prompt).toContain("request structured input");
     expect(prompt).toContain('"executionAuthority": "workspace"');
   });
@@ -647,6 +647,8 @@ describe("prompt renderers", () => {
     // trigger. Re-measured after review removed a duplicate Documents sentence:
     // the prompt without Sites is 7,701 bytes, Sites costs 662, and the total is
     // 8,363 — 137 bytes of deliberate headroom rather than the previous 11.
+    // Stating the Organization, Channel, Thread, Breakout hierarchy in the
+    // orientation brought the total to 8,443, leaving 57 bytes.
     expect(Buffer.byteLength(workstreamPrompt, "utf8")).toBeLessThan(8_500);
   });
 

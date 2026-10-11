@@ -71,12 +71,16 @@ import {
   WorkspaceExternalEventDeliveryQueueMessageSchema,
   WorkspaceExternalEventMatchResultSchema,
   asSpaceId,
+  asWorkstreamId,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
   automationTriggersAdmitResourceType,
   IdSchema,
   SpaceConversationSchema,
+  type ChannelStats,
+  type Pin,
+  type PinKind,
   type SpaceConversation,
   UserIdSchema,
   SubstreamIdSchema,
@@ -91,6 +95,7 @@ import {
   WorkspaceAttentionSchema,
   WorkspaceSpaceConversationsEventSchema,
   WorkspaceSpaceSnapshotEventSchema,
+  WorkspaceNavigationStateEventSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceWorkstreamRecencyEventSchema,
   WorkspaceSidebarSchema,
@@ -230,6 +235,7 @@ import {
   readWorkstreamAuthorityControl,
 } from "../services/workstream-authority";
 import { boundParameterChunks } from "./bound-parameters";
+import { isBreakoutActivityEvent } from "./breakout-activity";
 import { projectionSupersedes, type StoredProjection } from "./projection-fence";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
 import { conversationObjectName, workspaceDOName } from "./names";
@@ -658,6 +664,28 @@ import {
   WorkspaceSpaceBootstrapStatusSchema,
   WorkspaceSpaceChannelPageRequestSchema,
   WorkspaceSpaceChannelPageResultSchema,
+  WorkspaceChannelFeedResultSchema,
+  WorkspaceActivityResultSchema,
+  WorkspaceActivitySeenRequestSchema,
+  type WorkspaceActivityResult,
+  type WorkspaceActivitySeenRequest,
+  WorkspaceMyThreadsRequestSchema,
+  WorkspaceMyThreadsResultSchema,
+  WorkspacePinChangeRequestSchema,
+  WorkspacePinOrderRequestSchema,
+  WorkspacePinResultSchema,
+  WorkspaceChannelStatsResultSchema,
+  WorkspaceSpaceReadRequestSchema,
+  type WorkspaceSpaceReadRequest,
+  WorkspaceSpaceReadResultSchema,
+  type WorkspaceSpaceReadResult,
+  type WorkspaceChannelStatsResult,
+  type WorkspaceChannelFeedResult,
+  type WorkspaceMyThreadsRequest,
+  type WorkspaceMyThreadsResult,
+  type WorkspacePinChangeRequest,
+  type WorkspacePinOrderRequest,
+  type WorkspacePinResult,
   WorkspaceSpaceDefaultRequestSchema,
   WorkspaceSpaceDefaultResultSchema,
   WorkspaceSpaceBootstrapPageSchema,
@@ -729,6 +757,7 @@ import {
   type WorkspaceSpaceReserveRequest,
 } from "./workspace-space-protocol";
 import {
+  breakoutListedSql,
   channelListed,
   channelListedSql,
   mainOpenableSql,
@@ -748,7 +777,12 @@ import {
   SPACE_INVITEES_MIGRATION,
   WorkspaceSpaceStorage,
   type WorkspaceSpaceIntentClaim,
+  type SpaceConversationKey,
 } from "./workspace-space-storage";
+import { WorkspacePinStorage, WORKSPACE_PINS_MIGRATION } from "./workspace-pin-storage";
+import { type ChannelReadState, WORKSPACE_CHANNEL_READS_MIGRATION } from "./workspace-channel-read-storage";
+import { unreadState } from "./unread-state";
+import { WorkspaceActivityFeed } from "./workspace-activity-feed";
 import {
   PersonalSystemPromptReadRequestSchema,
   PersonalSystemPromptWriteRequestSchema,
@@ -4201,6 +4235,17 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 96,
   description: "Organization invitees listed in a Space until they join",
   statements: SPACE_INVITEES_MIGRATION,
+}, {
+  version: 97,
+  description: "one pin table for threads, Channels and breakouts, and the Threads and Channel feed indexes",
+  // The old pin tables stay and are still written; see workspace-pin-storage.ts.
+  statements: WORKSPACE_PINS_MIGRATION,
+}, {
+  version: 98,
+  description: "a Channel's unread waterline and each person's read position in it",
+  // Breakout-identical columns, advanced only by placing a thread; see
+  // workspace-channel-read-storage.ts and docs/spaces.md#channel-read-state.
+  statements: WORKSPACE_CHANNEL_READS_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -4462,13 +4507,15 @@ function directoryWorkstream(
   mainOpen = true,
 ): Workstream {
   const latest = Number(row.latest_attention_ordinal);
-  const seen = row.seen_attention_ordinal === null
-    ? Number(row.unread_tracking_start_ordinal)
-    : Number(row.seen_attention_ordinal);
   const manual = row.manual_unread_from_ordinal === null
     ? null
     : Number(row.manual_unread_from_ordinal);
-  const firstUnread = manual ?? (latest > seen ? Math.min(latest, seen + 1) : null);
+  const { readThrough: seen, firstUnread, hasUnread } = unreadState({
+    latest,
+    seen: row.seen_attention_ordinal === null ? null : Number(row.seen_attention_ordinal),
+    trackingStart: Number(row.unread_tracking_start_ordinal),
+    manual,
+  });
   const titleStatus = settledTitleStatus(row.title_status, row.source_created_at);
   const participantPreview = row.scope === "personal"
     ? preview
@@ -4487,7 +4534,7 @@ function directoryWorkstream(
     readThroughSequenceNumber: seen,
     manualUnreadFromSequenceNumber: manual,
     manualUnreadGeneration: Number(row.manual_unread_generation ?? 0),
-    hasUnread: firstUnread !== null,
+    hasUnread,
     youAreMentioned: Number(row.latest_mention_attention_ordinal ?? 0) > seen,
     unseen: row.unseen === 1,
     firstUnreadSequenceNumber: firstUnread,
@@ -4565,13 +4612,14 @@ function withoutMainState(state: ChannelViewerState | undefined): Partial<Channe
  * The derivations are `directoryWorkstream`'s, against the breakout tables:
  * the unread waterline falls back to the conversation's own
  * `unread_tracking_start_ordinal` when this person has no viewer row, and a
- * mention counts only above that waterline. They are written out rather than
- * shared with that function because the two read different tables and the
- * columns a Channel row has that a breakout does not — a pin, a visit, an
- * email address, a facepile, a wake-up — are exactly the fields a breakout
- * answers with their empty value. What *is* shared is the decision that
- * matters: which of these rows appears at all, which the page query makes with
- * one predicate rendered against both tables.
+ * mention counts only above that waterline. The unread derivation itself is
+ * the shared `unreadState`, which a Channel container's read state uses too.
+ * The rest is written out rather than shared with that function because the
+ * two read different tables and the columns a Channel row has that a breakout
+ * does not — a pin, a visit, an email address, a facepile, a wake-up — are
+ * exactly the fields a breakout answers with their empty value. What *is*
+ * shared is the decision that matters: which of these rows appears at all,
+ * which the page query makes with one predicate rendered against both tables.
  *
  * `id` is the substream id, because that is this conversation's identity. The
  * parent's id, the substream id again and the parent's title travel in
@@ -4608,13 +4656,15 @@ function breakoutConversation(
   spaceIds: readonly string[],
 ): SpaceConversation {
   const latest = Number(row.latest_attention_ordinal);
-  const seen = row.seen_attention_ordinal === null
-    ? Number(row.unread_tracking_start_ordinal)
-    : Number(row.seen_attention_ordinal);
   const manual = row.manual_unread_from_ordinal === null
     ? null
     : Number(row.manual_unread_from_ordinal);
-  const firstUnread = manual ?? (latest > seen ? Math.min(latest, seen + 1) : null);
+  const { readThrough: seen, firstUnread, hasUnread } = unreadState({
+    latest,
+    seen: row.seen_attention_ordinal === null ? null : Number(row.seen_attention_ordinal),
+    trackingStart: Number(row.unread_tracking_start_ordinal),
+    manual,
+  });
   return SpaceConversationSchema.parse({
     id: row.substream_id,
     workspaceId,
@@ -4631,7 +4681,7 @@ function breakoutConversation(
     readThroughSequenceNumber: seen,
     manualUnreadFromSequenceNumber: manual,
     manualUnreadGeneration: Number(row.manual_unread_generation ?? 0),
-    hasUnread: firstUnread !== null,
+    hasUnread,
     youAreMentioned: Number(row.latest_mention_attention_ordinal ?? 0) > seen,
     unseen: row.unseen === 1,
     firstUnreadSequenceNumber: firstUnread,
@@ -5340,7 +5390,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (isPersonNotificationEffect(effect)) {
         if (applied.notificationIntentId) outbox.push(envelope);
       } else if (effect.kind === "activity_event" && effect.sourceKind === "workstream_message"
-        && effect.sourceId && effect.targets.length > 0) {
+        && effect.sourceId && effect.targets.length > 0 && !isBreakoutActivityEvent(effect)) {
         outbox.push(envelope);
       }
     }
@@ -9147,6 +9197,71 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * What each keyed conversation looks like to this viewer, in the order the
+   * keys came in: the projection the dashboard, the Threads tab and anything
+   * else listing a mix of threads and breakouts answer with.
+   *
+   * Two reads rather than one join, because the two kinds live in two tables
+   * on purpose (`workspace-breakout-storage.ts` says why). A key the second
+   * read cannot find — a thread this viewer may not open after all, which is
+   * the directory's fact rather than the caller's — is dropped.
+   */
+  private conversationRows(
+    viewer: Viewer,
+    workspaceId: string,
+    keys: readonly SpaceConversationKey[],
+  ): SpaceConversation[] {
+    const channelIds = keys.flatMap((item) => (
+      item.kind === "channel" ? [item.workstreamId] : []
+    ));
+    const breakoutIds = keys.flatMap((item) => (
+      item.kind === "breakout" && item.substreamId !== null ? [item.substreamId] : []
+    ));
+    // Chunked, because a page is up to `SPACE_CHANNEL_PAGE_SIZE` ids and one
+    // statement binds at most a hundred parameters.
+    const channelRows = boundParameterChunks(channelIds).flatMap((chunk) =>
+      this.state.storage.sql.exec<WorkspaceDirectoryRow>(
+        `${SELECT_WORKSPACE_DIRECTORY}
+         WHERE directory.workstream_id IN (${chunk.map(() => "?").join(", ")})
+           AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
+         ORDER BY directory.workstream_id`,
+        viewer.userId,
+        viewer.userId,
+        ...chunk,
+      ).toArray());
+    const breakoutRows = boundParameterChunks(breakoutIds).flatMap((chunk) =>
+      this.state.storage.sql.exec<WorkspaceBreakoutRow>(
+        `${SELECT_WORKSPACE_BREAKOUT}
+         WHERE breakout.substream_id IN (${chunk.map(() => "?").join(", ")})
+         ORDER BY breakout.substream_id`,
+        viewer.userId,
+        ...chunk,
+      ).toArray());
+    const spaceStorage = this.spaceStorage();
+    const channels = new Map(mapDirectoryWorkstreams(
+      this.state.storage.sql, channelRows, workspaceId, spaceStorage, viewer,
+    ).map((workstream) => [workstream.id as string, workstream]));
+    // A breakout's Spaces are its parent Channel's: a breakout has no
+    // membership of its own, and the field is what a client uses to decide
+    // which Space a row belongs under.
+    const spaceIdsByChannel = spaceStorage.spaceIdsByChannel(
+      viewer, [...new Set(breakoutRows.map((row) => row.workstream_id))],
+    );
+    const breakouts = new Map(breakoutRows.map((row) => [
+      row.substream_id,
+      breakoutConversation(row, workspaceId, spaceIdsByChannel.get(row.workstream_id) ?? []),
+    ]));
+    return keys.flatMap((item) => {
+      if (item.kind === "channel") {
+        const channel = channels.get(item.workstreamId);
+        return channel ? [{ ...channel, kind: "channel" as const, breakoutOf: null }] : [];
+      }
+      const breakout = item.substreamId === null ? undefined : breakouts.get(item.substreamId);
+      return breakout ? [breakout] : [];
+    });
+  }
+
+  /**
    * One page of the conversations in a Space that currently need this viewer.
    *
    * The route is still `/spaces/:id/channels` and the RPC still carries that
@@ -9176,58 +9291,238 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const page = this.spaceStorage().conversationPage(viewer, request.spaceId, request.cursor);
     if (page === "invalid_cursor") return { ok: false, code: "space_cursor_invalid" };
     if (page === false) return { ok: false, code: "space_not_found" };
-    const channelIds = page.items.flatMap((item) => (
-      item.kind === "channel" ? [item.workstreamId] : []
-    ));
-    const breakoutIds = page.items.flatMap((item) => (
-      item.kind === "breakout" && item.substreamId !== null ? [item.substreamId] : []
-    ));
-    // Chunked, because a page is up to `SPACE_CHANNEL_PAGE_SIZE` ids and one
-    // statement binds at most a hundred parameters.
-    const channelRows = boundParameterChunks(channelIds).flatMap((chunk) =>
-      this.state.storage.sql.exec<WorkspaceDirectoryRow>(
-        `${SELECT_WORKSPACE_DIRECTORY}
-         WHERE directory.workstream_id IN (${chunk.map(() => "?").join(", ")})
-           AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
-         ORDER BY directory.workstream_id`,
-        request.userId,
-        request.userId,
-        ...chunk,
-      ).toArray());
-    const breakoutRows = boundParameterChunks(breakoutIds).flatMap((chunk) =>
-      this.state.storage.sql.exec<WorkspaceBreakoutRow>(
-        `${SELECT_WORKSPACE_BREAKOUT}
-         WHERE breakout.substream_id IN (${chunk.map(() => "?").join(", ")})
-         ORDER BY breakout.substream_id`,
-        request.userId,
-        ...chunk,
-      ).toArray());
-    const spaceStorage = this.spaceStorage();
-    const channels = new Map(mapDirectoryWorkstreams(
-      this.state.storage.sql, channelRows, request.workspaceId, spaceStorage, viewer,
-    ).map((workstream) => [workstream.id as string, workstream]));
-    // A breakout's Spaces are its parent Channel's: a breakout has no
-    // membership of its own, and the field is what a client uses to decide
-    // which Space a row belongs under.
-    const spaceIdsByChannel = spaceStorage.spaceIdsByChannel(
-      viewer, [...new Set(breakoutRows.map((row) => row.workstream_id))],
-    );
-    const breakouts = new Map(breakoutRows.map((row) => [
-      row.substream_id,
-      breakoutConversation(row, request.workspaceId, spaceIdsByChannel.get(row.workstream_id) ?? []),
-    ]));
-    const items = page.items.flatMap((item) => {
-      if (item.kind === "channel") {
-        const channel = channels.get(item.workstreamId);
-        return channel ? [{ ...channel, kind: "channel" as const, breakoutOf: null }] : [];
-      }
-      const breakout = item.substreamId === null ? undefined : breakouts.get(item.substreamId);
-      return breakout ? [breakout] : [];
-    });
+    const items = this.conversationRows(viewer, request.workspaceId, page.items);
     return WorkspaceSpaceChannelPageResultSchema.parse({
       ok: true,
       page: { items, nextCursor: page.nextCursor },
     });
+  }
+
+  /**
+   * One page of a Channel's feed (the storage Space's threads, newest placement
+   * first). A thread this viewer may open comes back whole; one they may not is
+   * a locked row with its id and placement time and nothing else, which is the
+   * whole point of reading it from storage as a flag rather than projecting it.
+   */
+  async listChannelFeed(input: WorkspaceSpaceChannelPageRequest): Promise<WorkspaceChannelFeedResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceChannelPageRequestSchema, input, "list_channel_feed");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return { ok: false, code: "space_access_denied" };
+    const page = this.spaceStorage().feedPage(viewer, request.spaceId, request.cursor);
+    if (page === "invalid_cursor") return { ok: false, code: "space_cursor_invalid" };
+    if (page === false) return { ok: false, code: "space_not_found" };
+    const threads = new Map(this.conversationRows(
+      viewer,
+      request.workspaceId,
+      page.items.flatMap((item) => (item.openable
+        ? [{ kind: "channel" as const, workstreamId: item.workstreamId, substreamId: null }]
+        : [])),
+    ).map((thread) => [thread.id as string, thread]));
+    return WorkspaceChannelFeedResultSchema.parse({
+      ok: true,
+      page: {
+        items: page.items.map((item) => {
+          const thread = item.openable ? threads.get(item.workstreamId) : undefined;
+          const placedAt = iso(item.placedAt);
+          const attentionSequenceNumber = item.attentionOrdinal;
+          if (!thread) return { kind: "locked", placedAt, attentionSequenceNumber, threadId: item.workstreamId };
+          return { kind: "thread", placedAt, attentionSequenceNumber, thread: WorkstreamSchema.parse(thread) };
+        }),
+        nextCursor: page.nextCursor,
+        latestAttentionSequenceNumber: page.latestAttentionOrdinal,
+      },
+    });
+  }
+
+  /** One page of the Threads tab: the threads and breakouts this person takes part in or pinned. */
+  async listMyThreads(input: WorkspaceMyThreadsRequest): Promise<WorkspaceMyThreadsResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceMyThreadsRequestSchema, input, "list_my_threads");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return { ok: false, code: "space_access_denied" };
+    const page = this.spaceStorage().participatingPage(viewer, request.cursor);
+    if (page === "invalid_cursor") return { ok: false, code: "space_cursor_invalid" };
+    const pinnedPage = request.cursor !== null ? null
+      : this.spaceStorage().participatingPage(viewer, null, { pinnedOnly: true });
+    const pinned = pinnedPage === null || pinnedPage === "invalid_cursor" ? [] : pinnedPage.items;
+    return WorkspaceMyThreadsResultSchema.parse({
+      ok: true,
+      page: {
+        items: this.conversationRows(viewer, request.workspaceId, page.items),
+        nextCursor: page.nextCursor,
+        pinned: this.conversationRows(viewer, request.workspaceId, pinned),
+      },
+    });
+  }
+
+  /** One page of the Activity tab; see `workspace-activity-feed.ts`. */
+  async listActivity(input: WorkspaceMyThreadsRequest): Promise<WorkspaceActivityResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceMyThreadsRequestSchema, input, "list_activity");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return { ok: false, code: "space_access_denied" };
+    const page = new WorkspaceActivityFeed(this.state.storage, this.spaceStorage()).page(viewer, request.cursor);
+    if (page === "invalid_cursor") return { ok: false, code: "space_cursor_invalid" };
+    return WorkspaceActivityResultSchema.parse({ ok: true, page });
+  }
+
+  /** Mark the Activity tab read through a time, for this person's other windows too. */
+  async markActivitySeen(input: WorkspaceActivitySeenRequest): Promise<void> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceActivitySeenRequestSchema, input, "mark_activity_seen");
+    this.assertWorkspace(request.workspaceId);
+    const feed = new WorkspaceActivityFeed(this.state.storage, this.spaceStorage());
+    if (!feed.ready()) return;
+    feed.markSeen(request.userId, request.seenThrough, Date.now());
+  }
+
+  /** This person's pins, every kind. */
+  async listPins(input: WorkspaceSpaceListRequest): Promise<WorkspacePinResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceListRequestSchema, input, "list_pins");
+    this.assertWorkspace(request.workspaceId);
+    return WorkspacePinResultSchema.parse({ ok: true, pins: new WorkspacePinStorage(this.state.storage).list(request.userId) });
+  }
+
+  /**
+   * The Channels tab's second lines on their own, read again when a thread is
+   * placed or moves, so the counts follow without a whole Space snapshot.
+   */
+  async listChannelStats(input: WorkspaceSpaceListRequest): Promise<WorkspaceChannelStatsResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceListRequestSchema, input, "list_channel_stats");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return { ok: false, code: "space_access_denied" };
+    return WorkspaceChannelStatsResultSchema.parse({ ok: true, stats: this.channelStatsFor(viewer) });
+  }
+
+  /**
+   * Acknowledge a Channel read through a placement, for this person alone.
+   *
+   * Answers the person's whole `ChannelStats` row for that Channel, and sends
+   * their other sockets the snapshot that carries the same row, the path a pin
+   * already takes, so a second window's dot clears without a new event kind.
+   */
+  async acknowledgeSpaceRead(input: WorkspaceSpaceReadRequest): Promise<WorkspaceSpaceReadResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceReadRequestSchema, input, "acknowledge_space_read");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return { ok: false, code: "space_access_denied" };
+    const read = this.spaceStorage().acknowledgeRead(
+      viewer,
+      request.spaceId,
+      request.readThroughSequenceNumber,
+    );
+    return this.spaceReadAnswer(viewer, request.spaceId, read);
+  }
+
+  private spaceReadAnswer(viewer: Viewer, spaceId: string, read: ChannelReadState | false): WorkspaceSpaceReadResult {
+    if (read === false) return { ok: false, code: "space_not_found" };
+    const stats = this.channelStatsFor(viewer, spaceId)[0];
+    if (!stats) return { ok: false, code: "space_not_found" };
+    this.publishNavigationState(viewer.userId, { channelStats: [stats] });
+    return WorkspaceSpaceReadResultSchema.parse({ ok: true, stats });
+  }
+
+  /**
+   * Tell one person's other windows what a write of their own changed: the
+   * pin list, or one Channel's read state. Only what changed is sent, so a
+   * read or a pin never rebuilds the Space snapshot.
+   */
+  private publishNavigationState(
+    userId: string,
+    state: { pins?: Pin[]; channelStats?: ChannelStats[] },
+  ): void {
+    const message = JSON.stringify(WorkspaceNavigationStateEventSchema.parse({
+      type: "workspace_navigation_state",
+      occurredAt: new Date().toISOString(),
+      ...state,
+    }));
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed || attachment.userId !== userId) continue;
+      try {
+        socket.send(message);
+      } catch {
+        // Reconnect receives the same state in the subscribe payload.
+      }
+    }
+  }
+
+  /**
+   * Pin or unpin a thread, a Channel or a breakout.
+   *
+   * A pin is refused for an item this person may not list, so a pin can never
+   * be how somebody learns a thread exists. An unpin is never refused: taking
+   * away a pin to something you can no longer see is how you tidy it up.
+   */
+  async changePin(input: WorkspacePinChangeRequest): Promise<WorkspacePinResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspacePinChangeRequestSchema, input, "change_pin");
+    this.assertWorkspace(request.workspaceId);
+    const pins = new WorkspacePinStorage(this.state.storage);
+    if (request.pinned) {
+      const viewer = await this.spaceReader(request.workspaceId, request.userId);
+      if (!viewer || !this.pinTargetListed(viewer, request.kind, request.itemId, request.parentId)) {
+        return { ok: false, code: "pin_target_not_found" };
+      }
+    }
+    const now = Date.now();
+    const outcome = this.state.storage.transactionSync((): "changed" | "unchanged" | "limit" => {
+      if (!request.pinned) return pins.unpin(request.userId, request.kind, request.itemId) ? "changed" : "unchanged";
+      if (pins.count(request.userId) >= MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER) return "limit";
+      return pins.pin(request.userId, request.kind, request.itemId, request.parentId, now) ? "changed" : "unchanged";
+    });
+    if (outcome === "limit") return { ok: false, code: "pin_limit_reached" };
+    const list = pins.list(request.userId);
+    if (outcome === "changed") this.publishNavigationState(request.userId, { pins: list });
+    return WorkspacePinResultSchema.parse({ ok: true, pins: list });
+  }
+
+  /** Put one kind of pin in this person's order. */
+  async reorderPins(input: WorkspacePinOrderRequest): Promise<WorkspacePinResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspacePinOrderRequestSchema, input, "reorder_pins");
+    this.assertWorkspace(request.workspaceId);
+    const pins = new WorkspacePinStorage(this.state.storage);
+    const now = Date.now();
+    this.state.storage.transactionSync(() => pins.reorder(request.userId, request.kind, request.ids, now));
+    const list = pins.list(request.userId);
+    this.publishNavigationState(request.userId, { pins: list });
+    return WorkspacePinResultSchema.parse({ ok: true, pins: list });
+  }
+
+  private pinTargetListed(viewer: Viewer, kind: PinKind, itemId: string, parentId: string | null): boolean {
+    if (kind === "thread") return parentId === null && this.directoryVisible(viewer, itemId);
+    if (kind === "channel") return parentId === null && this.spaceStorage().reach(viewer, itemId, true) !== null;
+    if (parentId === null || !this.spaceStorage().breakoutsReady()) return false;
+    // The conversation page's two gates: the thread is listed, then the breakout is.
+    return this.state.storage.sql.exec(
+      `SELECT 1 AS one FROM breakouts breakout
+         JOIN channels directory ON directory.workstream_id = breakout.workstream_id
+         LEFT JOIN channel_viewers viewer
+           ON viewer.workstream_id = directory.workstream_id
+          AND viewer.user_id = ?1
+          AND viewer.authority_generation = directory.authority_generation
+         LEFT JOIN breakout_viewers breakout_viewer
+           ON breakout_viewer.workstream_id = breakout.workstream_id
+          AND breakout_viewer.substream_id = breakout.substream_id
+          AND breakout_viewer.user_id = ?1
+          AND breakout_viewer.authority_generation = breakout.authority_generation
+        WHERE breakout.workstream_id = ?2 AND breakout.substream_id = ?3
+          AND breakout.archived_at IS NULL AND directory.archived_at IS NULL
+          AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts: true, userId: "?1" })}
+          AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass)}`,
+      viewer.userId,
+      parentId,
+      itemId,
+    ).toArray().length === 1;
   }
 
   /** The active Spaces one Channel currently sits in. */
@@ -9346,6 +9641,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
+    // General is every thread's fallback home, so it stays Organization-wide:
+    // a private General would hide every unplaced thread's Channel.
+    if (request.audience.scope === "personal" && this.spaceStorage().generalSpaceId() === request.spaceId) {
+      return { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    }
     const activeMembers = await Promise.all(request.audience.participantUserIds.map((userId) => (
       this.activeSpaceMember(request.workspaceId, userId)
     )));
@@ -9502,6 +9802,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         const spaces = placed.map((entry) => entry.space);
         const start = resolveSpaceWorkstreamStart({
           spaces, scope: request.requestedScope, requestedParticipantUserIds: request.requestedParticipantUserIds,
+          narrowInPrivateSpaces: request.narrowInPrivateSpaces === true,
         });
         const child = parent.reserveChild({
           workspaceId: request.workspaceId,
@@ -9593,7 +9894,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!this.directoryVisible(member(request.auth.userId), request.workstreamId)) {
       return {
         ok: false,
-        refusal: { about: "conversation", status: 404, code: "workstream_not_found", message: "Channel not found" },
+        refusal: { about: "conversation", status: 404, code: "workstream_not_found", message: "Thread not found" },
       };
     }
     return this.addChannelToSpace(request.auth.workspaceId, request.auth.userId, request.spaceId, request.workstreamId);
@@ -9749,9 +10050,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const result = WorkspaceSpaceMutationResultSchema.parse(this.spaceStorage().archive(request.userId, request.spaceId));
+    const storage = this.spaceStorage();
+    const archived = storage.archive(request.workspaceId, request.userId, request.spaceId);
+    const result = WorkspaceSpaceMutationResultSchema.parse(archived.result);
     if (!result.ok) return result;
     this.publishSpaceSnapshot();
+    if (archived.rehomed.length > 0) {
+      const general = asSpaceId(storage.generalSpaceId()!);
+      this.publishSpaceConversationsChanged({
+        spaceIdsThroughChannel: new Map(archived.rehomed.map((workstreamId) => [asWorkstreamId(workstreamId), [general]])),
+      });
+      for (const workstreamId of archived.rehomed) {
+        this.deferSpaceMembershipConvergence(request.workspaceId, asWorkstreamId(workstreamId), false);
+      }
+      await this.afterSidekickDefaultsApplied(storage, request.workspaceId);
+    }
     // An archive takes every member Channel off this Space's dashboard and a
     // restore puts them back. `spaceIds`, which names the Space to everybody
     // who reaches it, is right here: the Space's own disappearance and return
@@ -14290,6 +14603,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       throw new Error("workstream_not_found");
     }
     const now = Date.now();
+    const pinStorage = new WorkspacePinStorage(this.state.storage);
     const changed = this.state.storage.transactionSync(() => {
       const alreadyPinned = this.state.storage.sql.exec<{ one: number }>(
         `SELECT 1 AS one FROM workspace_workstream_pins
@@ -14319,6 +14633,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         now,
         now,
       ).toArray().length === 1;
+      // Mirrored into the one pin table the new client reads, so a pin made on
+      // an older desktop shows there too; see workspace-pin-storage.ts.
+      if (inserted && pinStorage.ready()) pinStorage.pin(request.userId, "thread", request.workstreamId, null, now);
       if (inserted) this.advanceDirectoryVersion(now);
       return inserted;
     });
@@ -14347,6 +14664,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ).toArray().length === 1;
       if (removed) {
         this.rewritePinOrder(request.userId, request.spaceId, [], now);
+        // The thread stays pinned while any Space still pins it, as it did
+        // under All; see workspace-pin-storage.ts.
+        const stillPinned = this.state.storage.sql.exec(
+          `SELECT 1 FROM workspace_workstream_pins WHERE user_id = ? AND workstream_id = ?`,
+          request.userId,
+          request.workstreamId,
+        ).toArray().length > 0;
+        const pinStorage = new WorkspacePinStorage(this.state.storage);
+        if (!stillPinned && pinStorage.ready()) pinStorage.unpin(request.userId, "thread", request.workstreamId);
         this.advanceDirectoryVersion(now);
       }
       return removed;
@@ -16389,6 +16715,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       && namedSpaceIds.length === 0 && spaceIdsThroughChannel.size === 0
     ) return;
     const occurredAt = new Date().toISOString();
+    // The `spaceIds` and `spaceIdsThroughChannel` arms are a thread entering
+    // or leaving a Channel, or the Channel itself moving; the Channel arms are
+    // a row already in one changing.
+    const placementChanged = namedSpaceIds.length > 0 || spaceIdsThroughChannel.size > 0;
     const spaces = this.spaceStorage();
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
@@ -16426,6 +16756,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         socket.send(JSON.stringify(WorkspaceSpaceConversationsEventSchema.parse({
           type: "space_conversations_changed",
           occurredAt,
+          placementChanged,
           spaceIds: sortedSpaceIds,
           attentionCounts: sortedSpaceIds.map((spaceId) => ({
             spaceId,
@@ -16448,10 +16779,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (!attachment?.subscribed) continue;
       if (onlyUserId !== undefined && attachment.userId !== onlyUserId) continue;
       try {
+        // No `channelStats`: they are a grouped read over every placement,
+        // per socket, and a snapshot goes to every socket in the
+        // Organization. A client reads them again over REST
+        // (`/navigation/channel-stats`) when a snapshot arrives without them.
         socket.send(JSON.stringify(WorkspaceSpaceSnapshotEventSchema.parse({
           type: "workspace_space_snapshot",
           occurredAt,
-          ...this.spacesFor(attachment),
+          ...this.spacesFor(attachment, { channelStats: false }),
         })));
       } catch {
         // Reconnect receives this same snapshot in the subscribe payload.
@@ -16465,10 +16800,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * A guest is not Organization-wide, so a Space reaches them only through a
    * Channel they may list, with the `through_channel` summary.
    */
-  private spacesFor(attachment: WorkspaceSocketAttachment): {
+  private spacesFor(attachment: WorkspaceSocketAttachment, options: { channelStats: boolean } = { channelStats: true }): {
     spaces: SpaceSnapshot;
     ordering: PersonalOrder;
     pinnedOrder: string[];
+    pins: Pin[];
+    channelStats?: ChannelStats[];
     spacesReady: boolean;
   } {
     const spaces = this.spaceStorage();
@@ -16482,8 +16819,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       spaces: { active, inactive: spaces.listInactive(viewer) },
       ordering: spaces.readOrders(attachment.workspaceId, viewer),
       pinnedOrder: spaces.readPinnedOrder(viewer),
+      pins: new WorkspacePinStorage(this.state.storage).list(viewer.userId),
+      ...(options.channelStats ? { channelStats: this.channelStatsFor(viewer) } : {}),
       spacesReady: spaces.bootstrapStatus().ready,
     };
+  }
+
+  private channelStatsFor(viewer: Viewer, onlySpaceId?: string): ChannelStats[] {
+    return this.spaceStorage().channelStats(viewer, onlySpaceId).map((stats) => ({
+      channelId: stats.spaceId,
+      threadCount: stats.threadCount,
+      lastActivityAt: iso(stats.lastActivityAt),
+      ...stats.read,
+    }));
   }
 
   private async publishDirectorySync(workspaceId: string): Promise<void> {

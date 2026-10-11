@@ -1,0 +1,134 @@
+import { z } from "zod";
+
+import { IdSchema, WorkstreamIdSchema } from "./identifiers";
+
+/**
+ * What a person can pin: a thread (storage `workstream`), a Channel (storage
+ * `space`) or a breakout (storage `substream`). One list per kind, each in the
+ * person's own order. See `docs/workstream-pinning.md`.
+ */
+export const PinKindSchema = z.enum(["thread", "channel", "breakout"]);
+export type PinKind = z.infer<typeof PinKindSchema>;
+
+/**
+ * One pin. `parentId` is the breakout's thread, which a client needs to open
+ * it, and `null` for the other two kinds.
+ */
+export const PinSchema = z.strictObject({
+  kind: PinKindSchema,
+  id: IdSchema,
+  parentId: WorkstreamIdSchema.nullable(),
+}).superRefine((pin, context) => {
+  if ((pin.kind === "breakout") !== (pin.parentId !== null)) {
+    context.addIssue({
+      code: "custom",
+      path: ["parentId"],
+      message: "A breakout pin carries its thread and no other pin does",
+    });
+  }
+});
+export type Pin = z.infer<typeof PinSchema>;
+
+/** Every pin a person has, each kind in their order. */
+export const PinListSchema = z.array(PinSchema);
+export type PinList = z.infer<typeof PinListSchema>;
+
+/** Pin one item. A breakout names its thread. */
+export const PinRequestSchema = z.strictObject({
+  parentId: WorkstreamIdSchema.optional(),
+});
+export type PinRequest = z.infer<typeof PinRequestSchema>;
+
+/** Save one kind's order: ids, first to last. Unknown ids are dropped. */
+export const PinOrderRequestSchema = z.strictObject({
+  kind: PinKindSchema,
+  ids: z.array(IdSchema),
+});
+export type PinOrderRequest = z.infer<typeof PinOrderRequestSchema>;
+
+/**
+ * What the Channels tab prints under each Channel's name, for the Channels this
+ * viewer may list: how many threads they may list in it, and when the newest of
+ * those last moved. Counts only listable threads, so a number never tells a
+ * person about threads they cannot see.
+ */
+export const ChannelStatsSchema = z.strictObject({
+  channelId: IdSchema,
+  threadCount: z.number().int().nonnegative(),
+  lastActivityAt: z.string().datetime({ offset: true }).nullable(),
+  /**
+   * The Channel's unread state, in the same fields and with the same meaning
+   * a thread or a breakout carries: each thread placed in the Channel takes
+   * the next attention sequence number, and the viewer's read position is
+   * acknowledged the way a conversation's is. Only a placement advances it.
+   * A guest is never unread (they see no locked rows).
+   */
+  latestAttentionSequenceNumber: z.number().int().nonnegative(),
+  readThroughSequenceNumber: z.number().int().nonnegative(),
+  firstUnreadSequenceNumber: z.number().int().positive().nullable(),
+  hasUnread: z.boolean(),
+});
+export type ChannelStats = z.infer<typeof ChannelStatsSchema>;
+
+/**
+ * Acknowledge a Channel read through a placement. A Channel has no "mark
+ * unread", so unlike a thread's acknowledgement there is no generation to
+ * compare against.
+ */
+export const AcknowledgeChannelReadRequestSchema = z.strictObject({
+  readThroughSequenceNumber: z.number().int().nonnegative(),
+});
+export type AcknowledgeChannelReadRequest = z.infer<typeof AcknowledgeChannelReadRequestSchema>;
+
+export const ChannelStatsListSchema = z.array(ChannelStatsSchema);
+export type ChannelStatsList = z.infer<typeof ChannelStatsListSchema>;
+
+/**
+ * One row of the Activity tab.
+ *
+ * - `added`: somebody added the viewer to a thread or a breakout.
+ * - `mentioned`: somebody mentioned the viewer.
+ * - `thread_started`: somebody started a thread the viewer may list.
+ * - `breakout_started`: somebody started a breakout the viewer may list.
+ * - `run_finished`: Rally finished its latest run in a thread or breakout the
+ *   viewer takes part in.
+ *
+ * `breakout` is set when the row is about a breakout rather than its thread.
+ * Titles are the conversation's current ones, read when the page is.
+ */
+export const ActivityItemKindSchema = z.enum([
+  "added",
+  "mentioned",
+  "thread_started",
+  "breakout_started",
+  "run_finished",
+]);
+export type ActivityItemKind = z.infer<typeof ActivityItemKindSchema>;
+
+export const ActivityItemSchema = z.strictObject({
+  id: z.string().min(1).max(400),
+  kind: ActivityItemKindSchema,
+  occurredAt: z.string().datetime({ offset: true }),
+  actorUserId: IdSchema.nullable(),
+  actorLabel: z.string().max(300),
+  threadId: WorkstreamIdSchema,
+  threadTitle: z.string(),
+  breakout: z.strictObject({ substreamId: IdSchema, title: z.string() }).nullable(),
+  /** The Channels the thread sits in that the viewer may list. */
+  channelIds: z.array(IdSchema),
+  unread: z.boolean(),
+});
+export type ActivityItem = z.infer<typeof ActivityItemSchema>;
+
+/** One page of the Activity tab, newest first. */
+export const ActivityPageSchema = z.strictObject({
+  items: z.array(ActivityItemSchema),
+  nextCursor: z.string().min(1).nullable(),
+});
+export type ActivityPage = z.infer<typeof ActivityPageSchema>;
+
+/** Mark everything up to and including this time as read. */
+export const ActivitySeenRequestSchema = z.strictObject({
+  seenThrough: z.string().datetime({ offset: true }),
+});
+export type ActivitySeenRequest = z.infer<typeof ActivitySeenRequestSchema>;

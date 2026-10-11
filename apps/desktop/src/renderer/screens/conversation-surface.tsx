@@ -4,7 +4,11 @@ import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowled
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { skipToken, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { fetchThroughOwner } from '../lib/fetch-through-owner';
+import { usePinnedIds } from '../lib/pins';
 import clsx from 'clsx';
+import { personalColor, personalColorInk } from '../components/personal-avatar';
+import { MemberPresentationContext } from '../lib/member-presentation';
 import {
   AlertTriangle,
   Ellipsis,
@@ -173,12 +177,25 @@ export function workspaceMemberFromSession(session: ClientSession | null): Works
  * opening. The status lives here rather than on the layout so that a rail drawn
  * beside it, placeholder or real, is never read out as part of it.
  */
-function ConversationOpeningFeed({ label, parentKind, caption = false }: {
+function ConversationOpeningFeed({ label, parentKind, caption = false, openingMessage, openingAuthorId }: {
   label: string;
   parentKind: ConversationParentKind;
   /** Show the label above the placeholders, for a wait long enough to explain. */
   caption?: boolean;
+  /**
+   * What the person just sent, for a thread still being created: drawn as the
+   * message it is about to be, so the pane does not swap a placeholder for it.
+   */
+  openingMessage?: string | undefined;
+  /** Who sent it, for their own bubble colour, as the transcript draws it. */
+  openingAuthorId?: string | undefined;
 }): React.JSX.Element {
+  const presentations = useContext(MemberPresentationContext);
+  const profile = openingAuthorId ? presentations.get(openingAuthorId) : undefined;
+  const bubbleStyle = profile ? {
+    '--av-cmp-bubble-human-background': personalColor(profile.color),
+    '--av-cmp-bubble-human-foreground': personalColorInk(profile.color),
+  } as React.CSSProperties : undefined;
   return (
     <div
       aria-label={label}
@@ -200,7 +217,16 @@ function ConversationOpeningFeed({ label, parentKind, caption = false }: {
           </header>
         )}
         <div className="transcript-scroll">
-          <div className="transcript-column conversation-opening-messages">
+          {openingMessage ? <div className="transcript-column conversation-opening-messages">
+            <article className="message-block human-message own-human-message" style={bubbleStyle}>
+              <div className="human-message-content">
+                <div className="human-message-bubble">
+                  <div className="human-message-bubble-body"><div className="markdown-body"><p>{openingMessage}</p></div></div>
+                </div>
+              </div>
+            </article>
+            <p aria-hidden="true" className="conversation-opening-caption">{label}</p>
+          </div> : <div className="transcript-column conversation-opening-messages">
             {caption && <p aria-hidden="true" className="conversation-opening-caption">{label}</p>}
             <div className="conversation-opening-message">
               <div className="conversation-opening-byline">
@@ -239,7 +265,7 @@ function ConversationOpeningFeed({ label, parentKind, caption = false }: {
                 <span className="skeleton-bar conversation-opening-line is-short" />
               </div>
             </div>
-          </div>
+          </div>}
         </div>
         <div className="composer-dock conversation-opening-composer-dock">
           <div className="skeleton-bar conversation-opening-composer" />
@@ -253,14 +279,18 @@ export function ConversationOpeningSkeleton({
   label,
   parentKind,
   caption = false,
+  openingMessage,
+  openingAuthorId,
 }: {
   label: string;
   parentKind: ConversationParentKind;
   caption?: boolean;
+  openingMessage?: string | undefined;
+  openingAuthorId?: string | undefined;
 }): React.JSX.Element {
   return (
     <div className="conversation-layout conversation-opening-skeleton">
-      <ConversationOpeningFeed caption={caption} label={label} parentKind={parentKind} />
+      <ConversationOpeningFeed caption={caption} label={label} openingAuthorId={openingAuthorId} openingMessage={openingMessage} parentKind={parentKind} />
     </div>
   );
 }
@@ -615,7 +645,7 @@ export function AddParticipantDialog({
   return (
     <Modal
       description={privateSubstream
-        ? 'Added participants can read this breakout and its shared context. This does not grant access to the parent channel.'
+        ? 'Added participants can read this breakout and its shared context. This does not grant access to the parent thread.'
         : 'Add people to the main conversation. Opening or viewing never adds someone as a participant.'}
       onOpenChange={onOpenChange}
       open={open}
@@ -702,20 +732,19 @@ export function AddParticipantDialog({
 export function RemoveParticipantDialog({ failure, member, noun, onCancel, onContinue, pending, self }: {
   failure?: string | undefined;
   member: WorkspaceMember | undefined;
-  noun: 'channel' | 'breakout';
+  noun: 'thread' | 'breakout';
   onCancel: () => void;
   onContinue: () => void;
   pending: boolean;
   self: boolean;
 }): React.JSX.Element {
-  // A Space that includes the Channel keeps its members in, so leaving the
-  // Channel's own list ends access only when nothing else grants it.
+  // A Channel grants no reader (`docs/spaces.md`), so being in a Channel that
+  // holds this thread keeps nobody in it: only a public thread does.
   const who = self ? 'You' : member?.name ?? 'They';
   const keeps = self ? 'You keep' : 'They keep';
-  const viaSpace = noun === 'channel' ? ` or a space ${self ? 'you’re' : 'they’re'} in includes it` : '';
   return (
     <Modal
-      description={`${who} will be taken off this ${noun}. ${keeps} access only if it’s public${viaSpace}.`}
+      description={`${who} will be taken off this ${noun}. ${keeps} access only if it’s public.`}
       footer={<>
         <Button disabled={pending} onClick={onCancel}>Cancel</Button>
         <Button className="button-danger" disabled={pending} onClick={onContinue}>Continue</Button>
@@ -863,10 +892,10 @@ export function WorkstreamErrorState({
       <div className="screen-drag-strip window-drag" />
       <div className="screen-state-actions window-no-drag">
         <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild><IconButton label="More channel actions"><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
+          <DropdownMenu.Trigger asChild><IconButton label="More thread actions"><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
-              <DropdownMenu.Item className="menu-item" onSelect={copyWorkstreamId}><Info size={14} /> Copy channel ID</DropdownMenu.Item>
+              <DropdownMenu.Item className="menu-item" onSelect={copyWorkstreamId}><Info size={14} /> Copy thread ID</DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
@@ -874,7 +903,7 @@ export function WorkstreamErrorState({
       <EmptyState
         action={<Button onClick={onRetry}><RefreshCcw size={14} /> Try again</Button>}
         description={description}
-        title={`${parentNoun === 'automation' ? 'Sidekick' : 'Channel'} could not be opened`}
+        title={`${parentNoun === 'automation' ? 'Sidekick' : 'Thread'} could not be opened`}
       />
     </div>
   );
@@ -1346,13 +1375,13 @@ export function ConversationSurface({
   ), [detailQueryKey, queryClient, transcriptQueryKey]);
   const workstream = useQuery<WorkstreamDetail | undefined>({
     queryKey: detailQueryKey,
-    queryFn: async () => undefined,
+    queryFn: fetchThroughOwner,
     enabled: false,
     staleTime: 5_000,
   });
   const orderedTranscript = useQuery<WorkstreamTranscriptSnapshot | undefined>({
     queryKey: transcriptQueryKey,
-    queryFn: async () => undefined,
+    queryFn: fetchThroughOwner,
     enabled: false,
     staleTime: Number.POSITIVE_INFINITY,
   });
@@ -1377,6 +1406,7 @@ export function ConversationSurface({
     staleTime: Number.POSITIVE_INFINITY,
   });
   const telemetryOpenedWorkstreamRef = useRef<string | null>(null);
+  const pinnedThreads = usePinnedIds('thread');
   useEffect(() => {
     const detail = workstream.data;
     if (parentKind !== 'workstream') return;
@@ -1388,9 +1418,9 @@ export function ConversationSurface({
       visibility: telemetryVisibility(detail.scope),
       navigation: workstreamNavigation(detail.id),
       origin: detail.systemKind ? 'system' : 'ad_hoc',
-      pinned: (detail.spacePins?.length ?? 0) > 0,
+      pinned: pinnedThreads.has(detail.id),
     });
-  }, [id, parentKind, workstream.data]);
+  }, [id, parentKind, pinnedThreads, workstream.data]);
   const payloadBelongsToRoute = workstreamPayloadBelongsToRoute(
     id,
     workstream.data,
@@ -1661,7 +1691,7 @@ export function ConversationSurface({
   // Breakout's origin card. Subscribed rather than fetched.
   const channelTranscript = useQuery<WorkstreamTranscriptSnapshot | undefined>({
     queryKey: orderedTranscriptQueryKey(id, '0'),
-    queryFn: async () => undefined,
+    queryFn: fetchThroughOwner,
     enabled: false,
   });
   const originTurnId = substreamId === '0' ? undefined : breakoutOrigin?.turnId;
@@ -2093,14 +2123,9 @@ export function ConversationSurface({
     // screen stayed, and the reader was left on "could not be opened".
     onMutate: ({ target }) => {
       const previous = queryClient.getQueryData<WorkstreamDetail>(workstreamDetailQueryKey(id, target));
-      const filter = useUiStore.getState().sidebarSpaceFilter;
-      const spaceIds = previous?.spaceIds ?? [];
-      return {
-        previous,
-        // The Space the reader is looking at when the Channel is in it, and
-        // otherwise the Channel's own first Space.
-        spaceId: filter !== null && spaceIds.includes(filter) ? filter : spaceIds[0],
-      };
+      // Beside a Channel, the landing returns to it; a thread open on its own
+      // returns to its first Channel.
+      return { previous, spaceId: previous?.spaceIds?.[0] };
     },
     onSuccess: (_result, { member, target }, context) => {
       const targetKey = workstreamDetailQueryKey(id, target);
@@ -2165,7 +2190,6 @@ export function ConversationSurface({
     mutationFn: () => socketConnection.retryHarness(),
     onSuccess: async () => {
       requestSocketSnapshot();
-      await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
     },
   });
 
@@ -2380,7 +2404,6 @@ export function ConversationSurface({
     try {
       await socketConnection.answerElicitation(elicitationId, answer, customResponse);
       requestSocketSnapshot();
-      await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
     } catch (error) {
       queryClient.setQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey, (current) =>
         current ? setTranscriptElicitationState(current, elicitationId, {
@@ -2402,7 +2425,7 @@ export function ConversationSurface({
     deliveryMode?: WorkstreamMessageDeliveryMode,
     invitedEmails: string[] = [],
   ): Promise<void> => {
-    if (!api || !routedDetail) throw new Error('This channel is not ready to receive messages.');
+    if (!api || !routedDetail) throw new Error('This thread is not ready to receive messages.');
     // Ahead of the optimistic turn and of `sending`. A message the server will
     // refuse must not appear in the transcript first and be pulled back out of
     // it, and the person is the only one who can resolve this.
@@ -2564,7 +2587,6 @@ export function ConversationSurface({
       setCarriedStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT);
       attachmentDraft.commitLease(attachmentLease.leaseId);
       requestSocketSnapshot();
-      await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
     } catch (error) {
       await attachmentDraft.restoreLease(attachmentLease.leaseId);
       queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId), (current) =>
@@ -2764,6 +2786,10 @@ export function ConversationSurface({
     runTiming,
   });
   const visibleTranscript = transcript;
+  // The origin card a breakout being started from here will open with.
+  const launchOrigin = substreamLaunch && parentKind !== 'automation'
+    ? breakoutOriginMessages(visibleTranscript, substreamLaunch.throughTurnId)
+    : null;
   const firstUnreadSequenceNumber = detail.firstUnreadSequenceNumber;
   const firstUnreadIndex = firstUnreadSequenceNumber === null
     ? -1
@@ -2891,7 +2917,7 @@ export function ConversationSurface({
           state={socketConnection.openingError
             ? 'failed'
             : socketState === 'unavailable' ? 'offline' : 'connecting'}
-          subject={parentKind === 'automation' ? 'Sidekick' : substreamId === '0' ? 'channel' : 'breakout'}
+          subject={parentKind === 'automation' ? 'Sidekick' : substreamId === '0' ? 'thread' : 'breakout'}
         /> : null}
         currentUser={launchAuthor}
         draft={{
@@ -2908,6 +2934,8 @@ export function ConversationSurface({
         onOpenAttachment={setAttachmentPreview}
         parent={displayedDetail}
         sendBlocked={feedFromLocalCache}
+        titlePill={parentKind !== 'automation'}
+        {...(launchOrigin ? { origin: { channelTitle: displayedDetail.title, ...launchOrigin } } : {})}
         workspaceId={workspaceId}
         workspaceRegion={workspaceRegion}
       /> : <>
@@ -3055,7 +3083,7 @@ export function ConversationSurface({
               state={socketConnection.openingError
                 ? 'failed'
                 : socketState === 'unavailable' ? 'offline' : 'connecting'}
-              subject={parentKind === 'automation' ? 'Sidekick' : substreamId === '0' ? 'channel' : 'breakout'}
+              subject={parentKind === 'automation' ? 'Sidekick' : substreamId === '0' ? 'thread' : 'breakout'}
             />
           )}
         </ConnectingCardSlot>
@@ -3102,7 +3130,7 @@ export function ConversationSurface({
               title="Ready to begin"
               description={parentKind === 'automation'
                 ? 'Tell your Sidekick what you’d like help with. You can ask for changes as you go.'
-                : 'Send a message to start work in this stream.'}
+                : 'Send a message to start work in this thread.'}
             />
           ) : (
             <MessageFeed
@@ -3172,7 +3200,7 @@ export function ConversationSurface({
               ? 'Ask your Sidekick…'
               // A name still being chosen is not one to address yet.
               : displayedDetail.titleStatus === 'naming' || !displayedDetail.title
-                ? 'Message the channel…'
+                ? 'Message the thread…'
                 : substreamId === '0' ? `Message ${displayedDetail.title}` : `Reply in ${displayedDetail.title}`}
             attachments={attachmentDraft.attachments}
             error={sendError
@@ -3315,7 +3343,7 @@ export function ConversationSurface({
         failure={removeConfirm && removeParticipant.error
           ? refusalMessage(removeParticipant.error) ?? 'That participant couldn’t be removed.'
           : undefined}
-        noun={removeConfirm?.target === '0' ? 'channel' : 'breakout'}
+        noun={removeConfirm?.target === '0' ? 'thread' : 'breakout'}
         onCancel={() => { setRemoveConfirm(null); removeParticipant.reset(); }}
         onContinue={() => {
           if (!removeConfirm) return;

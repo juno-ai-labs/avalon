@@ -131,6 +131,9 @@ export function addPendingWorkstream(queryClient: QueryClient, input: {
   scope: WorkstreamSummary['scope'];
   harnessStatus: WorkstreamSummary['harnessStatus'];
   createdAt: string;
+  /** Who started it and what they asked, so every surface shows it before the server answers. */
+  createdByUserId?: string;
+  objective?: string;
 }): void {
   const row: WorkstreamSummary = {
     id: input.id,
@@ -153,6 +156,8 @@ export function addPendingWorkstream(queryClient: QueryClient, input: {
     pinPosition: null,
     pending: true,
     ...(input.origin ? { pendingOrigin: input.origin } : {}),
+    ...(input.createdByUserId ? { createdByUserId: input.createdByUserId } : {}),
+    ...(input.objective ? { objective: input.objective } : {}),
   };
   setCachedWorkstreams(queryClient, (current) => [
     row,

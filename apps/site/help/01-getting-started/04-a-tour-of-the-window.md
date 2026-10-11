@@ -1,60 +1,85 @@
 ---
 title: A tour of the window
-description: Find your way around the sidebar, the Space pills, the conversation and the panels beside it.
+description: Find your way around the sidebar, a Channel's screen, a Thread and the panes beside it.
 ---
 
-Rally's window has one sidebar on the left and your conversation on the right. The sidebar is how you get anywhere: a row of buttons at the top, a row of Space pills under them, and then the list of Channels. Whatever you open fills the rest of the window.
+Rally's window has a sidebar on the left and your work on the right. The sidebar is how you get anywhere: a narrow strip of three buttons down its left edge, and next to it the list for whichever button you picked. Whatever you open from that list fills the rest of the window.
 
 | Part | What it shows |
 | --- | --- |
-| Top buttons | Search, import, a new Channel, and an update when one is ready |
-| Space pills | **All**, then each of your Spaces, for narrowing the list |
-| Channel list | Your pinned Channels, then every other Channel from A to Z |
-| Account menu | Your name at the bottom of the sidebar |
-| Conversation | The messages themselves, the box you type in, and a title pill at the top |
-| Right-hand side | An open Breakout, a docked file or the built-in browser, when you open one |
+| Section buttons | **Threads**, **Channels** and **Activity**, down the left edge, with your account menu at the bottom |
+| The list | The Threads, Channels or Activity you picked, with search and import at the top |
+| A Channel | A feed of the Channel's Threads, and a message box that starts a new one |
+| A Thread | The conversation itself, the box you type in, and a title pill at the top |
+| Panes | Up to two things side by side, such as a Channel and a Thread, or a Thread and a Breakout |
 
 This page walks through each part. Each one has a chapter of its own later; here you only need to know what is where.
 
-## The buttons at the top
+## The section buttons
 
-Four round buttons sit at the top of the sidebar, beside the window's own controls:
+Three buttons run down the left edge of the window, each an icon with its name under it. Click one and the list beside it changes.
+
+- **Threads** lists every Thread and Breakout you take part in. A red number on the button counts what is waiting on you: Threads where you were mentioned, have unread messages or have not looked yet, plus anyone asking to join something of yours. The dock icon and the Mac menu bar show the same number.
+- **Channels** lists every Channel you can see.
+- **Activity** is a feed of what has happened to you lately, such as someone adding you to a Thread.
+
+Your avatar sits at the bottom of the strip and opens the account menu, described [below](#the-account-menu).
+
+## The top of the list
+
+Whichever section you are in, its name sits at the top of the list, with a few round buttons beside it:
 
 - **Restart to update** appears only when a new version of Rally has downloaded. See [Keeping Rally up to date](../09-settings-and-shortcuts/04-updates.md).
 - **Search organization** searches everything you can read. See [Search and links](../03-spaces-and-breakouts/06-search-and-links.md).
-- **Import from ChatGPT or Claude** brings in a conversation you had elsewhere. See [Bring in a conversation from Claude or ChatGPT](../02-working-in-a-channel/08-import-from-claude-or-chatgpt.md).
-- **New channel** starts a Channel. You will use it on [the next page](05-your-first-channel.md).
+- **Import a conversation** brings in a conversation you had in ChatGPT or Claude. See [Bring in a conversation from Claude or ChatGPT](../02-working-in-a-channel/08-import-from-claude-or-chatgpt.md).
 
-## The Space pills
+There is no button here for a new Thread. Threads start inside a Channel, which you will do on [the next page](05-your-first-channel.md).
 
-Under the buttons is a row of pills, one per Space. A Space is a group of Channels, and a new Organization has just one, **General**, so this row looks a little lonely at first.
+## The Channels list
 
-- **All** shows every Channel you can see. Click a Space's pill and the list below shows only the Channels in that Space. A pill only filters the list; it does not take you anywhere.
-- **General** has no pill of its own. It is where a Channel lives when nobody put it anywhere more specific, and **All** already shows it.
-- To open a Space's own page, right-click its pill and choose **Open space**.
-- The round button at the start of the row, a folder with a plus, is **New space**. Right-click it for **Restore archived space**, when you have archived one.
-- Drag a pill sideways to reorder the row. The order is yours alone: it follows you to your other devices, and nobody else's changes. From the keyboard, select a pill and hold <kbd>⌥ Option</kbd> while pressing <kbd>←</kbd> or <kbd>→</kbd>.
+A Channel is a team's list of Threads: one for a team, a client or a long-running project. A new Organization has one, **General**, so this list looks a little lonely at first.
 
-When there are more pills than fit, scroll the row sideways. Rally remembers which pill you picked on this Mac. Spaces have a full page of their own in [Spaces](../03-spaces-and-breakouts/01-spaces.md).
+- **Pinned** comes first, once you have pinned a Channel. Drag pinned Channels up and down to put them in your own order.
+- **All channels** follows, with every other Channel you can see. It starts A to Z. Click the sort button beside **All channels** to switch between **A–Z**, **Recent** (newest activity first) and **Needs attention** (Channels with something new for you first). Rally remembers your choice.
+- Each row shows the Channel's icon and name, a lock if the Channel is private, when it last had activity, and how many Threads are in it, such as **12 threads**.
+- A red dot and a bold name mean a Thread was added to that Channel since you last opened it. Opening the Channel clears it.
+- Click a row to open the Channel. Right-click it for **Pin** or **Unpin**.
+- The **+** beside **All channels** opens **New channel**. Type a name and click **Create channel**.
 
-## The Channel list
+[Channels](../03-spaces-and-breakouts/01-spaces.md) has the whole story, including private Channels and the Channel's own menu.
 
-Below the pills are your Channels.
+## The Threads list
 
-- **Pinned** comes first. It is there even before you pin anything, and then it reads **Move a channel here to pin it**. Drag a Channel into it to pin it. Every other Channel follows, alphabetically, under **Channels**. [Arranging your Channels](../03-spaces-and-breakouts/02-arranging-channels.md) covers pinning, moving and archiving.
-- Each row shows the Channel's icon, its name and when it last had activity. Underneath, it names the Spaces the Channel is in (General is left out, so a Channel only in General has a one-line row).
-- A Channel with messages you have not read has its name in bold, and a small dot at the start of the row says what it wants from you. [Status dots](../02-working-in-a-channel/06-status-dots-and-badges.md) explains every dot.
-- A small clock under the time means Rally has a reminder or follow-up scheduled there. Hover over the clock to see when.
-- Click a row to open that Channel. Hover for a moment to see its full name in a card.
-- Right-click a row for a menu of things you can do to it. Right-click an empty part of the list to start a new Channel.
+The Threads list is where you jump back into work you are part of.
 
-If you have no Channels yet, the list shows one dashed outline under its **Channels** heading, where your first Channel will go. That changes on the next page.
+- **Pinned** comes first, once you have pinned something. It holds the Threads and Breakouts you pinned, in the order you drag them into.
+- **Threads** follows, with every Thread and Breakout you take part in. The label at the right of its heading says how they are sorted. Click it to switch between **Recent** (the newest activity first, which is where it starts), **A–Z** and **Needs attention**, which puts whatever is counted on the **Threads** button at the top.
+- Each row shows the Thread's name and, under it, a small chip for each Channel it sits in. A Breakout's row names the Thread it belongs to instead.
+- A small dot at the start of a row says the Thread wants something from you. [Status dots](../02-working-in-a-channel/06-status-dots-and-badges.md) explains every dot.
+- Click a row to open it. Right-click it for **Pin** or **Unpin**. [Arranging your Threads](../03-spaces-and-breakouts/02-arranging-channels.md) covers pinning and archiving.
 
-The sidebar does not fold away. To give the conversation more room, drag the sidebar's right edge to make it narrower; drag it back to widen it again.
+Until you have started a Thread or someone has added you to one, the list says **Threads you start or are added to appear here.** That changes on the next page.
+
+## The Activity list
+
+Activity is the list to check when you have been away. It shows what happened to you, newest first, grouped under **Today**, **Yesterday** and earlier dates:
+
+- someone added you to a Thread;
+- someone mentioned you;
+- someone started a Thread or a Breakout you can see;
+- Rally finished a run in a Thread you are part of.
+
+Each item names who did it, the Thread or Breakout, and the Channel it is in. Click an item to open what it names. Anything new since you last looked has a small dot at the end of its row, and opening the Activity list counts as looking.
+
+If people have asked to join a Thread or Breakout you started, their requests sit at the top under **Requests**, with a check mark to approve and a cancel sign to decline. Click the request itself to see it in full first. [Who can see what](../03-spaces-and-breakouts/04-who-can-see-what.md#asking-to-join-from-a-link) has more on requests.
+
+When there is nothing to show, the list says **Nothing new. Activity about your threads shows up here.** Enjoy it while it lasts.
+
+To make the sidebar narrower or wider, drag its right edge.
 
 ## The account menu
 
-At the bottom of the sidebar is your avatar and name. Click it to open the account menu:
+Your avatar at the bottom of the section buttons opens the account menu:
 
 - **Restart to Update** appears at the top when a new version of Rally has downloaded and is ready. See [Keeping Rally up to date](../09-settings-and-shortcuts/04-updates.md).
 - **Sidekicks** opens the Sidekicks window, covered in [Sidekicks](../07-sidekicks/index.md).
@@ -65,26 +90,40 @@ If your account can belong to several Organizations, the menu also lists them un
 
 For help, the **Help** menu in the Mac menu bar has a link to the Rally website, and [Contacting support](../12-help-and-glossary/03-contact-support.md) tells you how to reach a person.
 
-## The conversation
+## A Channel's screen
 
-The rest of the window is where the work happens: the messages between you, your teammates and Rally, with the message box at the bottom. The whole of [chapter 2](../02-working-in-a-channel/index.md) is about this part.
+Open a Channel and its screen fills the window. At the top is the Channel's name in a rounded pill; click it for the Channel's menu.
 
-At the top floats the Channel's **title pill**, with its icon and name. Click the name to open the Channel's menu: who is in it, its Sidekicks and Breakouts, renaming, links and sharing all live there. [Names, icons and colours](../02-working-in-a-channel/07-name-icon-and-colour.md#the-title-pill) shows you around it.
+Below that is the Channel's feed: one entry per Thread, oldest at the top and newest at the bottom, nearest the message box. Each entry says who started the Thread and when, gives a line or two about what it is for, and ends with a chip carrying the Thread's name. Click the chip to open the Thread.
 
-## The right-hand side
+At the bottom is a message box that says **Start a thread in** and the Channel's name. Type what you want and send it, and Rally starts a new Thread in this Channel with your message as its first one. This box is the way to start a Thread in Rally.
 
-Some things open on the right-hand side of the window, so you can read them beside the conversation.
+Nobody chats on a Channel's screen, and Rally never replies there. The talking happens in the Threads.
 
-- **A Breakout**: open one and it sits to the right of its Channel, so you see both at once. See [Breakouts](../03-spaces-and-breakouts/03-breakouts.md).
-- **A single file or document**: files usually open first in a large preview over the window. Click **Open in a righthand sidebar** to dock it here instead, beside the chat. [Opening, docking and downloading](../06-things-rally-makes/02-opening-and-downloading.md) has the details.
-- **The Browser**: links can open in a built-in browser right here. See [Research and the built-in browser](../04-working-with-rally/02-research-and-the-web.md).
+## A Thread
 
-Drag the panel's left edge to make it wider or narrower. There is one place on the right: opening a file or the browser from the Channel hides an open Breakout until you close it again.
+A Thread is where the work happens: the messages between you, your teammates and Rally, with the message box at the bottom. The whole of [chapter 2](../02-working-in-a-channel/index.md) is about this part.
+
+At the top floats the Thread's **title pill**, with its icon and name. Click the name to open the Thread's menu: who is in it, its Sidekicks and Breakouts, renaming, links and sharing all live there. [Names, icons and colours](../02-working-in-a-channel/07-name-icon-and-colour.md#the-title-pill) shows you around it.
+
+## Panes side by side
+
+Rally shows at most two things side by side, and slides them along as you go deeper.
+
+1. **Open a Thread from a Channel** and it opens in a pane on the right, with the Channel still on the left.
+2. **Open a Breakout from that Thread** and everything moves one step left: the Thread is now on the left, the Breakout on the right, and the Channel becomes a small breadcrumb in the header above the Thread. See [Breakouts](../03-spaces-and-breakouts/03-breakouts.md).
+3. **Open a file or document from the Breakout** and everything moves left again. The Thread joins the breadcrumbs. [Opening, docking and downloading](../06-things-rally-makes/02-opening-and-downloading.md) has the details on files.
+
+Click a breadcrumb to step back to it. The close button on a Thread's title pill takes you back to its Channel on its own. A Thread you open from the Threads list or Activity opens beside its home Channel, so the Channel is always one step back. A Thread in no Channel you can see opens on its own.
+
+Drag the edge between two panes to make one wider and the other narrower. If the window is too narrow for two panes, Rally shows one and keeps the rest as breadcrumbs.
+
+Inside a Thread, a docked file and the built-in browser share the right-hand pane with Breakouts. Opening a file or the browser from the Thread hides an open Breakout until you close it again. See [Research and the built-in browser](../04-working-with-rally/02-research-and-the-web.md).
 
 ## Rally remembers where you were
 
-When you quit Rally and open it again, it returns to the Space, Channel or Breakout you were last looking at, with your sidebar width and your place in the conversation as you left them.
+When you quit Rally and open it again, it returns to what you were last looking at, with your sidebar width and your place in the conversation as you left them. The first time, or if that place has gone, it opens a pinned Channel, or else General.
 
-This memory belongs to this Mac; your other devices keep their own. If the Channel you were in has since been archived, or you no longer have access to it, Rally opens your most recent Channel instead.
+This memory belongs to this Mac; your other devices keep their own.
 
-Next, put something in it: [start your first Channel](05-your-first-channel.md).
+Next, put something in it: [start your first Thread](05-your-first-channel.md).

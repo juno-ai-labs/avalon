@@ -8,13 +8,13 @@ chooses what to do, and how to ask so you get what you meant.
 
 ## One Rally per conversation
 
-Each Channel has one agent, called Rally, working in the conversation
+Each Thread has one agent, called Rally, working in the conversation
 alongside the people. Each Breakout has its own, and so does each conversation
 you have with a Sidekick. It is one ongoing thread of work per conversation,
 not a fresh agent for every message. That is why you can say "now do the same
 for March" and Rally knows what "the same" was.
 
-When you are alone in a Channel, every message goes to Rally. When other people
+When you are alone in a Thread, every message goes to Rally. When other people
 are there too, Rally decides whether each message is meant for it. Mention
 **@Rally** to be sure. The details are in
 [People in the room](../02-working-in-a-channel/05-people-in-the-room.md).
@@ -151,10 +151,9 @@ A few things to know:
   [Memory and coming back later](05-memory-and-coming-back-later.md)).
 - Rarely, a conversation is too big for Rally to take in at all.
   You then see a message that begins **This conversation is longer than the
-  selected model will accept. Start a new work stream to continue**. "Work
-  stream" is the old name
-  for a Channel. Start a new Channel and tell Rally what it needs to know.
-- Rally does not reach into your other Channels to fill gaps. Each
+  selected model will accept. Start a new thread to continue**. Start a
+  new Thread and tell Rally what it needs to know.
+- Rally does not reach into your other Threads to fill gaps. Each
   conversation stands on its own.
 
 ## What you will not find
@@ -163,7 +162,7 @@ Two things people often look for:
 
 - **A model picker.** You cannot choose which AI model Rally uses.
 - **A meter.** There is no price, token count or credit counter in the
-  Channel, the message box or the conversation.
+  Thread, the message box or the conversation.
 
 ## Asking well
 
@@ -179,6 +178,6 @@ A good request saves a round trip. These habits help:
 - **Attach the file** rather than describing it. Rally always answers a
   message with an attachment.
 - **Steer, don't restart.** If the first answer is close, tell Rally what to
-  change in the same Channel. It remembers the rest.
+  change in the same Thread. It remembers the rest.
 
 Next: [Research and the built-in browser](02-research-and-the-web.md).

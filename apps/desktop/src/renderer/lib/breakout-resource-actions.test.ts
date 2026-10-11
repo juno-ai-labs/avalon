@@ -21,7 +21,7 @@ describe('breakoutResourceActions', () => {
   it('attaches a breakout artifact to the channel', () => {
     const attach = vi.fn();
     const actions = breakoutResourceActions({ attach, breakoutResources: [site], channelResources: [] })('market-map');
-    expect(actions).toEqual([expect.objectContaining({ label: 'Attach to channel', disabled: false })]);
+    expect(actions).toEqual([expect.objectContaining({ label: 'Attach to thread', disabled: false })]);
     actions![0]!.onSelect();
     expect(attach).toHaveBeenCalledWith(site);
   });
