@@ -25,27 +25,21 @@ describe("channelReadState", () => {
     latest_attention_ordinal: 3,
     unread_tracking_start_ordinal: 0,
     seen_attention_ordinal: 1,
-    manual_unread_from_ordinal: null,
-    manual_unread_generation: 2,
   };
 
   it("answers a member in ChannelStats's field names", () => {
     expect(channelReadState(row, false)).toEqual({
       latestAttentionSequenceNumber: 3,
       readThroughSequenceNumber: 1,
-      manualUnreadFromSequenceNumber: null,
-      manualUnreadGeneration: 2,
       firstUnreadSequenceNumber: 2,
       hasUnread: true,
     });
   });
 
   it("answers a guest as caught up whatever was placed", () => {
-    expect(channelReadState({ ...row, manual_unread_from_ordinal: 2 }, true)).toEqual({
+    expect(channelReadState(row, true)).toEqual({
       latestAttentionSequenceNumber: 3,
       readThroughSequenceNumber: 3,
-      manualUnreadFromSequenceNumber: null,
-      manualUnreadGeneration: 0,
       firstUnreadSequenceNumber: null,
       hasUnread: false,
     });

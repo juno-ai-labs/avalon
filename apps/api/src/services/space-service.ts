@@ -281,7 +281,7 @@ export class SpaceService {
    */
   async acknowledgeRead(
     spaceId: SpaceId,
-    input: { readThroughSequenceNumber: number; observedManualUnreadGeneration: number },
+    input: { readThroughSequenceNumber: number },
   ): Promise<ChannelStats> {
     if (this.auth.impersonatorUserId) return this.currentChannelStats(spaceId);
     return this.channelReadAnswer(await (await this.workspace()).acknowledgeSpaceRead({
@@ -289,17 +289,6 @@ export class SpaceService {
       userId: asUserId(this.auth.userId),
       spaceId,
       readThroughSequenceNumber: input.readThroughSequenceNumber,
-      observedManualUnreadGeneration: input.observedManualUnreadGeneration,
-    }));
-  }
-
-  /** Mark a Channel unread from its newest placement. */
-  async markUnread(spaceId: SpaceId): Promise<ChannelStats> {
-    if (this.auth.impersonatorUserId) return this.currentChannelStats(spaceId);
-    return this.channelReadAnswer(await (await this.workspace()).markSpaceUnread({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: asUserId(this.auth.userId),
-      spaceId,
     }));
   }
 

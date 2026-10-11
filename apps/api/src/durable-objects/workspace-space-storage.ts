@@ -2013,9 +2013,9 @@ export class WorkspaceSpaceStorage {
     const listed = this.spaceListing(viewer);
     const columns = this.readsReady()
       ? `space.latest_attention_ordinal, space.unread_tracking_start_ordinal,
-         reads.seen_attention_ordinal, reads.manual_unread_from_ordinal, reads.manual_unread_generation`
+         reads.seen_attention_ordinal`
       : `0 AS latest_attention_ordinal, 0 AS unread_tracking_start_ordinal,
-         NULL AS seen_attention_ordinal, NULL AS manual_unread_from_ordinal, 0 AS manual_unread_generation`;
+         NULL AS seen_attention_ordinal`;
     const join = this.readsReady()
       ? "LEFT JOIN space_reads reads ON reads.space_id = space.space_id AND reads.user_id = ?1"
       : "";
@@ -2038,8 +2038,7 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
-   * Move this viewer's read position in a Channel forward, never back, and
-   * clear their manual unread mark when it is the one they saw.
+   * Move this viewer's read position in a Channel forward, never back.
    *
    * The thread acknowledgement's rule (`acknowledgeRead` in
    * `workstream-object-product.ts`) against this Channel's columns, except
@@ -2052,7 +2051,6 @@ export class WorkspaceSpaceStorage {
     viewer: Viewer,
     spaceId: string,
     readThrough: number,
-    observedManualUnreadGeneration: number,
     now = Date.now(),
   ): ChannelReadState | false {
     if (!this.ready() || !this.readsReady()) return false;
@@ -2061,51 +2059,17 @@ export class WorkspaceSpaceStorage {
       if (!current) return false;
       const seen = Math.min(readThrough, current.latestAttentionSequenceNumber);
       this.storage.sql.exec(
-        `INSERT INTO space_reads (space_id, user_id, seen_attention_ordinal, manual_unread_from_ordinal,
-                                  manual_unread_generation, updated_at)
-         SELECT ?1, ?2, MAX(space.unread_tracking_start_ordinal, ?3), NULL, 0, ?4
+        `INSERT INTO space_reads (space_id, user_id, seen_attention_ordinal, updated_at)
+         SELECT ?1, ?2, MAX(space.unread_tracking_start_ordinal, ?3), ?4
            FROM spaces space WHERE space.space_id = ?1
          ON CONFLICT(space_id, user_id) DO UPDATE SET
            seen_attention_ordinal = MAX(
              COALESCE(space_reads.seen_attention_ordinal, excluded.seen_attention_ordinal),
              excluded.seen_attention_ordinal),
-           manual_unread_from_ordinal = CASE
-             WHEN space_reads.manual_unread_generation = ?5
-              AND ?3 >= COALESCE(space_reads.manual_unread_from_ordinal, ?3)
-             THEN NULL ELSE space_reads.manual_unread_from_ordinal END,
            updated_at = excluded.updated_at`,
         spaceId,
         viewer.userId,
         seen,
-        now,
-        observedManualUnreadGeneration,
-      );
-      return this.visibleSpaceReads(viewer, spaceId).get(spaceId) ?? false;
-    });
-  }
-
-  /**
-   * Mark a Channel unread from its newest placement, as a thread's "mark
-   * unread" does. A Channel nothing was ever placed in has nothing to mark and
-   * answers unchanged. `false` for a Channel this viewer cannot list.
-   */
-  markUnread(viewer: Viewer, spaceId: string, now = Date.now()): ChannelReadState | false {
-    if (!this.ready() || !this.readsReady()) return false;
-    return this.storage.transactionSync(() => {
-      const current = this.visibleSpaceReads(viewer, spaceId).get(spaceId);
-      if (!current) return false;
-      if (current.latestAttentionSequenceNumber === 0) return current;
-      this.storage.sql.exec(
-        `INSERT INTO space_reads (space_id, user_id, seen_attention_ordinal, manual_unread_from_ordinal,
-                                  manual_unread_generation, updated_at)
-         VALUES (?1, ?2, NULL, ?3, 1, ?4)
-         ON CONFLICT(space_id, user_id) DO UPDATE SET
-           manual_unread_from_ordinal = excluded.manual_unread_from_ordinal,
-           manual_unread_generation = space_reads.manual_unread_generation + 1,
-           updated_at = excluded.updated_at`,
-        spaceId,
-        viewer.userId,
-        current.latestAttentionSequenceNumber,
         now,
       );
       return this.visibleSpaceReads(viewer, spaceId).get(spaceId) ?? false;
@@ -4862,9 +4826,8 @@ export class WorkspaceSpaceStorage {
     }
     if (latest === 0) return;
     this.storage.sql.exec(
-      `INSERT INTO space_reads (space_id, user_id, seen_attention_ordinal, manual_unread_from_ordinal,
-                                manual_unread_generation, updated_at)
-       VALUES (?1, ?2, ?3, NULL, 0, ?4)
+      `INSERT INTO space_reads (space_id, user_id, seen_attention_ordinal, updated_at)
+       VALUES (?1, ?2, ?3, ?4)
        ON CONFLICT(space_id, user_id) DO UPDATE SET
          seen_attention_ordinal = MAX(COALESCE(space_reads.seen_attention_ordinal, 0), excluded.seen_attention_ordinal),
          updated_at = excluded.updated_at`,

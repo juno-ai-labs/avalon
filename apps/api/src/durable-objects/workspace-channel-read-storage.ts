@@ -41,8 +41,6 @@ export const WORKSPACE_CHANNEL_READS_MIGRATION: readonly string[] = [
     space_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
     seen_attention_ordinal INTEGER CHECK (seen_attention_ordinal IS NULL OR seen_attention_ordinal >= 0),
-    manual_unread_from_ordinal INTEGER CHECK (manual_unread_from_ordinal IS NULL OR manual_unread_from_ordinal > 0),
-    manual_unread_generation INTEGER NOT NULL DEFAULT 0 CHECK (manual_unread_generation >= 0),
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (space_id, user_id)
   ) STRICT`,
@@ -72,8 +70,6 @@ export const WORKSPACE_CHANNEL_READS_MIGRATION: readonly string[] = [
 export interface ChannelReadState {
   latestAttentionSequenceNumber: number;
   readThroughSequenceNumber: number;
-  manualUnreadFromSequenceNumber: number | null;
-  manualUnreadGeneration: number;
   firstUnreadSequenceNumber: number | null;
   hasUnread: boolean;
 }
@@ -83,8 +79,6 @@ export interface ChannelReadRow {
   latest_attention_ordinal: number;
   unread_tracking_start_ordinal: number;
   seen_attention_ordinal: number | null;
-  manual_unread_from_ordinal: number | null;
-  manual_unread_generation: number | null;
 }
 
 /**
@@ -98,24 +92,21 @@ export function channelReadState(row: ChannelReadRow, guest: boolean): ChannelRe
     return {
       latestAttentionSequenceNumber: latest,
       readThroughSequenceNumber: latest,
-      manualUnreadFromSequenceNumber: null,
-      manualUnreadGeneration: 0,
       firstUnreadSequenceNumber: null,
       hasUnread: false,
     };
   }
-  const manual = row.manual_unread_from_ordinal === null ? null : Number(row.manual_unread_from_ordinal);
   const state = unreadState({
     latest,
     seen: row.seen_attention_ordinal === null ? null : Number(row.seen_attention_ordinal),
     trackingStart: Number(row.unread_tracking_start_ordinal),
-    manual,
+    // A Channel has no "mark unread": a person's read position only moves
+    // forward, and only a new placement makes it unread again.
+    manual: null,
   });
   return {
     latestAttentionSequenceNumber: latest,
     readThroughSequenceNumber: state.readThrough,
-    manualUnreadFromSequenceNumber: manual,
-    manualUnreadGeneration: Number(row.manual_unread_generation ?? 0),
     firstUnreadSequenceNumber: state.firstUnread,
     hasUnread: state.hasUnread,
   };

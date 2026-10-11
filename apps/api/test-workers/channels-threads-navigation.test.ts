@@ -387,7 +387,7 @@ describe("Channel read state", () => {
 
     const acknowledged = await workspace().acknowledgeSpaceRead({
       workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId,
-      readThroughSequenceNumber: 2, observedManualUnreadGeneration: 0,
+      readThroughSequenceNumber: 2,
     });
     expect(acknowledged).toMatchObject({ ok: true, stats: { channelId, readThroughSequenceNumber: 2, hasUnread: false } });
     expect(readState(await stats(MEMBER, channelId))).toEqual({ latest: 2, readThrough: 2, firstUnread: null, hasUnread: false });
@@ -447,7 +447,7 @@ describe("Channel read state", () => {
     expect(page.latestAttentionSequenceNumber).toBe(2);
     await workspace().acknowledgeSpaceRead({
       workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId,
-      readThroughSequenceNumber: page.latestAttentionSequenceNumber!, observedManualUnreadGeneration: 0,
+      readThroughSequenceNumber: page.latestAttentionSequenceNumber!,
     });
 
     expect(readState(await stats(MEMBER, channelId))).toEqual({ latest: 2, readThrough: 2, firstUnread: null, hasUnread: false });
@@ -462,25 +462,6 @@ describe("Channel read state", () => {
     expect((await stats(MEMBER, channelId)).hasUnread).toBe(true);
   });
 
-  it("given a read Channel, when the member marks it unread and then acknowledges at the generation they saw, then the mark is set and cleared", async () => {
-    const channelId = await channelWithThreads();
-    await workspace().acknowledgeSpaceRead({
-      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId,
-      readThroughSequenceNumber: 2, observedManualUnreadGeneration: 0,
-    });
-
-    const marked = await workspace().markSpaceUnread({ workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId });
-    expect(marked).toMatchObject({
-      ok: true, stats: { manualUnreadFromSequenceNumber: 2, manualUnreadGeneration: 1, firstUnreadSequenceNumber: 2, hasUnread: true },
-    });
-
-    await workspace().acknowledgeSpaceRead({
-      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId,
-      readThroughSequenceNumber: 2, observedManualUnreadGeneration: 1,
-    });
-    expect(readState(await stats(MEMBER, channelId))).toEqual({ latest: 2, readThrough: 2, firstUnread: null, hasUnread: false });
-  });
-
   it("given a Channel the member cannot list, when they acknowledge it, then it is refused as not found", async () => {
     const channelId = await channelWithThreads();
     await workspace().noteSpaceAudience({
@@ -490,7 +471,7 @@ describe("Channel read state", () => {
 
     await expect(workspace().acknowledgeSpaceRead({
       workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId,
-      readThroughSequenceNumber: 2, observedManualUnreadGeneration: 0,
+      readThroughSequenceNumber: 2,
     })).resolves.toEqual({ ok: false, code: "space_not_found" });
   });
 });

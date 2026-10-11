@@ -4,6 +4,7 @@ import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceSpaceConversationsEventSchema,
   WorkspaceSpaceSnapshotEventSchema,
+  WorkspaceNavigationStateEventSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceWorkstreamRecencyEventSchema,
   WorkspaceFeatureFlagsEventSchema,
@@ -62,7 +63,9 @@ import {
   PERSONAL_ORDER_QUERY_KEY,
   PINNED_ORDER_QUERY_KEY,
   SIDEBAR_LIST_QUERY_KEYS,
+  applyNavigationState,
   applyVersionedSpaceSnapshot,
+  CHANNEL_FEEDS_QUERY_KEY,
   applyVersionedSidebarList,
   CHANNEL_STATS_QUERY_KEY,
   MY_THREADS_QUERY_KEY,
@@ -561,6 +564,11 @@ export function WorkspaceSocketProvider({
      */
     const applyConnectedSidebar = (sidebar: WorkspaceSidebar): boolean => {
       channelsBySpace = sidebar.channelsBySpace === true;
+      // The lists the socket does not carry. A nudge missed while the socket
+      // was away is never sent again, so a connect is when they are read again.
+      void queryClient.invalidateQueries({ queryKey: CHANNEL_FEEDS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: MY_THREADS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: ACTIVITY_QUERY_KEY });
       if (channelsBySpace) {
         // Every Space is loading again: the walk this starts is what says
         // what the socket missed while it was away.
@@ -1218,6 +1226,11 @@ export function WorkspaceSocketProvider({
             void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
             return;
           }
+          const navigationState = safeParseSocketEvent(WorkspaceNavigationStateEventSchema, decoded);
+          if (navigationState.success) {
+            applyNavigationState(queryClient, navigationState.data);
+            return;
+          }
           const accessRequests = safeParseSocketEvent(WorkspaceAccessRequestsEventSchema, decoded);
           if (accessRequests.success) {
             queryClient.setQueryData(accessRequestsQueryKey(workspaceId), accessRequests.data.requests);
@@ -1253,12 +1266,15 @@ export function WorkspaceSocketProvider({
             for (const spaceId of spaceConversations.data.spaceIds) {
               void queryClient.invalidateQueries({ queryKey: channelFeedQueryKey(spaceId) });
             }
-            // A placement or attention change can add a thread this person
-            // takes part in; the Threads tab's own list is read again.
-            void queryClient.invalidateQueries({ queryKey: MY_THREADS_QUERY_KEY });
-            void queryClient.invalidateQueries({ queryKey: CHANNEL_STATS_QUERY_KEY });
-            // Activity lists thread starts, and a placement is how one arrives.
-            void queryClient.invalidateQueries({ queryKey: ACTIVITY_QUERY_KEY });
+            // Only a placement changes which threads the Threads tab, Activity
+            // and the Channel counts hold, so only a placement re-reads them
+            // now. A message in a thread already placed marks them stale,
+            // read again the next time one is shown, rather than re-reading
+            // every loaded page for every message in the Organization.
+            const refetchType = spaceConversations.data.placementChanged === false ? 'none' : 'active';
+            void queryClient.invalidateQueries({ queryKey: MY_THREADS_QUERY_KEY, refetchType });
+            void queryClient.invalidateQueries({ queryKey: CHANNEL_STATS_QUERY_KEY, refetchType });
+            void queryClient.invalidateQueries({ queryKey: ACTIVITY_QUERY_KEY, refetchType });
             if (spaceConversations.data.attentionCounts.length > 0) {
               const counts = new Map(spaceConversations.data.attentionCounts.map((entry) => [
                 entry.spaceId,

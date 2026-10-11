@@ -65,6 +65,29 @@ export const MY_THREADS_QUERY_KEY = ['my-threads'] as const;
 /** The Activity tab's first page. */
 export const ACTIVITY_QUERY_KEY = ['activity'] as const;
 /** One Channel's feed. */
+/**
+ * A write this person made in another window: the whole pin list, or the
+ * rows of the Channels whose read state moved (`workspace_navigation_state`).
+ */
+export function applyNavigationState(
+  queryClient: QueryClient,
+  state: { pins?: PinList | undefined; channelStats?: ChannelStats[] | undefined },
+): void {
+  if (state.pins) queryClient.setQueryData(PINS_QUERY_KEY, state.pins);
+  const rows = state.channelStats;
+  if (!rows || rows.length === 0) return;
+  queryClient.setQueryData<ChannelStats[]>(CHANNEL_STATS_QUERY_KEY, (current) => {
+    if (!current) return current;
+    const changed = new Map(rows.map((row) => [row.channelId, row]));
+    const merged = current.map((row) => changed.get(row.channelId) ?? row);
+    const held = new Set(current.map((row) => row.channelId));
+    return [...merged, ...rows.filter((row) => !held.has(row.channelId))];
+  });
+}
+
+/** Every Channel feed held, the prefix each `channelFeedQueryKey` starts with. */
+export const CHANNEL_FEEDS_QUERY_KEY = ['channel-feed'] as const;
+
 export function channelFeedQueryKey(channelId: string): readonly ['channel-feed', string] {
   return ['channel-feed', channelId];
 }
@@ -152,12 +175,14 @@ export function applyVersionedSpaceSnapshot(
   navigation: { pins?: PinList | undefined; channelStats?: ChannelStats[] | undefined } = {},
 ): boolean {
   pinWaterlineLedger(queryClient);
-  // Not under the Space waterline: a pin or a Channel read republishes the
-  // snapshot without moving it, and that republication is how this person's
-  // other windows hear of either. Both are this person's own state, sent in
-  // order on one socket, so the newest frame is the current one.
+  // Not under the Space waterline: both are this person's own state, sent in
+  // order on one socket, so the newest frame is the current one. Only the
+  // connect payload carries Channel stats; a broadcast snapshot leaves them
+  // out, and a Space change is when they may have moved, so they are read
+  // again instead.
   if (navigation.pins) queryClient.setQueryData(PINS_QUERY_KEY, navigation.pins);
   if (navigation.channelStats) queryClient.setQueryData(CHANNEL_STATS_QUERY_KEY, navigation.channelStats);
+  else void queryClient.invalidateQueries({ queryKey: CHANNEL_STATS_QUERY_KEY });
   const waterlines = queryClient.getQueryData<Partial<Record<SidebarWaterline, number>>>(
     SIDEBAR_LIST_WATERLINES_KEY,
   ) ?? {};

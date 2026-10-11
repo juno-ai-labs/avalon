@@ -1,6 +1,7 @@
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  applyNavigationState,
   applyContainerOrder,
   applyVersionedSpaceSnapshot,
   applyVersionedSidebarList,
@@ -88,8 +89,6 @@ describe('applyVersionedSidebarList', () => {
       lastActivityAt: '2026-10-10T18:00:00.000Z',
       latestAttentionSequenceNumber: 3,
       readThroughSequenceNumber: 3,
-      manualUnreadFromSequenceNumber: null,
-      manualUnreadGeneration: 0,
       firstUnreadSequenceNumber: null,
       hasUnread: false,
     }];
@@ -169,5 +168,23 @@ describe('applyVersionedSidebarList', () => {
     expect(queryClient.getQueryData(['personal-order'])).toEqual([
       { container: { kind: 'space', id: SPACE_ID }, itemIds: [] },
     ]);
+  });
+});
+
+describe('applyNavigationState', () => {
+  const row = (channelId: string, hasUnread: boolean) => ({
+    channelId, threadCount: 1, lastActivityAt: null, latestAttentionSequenceNumber: 1,
+    readThroughSequenceNumber: hasUnread ? 0 : 1, firstUnreadSequenceNumber: hasUnread ? 1 : null, hasUnread,
+  });
+
+  it('replaces the pin list and only the Channel rows another window read', () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(['pins'], [{ kind: 'thread', id: CHANNEL_ID, parentId: null }]);
+    queryClient.setQueryData(['channel-stats'], [row(SPACE_ID, true), row(CHANNEL_ID, true)]);
+
+    applyNavigationState(queryClient, { pins: [], channelStats: [row(SPACE_ID, false)] });
+
+    expect(queryClient.getQueryData(['pins'])).toEqual([]);
+    expect(queryClient.getQueryData(['channel-stats'])).toEqual([row(SPACE_ID, false), row(CHANNEL_ID, true)]);
   });
 });
