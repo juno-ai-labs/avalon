@@ -35,6 +35,9 @@ and destination mechanics remain in [`telemetry.md`](telemetry.md).
 an external referring domain, allowlisted `utm_source`, `utm_medium`, and
 `utm_campaign` values, and `adClickIdSource`: which ad platform's click
 identifier the URL carried (`x` for X's `twclid`), never the identifier.
+Both page events also carry `trafficClass` and `trafficReasons`, set by the API;
+[site traffic classification](site-traffic-classification.md) owns them, the
+time zone and start checks the bootstrap body carries, and `pageSignals`.
 `site_page_left` carries the page/path and a bounded
 visible-duration bucket. Global maps these observations one-for-one to PostHog
 `$pageview` and `$pageleave`, with URL/host/path properties derived from the
