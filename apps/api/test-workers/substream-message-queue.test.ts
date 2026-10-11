@@ -111,6 +111,7 @@ async function product(stub: DurableObjectStub, body: unknown): Promise<{
 async function initializeWorkstream(
   stub: DurableObjectStub,
   openingMessage: string,
+  extra: { telemetryJourney?: "workstream_create" } = {},
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   return product(stub, {
     operation: "initialize",
@@ -132,6 +133,7 @@ async function initializeWorkstream(
       modelOverride: MODEL,
       executionPrincipal: { type: "user", userId: USER_ID },
       reason: "user_message",
+      ...extra,
     },
   });
 }
@@ -717,7 +719,7 @@ describe("a message queued behind a live run", () => {
     }
   });
 
-  it("records one message_sent for a person's message, however often it is retried", async () => {
+  it("records one message_sent per message a person sends, however often it is retried", async () => {
     await createTelemetryTables();
     const stub = agentStub();
     // The envelope admits a deployed environment name, and this suite's
@@ -735,7 +737,7 @@ describe("a message queued behind a live run", () => {
           assistantTurn("answering the member")],
         { primaryModel: MODEL, fallbackModels: [], gateFirstCall: true },
       );
-      await initializeWorkstream(stub, "opening message");
+      const opening = await initializeWorkstream(stub, "opening message", { telemetryJourney: "workstream_create" });
       await waitForGatedProviderCall(stub);
 
       // Support writes as the member without the member sending anything.
@@ -755,8 +757,12 @@ describe("a message queued behind a live run", () => {
         interval: 25,
       }).toBe(true);
       const accepted = await acceptedMessageSent();
-      expect(accepted).toHaveLength(1);
-      expect(accepted[0]).toMatchObject({
+      expect(accepted).toHaveLength(2);
+      // The composer's opening message counts too, recorded where it is admitted.
+      expect(accepted.find((event) => (event.properties as { messageId?: string }).messageId
+        === opening.body.turnId)).toMatchObject({ name: "message_sent", properties: { messageKind: "message" } });
+      expect(accepted.find((event) => (event.properties as { messageId?: string }).messageId
+        === sent.turnId)).toMatchObject({
         name: "message_sent",
         identityScope: "workspace-user",
         properties: {
