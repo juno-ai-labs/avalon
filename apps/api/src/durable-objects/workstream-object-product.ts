@@ -1720,6 +1720,22 @@ export class WorkstreamObjectProductService {
         ];
       },
     );
+    // Only the composer's create carries this journey; Slack, suggestions,
+    // imports and Sidekicks open Channels with text nobody typed here.
+    if (input.telemetryJourney === "workstream_create" && !history && !input.seed) {
+      recordMessageSentTelemetry(this.env, auth, {
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        messageId,
+        scope: input.scope,
+        origin: new WorkstreamIdentityStorage(this.storage).identity()?.origin_type ?? "ad_hoc",
+        messageKind: "message",
+        attachmentCount: input.attachmentIds.length,
+        mentionCount: prepared.mentions.length,
+        // Everyone seated besides the creator: explicit picks and accepted mentions.
+        participantAddedCount: memberIds.length - 1,
+      }, this.defer);
+    }
     return {
       workstream: await this.summary(this.root(), auth.userId),
       turnId: messageId,
@@ -4552,7 +4568,7 @@ export class WorkstreamObjectProductService {
     // without reading identity/transfer state or contacting the grant owner.
     // Counted before anything seats them: once participant authority has
     // moved to the parent, preparation below projects them into the roster.
-    const participantAddedCount = confirmedParticipantUserIds.filter((userId) => !this.isParticipant(userId)).length;
+    const participantAddedCount = new Set(confirmedParticipantUserIds.filter((userId) => !this.isParticipant(userId))).size;
     const missingParticipantUserIds = [...new Set([auth.userId, ...confirmedParticipantUserIds])]
       .filter((userId) => !this.isParticipant(userId));
     if (missingParticipantUserIds.length > 0) {
