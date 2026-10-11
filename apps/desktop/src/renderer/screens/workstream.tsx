@@ -669,7 +669,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const railScope = useUiStore((state) => state.railScope);
   const storeRailOpen = useUiStore((state) => state.railOpen);
   const closeRail = useUiStore((state) => state.closeRail);
-  const pinThread = usePinAction();
+  const pinThread = usePinAction(api);
   const breakoutScope = openBreakoutId === null ? null : `${id}:${openBreakoutId}`;
   const breakoutOwnsRail = storeRailOpen && breakoutScope !== null && railScope === breakoutScope;
   const mainOwnsRail = storeRailOpen && railScope === id;
