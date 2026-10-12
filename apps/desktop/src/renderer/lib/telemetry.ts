@@ -129,6 +129,10 @@ export function telemetrySurfaceForPath(
   // funnel; `automation_builder` stays in the union because rows recorded
   // before the retirement still carry it.
   if (pathname === '/settings') return { surface: 'settings_application' };
+  // A thread opened beside its Channel is the same surface as one on its own
+  // route; without this, every open from the sidebar was abandoned on arrival.
+  const thread = /^\/channels\/[^/]+\/threads\/([0-9a-f-]{36})$/iu.exec(pathname);
+  if (thread) return { surface: 'workstream', resourceType: 'workstream', resourceId: thread[1]! };
   const match = /^\/(workstreams|notes|automations)\/([0-9a-f-]{36})$/iu.exec(pathname);
   if (!match) return null;
   const resourceType = match[1] === 'workstreams' ? 'workstream' : match[1] === 'notes' ? 'note' : 'automation';
