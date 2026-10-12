@@ -708,6 +708,8 @@ select the new organization.
 
 The browser also records the account introduction as seen instead of showing
 it, since the landing page that sent the person here already introduced Rally.
+(The desktop app has since dropped the introduction screens too; see
+[`new-user-onboarding.md`](new-user-onboarding.md).)
 
 **Consequences:** Creation runs only on Global; another deployment answers 409
 `global_identity_required`. The bearer the create path mints is revoked at once,
