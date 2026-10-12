@@ -1,8 +1,8 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '../lib/api';
 import { CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
@@ -293,6 +293,103 @@ describe('the navigation sidebar', () => {
       renderSidebar(seed);
       expect(screen.getByRole('button', { name: 'Sorted by Recent. Sort by Needs attention' })).toBeInTheDocument();
       expect(names()).toEqual(['Zebra', 'Kiwi', 'Mango', 'Apple']);
+    });
+  });
+  describe('list motion', () => {
+    const animate = vi.fn((element: Element, keyframes: Keyframe[], options: KeyframeAnimationOptions) => {
+      void element; void keyframes; void options;
+      return { cancel: vi.fn(), onfinish: null, oncancel: null };
+    });
+    const measure = Element.prototype.getBoundingClientRect;
+
+    // `animate` is deleted rather than restored because jsdom never defined
+    // it; the measurement jsdom does define goes back as it was.
+    beforeEach(() => {
+      animate.mockClear();
+      Element.prototype.animate = function animateStub(
+        this: Element,
+        keyframes: Keyframe[] | PropertyIndexedKeyframes | null,
+        options?: number | KeyframeAnimationOptions,
+      ): Animation {
+        return animate(this, keyframes as Keyframe[], options as KeyframeAnimationOptions) as unknown as Animation;
+      };
+      // jsdom lays nothing out: rows and headings sit one slot apart in
+      // document order under the scroll box.
+      Element.prototype.getBoundingClientRect = function getBoundingClientRect(this: Element): DOMRect {
+        const scroll = this.closest('.sidebar-scroll');
+        const index = scroll === null || scroll === this
+          ? 0
+          : [...scroll.querySelectorAll('[data-motion-key]')].indexOf(this);
+        const top = index * 48;
+        return { top, left: 8, right: 288, bottom: top + 48, width: 280, height: 48, x: 8, y: top, toJSON: () => ({}) };
+      };
+    });
+
+    afterEach(() => {
+      delete (Element.prototype as Partial<Element>).animate;
+      Element.prototype.getBoundingClientRect = measure;
+    });
+
+    function playedOn(key: string): { element: HTMLElement; keyframes: Keyframe[] } | undefined {
+      const call = animate.mock.calls.find(([element]) => (element as HTMLElement).dataset.motionKey === key);
+      return call ? { element: call[0] as HTMLElement, keyframes: call[1] } : undefined;
+    }
+
+    const fruit = { waterline: 1, items: [channel('apple', 'Apple'), channel('mango', 'Mango'), channel('zebra', 'Zebra')] };
+
+    it('moves a pinned Channel up into Pinned, and shifts the rows it passed', async () => {
+      api.setPinned.mockResolvedValue([{ kind: 'channel', id: 'zebra', parentId: null }]);
+      renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, fruit));
+
+      fireEvent.contextMenu(screen.getByRole('button', { name: /Zebra/u }));
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+      await screen.findByRole('region', { name: 'Pinned channels' });
+
+      // Zebra rises two slots, from last under All channels to first under
+      // Pinned: the row the Pinned section now renders is the one that plays.
+      const moved = playedOn('channel:zebra');
+      expect(screen.getByRole('region', { name: 'Pinned channels' })).toContainElement(moved!.element);
+      expect(moved!.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 96px)' }));
+      expect(playedOn('channel:apple')?.keyframes).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
+    });
+
+    it('moves a restored Channel from Archived up into the list', async () => {
+      api.restoreSpace.mockResolvedValue(channel('hiring', 'Hiring'));
+      renderSidebar((client) => {
+        client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] });
+        client.setQueryData(INACTIVE_SPACES_QUERY_KEY, { waterline: 1, items: [channel('hiring', 'Hiring', { status: 'archived' })] });
+      });
+      const archived = within(screen.getByRole('region', { name: 'Archived channels' }));
+      fireEvent.click(archived.getByRole('button', { name: 'Show 1' }));
+      fireEvent.click(archived.getByRole('button', { name: 'Restore' }));
+      await within(screen.getByRole('region', { name: 'All channels' })).findByRole('button', { name: /Hiring/u });
+
+      // From the fourth slot (under Archived) to the second (above Outbound).
+      expect(playedOn('channel:hiring')?.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 96px)' }));
+    });
+
+    it('holds the dragged row, and drops it in the slot laid out under the pointer', () => {
+      const pins = fruit.items.map((item) => ({ kind: 'channel' as const, id: item.id, parentId: null }));
+      api.reorderPins.mockResolvedValue(pins);
+      renderSidebar((client) => {
+        client.setQueryData(SPACES_QUERY_KEY, fruit);
+        client.setQueryData(PINS_QUERY_KEY, pins);
+      });
+      const pinned = within(screen.getByRole('region', { name: 'Pinned channels' }));
+      const zebra = pinned.getByRole('button', { name: /Zebra/u });
+      fireEvent.dragStart(zebra, { dataTransfer: { effectAllowed: 'all' } });
+      expect(zebra).toHaveAttribute('data-motion-hold');
+
+      // The event reaches Apple, but the pointer is in Mango's laid-out slot
+      // (the Pinned heading is slot 0, Apple 1, Mango 2): a row drawn there
+      // mid-motion is not the slot's owner.
+      // jsdom has no DragEvent, so the pointer's position is set by hand.
+      const apple = pinned.getByRole('button', { name: /Apple/u });
+      const over = createEvent.dragOver(apple);
+      Object.defineProperty(over, 'clientY', { value: 100 });
+      fireEvent(apple, over);
+      fireEvent.drop(zebra);
+      expect(api.reorderPins).toHaveBeenLastCalledWith('channel', ['apple', 'zebra', 'mango']);
     });
   });
 });

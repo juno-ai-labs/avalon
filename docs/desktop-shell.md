@@ -91,10 +91,10 @@ Opening it marks it read.
 A row opened from any list opens the thread beside one of its Channels — the
 one already open when it sits there — so a Channel is always one step back.
 
-Rows in these lists do not animate when they move: a row that changes place
-(a pin, a new activity time, a re-sort) is simply drawn in its new slot. The
-old sidebar's list motion ([`list-motion.md`](list-motion.md)) was not carried
-over.
+A row in these lists that changes place (a pin, a new activity time, a
+re-sort, a restore) travels to its new slot rather than reappearing there.
+Each tab runs the list motion on the shared scroll box;
+[`list-motion.md`](list-motion.md) owns it.
 
 ### The Channel screen
 

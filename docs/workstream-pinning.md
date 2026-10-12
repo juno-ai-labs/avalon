@@ -80,8 +80,9 @@ switch, writes one pin. A drag inside a Pinned part moves the row under the
 pointer and saves the kind's whole order on drop (`PUT /navigation/pins`). A
 pin or reorder that did not save leaves a line above the open tab saying so,
 and the list keeps what the server answered last. Only the newest write's
-answer is applied, so an older response cannot snap the list back. Rows do not
-animate between sections; [`list-motion.md`](list-motion.md) records why.
+answer is applied, so an older response cannot snap the list back. A pinned
+row travels into **Pinned** rather than reappearing there, and a drag resolves
+its target by layout; [`list-motion.md`](list-motion.md) owns both.
 
 ### Older desktops' per-Space pins
 
