@@ -224,4 +224,5 @@ update it in the same change.
 | [`landing-comparisons.md`](landing-comparisons.md) | The landing page's "Compared to" section, the `/compare/` pages, and the column footer they share: the one list of rivals in `site-chrome.ts`, the marker plugin, the page shape built for AI search, and the rule that claims about a rival stay checkable. Read before adding a rival or a footer link. |
 | [`landing-page-tracking.md`](landing-page-tracking.md) | What the landing page reports to PostHog, the tagged links, and the checklist a redesign must keep so tracking survives. |
 | [`public-site-telemetry.md`](public-site-telemetry.md) | Global anonymous acquisition and desktop-handoff measurement, and the temporary PostHog browser SDK (session replay, heatmaps) on the marketing pages. |
+| [`site-traffic-classification.md`](site-traffic-classification.md) | Human-versus-automated classes for public-site visits, from network, header, engine and input contradictions, stored only as closed codes. |
 | [`terminal-production-qa-2026-08-21.md`](terminal-production-qa-2026-08-21.md) | Historical Terminal production verification. |

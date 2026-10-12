@@ -431,6 +431,7 @@ describe("PostHog adapter", () => {
         campaignSource: "launch",
         campaignMedium: "email",
         campaignName: "august",
+        adClickIdSource: "x",
       },
     };
 
@@ -446,6 +447,7 @@ describe("PostHog adapter", () => {
         $utm_source: "launch",
         $utm_medium: "email",
         $utm_campaign: "august",
+        adClickIdSource: "x",
         $session_id: "018f22f2-4c22-7abc-8def-0123456789a0",
         $process_person_profile: false,
       },
