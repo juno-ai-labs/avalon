@@ -124,7 +124,6 @@ import {
   RallyApiResponseError,
   readJsonBody,
   refreshFailureIsTerminal,
-  refreshFailureIsTransient,
   responseError,
   UnusableCredentialError,
 } from './api-response-error';
@@ -164,7 +163,6 @@ import {
 } from './artifact-viewers';
 import { conversationDetailsGeometry } from './conversation-details-geometry';
 import { CredentialRefreshRegistry } from './credential-refresh';
-import { retryTransient } from './retry-transient';
 import { DebugSettingsController } from './debug-settings';
 import {
   acceptedDeepLink,
@@ -2210,25 +2208,6 @@ async function requestSession(
   return { ...parsed.data, apiBaseUrl: returnedApiBaseUrl };
 }
 
-/** Retries of a refresh that failed without a usable answer. Three tries
- * ride out a network still coming back after the Mac wakes. A repeat is safe
- * because the service keeps honouring a retired refresh token until its
- * successor is used (`AuthService.refresh`). */
-const REFRESH_ATTEMPTS = 3;
-const REFRESH_RETRY_DELAYS_MS = [1_000, 2_000] as const;
-
-function requestRefresh(apiBaseUrl: string, previous: StoredAuth): Promise<WireSession> {
-  return retryTransient(
-    () => requestSession(apiBaseUrl, '/auth/refresh', { refreshToken: previous.refreshToken }, previous.accessToken),
-    {
-      attempts: REFRESH_ATTEMPTS,
-      delaysMs: REFRESH_RETRY_DELAYS_MS,
-      // A sign-out during the wait owns the credential now; stop asking.
-      transient: (error) => !loggingOut && refreshFailureIsTransient(error),
-    },
-  );
-}
-
 async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
   const expectedLifecycleEpoch = sessionLifecycleEpoch;
   if (loggingOut) throw new Error('Wait for Rally to finish signing out before signing in again');
@@ -2593,7 +2572,12 @@ async function refreshStoredCredentialOnce(previous: StoredAuth): Promise<WireSe
   const apiBaseUrl = apiBaseForAuth(previous);
   let session: WireSession;
   try {
-    session = await requestRefresh(apiBaseUrl, previous);
+    session = await requestSession(
+      apiBaseUrl,
+      '/auth/refresh',
+      { refreshToken: previous.refreshToken },
+      previous.accessToken,
+    );
     if (!sessionsShareBinding(session, previous) || session.apiBaseUrl !== apiBaseUrl) {
       throw new UnusableCredentialError('The refreshed session did not match the stored credential binding');
     }
@@ -3075,7 +3059,12 @@ async function refreshActiveSessionOnce(previousAuth: StoredAuth, expectedLifecy
   const apiBaseUrl = apiBaseForAuth(previousAuth);
   let session: WireSession;
   try {
-    session = await requestRefresh(apiBaseUrl, previousAuth);
+    session = await requestSession(
+      apiBaseUrl,
+      '/auth/refresh',
+      { refreshToken: previousAuth.refreshToken },
+      previousAuth.accessToken,
+    );
     // A binding the service will never agree with cannot be retried into
     // working. Joining the workspace from another device rebinds the
     // server session while this device's stored binding stays unbound, so
