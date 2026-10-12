@@ -192,7 +192,13 @@ describe('token references', () => {
     '--title-menu-room',
     // The feed's spacing steps, each a multiple of the one `ref.space.unit`
     // token; the multiples are the stylesheet's, not a theme's.
-    '--space-1', '--space-2', '--space-3', '--space-4', '--space-5', '--space-6', '--space-7', '--space-8'];
+    '--space-1', '--space-2', '--space-3', '--space-4', '--space-5', '--space-6', '--space-7', '--space-8',
+    // The section switcher's width, which the main window centres the macOS
+    // traffic lights over: layout, the same in every theme.
+    '--navigation-rail-width',
+    // The ring behind a tile's badge, set by each sidebar row to its own
+    // background so the badge reads as cut out of the tile.
+    '--tile-ring'];
 
   // Set at runtime rather than in CSS: some by components as inline styles,
   // three by libraries on their own elements. They cannot be checked from this
