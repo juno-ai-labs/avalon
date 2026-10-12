@@ -10,6 +10,15 @@ import type { ReactNode } from 'react';
  */
 export type TileShape = 'squircle' | 'circle';
 
+/**
+ * How many badges a tile draws. Each 22px badge sits 14px left of the one
+ * before, starting 6px past the tile's right edge, so a 36px tile holds two;
+ * a third would start 8px past its left edge, out over the row's padding.
+ * Geometry, not a policy: a surface that wants more names them elsewhere, as
+ * a thread row's second line does.
+ */
+const BADGE_ROOM = 2;
+
 /** A small tile pinned to a larger one's bottom-right corner. */
 export interface TileBadge {
   key: string;
@@ -50,7 +59,7 @@ export function IdentityTile({ badges, className, icon: Icon, ink, shape, size =
     <span className={clsx('identity-tile-shape', `is-${shape}`)} style={{ background: tint, color: ink }}>
       <Icon size={Math.round(size * 0.47)} strokeWidth={1.8} />
     </span>
-    {badges?.map((badge, index) => <span
+    {badges?.slice(0, BADGE_ROOM).map((badge, index) => <span
       className={clsx('identity-tile-badge', `is-${badge.shape}`)}
       key={badge.key}
       style={{ right: -6 + index * 14 }}

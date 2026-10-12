@@ -33,7 +33,7 @@ import type { AttentionItem } from '../lib/attention-items';
 import { useAppSession } from '../lib/app-session';
 import { consumeDeepLinkWorkstreamNavigation, useDeepLinkWorkstreamNavigation } from '../lib/deep-link-navigation';
 import { desktopBridge } from '../lib/platform';
-import { formatDateTime, formatSidebarActivityTime, formatTime } from '../lib/format';
+import { formatDateTime, formatSidebarActivityTime, formatTime, readerMarkerStatus } from '../lib/format';
 import { layoutInsertIndex, layoutRowAt } from '../lib/list-motion';
 import { channelRoute, homeChannelId, threadRoute } from '../lib/navigation-routes';
 import { moveWithin } from '../lib/personal-order';
@@ -288,7 +288,7 @@ export function NavigationSidebar({
             {section === 'threads' && !guest && <IconButton
               disabled={startChannelId === null}
               label="New thread"
-              onClick={() => { if (startChannelId) void navigate(channelRoute(startChannelId)); }}
+              onClick={() => { if (startChannelId) void navigate(channelRoute(startChannelId), { state: { focusComposer: true } }); }}
             >
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
@@ -706,7 +706,7 @@ function RowLayout({ detail, tile, time, title, titleExtra, unread }: {
  * that; what the run is doing is the thread's own header's to show.
  */
 function threadUnread(row: SpaceConversationSummary): boolean {
-  return row.hasUnread || row.unseen === true || row.youAreMentioned === true;
+  return readerMarkerStatus(row) !== null;
 }
 
 function useSpaceMap(): Map<string, SpaceSummary> {
@@ -1248,7 +1248,9 @@ function useMarkActivityRead(): () => void {
       ...data,
       pages: data.pages.map((page) => ({ ...page, items: page.items.map((item) => item.unread ? { ...item, unread: false } : item) })),
     });
-    void api.markActivitySeen(newest).catch(() => undefined);
+    // A failed write puts the dots back from the server rather than leaving
+    // them cleared over a waterline that never moved.
+    void api.markActivitySeen(newest).catch(() => queryClient.invalidateQueries({ queryKey: ACTIVITY_QUERY_KEY }));
   }, [api, queryClient]);
 }
 
