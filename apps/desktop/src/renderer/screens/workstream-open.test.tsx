@@ -829,7 +829,7 @@ describe('socket-first channel open', () => {
 
     expect(await screen.findByRole('button', { name: 'Breakout menu: Private child' })).toBeInTheDocument();
     // The Breakout's pill wears the breakout arrow; its own icon is chosen from its menu.
-    expect(screen.queryByRole('button', { name: 'Change Private child icon and color' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Change Private child icon' })).not.toBeInTheDocument();
     act(() => client.setQueryData(['workstream', workstreamId], { ...parent, appearance: { icon: 'heart', color: 'blue' } }));
 
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Thread menu: Recovered channel' }), { button: 0, ctrlKey: false });
@@ -881,9 +881,11 @@ describe('socket-first channel open', () => {
 
     fireEvent.pointerDown(await screen.findByRole('button', { name: 'Breakout menu: Private child' }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
-    fireEvent.keyDown(await screen.findByRole('menuitem', { name: 'Icon and color' }), { key: 'ArrowRight' });
-    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Purple' }));
-    await waitFor(() => expect(childAppearance).toHaveBeenCalledWith({ color: 'purple' }));
+    fireEvent.keyDown(await screen.findByRole('menuitem', { name: 'Icon' }), { key: 'ArrowRight' });
+    // The colour is the Channel's, so only the icon is offered.
+    expect(screen.queryByRole('menuitemradio', { name: 'Purple' })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Heart' }));
+    await waitFor(() => expect(childAppearance).toHaveBeenCalledWith({ icon: 'heart' }));
     expect(mainAppearance).not.toHaveBeenCalled();
   });
 
@@ -907,9 +909,10 @@ describe('socket-first channel open', () => {
     });
 
     await titleMenu('Thread menu: Recovered channel', 'More');
-    fireEvent.keyDown(await screen.findByRole('menuitem', { name: 'Icon and color' }), { key: 'ArrowRight' });
-    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Purple' }));
-    await waitFor(() => expect(mainAppearance).toHaveBeenCalledWith({ color: 'purple' }));
+    fireEvent.keyDown(await screen.findByRole('menuitem', { name: 'Icon' }), { key: 'ArrowRight' });
+    expect(screen.queryByRole('menuitemradio', { name: 'Purple' })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Heart' }));
+    await waitFor(() => expect(mainAppearance).toHaveBeenCalledWith({ icon: 'heart' }));
   });
 
   it('marks the Channel pill with the sidebar row\'s appearance, which a receipt moves first', async () => {
@@ -927,13 +930,13 @@ describe('socket-first channel open', () => {
       cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
     }, childId);
 
-    const channelTrigger = await screen.findByRole('button', { name: 'Change Recovered channel icon and color' });
+    const channelTrigger = await screen.findByRole('button', { name: 'Change Recovered channel icon' });
     expect(channelTrigger.querySelector('.lucide-megaphone')).not.toBeNull();
 
     // The receipt-time writer itself, not a hand-rolled cache poke: it writes
     // the row and deliberately leaves the detail alone.
     act(() => patchCachedWorkstreamAppearance(client, workstreamId, { icon: 'heart', color: 'blue' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Change Recovered channel icon and color' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Change Recovered channel icon' })
       .querySelector('.lucide-heart')).not.toBeNull());
   });
 

@@ -4573,7 +4573,7 @@ describe("a member's message travels the whole pipeline", () => {
 
   describe("shared appearance projection", () => {
     useHeldEffectQueue();
-    it("persists shared appearance patches and does not replay an old choice", async () => {
+    it("persists shared icon patches, drops a client's colour, and does not replay an old choice", async () => {
       const stub = agentStub();
       const opened = await initializeWorkstream(stub, "first message");
       await settledRun(stub, opened.body.harnessRunId as string);
@@ -4583,21 +4583,23 @@ describe("a member's message travels the whole pipeline", () => {
         socket.send(JSON.stringify({ type: "set_workstream_appearance", operationId, appearance }));
         expect(await receipt).toMatchObject({ type: "client_command_succeeded", command: "set_workstream_appearance", operationId });
       };
-      await choose("00000000-0000-7000-8000-0000000006c1", { color: "blue" });
+      await choose("00000000-0000-7000-8000-0000000006c1", { icon: "heart" });
       await choose("00000000-0000-7000-8000-0000000006c2", { icon: "rocket" });
-      await choose("00000000-0000-7000-8000-0000000006c3", { color: "purple" });
-      await choose("00000000-0000-7000-8000-0000000006c1", { color: "blue" });
+      // A thread's colour is its Channel's, written by the server alone
+      // (channel-color-sync.ts): the command succeeds and the colour is dropped.
+      await choose("00000000-0000-7000-8000-0000000006c3", { icon: "rocket", color: "purple" });
+      await choose("00000000-0000-7000-8000-0000000006c1", { icon: "heart" });
       await deliverEffectsToWorkspaceInOrder(env, stub);
       const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
       const page = await workspace.listWorkstreams({ workspaceId: WORKSPACE_ID, userId: USER_ID, limit: 20, includeSystem: false });
-      expect(page.items.find((item) => item.id === WORKSTREAM_ID)?.appearance).toEqual({ icon: "rocket", color: "purple" });
+      expect(page.items.find((item) => item.id === WORKSTREAM_ID)?.appearance).toEqual({ icon: "rocket", color: null });
       const service = new WorkstreamService({ ...TEST_ENV, SESSION_SIGNING_KEY: "appearance-test-signing-key", PUBLIC_API_BASE_URL: "https://api.rally.test" }, AUTH);
       const ticket = await service.workstreamControlSocketTicket(WORKSTREAM_ID);
       expect(new URL(ticket.url).search).toBe("");
       socket.close(1000, "done");
       await evictDurableObject(stub);
       const reopened = await openSubscribedSocket(stub, "00000000-0000-7000-8000-0000000006c4");
-      expect(reopened.initial).toMatchObject({ workstream: { appearance: { icon: "rocket", color: "purple" } } });
+      expect(reopened.initial).toMatchObject({ workstream: { appearance: { icon: "rocket", color: null } } });
       reopened.socket.close(1000, "done");
     });
   });

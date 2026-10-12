@@ -269,11 +269,12 @@ describe("the shared Durable Object alarm list", () => {
         { phase: "parent_breakouts", alarmKind: undefined },
         // Post-commit work a directory write recorded and did not finish.
         { phase: "directory_followup", alarmKind: undefined },
-        // The Space authority's two publishing phases sit before the sweep:
-        // each publishes onto the activity Queue, and a rejected send has to
-        // leave its rows claimed and pending rather than spin this alarm.
+        // The Space authority's publishing phases sit before the sweep: each
+        // publishes onto the activity Queue, and a rejected send has to leave
+        // its rows claimed and pending rather than spin this alarm.
         { phase: "space_default_publish", alarmKind: undefined },
         { phase: "space_bootstrap", alarmKind: undefined },
+        { phase: "channel_color_sync", alarmKind: undefined },
         { phase: "activity_reap", alarmKind: undefined },
         { phase: "connector_event_reap", alarmKind: undefined },
         { phase: "schedule_reconcile", alarmKind: undefined },
