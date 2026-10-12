@@ -127,6 +127,18 @@ describe('a Channel', () => {
     expect(await screen.findByText('composer')).toHaveAttribute('data-thread-open', 'true');
   });
 
+  it('marks each day the feed crosses once, above its first thread', async () => {
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [
+      { kind: 'thread', placedAt: '2026-10-02T15:00:00.000Z', attentionSequenceNumber: 3, thread: { ...plan, id: 'later' } },
+      { kind: 'thread', placedAt: '2026-10-02T14:00:00.000Z', attentionSequenceNumber: 2, thread: plan },
+      { kind: 'locked', placedAt: '2026-09-20T12:00:00.000Z', attentionSequenceNumber: 1, threadId: 'secret' },
+    ] });
+    renderChannel();
+    const feed = within(await screen.findByRole('list', { name: 'Threads in Outbound' }));
+    await feed.findAllByRole('listitem');
+    expect(feed.getAllByRole('separator')).toHaveLength(2);
+  });
+
   it('names somebody it cannot look up as someone, not Rally', async () => {
     api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [
       { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, createdByUserId: 'gone' } },
