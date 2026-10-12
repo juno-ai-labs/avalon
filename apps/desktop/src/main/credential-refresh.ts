@@ -1,16 +1,15 @@
 /**
  * One refresh in flight per stored refresh token.
  *
- * The API rotates the refresh token on every `/auth/refresh`, and for sixty
- * seconds it also honours the token it just retired so that a device whose
- * response was lost can present the old one again. That grace clause makes a
- * *concurrent* pair of refreshes with the same token dangerous rather than
- * harmless: both succeed, each rotates, and the response that reaches the
- * desktop first is the one persisted — leaving the device holding a token
- * the service will only accept for the remainder of the grace window. The
- * next refresh after that is a 401, which the desktop reads as terminal and
- * answers by surrendering the credential. For the account identity that now
- * ends the complete local session and shows the native sign-in notice.
+ * The API rotates the refresh token on every `/auth/refresh` and keeps
+ * honouring the token it retired until the successor is first presented, so
+ * a device whose response was lost can present the old one again, however
+ * much later. Two *concurrent* refreshes with the same token are still
+ * harmful: both succeed, the second keeps the old token valid and retires the
+ * first answer's token at once, and if the desktop persists that first answer
+ * its next refresh is a 401, which it reads as terminal. For the account
+ * identity that ends the complete local session and shows the native sign-in
+ * notice.
  *
  * Every path that renews a stored credential therefore goes through here, so
  * that two requests which found the same access token expired share one
