@@ -133,6 +133,21 @@ describe('the navigation sidebar', () => {
     expect(api.reorderPins).toHaveBeenLastCalledWith('channel', ['growth', 'outbound']);
   });
 
+  it('keeps an empty Pinned section that says how to pin, and wakes it while a row is dragged', async () => {
+    renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
+    const pinned = within(screen.getByRole('region', { name: 'Pinned channels' }));
+    const hint = pinned.getByText('Move a channel here to pin it').parentElement!;
+    expect(hint).not.toHaveClass('is-armed');
+    fireEvent.dragStart(screen.getByRole('button', { name: /Outbound/u }), { dataTransfer: { effectAllowed: 'all', setData: vi.fn() } });
+    expect(hint).toHaveClass('is-armed');
+    fireEvent.dragEnd(screen.getByRole('button', { name: /Outbound/u }));
+    expect(hint).not.toHaveClass('is-armed');
+
+    useUiStore.getState().setSidebarSection('threads');
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [] });
+    expect(await within(await screen.findByRole('region', { name: 'Pinned threads' })).findByText('Move a thread here to pin it')).toBeInTheDocument();
+  });
+
   it('says why a pin did not save', async () => {
     api.setPinned.mockRejectedValue(new ApiError('limit', 409, 'pin_limit_reached'));
     renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
@@ -343,14 +358,15 @@ describe('the navigation sidebar', () => {
 
       fireEvent.contextMenu(screen.getByRole('button', { name: /Zebra/u }));
       fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
-      await screen.findByRole('region', { name: 'Pinned channels' });
+      const pinned = within(screen.getByRole('region', { name: 'Pinned channels' }));
+      await pinned.findByRole('button', { name: /Zebra/u });
 
-      // Zebra rises two slots, from last under All channels to first under
+      // Zebra rises three slots, from last under All channels to first under
       // Pinned: the row the Pinned section now renders is the one that plays.
       const moved = playedOn('channel:zebra');
       expect(screen.getByRole('region', { name: 'Pinned channels' })).toContainElement(moved!.element);
-      expect(moved!.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 96px)' }));
-      expect(playedOn('channel:apple')?.keyframes).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
+      expect(moved!.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 144px)' }));
+      expect(playedOn('channel:apple')?.keyframes).toEqual([{ transform: 'translate(0px, -48px)' }, { transform: 'translate(0px, 0px)' }]);
     });
 
     it('moves a restored Channel from Archived up into the list', async () => {
@@ -366,6 +382,39 @@ describe('the navigation sidebar', () => {
 
       // From the fourth slot (under Archived) to the second (above Outbound).
       expect(playedOn('channel:hiring')?.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 96px)' }));
+    });
+
+    it('pins a row dragged into Pinned at the slot held open for it', async () => {
+      api.setPinned.mockResolvedValue(['apple', 'mango', 'zebra'].map((id) => ({ kind: 'channel', id, parentId: null })));
+      api.reorderPins.mockResolvedValue(['apple', 'zebra', 'mango'].map((id) => ({ kind: 'channel', id, parentId: null })));
+      renderSidebar((client) => {
+        client.setQueryData(SPACES_QUERY_KEY, fruit);
+        client.setQueryData(PINS_QUERY_KEY, [
+          { kind: 'channel', id: 'apple', parentId: null },
+          { kind: 'channel', id: 'mango', parentId: null },
+        ]);
+      });
+      const section = screen.getByRole('region', { name: 'Pinned channels' });
+      const zebra = within(screen.getByRole('region', { name: 'All channels' })).getByRole('button', { name: /Zebra/u });
+      fireEvent.dragStart(zebra, { dataTransfer: { effectAllowed: 'all', setData: vi.fn() } });
+
+      // The Pinned heading is slot 0, Apple 1 and Mango 2: a pointer past
+      // Apple's middle and short of Mango's holds the slot between them.
+      const over = createEvent.dragOver(section, { dataTransfer: { dropEffect: 'none' } });
+      Object.defineProperty(over, 'clientY', { value: 100 });
+      fireEvent(section, over);
+      const ghost = section.querySelector('.is-pin-ghost');
+      expect(ghost).toHaveTextContent('Zebra');
+      expect([...section.querySelectorAll('.navigation-channel-row')].map((row) => row.textContent?.slice(0, 5)))
+        .toEqual(['Apple', 'Zebra', 'Mango']);
+
+      fireEvent.drop(section);
+      // A new pin is appended, so the slot it was dropped in is saved after.
+      await waitFor(() => expect(api.reorderPins).toHaveBeenCalledWith('channel', ['apple', 'zebra', 'mango']));
+      expect(api.setPinned).toHaveBeenCalledWith('channel', 'zebra', true, undefined);
+      await waitFor(() => expect(within(section).getAllByRole('button').filter((row) => row.classList.contains('navigation-channel-row'))
+        .map((row) => row.textContent?.slice(0, 5))).toEqual(['Apple', 'Zebra', 'Mango']));
+      expect(section.querySelector('.is-pin-ghost')).toBeNull();
     });
 
     it('holds the dragged row, and drops it in the slot laid out under the pointer', () => {
