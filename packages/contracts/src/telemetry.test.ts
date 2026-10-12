@@ -379,6 +379,26 @@ describe("telemetry registry", () => {
     }).success).toBe(false);
   });
 
+  it("rejects an ad click identifier's value where only its platform may go", () => {
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...envelope("site_page_viewed", {
+        page: "landing", pathname: "/", adClickIdSource: "23opevjt88psuo13lu8d020qkn",
+      }),
+      source: "site",
+    }).success).toBe(false);
+  });
+
+  it("rejects traffic codes outside the closed lists, so no raw signal can ride along", () => {
+    const pageLeft = (properties: Record<string, unknown>) => TelemetryEnvelopeSchema.safeParse({
+      ...envelope("site_page_left", { page: "landing", pathname: "/", duration: "1s_5s", ...properties }),
+      source: "site",
+    }).success;
+    expect(pageLeft({ pageSignals: ["America/Los_Angeles"] })).toBe(false);
+    expect(pageLeft({ pageSignals: ["webdriver"] })).toBe(false);
+    expect(pageLeft({ trafficReasons: ["AS16509"] })).toBe(false);
+    expect(pageLeft({ trafficClass: "bot" })).toBe(false);
+  });
+
   it("rejects unknown application settings and icon values", () => {
     expect(TelemetryEnvelopeSchema.safeParse({
       ...envelope("application_settings_state", {
@@ -615,6 +635,17 @@ describe("telemetry registry", () => {
     }],
     ["site_page_viewed", "site", "anonymous-epoch", {
       page: "landing", pathname: "/", referringDomain: "example.com", campaignSource: "launch",
+    }],
+    ["site_page_viewed", "site", "anonymous-epoch", {
+      page: "landing", pathname: "/", campaignSource: "x", adClickIdSource: "x",
+    }],
+    ["site_page_viewed", "site", "anonymous-epoch", {
+      page: "landing", pathname: "/", trafficClass: "automated",
+      trafficReasons: ["engine_mismatch", "hosting_network", "tz_offset_mismatch"],
+    }],
+    ["site_page_left", "site", "anonymous-epoch", {
+      page: "landing", pathname: "/", duration: "1s_5s", pageSignals: ["human_input"],
+      trafficClass: "human", trafficReasons: ["human_input"],
     }],
     ["site_page_left", "site", "anonymous-epoch", {
       page: "landing", pathname: "/", duration: "30s_2m",

@@ -6,6 +6,7 @@ import type {
   TelemetryEventProperties,
   TelemetryRouteResponse,
 } from '@rally/contracts/telemetry';
+import { pageStartSignals, pageTimeZone, watchPageInput } from './traffic-signals';
 
 type SitePage = TelemetryEventProperties<'site_page_viewed'>['page'];
 type SiteActionLink = Omit<TelemetryEventProperties<'site_action_selected'>, 'page'>;
@@ -108,7 +109,12 @@ async function capability(): Promise<CapabilityState> {
   const response = await fetch(`${apiBaseUrl()}/telemetry/bootstrap`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ anonymousEpochId: epochId, routeToken: route.routeToken }),
+    body: JSON.stringify({
+      anonymousEpochId: epochId,
+      routeToken: route.routeToken,
+      timeZone: pageTimeZone(),
+      pageSignals: pageStartSignals(),
+    }),
   });
   if (!response.ok) throw new Error('site_telemetry_bootstrap_failed');
   const value = { ...(await response.json() as TelemetryBootstrapResponse), anonymousEpochId: epochId };
@@ -275,6 +281,29 @@ function campaignValue(name: string): string | undefined {
   return value && /^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/u.test(value) ? value : undefined;
 }
 
+// Ad platforms' click-identifier parameters, by the source the event names.
+// Only whether one is present is reported; its value identifies one ad click.
+const AD_CLICK_ID_PARAMETERS = [['twclid', 'x']] as const;
+
+let adClickIdSource: TelemetryEventProperties<'site_page_viewed'>['adClickIdSource'];
+let adClickIdTaken = false;
+
+/**
+ * Notes which ad platform's click identifier the landing URL carried, then
+ * removes the identifier from the address bar. It runs before PostHog's SDK
+ * loads, because the SDK reports the full URL with every event and replay,
+ * and the identifier names one ad click.
+ */
+export function takeAdClickId(): void {
+  if (adClickIdTaken) return;
+  adClickIdTaken = true;
+  const url = new URL(location.href);
+  adClickIdSource = AD_CLICK_ID_PARAMETERS.find(([parameter]) => url.searchParams.get(parameter))?.[1];
+  if (!AD_CLICK_ID_PARAMETERS.some(([parameter]) => url.searchParams.has(parameter))) return;
+  for (const [parameter] of AD_CLICK_ID_PARAMETERS) url.searchParams.delete(parameter);
+  history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
 function referringDomain(): string | undefined {
   if (!document.referrer) return undefined;
   try {
@@ -387,6 +416,7 @@ export function provideAnalyticsSession(session: (() => string) | null): void {
 }
 
 export function initializeSiteTelemetry(): void {
+  takeAdClickId();
   report('site_page_viewed', {
     page: currentSitePage(),
     pathname: normalizedPathname(),
@@ -394,14 +424,18 @@ export function initializeSiteTelemetry(): void {
     ...(campaignValue('utm_source') ? { campaignSource: campaignValue('utm_source') } : {}),
     ...(campaignValue('utm_medium') ? { campaignMedium: campaignValue('utm_medium') } : {}),
     ...(campaignValue('utm_campaign') ? { campaignName: campaignValue('utm_campaign') } : {}),
+    ...(adClickIdSource ? { adClickIdSource } : {}),
   });
+  const pageInput = watchPageInput();
   const leave = (): void => {
     if (leaveReported) return;
     leaveReported = true;
+    const pageSignals = pageInput();
     report('site_page_left', {
       page: currentSitePage(),
       pathname: normalizedPathname(),
       duration: durationBucket(Date.now() - pageVisibleAt),
+      ...(pageSignals.length ? { pageSignals } : {}),
     }, true);
   };
   window.addEventListener('pagehide', leave, { once: true });
