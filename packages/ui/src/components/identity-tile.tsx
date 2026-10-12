@@ -20,7 +20,17 @@ export type TileShape = 'squircle' | 'circle';
 const BADGE_ROOM = 2;
 
 /** A small tile pinned to a larger one's bottom-right corner. */
-export interface TileBadge {
+export interface TileBadge extends NestedTileBadge {
+  /**
+   * A smaller badge on this badge's own corner, for a chain of containers: a
+   * breakout's tile carries its thread, and the thread carries its Channel.
+   * One level: the 15px nested badge has no room for another.
+   */
+  badge?: NestedTileBadge | undefined;
+}
+
+/** A badge's look, without a badge of its own. */
+export interface NestedTileBadge {
   key: string;
   shape: TileShape;
   /** The badge's fill. */
@@ -30,15 +40,10 @@ export interface TileBadge {
   icon?: LucideIcon | undefined;
   /** Text in place of a symbol, such as a person's initials. */
   text?: string | undefined;
-  /**
-   * A smaller badge on this badge's own corner, for a chain of containers: a
-   * breakout's tile carries its thread, and the thread carries its Channel.
-   */
-  badge?: TileBadge | undefined;
 }
 
 /** A badge in its ring, and the badge nested on its corner, if any. */
-function Badge({ badge, nested = false, right }: { badge: TileBadge; nested?: boolean; right: number }): React.JSX.Element {
+function Badge({ badge, nested = false, right }: { badge: TileBadge | NestedTileBadge; nested?: boolean; right: number }): React.JSX.Element {
   return <span
     className={clsx('identity-tile-badge', `is-${badge.shape}`, nested && 'is-nested')}
     style={{ right }}
@@ -46,7 +51,7 @@ function Badge({ badge, nested = false, right }: { badge: TileBadge; nested?: bo
     <span className={clsx('identity-tile-badge-fill', `is-${badge.shape}`)} style={{ background: badge.fill, color: badge.ink }}>
       {badge.icon ? <badge.icon size={nested ? 7 : 10} strokeWidth={2.2} /> : badge.text}
     </span>
-    {badge.badge && <Badge badge={badge.badge} nested right={-7} />}
+    {!nested && 'badge' in badge && badge.badge && <Badge badge={badge.badge} nested right={-7} />}
   </span>;
 }
 
