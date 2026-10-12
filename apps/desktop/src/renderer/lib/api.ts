@@ -12,6 +12,7 @@ import {
   type ChannelStats,
   type ChannelStatsList,
   PinListSchema,
+  type ActivityFilter,
   type ActivityPage,
   type PinKind,
   type PinList,
@@ -1532,8 +1533,11 @@ export class RallyApi {
     return this.request('/navigation/pins', { method: 'PUT', body: { kind, ids }, schema: PinListSchema });
   }
 
-  getActivity(cursor: string | null, signal?: AbortSignal): Promise<ActivityPage> {
-    const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
+  getActivity(cursor: string | null, only: ActivityFilter | null = null, signal?: AbortSignal): Promise<ActivityPage> {
+    const params = new URLSearchParams();
+    if (cursor !== null) params.set('cursor', cursor);
+    if (only !== null) params.set('only', only);
+    const query = params.size === 0 ? '' : `?${params.toString()}`;
     return this.request(`/navigation/activity${query}`, { schema: ActivityPageSchema, ...(signal ? { signal } : {}) });
   }
 

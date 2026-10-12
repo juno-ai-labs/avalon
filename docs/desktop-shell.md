@@ -45,9 +45,13 @@ One `ResizableSidebar` on the left, at the width in `useUiStore.sidebarWidth`
 drags it), clamped to the shared minimum and maximum. It holds two columns:
 
 - **The section switcher**, a 76px rail under the macOS window controls,
-  which the main window centers over it per macOS version:
-  **Channels**, **Threads** and **Activity**, each an icon over its name, and
-  the account menu at the bottom (its trigger shows only the avatar here).
+  which the main window centers over it per macOS version (the width is
+  `--navigation-rail-width`; change it and the light position together):
+  **Channels**, **Threads** and **Activity**, each an outline over its name,
+  and the account menu at the bottom (its trigger shows only the avatar here).
+  The outlines are what each list holds: a Channel is a squircle and a Thread
+  is a circle, as their rows draw them, and Activity, which holds neither, is
+  a triangle.
   The choice is a device preference (`rally.sidebar-section`). **Threads**
   carries a red count: every conversation waiting on this person and every
   access request waiting on them, the same `attentionItems` the dock badge and
@@ -55,14 +59,23 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   Activity carry no badge.
 - **One list**, titled with the section's name, with **Search organization**,
   **Import** (Mac app only, into any Channel the person may place threads in),
-  and **Restart to update** when one is downloaded.
+  **Restart to update** when one is downloaded, and one action per section:
+  **New channel** on Channels, **New thread** on Threads, **Mark all read** on
+  Activity.
+
+Every row in the three lists is one layout (`RowLayout`): an `IdentityTile`
+(`packages/ui/src/components/identity-tile.tsx`), a name with a time, and a
+second line with the unread dot at its end. A tile is a shape in the object's
+pastel pair with its glyph, and can carry small badges on its corner, each in
+a ring painted the row's own background (`--tile-ring`) so it reads as cut out
+of the tile on a plain, hovered or selected row.
 
 **Channels**: what the person pinned, in their order (drag to reorder), then
 every other Channel they may see, ordered **A–Z** (default), **Recent** (newest
 activity first, a Channel with none last) or **Needs attention** (unread first,
 then a Channel holding a thread that needs this person, each group by Recent),
 cycled from the same heading control the Threads tab uses and kept per device
-(`rally.sidebar-channel-sort`). Each row is the Channel's mark, its
+(`rally.sidebar-channel-sort`). Each row is the Channel's squircle tile, its
 name, a lock when it is private, the time of its newest listable thread, and
 "N threads" — both from `channelStats`, seeded by the socket's snapshot and
 read again (`GET /navigation/channel-stats`) when a placement nudge names a
@@ -74,27 +87,43 @@ loaded placement's `attentionSequenceNumber` (`PATCH /spaces/:id/read-state`),
 under the same gate and debounce a conversation's read acknowledgement uses,
 and writes the answered stats row back over the cached one. A failed
 acknowledgement puts the dot back and is not retried until the Channel is
-opened again. **+** opens New channel,
-which names one; every Channel starts Organization-wide.
+opened again. **New channel** names one; every Channel starts
+Organization-wide.
 
 **Threads**: what the person pinned (threads, then breakouts), then every
 thread and breakout they take part in (`GET /navigation/threads`), ordered
 **Recent** (default), **A–Z** or **Needs attention** (`rally.sidebar-thread-sort`).
-A row is its status dot, its title, and its Channel chips; a breakout's row
-carries its thread's name instead. A row the socket holds is drawn from the
-socket, so its dot moves live. Right-click pins or unpins. A row with a
-wake-up coming carries a clock whose tooltip says when and what. A thread
-Rally is still naming shows a shimmer in place of its title
-(`useNamingSkeleton`). Hovering a row for a second warms its thread's socket,
-and a plain click starts the open-latency measurement
+A row is the thread's circle tile with a squircle badge for each Channel it
+sits in, its title, its last activity time, and the Channels' names; a
+breakout's second line starts `↳` and its thread's name. A row is unread
+(bold title, the time and a dot in the unread colour) when it has new
+messages, mentions the person, or was never opened, the three the Threads
+count is made of; what the run is doing is the thread's own header's to show.
+A row the socket holds is drawn from the socket, so its dot moves live.
+Right-click pins or unpins. A row with a wake-up coming carries a clock whose
+tooltip says when and what. A thread Rally is still naming shows a shimmer in
+place of its title (`useNamingSkeleton`). Hovering a row for a second warms
+its thread's socket, and a plain click starts the open-latency measurement
 (`markWorkstreamFeedOpenStarted`); the open thread clicked again starts
 nothing. A thread opened from a desktop link is scrolled into view, loading
-further pages until its row is listed.
+further pages until its row is listed. **New thread** opens the Channel in
+view, or General, whichever the person can start a thread in, and its
+composer takes focus: a thread is started from a Channel and nowhere else
+(the PRD's non-goal 6).
 
 **Activity**: requests to join waiting on this person (approve or decline in
 place), then what happened to them, grouped Today, Yesterday and by day
 (`GET /navigation/activity`; [`digests.md`](digests.md#the-activity-tab)).
-Opening it marks it read.
+A row is the Channel's tile badged with who acted (Rally's sparkle, or a
+person's initials), the sentence, and the Channel with the time. Chips filter
+it: **All**, **Unread** (filtered in the client, since unread is everything
+after one waterline and so a run at the top of the newest-first feed) and
+**Mentions** (`?only=mentions`, filtered by the server, since mentions are
+sparse and a client filter could draw an empty page with more behind it).
+Opening it marks it read through its newest row, under All or Unread only:
+Mentions holds part of the feed, and reading through its newest would mark the
+rest seen. **Mark all read** moves the waterline to the newest row held and
+drops every held dot at once.
 
 A row opened from any list opens the thread beside one of its Channels — the
 one already open when it sits there — so a Channel is always one step back.
@@ -344,6 +373,33 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-12 — Shape says Channel or Thread; rows carry tiles and times
+
+**What changed:** The section switcher draws outlines instead of icons; every row in the three lists is one layout around an
+`IdentityTile`, a squircle for a Channel and a circle for a Thread, a thread
+badged with its Channels and an Activity row with who acted. Thread rows gain
+their time and lose the run-state dot. The panel header gains New channel,
+New thread and Mark all read, and Activity gains All, Unread and Mentions.
+
+**Why:** The founder's sidebar mock (4a, "squircle channels, circle threads")
+makes the two kinds of thing tell apart at a glance, since the redesign put
+both in lists that look alike. The product owner chose unread only on a
+thread row: the run state is the thread's to show, and the row answers whether
+there is something new for this person.
+
+**Considered and rejected:** A client-side Mentions filter: mentions are
+sparse and paging could show an empty list with more behind it. The mock's
+58px rail: macOS 26 draws a 60px group of window controls, which cannot sit
+centred in it, so the rail keeps the 76px the main window centres them over.
+Painting a badge's symbol white on the hue: in the dark appearance the ink is
+light, so the badge inverts the pastel pair instead.
+
+**Consequences:** A new list row uses `RowLayout` and `IdentityTile` rather
+than its own grid. A thread's run state is no longer visible in the sidebar
+([`workstream-markers.md`](workstream-markers.md)). The Activity query key
+carries its filter (`['activity', 'all' | 'mentions']`), so invalidating
+`['activity']` still reaches every chip.
 
 ### 2026-10-12 — The sidebar takes back what the redesign dropped
 

@@ -6,6 +6,7 @@ import {
   CreateSpaceRequestSchema,
   IdSchema,
   ScopeSchema,
+  ActivityFilterSchema,
   ActivityPageSchema,
   ChannelFeedPageSchema,
   ChannelStatsListSchema,
@@ -369,7 +370,12 @@ export const WorkspaceMyThreadsResultSchema = z.union([
 ]);
 export type WorkspaceMyThreadsResult = z.infer<typeof WorkspaceMyThreadsResultSchema>;
 
-/** The Activity tab: same request as the Threads tab. */
+/** The Activity tab: the Threads tab's request, narrowed by an optional filter. */
+export const WorkspaceActivityRequestSchema = WorkspaceMyThreadsRequestSchema.extend({
+  only: ActivityFilterSchema.nullable().default(null),
+}).strict();
+export type WorkspaceActivityRequest = z.input<typeof WorkspaceActivityRequestSchema>;
+
 export const WorkspaceActivityResultSchema = z.union([
   z.strictObject({ ok: z.literal(true), page: ActivityPageSchema }),
   SpaceFailureSchema,
