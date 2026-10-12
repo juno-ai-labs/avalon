@@ -7870,15 +7870,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   position: relative;
   z-index: 3;
 }
-.title-pill-ancestors {
-  --title-pill-glass-shine: rgb(255 255 255 / .7);
-  align-items: center;
-  display: flex;
-  gap: 6px;
-  justify-self: start;
-  max-width: 100%;
-  min-width: 0;
-}
+.title-pill-ancestors { align-items: center; display: flex; gap: 6px; justify-self: start; max-width: 100%; min-width: 0; position: relative; }
 /* Breadcrumbs give way rather than run under the centred pill: each shrinks
    to its mark, its title ending in an ellipsis. A Channel's name is short and
    says where you are, so the thread beside it gives way first. */
@@ -7908,40 +7900,41 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
     white-space: nowrap;
     width: 1px;
   }
-  /* Shown as marks, the two crumbs fuse into one glass capsule: one path,
-     not two loose buttons. Each mark keeps its own round hover. */
-  .title-pill-ancestors:has(> .title-pill-ancestor + .title-pill-ancestor) {
-    backdrop-filter: blur(12px) saturate(180%);
-    background:
-      linear-gradient(to bottom, rgb(255 255 255 / .22), transparent 60%),
-      color-mix(in srgb, var(--av-sys-color-surface-raised) 62%, transparent);
-    border-radius: var(--av-sys-size-radius-pill);
-    box-shadow:
-      inset 0 1px 0 var(--title-pill-glass-shine),
-      0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong),
-      var(--av-cmp-composer-shadow);
-    gap: 0;
-    padding: 2px;
-  }
+  /* Shown as marks, the two crumbs sit on one glass shape joined by a narrow
+     neck (`AncestorBridge`). Its geometry is fixed: 36px circles 42px apart. */
+  .title-pill-ancestors:has(> .title-pill-ancestor + .title-pill-ancestor) { gap: 6px; }
   .title-pill-ancestors:has(> .title-pill-ancestor + .title-pill-ancestor) .title-pill.is-ancestor {
     background: transparent;
     box-shadow: none;
   }
   .title-pill-ancestors:has(> .title-pill-ancestor + .title-pill-ancestor) .title-pill-select {
-    height: 32px;
     justify-content: center;
     padding: 0;
-    width: 32px;
+    width: 36px;
   }
+  .title-pill-ancestors > .title-pill-bridge { display: block; }
 }
-[data-theme='dark'] .title-pill-ancestors { --title-pill-glass-shine: rgb(255 255 255 / .12); }
+.title-pill-ancestor { position: relative; z-index: 1; }
+.title-pill-bridge {
+  --title-pill-glass-shine: rgb(255 255 255 / .75);
+  display: none;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / .08)) drop-shadow(0 4px 10px rgb(0 0 0 / .06));
+  left: -1px;
+  overflow: visible;
+  pointer-events: none;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+}
+[data-theme='dark'] .title-pill-bridge { --title-pill-glass-shine: rgb(255 255 255 / .16); }
+.title-pill-bridge-body { fill: color-mix(in srgb, var(--av-sys-color-surface-raised) 80%, transparent); }
+.title-pill-bridge-sheen-from { stop-color: var(--title-pill-glass-shine); stop-opacity: .35; }
+.title-pill-bridge-sheen-to { stop-color: var(--title-pill-glass-shine); stop-opacity: 0; }
+.title-pill-bridge-rim-from { stop-color: var(--title-pill-glass-shine); }
+.title-pill-bridge-rim-to { stop-color: var(--title-pill-glass-shine); stop-opacity: 0; }
+.title-pill-bridge-edge { fill: none; stroke: var(--av-sys-color-border-strong); stroke-width: var(--av-sys-size-border-hairline); }
 @media (prefers-reduced-transparency: reduce) {
-  @container conversation-pane (width < 760px) {
-    .title-pill-ancestors:has(> .title-pill-ancestor + .title-pill-ancestor) {
-      backdrop-filter: none;
-      background: var(--av-sys-color-surface-raised);
-    }
-  }
+  .title-pill-bridge-body { fill: var(--av-sys-color-surface-raised); }
 }
 /*
  * A pane too narrow to centre its pill between full ancestors (a breakout
