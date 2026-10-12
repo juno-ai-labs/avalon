@@ -42,7 +42,7 @@ import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY,
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { latestPinWrite, reportThreadPin, usePinAction, usePinFailure, usePins, usePinWrite, type PinnedThread } from '../lib/pins';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation } from '../lib/telemetry';
-import type { SpaceConversationSummary, Workspace } from '../lib/types';
+import type { SpaceConversationSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { useUiStore, type SidebarChannelSort, type SidebarSection } from '../lib/ui-store';
 import { useListMotion } from '../lib/use-list-motion';
 import { useSpaceDirectories } from '../lib/use-space-directories';
@@ -725,6 +725,19 @@ function useSpaceMap(): Map<string, SpaceSummary> {
 }
 
 /**
+ * A listed row with what the socket holds fresher: a thread takes its live
+ * copy, and a breakout its thread's live appearance for the badge on its tile.
+ */
+function withLiveThread(
+  row: SpaceConversationSummary,
+  liveById: ReadonlyMap<string, WorkstreamSummary>,
+): SpaceConversationSummary {
+  if (!row.breakoutOf) return { ...row, ...liveById.get(row.id), kind: row.kind, breakoutOf: row.breakoutOf };
+  const appearance = liveById.get(row.breakoutOf.workstreamId)?.appearance ?? row.breakoutOf.appearance;
+  return { ...row, breakoutOf: { ...row.breakoutOf, appearance } };
+}
+
+/**
  * The Threads tab: what this person pinned, then every thread and breakout
  * they take part in. The list is the server's (`GET /navigation/threads`); a
  * thread the socket holds is drawn from the socket, so its dot moves live.
@@ -754,16 +767,12 @@ function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): 
     // read again.
     const started = (live.data ?? []).filter((row) => row.pending && !known.has(row.id))
       .map((row): SpaceConversationSummary => ({ ...row, kind: 'channel', breakoutOf: null }));
-    return [...started, ...fetched.map((row) => row.kind === 'channel'
-      ? { ...row, ...liveById.get(row.id), kind: row.kind, breakoutOf: row.breakoutOf }
-      : row)];
+    return [...started, ...fetched.map((row) => withLiveThread(row, liveById))];
   }, [list.data, live.data, liveById]);
   // Pinned rows come whole with the first page, so a pin whose activity is
   // pages back is still drawn; a row on a loaded page is the fresher copy.
   const byId = useMemo(() => new Map([
-    ...(list.data?.pages[0]?.pinned ?? []).map((row): [string, SpaceConversationSummary] => [row.id, row.kind === 'channel'
-      ? { ...row, ...liveById.get(row.id), kind: row.kind, breakoutOf: row.breakoutOf }
-      : row]),
+    ...(list.data?.pages[0]?.pinned ?? []).map((row): [string, SpaceConversationSummary] => [row.id, withLiveThread(row, liveById)]),
     ...rows.map((row): [string, SpaceConversationSummary] => [row.id, row]),
   ]), [list.data, liveById, rows]);
   const threadPins = pins.filter((item) => item.kind === 'thread').map((item) => item.id);
