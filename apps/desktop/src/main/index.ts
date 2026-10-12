@@ -1,5 +1,6 @@
 import { startCanvaConnection } from './canva-loopback';
 import { boundsWithoutConversationDetails, clampWindowBounds, readMainWindowState, writeMainWindowState } from './main-window-state';
+import { mainWindowTrafficLightPosition } from './main-window-chrome';
 import { EmbeddedBrowser, isEmbeddedBrowserWebContents } from './embedded-browser';
 import { EmbeddedBrowserBoundsSchema, EmbeddedBrowserCommandSchema, type EmbeddedBrowserCommand } from '../common/embedded-browser';
 import { BrowserImportContextSchema, BrowserImportedWorkstreamIdSchema, BrowserImportProgressSchema, type BrowserImportContext, type BrowserImportProgress } from '../common/browser-import';
@@ -5156,7 +5157,7 @@ async function createMainWindow(): Promise<void> {
     backgroundColor: windowBackgroundColor(),
     title: 'Rally',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
-    trafficLightPosition: { x: 18, y: 17 },
+    trafficLightPosition: mainWindowTrafficLightPosition(process.getSystemVersion()),
     ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
     webPreferences: {
       preload: preloadPath(),
