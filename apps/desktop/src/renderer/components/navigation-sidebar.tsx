@@ -1,5 +1,5 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import type { ActivityFilter, ActivityItem, ActivityPage, ConversationAccessRequestItem, PinKind, SpaceSummary } from '@rally/contracts';
+import type { ActivityFilter, ActivityItem, ActivityPage, ConversationAccessRequestItem, PinKind, SpaceSummary, WorkstreamAppearance } from '@rally/contracts';
 import { IdentityTile, ShapeOutline, type TileBadge } from '@rally/ui/components/identity-tile';
 import { resolveWorkstreamAppearance, WORKSTREAM_ICON_COMPONENTS } from '@rally/ui/components/workstream-glyph';
 import { markColors } from '@rally/ui/lib/project-palette';
@@ -676,6 +676,12 @@ function channelBadge(space: SpaceSummary): TileBadge {
   return { key: space.id, shape: 'squircle', fill: ink, ink: tint, icon: Icon };
 }
 
+/** A thread as a badge, inverted the same way, with its Channel on its corner. */
+function threadBadge(threadId: string, saved: WorkstreamAppearance | undefined, channel: SpaceSummary | undefined): TileBadge {
+  const { Icon, ink, tint } = resolveWorkstreamAppearance(threadId, saved);
+  return { key: threadId, shape: 'circle', fill: ink, ink: tint, icon: Icon, badge: channel && channelBadge(channel) };
+}
+
 /**
  * One row of any of the three lists: a tile, a name with its time, and a
  * second line with an optional unread dot at its end.
@@ -896,6 +902,11 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
     return space ? [space] : [];
   });
   const appearance = resolveWorkstreamAppearance(row.id, row.appearance);
+  // A breakout's tile carries its thread, and the thread its Channel, each on
+  // the corner of the one before.
+  const badges = row.breakoutOf
+    ? [threadBadge(row.breakoutOf.workstreamId, row.breakoutOf.appearance, channels[0])]
+    : channels.map(channelBadge);
   const names = channels.map((space) => space.name).join(' · ');
   const detail = row.kind === 'breakout' && row.breakoutOf
     ? `↳ ${row.breakoutOf.title}${names ? ` · ${names}` : ''}`
@@ -941,7 +952,7 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
       >
         <RowLayout
           detail={detail}
-          tile={<IdentityTile badges={channels.map(channelBadge)} icon={appearance.Icon} ink={appearance.ink} shape="circle" tint={appearance.tint} />}
+          tile={<IdentityTile badges={badges} icon={appearance.Icon} ink={appearance.ink} shape="circle" tint={appearance.tint} />}
           time={!row.pending && <RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={row.lastActivityAt} />}
           title={row.pending ? 'Starting…' : naming ? <TitleSkeleton /> : row.title}
           titleExtra={wakeup && <Tip
