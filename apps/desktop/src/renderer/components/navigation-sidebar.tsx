@@ -849,8 +849,8 @@ function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): 
       {pinnedRows('thread', threadDrag, 0)}
       {pinnedRows('breakout', breakoutDrag, threadDrag.order.length)}
     </PinnedSection>
-    <section aria-busy={list.isPending || undefined} aria-label="All Threads" className="navigation-section">
-      <SectionHeading motionKey="threads" trailing={<SortButton onChange={setSort} sort={sort} sorts={THREAD_SORTS} />}>All Threads</SectionHeading>
+    <section aria-busy={list.isPending || undefined} aria-label="All threads" className="navigation-section">
+      <SectionHeading motionKey="threads" trailing={<SortButton onChange={setSort} sort={sort} sorts={THREAD_SORTS} />}>All threads</SectionHeading>
       {list.isPending && rows.length === 0 && <SidebarSkeletonRows count={6} hint />}
       {unpinned.map((row) => renderRow(
         row,
