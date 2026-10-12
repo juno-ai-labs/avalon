@@ -209,18 +209,7 @@ export function NavigationSidebar({
   const waiting = attentionItems.length + accessRequests.length;
   const title = SECTIONS.find((candidate) => candidate.id === section)?.label ?? 'Threads';
   const [creatingChannel, setCreatingChannel] = useState(false);
-  const navigate = useNavigate();
-  const openChannelId = useOpenChannelId();
-  const { active } = useSpaceDirectories();
   const markActivityRead = useMarkActivityRead();
-  // A thread is started from a Channel's composer and nowhere else, so New
-  // thread opens the Channel in view, or General, where that composer takes
-  // focus (PRD non-goal 6).
-  const startable = (active.data?.items ?? []).filter((space) => space.reach !== 'through_channel');
-  const startChannelId = startable.find((space) => space.id === openChannelId)?.id
-    ?? startable.find((space) => space.systemRole === 'general')?.id
-    ?? startable[0]?.id
-    ?? null;
   return <ResizableSidebar
     aria-label="Rally navigation"
     className={clsx('sidebar single-sidebar navigation-sidebar', sidebarOpen && 'is-mobile-open')}
@@ -282,18 +271,6 @@ export function NavigationSidebar({
               <IconSearch aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>
             {section === 'channels' && <IconButton label="New channel" onClick={() => setCreatingChannel(true)}>
-              <IconPlus aria-hidden="true" size={18} stroke={1.8} />
-            </IconButton>}
-            {section === 'threads' && !guest && <IconButton
-              disabled={startChannelId === null}
-              label="New thread"
-              onClick={() => {
-                if (!startChannelId) return;
-                // The sheet closes on a new path; the Channel already open is not one.
-                setSidebarOpen(false);
-                void navigate(channelRoute(startChannelId), { state: { focusComposer: true } });
-              }}
-            >
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
             {section === 'activity' && <IconButton label="Mark all read" onClick={markActivityRead}>
@@ -872,8 +849,8 @@ function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): 
       {pinnedRows('thread', threadDrag, 0)}
       {pinnedRows('breakout', breakoutDrag, threadDrag.order.length)}
     </PinnedSection>
-    <section aria-busy={list.isPending || undefined} aria-label="Recent threads" className="navigation-section">
-      <SectionHeading motionKey="threads" trailing={<SortButton onChange={setSort} sort={sort} sorts={THREAD_SORTS} />}>Recent</SectionHeading>
+    <section aria-busy={list.isPending || undefined} aria-label="All Threads" className="navigation-section">
+      <SectionHeading motionKey="threads" trailing={<SortButton onChange={setSort} sort={sort} sorts={THREAD_SORTS} />}>All Threads</SectionHeading>
       {list.isPending && rows.length === 0 && <SidebarSkeletonRows count={6} hint />}
       {unpinned.map((row) => renderRow(
         row,
