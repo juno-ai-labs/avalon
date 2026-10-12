@@ -4,7 +4,7 @@ import { IconChevronDown, IconChevronRight, IconCornerDownRight, IconSearch, Ico
 import { IconButton } from './primitives';
 import clsx from 'clsx';
 import { isComposingKeyEvent } from '../lib/ime';
-import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 /**
  * One level inside a title pill's menu, e.g. People. The pill names it as a
@@ -310,10 +310,81 @@ export function TitlePillHeader({ ancestors = [], className, current, trailing }
       {ancestors.map((level) => <span className="title-pill-ancestor window-no-drag" key={level.key}>
         <TitlePill level={level} variant="ancestor" />
       </span>)}
+      {ancestors.length === 2 ? <AncestorBridge /> : null}
     </div>
     <div className="title-pill-current window-no-drag"><TitlePill level={current} /></div>
     <div className="title-pill-trailing">{trailing ? <span className="window-no-drag">{trailing}</span> : null}</div>
   </header>;
+}
+
+/*
+ * Two marks joined by a narrow neck, as two drops of water touch. The
+ * stylesheet sizes each collapsed crumb to a BRIDGE_RADIUS circle and spaces
+ * them BRIDGE_SPAN apart, so the outline is fixed and computed once.
+ */
+const BRIDGE_RADIUS = 18;
+const BRIDGE_SPAN = 42;
+const BRIDGE_NECK = 7;
+/** Where the neck leaves each circle, measured from the line between centres. */
+const BRIDGE_ANGLE = Math.PI / 4;
+
+function bridgePath(): string {
+  const r = BRIDGE_RADIUS;
+  const left = r;
+  const right = r + BRIDGE_SPAN;
+  const dx = r * Math.cos(BRIDGE_ANGLE);
+  const dy = r * Math.sin(BRIDGE_ANGLE);
+  // A cubic's midpoint sits at (p0 + 3c0 + 3c1 + p1) / 8; solving for the
+  // control length that lands it on the neck's half height.
+  const reach = (dy - BRIDGE_NECK) / (0.75 * Math.cos(BRIDGE_ANGLE));
+  const rx = reach * Math.sin(BRIDGE_ANGLE);
+  const ry = reach * Math.cos(BRIDGE_ANGLE);
+  const top = r - dy;
+  const bottom = r + dy;
+  const n = (value: number): string => value.toFixed(2);
+  return [
+    `M${n(left + dx)} ${n(top)}`,
+    `C${n(left + dx + rx)} ${n(top + ry)} ${n(right - dx - rx)} ${n(top + ry)} ${n(right - dx)} ${n(top)}`,
+    `A${r} ${r} 0 1 1 ${n(right - dx)} ${n(bottom)}`,
+    `C${n(right - dx - rx)} ${n(bottom - ry)} ${n(left + dx + rx)} ${n(bottom - ry)} ${n(left + dx)} ${n(bottom)}`,
+    `A${r} ${r} 0 1 1 ${n(left + dx)} ${n(top)}`,
+    'Z',
+  ].join(' ');
+}
+
+const BRIDGE_PATH = bridgePath();
+
+/**
+ * The glass a breakout's two collapsed crumbs sit on. Hidden until the pane is
+ * narrow enough that both crumbs show only their marks.
+ */
+function AncestorBridge(): React.JSX.Element {
+  const id = useId();
+  const width = BRIDGE_SPAN + 2 * BRIDGE_RADIUS;
+  const height = 2 * BRIDGE_RADIUS;
+  return <svg
+    aria-hidden="true"
+    className="title-pill-bridge"
+    height={height}
+    viewBox={`-1 -1 ${width + 2} ${height + 2}`}
+    width={width + 2}
+  >
+    <defs>
+      <linearGradient id={`${id}-sheen`} x1="0" x2="0" y1="0" y2="1">
+        <stop className="title-pill-bridge-sheen-from" offset="0" />
+        <stop className="title-pill-bridge-sheen-to" offset="0.6" />
+      </linearGradient>
+      <linearGradient id={`${id}-rim`} x1="0" x2="0" y1="0" y2="1">
+        <stop className="title-pill-bridge-rim-from" offset="0" />
+        <stop className="title-pill-bridge-rim-to" offset="0.45" />
+      </linearGradient>
+      <clipPath id={`${id}-inside`}><path d={BRIDGE_PATH} /></clipPath>
+    </defs>
+    <path className="title-pill-bridge-body" d={BRIDGE_PATH} />
+    <path d={BRIDGE_PATH} fill={`url(#${id}-sheen)`} />
+    <path clipPath={`url(#${id}-inside)`} d={BRIDGE_PATH} fill="none" stroke={`url(#${id}-rim)`} strokeWidth="3" />
+    <path className="title-pill-bridge-edge" d={BRIDGE_PATH} />
+  </svg>;
 }
 
 /** The identity row at the top of a title menu: what this is and where it lives. */
