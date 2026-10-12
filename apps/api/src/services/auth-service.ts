@@ -561,27 +561,30 @@ export class AuthService {
     const newRefreshToken = randomToken(48);
     const newHash = await sha256(newRefreshToken);
     const rotatedAt = nowIso();
-    const replayGraceStart = new Date(Date.now() - 60_000).toISOString();
     const renewal = sessionRenewalPolicy(this.env, rotatedAt);
+    // The token a renewal retires stays valid until its successor is first
+    // presented, not for a fixed time: only that presentation proves the
+    // device received the successor. A response lost while a laptop sleeps
+    // can be retried hours later. Presenting the current token retires the
+    // previous one; presenting the previous one issues a new successor and
+    // keeps the previous one, since that is still the token the device holds.
     const row = await this.env.DB.prepare(
       `UPDATE sessions
-       SET previous_refresh_token_hash = refresh_token_hash,
+       SET previous_refresh_token_hash = CASE WHEN refresh_token_hash = ?
+             THEN refresh_token_hash ELSE previous_refresh_token_hash END,
            refresh_token_hash = ?, refresh_rotated_at = ?,
            expires_at = ${renewal.expirySql}
-       WHERE (
-           refresh_token_hash = ?
-           OR (previous_refresh_token_hash = ? AND refresh_rotated_at >= ?)
-         )
+       WHERE (refresh_token_hash = ? OR previous_refresh_token_hash = ?)
          AND ${renewal.eligibilitySql}
        RETURNING id, user_id, workspace_id, impersonator_user_id`,
     )
       .bind(
+        oldHash,
         newHash,
         rotatedAt,
         ...renewal.expiryValues,
         oldHash,
         oldHash,
-        replayGraceStart,
         ...renewal.eligibilityValues,
       )
       .first<{ id: string; user_id: string; workspace_id: string | null; impersonator_user_id: string | null }>();
@@ -630,16 +633,14 @@ export class AuthService {
     }
     if (input.refreshToken) {
       const at = nowIso();
-      const replayGraceStart = new Date(Date.now() - 60_000).toISOString();
       const tokenHash = await sha256(input.refreshToken);
       const result = await this.env.DB.prepare(
         `UPDATE sessions SET revoked_at = ?
          WHERE revoked_at IS NULL
-           AND (refresh_token_hash = ?
-             OR (previous_refresh_token_hash = ? AND refresh_rotated_at >= ?))
+           AND (refresh_token_hash = ? OR previous_refresh_token_hash = ?)
          RETURNING id, user_id, workspace_id`,
       )
-        .bind(at, tokenHash, tokenHash, replayGraceStart)
+        .bind(at, tokenHash, tokenHash)
         .all<RevokedSessionRow>();
       revoked.push(...(result.results ?? []));
     }
