@@ -310,6 +310,11 @@ describe('the navigation sidebar', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'New thread' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/general');
+    // Again from the phone sheet, with General now open: the path does not
+    // change, and the sheet still closes.
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'New thread' }));
+    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
     // The composer may already be mounted, so the focus is asked for in the
     // navigation rather than left to its mount.
     expect(screen.getByTestId('location')).toHaveAttribute('data-state', '{"focusComposer":true}');

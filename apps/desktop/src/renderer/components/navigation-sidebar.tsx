@@ -287,7 +287,12 @@ export function NavigationSidebar({
             {section === 'threads' && !guest && <IconButton
               disabled={startChannelId === null}
               label="New thread"
-              onClick={() => { if (startChannelId) void navigate(channelRoute(startChannelId), { state: { focusComposer: true } }); }}
+              onClick={() => {
+                if (!startChannelId) return;
+                // The sheet closes on a new path; the Channel already open is not one.
+                setSidebarOpen(false);
+                void navigate(channelRoute(startChannelId), { state: { focusComposer: true } });
+              }}
             >
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
