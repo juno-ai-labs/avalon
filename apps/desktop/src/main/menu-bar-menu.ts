@@ -1,6 +1,7 @@
 import type { MenuItemConstructorOptions } from 'electron';
 import { statusLabel } from '@rally/ui/lib/format';
 import type { ReaderMarkerStatus } from '../common/attention-items';
+import { macosMajorVersion } from './macos-version';
 
 export interface MenuBarWorkstream {
   readonly id: string;
@@ -74,14 +75,9 @@ export interface MenuBarMenuOptions {
  * Electron has no section-header item at all, so the label is drawn as a
  * disabled row — which is close to what a header looks like, and much closer
  * than the alternative of leaving the groups unlabelled.
- *
- * Takes the version string rather than reading it, both so the fallback is
- * testable and because `process.getSystemVersion` exists only in Electron's
- * main process.
  */
 export function supportsSectionHeaders(systemVersion: string): boolean {
-  const major = Number.parseInt(systemVersion.split('.')[0] ?? '', 10);
-  return Number.isFinite(major) && major >= 14;
+  return macosMajorVersion(systemVersion) >= 14;
 }
 
 function sectionHeader(label: string, supported: boolean): MenuItemConstructorOptions {

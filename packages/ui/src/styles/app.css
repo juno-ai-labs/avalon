@@ -959,9 +959,10 @@ pre {
   width: 100%;
 }
 
-/* macOS draws the traffic lights over the web contents: three 12px buttons on a
-   20px pitch from the `trafficLightPosition` the main process sets at x: 18, so
-   they end at 70px, and this clears them by 12. `.meeting-titlebar` reserves the
+/* macOS draws the traffic lights over the web contents, centered by the main
+   process over the 76px section switcher. At their widest (macOS 26: 14px
+   buttons on a 23px pitch from x: 8) they end at 68px, and this clears them by
+   14. `.meeting-titlebar` reserves the
    same band and reaches it a different way — a flat 82px on every platform,
    because that window renders no `.workspace-shell` and so has no class to be
    told the platform by. Neither reads the other; the numbers agree because they

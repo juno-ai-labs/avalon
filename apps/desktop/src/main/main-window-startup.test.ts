@@ -3,6 +3,7 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { expect, it, vi } from 'vitest';
 
+import { macosMajorVersion } from './macos-version';
 import { boundsWithoutConversationDetails } from './main-window-state';
 
 it('defers main-window creation and restores and persists native geometry', async () => {
@@ -41,7 +42,8 @@ it('defers main-window creation and restores and persists native geometry', asyn
   }
   const create = runInNewContext(`${ts.transpile(reveal!.getText(parsed))}; ${ts.transpile(declaration!.getText(parsed))}; createMainWindow`, {
     mainWindowStartup: startup, mainWindowLoading: null, mainWindowReadyToShow: false, mainWindow: null, rendererReady: false,
-    BrowserWindow: Window, process: { platform: 'darwin' }, app: { isPackaged: true },
+    BrowserWindow: Window, process: { platform: 'darwin', getSystemVersion: () => '26.0' }, app: { isPackaged: true },
+    macosMajorVersion,
     electronScreen: { getPrimaryDisplay: () => ({ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } }), getAllDisplays: () => [] },
     readMainWindowState: () => ({ bounds: { x: 100, y: 50, width: 1180, height: 900 }, maximized: true }),
     writeMainWindowState: writeState, boundsWithoutConversationDetails,
