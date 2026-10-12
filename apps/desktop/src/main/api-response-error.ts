@@ -58,6 +58,16 @@ export function refreshFailureIsTerminal(error: unknown): boolean {
     || error instanceof UnusableCredentialError;
 }
 
+/** True when a refresh failed for a reason a moment's wait can fix: no
+ * answer at all (the network is still coming back after sleep), an answer
+ * that was not Rally's, a server failure, or a rate limit. A refusal the
+ * service meant, and anything terminal, is never retried. */
+export function refreshFailureIsTransient(error: unknown): boolean {
+  if (refreshFailureIsTerminal(error)) return false;
+  if (!(error instanceof RallyApiResponseError)) return true;
+  return error.status >= 500 || error.status === 408 || error.status === 429;
+}
+
 /**
  * Decodes a successful Rally response, tolerating one that carries no body.
  *
