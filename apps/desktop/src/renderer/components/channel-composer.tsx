@@ -1,8 +1,8 @@
 import { asSubstreamId, asWorkspaceId, asWorkstreamId, MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useContext, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { logError } from '../../common/logger';
 import type { MentionIdentity } from '../lib/api';
@@ -271,8 +271,17 @@ export function ChannelComposer({ channelId, channelName, channelScope, threadOp
     participants: [{ ...workspace.currentUser, role: 'creator' }],
   };
 
+  // New thread in the sidebar asks for this composer by navigation state, so
+  // a Channel already open, whose composer mounted long ago, still takes focus.
+  const location = useLocation();
+  const dock = useRef<HTMLElement>(null);
+  const focusRequested = (location.state as { focusComposer?: boolean } | null)?.focusComposer === true;
+  useEffect(() => {
+    if (focusRequested) dock.current?.querySelector('textarea')?.focus();
+  }, [focusRequested, location.key]);
+
   return <EmailMentionContext.Provider value={emailMentions}>
-    <section aria-label={`Start a thread in ${channelName}`} className="composer-dock channel-composer-dock">
+    <section aria-label={`Start a thread in ${channelName}`} className="composer-dock channel-composer-dock" ref={dock}>
       <div className="composer-stack">
         <WorkstreamComposer
           api={api ?? undefined}

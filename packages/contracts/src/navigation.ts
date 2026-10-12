@@ -105,6 +105,10 @@ export const ActivityItemKindSchema = z.enum([
 ]);
 export type ActivityItemKind = z.infer<typeof ActivityItemKindSchema>;
 
+/** A narrower Activity feed: `mentions` keeps only the rows where somebody mentioned this person. */
+export const ActivityFilterSchema = z.enum(["mentions"]);
+export type ActivityFilter = z.infer<typeof ActivityFilterSchema>;
+
 export const ActivityItemSchema = z.strictObject({
   id: z.string().min(1).max(400),
   kind: ActivityItemKindSchema,

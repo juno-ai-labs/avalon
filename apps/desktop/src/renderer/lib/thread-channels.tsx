@@ -1,5 +1,6 @@
 import type { ThreadChannels } from '@rally/ui/components/conversation-menus';
-import { SpaceIcon } from '@rally/ui/components/space-icon';
+import { IdentityTile } from '@rally/ui/components/identity-tile';
+import { WORKSTREAM_ICON_COMPONENTS } from '@rally/ui/components/workstream-glyph';
 import { markColors } from '@rally/ui/lib/project-palette';
 import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -30,9 +31,13 @@ export function useThreadChannels(threadId: string, spaceIds: readonly string[],
   const row = (space: (typeof channels)[number]) => ({
     id: space.id,
     name: space.name,
-    icon: <span className="navigation-channel-mark is-small" style={{ background: markColors(space.colorKey).tint }}>
-      <SpaceIcon size={16} space={space} />
-    </span>,
+    icon: <IdentityTile
+      icon={WORKSTREAM_ICON_COMPONENTS[space.iconKey]}
+      ink={markColors(space.colorKey).ink}
+      shape="squircle"
+      size={24}
+      tint={markColors(space.colorKey).tint}
+    />,
   });
   const inThread = new Set(spaceIds);
   const current = channels.filter((space) => inThread.has(space.id)).map(row);
