@@ -122,13 +122,25 @@ Onboarding no longer starts an agent run or a connector authorization.
 
 ### 2026-10-12 — Remove the introduction screens
 
-The three animated introduction screens before sign-in, and again after a
-signed-in handoff, are gone at the product owner's request: the app opens
-straight to sign-in. The `introduced` flag stays and is now saved
-automatically on arrival, as the browser already did, because signup
-completion telemetry (`signup_completed`) requires it for eligible accounts.
-Dropping the flag would need a migration and a telemetry change for no user
-benefit, so it was kept.
+**What changed:** The three animated introduction screens are gone. A
+signed-out person lands on sign-in, and an eligible account that has not been
+introduced records `introduced` on arrival behind an "Opening Rally" screen,
+with a retry if the save fails. This is the path the browser already took.
+
+**Why:** The product owner asked for the app to open straight to sign-in. The
+screens put three clicks in front of sign-in and showed again to new accounts
+arriving through a signed-in handoff.
+
+**Considered and rejected:** Removing the `introduced` flag along with the
+screens. Signup completion telemetry (`signup_completed`) only fires for an
+eligible account once the flag is set, so dropping it needs a migration and a
+telemetry change for no user benefit.
+
+**Consequences:** `introduced` now means "has reached the app", not "has seen
+the introduction". Anything that stops recording it on arrival leaves eligible
+accounts never counted as completed signups and their conversations unadmitted.
+
+Shipped in juno-ai-labs/avalon#1196.
 
 ### 2026-10-07 — Connecting tools leaves the setup journey
 
