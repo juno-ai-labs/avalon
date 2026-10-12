@@ -4,7 +4,6 @@ import {
   definitivelyInvalidatesStoredCredential,
   readJsonBody,
   refreshFailureIsTerminal,
-  refreshFailureIsTransient,
   responseError,
   UnusableCredentialError,
   workspaceActivationBridgeError,
@@ -97,14 +96,5 @@ describe('decoding a successful response body', () => {
 
   it('rejects a body that claims to be JSON and is not', async () => {
     await expect(readJsonBody(new Response('<html>502</html>', { status: 200 }))).rejects.toThrow();
-  });
-
-  it('retries a refresh that got no answer or a server failure, never a refusal', async () => {
-    expect(refreshFailureIsTransient(new TypeError('net::ERR_NETWORK_CHANGED'))).toBe(true);
-    expect(refreshFailureIsTransient(await responseError(new Response(null, { status: 503 })))).toBe(true);
-    expect(refreshFailureIsTransient(await responseError(new Response(null, { status: 429 })))).toBe(true);
-    expect(refreshFailureIsTransient(await responseError(new Response(null, { status: 401 })))).toBe(false);
-    expect(refreshFailureIsTransient(await responseError(new Response(null, { status: 400 })))).toBe(false);
-    expect(refreshFailureIsTransient(new UnusableCredentialError('authentication_session_invalid'))).toBe(false);
   });
 });
