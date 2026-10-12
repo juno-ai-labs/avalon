@@ -28,8 +28,8 @@ import { SPACE_CHANNEL_PAGE_SIZE, type WorkspaceSpaceStorage } from "./workspace
  * what lists it here. Titles are read now, not from the event's snapshot, so a
  * renamed thread reads under its new name.
  *
- * Read state is one time per person (`workspace_activity_seen`): opening the
- * tab reads everything above it.
+ * Read state is one time per person (`workspace_activity_seen`): Mark all
+ * read moves it, and everything older is read.
  */
 
 interface ActivityKey extends Record<string, SqlStorageValue> {

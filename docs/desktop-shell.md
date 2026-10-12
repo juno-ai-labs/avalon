@@ -120,8 +120,9 @@ A row is the Channel's tile badged with who acted (Rally's sparkle, or a
 person's initials), the sentence, and the Channel with the time. Chips filter
 it: **All**, **Unread** and **Mentions**
 ([`digests.md`](digests.md#the-activity-tab) says which side filters each).
-Opening it marks it read, under All or Unread only. **Mark all read** clears
-every held dot at once.
+Showing it reads nothing: a row stays unread until **Mark all read**, which
+moves the read time to the newest row held and clears every held dot at once
+(the PRD's decision log, 2026-10-12).
 
 A row opened from any list opens the thread beside one of its Channels — the
 one already open when it sits there — so a Channel is always one step back.
@@ -379,12 +380,15 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 badged with its Channels and an Activity row with who acted. Thread rows gain
 their time and lose the run-state dot. The panel header gains New channel,
 New thread and Mark all read, and Activity gains All, Unread and Mentions.
+Showing Activity no longer reads it; Mark all read does.
 
 **Why:** The founder's sidebar mock (4a, "squircle channels, circle threads")
 makes the two kinds of thing easy to tell apart at a glance, since the redesign put
 both in lists that look alike. The product owner chose unread only on a
 thread row: the run state is the thread's to show, and the row answers whether
-there is something new for this person.
+there is something new for this person. Reading Activity on open emptied
+the Unread chip on the first refetch, so the product owner moved the read to
+Mark all read.
 
 **Considered and rejected:** A client-side Mentions filter: mentions are
 sparse and paging could show an empty list with more behind it. The mock's

@@ -263,8 +263,8 @@ describe('the navigation sidebar', () => {
     await waitFor(() => expect(today.getByRole('link')).toHaveTextContent('Maya K started Q4 plan'));
   });
 
-  it('groups Activity by day, marks what is new, and marks it read once shown', async () => {
-    const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+  it('groups Activity by day and keeps what is new unread while it is shown, focused or not', async () => {
+    const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
     useUiStore.getState().setSidebarSection('activity');
     const now = new Date();
     api.getActivity.mockResolvedValue({ nextCursor: null, items: [{
@@ -276,13 +276,10 @@ describe('the navigation sidebar', () => {
     const today = within(await screen.findByRole('region', { name: 'Today' }));
     expect(today.getByRole('link')).toHaveTextContent('Maya K added you to Reply-handling playbook');
     expect(today.getByRole('img', { name: 'Unread' })).toBeInTheDocument();
-    // A window in the background is not somebody looking: nothing is marked
-    // until it takes focus.
+    // Showing the tab in a focused window reads nothing; only Mark all read does.
+    window.dispatchEvent(new Event('focus'));
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(api.markActivitySeen).not.toHaveBeenCalled();
-    hasFocus.mockReturnValue(true);
-    window.dispatchEvent(new Event('focus'));
-    await waitFor(() => expect(api.markActivitySeen).toHaveBeenCalledWith(now.toISOString()));
     hasFocus.mockRestore();
   });
 
@@ -357,6 +354,28 @@ describe('the navigation sidebar', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Mentions' }));
       await waitFor(() => expect(titles()).toEqual(['Named here']));
       expect(api.getActivity).toHaveBeenCalledWith(null, 'mentions', expect.anything());
+    });
+
+    it('still lists what is unread under Unread after leaving the tab and coming back', async () => {
+      // The server's answer follows its waterline: once marked seen, nothing is unread.
+      let seen = false;
+      api.markActivitySeen.mockImplementation(async () => { seen = true; });
+      api.getActivity.mockImplementation(async () => ({ nextCursor: null, items: [item('Fresh', { unread: !seen })] }));
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [] });
+      const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+      renderSidebar(seed);
+      await screen.findByRole('region', { name: 'Today' });
+      // Looked at for longer than a read's debounce.
+      window.dispatchEvent(new Event('focus'));
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
+      fireEvent.click(screen.getByRole('button', { name: 'Threads' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Activity' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Unread' }));
+      const today = within(await screen.findByRole('region', { name: 'Today' }));
+      expect(today.getByRole('link')).toHaveTextContent('Fresh');
+      expect(today.getByRole('img', { name: 'Unread' })).toBeInTheDocument();
+      hasFocus.mockRestore();
     });
 
     it('clears every dot and moves the waterline on Mark all read', async () => {

@@ -584,7 +584,22 @@ already chose not to write back.
 **Changes:** Corrects key design decision 5 and Rollout, which said pin writes
 go to both tables and keep both clients in step. Shipped in #1188.
 
-## Key design decisions
+### 2026-10-12 — Activity is read by Mark all read, not by opening the tab
+
+**Decided:** Showing the Activity tab no longer moves
+`workspace_activity_seen`. **Mark all read** in the tab's header is the one
+thing that does. Rows stay one time per person; there is still no per-item
+read.
+
+**Why:** The sidebar mock added an **Unread** chip. With the tab read on
+open, every refetch after the first look (coming back to the tab, a socket
+nudge) answered with nothing unread, so the chip was empty almost at once.
+The product owner chose to keep the chip and stop reading on open.
+
+**Changes:** Supersedes "Activity read state is one time per person" on when
+the time moves: unread is now "newer than the last Mark all read". Opening an
+item does not read it; with one time per person, reading an item would read
+every older one too. Shipped in #1199.
 
 1. **Today's Space container is the new Channel.** It keeps the same rows
    (WorkspaceDO `spaces`, `space_viewers`, `space_channel_memberships`) and the
