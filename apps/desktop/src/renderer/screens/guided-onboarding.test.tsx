@@ -6,7 +6,6 @@ import { AccountOnboardingGate, PersonalSetup, WorkspaceOnboardingJourney } from
 import { act } from '@testing-library/react';
 import type { Workspace } from '../lib/types';
 import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
-import { CollaborationSessionProvider } from '../lib/collaboration-session';
 
 const state = vi.hoisted(() => ({
   signedIn: true,
@@ -61,13 +60,11 @@ beforeEach(() => {
   state.startProviderConnection.mockResolvedValue({ attemptId: 'attempt-1', url: 'https://provider.example/authorize' });
 });
 describe('new-account learning paths', () => {
-  it('introduces the platform before offering sign-in without fetching private account data', async () => {
+  it('goes straight to sign-in without fetching private account data', () => {
     state.signedIn = false;
     show();
-    expect(screen.getByRole('heading', { name: 'Meet Rally. Work moves forward together.' })).toBeInTheDocument();
+    expect(screen.getByText('Ordinary organization')).toBeInTheDocument();
     expect(state.getAccount).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-    expect(await screen.findByText('Ordinary organization')).toBeInTheDocument();
   });
   it('lets exempt accounts enter without creating a journey', async () => {
     state.getAccount.mockResolvedValue({ ...state.account, eligible: false }); show();
@@ -160,29 +157,29 @@ describe('new-account learning paths', () => {
     show();
     expect(screen.getByRole('heading', { name: 'Opening Rally' })).toBeInTheDocument();
     expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
+    state.saveAccount.mockReturnValue(new Promise(() => {}));
     await act(async () => { resolveLookup({ ...state.account, introduced: false }); });
-    expect(await screen.findByRole('heading', { name: 'Meet Rally. Work moves forward together.' })).toBeInTheDocument();
-    expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
-  });
-  it('records the introduction without showing it in the browser, which the landing page already introduced', async () => {
-    state.getAccount.mockResolvedValue({ ...state.account, introduced: false });
-    state.saveAccount.mockResolvedValue({ ...state.account, introduced: true, revision: 1 });
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<MemoryRouter><QueryClientProvider client={client}>
-      <CollaborationSessionProvider api={null} session={null} host="browser"><AccountOnboardingGate><WorkspaceView /></AccountOnboardingGate></CollaborationSessionProvider>
-    </QueryClientProvider></MemoryRouter>);
     await waitFor(() => expect(state.saveAccount).toHaveBeenCalledWith({ expectedRevision: 0, introduced: true }));
-    expect(screen.queryByRole('heading', { name: 'Meet Rally. Work moves forward together.' })).not.toBeInTheDocument();
-  });
-  it('still introduces an eligible organization account when its background lookup completes', async () => {
-    let resolveLookup!: (account: typeof state.account) => void;
-    state.getAccount.mockImplementation(() => new Promise((resolve) => { resolveLookup = resolve; }));
-    show();
-    expect(screen.getByText('Ordinary organization')).toBeInTheDocument();
-    expect(screen.getByTestId('admission')).toHaveTextContent('blocked');
-    await act(async () => { resolveLookup({ ...state.account, introduced: false }); });
-    expect(await screen.findByRole('heading', { name: 'Meet Rally. Work moves forward together.' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Opening Rally' })).toBeInTheDocument();
     expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
+  });
+  it('records the introduction without showing it, then opens the organization', async () => {
+    state.getAccount.mockResolvedValueOnce({ ...state.account, introduced: false });
+    state.saveAccount.mockResolvedValue({ ...state.account, introduced: true, revision: 1 });
+    state.journey.mockResolvedValue({ path: 'member', stage: 'complete', revision: 0, connectorIds: [] });
+    show();
+    await waitFor(() => expect(state.saveAccount).toHaveBeenCalledWith({ expectedRevision: 0, introduced: true }));
+    expect(await screen.findByText('Ordinary organization')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('admission')).toHaveTextContent('allowed'));
+  });
+  it('offers a retry when recording the introduction fails', async () => {
+    state.getAccount.mockResolvedValue({ ...state.account, introduced: false });
+    state.saveAccount.mockRejectedValueOnce(new Error('Profile changed in another session'));
+    show();
+    expect(await screen.findByText('Profile changed in another session')).toBeInTheDocument();
+    state.saveAccount.mockReturnValue(new Promise(() => {}));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(state.saveAccount).toHaveBeenCalledTimes(2);
   });
   it('withholds admission when pending journey progress resolves to unfinished setup', async () => {
     let finishJourney!: (value: { path: string; stage: string; revision: number; connectorIds: string[] }) => void;
