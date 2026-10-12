@@ -7900,8 +7900,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
     white-space: nowrap;
     width: 1px;
   }
-  /* Shown as marks, the two crumbs sit on one glass shape joined by a narrow
-     neck (`AncestorBridge`). Its geometry is fixed: 36px circles 42px apart. */
+  /* Shown as marks, the crumbs sit on one glass shape, each joined to the next
+     by a narrow neck (`AncestorBridge`). Its geometry assumes 36px circles
+     42px apart. */
   .title-pill-ancestors:has(> .title-pill-ancestor + .title-pill-ancestor) { gap: 6px; }
   .title-pill-ancestors:has(> .title-pill-ancestor + .title-pill-ancestor) .title-pill.is-ancestor {
     background: transparent;

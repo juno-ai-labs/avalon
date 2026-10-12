@@ -310,7 +310,7 @@ export function TitlePillHeader({ ancestors = [], className, current, trailing }
       {ancestors.map((level) => <span className="title-pill-ancestor window-no-drag" key={level.key}>
         <TitlePill level={level} variant="ancestor" />
       </span>)}
-      {ancestors.length === 2 ? <AncestorBridge /> : null}
+      {ancestors.length > 1 ? <AncestorBridge count={ancestors.length} /> : null}
     </div>
     <div className="title-pill-current window-no-drag"><TitlePill level={current} /></div>
     <div className="title-pill-trailing">{trailing ? <span className="window-no-drag">{trailing}</span> : null}</div>
@@ -318,20 +318,20 @@ export function TitlePillHeader({ ancestors = [], className, current, trailing }
 }
 
 /*
- * Two marks joined by a narrow neck, as two drops of water touch. The
+ * Marks joined in a row by narrow necks, as drops of water touch. The
  * stylesheet sizes each collapsed crumb to a BRIDGE_RADIUS circle and spaces
- * them BRIDGE_SPAN apart, so the outline is fixed and computed once.
+ * them BRIDGE_SPAN apart, so the outline depends only on how many there are.
  */
 const BRIDGE_RADIUS = 18;
 const BRIDGE_SPAN = 42;
 const BRIDGE_NECK = 7;
-/** Where the neck leaves each circle, measured from the line between centres. */
+/** Where a neck leaves its circle, measured from the line between centres. */
 const BRIDGE_ANGLE = Math.PI / 4;
 
-function bridgePath(): string {
+/** The outline of `count` circles in a row, each joined to the next by a neck. */
+function bridgePath(count: number): string {
   const r = BRIDGE_RADIUS;
-  const left = r;
-  const right = r + BRIDGE_SPAN;
+  const centre = (index: number): number => r + index * BRIDGE_SPAN;
   const dx = r * Math.cos(BRIDGE_ANGLE);
   const dy = r * Math.sin(BRIDGE_ANGLE);
   // A cubic's midpoint sits at (p0 + 3c0 + 3c1 + p1) / 8; solving for the
@@ -342,30 +342,41 @@ function bridgePath(): string {
   const top = r - dy;
   const bottom = r + dy;
   const n = (value: number): string => value.toFixed(2);
-  return [
-    `M${n(left + dx)} ${n(top)}`,
-    `C${n(left + dx + rx)} ${n(top + ry)} ${n(right - dx - rx)} ${n(top + ry)} ${n(right - dx)} ${n(top)}`,
-    `A${r} ${r} 0 1 1 ${n(right - dx)} ${n(bottom)}`,
-    `C${n(right - dx - rx)} ${n(bottom - ry)} ${n(left + dx + rx)} ${n(bottom - ry)} ${n(left + dx)} ${n(bottom)}`,
-    `A${r} ${r} 0 1 1 ${n(left + dx)} ${n(top)}`,
-    'Z',
-  ].join(' ');
+  const last = count - 1;
+  // Clockwise from the first neck's top: along the top, round the last
+  // circle, back along the bottom, round the first. Each inner circle shows
+  // a short arc between its two necks.
+  const path = [`M${n(centre(0) + dx)} ${n(top)}`];
+  for (let index = 0; index < last; index += 1) {
+    const from = centre(index) + dx;
+    const to = centre(index + 1) - dx;
+    path.push(`C${n(from + rx)} ${n(top + ry)} ${n(to - rx)} ${n(top + ry)} ${n(to)} ${n(top)}`);
+    if (index + 1 < last) path.push(`A${r} ${r} 0 0 1 ${n(centre(index + 1) + dx)} ${n(top)}`);
+  }
+  path.push(`A${r} ${r} 0 1 1 ${n(centre(last) - dx)} ${n(bottom)}`);
+  for (let index = last; index > 0; index -= 1) {
+    const from = centre(index) - dx;
+    const to = centre(index - 1) + dx;
+    path.push(`C${n(from - rx)} ${n(bottom - ry)} ${n(to + rx)} ${n(bottom - ry)} ${n(to)} ${n(bottom)}`);
+    if (index - 1 > 0) path.push(`A${r} ${r} 0 0 1 ${n(centre(index - 1) - dx)} ${n(bottom)}`);
+  }
+  path.push(`A${r} ${r} 0 1 1 ${n(centre(0) + dx)} ${n(top)}`, 'Z');
+  return path.join(' ');
 }
 
-const BRIDGE_PATH = bridgePath();
-
 /**
- * The glass a breakout's two collapsed crumbs sit on. Hidden until the pane is
- * narrow enough that both crumbs show only their marks.
+ * The glass a pane's collapsed crumbs sit on, however many there are. Hidden
+ * until the pane is narrow enough that the crumbs show only their marks.
  */
-function AncestorBridge(): React.JSX.Element {
+function AncestorBridge({ count }: { count: number }): React.JSX.Element {
   const id = useId();
-  const width = BRIDGE_SPAN + 2 * BRIDGE_RADIUS;
+  const path = useMemo(() => bridgePath(count), [count]);
+  const width = (count - 1) * BRIDGE_SPAN + 2 * BRIDGE_RADIUS;
   const height = 2 * BRIDGE_RADIUS;
   return <svg
     aria-hidden="true"
     className="title-pill-bridge"
-    height={height}
+    height={height + 2}
     viewBox={`-1 -1 ${width + 2} ${height + 2}`}
     width={width + 2}
   >
@@ -378,12 +389,12 @@ function AncestorBridge(): React.JSX.Element {
         <stop className="title-pill-bridge-rim-from" offset="0" />
         <stop className="title-pill-bridge-rim-to" offset="0.45" />
       </linearGradient>
-      <clipPath id={`${id}-inside`}><path d={BRIDGE_PATH} /></clipPath>
+      <clipPath id={`${id}-inside`}><path d={path} /></clipPath>
     </defs>
-    <path className="title-pill-bridge-body" d={BRIDGE_PATH} />
-    <path d={BRIDGE_PATH} fill={`url(#${id}-sheen)`} />
-    <path clipPath={`url(#${id}-inside)`} d={BRIDGE_PATH} fill="none" stroke={`url(#${id}-rim)`} strokeWidth="3" />
-    <path className="title-pill-bridge-edge" d={BRIDGE_PATH} />
+    <path className="title-pill-bridge-body" d={path} />
+    <path d={path} fill={`url(#${id}-sheen)`} />
+    <path clipPath={`url(#${id}-inside)`} d={path} fill="none" stroke={`url(#${id}-rim)`} strokeWidth="3" />
+    <path className="title-pill-bridge-edge" d={path} />
   </svg>;
 }
 
