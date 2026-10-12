@@ -56,6 +56,10 @@ describe('renderer semantic telemetry helpers', () => {
     expect(telemetrySurfaceForPath('/')).toBeNull();
     expect(telemetrySurfaceForPath('/spaces/space-id/workstreams/new')).toEqual({ surface: 'workspace_home' });
     expect(telemetrySurfaceForPath('/workstreams/new')).toBeNull();
+    expect(telemetrySurfaceForPath('/channels/channel-id/threads/00000000-0000-4000-8000-000000000201')).toEqual({
+      surface: 'workstream', resourceType: 'workstream', resourceId: '00000000-0000-4000-8000-000000000201',
+    });
+    expect(telemetrySurfaceForPath('/channels/channel-id')).toBeNull();
   });
 
   it('creates time-ordered UUIDv7 operation identifiers', () => {
