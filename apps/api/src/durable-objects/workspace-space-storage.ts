@@ -19,6 +19,7 @@ import {
   type ContainerOrder,
   type OrderedContainer,
   type PersonalOrder,
+  type SpaceColorKey,
   type SpaceDefaultKind,
   type SpaceDirectory,
   type SpaceReach,
@@ -120,6 +121,17 @@ const SPACE_COLOR_FALLBACK = "blue";
 
 const SPACE_ICON_KEY_SET: ReadonlySet<string> = new Set(STORABLE_APPEARANCE_ICON_KEYS);
 const SPACE_COLOR_KEY_SET: ReadonlySet<string> = new Set(SPACE_COLOR_KEYS_STORABLE);
+
+/**
+ * A stored Space appearance's colour, coerced rather than parsed: the
+ * appearance is the Space's own object's, and a key this build does not know
+ * still has to draw as something.
+ */
+function spaceColorKey(appearanceJson: string | null): SpaceColorKey {
+  const appearance = appearanceJson ? JSON.parse(appearanceJson) as { color?: unknown } : null;
+  const color = typeof appearance?.color === "string" ? appearance.color : null;
+  return color && SPACE_COLOR_KEY_SET.has(color) ? color as SpaceColorKey : SPACE_COLOR_FALLBACK;
+}
 
 /**
  * WorkspaceDO's Space tables.
@@ -2326,6 +2338,20 @@ export class WorkspaceSpaceStorage {
     return this.spaceIdsByChannel(viewer, [workstreamId]).get(workstreamId) ?? [];
   }
 
+  /**
+   * The colour a thread and its Breakouts carry: that of its canonical
+   * Channel, as that Channel's summary draws it. `null` when it sits in no
+   * active Channel. See `channel-color-sync.ts`.
+   */
+  channelColor(workstreamId: string): SpaceColorKey | null {
+    const spaceId = this.canonicalChannelSpaceId(workstreamId);
+    if (spaceId === null) return null;
+    const row = this.storage.sql.exec<{ appearance_json: string | null } & Record<string, SqlStorageValue>>(
+      "SELECT appearance_json FROM spaces WHERE space_id = ?", spaceId,
+    ).toArray()[0];
+    return row ? spaceColorKey(row.appearance_json) : null;
+  }
+
   /** Stable placement used by links minted without a currently selected Space. */
   canonicalChannelSpaceId(workstreamId: string): string | null {
     if (!this.ready()) return null;
@@ -2383,7 +2409,6 @@ export class WorkspaceSpaceStorage {
           ? JSON.parse(row.appearance_json) as { icon?: unknown; color?: unknown }
           : null;
         const icon = typeof appearance?.icon === "string" ? appearance.icon : null;
-        const color = typeof appearance?.color === "string" ? appearance.color : null;
         const existing = spaces.get(row.space_id);
         if (existing) {
           if (!existing.workstreamIds.includes(row.workstream_id)) existing.workstreamIds.push(row.workstream_id);
@@ -2395,7 +2420,7 @@ export class WorkspaceSpaceStorage {
             id: row.space_id,
             name: row.title,
             iconKey: icon && SPACE_ICON_KEY_SET.has(icon) ? icon : SPACE_ICON_FALLBACK,
-            colorKey: color && SPACE_COLOR_KEY_SET.has(color) ? color : SPACE_COLOR_FALLBACK,
+            colorKey: spaceColorKey(row.appearance_json),
             scope: row.scope,
             systemRole: row.system_role,
           }),
@@ -4706,7 +4731,6 @@ export class WorkspaceSpaceStorage {
       ? JSON.parse(row.appearance_json) as { icon?: unknown; color?: unknown }
       : null;
     const icon = typeof appearance?.icon === "string" ? appearance.icon : null;
-    const color = typeof appearance?.color === "string" ? appearance.color : null;
     return SpaceSummarySchema.parse({
       id: row.space_id,
       name: row.title,
@@ -4715,7 +4739,7 @@ export class WorkspaceSpaceStorage {
       // Space picker still has to render as something rather than throw on a
       // read of the whole directory.
       iconKey: icon && SPACE_ICON_KEY_SET.has(icon) ? icon : SPACE_ICON_FALLBACK,
-      colorKey: color && SPACE_COLOR_KEY_SET.has(color) ? color : SPACE_COLOR_FALLBACK,
+      colorKey: spaceColorKey(row.appearance_json),
       scope: row.scope,
       status: row.archived_at === null ? "active" : "archived",
       systemRole: row.system_role,

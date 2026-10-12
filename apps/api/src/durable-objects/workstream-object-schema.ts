@@ -25,7 +25,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 73;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 74;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3438,6 +3438,17 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
         created_at INTEGER NOT NULL
       ) STRICT`,
       `CREATE INDEX run_absorbed_slack_origins_run ON run_absorbed_slack_origins (run_id)`,
+    ],
+  },
+  {
+    version: 74,
+    description: "the newest Channel colour revision this conversation applied",
+    statements: [
+      // WorkspaceDO numbers every mark from one counter (channel-color-sync.ts);
+      // `recolor` refuses a revision at or below this one, so a job that
+      // stalled behind a newer one cannot write the old colour back.
+      `ALTER TABLE workstream ADD COLUMN channel_color_revision INTEGER NOT NULL DEFAULT 0
+         CHECK (channel_color_revision >= 0)`,
     ],
   },
 ];
