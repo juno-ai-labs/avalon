@@ -1,6 +1,6 @@
 import { startCanvaConnection } from './canva-loopback';
 import { boundsWithoutConversationDetails, clampWindowBounds, readMainWindowState, writeMainWindowState } from './main-window-state';
-import { mainWindowTrafficLightPosition } from './main-window-chrome';
+import { macosMajorVersion } from './macos-version';
 import { EmbeddedBrowser, isEmbeddedBrowserWebContents } from './embedded-browser';
 import { EmbeddedBrowserBoundsSchema, EmbeddedBrowserCommandSchema, type EmbeddedBrowserCommand } from '../common/embedded-browser';
 import { BrowserImportContextSchema, BrowserImportedWorkstreamIdSchema, BrowserImportProgressSchema, type BrowserImportContext, type BrowserImportProgress } from '../common/browser-import';
@@ -5157,7 +5157,9 @@ async function createMainWindow(): Promise<void> {
     backgroundColor: windowBackgroundColor(),
     title: 'Rally',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
-    trafficLightPosition: mainWindowTrafficLightPosition(process.getSystemVersion()),
+    // Centered over the 76px section switcher: macOS 26 draws a 60pt group
+    // (14pt buttons on a 23pt pitch), earlier versions 52pt (12pt on 20pt).
+    trafficLightPosition: { x: macosMajorVersion(process.getSystemVersion()) >= 26 ? 8 : 12, y: 17 },
     ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
     webPreferences: {
       preload: preloadPath(),
