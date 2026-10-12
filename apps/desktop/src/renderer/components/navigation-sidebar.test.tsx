@@ -435,6 +435,23 @@ describe('the navigation sidebar', () => {
       expect(section.querySelector('.is-pin-ghost')).toBeNull();
     });
 
+    it('lets a row pinned by dragging be unpinned back into its list', async () => {
+      const pinnedList = [{ kind: 'channel' as const, id: 'zebra', parentId: null }];
+      api.setPinned.mockResolvedValueOnce(pinnedList).mockResolvedValueOnce([]);
+      renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, fruit));
+      const section = screen.getByRole('region', { name: 'Pinned channels' });
+      const all = within(screen.getByRole('region', { name: 'All channels' }));
+      fireEvent.dragStart(all.getByRole('link', { name: /Zebra/u }), { dataTransfer: { effectAllowed: 'all', setData: vi.fn() } });
+      fireEvent.dragOver(section, { dataTransfer: { dropEffect: 'none' } });
+      fireEvent.drop(section);
+      const pinnedZebra = await within(section).findByRole('link', { name: /Zebra/u });
+
+      fireEvent.contextMenu(pinnedZebra);
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Unpin' }));
+      expect(await all.findByRole('link', { name: /Zebra/u })).toBeInTheDocument();
+      expect(within(section).queryByRole('link', { name: /Zebra/u })).not.toBeInTheDocument();
+    });
+
     it('holds the dragged row, and drops it in the slot laid out under the pointer', () => {
       const pins = fruit.items.map((item) => ({ kind: 'channel' as const, id: item.id, parentId: null }));
       api.reorderPins.mockResolvedValue(pins);
