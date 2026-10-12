@@ -212,9 +212,7 @@ relation, so the page and its cursor are cut from mentions and nothing else.
 The tab's Mentions chip reads it, because mentions are sparse and a client
 filter over newest-first pages could draw an empty page with more behind it.
 Unread is the client's: unread is everything after one waterline, so it is
-already a run at the top of the feed. Opening the tab under Mentions does not
-move the waterline, since reading through its newest row would mark the rest
-of the feed seen.
+already a run at the top of the feed.
 
 **A breakout's mentions** reach the log in one narrow shape
 (`breakout-activity.ts`). A breakout is private to the people in it, and a
@@ -232,7 +230,8 @@ and the breakout listing check above decides whether the person named sees it.
 Nothing here changes what a digest reads.
 
 **Read state is one time per person** (`workspace_activity_seen`, migration
-97), moved forward by `PUT /navigation/activity/seen` when the tab is opened.
+97), moved forward by `PUT /navigation/activity/seen` when the person chooses
+**Mark all read**. Showing the tab reads nothing.
 An item is unread when it is newer than that time.
 
 Starts are not read from the opening message's event. Driving the local stack

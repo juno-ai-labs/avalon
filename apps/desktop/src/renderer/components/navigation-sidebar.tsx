@@ -47,7 +47,6 @@ import { useUiStore, type SidebarChannelSort, type SidebarSection } from '../lib
 import { useListMotion } from '../lib/use-list-motion';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
-import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { openWorkstreamId } from '../lib/workstream-landing';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { Button, IconButton, InlineError, Modal, TitleSkeleton, Tip } from './primitives';
@@ -1231,10 +1230,9 @@ function activityQueryKey(only: ActivityFilter | null): readonly unknown[] {
 }
 
 /**
- * Mark all read: the server's waterline moves to the newest row held, and
- * every held page drops its dots now rather than on the next read. Opening the
- * tab already marks what it shows; this is for the person who wants the dots
- * gone without waiting for that read to come back.
+ * Mark all read, the one way Activity is read: the server's waterline moves to
+ * the newest row held, and every held page drops its dots now. Showing the tab
+ * reads nothing, so Unread still lists what came in after a refetch.
  */
 function useMarkActivityRead(): () => void {
   const { api } = useAppSession();
@@ -1268,8 +1266,8 @@ function dayLabel(value: string, now = new Date()): string {
 
 /**
  * The Activity tab: requests to join waiting on this person, then what
- * happened to them, newest first and grouped by day. Opening it reads it, so
- * the next opening's dots are only what came after.
+ * happened to them, newest first and grouped by day. A row stays unread until
+ * Mark all read, so Unread is a list to work through rather than one glance.
  */
 function ActivitySection({ accessDecisionFailed, accessRequests, attentionComplete, guest, onDecideAccessRequest, onOpenAccessRequest, scroll }: {
   accessDecisionFailed: boolean;
@@ -1307,24 +1305,6 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
   });
   const fetched = useMemo(() => (feed.data?.pages ?? []).flatMap((page) => page.items), [feed.data]);
   const items = chip === 'unread' ? fetched.filter((item) => item.unread) : fetched;
-  const markedThrough = useRef<string | null>(null);
-  // Only the whole feed moves the waterline. Mentions holds some of what
-  // happened, and reading through its newest would mark the rest seen.
-  const newest = only === null ? fetched[0]?.occurredAt ?? null : null;
-  // On a phone the section stays mounted while the sheet is closed, so a
-  // closed sheet is not the person looking.
-  const sheetOpen = useUiStore((state) => state.sidebarOpen);
-  const acknowledge = useCallback((): void => {
-    if (!api || !newest || markedThrough.current === newest) return;
-    if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
-    if (window.innerWidth <= PHONE_LAYOUT_MAX_WIDTH && !sheetOpen) return;
-    markedThrough.current = newest;
-    void api.markActivitySeen(newest).catch(() => undefined);
-  }, [api, newest, sheetOpen]);
-  // The same gate a conversation's read takes: the window is in front and
-  // focused, and it is rechecked when either changes, so Activity arriving
-  // in a background window keeps its dots until somebody looks.
-  useVisibleReadAcknowledgement(acknowledge);
   const href = (item: ActivityItem): string => {
     const parent = live.data?.find((candidate) => candidate.id === item.threadId);
     return threadRoute(item.threadId, homeChannelId(parent?.spaceIds ?? item.channelIds), item.breakout?.substreamId);
