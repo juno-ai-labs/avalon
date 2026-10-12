@@ -1,6 +1,6 @@
 # New-user onboarding
 
-Rally introduces new accounts, helps workspace creators connect their tools and
+Rally helps organization creators connect their tools and
 invite teammates, then guides each person through personal appearance. Invitations finish creator
 setup and open the main app at New. Existing accounts are exempted when the migration runs. This
 ships directly for newly created accounts, with no feature flag.
@@ -18,16 +18,15 @@ ships directly for newly created accounts, with no feature flag.
 | `apps/api/src/services/onboarding-journey-service.ts` | Membership, eligibility and completion checks. |
 | `apps/api/src/routes/onboarding.ts`, `workspace.ts` | Identity and workspace API boundaries. |
 | `apps/desktop/src/renderer/lib/account-profile-editor.ts` | Account-scoped immediate drafts and serial revision-checked autosave. |
-| `apps/desktop/src/renderer/screens/guided-onboarding.tsx` | Introduction, personal setup and invitations. |
-| `apps/desktop/src/renderer/components/personal-avatar.tsx`, `lib/onboarding-motion.ts`, `styles/onboarding.css` | Appearance and reference-derived motion. |
+| `apps/desktop/src/renderer/screens/guided-onboarding.tsx` | Recording the introduction, personal setup and invitations. |
+| `apps/desktop/src/renderer/components/personal-avatar.tsx`, `styles/onboarding.css` | Appearance and reference-derived motion. |
 
 ## How it works
 
-The three introduction screens appear before sign-in. The browser never shows
-them: its visitors come from the landing page, so it records the introduction
-as seen. After authentication,
-completion is saved on the account before workspace activation; eligible accounts
-arriving through a signed-in handoff still receive the introduction.
+There are no introduction screens: a signed-out person goes straight to
+sign-in. The account still carries an `introduced` flag, because signup
+completion waits on it, so an eligible account that has not recorded it shows
+"Opening Rally" while the app saves it, with a retry if the save fails.
 Existing [workspace discovery and invitation acceptance](multiple-workspaces.md)
 choose the regional workspace. Everyone starts at personal setup. Connecting
 tools is not a journey step; it lives in Settings → Connections. The invitation
@@ -92,8 +91,8 @@ On the Mac app, a missing account credential or a terminal account renewal
 failure ends the complete local session and shows a native sign-in notice;
 it cannot leave Account settings unavailable inside an otherwise signed-in app.
 An identity without a workspace still waits for its introduction status and
-retains the retry/sign-out flow. Eligible accounts still receive their unfinished
-introduction and workspace journey when account details arrive. Workspace journey
+retains the retry/sign-out flow. Eligible accounts still record their
+introduction and resume their workspace journey when account details arrive. Workspace journey
 progress also loads without replacing the app with a loading screen; only known
 unfinished setup or a journey failure interrupts the workspace. While either
 lookup is pending, nested conversation-admission providers keep warmed feeds
@@ -120,6 +119,30 @@ cover existing authentication and activation behavior.
 Visual verification uses the isolated local Electron window. The reference
 inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-reference.md).
 Onboarding no longer starts an agent run or a connector authorization.
+
+## Changelog
+
+### 2026-10-12 — Remove the introduction screens
+
+**What changed:** The three animated introduction screens are gone. A
+signed-out person lands on sign-in, and an eligible account that has not been
+introduced records `introduced` on arrival behind an "Opening Rally" screen,
+with a retry if the save fails. This is the path the browser already took.
+
+**Why:** The product owner asked for the app to open straight to sign-in. The
+screens put three clicks in front of sign-in and showed again to new accounts
+arriving through a signed-in handoff.
+
+**Considered and rejected:** Removing the `introduced` flag along with the
+screens. Signup completion telemetry (`signup_completed`) only fires for an
+eligible account once the flag is set, so dropping it needs a migration and a
+telemetry change for no user benefit.
+
+**Consequences:** `introduced` now means "has reached the app", not "has seen
+the introduction". Anything that stops recording it on arrival leaves eligible
+accounts never counted as completed signups and their conversations unadmitted.
+
+Shipped in juno-ai-labs/avalon#1196.
 
 ### 2026-10-07 — Connecting tools leaves the setup journey
 
