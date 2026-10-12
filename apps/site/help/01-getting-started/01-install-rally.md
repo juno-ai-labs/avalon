@@ -3,7 +3,7 @@ title: Install Rally and sign in
 description: Download Rally for your Mac, open it, and sign in with Google.
 ---
 
-Everything starts on your Mac. This page gets Rally onto it, through its short introduction, and signed in with your Google account.
+Everything starts on your Mac. This page gets Rally onto it and signed in with your Google account.
 
 ## What you need
 
@@ -33,21 +33,9 @@ A teammate, or an invitation email, may give you a personal link that looks like
 
 If the page says **This link is incomplete or invalid. Ask the sender for a new link.**, do exactly that. The same goes for a link that has been used up or has expired. If the page says it is busy or the installer is briefly unavailable, wait a moment and use its retry button. If nothing works, the public **Download the macOS app** button below the headline on [rallywith.ai](https://rallywith.ai) gets you the same app.
 
-## The introduction
-
-When you open Rally with a brand-new account, it plays a short animated introduction in three screens. Each one has a small demo you can poke at.
-
-1. **Meet Rally. Work moves forward together.** You, your team and Rally in one conversation. Click **Meet channels** to continue.
-2. **A channel gives your work a home.** Each area of work gets a Channel, and each task in it gets a Thread. Click **Explore breakouts**.
-3. **Explore an idea in a breakout.** Taking a side conversation off the main one. Try **Start breakout** in the demo, then click **Get started**.
-
-**Back** goes back a screen. If you would rather skip it, the skip button on the first two screens reads **Sign in** before you have signed in, and **Skip intro** afterwards.
-
-Once you finish or skip it, Rally remembers that on your account, so you will not see it again, even on another Mac. People whose accounts already existed when the introduction was added never see it. If your Mac has **Reduce motion** turned on in its accessibility settings, the animations show their final frame instead of moving.
-
 ## Sign in with Google
 
-Next comes the Welcome screen: **Welcome to Rally**, **Your team, your work, and Rally. All in one place.** and **Sign in or create your account.** There is one button, and it does both jobs.
+Rally opens on the Welcome screen: **Welcome to Rally**, **Your team, your work, and Rally. All in one place.** and **Sign in or create your account.** There is one button, and it does both jobs.
 
 1. Click **Continue with Google**. Rally opens your usual web browser at Google's sign-in page.
 2. Choose your Google account and approve.
