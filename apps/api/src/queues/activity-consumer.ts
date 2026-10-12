@@ -572,11 +572,12 @@ async function consumeOne(message: Message<unknown>, env: Env,
       const work = await workspace.channelColorWork(target);
       if (work) {
         // Main and each open Breakout, in turn. A failure part way leaves the
-        // row in place, and the alarm sends it again; `recolor` skips the
-        // conversations that already match.
+        // row in place, and the alarm sends it again; `recolor` writes nothing
+        // where the colour already matches, and refuses this revision wherever
+        // a newer one has already landed.
         for (const substreamId of work.substreamIds) {
           await createIdentityObjectPort(env, target.workspaceId, target.workstreamId, undefined, substreamId)
-            .recolor({ color: work.color, now: Date.now() });
+            .recolor({ color: work.color, revision: target.revision, now: Date.now() });
         }
         await workspace.completeChannelColorSync(target);
       }

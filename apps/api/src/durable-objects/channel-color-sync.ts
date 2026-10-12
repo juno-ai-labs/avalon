@@ -37,9 +37,20 @@ import { z } from "zod";
  * See `docs/workstream-appearance.md`.
  */
 
-const MARK = (workstreamId: string) => `INSERT INTO channel_color_sync(workstream_id, revision, attempts, not_before)
-       VALUES (${workstreamId}, 1, 0, 0)
-       ON CONFLICT(workstream_id) DO UPDATE SET revision = revision + 1, attempts = 0, not_before = 0, in_flight = 0;`;
+/**
+ * Every mark takes the next value of one counter, so a thread's revision never
+ * repeats, not even after its row is settled and deleted. A conversation keeps
+ * the highest revision it applied and refuses an older one (`recolor`), so a
+ * job that stalled behind a newer one cannot put the old colour back.
+ */
+const NEXT_REVISION = "UPDATE channel_color_sync_state SET revision = revision + 1 WHERE id = 1;";
+const CURRENT_REVISION = "(SELECT revision FROM channel_color_sync_state WHERE id = 1)";
+const REMARK = "ON CONFLICT(workstream_id) DO UPDATE SET revision = excluded.revision, attempts = 0, not_before = 0, in_flight = 0;";
+
+const MARK = (workstreamId: string) => `${NEXT_REVISION}
+     INSERT INTO channel_color_sync(workstream_id, revision, attempts, not_before)
+       VALUES (${workstreamId}, ${CURRENT_REVISION}, 0, 0)
+       ${REMARK}`;
 
 /** WorkspaceDO migration 99; the backfill is its last statement. */
 export const CHANNEL_COLOR_SYNC_MIGRATION: readonly string[] = [
@@ -51,6 +62,12 @@ export const CHANNEL_COLOR_SYNC_MIGRATION: readonly string[] = [
     in_flight INTEGER NOT NULL DEFAULT 0 CHECK (in_flight IN (0, 1))
   ) STRICT`,
   `CREATE INDEX channel_color_sync_due_idx ON channel_color_sync(not_before, workstream_id)`,
+  `CREATE TABLE channel_color_sync_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    revision INTEGER NOT NULL CHECK (revision > 0)
+  ) STRICT`,
+  // The backfill below is revision 1; the first mark after it is 2.
+  "INSERT INTO channel_color_sync_state(id, revision) VALUES (1, 1)",
   // A placement made, ended, archived with its Channel or restored. `UPDATE OF
   // state` only: the row's ordinal and timestamps move on every feed write.
   `CREATE TRIGGER channel_color_membership_insert AFTER INSERT ON space_channel_memberships BEGIN
@@ -69,10 +86,11 @@ export const CHANNEL_COLOR_SYNC_MIGRATION: readonly string[] = [
   `CREATE TRIGGER channel_color_space_change AFTER UPDATE OF appearance_json, archived_at, scope ON spaces
    WHEN json_extract(OLD.appearance_json, '$.color') IS NOT json_extract(NEW.appearance_json, '$.color')
      OR OLD.archived_at IS NOT NEW.archived_at OR OLD.scope IS NOT NEW.scope BEGIN
+     ${NEXT_REVISION}
      INSERT INTO channel_color_sync(workstream_id, revision, attempts, not_before)
-       SELECT workstream_id, 1, 0, 0 FROM space_channel_memberships
+       SELECT workstream_id, ${CURRENT_REVISION}, 0, 0 FROM space_channel_memberships
         WHERE space_id = NEW.space_id AND state = 'active'
-       ON CONFLICT(workstream_id) DO UPDATE SET revision = revision + 1, attempts = 0, not_before = 0, in_flight = 0;
+       ${REMARK}
    END`,
   // A thread's or a Breakout's first projection: the conversation exists now,
   // and starts without a colour. A thread restored from the archive is marked

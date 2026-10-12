@@ -31,6 +31,15 @@ with the identity operation `recolor`, and settles the row with
 `completeChannelColorSync` only if nothing marked the thread again meanwhile.
 The projection each `recolor` commits carries the colour to every client.
 
+Every mark takes the next value of one counter (`channel_color_sync_state`),
+so a thread's `revision` never repeats, even after its row is settled and
+deleted, and a late completion cannot take a newer mark. Each conversation
+keeps the newest revision it applied (`channel_color_revision`, conversation
+migration 74), and `recolor` refuses one at or below it. Two jobs for the same
+thread can overlap (a newer mark is sent while an older job is still writing),
+and without that fence the older job could put the old colour back on the
+Breakouts it had not reached yet, with nothing left to correct it.
+
 One batch (up to 100 threads, the Queue's `sendBatch` maximum) is in flight per
 Organization at a time. A claimed row is `in_flight`; the lane sends nothing
 while any in-flight row's retry gate is still ahead, and the alarm waits for
@@ -188,6 +197,8 @@ until someone picks a hue.
   cannot overwrite a later choice.
 - Omitted fields mean unchanged; null fields use the deterministic ID-based
   default. Older work streams retain their original appearance until edited.
+- A colour job carries its mark's revision to every conversation it writes,
+  and a conversation never applies a revision at or below the one it holds.
 - A thread's or a Breakout's colour has one writer, `recolor`. A new path that
   sets one some other way is overwritten the next time the thread is marked;
   a new table whose change can move a thread's colour needs its own trigger in
@@ -235,7 +246,8 @@ listings. The Channel colour is proved on real workerd in
 revision fence, the rows settled with nothing to write, and the Queue consumer
 recolouring a real Main, and a later batch held until the one in flight
 settles or is released) and `identity-authority.test.ts` (`recolor` keeps the
-icon, commits the projection, and writes nothing on a repeat); the
+icon, commits the projection, writes nothing on a repeat, and refuses an older
+revision); the
 `message-to-output-pipeline.test.ts` appearance case proves a client's colour
 is dropped. `workspace-channel-color-migration.test.ts` proves the backfill.
 Inspect the actual Electron popup in light and dark,
@@ -245,7 +257,8 @@ including scrolling, and check another connected window and reopening.
 
 **What changed:** A thread and its Breakouts carry their Channel's colour in
 their own stored appearance, written by the server (`channel-color-sync.ts`,
-WorkspaceDO migration 99, identity operation `recolor`). Migration 99 backfills
+WorkspaceDO migration 99, conversation migration 74, identity operation
+`recolor`). Migration 99 backfills
 every existing thread, overwriting the colours people had chosen. The client's
 colour patch is dropped for a thread or a Breakout and their pickers offer
 icons only.
