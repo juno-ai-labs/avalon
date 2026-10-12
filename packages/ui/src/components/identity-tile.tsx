@@ -15,7 +15,8 @@ export type TileShape = 'squircle' | 'circle';
  * before, starting 6px past the tile's right edge, so a 36px tile holds two;
  * a third would start 8px past its left edge, out over the row's padding.
  * Geometry, not a policy: a surface that wants more names them elsewhere, as
- * a thread row's second line does.
+ * a thread row's second line does. A nested badge reaches 11px past the
+ * tile's right edge and 9px below it, inside the row's gap and padding.
  */
 const BADGE_ROOM = 2;
 
@@ -51,14 +52,13 @@ function Badge({ badge, nested = false, right }: { badge: TileBadge | NestedTile
     <span className={clsx('identity-tile-badge-fill', `is-${badge.shape}`)} style={{ background: badge.fill, color: badge.ink }}>
       {badge.icon ? <badge.icon size={nested ? 7 : 10} strokeWidth={2.2} /> : badge.text}
     </span>
-    {!nested && 'badge' in badge && badge.badge && <Badge badge={badge.badge} nested right={-7} />}
+    {!nested && 'badge' in badge && badge.badge && <Badge badge={badge.badge} nested right={-5} />}
   </span>;
 }
 
 /**
  * A shaped, tinted tile with one symbol in it, and optionally badges on its
- * corner: a thread's tile carries the Channels it sits in, a breakout's carries
- * its thread with the thread's Channel nested on that, and an Activity row's
+ * corner: a thread's tile carries the Channels it sits in, an Activity row's
  * carries who acted.
  *
  * Each badge sits in a ring painted `--tile-ring`, which the surface sets to

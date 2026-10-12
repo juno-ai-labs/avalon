@@ -911,8 +911,6 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
     return space ? [space] : [];
   });
   const appearance = resolveWorkstreamAppearance(row.id, row.appearance);
-  // A breakout's tile carries its thread, and the thread its Channel, each on
-  // the corner of the one before.
   const badges = row.breakoutOf
     ? [threadBadge(row.breakoutOf.workstreamId, row.breakoutOf.appearance, channels[0])]
     : channels.map(channelBadge);
