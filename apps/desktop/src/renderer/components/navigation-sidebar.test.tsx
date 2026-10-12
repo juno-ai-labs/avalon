@@ -326,6 +326,8 @@ describe('the navigation sidebar', () => {
     const unread = (name: string): boolean => within(list.getByRole('link', { name: new RegExp(name, 'u') })).queryByRole('img', { name: 'Unread' }) !== null;
     expect(['New messages', 'Named', 'Never opened', 'Running', 'In two'].map(unread)).toEqual([true, true, true, false, false]);
     expect(threadRows(list).find(([title]) => title === 'In two')).toEqual(['In two', 'Outbound · Growth']);
+    // A thread starts from a Channel's composer, so the header offers no New thread.
+    expect(screen.queryByRole('button', { name: 'New thread' })).not.toBeInTheDocument();
   });
 
   it('opens New channel from the Channels header', () => {
