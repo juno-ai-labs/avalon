@@ -382,9 +382,12 @@ of its sorts.
 
 **Why:** The product owner asked for it removed. A thread starts from a
 Channel's composer and nowhere else (the PRD's non-goal 6), so the button only
-jumped to a Channel the person could open from the Channels tab. A later
-change that brings it back has to restore a way to focus an already mounted
-composer.
+jumped to a Channel the person could open from the Channels tab.
+
+**Consequences:** A later change that brings the button back has to restore a
+way to focus an already mounted composer.
+
+Shipped in [#1201](https://github.com/juno-ai-labs/avalon/pull/1201).
 
 ### 2026-10-12 — A breakout's tile nests its thread and Channel
 
