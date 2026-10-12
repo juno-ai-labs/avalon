@@ -81,7 +81,14 @@ thread and breakout they take part in (`GET /navigation/threads`), ordered
 **Recent** (default), **A–Z** or **Needs attention** (`rally.sidebar-thread-sort`).
 A row is its status dot, its title, and its Channel chips; a breakout's row
 carries its thread's name instead. A row the socket holds is drawn from the
-socket, so its dot moves live. Right-click pins or unpins.
+socket, so its dot moves live. Right-click pins or unpins. A row with a
+wake-up coming carries a clock whose tooltip says when and what. A thread
+Rally is still naming shows a shimmer in place of its title
+(`useNamingSkeleton`). Hovering a row for a second warms its thread's socket,
+and a plain click starts the open-latency measurement
+(`markWorkstreamFeedOpenStarted`); the open thread clicked again starts
+nothing. A thread opened from a desktop link is scrolled into view, loading
+further pages until its row is listed.
 
 **Activity**: requests to join waiting on this person (approve or decline in
 place), then what happened to them, grouped Today, Yesterday and by day
@@ -90,6 +97,10 @@ Opening it marks it read.
 
 A row opened from any list opens the thread beside one of its Channels — the
 one already open when it sits there — so a Channel is always one step back.
+Every row in the three lists is a link, so a modified click opens it
+elsewhere (a new tab, in the web app). Each list draws placeholder rows until
+its first page arrives. A guest has no Channels section, per the navigation
+PRD; a guest whose stored section is Channels sees Threads.
 
 A row in these lists that changes place (a pin, a new activity time, a
 re-sort, a restore) travels to its new slot rather than reappearing there.
@@ -332,6 +343,29 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-12 — The sidebar takes back what the redesign dropped
+
+**What changed:** Rows are links again. Hovering a thread row warms its
+socket, and a click starts the open-latency measurement, which
+`telemetrySurfaceForPath` now recognizes on the `/channels/:id/threads/:id`
+route. Thread pins report `workstream_action_completed`. Rows show the wake-up
+clock and the naming shimmer, lists draw placeholder rows while loading, a
+deep link scrolls to its row, and a pin scrolls to and focuses the moved row.
+Guests no longer get the Channels section.
+
+**Why:** The redesign rewrote the sidebar and left these out without a
+decision in its PRD. Most are cheap to carry and two cost the product
+directly: every open was cold, and open latency stopped being measured,
+because the telemetry route parser only knew `/workstreams/:id` and so every
+open from the new routes was dropped as soon as it arrived.
+
+**Considered and rejected:** Restoring the old hover preview card, the
+"Mark all as read" group menus and scroll-position memory. Left out on
+request; the card mostly served the narrow sidebar, which no longer exists.
+
+**Consequences:** A new route that shows a thread must be added to
+`telemetrySurfaceForPath` too, or opens to it are dropped.
 
 ### 2026-10-10 — A section switcher and a pane stack replace the Space sidebar
 
