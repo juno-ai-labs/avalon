@@ -40,7 +40,7 @@ import { moveWithin } from '../lib/personal-order';
 import { compareChannels } from '../lib/sidebar-channel-order';
 import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, MY_THREADS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
-import { reportThreadPin, usePinAction, usePinFailure, usePins, usePinWrite, type PinnedThread } from '../lib/pins';
+import { latestPinWrite, reportThreadPin, usePinAction, usePinFailure, usePins, usePinWrite, type PinnedThread } from '../lib/pins';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation } from '../lib/telemetry';
 import type { SpaceConversationSummary, Workspace } from '../lib/types';
 import { useUiStore, type SidebarChannelSort, type SidebarSection } from '../lib/ui-store';
@@ -303,13 +303,9 @@ function useOpenThreadId(): string | null {
 }
 
 /**
- * A Pinned list arranged by dragging: the order moves under the pointer and is
- * saved on drop. The server answers with the whole pin list, which replaces the
- * one held. The dragged row is held by the list motion, so it is placed rather
- * than sent out of frame on every step, and the slot under the pointer is the
- * row laid out there, not the row drawn there: mid-motion, a row gliding out
- * of the slot the dragged row just took would otherwise be read as that slot's
- * owner and the reorder would send it straight back (`docs/list-motion.md`).
+ * A Pinned list arranged by dragging, saved on drop. The target slot is the
+ * row laid out under the pointer, not the one drawn there mid-motion, or rows
+ * in motion would trade places (`docs/list-motion.md`).
  */
 function usePinnedDrag(kind: PinKind, ids: readonly string[]): {
   order: readonly string[];
@@ -390,12 +386,9 @@ interface PinDrop {
 }
 
 /**
- * Pinning by dragging an unpinned row into the Pinned section. While the row
- * is over the section, `drop.index` is the slot a placeholder holds open for
- * it; letting go there pins it and, unless that slot is the end, saves the
- * order with it in place, since a new pin is appended. A landed row stays
- * drawn in Pinned until the pin list holds it, so it does not bounce back to
- * the list while the write is in flight. `drop` is null once that happens.
+ * Pinning by dragging an unpinned row into Pinned, at the slot it is dropped
+ * in (`docs/workstream-pinning.md`). A landed row stays in Pinned until the
+ * pin list holds it.
  */
 function usePinDrop(pinnedIds: ReadonlySet<string>, orderOf: (kind: PinKind) => readonly string[]): {
   drop: PinDrop | null;
@@ -444,15 +437,18 @@ function usePinDrop(pinnedIds: ReadonlySet<string>, orderOf: (kind: PinKind) => 
         event.preventDefault();
         const index = drop.index ?? orderOf(drop.kind).length;
         setState({ ...drop, index, landed: true });
+        let issued = 0;
         const pinned = api.setPinned(drop.kind, drop.id, true, drop.parentId).then((list) => {
           if (drop.kind === 'thread' && drop.thread) reportThreadPin(drop.thread, true);
           const order = list.filter((item) => item.kind === drop.kind).map((item) => item.id);
-          return !order.includes(drop.id) || order.indexOf(drop.id) === index
+          // A newer pin write owns the order now.
+          return !order.includes(drop.id) || order.indexOf(drop.id) === index || issued !== latestPinWrite()
             ? list
             : api.reorderPins(drop.kind, moveWithin(order, drop.id, index));
         });
         // A failure is reported by the write; the row goes back to its list.
         write(pinned);
+        issued = latestPinWrite();
         pinned.catch(() => setState((current) => (current?.id === drop.id && current.landed ? null : current)));
       },
     },
@@ -465,21 +461,23 @@ function usePinDrop(pinnedIds: ReadonlySet<string>, orderOf: (kind: PinKind) => 
  * accent while a row is being dragged. The whole section, heading included,
  * is the drop target, so a release in a gap between rows still counts.
  */
-function PinnedSection({ children, count, drop, label, noun, target }: {
+function PinnedSection({ children, count, drop, label, noun, reorderable, target }: {
   children: ReactNode;
   count: number;
   drop: PinDrop | null;
   label: string;
   noun: string;
+  /** Whether any one kind holds two or more pins; each kind reorders on its own. */
+  reorderable: boolean;
   target: React.HTMLAttributes<HTMLElement>;
 }): React.JSX.Element {
   const hint = useId();
   // How to reorder is said once, for the section; each row says only its
   // place (`pinnedPosition`). As a per-row description it would be repeated
   // before every title.
-  return <section aria-describedby={count > 1 ? hint : undefined} aria-label={label} className="navigation-section" {...target}>
-    <SectionHeading motionKey="pinned" trailing={count > 1 ? <span aria-hidden="true">Drag to reorder</span> : undefined}>Pinned</SectionHeading>
-    {count > 1 && <p className="sr-only" id={hint}>Hold Alt and press the up or down arrow to move a pinned {noun}.</p>}
+  return <section aria-describedby={reorderable ? hint : undefined} aria-label={label} className="navigation-section" {...target}>
+    <SectionHeading motionKey="pinned" trailing={reorderable ? <span aria-hidden="true">Drag to reorder</span> : undefined}>Pinned</SectionHeading>
+    {reorderable && <p className="sr-only" id={hint}>Hold Alt and press the up or down arrow to move a pinned {noun}.</p>}
     {count === 0 && drop?.index == null && <div className={clsx('pinned-empty-drop-surface', drop && 'is-armed')}>
       <IconPin aria-hidden="true" size={15} stroke={1.7} />
       <span>Move a {noun} here to pin it</span>
@@ -494,14 +492,9 @@ function pinnedPosition(index: number, count: number): string {
 }
 
 /**
- * Follows a row that a pin or unpin moved to the other section, which is off
- * screen whenever the reader scrolled to reach it. Waits until the list
- * carries the change, since the write's answer reaches the list a tick after
- * it resolves, and gives up if it never does. Scrolls only as far as needed,
- * and moves focus to the row only when the move left focus nowhere, as it
- * does when the row remounts in its new section. Must be called before
- * `useListMotion`: the motion's first frame draws the row back at its old
- * slot, and a scroll after that would aim at where the row used to be.
+ * Scrolls to a row a pin or unpin moved, once the list shows the move, and
+ * focuses it if the move left focus nowhere. Call before `useListMotion`,
+ * whose first frame draws the row back at its old slot.
  */
 function usePinReveal(
   scroll: RefObject<HTMLElement | null>,
@@ -696,8 +689,18 @@ function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): 
   // until its row is there or the list runs out. The link is marked before
   // the route changes, so a route still on another thread is waited out.
   const deepLink = useDeepLinkWorkstreamNavigation();
+  // The link reached its thread once; leaving it after that ends the link.
+  const deepLinkArrived = useRef<number | null>(null);
+  // Each page is asked for once, so a render landing before the fetch shows
+  // as in flight does not restart it.
+  const deepLinkPage = useRef<string | null>(null);
   useLayoutEffect(() => {
-    if (deepLink === null || deepLink.workstreamId !== openThreadId) return;
+    if (deepLink === null) return;
+    if (deepLink.workstreamId !== openThreadId) {
+      if (deepLinkArrived.current === deepLink.revision) consumeDeepLinkWorkstreamNavigation(deepLink.revision);
+      return;
+    }
+    deepLinkArrived.current = deepLink.revision;
     const row = scroll.current?.querySelector<HTMLElement>(`[data-motion-key="thread:${deepLink.workstreamId}"]`);
     if (row) {
       row.scrollIntoView?.({ block: 'center', behavior: 'auto' });
@@ -705,8 +708,14 @@ function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): 
       return;
     }
     if (!list.isSuccess || list.isFetchingNextPage) return;
-    if (list.hasNextPage) void list.fetchNextPage();
-    else consumeDeepLinkWorkstreamNavigation(deepLink.revision);
+    if (!list.hasNextPage) {
+      consumeDeepLinkWorkstreamNavigation(deepLink.revision);
+      return;
+    }
+    const page = `${deepLink.revision}:${list.data.pages.length}`;
+    if (deepLinkPage.current === page) return;
+    deepLinkPage.current = page;
+    void list.fetchNextPage();
   });
   // A row that changes place, a pin or a re-sort, travels there. A row keeps
   // its motion key between Pinned and the list, so a pin is one row moving.
@@ -740,18 +749,27 @@ function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): 
     row={row}
     spaces={spaces}
   />;
-  const pinnedRows = (kind: PinKind, drag: ReturnType<typeof usePinnedDrag>): ReactNode[] => withPinDrop(kind, drag.order, drop)
+  // Threads are drawn above breakouts, so a breakout's place counts past them.
+  const pinnedCount = threadDrag.order.length + breakoutDrag.order.length;
+  const pinnedRows = (kind: PinKind, drag: ReturnType<typeof usePinnedDrag>, offset: number): ReactNode[] => withPinDrop(kind, drag.order, drop)
     .map((id) => {
       const row = byId.get(id);
       if (!row) return null;
       if (id === drop?.id) return renderRow(row, undefined, undefined, !drop.landed);
       const index = drag.order.indexOf(id);
-      return renderRow(row, drag.rowProps(id, index), drag.moves(id, index), false, pinnedPosition(index, drag.order.length));
+      return renderRow(row, drag.rowProps(id, index), drag.moves(id, index), false, pinnedPosition(offset + index, pinnedCount));
     });
   return <>
-    <PinnedSection count={pinned.size} drop={drop} label="Pinned threads" noun="thread" target={pinDrop.targetProps}>
-      {pinnedRows('thread', threadDrag)}
-      {pinnedRows('breakout', breakoutDrag)}
+    <PinnedSection
+      count={pinned.size}
+      drop={drop}
+      label="Pinned threads"
+      noun="thread"
+      reorderable={threadPins.length > 1 || breakoutPins.length > 1}
+      target={pinDrop.targetProps}
+    >
+      {pinnedRows('thread', threadDrag, 0)}
+      {pinnedRows('breakout', breakoutDrag, threadDrag.order.length)}
     </PinnedSection>
     <section aria-busy={list.isPending || undefined} aria-label="Threads" className="navigation-section">
       <SectionHeading motionKey="threads" trailing={<SortButton onChange={setSort} sort={sort} sorts={THREAD_SORTS} />}>Threads</SectionHeading>
@@ -792,8 +810,8 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
   const threadId = row.breakoutOf?.workstreamId ?? row.id;
   const warmup = useWorkstreamSocketHoverWarmup(threadId);
   const socketOpenContext = useWorkstreamSocketOpenContext(threadId);
-  const route = useCurrentRoute();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
+  const route = `${pathname}${search}`;
   const naming = useNamingSkeleton(row);
   const live = !ghost && !row.pending;
   const open = (event: React.MouseEvent): void => {
@@ -938,7 +956,7 @@ function ChannelsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }):
     stats={statsById.get(space.id)}
   />;
   return <>
-    <PinnedSection count={channelPins.length} drop={drop} label="Pinned channels" noun="channel" target={pinDrop.targetProps}>
+    <PinnedSection count={channelPins.length} drop={drop} label="Pinned channels" noun="channel" reorderable={channelPins.length > 1} target={pinDrop.targetProps}>
       {withPinDrop('channel', drag.order, drop).map((id) => {
         const space = byId.get(id);
         if (!space) return null;
@@ -964,10 +982,8 @@ function ChannelsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }):
 }
 
 /**
- * The Archived section's state. It is held by the Channels tab rather than
- * the section, so that anything changing the section's rows (unfolding it, a
- * failed restore's line) renders the component that runs the list motion, and
- * an archived row is measured before a restore moves it.
+ * The Archived section's state, held by the Channels tab so that changes to
+ * its rows render the component that runs the list motion.
  */
 function useArchivedChannels(): {
   failed: string | null;

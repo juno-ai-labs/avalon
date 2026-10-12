@@ -346,26 +346,22 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 
 ### 2026-10-12 — The sidebar takes back what the redesign dropped
 
-**What changed:** Rows are links again. Hovering a thread row warms its
-socket, and a click starts the open-latency measurement, which
-`telemetrySurfaceForPath` now recognizes on the `/channels/:id/threads/:id`
-route. Thread pins report `workstream_action_completed`. Rows show the wake-up
-clock and the naming shimmer, lists draw placeholder rows while loading, a
-deep link scrolls to its row, and a pin scrolls to and focuses the moved row.
-Guests no longer get the Channels section.
+**What changed:** Rows are links again, thread rows warm their socket on hover
+and start the open-latency measurement on a click, and guests lose the
+Channels section. `telemetrySurfaceForPath` now recognizes
+`/channels/:id/threads/:id`.
 
-**Why:** The redesign rewrote the sidebar and left these out without a
-decision in its PRD. Most are cheap to carry and two cost the product
-directly: every open was cold, and open latency stopped being measured,
-because the telemetry route parser only knew `/workstreams/:id` and so every
-open from the new routes was dropped as soon as it arrived.
+**Why:** The redesign left these out without a decision in its PRD. Every open
+was cold, and open latency went unmeasured, because the route parser only
+knew `/workstreams/:id` and dropped every open from the new route.
 
-**Considered and rejected:** Restoring the old hover preview card, the
-"Mark all as read" group menus and scroll-position memory. Left out on
-request; the card mostly served the narrow sidebar, which no longer exists.
+**Considered and rejected:** The hover preview card, the "Mark all as read"
+group menus and scroll-position memory, left out on request.
 
 **Consequences:** A new route that shows a thread must be added to
-`telemetrySurfaceForPath` too, or opens to it are dropped.
+`telemetrySurfaceForPath`, or opens to it are dropped.
+
+Shipped in [#1197](https://github.com/juno-ai-labs/avalon/pull/1197).
 
 ### 2026-10-10 — A section switcher and a pane stack replace the Space sidebar
 

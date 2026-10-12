@@ -42,6 +42,15 @@ export function usePinFailure(): string | null {
 let pinWritesStarted = 0;
 
 /**
+ * The newest pin write's number. A write with a follow-up of its own (a drop
+ * that pins, then saves the order) checks it before sending the follow-up, so
+ * an older drop cannot save its order over a newer pin.
+ */
+export function latestPinWrite(): number {
+  return pinWritesStarted;
+}
+
+/**
  * Hold a pin write's answer, or say why it failed. Each answer is the whole
  * list, and two writes in flight can answer in either order, so an answer is
  * held only when no later write has started; the later one's answer, or the

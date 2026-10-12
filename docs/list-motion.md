@@ -398,52 +398,21 @@ each one.
 
 ### 2026-10-12 — The new sidebar's tabs move their rows again
 
-**What changed:** The Threads, Channels and Activity tabs call
-`useListMotion`, one call per tab on the shared scroll box, with the wiring
-the 2026-10-10 entry listed. The Archived section's open and failed state
-moved up into the Channels tab, and a restore writes both directories in one
-batch.
+**What changed:** Each of the Threads, Channels and Activity tabs calls
+`useListMotion` on the shared scroll box.
 
-**Why:** Rows jumping to a new slot read as two events, which is the problem
-this module exists to solve; the redesign's scope cut had removed it from
-every list a person sees in the sidebar.
+**Why:** The redesign shipped the lists without motion as a scope cut, so
+rows jumped instead of moving.
 
-**Considered and rejected:** One call in `NavigationSidebar` with the section
-as `layoutKey`. A relayout still plays entrances, so switching to Activity
-would have slid every pending request in. A call per tab gets "nothing plays
-on the first commit" for free.
+**Considered and rejected:** One call in `NavigationSidebar` keyed on the
+section. A relayout still plays entrances, so every pending request would have
+slid in on each switch to Activity.
 
-**Consequences:** The hook only measures when the component that calls it
-renders. State that changes a tab's rows (a folded section, an error line
-above rows) must live in that tab's component or above it, not in a child,
-or the next move is planned from stale positions. Likewise, a change that
-moves a row between two lists must land in one render, or the hook sees a
-row leave and a stranger arrive.
+**Consequences:** The hook measures only when its caller renders. State that
+changes a tab's rows must live in that tab or above it, and a row moving
+between two lists must move in one render.
 
-### 2026-10-10 — The sidebar's lists ship without motion
-
-**What changed:** The sidebar that called `useListMotion` is deleted, and the
-new Threads, Channels and Activity lists do not call it. A row that moves is
-drawn in its new slot. `list-motion.ts`, `use-list-motion.ts` and their tests
-stay.
-
-**Why:** A scope cut to ship the navigation redesign
-([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)) in one change. The
-old wiring was specific to the old sidebar: its recency groups, its per-Space
-motion scopes, its compact layout and its reveal-on-pin. None of those exist
-in the new lists, so carrying it over meant rewiring, not moving it.
-
-**Considered and rejected:** Deleting the module. The planner and hook hold
-the hard parts (interruption, stand-in exits, the pointer guard) and know
-nothing about the sidebar, so keeping them costs only their tests.
-
-**Consequences:** Bringing motion back to a list means marking its rows with
-`data-motion-key` (and `data-motion-hold` for headings that should travel with
-them), giving each section its own `data-motion-scope` where a row can appear
-twice (a pin above its own list row), attaching `useListMotion` to the scroll
-box, and resolving a Pinned drag's target through `layoutRowAt`. Then judge it
-in a real window. Until then a pin, a re-sort or new activity moves a row
-without a transition.
+Shipped in [#1197](https://github.com/juno-ai-labs/avalon/pull/1197).
 
 ### 2026-09-21 — A named mover can travel between equal slots
 
