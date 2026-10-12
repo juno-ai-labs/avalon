@@ -789,6 +789,7 @@ import {
   completeChannelColorSync,
   nextChannelColorSyncAt,
   publishChannelColorSync,
+  releaseChannelColorSync,
   type ChannelColorSyncMessage,
   type ChannelColorWork,
 } from "./channel-color-sync";
@@ -10203,11 +10204,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(ChannelColorSyncMessageSchema, input, "channel_color_work");
     this.assertWorkspace(request.workspaceId);
-    return ChannelColorWorkSchema.parse(this.state.storage.transactionSync(() => channelColorWork(this.state.storage.sql, {
+    const work = ChannelColorWorkSchema.parse(this.state.storage.transactionSync(() => channelColorWork(this.state.storage.sql, {
       workstreamId: request.workstreamId,
       revision: request.revision,
       color: this.spaceStorage().channelColor(request.workstreamId),
     })));
+    // A settled row may be the last of its batch, which lets the next one go.
+    if (work === null) await this.armNextAlarm();
+    return work;
   }
 
   /** Settle a thread every conversation of which now carries its colour. */
@@ -10215,7 +10219,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(ChannelColorSyncMessageSchema, input, "complete_channel_color_sync");
     this.assertWorkspace(request.workspaceId);
-    return completeChannelColorSync(this.state.storage.sql, request.workstreamId, request.revision);
+    const completed = completeChannelColorSync(this.state.storage.sql, request.workstreamId, request.revision);
+    await this.armNextAlarm();
+    return completed;
+  }
+
+  /** A thread the consumer could not finish: it retries at its own gate and holds back nothing. */
+  async releaseChannelColorSync(input: ChannelColorSyncMessage): Promise<boolean> {
+    await this.initialized;
+    const request = parseRpcInput(ChannelColorSyncMessageSchema, input, "release_channel_color_sync");
+    this.assertWorkspace(request.workspaceId);
+    const released = releaseChannelColorSync(this.state.storage.sql, request.workstreamId, request.revision);
+    await this.armNextAlarm();
+    return released;
   }
 
   async failSpaceDefaultTarget(input: SpaceDefaultQueueMessage): Promise<boolean> {

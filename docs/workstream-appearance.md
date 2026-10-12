@@ -31,6 +31,16 @@ with the identity operation `recolor`, and settles the row with
 `completeChannelColorSync` only if nothing marked the thread again meanwhile.
 The projection each `recolor` commits carries the colour to every client.
 
+One batch (up to 100 threads, the Queue's `sendBatch` maximum) is in flight per
+Organization at a time. A claimed row is `in_flight`; the lane sends nothing
+while any in-flight row's retry gate is still ahead, and the alarm waits for
+that gate rather than for the pending rows. Settling or releasing a thread
+(`releaseChannelColorSync`, which the consumer calls on a failure) re-arms
+the alarm, so the next batch follows the last one's completion. The
+backfill is paced by how fast the object answers, not by a chosen interval:
+sent back to back it would have repeated the resource-search backfill's
+overload (`docs/text-search.md`, 2026-09-26).
+
 **A Sidekick has one too, and it is the same palette.** Clicking the hexagon on
 its profile opens the picker this document owns, over the same catalog and the
 same colour ring. What differs is only where the value is stored and how it is
@@ -223,7 +233,8 @@ legs and asserts the merge, the refusal, and the value on both directory
 listings. The Channel colour is proved on real workerd in
 `channel-color-sync.test.ts` (which writes mark a thread and which do not, the
 revision fence, the rows settled with nothing to write, and the Queue consumer
-recolouring a real Main) and `identity-authority.test.ts` (`recolor` keeps the
+recolouring a real Main, and a later batch held until the one in flight
+settles or is released) and `identity-authority.test.ts` (`recolor` keeps the
 icon, commits the projection, and writes nothing on a repeat); the
 `message-to-output-pipeline.test.ts` appearance case proves a client's colour
 is dropped. `workspace-channel-color-migration.test.ts` proves the backfill.
@@ -252,7 +263,11 @@ colours, but every projection point would need to know the rule, and a
 Channel recolour would have to republish each row. Hooking each placement
 path in code was rejected for triggers: the placement writes are many
 (birth, add, remove, move, archive into General, restore, the cutover) and a
-missed one is a thread silently left in the wrong colour.
+missed one is a thread silently left in the wrong colour. Sending due rows
+back to back was rejected for one batch in flight: the backfill marks every
+thread at once, and each message calls WorkspaceDO and then sends a child
+effect back to it, the shape that overloaded the object in the resource-search
+backfill. Completion gating needs no interval anyone would have to pick.
 
 **Respect:** Undoing this is not a deletion: the original colours are gone.
 Letting conversations choose again means removing the colour drop in

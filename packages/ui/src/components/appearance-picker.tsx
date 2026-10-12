@@ -118,7 +118,7 @@ export function AppearanceSubmenu({ id, appearance, label: itemLabel, icon, onCh
   label: string;
   icon?: React.ReactNode;
   onChange: (patch: WorkstreamAppearancePatch) => Promise<void>;
-  /** False for a mark whose colour is not its own to choose; see `inChannelColor`. */
+  /** False for a thread or a Breakout, whose colour is its Channel's and set by the server. */
   colors?: boolean;
 }): React.JSX.Element {
   const { selected, change, error, onOpenChange } = useAppearanceChoice(id, appearance, onChange);
@@ -142,7 +142,7 @@ export function AppearancePicker({ id, appearance, label: triggerLabel, renderGl
   onChange: (patch: WorkstreamAppearancePatch) => Promise<void>;
   /** The trigger's frame, for a surface that draws its mark in a tile of its own. */
   triggerClassName?: string;
-  /** False for a mark whose colour is not its own to choose; see `inChannelColor`. */
+  /** False for a thread or a Breakout, whose colour is its Channel's and set by the server. */
   colors?: boolean;
 }): React.JSX.Element {
   const { selected, change, error, onOpenChange } = useAppearanceChoice(id, appearance, onChange);

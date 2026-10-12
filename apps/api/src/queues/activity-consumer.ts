@@ -585,11 +585,13 @@ async function consumeOne(message: Message<unknown>, env: Env,
       if (!isRetirementRefusal(error)) {
         // Acked rather than retried: the row's own gate sends it again, and a
         // Queue retry beside it would be a second copy of the same attempt.
+        // Released so it does not hold the rest of its batch's successors back.
         logWarn(env, "channel_color_sync_failed", {
           workspace_id: target.workspaceId,
           workstream_id: target.workstreamId,
           reason: diagnosticErrorCode(error, "channel_color_sync_failed"),
         });
+        await workspace.releaseChannelColorSync(target).catch(() => undefined);
       }
     }
     message.ack();
