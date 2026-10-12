@@ -133,6 +133,40 @@ const applicationVersionProperties = deferredZodSchema(() => z.strictObject({
 }));
 const durationBucket = z.enum(["lt_100ms", "100ms_1s", "1s_5s", "5s_30s", "gte_30s"]);
 const journeyDurationBucket = z.enum(["unknown", "lt_1s", "1s_5s", "5s_30s", "30s_2m", "2m_10m", "gte_10m"]);
+/**
+ * Public-site traffic classification (docs/site-traffic-classification.md).
+ * Every value is a derived yes/no code; the raw network, header, timezone and
+ * input data behind it never leaves the check that read it.
+ */
+export const SITE_TRAFFIC_CLASSES = ["declared_bot", "automated", "datacenter", "human", "unverified"] as const;
+/** Checks the page runs before its telemetry starts; sent in the bootstrap body. */
+export const SITE_PAGE_START_SIGNALS = ["webdriver", "automation_globals", "engine_mismatch"] as const;
+/** Facts about input the page reports when it is left. */
+export const SITE_PAGE_LEAVE_SIGNALS = ["human_input", "untrusted_input", "swipe_no_scroll", "never_visible"] as const;
+/** Checks the API runs on the bootstrap request itself. */
+export const SITE_EDGE_SIGNALS = [
+  "declared_bot",
+  "signed_agent",
+  "headless_ua",
+  "origin_bad",
+  "fetch_metadata_bad",
+  "hosting_network",
+  "private_relay",
+  "tz_offset_mismatch",
+  "transport_legacy",
+  "accept_language_bad",
+  "ch_contradiction",
+  "x_in_app",
+] as const;
+export const SITE_TRAFFIC_REASONS = [
+  ...SITE_EDGE_SIGNALS,
+  ...SITE_PAGE_START_SIGNALS,
+  ...SITE_PAGE_LEAVE_SIGNALS,
+] as const;
+export type SiteTrafficClass = typeof SITE_TRAFFIC_CLASSES[number];
+export type SiteTrafficReason = typeof SITE_TRAFFIC_REASONS[number];
+const siteTrafficClass = z.enum(SITE_TRAFFIC_CLASSES);
+const siteTrafficReasons = z.array(z.enum(SITE_TRAFFIC_REASONS)).max(SITE_TRAFFIC_REASONS.length);
 const countBucket = z.enum(["zero", "one", "two_to_five", "six_to_twenty", "twenty_one_to_one_hundred", "over_one_hundred"]);
 const resultClass = z.enum(["success", "validation_error", "conflict", "denied", "unavailable", "failed"]);
 const region = RegionSchema;
@@ -2013,6 +2047,14 @@ export const TELEMETRY_EVENTS = {
       campaignSource: safeTelemetryTaxonomyValue.optional(),
       campaignMedium: safeTelemetryTaxonomyValue.optional(),
       campaignName: safeTelemetryTaxonomyValue.optional(),
+      // Which ad platform's click identifier the landing URL carried, never
+      // the identifier itself. It tells a paid click apart from a copied link
+      // that still has the campaign tags, and joins visits to the platform's
+      // click counts. `x` is X's `twclid`.
+      adClickIdSource: z.enum(["x"]).optional(),
+      // Set by the API on acceptance, replacing whatever the page sent.
+      trafficClass: siteTrafficClass.optional(),
+      trafficReasons: siteTrafficReasons.optional(),
     })),
   }),
   site_page_left: productEvent({
@@ -2026,6 +2068,10 @@ export const TELEMETRY_EVENTS = {
       page: z.enum(["landing", "download", "support", "legal", "auth_handoff", "invite_handoff", "workstream_handoff", "slack_handoff", "desktop_handoff", "not_found"]),
       pathname: z.string().min(1).max(160).regex(/^\/[a-z0-9_:/.-]*$/u),
       duration: journeyDurationBucket,
+      pageSignals: z.array(z.enum(SITE_PAGE_LEAVE_SIGNALS)).max(SITE_PAGE_LEAVE_SIGNALS.length).optional(),
+      // Set by the API on acceptance, replacing whatever the page sent.
+      trafficClass: siteTrafficClass.optional(),
+      trafficReasons: siteTrafficReasons.optional(),
     })),
   }),
   site_action_selected: productEvent({
@@ -2312,6 +2358,9 @@ export const TELEMETRY_BATCH_MAX_BYTES = 256 * 1024;
 export const TelemetryBootstrapRequestSchema = deferredZodSchema(() => z.strictObject({
   anonymousEpochId: UuidV7Schema,
   routeToken: z.string().min(32).max(2_048).optional(),
+  // The page's IANA time zone, compared with the address's and then dropped.
+  timeZone: z.string().min(1).max(64).regex(/^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+){0,2}$/u).optional(),
+  pageSignals: z.array(z.enum(SITE_PAGE_START_SIGNALS)).max(SITE_PAGE_START_SIGNALS.length).optional(),
 }));
 export type TelemetryBootstrapRequest = z.infer<typeof TelemetryBootstrapRequestSchema>;
 

@@ -2,17 +2,20 @@ import { isConfiguredRegion } from "@rally/contracts/regions";
 import type { Region } from "@rally/contracts/regions";
 import { newId } from "@rally/db";
 import {
+  SITE_TRAFFIC_REASONS,
   TelemetryBootstrapResponseSchema,
   TelemetryEnvelopeSchema,
   TelemetryRouteResponseSchema,
   type TelemetryBootstrapResponse,
   type TelemetryEnvelope,
   type TelemetryRouteResponse,
+  type SiteTrafficReason,
 } from "@rally/contracts/telemetry";
 import type { Env } from "../env";
 import { hmacSha256, timingSafeEqualText } from "../lib/crypto";
 import { TelemetryCollector, type TelemetryAcceptanceResult } from "./collector";
 import type { AnonymousTelemetryProjection } from "./regional-bridge";
+import { classifySiteTraffic, normalizedTrafficReasons } from "./site-traffic";
 
 const CAPABILITY_LIFETIME_MS = 60 * 60 * 1_000;
 const ROUTE_DECISION_LIFETIME_MS = 5 * 60 * 1_000;
@@ -36,6 +39,37 @@ interface CapabilityClaims {
   route: Region;
   routingBasis: "ip_geolocation" | "geolocation_fallback";
   expiresAt: number;
+  // The traffic codes the bootstrap request earned. Absent on capabilities
+  // signed before classification shipped.
+  traffic?: SiteTrafficReason[];
+}
+
+const TRAFFIC_REASONS: ReadonlySet<string> = new Set(SITE_TRAFFIC_REASONS);
+// The site events a visit's traffic class is stamped on.
+const CLASSIFIED_SITE_EVENTS = new Set(["site_page_viewed", "site_page_left"]);
+
+/**
+ * The event with the API's traffic class in place of anything the page sent.
+ * A page leave adds the input facts it reported to the codes its bootstrap
+ * earned.
+ */
+function withTrafficClass(event: TelemetryEnvelope, traffic: readonly SiteTrafficReason[]): TelemetryEnvelope {
+  if (event.source !== "site" || !CLASSIFIED_SITE_EVENTS.has(event.name)) return event;
+  // The page's input facts are merged into the reasons, so they are not kept
+  // twice: `trafficReasons` is the one property to query.
+  const { pageSignals, ...properties } = event.properties;
+  const reasons = normalizedTrafficReasons([
+    ...traffic,
+    ...(Array.isArray(pageSignals) ? pageSignals as SiteTrafficReason[] : []),
+  ]);
+  return {
+    ...event,
+    properties: {
+      ...properties,
+      trafficClass: classifySiteTraffic(reasons),
+      trafficReasons: reasons,
+    },
+  } as TelemetryEnvelope;
 }
 
 interface RouteDecisionClaims {
@@ -78,6 +112,9 @@ async function verifyCapability(secret: string, token: string): Promise<Capabili
       || !isConfiguredRegion(claims.route)
       || (claims.routingBasis !== "ip_geolocation" && claims.routingBasis !== "geolocation_fallback")
       || !Number.isSafeInteger(claims.expiresAt)
+      || (claims.traffic !== undefined && (
+        !Array.isArray(claims.traffic) || !claims.traffic.every((code) => TRAFFIC_REASONS.has(code))
+      ))
     ) throw new Error("invalid");
     return claims;
   } catch {
@@ -161,6 +198,7 @@ export class TelemetryBootstrapService {
   async bootstrap(
     anonymousEpochId: string,
     routeToken?: string,
+    traffic: readonly SiteTrafficReason[] = [],
   ): Promise<TelemetryBootstrapResponse> {
     if (this.env.AVALON_REGION !== "global") throw new Error("telemetry_bootstrap_global_only");
     const now = new Date();
@@ -201,6 +239,7 @@ export class TelemetryBootstrapService {
         route: existing.route,
         routingBasis: existing.routing_basis,
         expiresAt: expiresAt.getTime(),
+        traffic: normalizedTrafficReasons(traffic),
       };
       return TelemetryBootstrapResponseSchema.parse({
         journeyId: existing.journey_id,
@@ -238,7 +277,7 @@ export class TelemetryBootstrapService {
       // A concurrent bootstrap won the anonymous-epoch uniqueness race. Reuse
       // its fixed route rather than returning a capability for an unpersisted
       // journey or replacing its coarse-location decision.
-      return this.bootstrap(anonymousEpochId, routeToken);
+      return this.bootstrap(anonymousEpochId, routeToken, traffic);
     }
     const claims: CapabilityClaims = {
       version: 1,
@@ -247,6 +286,7 @@ export class TelemetryBootstrapService {
       route: route.route,
       routingBasis: route.routingBasis,
       expiresAt: expiresAt.getTime(),
+      traffic: normalizedTrafficReasons(traffic),
     };
     return TelemetryBootstrapResponseSchema.parse({
       journeyId,
@@ -292,7 +332,10 @@ export class TelemetryBootstrapService {
         && candidate.category === "essential"
         && installationId !== undefined;
       if (!anonymousProduct && !installationHealth) throw new Error("telemetry_anonymous_event_forbidden");
-      return TelemetryEnvelopeSchema.parse(candidate) as TelemetryEnvelope;
+      return withTrafficClass(
+        TelemetryEnvelopeSchema.parse(candidate) as TelemetryEnvelope,
+        claims.traffic ?? [],
+      );
     });
     const collector = new TelemetryCollector(this.env);
     return Promise.all(events.map((event) => collector.accept(

@@ -1,8 +1,10 @@
 import { loadPostHog, runsPostHog } from './posthog-loader';
-import { awaitAnalyticsSession, currentSitePage, environment, initializeSiteTelemetry } from './telemetry';
+import { awaitAnalyticsSession, currentSitePage, environment, initializeSiteTelemetry, takeAdClickId } from './telemetry';
 
 // Capability pages have no acquisition telemetry, including their fragments.
 if (!/^\/download(?:\/|$)/u.test(location.pathname)) {
+  // Before the PostHog SDK can read the address bar.
+  takeAdClickId();
   if (runsPostHog(environment(), location.pathname, currentSitePage() === 'not_found')) {
     awaitAnalyticsSession();
     loadPostHog();
