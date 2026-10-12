@@ -69,7 +69,8 @@ second line with the unread dot at its end. A tile is a shape in the object's
 pastel pair with its glyph, and can carry small badges on its corner, each in
 a ring painted the row's own background (`--tile-ring`) so it reads as cut out
 of the tile on a plain, hovered or selected row. A badge can carry one smaller
-badge on its own corner, for a chain of containers.
+badge on its own corner, for a chain of containers; the parent moves in so the
+deepest badge's corner lands where a lone badge's would.
 
 **Channels**: what the person pinned, in their order (drag to reorder), then
 every other Channel they may see, ordered **A–Z** (default), **Recent** (newest
@@ -380,7 +381,9 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 
 **What changed:** A breakout row's tile is badged with its thread, and the
 thread badge carries the Channel on its own corner. `TileBadge` gained an
-optional nested `badge`, drawn 15px in the same ring.
+optional nested `badge`, drawn 15px in the same ring. The thread badge moves
+in so the nested badge's corner matches a lone badge's, keeping every row's
+corner in one place.
 
 **Why:** The product owner asked for nested badges on breakouts. With
 Channel badges alone, a breakout's tile looked like a thread's, and only the
