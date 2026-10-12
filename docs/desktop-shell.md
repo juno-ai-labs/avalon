@@ -93,9 +93,9 @@ opened again. **New channel** names one; every Channel starts
 Organization-wide.
 
 **Threads**: what the person pinned (threads, then breakouts), then every
-thread and breakout they take part in under **All Threads**
-(`GET /navigation/threads`), ordered
-**Recent** (default), **A–Z** or **Needs attention** (`rally.sidebar-thread-sort`).
+thread and breakout they take part in under **All threads**
+(`GET /navigation/threads`), ordered **Recent** (default), **A–Z** or
+**Needs attention** (`rally.sidebar-thread-sort`).
 A row is the thread's circle tile with a squircle badge for each Channel it
 sits in (two at most, the room a tile has), its title, its last activity time, and the Channels' names. A
 breakout's tile carries its thread's circle badge instead, with the thread's
@@ -377,7 +377,7 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 
 **What changed:** The Threads header no longer carries a **+**. The composer's
 `focusComposer` navigation state, which only that button set, is gone too. The
-list's heading reads **All Threads** instead of Recent, which also named one
+list's heading reads **All threads** instead of Recent, which also named one
 of its sorts.
 
 **Why:** The product owner asked for it removed. A thread starts from a
