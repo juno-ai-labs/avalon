@@ -172,14 +172,16 @@ describe('new-account learning paths', () => {
     expect(await screen.findByText('Ordinary organization')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId('admission')).toHaveTextContent('allowed'));
   });
-  it('offers a retry when recording the introduction fails', async () => {
-    state.getAccount.mockResolvedValue({ ...state.account, introduced: false });
+  it('retries recording the introduction against the revision another session saved', async () => {
+    state.getAccount.mockResolvedValueOnce({ ...state.account, introduced: false })
+      .mockResolvedValue({ ...state.account, introduced: false, revision: 1 });
     state.saveAccount.mockRejectedValueOnce(new Error('Profile changed in another session'));
     show();
     expect(await screen.findByText('Profile changed in another session')).toBeInTheDocument();
+    await waitFor(() => expect(state.getAccount).toHaveBeenCalledTimes(2));
     state.saveAccount.mockReturnValue(new Promise(() => {}));
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(state.saveAccount).toHaveBeenCalledTimes(2);
+    expect(state.saveAccount).toHaveBeenLastCalledWith({ expectedRevision: 1, introduced: true });
   });
   it('withholds admission when pending journey progress resolves to unfinished setup', async () => {
     let finishJourney!: (value: { path: string; stage: string; revision: number; connectorIds: string[] }) => void;

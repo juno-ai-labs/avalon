@@ -1,6 +1,6 @@
 # New-user onboarding
 
-Rally helps workspace creators connect their tools and
+Rally helps organization creators connect their tools and
 invite teammates, then guides each person through personal appearance. Invitations finish creator
 setup and open the main app at New. Existing accounts are exempted when the migration runs. This
 ships directly for newly created accounts, with no feature flag.
@@ -119,6 +119,8 @@ cover existing authentication and activation behavior.
 Visual verification uses the isolated local Electron window. The reference
 inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-reference.md).
 Onboarding no longer starts an agent run or a connector authorization.
+
+## Changelog
 
 ### 2026-10-12 — Remove the introduction screens
 

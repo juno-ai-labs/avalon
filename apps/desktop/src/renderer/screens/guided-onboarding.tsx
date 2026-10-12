@@ -97,8 +97,11 @@ function RecordIntroduction(): React.JSX.Element {
       const saved = await updateAccountOnboarding({ expectedRevision: account.revision, introduced: true });
       queryClient.setQueriesData({ queryKey: ['account-onboarding'] }, saved);
       await queryClient.invalidateQueries({ queryKey: ['account-onboarding'] });
-    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not save your progress.'); }
-    finally { setBusy(false); }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not save your progress.');
+      // A revision conflict means another session saved first; Retry needs its revision.
+      await queryClient.invalidateQueries({ queryKey: ['account-onboarding'] });
+    } finally { setBusy(false); }
   }, [account.revision, busy, queryClient, updateAccountOnboarding]);
   const recorded = useRef(false);
   useEffect(() => {
