@@ -8572,6 +8572,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   text-align: left;
   width: 100%;
 }
+/* Rows are links, so a modified click opens one elsewhere; they read as rows. */
+.navigation-row, .activity-row { text-decoration: none; }
 .navigation-row:hover { background: var(--av-sys-color-state-hover); }
 .navigation-row.is-active { background: var(--av-sys-color-surface-raised-hover); }
 .navigation-row[draggable='true'] { cursor: grab; }
