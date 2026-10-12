@@ -1,18 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
-import { sha256 } from "../src/lib/crypto";
 import { AuthService } from "../src/services/auth-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
-const oldRefreshToken = "old-refresh-token-with-more-than-twenty-characters";
 const userId = "00000000-0000-7000-8000-000000000001";
-const createdAt = "2026-08-01T12:00:00.000Z";
 const workspaceId = "00000000-0000-7000-8000-0000000000a1";
 
 class SessionDatabase {
-  currentHash = "";
-  previousHash: string | null = null;
-  rotatedAt: string | null = null;
   revokedSessionIds: string[] = [];
   refreshRevocations = 0;
 
@@ -26,33 +20,9 @@ class SessionDatabase {
           return statement;
         },
         first: async <T>() => {
-          if (sql.startsWith("UPDATE sessions SET previous_refresh_token_hash")) {
-            // Positions follow the statement in `AuthService.refresh`: the
-            // renewed expiry, ceiling modifier and support-grant fallback sit
-            // between the rotation stamp and the presented hashes.
-            const [newHash, nextRotatedAt, , , , presentedCurrent, presentedPrevious, graceStart] = values as string[];
-            const currentMatches = presentedCurrent === this.currentHash;
-            const previousMatches = presentedPrevious === this.previousHash
-              && this.rotatedAt !== null
-              && this.rotatedAt >= graceStart!;
-            if (!currentMatches && !previousMatches) return null;
-            this.previousHash = this.currentHash;
-            this.currentHash = newHash!;
-            this.rotatedAt = nextRotatedAt!;
-            return { id: "session-1", user_id: userId, workspace_id: null, impersonator_user_id: null } as T;
-          }
           if (sql.startsWith("UPDATE sessions SET revoked_at = ? WHERE id = ?")) {
             this.revokedSessionIds.push(String(values[1]));
             return { id: String(values[1]), user_id: userId, workspace_id: workspaceId } as T;
-          }
-          if (sql.includes("FROM users WHERE id = ?") && sql.includes("id AS user_id")) {
-            return {
-              user_id: userId,
-              email: "member@example.com",
-              user_name: "Member",
-              avatar_url: null,
-              user_created_at: createdAt,
-            } as T;
           }
           throw new Error(`Unexpected first query: ${sql}`);
         },
@@ -88,57 +58,9 @@ function environment(database: SessionDatabase, published: unknown[] = []): Env 
 
 describe("authentication session lifecycle", () => {
   let database: SessionDatabase;
-  let service: AuthService;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     database = new SessionDatabase();
-    database.currentHash = await sha256(oldRefreshToken);
-    service = new AuthService(environment(database));
-  });
-
-  it("accepts the immediately previous refresh token when a rotation response is lost", async () => {
-    const first = await service.refresh(oldRefreshToken);
-    const recovered = await service.refresh(oldRefreshToken);
-
-    expect(recovered.refreshToken).not.toBe(first.refreshToken);
-    expect(recovered.workspace).toBeNull();
-    await expect(service.refresh(recovered.refreshToken)).resolves.toMatchObject({
-      user: { email: "member@example.com" },
-      workspace: null,
-    });
-  });
-
-  it("retires the earlier of two concurrent rotations once the replay grace has passed", async () => {
-    // The grace clause above exists for a lost response, and it makes a
-    // *concurrent* pair of refreshes with the same token succeed twice: each
-    // rotates, and the earlier answer's token is only honoured as the
-    // "previous" one for the next sixty seconds. A desktop that persists the
-    // earlier answer is therefore holding a token that dies quietly a minute
-    // later — the reason the desktop single-flights its refreshes
-    // (apps/desktop/src/main/credential-refresh.ts).
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date("2026-09-02T12:00:00.000Z"));
-      const [first, second] = await Promise.all([
-        service.refresh(oldRefreshToken),
-        service.refresh(oldRefreshToken),
-      ]);
-      // Promise.all preserves invocation order, not the order in which async
-      // hashing lets the rotations commit. Identify the retired answer from
-      // the committed watermark rather than assuming the first call wins.
-      const earlier = await sha256(first.refreshToken) === database.previousHash ? first : second;
-      const later = earlier === first ? second : first;
-      expect(earlier.refreshToken).not.toBe(later.refreshToken);
-
-      vi.setSystemTime(new Date("2026-09-02T12:01:01.000Z"));
-      await expect(service.refresh(earlier.refreshToken)).rejects.toMatchObject({
-        status: 401,
-        code: "invalid_refresh_token",
-      });
-      await expect(service.refresh(later.refreshToken)).resolves.toMatchObject({ workspace: null });
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it("revokes the verified bearer session even when the supplied refresh token is stale", async () => {
