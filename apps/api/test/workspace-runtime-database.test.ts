@@ -238,7 +238,8 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_space_state",
   "space_viewers",
   "space_invitees", // Read and written only by the Space audience and invitee RPCs.
-  "channel_color_sync", // Its triggers, the alarm lane and the two channel-colour RPCs only.
+  "channel_color_sync", // Its triggers, the alarm lane and the channel-colour RPCs only.
+  "channel_color_sync_state", // The revision counter those triggers number marks from.
   "space_reads", // Each person's Channel read position; only the Space read RPCs.
   "workspace_sidebar_list_state",
   "workspace_socket_ticket_receipts",

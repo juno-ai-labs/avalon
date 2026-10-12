@@ -1149,7 +1149,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "conversation_access_requests",
   "workstream_notification_intents",
   "workspace_socket_unheard", // The first-frame watch's ledger.
-  "channel_color_sync", // Its triggers, the alarm lane and the channel-colour RPCs.
+  "channel_color_sync", "channel_color_sync_state", // Its triggers, the alarm lane and the channel-colour RPCs.
   // Converted to typed methods, so a generic statement naming one is a
   // mistake rather than a legacy caller. Refusing it here is what makes the
   // routing entries in `WORKSPACE_LOCAL_TABLES` more than a courtesy: the
