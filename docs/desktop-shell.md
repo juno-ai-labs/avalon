@@ -388,12 +388,11 @@ second line said where it sat.
 
 **Considered and rejected:** The thread and Channel side by side as two
 corner badges: that reads as two containers of the breakout, not one inside
-the other. Nesting more than one badge per badge: one level is what the chain
-needs, and the 15px badge has no room for a second.
+the other.
 
 **Consequences:** A breakout tile names one Channel, its thread's first; the
-second line still names them all. A deeper chain would shrink past legibility,
-so a new nesting level needs a new size, not another recursion.
+second line still names them all. Nesting is one level: the 15px badge has no
+room for another.
 
 Shipped in [#1200](https://github.com/juno-ai-labs/avalon/pull/1200).
 
