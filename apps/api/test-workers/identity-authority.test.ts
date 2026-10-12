@@ -169,7 +169,7 @@ describe("identity authority on real workerd", () => {
     });
   });
 
-  it("puts the Channel's colour on a conversation, keeps its icon, and settles a repeat as unchanged", async () => {
+  it("puts the Channel's colour on a conversation, keeps its icon, and refuses an older revision", async () => {
     const stub = agent();
     await boot(stub);
     await runInDurableObject(stub, (_instance, state) => {
@@ -179,7 +179,7 @@ describe("identity authority on real workerd", () => {
       );
     });
 
-    const first = await identity(stub, "recolor", { color: "red", now: 3 });
+    const first = await identity(stub, "recolor", { color: "red", revision: 5, now: 3 });
 
     expect(first.value).toEqual({ outcome: "recolored" });
     await runInDurableObject(stub, (_instance, state) => {
@@ -191,7 +191,14 @@ describe("identity authority on real workerd", () => {
         `SELECT COUNT(*) AS count FROM projection_keys WHERE projection_key = 'common'`,
       ).one().count).toBe(1);
     });
-    expect((await identity(stub, "recolor", { color: "red", now: 4 })).value).toEqual({ outcome: "unchanged" });
+    expect((await identity(stub, "recolor", { color: "red", revision: 6, now: 4 })).value).toEqual({ outcome: "unchanged" });
+    // A job that stalled behind a newer one: its older colour is not written back.
+    expect((await identity(stub, "recolor", { color: "green", revision: 4, now: 5 })).value).toEqual({ outcome: "superseded" });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(JSON.parse(state.storage.sql.exec<{ appearance_json: string }>(
+        "SELECT appearance_json FROM workstream WHERE id = 1",
+      ).one().appearance_json)).toEqual({ icon: "rocket", color: "red" });
+    });
   });
 
   it("takes an address once, and tells the second reservation it lost", async () => {

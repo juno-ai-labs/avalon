@@ -225,7 +225,23 @@ describe("a thread carries its Channel's colour", () => {
 
     expect(await workspace().channelColorWork(message(sent))).toBeNull();
     expect(await workspace().completeChannelColorSync(message(sent))).toBe(false);
-    expect(await marked()).toBe(sent + 1);
+    expect(await marked()).toBeGreaterThan(sent);
+  });
+
+  it("numbers a mark made after the last one settled above it, so a late completion cannot take it", async () => {
+    const launch = await reserve("Launch", "red");
+    await project(1);
+    await placeMembership(workspace(), { workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: launch, workstreamId: THREAD });
+    const settledRevision = (await marked())!;
+    await settle();
+
+    await recolorChannel(launch, "Launch", "green");
+
+    const fresh = (await marked())!;
+    expect(fresh).toBeGreaterThan(settledRevision);
+    // The finished job's own completion arriving late leaves the new mark alone.
+    expect(await workspace().completeChannelColorSync(message(settledRevision))).toBe(false);
+    expect(await marked()).toBe(fresh);
   });
 
   it("settles a thread with nothing to write: in no Channel, or archived", async () => {
