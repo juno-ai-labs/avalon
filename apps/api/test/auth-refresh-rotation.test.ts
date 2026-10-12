@@ -70,6 +70,20 @@ describe("a retired refresh token stays valid until its successor is used", () =
     await expect(service(database).refresh(TOKEN)).resolves.toMatchObject({ workspace: null });
   });
 
+  it("leaves only the later answer usable when one token renews twice", async () => {
+    // Why the desktop shares one renewal per token (credential-refresh.ts):
+    // the second renewal keeps the presented token and retires the first answer.
+    const database = await seedSession();
+    const earlier = await service(database).refresh(TOKEN);
+    const later = await service(database).refresh(TOKEN);
+
+    await expect(service(database).refresh(earlier.refreshToken)).rejects.toMatchObject({
+      status: 401,
+      code: "invalid_refresh_token",
+    });
+    await expect(service(database).refresh(later.refreshToken)).resolves.toMatchObject({ workspace: null });
+  });
+
   it("retires the earlier token once the device presents its successor", async () => {
     const database = await seedSession();
     const successor = await service(database).refresh(TOKEN);
