@@ -8466,83 +8466,92 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
    (`docs/desktop-shell.md`). The rail sits under the macOS traffic lights; the
    list keeps the sidebar's own width and resize edge. */
 .navigation-body { display: flex; flex: 1; min-height: 0; }
+/* The main window centres the macOS traffic lights over this width
+   (`main/index.ts`, per macOS version). macOS 26 draws a 60px group, so the
+   mock's 58px cannot hold them centred; change both together. */
+.navigation-sidebar { --navigation-rail-width: 76px; }
 .navigation-rail {
   align-items: center;
-  background: var(--av-sys-color-surface-sunken);
   border-right: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
   display: flex;
   flex: none;
   flex-direction: column;
-  gap: 6px;
-  padding-bottom: 14px;
-  width: 76px;
+  gap: 14px;
+  padding-bottom: 16px;
+  width: var(--navigation-rail-width);
 }
-.navigation-rail-top { flex: none; height: 46px; width: 100%; }
+.navigation-rail-top { flex: none; height: 32px; margin-bottom: -10px; width: 100%; }
 .navigation-rail-button {
   align-items: center;
   background: transparent;
   border: 0;
-  color: var(--av-sys-color-text-subtle);
+  color: var(--av-sys-color-text-default);
   cursor: pointer;
   display: flex;
   flex-direction: column;
   font: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 400;
+  gap: 3px;
+  margin-top: 4px;
   padding: 0;
-  width: 64px;
+  width: 100%;
 }
 .navigation-rail-icon {
   align-items: center;
-  border-radius: 12px;
+  border-radius: 9px;
+  color: var(--av-sys-color-text-subtle);
   display: flex;
-  height: 40px;
+  height: 34px;
   justify-content: center;
   position: relative;
-  width: 44px;
+  width: 34px;
 }
 .navigation-rail-button:hover .navigation-rail-icon { background: var(--av-sys-color-state-hover); }
-.navigation-rail-button.is-active { color: var(--av-sys-color-text-default); font-weight: 600; }
-.navigation-rail-button.is-active .navigation-rail-icon { background: var(--av-sys-color-surface-raised-hover); }
+.navigation-rail-button.is-active { font-weight: 600; }
+.navigation-rail-button.is-active .navigation-rail-icon { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
 .navigation-rail-badge {
   background: var(--av-sys-color-workstream-news);
-  border: 2px solid var(--av-sys-color-surface-sunken);
+  border: 2px solid var(--av-cmp-sidebar-background-solid);
   border-radius: 999px;
   color: var(--av-sys-color-palette-ink-light);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  line-height: 14px;
-  min-width: 18px;
-  padding: 0 4px;
+  line-height: 12px;
+  min-width: 16px;
+  padding: 0 3px;
   position: absolute;
-  right: -2px;
+  right: -5px;
   text-align: center;
-  top: -2px;
+  top: -4px;
 }
 .navigation-rail-spacer { flex: 1; }
 .navigation-rail-account { flex: none; justify-content: center; }
 .navigation-rail-account .account-trigger { justify-content: center; padding: 0; width: auto !important; }
 .navigation-rail-account .account-copy,
 .navigation-rail-account .account-trigger > :not(.avatar):not(.account-avatar) { display: none; }
+.navigation-rail-account .avatar,
+.navigation-rail-account .account-avatar { font-size: 10px; height: 26px; width: 26px; }
 .navigation-panel { display: flex; flex: 1; flex-direction: column; min-width: 0; }
-.navigation-panel-header { align-items: center; display: flex; flex: none; gap: 8px; height: 56px; padding: 14px 12px 0 18px; }
-.navigation-panel-title { flex: 1; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0; min-width: 0; }
-.navigation-panel-actions { display: flex; gap: 2px; }
+.navigation-panel-header { align-items: center; display: flex; flex: none; gap: 8px; height: 66px; padding: 16px 10px 0 20px; }
+.navigation-panel-title { flex: 1; font-size: 22px; font-weight: 700; letter-spacing: -0.015em; margin: 0; min-width: 0; }
+.navigation-panel-actions { color: var(--av-sys-color-text-subtle); display: flex; gap: 2px; }
 /* Positioned so a row leaving through the list motion's stand-in is drawn over its own slot. */
-.navigation-panel-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 8px 16px; position: relative; }
-.navigation-section { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
+.navigation-panel-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 16px; position: relative; }
+.navigation-section { display: flex; flex-direction: column; margin-top: 10px; }
+.navigation-section:first-child { margin-top: 0; }
 .navigation-section-heading {
   align-items: center;
   color: var(--av-sys-color-text-muted);
   display: flex;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 12.5px;
+  font-weight: 500;
   justify-content: space-between;
   min-height: 26px;
-  padding: 0 8px 0 10px;
+  padding: 0 8px 0 12px;
 }
-.navigation-section-trailing { align-items: center; display: inline-flex; font-weight: 500; gap: 2px; }
+.navigation-section-trailing { align-items: center; display: inline-flex; font-weight: 400; gap: 2px; }
+.navigation-section-mark { display: inline-flex; padding: 2px 4px; }
 .navigation-sort {
   align-items: center;
   background: transparent;
@@ -8559,63 +8568,15 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 /* Where a row dragged into Pinned would land: a faded copy of it that the
    pointer passes through, so the section beneath stays the drop target. */
 .navigation-row.is-pin-ghost { opacity: .45; pointer-events: none; }
-.navigation-row {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 12px;
-  color: var(--av-sys-color-text-default);
-  cursor: pointer;
-  display: grid;
-  font: inherit;
-  gap: 10px;
-  padding: 8px 10px;
-  text-align: left;
-  width: 100%;
-}
 /* Rows are links, so a modified click opens one elsewhere; they read as rows. */
 .navigation-row, .activity-row { text-decoration: none; }
-.navigation-row:hover { background: var(--av-sys-color-state-hover); }
-.navigation-row.is-active { background: var(--av-sys-color-surface-raised-hover); }
-.navigation-row[draggable='true'] { cursor: grab; }
-.navigation-thread-row { grid-template-columns: 12px minmax(0, 1fr); }
-.navigation-channel-row { grid-template-columns: 40px minmax(0, 1fr); }
-.navigation-row-marker { align-self: start; display: flex; justify-content: center; padding-top: 6px; }
-.navigation-row-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.navigation-row-line { align-items: baseline; display: flex; gap: 6px; min-width: 0; }
-.navigation-row-title { flex: 1; font-size: 14.5px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.navigation-thread-row .navigation-row-title { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.navigation-thread-row.has-activity .navigation-row-title { font-weight: 650; }
-.navigation-channel-row.is-unread .navigation-row-title { font-weight: 650; }
-/* The Activity tab's unread dot, centred on the name line rather than hung from its top. */
-.navigation-row-unread-dot { align-self: center; background: var(--av-sys-color-workstream-news); border-radius: 999px; flex: none; height: 8px; width: 8px; }
-.navigation-row-time { color: var(--av-sys-color-text-muted); flex: none; font-size: 12.5px; }
-.navigation-row-lock { color: var(--av-sys-color-text-muted); flex: none; }
-.navigation-row-detail { color: var(--av-sys-color-text-muted); font-size: 13px; }
-.navigation-channel-mark { align-items: center; border-radius: 999px; display: flex; height: 40px; justify-content: center; width: 40px; }
-.navigation-channel-mark.is-small { height: 34px; width: 34px; }
-.navigation-archived-row { align-items: center; display: flex; gap: 10px; padding: 6px 10px; }
-.navigation-archived-name { color: var(--av-sys-color-text-muted); flex: 1; font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.navigation-chips { display: flex; flex-wrap: wrap; gap: 4px; }
-.navigation-chip {
-  align-items: center;
-  border-radius: 999px;
-  box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong);
-  color: var(--av-sys-color-text-subtle);
-  display: inline-flex;
-  font-size: 12px;
-  gap: 4px;
-  max-width: 100%;
-  padding: 2px 8px;
-}
-.navigation-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.navigation-empty { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 8px 10px; }
-.navigation-more { background: transparent; border: 0; color: var(--av-sys-color-text-muted); cursor: pointer; font: inherit; font-size: 13px; padding: 6px 10px; text-align: left; }
-.navigation-more:hover { color: var(--av-sys-color-text-default); }
-
-/* Activity: one row per thing that happened to this person. */
+/* A row, and the ring its tiles' badges sit in. The ring is the row's own
+   background, layered the same way, so a badge reads as cut out of its tile
+   on a plain, hovered or selected row alike. */
+.navigation-row,
 .activity-row {
-  align-items: flex-start;
+  --tile-ring: var(--av-cmp-sidebar-background-solid);
+  align-items: center;
   background: transparent;
   border: 0;
   border-radius: 12px;
@@ -8623,35 +8584,91 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   cursor: pointer;
   display: flex;
   font: inherit;
-  gap: 10px;
+  gap: 11px;
   padding: 8px 10px;
   text-align: left;
   width: 100%;
 }
-.activity-row:hover { background: var(--av-sys-color-state-hover); }
+.navigation-row:hover,
+.activity-row:hover {
+  --tile-ring: linear-gradient(var(--av-sys-color-state-hover), var(--av-sys-color-state-hover)) var(--av-cmp-sidebar-background-solid);
+  background: var(--av-sys-color-state-hover);
+}
+.navigation-row.is-active {
+  --tile-ring: linear-gradient(var(--av-sys-color-surface-raised-hover), var(--av-sys-color-surface-raised-hover)) var(--av-cmp-sidebar-background-solid);
+  background: var(--av-sys-color-surface-raised-hover);
+}
+.navigation-row[draggable='true'] { cursor: grab; }
+.navigation-row-copy { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.navigation-row-line { align-items: center; display: flex; gap: 8px; min-width: 0; }
+.navigation-row-title { flex: 1; font-size: 14.5px; font-weight: 500; line-height: 19px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.navigation-row.is-unread .navigation-row-title { font-weight: 650; }
+.navigation-row-unread-dot { background: var(--av-sys-color-workstream-news); border-radius: 999px; flex: none; height: 8px; width: 8px; }
+.navigation-row-time { color: var(--av-sys-color-text-muted); flex: none; font-size: 12px; }
+.navigation-row.is-unread .navigation-row-time { color: var(--av-sys-color-workstream-news); }
+.navigation-row-lock { color: var(--av-sys-color-text-muted); flex: none; }
+.navigation-row-detail { color: var(--av-sys-color-text-muted); flex: 1; font-size: 12.5px; line-height: 17px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.navigation-archived-row { align-items: center; display: flex; gap: 10px; padding: 6px 10px; }
+.navigation-archived-name { color: var(--av-sys-color-text-muted); flex: 1; font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.navigation-empty { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 8px 12px; }
+.navigation-more { background: transparent; border: 0; color: var(--av-sys-color-text-muted); cursor: pointer; font: inherit; font-size: 13px; padding: 6px 12px; text-align: left; }
+.navigation-more:hover { color: var(--av-sys-color-text-default); }
+.navigation-chips-row { display: flex; gap: 6px; padding: 0 2px 6px; }
+.navigation-filter-chip {
+  background: var(--av-sys-color-surface-raised);
+  border: 0;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong);
+  color: var(--av-sys-color-text-subtle);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 11px;
+}
+.navigation-filter-chip:hover { color: var(--av-sys-color-text-default); }
+.navigation-filter-chip.is-active { background: var(--av-sys-color-text-default); box-shadow: none; color: var(--av-sys-color-surface-default); }
+
+/* A shaped identity tile and the badges on its corner; see `identity-tile.tsx`. */
+.identity-tile { display: inline-flex; flex: none; position: relative; }
+.identity-tile-shape { align-items: center; display: flex; height: 100%; justify-content: center; width: 100%; }
+.identity-tile-shape.is-squircle,
+.identity-tile-badge.is-squircle,
+.identity-tile-badge-fill.is-squircle { border-radius: 32%; }
+.identity-tile-shape.is-circle,
+.identity-tile-badge.is-circle,
+.identity-tile-badge-fill.is-circle { border-radius: 50%; }
+.identity-tile-badge {
+  align-items: center;
+  background: var(--tile-ring, var(--av-sys-color-surface-default));
+  bottom: -5px;
+  display: flex;
+  height: 22px;
+  justify-content: center;
+  position: absolute;
+  width: 22px;
+}
+.identity-tile-badge-fill {
+  align-items: center;
+  display: flex;
+  font-size: 7.5px;
+  font-weight: 700;
+  height: 18px;
+  justify-content: center;
+  letter-spacing: 0;
+  width: 18px;
+}
+
+/* Activity: one row per thing that happened to this person. */
+.activity-row { align-items: flex-start; padding: 9px 10px; }
 .activity-request { align-items: center; box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong); cursor: default; }
 .activity-request .activity-row-body { background: transparent; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; text-align: left; }
 .activity-request-actions { display: flex; flex: none; gap: 2px; }
-.activity-avatar {
-  align-items: center;
-  background: var(--av-sys-color-accent-wash);
-  border-radius: 999px;
-  color: var(--av-sys-color-accent-strong);
-  display: flex;
-  flex: none;
-  font-size: 12px;
-  font-weight: 600;
-  height: 34px;
-  justify-content: center;
-  width: 34px;
-}
-.activity-avatar.is-rally { background: var(--av-sys-color-text-default); color: var(--av-sys-color-surface-default); }
-.activity-row-body { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
-.activity-row-text { font-size: 14px; line-height: 19px; }
-.activity-row-text strong { font-weight: 650; }
-.activity-row-detail { color: var(--av-sys-color-text-muted); font-size: 12.5px; }
+.activity-row-body { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.activity-row-text { color: var(--av-sys-color-text-subtle); font-size: 14px; line-height: 1.35; text-wrap: pretty; }
+.activity-row-text strong { color: var(--av-sys-color-text-default); font-weight: 600; }
+.activity-row-detail { color: var(--av-sys-color-text-muted); font-size: 12px; }
 .activity-chip { align-self: flex-start; cursor: inherit; height: 26px; }
-.activity-unread-dot { background: var(--av-sys-color-workstream-news); border-radius: 999px; flex: none; height: 8px; margin-top: 6px; width: 8px; }
+.activity-unread-dot { align-self: center; background: var(--av-sys-color-workstream-news); border-radius: 999px; flex: none; height: 8px; width: 8px; }
 
 @media (max-width: 640px) {
   /* The phone sheet shows the list's header as its top bar and the switcher

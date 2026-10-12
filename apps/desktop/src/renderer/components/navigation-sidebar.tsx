@@ -1,29 +1,29 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import type { ActivityItem, ConversationAccessRequestItem, PinKind, SpaceSummary } from '@rally/contracts';
-import { SpaceIcon } from '@rally/ui/components/space-icon';
+import type { ActivityFilter, ActivityItem, ActivityPage, ConversationAccessRequestItem, PinKind, SpaceSummary } from '@rally/contracts';
+import { IdentityTile, ShapeOutline, type TileBadge } from '@rally/ui/components/identity-tile';
+import { resolveWorkstreamAppearance, WORKSTREAM_ICON_COMPONENTS } from '@rally/ui/components/workstream-glyph';
 import { markColors } from '@rally/ui/lib/project-palette';
 import {
   IconArrowDown,
   IconArrowUp,
   IconArrowsSort,
-  IconBell,
   IconCancel,
   IconCheck,
+  IconChecks,
   IconClock,
   IconCloudDownload,
   IconCornerDownRight,
   IconDeviceDesktopDown,
-  IconHash,
   IconLock,
   IconMenu2,
-  IconMessages,
   IconPin,
   IconPinnedOff,
   IconPlus,
   IconSearch,
   IconX,
 } from '@tabler/icons-react';
-import { notifyManager, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { notifyManager, useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
+import { Sparkle } from 'lucide-react';
 import clsx from 'clsx';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
@@ -33,7 +33,7 @@ import type { AttentionItem } from '../lib/attention-items';
 import { useAppSession } from '../lib/app-session';
 import { consumeDeepLinkWorkstreamNavigation, useDeepLinkWorkstreamNavigation } from '../lib/deep-link-navigation';
 import { desktopBridge } from '../lib/platform';
-import { formatDateTime, formatSidebarActivityTime, workstreamMarkerStatus } from '../lib/format';
+import { formatDateTime, formatSidebarActivityTime, formatTime } from '../lib/format';
 import { layoutInsertIndex, layoutRowAt } from '../lib/list-motion';
 import { channelRoute, homeChannelId, threadRoute } from '../lib/navigation-routes';
 import { moveWithin } from '../lib/personal-order';
@@ -50,7 +50,7 @@ import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { openWorkstreamId } from '../lib/workstream-landing';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
-import { Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton, Tip } from './primitives';
+import { Button, IconButton, InlineError, Modal, TitleSkeleton, Tip } from './primitives';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import { RelativeTime } from './relative-time';
 import { ResizableSidebar, SidebarFooterItems, SidebarScroll } from '@rally/ui/components/resizable-sidebar';
@@ -65,10 +65,15 @@ const PHONE_LAYOUT_MAX_WIDTH = 640;
  */
 const REVEAL_DEADLINE_MS = 2_000;
 
+/**
+ * Each section's button is the outline of what its list holds: a Channel is a
+ * squircle and a Thread a circle, as their rows draw them. Activity holds
+ * neither, so it takes the triangle no object uses.
+ */
 const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNode }> = [
-  { id: 'channels', label: 'Channels', icon: <IconHash aria-hidden="true" size={20} stroke={1.7} /> },
-  { id: 'threads', label: 'Threads', icon: <IconMessages aria-hidden="true" size={20} stroke={1.7} /> },
-  { id: 'activity', label: 'Activity', icon: <IconBell aria-hidden="true" size={20} stroke={1.7} /> },
+  { id: 'channels', label: 'Channels', icon: <ShapeOutline shape="squircle" /> },
+  { id: 'threads', label: 'Threads', icon: <ShapeOutline shape="circle" /> },
+  { id: 'activity', label: 'Activity', icon: <ShapeOutline shape="triangle" /> },
 ];
 
 const THREAD_SORTS: ReadonlyArray<{ sort: SidebarChannelSort; label: string }> = [
@@ -204,6 +209,19 @@ export function NavigationSidebar({
   // waiting on this reader, and every access request waiting on them.
   const waiting = attentionItems.length + accessRequests.length;
   const title = SECTIONS.find((candidate) => candidate.id === section)?.label ?? 'Threads';
+  const [creatingChannel, setCreatingChannel] = useState(false);
+  const navigate = useNavigate();
+  const openChannelId = useOpenChannelId();
+  const { active } = useSpaceDirectories();
+  const markActivityRead = useMarkActivityRead();
+  // A thread is started from a Channel's composer and nowhere else, so New
+  // thread opens the Channel in view, or General, where that composer takes
+  // focus (PRD non-goal 6).
+  const startable = (active.data?.items ?? []).filter((space) => space.reach !== 'through_channel');
+  const startChannelId = startable.find((space) => space.id === openChannelId)?.id
+    ?? startable.find((space) => space.systemRole === 'general')?.id
+    ?? startable[0]?.id
+    ?? null;
   return <ResizableSidebar
     aria-label="Rally navigation"
     className={clsx('sidebar single-sidebar navigation-sidebar', sidebarOpen && 'is-mobile-open')}
@@ -258,11 +276,24 @@ export function NavigationSidebar({
             {downloadedUpdate !== null && <IconButton label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
               <IconDeviceDesktopDown aria-hidden="true" size={17} stroke={1.8} />
             </IconButton>}
-            <IconButton disabled={!onOpenSearch} label="Search organization" onClick={onOpenSearch}>
-              <IconSearch aria-hidden="true" size={16} stroke={1.9} />
-            </IconButton>
             {!guest && onOpenImport && <IconButton label="Import a conversation" onClick={onOpenImport}>
               <IconCloudDownload aria-hidden="true" size={17} stroke={1.8} />
+            </IconButton>}
+            <IconButton disabled={!onOpenSearch} label="Search organization" onClick={onOpenSearch}>
+              <IconSearch aria-hidden="true" size={18} stroke={1.8} />
+            </IconButton>
+            {section === 'channels' && <IconButton label="New channel" onClick={() => setCreatingChannel(true)}>
+              <IconPlus aria-hidden="true" size={18} stroke={1.8} />
+            </IconButton>}
+            {section === 'threads' && !guest && <IconButton
+              disabled={startChannelId === null}
+              label="New thread"
+              onClick={() => { if (startChannelId) void navigate(channelRoute(startChannelId)); }}
+            >
+              <IconPlus aria-hidden="true" size={18} stroke={1.8} />
+            </IconButton>}
+            {section === 'activity' && <IconButton label="Mark all read" onClick={markActivityRead}>
+              <IconChecks aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
           </div>
         </header>
@@ -284,6 +315,7 @@ export function NavigationSidebar({
       </div>
     </div>
     {accountSlot && createPortal(accountMenu, accountSlot)}
+    {creatingChannel && <NewChannelDialog onClose={() => setCreatingChannel(false)} />}
   </ResizableSidebar>;
 }
 
@@ -476,7 +508,7 @@ function PinnedSection({ children, count, drop, label, noun, reorderable, target
   // place (`pinnedPosition`). As a per-row description it would be repeated
   // before every title.
   return <section aria-describedby={reorderable ? hint : undefined} aria-label={label} className="navigation-section" {...target}>
-    <SectionHeading motionKey="pinned" trailing={reorderable ? <span aria-hidden="true">Drag to reorder</span> : undefined}>Pinned</SectionHeading>
+    <SectionHeading motionKey="pinned" trailing={<PinnedMark reorderable={reorderable} />}>Pinned</SectionHeading>
     {reorderable && <p className="sr-only" id={hint}>Hold Alt and press the up or down arrow to move a pinned {noun}.</p>}
     {count === 0 && drop?.index == null && <div className={clsx('pinned-empty-drop-surface', drop && 'is-armed')}>
       <IconPin aria-hidden="true" size={15} stroke={1.7} />
@@ -612,19 +644,69 @@ function SectionHeading({ children, motionKey, trailing }: {
   </div>;
 }
 
-/** The Channels a thread sits in that this person may see, as small marks. */
-function ChannelChips({ spaceIds, spaces }: { spaceIds: readonly string[]; spaces: ReadonlyMap<string, SpaceSummary> }): React.JSX.Element | null {
-  const shown = spaceIds.flatMap((id) => {
-    const space = spaces.get(id);
-    return space ? [space] : [];
-  });
-  if (shown.length === 0) return null;
-  return <span className="navigation-chips">
-    {shown.map((space) => <span className="navigation-chip" key={space.id}>
-      <SpaceIcon size={12} space={space} />
-      <span>{space.name}</span>
-    </span>)}
+/** The Pinned heading's pin; how to arrange the list is its tooltip once there is something to arrange. */
+function PinnedMark({ reorderable }: { reorderable: boolean }): React.JSX.Element {
+  const mark = <span aria-hidden="true" className="navigation-section-mark">
+    <IconPin size={14} stroke={1.8} />
   </span>;
+  return reorderable ? <Tip label="Drag to reorder">{mark}</Tip> : mark;
+}
+
+/** A Channel's identity as a tile: its glyph on its hue's pastel pair. */
+function channelLook(space: SpaceSummary): { Icon: typeof Sparkle; tint: string; ink: string } {
+  return { Icon: WORKSTREAM_ICON_COMPONENTS[space.iconKey], ...markColors(space.colorKey) };
+}
+
+function ChannelTile({ badges, size, space }: { badges?: readonly TileBadge[]; size?: number; space: SpaceSummary }): React.JSX.Element {
+  const { Icon, ink, tint } = channelLook(space);
+  return <IdentityTile badges={badges} icon={Icon} ink={ink} shape="squircle" size={size} tint={tint} />;
+}
+
+/**
+ * A Channel as a badge on another tile. The pair is inverted, the hue's ink
+ * under its tint, so the badge stays a solid mark of the Channel's colour
+ * against the tile it sits on in either appearance.
+ */
+function channelBadge(space: SpaceSummary): TileBadge {
+  const { Icon, ink, tint } = channelLook(space);
+  return { key: space.id, shape: 'squircle', fill: ink, ink: tint, icon: Icon };
+}
+
+/**
+ * One row of any of the three lists: a tile, a name with its time, and a
+ * second line with an optional unread dot at its end.
+ */
+function RowLayout({ detail, tile, time, title, titleExtra, unread }: {
+  detail: ReactNode;
+  tile: ReactNode;
+  time?: ReactNode;
+  title: ReactNode;
+  titleExtra?: ReactNode;
+  unread: boolean;
+}): React.JSX.Element {
+  return <>
+    {tile}
+    <span className="navigation-row-copy">
+      <span className="navigation-row-line">
+        <span className="navigation-row-title">{title}</span>
+        {titleExtra}
+        {time}
+      </span>
+      <span className="navigation-row-line">
+        <span className="navigation-row-detail">{detail}</span>
+        {unread && <span aria-label="Unread" className="navigation-row-unread-dot" role="img" />}
+      </span>
+    </span>
+  </>;
+}
+
+/**
+ * Whether a thread row reads as unread: new messages, a mention, or never
+ * opened, the same three the Threads button counts. A row says no more than
+ * that; what the run is doing is the thread's own header's to show.
+ */
+function threadUnread(row: SpaceConversationSummary): boolean {
+  return row.hasUnread || row.unseen === true || row.youAreMentioned === true;
 }
 
 function useSpaceMap(): Map<string, SpaceSummary> {
@@ -771,8 +853,8 @@ function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): 
       {pinnedRows('thread', threadDrag, 0)}
       {pinnedRows('breakout', breakoutDrag, threadDrag.order.length)}
     </PinnedSection>
-    <section aria-busy={list.isPending || undefined} aria-label="Threads" className="navigation-section">
-      <SectionHeading motionKey="threads" trailing={<SortButton onChange={setSort} sort={sort} sorts={THREAD_SORTS} />}>Threads</SectionHeading>
+    <section aria-busy={list.isPending || undefined} aria-label="Recent threads" className="navigation-section">
+      <SectionHeading motionKey="threads" trailing={<SortButton onChange={setSort} sort={sort} sorts={THREAD_SORTS} />}>Recent</SectionHeading>
       {list.isPending && rows.length === 0 && <SidebarSkeletonRows count={6} hint />}
       {unpinned.map((row) => renderRow(
         row,
@@ -804,9 +886,16 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
   row: SpaceConversationSummary;
   spaces: ReadonlyMap<string, SpaceSummary>;
 }): React.JSX.Element {
-  const status = workstreamMarkerStatus(row);
-  // A finished or stopped run with nothing unread is the resting state, drawn without a dot.
-  const quiet = status === 'completed' || status === 'stopped';
+  const unread = threadUnread(row);
+  const channels = row.spaceIds.flatMap((id) => {
+    const space = spaces.get(id);
+    return space ? [space] : [];
+  });
+  const appearance = resolveWorkstreamAppearance(row.id, row.appearance);
+  const names = channels.map((space) => space.name).join(' · ');
+  const detail = row.kind === 'breakout' && row.breakoutOf
+    ? `↳ ${row.breakoutOf.title}${names ? ` · ${names}` : ''}`
+    : names;
   const threadId = row.breakoutOf?.workstreamId ?? row.id;
   const warmup = useWorkstreamSocketHoverWarmup(threadId);
   const socketOpenContext = useWorkstreamSocketOpenContext(threadId);
@@ -832,7 +921,7 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
       <Link
         aria-current={active ? 'page' : undefined}
         {...ghostProps(ghost)}
-        className={clsx('navigation-row navigation-thread-row', active && 'is-active', !quiet && 'has-activity', ghost && 'is-pin-ghost')}
+        className={clsx('navigation-row navigation-thread-row', active && 'is-active', unread && 'is-unread', ghost && 'is-pin-ghost')}
         // A thread still starting slides in, and out again if its start fails.
         data-motion-insert={row.pending ? '' : undefined}
         // A placeholder is not the row: the row is still in its list.
@@ -846,40 +935,33 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
         to={href}
         {...drag}
       >
-        <span className="navigation-row-marker">{!quiet && <StatusDot compact status={status} tooltip />}</span>
-        <span className="navigation-row-copy">
-          <span className="navigation-row-line">
-            <span className="navigation-row-title">{row.pending ? 'Starting…' : naming ? <TitleSkeleton /> : row.title}</span>
-            {wakeup && <Tip
-              align="center"
-              className="workstream-timer-tooltip"
-              delayDuration={300}
-              disableHoverableContent
-              label={<>
-                <strong>Next: {formatDateTime(wakeup.dueAt)}</strong>
-                <span>{wakeup.promptPreview}</span>
-              </>}
-              side="right"
-              sideOffset={8}
+        <RowLayout
+          detail={detail}
+          tile={<IdentityTile badges={channels.map(channelBadge)} icon={appearance.Icon} ink={appearance.ink} shape="circle" tint={appearance.tint} />}
+          time={!row.pending && <RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={row.lastActivityAt} />}
+          title={row.pending ? 'Starting…' : naming ? <TitleSkeleton /> : row.title}
+          titleExtra={wakeup && <Tip
+            align="center"
+            className="workstream-timer-tooltip"
+            delayDuration={300}
+            disableHoverableContent
+            label={<>
+              <strong>Next: {formatDateTime(wakeup.dueAt)}</strong>
+              <span>{wakeup.promptPreview}</span>
+            </>}
+            side="right"
+            sideOffset={8}
+          >
+            <span
+              aria-label={`Active timer. Next: ${formatDateTime(wakeup.dueAt)}. ${wakeup.promptPreview}`}
+              className="sidebar-workstream-timer"
+              role="img"
             >
-              <span
-                aria-label={`Active timer. Next: ${formatDateTime(wakeup.dueAt)}. ${wakeup.promptPreview}`}
-                className="sidebar-workstream-timer"
-                role="img"
-              >
-                <IconClock aria-hidden="true" size={13} stroke={1.8} />
-              </span>
-            </Tip>}
-          </span>
-          {row.kind === 'breakout' && row.breakoutOf
-            ? <span className="navigation-chips">
-              <span className="navigation-chip">
-                <IconCornerDownRight aria-hidden="true" size={12} stroke={1.8} />
-                <span>{row.breakoutOf.title}</span>
-              </span>
+              <IconClock aria-hidden="true" size={13} stroke={1.8} />
             </span>
-            : <ChannelChips spaceIds={row.spaceIds} spaces={spaces} />}
-        </span>
+          </Tip>}
+          unread={unread}
+        />
         {position && <span className="sr-only">{position}</span>}
       </Link>
     </ContextMenu.Trigger>
@@ -918,7 +1000,6 @@ function ChannelsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }):
   const openChannelId = useOpenChannelId();
   const sort = useUiStore((state) => state.channelSort);
   const setSort = useUiStore((state) => state.setChannelSort);
-  const [creating, setCreating] = useState(false);
   const archived = useArchivedChannels();
   const statsById = useMemo(() => new Map((stats.data ?? []).map((item) => [item.channelId, item])), [stats.data]);
   const channels = active.data?.items ?? [];
@@ -966,18 +1047,12 @@ function ChannelsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }):
       })}
     </PinnedSection>
     <section aria-busy={active.data === undefined || undefined} aria-label="All channels" className="navigation-section">
-      <SectionHeading trailing={<>
-        <SortButton onChange={setSort} sort={sort} sorts={CHANNEL_SORTS} />
-        <Tip label="New channel"><button aria-label="New channel" className="navigation-sort" onClick={() => setCreating(true)} type="button">
-          <IconPlus aria-hidden="true" size={14} stroke={1.9} />
-        </button></Tip>
-      </>} motionKey="channels">All channels</SectionHeading>
+      <SectionHeading motionKey="channels" trailing={<SortButton onChange={setSort} sort={sort} sorts={CHANNEL_SORTS} />}>All channels</SectionHeading>
       {active.data === undefined && <SidebarSkeletonRows count={5} hint />}
       {rest.map((space) => row(space, pinDrop.sourceProps('channel', space.id)))}
       {active.data !== undefined && channels.length === 0 && <p className="navigation-empty">No channels yet.</p>}
     </section>
     {(inactive.data?.items.length ?? 0) > 0 && <ArchivedChannels archived={archived} channels={inactive.data!.items} />}
-    {creating && <NewChannelDialog onClose={() => setCreating(false)} />}
   </>;
 }
 
@@ -1029,9 +1104,7 @@ function ArchivedChannels({ archived, channels }: {
     {failed && <InlineError>{failed} couldn’t be restored. Try again.</InlineError>}
     {open && [...channels].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }))
       .map((space) => <div className="navigation-archived-row" data-motion-key={`channel:${space.id}`} key={space.id}>
-        <span className="navigation-channel-mark is-small" style={{ background: markColors(space.colorKey).tint }}>
-          <SpaceIcon size={16} space={space} />
-        </span>
+        <ChannelTile size={30} space={space} />
         <span className="navigation-archived-name">{space.name}</span>
         <Button onClick={() => restore(space)}>Restore</Button>
       </div>)}
@@ -1051,6 +1124,7 @@ function ChannelRow({ active, drag, ghost, moves, onPin, pinned, position, space
   stats: ChannelStats | undefined;
 }): React.JSX.Element {
   const count = stats?.threadCount ?? 0;
+  const unread = stats?.hasUnread === true;
   const route = useCurrentRoute();
   const href = channelRoute(space.id);
   return <ContextMenu.Root>
@@ -1058,7 +1132,7 @@ function ChannelRow({ active, drag, ghost, moves, onPin, pinned, position, space
       <Link
         aria-current={active ? 'page' : undefined}
         {...ghostProps(ghost)}
-        className={clsx('navigation-row navigation-channel-row', active && 'is-active', stats?.hasUnread && 'is-unread', ghost && 'is-pin-ghost')}
+        className={clsx('navigation-row navigation-channel-row', active && 'is-active', unread && 'is-unread', ghost && 'is-pin-ghost')}
         // A placeholder is not the row: the row is still in its list.
         data-motion-key={ghost ? undefined : `channel:${space.id}`}
         draggable={false}
@@ -1067,18 +1141,14 @@ function ChannelRow({ active, drag, ghost, moves, onPin, pinned, position, space
         to={href}
         {...drag}
       >
-        <span className="navigation-channel-mark" style={{ background: markColors(space.colorKey).tint }}>
-          <SpaceIcon size={18} space={space} />
-        </span>
-        <span className="navigation-row-copy">
-          <span className="navigation-row-line">
-            <span className="navigation-row-title">{space.name}</span>
-            {space.scope === 'personal' && <IconLock aria-label="Private" className="navigation-row-lock" size={13} stroke={1.8} />}
-            {stats?.lastActivityAt && <RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={stats.lastActivityAt} />}
-            {stats?.hasUnread && <span aria-label="Unread" className="navigation-row-unread-dot" role="img" />}
-          </span>
-          <span className="navigation-row-detail">{count === 1 ? '1 thread' : `${count} threads`}</span>
-        </span>
+        <RowLayout
+          detail={count === 1 ? '1 thread' : `${count} threads`}
+          tile={<ChannelTile space={space} />}
+          time={stats?.lastActivityAt && <RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={stats.lastActivityAt} />}
+          title={space.name}
+          titleExtra={space.scope === 'personal' && <IconLock aria-label="Private" className="navigation-row-lock" size={13} stroke={1.8} />}
+          unread={unread}
+        />
         {position && <span className="sr-only">{position}</span>}
       </Link>
     </ContextMenu.Trigger>
@@ -1148,6 +1218,44 @@ const ACTIVITY_VERBS: Record<ActivityItem['kind'], string> = {
   run_finished: 'finished',
 };
 
+/** The Activity tab's chips. Unread is the client's, Mentions the server's; see `ActivityFilterSchema`. */
+type ActivityChip = 'all' | 'unread' | 'mentions';
+const ACTIVITY_CHIPS: ReadonlyArray<{ chip: ActivityChip; label: string }> = [
+  { chip: 'all', label: 'All' },
+  { chip: 'unread', label: 'Unread' },
+  { chip: 'mentions', label: 'Mentions' },
+];
+
+function activityQueryKey(only: ActivityFilter | null): readonly unknown[] {
+  return [...ACTIVITY_QUERY_KEY, only ?? 'all'];
+}
+
+/**
+ * Mark all read: the server's waterline moves to the newest row held, and
+ * every held page drops its dots now rather than on the next read. Opening the
+ * tab already marks what it shows; this is for the person who wants the dots
+ * gone without waiting for that read to come back.
+ */
+function useMarkActivityRead(): () => void {
+  const { api } = useAppSession();
+  const queryClient = useQueryClient();
+  return useCallback(() => {
+    const held = queryClient.getQueriesData<InfiniteData<ActivityPage>>({ queryKey: ACTIVITY_QUERY_KEY });
+    const newest = held.flatMap(([, data]) => data?.pages[0]?.items[0]?.occurredAt ?? [])
+      .sort((left, right) => Date.parse(right) - Date.parse(left))[0];
+    if (!api || !newest) return;
+    queryClient.setQueriesData<InfiniteData<ActivityPage>>({ queryKey: ACTIVITY_QUERY_KEY }, (data) => data && {
+      ...data,
+      pages: data.pages.map((page) => ({ ...page, items: page.items.map((item) => item.unread ? { ...item, unread: false } : item) })),
+    });
+    void api.markActivitySeen(newest).catch(() => undefined);
+  }, [api, queryClient]);
+}
+
+function initials(name: string): string {
+  return name.split(/\s+/u).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
+}
+
 function dayLabel(value: string, now = new Date()): string {
   const date = new Date(value);
   const start = (offset: number): number => new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset).getTime();
@@ -1173,6 +1281,8 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
   const { api } = useAppSession();
   const live = useWorkstreamsQuery();
   const spaces = useSpaceMap();
+  const [chip, setChip] = useState<ActivityChip>('all');
+  const only: ActivityFilter | null = chip === 'mentions' ? 'mentions' : null;
   // A start names its starter by id; the name is the member directory's, the
   // same read the Channel feed names its authors from. A guest has no
   // directory and sees the label the server sent.
@@ -1186,16 +1296,21 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
     || members.data?.find((member) => member.id === item.actorUserId)?.name
     || 'Someone';
   const feed = useInfiniteQuery({
-    queryKey: ACTIVITY_QUERY_KEY,
-    queryFn: ({ pageParam, signal }) => api!.getActivity(pageParam, signal),
+    queryKey: activityQueryKey(only),
+    queryFn: ({ pageParam, signal }) => api!.getActivity(pageParam, only, signal),
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.nextCursor,
     enabled: Boolean(api),
     refetchOnMount: 'always',
   });
-  const items = useMemo(() => (feed.data?.pages ?? []).flatMap((page) => page.items), [feed.data]);
+  const fetched = useMemo(() => (feed.data?.pages ?? []).flatMap((page) => page.items), [feed.data]);
+  // Unread is everything after one waterline, so in a newest-first feed it
+  // is a run at the top: filtering what is loaded misses nothing above it.
+  const items = chip === 'unread' ? fetched.filter((item) => item.unread) : fetched;
   const markedThrough = useRef<string | null>(null);
-  const newest = items[0]?.occurredAt ?? null;
+  // Only the whole feed moves the waterline. Mentions holds some of what
+  // happened, and reading through its newest would mark the rest seen.
+  const newest = only === null ? fetched[0]?.occurredAt ?? null : null;
   // On a phone the section stays mounted while the sheet is closed, so a
   // closed sheet is not the person looking.
   const sheetOpen = useUiStore((state) => state.sidebarOpen);
@@ -1224,9 +1339,21 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
     if (last?.label === label) last.items.push(item);
     else groups.push({ label, items: [item] });
   }
+  const empty = chip === 'unread' ? 'Nothing unread.'
+    : chip === 'mentions' ? 'Nobody has mentioned you yet.'
+      : attentionComplete ? 'Nothing new. Activity about your threads shows up here.' : 'Still loading…';
   return <>
+    <div aria-label="Show" className="navigation-chips-row" role="group">
+      {ACTIVITY_CHIPS.map((candidate) => <button
+        aria-pressed={candidate.chip === chip}
+        className={clsx('navigation-filter-chip', candidate.chip === chip && 'is-active')}
+        key={candidate.chip}
+        onClick={() => setChip(candidate.chip)}
+        type="button"
+      >{candidate.label}</button>)}
+    </div>
     {accessDecisionFailed && <InlineError>That didn’t go through. Try again.</InlineError>}
-    {accessRequests.length > 0 && <section aria-label="Requests to join" className="navigation-section">
+    {accessRequests.length > 0 && chip === 'all' && <section aria-label="Requests to join" className="navigation-section">
       <SectionHeading motionKey="requests">Requests</SectionHeading>
       {accessRequests.map((request) => <div
         className="activity-row activity-request"
@@ -1254,18 +1381,22 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
       <SectionHeading motionKey={`day:${group.label}`}>{group.label}</SectionHeading>
       {group.items.map((item) => {
         const channel = item.channelIds.map((id) => spaces.get(id)).find(Boolean);
+        const actor: TileBadge = item.actorUserId === null
+          ? { key: 'actor', shape: 'circle', fill: 'var(--av-sys-color-text-default)', ink: 'var(--av-sys-color-surface-default)', icon: Sparkle }
+          : { key: 'actor', shape: 'circle', fill: 'var(--av-sys-color-accent-wash)', ink: 'var(--av-sys-color-accent-strong)', text: initials(actorName(item)) };
+        const thread = resolveWorkstreamAppearance(item.threadId);
         return <Link
           className={clsx('activity-row', item.unread && 'is-unread')}
           data-motion-key={`activity:${item.id}`}
           key={item.id}
           to={href(item)}
         >
-          <span aria-hidden="true" className={clsx('activity-avatar', item.actorUserId === null && 'is-rally')}>
-            {item.actorUserId === null ? '✦' : actorName(item).split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()}
-          </span>
+          {channel
+            ? <ChannelTile badges={[actor]} space={channel} />
+            : <IdentityTile badges={[actor]} icon={thread.Icon} ink={thread.ink} shape="circle" tint={thread.tint} />}
           <span className="activity-row-body">
             <span className="activity-row-text">
-              <strong>{actorName(item)}</strong> {ACTIVITY_VERBS[item.kind]}{item.kind === 'run_finished' ? ': ' : ' '}
+              <strong>{actorName(item)}</strong> {ACTIVITY_VERBS[item.kind]}{' '}
               <strong>{item.breakout && item.kind !== 'breakout_started' ? item.breakout.title : item.threadTitle}</strong>
             </span>
             {item.kind === 'breakout_started' && item.breakout && <span className="breakout-chip activity-chip">
@@ -1273,17 +1404,15 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
               <span className="breakout-chip-title">{item.breakout.title}</span>
             </span>}
             <span className="activity-row-detail">
-              {channel ? `in ${channel.name} · ` : ''}
-              <RelativeTime format={formatSidebarActivityTime} value={item.occurredAt} />
+              {channel ? `${channel.name} · ` : ''}
+              <RelativeTime format={formatTime} value={item.occurredAt} />
             </span>
           </span>
           {item.unread && <span aria-label="Unread" className="activity-unread-dot" role="img" />}
         </Link>;
       })}
     </section>)}
-    {feed.isSuccess && items.length === 0 && accessRequests.length === 0 && <p className="navigation-empty">
-      {attentionComplete ? 'Nothing new. Activity about your threads shows up here.' : 'Still loading…'}
-    </p>}
+    {feed.isSuccess && items.length === 0 && (chip !== 'all' || accessRequests.length === 0) && <p className="navigation-empty">{empty}</p>}
     {feed.hasNextPage && <button className="navigation-more" disabled={feed.isFetchingNextPage} onClick={() => void feed.fetchNextPage()} type="button">Show more</button>}
     {feed.isError && <InlineError>Activity couldn’t be loaded.</InlineError>}
   </>;

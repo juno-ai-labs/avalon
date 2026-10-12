@@ -1,5 +1,5 @@
 import type { SqlStorageValue } from "@cloudflare/workers-types";
-import type { ActivityItem, ActivityItemKind } from "@rally/contracts";
+import type { ActivityFilter, ActivityItem, ActivityItemKind } from "@rally/contracts";
 
 import { boundParameterChunks } from "./bound-parameters";
 import { breakoutListedSql, channelListedSql, type Viewer } from "./listing-rules";
@@ -97,7 +97,16 @@ export class WorkspaceActivityFeed {
     ).toArray().length === 1;
   }
 
-  page(viewer: Viewer, cursor: string | null): { items: ActivityItem[]; nextCursor: string | null } | "invalid_cursor" {
+  /**
+   * One page, newest first. `only: "mentions"` keeps the first arm alone and
+   * narrows it to the `mentioned` relation, so the page and its cursor are cut
+   * from mentions and nothing else; the other arms never run.
+   */
+  page(
+    viewer: Viewer,
+    cursor: string | null,
+    only: ActivityFilter | null = null,
+  ): { items: ActivityItem[]; nextCursor: string | null } | "invalid_cursor" {
     const after = cursor === null ? null : decodeCursor(cursor);
     if (cursor !== null && after === null) return "invalid_cursor";
     if (!this.ready()) return { items: [], nextCursor: null };
@@ -114,6 +123,8 @@ export class WorkspaceActivityFeed {
     // leave a page empty that has more behind it.
     const threadListed = channelListedSql("directory", "viewer", viewer.accessClass, { breakouts, userId: "?1" });
     const breakoutListed = breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass);
+    const mentionsOnly = only === "mentions";
+    const relations = mentionsOnly ? "('mentioned')" : "('added', 'mentioned')";
     const keys = [
       ...arm(`SELECT event.event_id AS id,
                      CASE target.relation WHEN 'added' THEN 'added' ELSE 'mentioned' END AS kind,
@@ -125,7 +136,7 @@ export class WorkspaceActivityFeed {
                 JOIN channels directory ON directory.workstream_id = event.subject_id
                 ${CHANNEL_VIEWER}
                WHERE target.user_id = ?1
-                 AND target.relation IN ('added', 'mentioned')
+                 AND target.relation IN ${relations}
                  AND event.subject_type = 'workstream'
                  AND event.event_type IN ('workstream_participant_added', 'workstream_message_created')
                  AND directory.archived_at IS NULL
@@ -143,7 +154,7 @@ export class WorkspaceActivityFeed {
       // not reliably reach this object (a breakout's is never forwarded), and
       // the directory row is what every other list here is drawn from. The
       // starter's name is the client's to resolve.
-      ...arm(`SELECT 'started:' || directory.workstream_id AS id,
+      ...(mentionsOnly ? [] : arm(`SELECT 'started:' || directory.workstream_id AS id,
                      'thread_started' AS kind,
                      directory.source_created_at AS occurred_at,
                      directory.created_by_user_id AS actor_user_id, '' AS actor_label,
@@ -155,8 +166,8 @@ export class WorkspaceActivityFeed {
                  AND directory.created_by_user_id <> ?1
                  AND directory.source_created_at IS NOT NULL
                  AND directory.archived_at IS NULL
-                 AND directory.system_kind IS NULL`),
-      ...(breakouts ? arm(`SELECT 'started:' || breakout.substream_id AS id,
+                 AND directory.system_kind IS NULL`)),
+      ...(breakouts && !mentionsOnly ? arm(`SELECT 'started:' || breakout.substream_id AS id,
                      'breakout_started' AS kind,
                      breakout.source_created_at AS occurred_at,
                      breakout.created_by_user_id AS actor_user_id, '' AS actor_label,
@@ -171,7 +182,7 @@ export class WorkspaceActivityFeed {
                  AND breakout.created_by_user_id <> ?1
                  AND breakout.source_created_at IS NOT NULL
                  AND breakout.archived_at IS NULL`) : []),
-      ...arm(`SELECT 'finished:' || directory.workstream_id || ':' || directory.completed_at AS id,
+      ...(mentionsOnly ? [] : arm(`SELECT 'finished:' || directory.workstream_id || ':' || directory.completed_at AS id,
                      'run_finished' AS kind,
                      directory.completed_at AS occurred_at,
                      NULL AS actor_user_id, 'Rally' AS actor_label,
@@ -183,8 +194,8 @@ export class WorkspaceActivityFeed {
                WHERE viewer.user_id = ?1 AND viewer.is_participant = 1
                  AND directory.exact_state = 'completed'
                  AND directory.completed_at IS NOT NULL
-                 AND directory.system_kind IS NULL`),
-      ...(breakouts ? arm(`SELECT 'finished:' || breakout.substream_id || ':' || breakout.completed_at AS id,
+                 AND directory.system_kind IS NULL`)),
+      ...(breakouts && !mentionsOnly ? arm(`SELECT 'finished:' || breakout.substream_id || ':' || breakout.completed_at AS id,
                      'run_finished' AS kind,
                      breakout.completed_at AS occurred_at,
                      NULL AS actor_user_id, 'Rally' AS actor_label,

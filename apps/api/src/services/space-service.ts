@@ -9,6 +9,7 @@ import {
   MoveChannelBetweenSpacesResultSchema,
   type SpaceChannelPage,
   SpaceChannelPageSchema,
+  type ActivityFilter,
   type ActivityPage,
   type ChannelFeedPage,
   type ChannelStats,
@@ -243,11 +244,12 @@ export class SpaceService {
   }
 
   /** The Activity tab, newest first. */
-  async listActivity(cursor: string | null): Promise<ActivityPage> {
+  async listActivity(cursor: string | null, only: ActivityFilter | null = null): Promise<ActivityPage> {
     const result = WorkspaceActivityResultSchema.parse(await (await this.workspace()).listActivity({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       cursor,
+      only,
     }));
     if (!result.ok) throw spaceRefusal(result.code, "");
     return result.page;

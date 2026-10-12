@@ -665,8 +665,10 @@ import {
   WorkspaceSpaceChannelPageRequestSchema,
   WorkspaceSpaceChannelPageResultSchema,
   WorkspaceChannelFeedResultSchema,
+  WorkspaceActivityRequestSchema,
   WorkspaceActivityResultSchema,
   WorkspaceActivitySeenRequestSchema,
+  type WorkspaceActivityRequest,
   type WorkspaceActivityResult,
   type WorkspaceActivitySeenRequest,
   WorkspaceMyThreadsRequestSchema,
@@ -9359,13 +9361,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /** One page of the Activity tab; see `workspace-activity-feed.ts`. */
-  async listActivity(input: WorkspaceMyThreadsRequest): Promise<WorkspaceActivityResult> {
+  async listActivity(input: WorkspaceActivityRequest): Promise<WorkspaceActivityResult> {
     await this.initialized;
-    const request = parseRpcInput(WorkspaceMyThreadsRequestSchema, input, "list_activity");
+    const request = parseRpcInput(WorkspaceActivityRequestSchema, input, "list_activity");
     this.assertWorkspace(request.workspaceId);
     const viewer = await this.spaceReader(request.workspaceId, request.userId);
     if (!viewer) return { ok: false, code: "space_access_denied" };
-    const page = new WorkspaceActivityFeed(this.state.storage, this.spaceStorage()).page(viewer, request.cursor);
+    const page = new WorkspaceActivityFeed(this.state.storage, this.spaceStorage()).page(viewer, request.cursor, request.only);
     if (page === "invalid_cursor") return { ok: false, code: "space_cursor_invalid" };
     return WorkspaceActivityResultSchema.parse({ ok: true, page });
   }

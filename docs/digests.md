@@ -207,6 +207,11 @@ at all. A page and its cursor therefore never carry a thread or breakout the
 viewer cannot list; filtering after the read would have let a page come back
 short, or empty with a cursor that names a hidden row.
 
+**`?only=mentions`** runs the first arm alone, narrowed to the `mentioned`
+relation, so the page and its cursor are cut from mentions and nothing else.
+The tab's Mentions chip reads it; Unread is the client's, because unread is
+everything after one waterline and so already a run at the top of the feed.
+
 **A breakout's mentions** reach the log in one narrow shape
 (`breakout-activity.ts`). A breakout is private to the people in it, and a
 `workstream`-audience event reaches every participant of the parent thread

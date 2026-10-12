@@ -1,4 +1,5 @@
 import {
+  ActivityFilterSchema,
   ActivityPageSchema,
   ActivitySeenRequestSchema,
   ChannelStatsListSchema,
@@ -18,6 +19,7 @@ import { zValidator } from "../middleware/validation";
 import { SpaceService } from "../services/space-service";
 
 const pageQuery = z.strictObject({ cursor: z.string().min(1).max(200).optional() });
+const activityQuery = pageQuery.extend({ only: ActivityFilterSchema.optional() });
 const pinParam = z.strictObject({ kind: PinKindSchema, id: IdSchema });
 
 /**
@@ -64,11 +66,12 @@ navigationRoutes.delete("/pins/:kind/:id", zValidator("param", pinParam), async 
   ));
 });
 
-navigationRoutes.get("/activity", zValidator("query", pageQuery), async (c) =>
-  c.json(ActivityPageSchema.parse(
-    await new SpaceService(c.env, getWorkspaceAuth(c)).listActivity(c.req.valid("query").cursor ?? null),
-  )),
-);
+navigationRoutes.get("/activity", zValidator("query", activityQuery), async (c) => {
+  const { cursor, only } = c.req.valid("query");
+  return c.json(ActivityPageSchema.parse(
+    await new SpaceService(c.env, getWorkspaceAuth(c)).listActivity(cursor ?? null, only ?? null),
+  ));
+});
 
 navigationRoutes.put("/activity/seen", zValidator("json", ActivitySeenRequestSchema), async (c) => {
   await new SpaceService(c.env, getWorkspaceAuth(c)).markActivitySeen(Date.parse(c.req.valid("json").seenThrough));
