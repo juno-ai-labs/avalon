@@ -491,15 +491,17 @@ the device kept a token that died sixty seconds later, and the next renewal was
 a terminal 401. Only the successor's first use proves the device received it,
 so that, not a clock, now retires the old token.
 
-**Rejected:** A longer fixed window. Any number is a guess at how long a laptop
-sleeps. A client-only fix: the desktop cannot tell a lost rotation from a
-revoked session, so the service has to keep the old token alive.
+**Considered and rejected:** A longer fixed window. Any number is a guess at
+how long a laptop sleeps. A client-only fix: the desktop cannot tell a lost
+rotation from a revoked session, so the service has to keep the old token alive.
 
-**Respect:** A stolen retired token now works until the device next renews,
-the same exposure a stolen current token has. The sessions' thirty-day sliding
+**Consequences:** A stolen retired token now works until the device next
+renews, the same exposure a stolen current token has. The sessions' thirty-day sliding
 and ninety-day ceiling still bound both. Concurrent renewals with one token
 remain harmful, so every desktop renewal must still go through
 `credential-refresh.ts`.
+
+Shipped in #1193.
 
 ### 2026-10-10: A sign-in replaces stored credentials the app could not show
 
