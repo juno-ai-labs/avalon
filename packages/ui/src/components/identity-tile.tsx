@@ -15,10 +15,16 @@ export type TileShape = 'squircle' | 'circle';
  * before, starting 6px past the tile's right edge, so a 36px tile holds two;
  * a third would start 8px past its left edge, out over the row's padding.
  * Geometry, not a policy: a surface that wants more names them elsewhere, as
- * a thread row's second line does. A nested badge reaches 11px past the
- * tile's right edge and 9px below it, inside the row's gap and padding.
+ * a thread row's second line does.
  */
 const BADGE_ROOM = 2;
+
+/**
+ * How far a nested badge reaches past its parent badge's corner. The parent
+ * moves in by the same amount, so the deepest badge's corner is where a lone
+ * badge's would be, at every depth.
+ */
+const NESTED_OVERHANG = 2;
 
 /** A small tile pinned to a larger one's bottom-right corner. */
 export interface TileBadge extends NestedTileBadge {
@@ -44,15 +50,25 @@ export interface NestedTileBadge {
 }
 
 /** A badge in its ring, and the badge nested on its corner, if any. */
-function Badge({ badge, nested = false, right }: { badge: TileBadge | NestedTileBadge; nested?: boolean; right: number }): React.JSX.Element {
+function Badge({ badge, bottom, nested = false, right }: {
+  badge: TileBadge | NestedTileBadge;
+  bottom?: number | undefined;
+  nested?: boolean;
+  right: number;
+}): React.JSX.Element {
   return <span
     className={clsx('identity-tile-badge', `is-${badge.shape}`, nested && 'is-nested')}
-    style={{ right }}
+    style={{ bottom, right }}
   >
     <span className={clsx('identity-tile-badge-fill', `is-${badge.shape}`)} style={{ background: badge.fill, color: badge.ink }}>
       {badge.icon ? <badge.icon size={nested ? 7 : 10} strokeWidth={2.2} /> : badge.text}
     </span>
-    {!nested && 'badge' in badge && badge.badge && <Badge badge={badge.badge} nested right={-5} />}
+    {!nested && 'badge' in badge && badge.badge && <Badge
+      badge={badge.badge}
+      bottom={-NESTED_OVERHANG}
+      nested
+      right={-NESTED_OVERHANG}
+    />}
   </span>;
 }
 
@@ -83,7 +99,10 @@ export function IdentityTile({ badges, className, icon: Icon, ink, shape, size =
     <span className={clsx('identity-tile-shape', `is-${shape}`)} style={{ background: tint, color: ink }}>
       <Icon size={Math.round(size * 0.47)} strokeWidth={1.8} />
     </span>
-    {badges?.slice(0, BADGE_ROOM).map((badge, index) => <Badge badge={badge} key={badge.key} right={-6 + index * 14} />)}
+    {badges?.slice(0, BADGE_ROOM).map((badge, index) => {
+      const inset = badge.badge ? NESTED_OVERHANG : 0;
+      return <Badge badge={badge} bottom={-5 + inset} key={badge.key} right={-6 + index * 14 + inset} />;
+    })}
   </span>;
 }
 
