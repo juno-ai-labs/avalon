@@ -8,15 +8,28 @@ catalog; where that pass produced none it keeps the deterministic icon derived
 from its id, which is also what every work stream created before this existed
 still shows.
 
-**For now a thread and its Breakouts are drawn in their Channel's colour.**
-Since the navigation redesign a thread (stored as a work stream) sits in one or
-more Channels (stored as Spaces), and every mark of a thread or a Breakout
-takes the colour of the Channel it is read in, or else of the first one it
-sits in. The icon stays the conversation's own, so the picker on a thread or a
-Breakout offers icons only. The stored colour is untouched: `inChannelColor`
-swaps it at draw time, which keeps going back a deletion rather than a
-migration. A client that does not know the Channel yet (the Space directory
-has not arrived) draws the stored colour until it does.
+**For now a thread's and a Breakout's colour is its Channel's, and the server
+writes it.** Since the navigation redesign a thread (stored as a work stream)
+sits in one or more Channels (stored as Spaces). Each thread and every Breakout
+under it stores the colour of the thread's canonical Channel
+(`canonicalChannelSpaceId`: Organization-wide before private, then by id) in
+its own `appearance_json`, like any other appearance, so every surface and
+every server-built mark reads it without knowing the rule. The client's
+appearance command drops `color` for a thread or a Breakout, and their pickers
+offer icons only (`colors={false}`); the icon stays the conversation's own. A
+Space's own appearance is unchanged.
+
+The writes are WorkspaceDO's, through `channel-color-sync.ts`. SQLite triggers
+mark a thread in `channel_color_sync` whenever its colour can move: one of its
+placements is made, ended or archived; a Channel it sits in changes colour, is
+archived or restored, or changes scope; the thread or a Breakout under it is
+first projected or restored from the archive. Migration 99 marks every thread
+that existed when it shipped. The alarm lane `channel_color_sync` sends due
+threads to the activity Queue; the consumer asks `channelColorWork` for the
+colour and the conversations (Main and each open Breakout), writes each one
+with the identity operation `recolor`, and settles the row with
+`completeChannelColorSync` only if nothing marked the thread again meanwhile.
+The projection each `recolor` commits carries the colour to every client.
 
 **A Sidekick has one too, and it is the same palette.** Clicking the hexagon on
 its profile opens the picker this document owns, over the same catalog and the
@@ -41,6 +54,7 @@ the old icon back. The route itself is [`spaces.md`](spaces.md)'s.
 | --- | --- |
 | `packages/contracts/src/appearance-icons.ts` | The one icon catalog for a Channel, a Breakout, a Space and a Sidekick: its eight sections, the pickable keys, the retired keys that stay storable, the id-derived default marks, and one short model-visible description per pickable key. |
 | `packages/contracts/src/workstream-appearance.ts` | The catalog under the names callers import (`WORKSTREAM_ICON_KEYS` for the menu, `WORKSTREAM_ICON_KEYS_STORABLE` for the schema), the default key, color keys, and partial updates. |
+| `apps/api/src/durable-objects/channel-color-sync.ts` | A thread's and its Breakouts' Channel colour: migration 99's table, triggers and backfill, the alarm lane's publish, and the two reads the Queue consumer settles through. `recolor` in `workstream-identity-storage.ts` is the write. |
 | `packages/ui/src/components/appearance-icons.ts` | `APPEARANCE_ICON_COMPONENTS`, the Lucide glyph for every storable key. |
 | `packages/ui/src/components/icon-catalog.tsx` | `IconCatalog`: section tabs over one scrolling grid with a heading per section. Both pickers render their cells through it. |
 | `packages/ui/src/components/appearance-picker.tsx` | `AppearancePicker`: palette, optimistic preview, ordered clicks, and failures, for every surface that has an appearance. The caller supplies the trigger's mark through `renderGlyph` and its accessible name through `label`; nothing else about it differs between a work stream and a Sidekick. |
@@ -164,9 +178,10 @@ until someone picks a hue.
   cannot overwrite a later choice.
 - Omitted fields mean unchanged; null fields use the deterministic ID-based
   default. Older work streams retain their original appearance until edited.
-- A thread's or Breakout's mark goes through `inChannelColor` with
-  `threadChannelColor`'s answer. A new surface that draws one without it shows a
-  colour no other surface does.
+- A thread's or a Breakout's colour has one writer, `recolor`. A new path that
+  sets one some other way is overwritten the next time the thread is marked;
+  a new table whose change can move a thread's colour needs its own trigger in
+  `channel-color-sync.ts`.
 - Every common projection carries the appearance. Dropping it makes identity
   differ between the header, sidebar, and reopening a work stream.
 
@@ -205,33 +220,45 @@ mutation must fail the reopened snapshot assertion. Client control/state tests
 cover the common cache path. The Sidekick's half is proved in the real-workerd
 `automation-directory.test.ts`, which drives `setAppearance` and the effect
 legs and asserts the merge, the refusal, and the value on both directory
-listings. `workstream-open.test.tsx` proves the thread pill moves to its
-Channel's colour once the Space directory lands and keeps its own icon, and that
-the thread and Breakout pickers offer no colour; `app-shell.test.tsx` proves
-search draws threads and Breakouts the same way. Inspect the actual Electron popup in light and dark,
+listings. The Channel colour is proved on real workerd in
+`channel-color-sync.test.ts` (which writes mark a thread and which do not, the
+revision fence, the rows settled with nothing to write, and the Queue consumer
+recolouring a real Main) and `identity-authority.test.ts` (`recolor` keeps the
+icon, commits the projection, and writes nothing on a repeat); the
+`message-to-output-pipeline.test.ts` appearance case proves a client's colour
+is dropped. `workspace-channel-color-migration.test.ts` proves the backfill.
+Inspect the actual Electron popup in light and dark,
 including scrolling, and check another connected window and reopening.
 
-### 2026-10-12 — Threads and Breakouts wear their Channel's colour
+### 2026-10-12 — Threads and Breakouts store their Channel's colour
 
-**What changed:** Every mark of a thread or a Breakout (its title pill, the
-Breakout menu's way back to its thread, search) is drawn in the colour of the
-Channel it sits in, through `inChannelColor` and `threadChannelColor`. The
-thread and Breakout pickers lost their colour half (`colors={false}`).
+**What changed:** A thread and its Breakouts carry their Channel's colour in
+their own stored appearance, written by the server (`channel-color-sync.ts`,
+WorkspaceDO migration 99, identity operation `recolor`). Migration 99 backfills
+every existing thread, overwriting the colours people had chosen. The client's
+colour patch is dropped for a thread or a Breakout and their pickers offer
+icons only.
 
 **Why:** Product call, stated as "for now": after Spaces became Channels and
 Channels became threads, a thread's own colour said nothing about where it
-lived, and a thread in red under a blue Channel read as belonging elsewhere.
+lived. The colour is stored rather than swapped at read time so that every
+reader (the sidebar, search, the access-request marks the server builds, a
+future email) gets it from the one appearance it already reads.
 
-**Rejected:** Rewriting each stored colour to the Channel's. A thread can sit
-in several Channels and move between them, so a stored copy goes stale on every
-move, and undoing it later would need the original values back. Swapping at
-draw time costs nothing and keeps the stored choice for when conversations get
-their own colour again.
+**Rejected:** A first cut swapped the colour on the client at draw time. It
+left server-built marks wrong and put the rule in every surface that draws a
+thread. A read-time swap on the server was also weighed: it keeps the stored
+colours, but every projection point would need to know the rule, and a
+Channel recolour would have to republish each row. Hooking each placement
+path in code was rejected for triggers: the placement writes are many
+(birth, add, remove, move, archive into General, restore, the cutover) and a
+missed one is a thread silently left in the wrong colour.
 
-**Respect:** The access-request screens still draw the stored colour: the
-server builds that mark (`conversationMark`) and the requester's client has no
-Channel to look up. Moving the swap to the server is the follow-up if it
-matters there.
+**Respect:** Undoing this is not a deletion: the original colours are gone.
+Letting conversations choose again means removing the colour drop in
+`applyAppearance` and the triggers, after which a thread keeps its Channel's
+colour until someone picks another. When a thread sits in several Channels its
+colour follows `canonicalChannelSpaceId`, not the Channel it is being read in.
 
 ### 2026-10-01 — One 253-icon catalog in sections, for every surface with an appearance
 
