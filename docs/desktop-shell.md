@@ -59,9 +59,9 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   Activity carry no badge.
 - **One list**, titled with the section's name, with **Search organization**,
   **Import** (Mac app only, into any Channel the person may place threads in),
-  **Restart to update** when one is downloaded, and one action per section:
-  **New channel** on Channels, **New thread** on Threads, **Mark all read** on
-  Activity.
+  **Restart to update** when one is downloaded, and **New channel** on
+  Channels or **Mark all read** on Activity. Threads has no header action: a
+  thread starts from a Channel's composer.
 
 Every row in the three lists is one layout (`RowLayout`): an `IdentityTile`
 (`packages/ui/src/components/identity-tile.tsx`), a name with a time, and a
@@ -93,7 +93,8 @@ opened again. **New channel** names one; every Channel starts
 Organization-wide.
 
 **Threads**: what the person pinned (threads, then breakouts), then every
-thread and breakout they take part in (`GET /navigation/threads`), ordered
+thread and breakout they take part in under **All Threads**
+(`GET /navigation/threads`), ordered
 **Recent** (default), **A–Z** or **Needs attention** (`rally.sidebar-thread-sort`).
 A row is the thread's circle tile with a squircle badge for each Channel it
 sits in (two at most, the room a tile has), its title, its last activity time, and the Channels' names. A
@@ -110,12 +111,7 @@ place of its title (`useNamingSkeleton`). Hovering a row for a second warms
 its thread's socket, and a plain click starts the open-latency measurement
 (`markWorkstreamFeedOpenStarted`); the open thread clicked again starts
 nothing. A thread opened from a desktop link is scrolled into view, loading
-further pages until its row is listed. **New thread** opens the Channel in
-view, or General, whichever the person can start a thread in: a thread is
-started from a Channel's composer and nowhere else (the PRD's non-goal 6).
-The composer takes focus whether or not the Channel was already open: the
-button asks for it in the navigation's state (`focusComposer`), which the
-mounted composer reads.
+further pages until its row is listed.
 
 **Activity**: requests to join waiting on this person (approve or decline in
 place), then what happened to them, grouped Today, Yesterday and by day
@@ -376,6 +372,19 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-12 — Threads loses its New thread button
+
+**What changed:** The Threads header no longer carries a **+**. The composer's
+`focusComposer` navigation state, which only that button set, is gone too. The
+list's heading reads **All Threads** instead of Recent, which also named one
+of its sorts.
+
+**Why:** The product owner asked for it removed. A thread starts from a
+Channel's composer and nowhere else (the PRD's non-goal 6), so the button only
+jumped to a Channel the person could open from the Channels tab. A later
+change that brings it back has to restore a way to focus an already mounted
+composer.
 
 ### 2026-10-12 — A breakout's tile nests its thread and Channel
 
