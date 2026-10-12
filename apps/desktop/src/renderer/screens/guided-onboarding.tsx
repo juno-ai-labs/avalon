@@ -13,7 +13,6 @@ import { PersonalAvatar, personalColor, personalColorInk } from '../components/p
 import { useAppSession } from '../lib/app-session';
 import { accountOnboardingQueryKey } from '../lib/account-onboarding-query';
 import { useShellCapabilities } from '../lib/collaboration-session';
-import { OnboardingIntroduction } from '../components/onboarding-introduction';
 import type { Workspace } from '../lib/types';
 
 const AccountLoadingContext = createContext(false);
@@ -23,10 +22,7 @@ export function useOnboardingAccount(): AccountOnboarding | null { return useCon
 
 export function AccountOnboardingGate({ children }: { children: ReactNode }): React.JSX.Element {
   const { api, session, signOut, updateCurrentUserName, getAccountOnboarding, updateAccountOnboarding } = useAppSession();
-  const { guest, host } = useShellCapabilities();
-  // The browser is reached from the landing page, which already introduced
-  // Rally, so it records the introduction as seen rather than showing it again.
-  const [previewed, setPreviewed] = useState(host === 'browser');
+  const { guest } = useShellCapabilities();
   // Account onboarding and the profile it carries belong to the signed-in
   // account. On a support session that is the Rally staff member, not the
   // person on screen, so none of it is read, shown or written there
@@ -65,15 +61,15 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
     if (profileState.profile.displayName?.trim()) updateCurrentUserName?.(profileState.profile.displayName.trim());
     return () => { delete root.dataset['personalColor']; };
   }, [account.data?.presentation, profileState, session, updateCurrentUserName]);
-  if (!session) return previewed ? <>{children}</> : <OnboardingIntroduction busy={false} error={null} onComplete={() => setPreviewed(true)} />;
+  if (!session) return <>{children}</>;
   // A restored workspace can open while identity-owned details load. Keep the
   // providers in place so a background result does not remount its socket/feed.
-  // Accounts without a workspace still finish their introduction before setup.
+  // Accounts without a workspace still record their introduction before setup.
   if (!session.workspace && !account.data) {
     if (account.error) return <OnboardingPage title="Let's pick up where you left off" footer={<><Button onClick={() => void account.refetch()}>Retry</Button><Button onClick={() => void signOut()}>Sign out</Button></>}><InlineError>{account.error.message}</InlineError></OnboardingPage>;
     return <OnboardingPage title="Opening Rally"><RallyMark /></OnboardingPage>;
   }
-  return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data ?? null}><ProfileEditorContext.Provider value={account.data ? editor : null}><AccountLoadingContext.Provider value={!supportSession && (account.isPending || account.isFetching)}><ConversationAdmissionProvider allowed={guest || supportSession || Boolean(account.data ? !account.data.eligible || account.data.introduced : account.error)}>{!guest && account.data?.eligible && !account.data.introduced ? <PlatformIntroduction previewed={previewed} /> : children}</ConversationAdmissionProvider></AccountLoadingContext.Provider></ProfileEditorContext.Provider></AccountContext.Provider></MemberPresentationContext.Provider>;
+  return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data ?? null}><ProfileEditorContext.Provider value={account.data ? editor : null}><AccountLoadingContext.Provider value={!supportSession && (account.isPending || account.isFetching)}><ConversationAdmissionProvider allowed={guest || supportSession || Boolean(account.data ? !account.data.eligible || account.data.introduced : account.error)}>{!guest && account.data?.eligible && !account.data.introduced ? <RecordIntroduction /> : children}</ConversationAdmissionProvider></AccountLoadingContext.Provider></ProfileEditorContext.Provider></AccountContext.Provider></MemberPresentationContext.Provider>;
 }
 
 export function OnboardingPage({ title, subtitle, children, footer }: { title: string; subtitle?: string | readonly string[]; children: ReactNode; footer?: ReactNode }): React.JSX.Element {
@@ -86,7 +82,9 @@ export function OnboardingPage({ title, subtitle, children, footer }: { title: s
   </main>;
 }
 
-function PlatformIntroduction({ previewed }: { previewed: boolean }): React.JSX.Element {
+// Rally no longer shows introduction screens, but signup completion still
+// waits on `introduced`, so a new account records it on arrival.
+function RecordIntroduction(): React.JSX.Element {
   const account = useOnboardingAccount()!;
   const { updateAccountOnboarding } = useAppSession();
   const queryClient = useQueryClient();
@@ -99,16 +97,17 @@ function PlatformIntroduction({ previewed }: { previewed: boolean }): React.JSX.
       const saved = await updateAccountOnboarding({ expectedRevision: account.revision, introduced: true });
       queryClient.setQueriesData({ queryKey: ['account-onboarding'] }, saved);
       await queryClient.invalidateQueries({ queryKey: ['account-onboarding'] });
-    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not save your progress.'); }
-    finally { setBusy(false); }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not save your progress.');
+      // A revision conflict means another session saved first; Retry needs its revision.
+      await queryClient.invalidateQueries({ queryKey: ['account-onboarding'] });
+    } finally { setBusy(false); }
   }, [account.revision, busy, queryClient, updateAccountOnboarding]);
   const recorded = useRef(false);
   useEffect(() => {
-    if (previewed && !recorded.current) { recorded.current = true; void complete(); }
-  }, [previewed, complete]);
-  const { host } = useShellCapabilities();
-  if (previewed) return <OnboardingPage title={host === 'browser' ? 'Opening Rally' : 'Welcome to Rally'} footer={error ? <Button onClick={() => void complete()}>Retry</Button> : undefined}>{error ? <InlineError>{error}</InlineError> : <RallyMark />}</OnboardingPage>;
-  return <OnboardingIntroduction signedIn onComplete={() => void complete()} busy={busy} error={error} />;
+    if (!recorded.current) { recorded.current = true; void complete(); }
+  }, [complete]);
+  return <OnboardingPage title="Opening Rally" footer={error ? <Button onClick={() => void complete()}>Retry</Button> : undefined}>{error ? <InlineError>{error}</InlineError> : <RallyMark />}</OnboardingPage>;
 }
 
 export function PersonalSetup({ onSaved, variant = 'onboarding', profileDetails }: { onSaved?: () => Promise<void>; variant?: 'onboarding' | 'settings'; profileDetails?: (name: string) => ReactNode }): React.JSX.Element {

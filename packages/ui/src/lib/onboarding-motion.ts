@@ -15,7 +15,4 @@ export function onboardingSpring(stiffness: number, damping: number): { duration
   });
   return { duration, easing: `linear(${points.join(', ')})` };
 }
-export const onboardingMotion = {
-  standard: onboardingSpring(175, 26), slow: onboardingSpring(100, 20), bounce: onboardingSpring(175, 18.5),
-  typeInterval: 35, typeDelay: 700, demoBeat: 900, jobsBeat: 800,
-} as const;
+export const onboardingMotion = { standard: onboardingSpring(175, 26) } as const;
