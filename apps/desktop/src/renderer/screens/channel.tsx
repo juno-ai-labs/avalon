@@ -1,5 +1,6 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import type { ChannelStats, ChannelStatsList, SpaceSummary } from '@rally/contracts';
+import type { ChannelStats, ChannelStatsList, SpaceSummary, WorkstreamAppearancePatch } from '@rally/contracts';
+import { AppearancePicker } from '@rally/ui/components/appearance-picker';
 import { BreakoutChipRow, type BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { ChannelContainerMenu } from '@rally/ui/components/conversation-menus';
 import type { SidekickRow } from '@rally/ui/components/sidekick-section';
@@ -17,6 +18,7 @@ import { Button, EmptyState, InlineError, LoadingState, Modal } from '../compone
 import { RelativeTime } from '../components/relative-time';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
+import { copySpaceLink } from '../lib/copy-workstream-link';
 import { ChannelPaneContextValue, channelRoute, threadRoute, type ChannelPaneContext } from '../lib/navigation-routes';
 import { PaneVisibility } from '../lib/pane-visibility';
 import { desktopBridge } from '../lib/platform';
@@ -381,7 +383,7 @@ function ChannelHeader({ members, space, workspace }: {
   space: SpaceSummary;
   workspace: Workspace;
 }): React.JSX.Element {
-  const { api } = useAppSession();
+  const { api, session } = useAppSession();
   const queryClient = useQueryClient();
   const [failure, setFailure] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -442,6 +444,26 @@ function ChannelHeader({ members, space, workspace }: {
       setFailure(spaceFailureSentence(cause, 'This channel couldn’t be archived.'));
     }
   };
+  // Each pick saves the whole presentation, so picks run one after another and
+  // each starts from the one before it: an icon then a colour chosen before the
+  // first save answers must not send the old icon back with the new colour.
+  const presentationWrites = useRef<{ queue: Promise<void>; latest: Pick<SpaceSummary, 'iconKey' | 'colorKey'> | null }>({ queue: Promise.resolve(), latest: null });
+  const changeAppearance = (patch: WorkstreamAppearancePatch): Promise<void> => {
+    const writes = presentationWrites.current;
+    const base = writes.latest ?? { iconKey: space.iconKey, colorKey: space.colorKey };
+    const next = { iconKey: patch.icon ?? base.iconKey, colorKey: patch.color ?? base.colorKey };
+    writes.latest = next;
+    const write = writes.queue.then(async () => {
+      stored(await api!.updateSpacePresentation(space.id, { name: space.name, ...next }));
+    }).finally(() => { if (writes.latest === next) writes.latest = null; });
+    writes.queue = write.catch(() => undefined);
+    return write;
+  };
+  const copyLink = session?.workspace ? (): void => {
+    const target = session.workspace!;
+    void copySpaceLink({ region: target.region, workspaceId: target.id }, space.id)
+      .catch(() => setFailure('This channel’s link couldn’t be copied.'));
+  } : undefined;
   const pinned = pinnedChannels.has(space.id);
   const recommended = new Set(space.defaultSidekickIds);
   const sidekicks: SidekickRow[] = (library.data ?? [])
@@ -457,6 +479,19 @@ function ChannelHeader({ members, space, workspace }: {
   const level: TitlePillLevel = {
     key: `channel-container:${space.id}`,
     icon: <SpaceIcon size={18} space={space} />,
+    ...(editable && api ? {
+      iconAction: <AppearancePicker
+        appearance={{ icon: space.iconKey, color: space.colorKey }}
+        id={space.id}
+        key={space.id}
+        label={`Change ${space.name} icon and color`}
+        onChange={changeAppearance}
+        renderGlyph={(appearance) => <SpaceIcon
+          size={18}
+          space={{ iconKey: appearance.icon ?? space.iconKey, colorKey: appearance.color ?? space.colorKey }}
+        />}
+      />,
+    } : {}),
     title: space.name,
     label: `Channel menu: ${space.name}`,
     menu: <ChannelContainerMenu
@@ -477,6 +512,7 @@ function ChannelHeader({ members, space, workspace }: {
       channel={{ name: space.name, scope: space.scope }}
       members={roster}
       onArchive={editable && !general ? () => setArchiving('confirm') : undefined}
+      onCopyLink={copyLink}
       onOpenSidekick={(id) => void desktopBridge().openSidekicks(id)}
       onRename={editable && !general ? () => setRenaming(space.name) : undefined}
       people={editable ? {

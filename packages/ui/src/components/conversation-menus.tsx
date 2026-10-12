@@ -616,8 +616,9 @@ export function ChannelMenu({
 
 /**
  * A Channel's title-pill menu, for the Channel screen: a Channel holds threads
- * rather than a conversation, so its menu is its people and its Sidekicks, and
- * the settings a Channel has (private or Organization-wide, pinned).
+ * rather than a conversation, so its menu is its people and its Sidekicks, with
+ * the settings a Channel has (private or Organization-wide, pinned) and its
+ * archive behind **More**, the same place a thread keeps them.
  *
  * The Sidekicks level lists the Sidekicks the Channel recommends to every
  * thread started in it (the stored Space's Sidekick defaults), which is where
@@ -660,21 +661,25 @@ export function ChannelContainerMenu({
   if (nav.view?.key === 'sidekicks') {
     return <SidekicksView addSidekick={addSidekick} failure={sidekickFailure} items={sidekicks} onOpen={onOpenSidekick} />;
   }
+  if (nav.view?.key === 'more') {
+    return <>
+      {privacy && <SwitchRow checked={privacy.on} disabled={privacy.disabled} icon={<IconLock aria-hidden="true" size={16} stroke={1.8} />} label="Private to its members" onChange={privacy.onChange} />}
+      {pinned && <SwitchRow checked={pinned.on} icon={<IconPin aria-hidden="true" size={16} stroke={1.8} />} label="Pinned in my sidebar" onChange={pinned.onChange} />}
+      {onArchive && <>
+        {(privacy || pinned) && <TitleMenuSeparator />}
+        <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={onArchive}>Archive channel</TitleMenuItem>
+      </>}
+    </>;
+  }
   return <>
     <ActionTiles>
       <ActionTile disabled={!people} icon={<IconUserPlus aria-hidden="true" size={20} stroke={1.6} />} label="Add people" onSelect={openLevel(nav, PEOPLE_VIEW)} />
       {onRename && <ActionTile icon={<IconPencil aria-hidden="true" size={20} stroke={1.6} />} label="Rename" onSelect={onRename} />}
       {onCopyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={onCopyLink} />}
+      {(privacy || pinned || onArchive) && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
     </ActionTiles>
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(members.length, channel.scope, false)} view={PEOPLE_VIEW} />
     <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
-    {(privacy || pinned) && <TitleMenuSeparator />}
-    {privacy && <SwitchRow checked={privacy.on} disabled={privacy.disabled} icon={<IconLock aria-hidden="true" size={16} stroke={1.8} />} label="Private to its members" onChange={privacy.onChange} />}
-    {pinned && <SwitchRow checked={pinned.on} icon={<IconPin aria-hidden="true" size={16} stroke={1.8} />} label="Pinned in my sidebar" onChange={pinned.onChange} />}
-    {onArchive && <>
-      <TitleMenuSeparator />
-      <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={onArchive}>Archive channel</TitleMenuItem>
-    </>}
   </>;
 }
 

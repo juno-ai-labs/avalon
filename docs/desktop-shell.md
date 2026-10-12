@@ -231,11 +231,14 @@ from; reduced motion turns both off.
   names what holds it public), Import updates, host extras, the thread's artifacts, and
   **Archive thread** last.
 - **Channel menu** (`ChannelContainerMenu`, on the Channel screen): tiles for
-  Add people, Rename and Copy link; People (the Channel's members, with
-  **Remove from channel** or **Leave the channel**) and Sidekicks (the
-  Channel's Sidekick defaults, each with **Remove from this channel**); then
-  **Private to its members**, **Pinned in my sidebar**, and **Archive channel**
-  last, which asks first.
+  Add people, Rename, Copy link (the Channel's `/s/` address) and More; People
+  (the Channel's members, with **Remove from channel** or **Leave the
+  channel**) and Sidekicks (the Channel's Sidekick defaults, each with
+  **Remove from this channel**). More is **Private to its members**, **Pinned
+  in my sidebar**, and **Archive channel** last, which asks first. The pill's
+  icon is its own control for whoever may edit the Channel: it opens the
+  shared icon-and-colour picker, and each pick saves the whole presentation
+  through `PATCH /spaces/:id`, one after another, each starting from the last.
 - **Breakout menu:** root header is the thread it belongs to (with **Show in
   thread**) and the message it started from. People (inviting to the
   Breakout alone) and Sidekicks as above;
@@ -372,6 +375,21 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-12 — The Channel menu gains Copy link and More; its icon picks its look
+
+**What changed:** The Channel menu's tiles are now Add people, Rename, Copy
+link and More, the same four a thread's menu has. Its two switches and
+**Archive channel** moved from the root into More. The Channel pill's icon
+opens the icon-and-colour picker in place, as a thread's icon already did.
+
+**Why:** The product owner asked for the Channel and thread menus to match,
+and for a Channel's look to be changed from its mark. A space's icon and colour
+are not a patch on the server: `PATCH /spaces/:id` takes name, icon and colour
+together. So the screen queues picks and builds each from the one before; two
+picks made before the first save answers would otherwise send the old icon back
+with the new colour. A change that moves the presentation to a patch endpoint
+can drop the queue.
 
 ### 2026-10-12 — Threads loses its New thread button
 
