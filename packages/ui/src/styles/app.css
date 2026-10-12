@@ -8657,6 +8657,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   letter-spacing: 0;
   width: 18px;
 }
+/* A badge on a badge's corner: the same ring, scaled down. */
+.identity-tile-badge.is-nested { bottom: -6px; height: 15px; width: 15px; }
+.identity-tile-badge.is-nested > .identity-tile-badge-fill { font-size: 5.5px; height: 12px; width: 12px; }
 
 /* Activity: one row per thing that happened to this person. */
 .activity-row { align-items: flex-start; padding: 9px 10px; }

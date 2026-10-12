@@ -30,11 +30,30 @@ export interface TileBadge {
   icon?: LucideIcon | undefined;
   /** Text in place of a symbol, such as a person's initials. */
   text?: string | undefined;
+  /**
+   * A smaller badge on this badge's own corner, for a chain of containers: a
+   * breakout's tile carries its thread, and the thread carries its Channel.
+   */
+  badge?: TileBadge | undefined;
+}
+
+/** A badge in its ring, and the badge nested on its corner, if any. */
+function Badge({ badge, nested = false, right }: { badge: TileBadge; nested?: boolean; right: number }): React.JSX.Element {
+  return <span
+    className={clsx('identity-tile-badge', `is-${badge.shape}`, nested && 'is-nested')}
+    style={{ right }}
+  >
+    <span className={clsx('identity-tile-badge-fill', `is-${badge.shape}`)} style={{ background: badge.fill, color: badge.ink }}>
+      {badge.icon ? <badge.icon size={nested ? 7 : 10} strokeWidth={2.2} /> : badge.text}
+    </span>
+    {badge.badge && <Badge badge={badge.badge} nested right={-7} />}
+  </span>;
 }
 
 /**
  * A shaped, tinted tile with one symbol in it, and optionally badges on its
- * corner: a thread's tile carries the Channels it sits in, an Activity row's
+ * corner: a thread's tile carries the Channels it sits in, a breakout's carries
+ * its thread with the thread's Channel nested on that, and an Activity row's
  * carries who acted.
  *
  * Each badge sits in a ring painted `--tile-ring`, which the surface sets to
@@ -59,15 +78,7 @@ export function IdentityTile({ badges, className, icon: Icon, ink, shape, size =
     <span className={clsx('identity-tile-shape', `is-${shape}`)} style={{ background: tint, color: ink }}>
       <Icon size={Math.round(size * 0.47)} strokeWidth={1.8} />
     </span>
-    {badges?.slice(0, BADGE_ROOM).map((badge, index) => <span
-      className={clsx('identity-tile-badge', `is-${badge.shape}`)}
-      key={badge.key}
-      style={{ right: -6 + index * 14 }}
-    >
-      <span className={clsx('identity-tile-badge-fill', `is-${badge.shape}`)} style={{ background: badge.fill, color: badge.ink }}>
-        {badge.icon ? <badge.icon size={10} strokeWidth={2.2} /> : badge.text}
-      </span>
-    </span>)}
+    {badges?.slice(0, BADGE_ROOM).map((badge, index) => <Badge badge={badge} key={badge.key} right={-6 + index * 14} />)}
   </span>;
 }
 

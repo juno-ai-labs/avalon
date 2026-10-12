@@ -68,7 +68,8 @@ Every row in the three lists is one layout (`RowLayout`): an `IdentityTile`
 second line with the unread dot at its end. A tile is a shape in the object's
 pastel pair with its glyph, and can carry small badges on its corner, each in
 a ring painted the row's own background (`--tile-ring`) so it reads as cut out
-of the tile on a plain, hovered or selected row.
+of the tile on a plain, hovered or selected row. A badge can carry one smaller
+badge on its own corner, for a chain of containers.
 
 **Channels**: what the person pinned, in their order (drag to reorder), then
 every other Channel they may see, ordered **A–Z** (default), **Recent** (newest
@@ -94,8 +95,10 @@ Organization-wide.
 thread and breakout they take part in (`GET /navigation/threads`), ordered
 **Recent** (default), **A–Z** or **Needs attention** (`rally.sidebar-thread-sort`).
 A row is the thread's circle tile with a squircle badge for each Channel it
-sits in (two at most, the room a tile has), its title, its last activity time, and the Channels' names; a
-breakout's second line starts `↳` and its thread's name. A row is unread
+sits in (two at most, the room a tile has), its title, its last activity time, and the Channels' names. A
+breakout's tile carries its thread's circle badge instead, with the thread's
+first Channel nested on that badge's corner, and its second line starts `↳`
+and its thread's name. A row is unread
 (bold title, the time and a dot in the unread colour) when it has new
 messages, mentions the person, or was never opened, the three the Threads
 count is made of; what the run is doing is the thread's own header's to show.
@@ -372,6 +375,26 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-12 — A breakout's tile nests its thread and Channel
+
+**What changed:** A breakout row's tile is badged with its thread, and the
+thread badge carries the Channel on its own corner. `TileBadge` gained an
+optional nested `badge`, drawn 15px in the same ring.
+
+**Why:** The product owner asked for nested badges on breakouts. With
+Channel badges alone, a breakout's tile looked like a thread's, and only the
+second line said where it sat.
+
+**Considered and rejected:** The thread and Channel side by side as two
+corner badges: that reads as two containers of the breakout, not one inside
+the other. Nesting more than one badge per badge: one level is what the chain
+needs, and the 15px badge has no room for a second.
+
+**Consequences:** A breakout tile names one Channel, its thread's first; the
+second line still names them all. A deeper chain would shrink past legibility,
+so a new nesting level needs a new size, not another recursion.
+
 
 ### 2026-10-12 — Shape says Channel or Thread; rows carry tiles and times
 
