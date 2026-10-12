@@ -42,6 +42,31 @@ on connect, read by the routing classifier, and held in a column that CHECKs
 4,000. The message itself is not shortened anywhere; it is the work stream's
 first message, stored whole.
 
+### The first summary
+
+That first line is a stand-in, and for a long request a poor one: it is how the
+work was asked for, not what it is, and a Channel's feed shows it under the
+thread's name. So the first naming pass
+([`workstream-naming.md`](workstream-naming.md)) asks for a summary in the same
+model call as the name and icon, and puts it in place of the derived line:
+one or two plain sentences, at most `MAXIMUM_DESCRIPTION_CHARACTERS`, keeping
+the people, documents and constraints the request names. A request that is
+already that short comes back as written, and nothing is stored.
+
+- **Only a derived description is summarized.** The creation service passes
+  `provisionalDescription` to `nameWorkstream` only when the description's
+  source is `derived`; one a person wrote is theirs.
+- **The write is `redescribe`, the loop's own compare-and-swap,** guarded on the
+  derived line. A person, or the loop, who replaced it while the model was
+  answering wins. It commits the directory projection, so the feed moves to the
+  summary without an event of its own.
+- **A summary that fails is no summary.** Missing, empty, or over the limit,
+  it is dropped and the derived line stands; the name and icon do not depend
+  on it. Over the limit is dropped rather than cut, because a summary cut
+  mid-sentence reads worse than the request.
+- **Only the composer's creation path asks today.** Slack-opened threads and
+  private Breakouts are named without a summary.
+
 Then the work stream is used, and two things drift apart:
 
 - **The purpose actually changed.** A work stream opened to chase one bug becomes
@@ -326,7 +351,31 @@ Four log events are emitted:
 | `workstream_description_rewritten` | A description was replaced. |
 | `workstream_description_rewrite_rejected` | A proposal was refused by a guard. A run of these on one `rejection_code` is the signal that either the guard or the model's routing needs attention. |
 | `workstream_description_change_below_threshold` | Every gate cleared except novelty. Carries the novel-term count, which is the only source of data for tuning that threshold: a rewrite the loop is deferring shows up as a run of these on one work stream, with the count sitting just below the floor. |
+| `workstream_description_summarized` | The first naming pass offered a summary. `outcome` is `applied`, or `superseded` when the derived line had already been replaced. |
 | `workstream_description_outcome_superseded` | An evaluation finished after a person had edited the description, so its decision was discarded. Carries the decision it would have written. |
+
+### 2026-10-12 — The first naming pass summarizes the request
+
+**What changed:** A thread started from the composer gets its description
+replaced by a one-to-two-sentence summary of the request, written by the
+first naming pass in the call it already makes. See
+[The first summary](#the-first-summary).
+
+**Why:** The Channel feed now shows the description under each thread's name,
+and the product owner asked whether it was a summary. It was not: the
+derived first line was the only description most threads ever had, because
+the loop below only rewrites after ten messages and real drift, which a
+typical thread never reaches.
+
+**Considered and rejected:** Letting this loop make its first pass without
+its volume gates. That is a second model call per thread, after the first
+run rather than a moment after creation, and it asks a judgment model
+built to say "keep" to write from scratch.
+
+**Consequences:** The description every run starts from is now a model's
+summary rather than the person's first line. The opening message is still
+the first message, stored whole, so no run loses the request. The summary is
+`derived`, so this loop may still rewrite it later.
 
 ### 2026-09-04 — Keep descriptions as context, not navigation copy
 

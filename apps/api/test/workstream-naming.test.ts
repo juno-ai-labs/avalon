@@ -861,6 +861,92 @@ describe("work-stream naming", () => {
 });
 
 /** Replaces the transcript with `count` alternating messages. */
+describe("first-pass summary", () => {
+  const summary = "An email to Danny at Mucker with the Avalon download link, asking him to add Alex and Katherine to the Tuesday call.";
+
+  it("asks for a summary beside the name and puts it in place of the derived description", async () => {
+    const database = seededDatabase();
+    const requests: Array<Record<string, unknown>> = [];
+    stubOpenRouter(requests, "Danny download link", undefined, "megaphone", summary);
+    const env = environment(database, []);
+
+    await nameWorkstream(env, {
+      workspaceId,
+      workstreamId,
+      objective,
+      openingMessage: objective,
+      provisionalTitle,
+      provisionalDescription: objective,
+      userId,
+    });
+
+    expect(requests).toHaveLength(1);
+    const schema = (requests[0]?.response_format as { json_schema: { schema: { required: string[] } } }).json_schema.schema;
+    expect(schema.required).toEqual(["title", "icon", "summary"]);
+    expect(description(database)).toBe(summary);
+    expect(title(database)).toBe("Danny download link");
+  });
+
+  it("leaves a description somebody replaced while the model was answering", async () => {
+    const database = seededDatabase();
+    stubOpenRouter([], "Danny download link", () => {
+      objectStoreOf(database).prepare("UPDATE workstream SET description = ? WHERE id = 1").run("Intro Danny to the Tuesday call.");
+    }, "megaphone", summary);
+    const env = environment(database, []);
+
+    await nameWorkstream(env, {
+      workspaceId,
+      workstreamId,
+      objective,
+      openingMessage: objective,
+      provisionalTitle,
+      provisionalDescription: objective,
+      userId,
+    });
+
+    expect(description(database)).toBe("Intro Danny to the Tuesday call.");
+  });
+
+  it("asks for no summary and keeps the description where a person wrote it", async () => {
+    const database = seededDatabase();
+    const requests: Array<Record<string, unknown>> = [];
+    stubOpenRouter(requests, "Danny download link", undefined, "megaphone", summary);
+    const env = environment(database, []);
+
+    await nameWorkstream(env, {
+      workspaceId,
+      workstreamId,
+      objective,
+      openingMessage: objective,
+      provisionalTitle,
+      userId,
+    });
+
+    const schema = (requests[0]?.response_format as { json_schema: { schema: { required: string[] } } }).json_schema.schema;
+    expect(schema.required).toEqual(["title", "icon"]);
+    expect(description(database)).toBe(objective);
+  });
+
+  it("keeps the derived description when the summary is too long to stand in for it", async () => {
+    const database = seededDatabase();
+    stubOpenRouter([], "Danny download link", undefined, "megaphone", "word ".repeat(80));
+    const env = environment(database, []);
+
+    await nameWorkstream(env, {
+      workspaceId,
+      workstreamId,
+      objective,
+      openingMessage: objective,
+      provisionalTitle,
+      provisionalDescription: objective,
+      userId,
+    });
+
+    expect(description(database)).toBe(objective);
+    expect(title(database)).toBe("Danny download link");
+  });
+});
+
 function seedMessages(database: DatabaseSync, count: number): void {
   const objectStore = objectStoreOf(database);
   objectStore.prepare("DELETE FROM participant_transcript_turns WHERE entry_kind = 'conversation'").run();
@@ -886,6 +972,10 @@ function seedMessages(database: DatabaseSync, count: number): void {
       createdAt: at,
     });
   }
+}
+
+function description(database: DatabaseSync): string {
+  return workstreamObjectRootRow<{ description: string }>(objectStoreOf(database), "description").description;
 }
 
 function workstreamRow(
@@ -920,12 +1010,17 @@ function stubOpenRouter(
   generatedTitle: string,
   beforeResponding?: () => void,
   generatedIcon: unknown = "megaphone",
+  generatedSummary?: string,
 ): void {
   vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
     requests.push(JSON.parse(String(init.body)) as Record<string, unknown>);
     beforeResponding?.();
     return new Response(JSON.stringify({
-      choices: [{ message: { content: JSON.stringify({ title: generatedTitle, icon: generatedIcon }) } }],
+      choices: [{ message: { content: JSON.stringify({
+        title: generatedTitle,
+        icon: generatedIcon,
+        ...(generatedSummary === undefined ? {} : { summary: generatedSummary }),
+      }) } }],
     }), { status: 200, headers: { "content-type": "application/json" } });
   }));
 }
