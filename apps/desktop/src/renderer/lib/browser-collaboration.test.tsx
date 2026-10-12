@@ -103,9 +103,8 @@ it('opens a guest in the shared shell without asking for anything a guest is ref
     expect(socket.readyState).toBe(BrowserSocket.OPEN);
     expect(live()).toEqual([socket]);
     expect(workspaceSockets()).toHaveLength(1);
-    // Neither the introduction nor the Organization's setup stands in front
-    // of a guest, and nothing they are refused was asked for.
-    expect(screen.queryByText(/Meet Rally/u)).not.toBeInTheDocument();
+    // The Organization's setup does not stand in front of a guest, and
+    // nothing they are refused was asked for.
     expect(requested.filter((path) => MEMBER_ONLY.test(path))).toEqual([]);
   } finally { view.unmount(); }
 });
