@@ -84,6 +84,17 @@ answer is applied, so an older response cannot snap the list back. A pinned
 row travels into **Pinned** rather than reappearing there, and a drag resolves
 its target by layout; [`list-motion.md`](list-motion.md) owns both.
 
+The Pinned part is always drawn, empty or not, because it is also where a row
+is dragged to pin it. Empty, it reads **Move a thread here to pin it** (or
+**channel**), and it lights up in the accent while an unpinned row is being
+dragged. Over the section, a faded copy of the row holds open the slot it
+would take (`layoutInsertIndex`). Letting go writes the pin, which the server
+appends, then saves the kind's order with the row in that slot unless the slot
+was the end. Until the pin list holds the row, it stays drawn in Pinned, so it
+does not bounce back to its list while the write is in flight. A failed write
+puts it back and says why, as a menu pin does. Dragging is pointer-only; the
+menu's **Pin** is the keyboard path.
+
 ### Older desktops' per-Space pins
 
 A desktop from before the redesign pins a thread in one Space:
@@ -330,6 +341,24 @@ Space should inherit an Organization-wide pin when a Channel has multiple
 placements, so the migration intentionally clears all existing pins.
 
 ## Changelog
+
+### 2026-10-12 — Dragging a row into Pinned pins it again
+
+**What changed:** The Pinned part of the Threads and Channels tabs is always
+drawn, with an empty-state drop area, and an unpinned row dragged into it is
+pinned at the slot it is dropped in.
+
+**Why:** The old sidebar had this, and the navigation redesign dropped it
+without a decision in the PRD: with nothing pinned there was no Pinned section
+at all, so nothing on screen said pinning existed.
+
+**Considered and rejected:** A server call that pins at a position. The
+existing append plus `PUT /navigation/pins` gives the same result with no
+API change, at the cost of a second write when the slot is not the end.
+
+**Consequences:** A drop is two writes, and only the newest write's answer is
+applied, so a drop made while an earlier pin write is in flight takes the
+order the later write saves.
 
 ### 2026-10-10 — One pin table for threads, Channels and breakouts
 
