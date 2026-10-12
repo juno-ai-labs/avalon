@@ -80,8 +80,15 @@ switch, writes one pin. A drag inside a Pinned part moves the row under the
 pointer and saves the kind's whole order on drop (`PUT /navigation/pins`). A
 pin or reorder that did not save leaves a line above the open tab saying so,
 and the list keeps what the server answered last. Only the newest write's
-answer is applied, so an older response cannot snap the list back. Rows do not
-animate between sections; [`list-motion.md`](list-motion.md) records why.
+answer is applied, so an older response cannot snap the list back. A pinned
+row travels into **Pinned** rather than reappearing there, and a drag resolves
+its target by layout; [`list-motion.md`](list-motion.md) owns both.
+
+The Pinned part is always drawn, because it is also where an unpinned row is
+dragged to pin it. A drop is the append the server always does, then
+`PUT /navigation/pins` with the row in the slot it was dropped in; a newer pin
+write skips that second step, so an older drop cannot save its order over it.
+A landed row stays in Pinned until the pin list holds it.
 
 ### Older desktops' per-Space pins
 
@@ -329,6 +336,22 @@ Space should inherit an Organization-wide pin when a Channel has multiple
 placements, so the migration intentionally clears all existing pins.
 
 ## Changelog
+
+### 2026-10-12 — Dragging a row into Pinned pins it again
+
+**What changed:** Pinned is always drawn, and an unpinned row dragged into it
+is pinned at the slot it is dropped in.
+
+**Why:** The redesign dropped this without a decision in the PRD; with nothing
+pinned, nothing on screen said pinning existed.
+
+**Considered and rejected:** A pin-at-position call. Append plus
+`PUT /navigation/pins` does the same with no API change.
+
+**Consequences:** A drop is two writes. The second is skipped when a newer pin
+write has started (`latestPinWrite`), so it cannot overwrite that write's order.
+
+Shipped in [#1197](https://github.com/juno-ai-labs/avalon/pull/1197).
 
 ### 2026-10-10 — One pin table for threads, Channels and breakouts
 
