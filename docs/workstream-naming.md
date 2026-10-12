@@ -95,6 +95,15 @@ title and a `settled` one render identically — and the next run tries again. T
 one exception is a row still in `naming`: that is a first pass that never
 finished, and its promise is the one that has to be kept.
 
+### The summary asked for on a first pass
+
+When creation derived the description from the opening message, the first
+pass also asks for a summary of the request, with its own schema
+(`nameWithSummaryJsonSchema`) so the other passes do not pay for one, and
+writes it through `redescribe`.
+[`workstream-descriptions.md`](workstream-descriptions.md#the-first-summary)
+owns the rules.
+
 ### The shape of a generated name
 
 Two to four words in sentence case, thirty characters or less. The prompt asks

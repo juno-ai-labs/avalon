@@ -15,6 +15,7 @@ import { logStructuredEvent } from "../observability/logger";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { publishWorkstreamEvent } from "./integrations";
 import { runStructuredInference } from "./structured-inference";
+import { MAXIMUM_DESCRIPTION_CHARACTERS } from "./workstream-description-service";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 
 /**
@@ -77,6 +78,18 @@ const nameJsonSchema = {
 };
 
 /**
+ * The same request with a summary beside the name, for the first pass over a
+ * description derived from the opening message. A separate schema rather than
+ * an optional field: under `strict: true` every property is required, and the
+ * passes that write no description should not pay for one.
+ */
+const nameWithSummaryJsonSchema = {
+  ...nameJsonSchema,
+  properties: { ...nameJsonSchema.properties, summary: { type: "string" } },
+  required: [...nameJsonSchema.required, "summary"],
+};
+
+/**
  * The title a work stream carries between being created and being named.
  *
  * A model call cannot sit in the creation path — the person who typed the
@@ -109,6 +122,13 @@ export interface WorkstreamNamingInput {
   provisionalTitle: string;
   /** The creator, where one exists — a rollout bucketing attribute. */
   userId?: string | undefined;
+  /**
+   * The description creation derived from the opening message, when it did.
+   * The pass then asks for a summary in the same call and puts it in place of
+   * this text, unless something else has replaced it first. Omitted where a
+   * person wrote the description, which is theirs to keep.
+   */
+  provisionalDescription?: string | undefined;
 }
 
 /**
@@ -130,6 +150,7 @@ export async function nameWorkstream(env: Env, input: WorkstreamNamingInput): Pr
       objective: input.objective,
       openingMessage: input.openingMessage,
       ...(input.useConversationContext ? { recentMessages: await loadNamingContext(env, input.workspaceId, input.workstreamId, input.substreamId) } : {}),
+      summarize: input.provisionalDescription !== undefined,
     });
     // Advanced either way. A work stream whose naming failed keeps its
     // provisional title, and clients waiting on the name are told to stop
@@ -140,9 +161,52 @@ export async function nameWorkstream(env: Env, input: WorkstreamNamingInput): Pr
       substreamId: input.substreamId,
       from: "naming",
       to: "automatic",
-      ...generated,
+      title: generated.title,
+      icon: generated.icon,
       standingTitle: input.provisionalTitle,
     });
+    if (input.provisionalDescription !== undefined && generated.summary !== null) {
+      await summarizeDescription(env, {
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        substreamId: input.substreamId,
+        summary: generated.summary,
+        provisionalDescription: input.provisionalDescription,
+      });
+    }
+  });
+}
+
+/**
+ * Put the first pass's summary in place of the description creation derived,
+ * if that description still stands.
+ *
+ * The same compare-and-swap the description loop writes through: a person, or
+ * the loop, who replaced the description while the model was answering wins.
+ * The write commits the directory projection with it, so the Channel's feed and
+ * the sidebar move to the summary without a separate event.
+ */
+async function summarizeDescription(env: Env, input: {
+  workspaceId: string;
+  workstreamId: string;
+  substreamId?: string | undefined;
+  summary: string;
+  provisionalDescription: string;
+}): Promise<void> {
+  if (input.summary === input.provisionalDescription) return;
+  const result = await createIdentityObjectPort(
+    env, input.workspaceId, input.workstreamId, undefined, input.substreamId,
+  ).redescribe({
+    description: input.summary,
+    expectedDescription: input.provisionalDescription,
+    now: Date.now(),
+  });
+  logStructuredEvent(env, "info", "workstream_description_summarized", {
+    workspace_id: input.workspaceId,
+    workstream_id: input.workstreamId,
+    outcome: result.outcome,
+    summary_length: input.summary.length,
+    provisional_length: input.provisionalDescription.length,
   });
 }
 
@@ -321,7 +385,8 @@ export async function refreshWorkstreamName(env: Env, input: {
       substreamId: input.substreamId,
       from: row.title_status,
       to: generated.title === null ? "automatic" : "settled",
-      ...generated,
+      title: generated.title,
+      icon: generated.icon,
       standingTitle: row.title,
     });
   });
@@ -352,13 +417,15 @@ async function loadNamingContext(
   }));
 }
 
-/** What one pass got out of the model: either half may be missing. */
+/** What one pass got out of the model: any part may be missing. */
 interface GeneratedName {
   title: string | null;
   icon: WorkstreamIconKey | null;
+  /** Only when the pass asked for one; see `nameWithSummaryJsonSchema`. */
+  summary: string | null;
 }
 
-const NOTHING_GENERATED: GeneratedName = { title: null, icon: null };
+const NOTHING_GENERATED: GeneratedName = { title: null, icon: null, summary: null };
 
 /**
  * Ask the naming agent for a name and an icon, or for nothing usable.
@@ -392,6 +459,8 @@ async function generateName(env: Env, input: {
   recentMessages?: WorkstreamNameContextMessage[];
   /** The caller writes no name, so the icon stands without one. */
   iconOnly?: boolean;
+  /** Ask for a summary of the request beside the name. */
+  summarize?: boolean;
 }): Promise<GeneratedName> {
   if (!env.OPENROUTER_API_KEY) return NOTHING_GENERATED;
   try {
@@ -407,9 +476,10 @@ async function generateName(env: Env, input: {
         objective: input.objective,
         ...(input.openingMessage.trim() ? { openingMessage: input.openingMessage } : {}),
         ...(input.recentMessages?.length ? { recentMessages: input.recentMessages } : {}),
+        ...(input.summarize ? { summarize: true } : {}),
       }),
       schemaName: "workstream_name",
-      jsonSchema: nameJsonSchema,
+      jsonSchema: input.summarize ? nameWithSummaryJsonSchema : nameJsonSchema,
       parse: (value) => WorkstreamNameResultSchema.parse(value),
       reasoningEffort: "none",
     });
@@ -420,8 +490,13 @@ async function generateName(env: Env, input: {
     // anyway would spend the one icon a work stream gets on the pass that
     // failed. The icon pass is the exception: it writes no name, so a name
     // that normalized away says nothing about the icon beside it.
-    if (input.iconOnly) return { title: null, icon: result.icon ?? null };
-    return title === null ? NOTHING_GENERATED : { title, icon: result.icon ?? null };
+    if (input.iconOnly) return { title: null, icon: result.icon ?? null, summary: null };
+    if (title === null) return NOTHING_GENERATED;
+    return {
+      title,
+      icon: result.icon ?? null,
+      summary: input.summarize ? normalizeGeneratedSummary(result.summary ?? "") : null,
+    };
   } catch (error) {
     logStructuredEvent(env, "warn", "workstream_naming_failed", {
       workspace_id: input.workspaceId,
@@ -529,6 +604,17 @@ export function normalizeGeneratedTitle(value: string): string | null {
   );
   if (shortened.length === 0) return null;
   return shortened;
+}
+
+/**
+ * Reduce a model's summary to the description it becomes, or `null` to keep
+ * the one in force. Over the description loop's length is dropped rather than
+ * cut: a summary cut mid-sentence reads worse than the request it replaces.
+ */
+export function normalizeGeneratedSummary(value: string): string | null {
+  const collapsed = normalizeModelText(value).replace(/\s+/gu, " ").trim();
+  if (collapsed.length === 0 || collapsed.length > MAXIMUM_DESCRIPTION_CHARACTERS) return null;
+  return collapsed;
 }
 
 function trimTrailing(value: string): string {

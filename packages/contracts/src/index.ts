@@ -3709,10 +3709,15 @@ export const WORKSTREAM_NAME_RESULT_MAX_LENGTH = 80;
  * describe the same thing, but the name is the load-bearing half — it is on
  * screen behind a skeleton — and an icon a provider spelled wrong must not cost
  * the work stream its name as well.
+ *
+ * The summary, asked for only on a first pass over a description derived from
+ * the opening message, falls back the same way: a missing or malformed one
+ * leaves that description standing and costs nothing else.
  */
 export const WorkstreamNameResultSchema = z.object({
   title: z.string().trim().min(1).max(WORKSTREAM_NAME_RESULT_MAX_LENGTH),
   icon: PickableWorkstreamIconKeySchema.nullish().catch(null),
+  summary: z.string().trim().min(1).nullish().catch(null),
 });
 
 export const ToolDefinitionSchema = z.object({
