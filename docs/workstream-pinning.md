@@ -84,20 +84,11 @@ answer is applied, so an older response cannot snap the list back. A pinned
 row travels into **Pinned** rather than reappearing there, and a drag resolves
 its target by layout; [`list-motion.md`](list-motion.md) owns both.
 
-The Pinned part is always drawn, empty or not, because it is also where a row
-is dragged to pin it. Empty, it reads **Move a thread here to pin it** (or
-**channel**), and it lights up in the accent while an unpinned row is being
-dragged. Over the section, a faded copy of the row holds open the slot it
-would take (`layoutInsertIndex`). Letting go writes the pin, which the server
-appends, then saves the kind's order with the row in that slot unless the slot
-was the end. Until the pin list holds the row, it stays drawn in Pinned, so it
-does not bounce back to its list while the write is in flight. A failed write
-puts it back and says why, as a menu pin does. Dragging is pointer-only; the
-menu's **Pin** and `Alt`+`Arrow` are the keyboard paths, and a screen reader
-hears how to reorder once, for the section, and each pinned row's place
-("Pinned, 2 of 3."). A pin or unpin from a menu scrolls the moved row into
-view and, when the move left focus nowhere, focuses it. A saved thread pin
-reports `workstream_action_completed`.
+The Pinned part is always drawn, because it is also where an unpinned row is
+dragged to pin it. A drop is the append the server always does, then
+`PUT /navigation/pins` with the row in the slot it was dropped in; a newer pin
+write skips that second step, so an older drop cannot save its order over it.
+A landed row stays in Pinned until the pin list holds it.
 
 ### Older desktops' per-Space pins
 
@@ -348,22 +339,19 @@ placements, so the migration intentionally clears all existing pins.
 
 ### 2026-10-12 — Dragging a row into Pinned pins it again
 
-**What changed:** The Pinned part of the Threads and Channels tabs is always
-drawn, with an empty-state drop area, and an unpinned row dragged into it is
-pinned at the slot it is dropped in. A menu pin scrolls to and focuses the
-moved row again, and screen readers hear the reorder keys and each row's place.
+**What changed:** Pinned is always drawn, and an unpinned row dragged into it
+is pinned at the slot it is dropped in.
 
-**Why:** The old sidebar had this, and the navigation redesign dropped it
-without a decision in the PRD: with nothing pinned there was no Pinned section
-at all, so nothing on screen said pinning existed.
+**Why:** The redesign dropped this without a decision in the PRD; with nothing
+pinned, nothing on screen said pinning existed.
 
-**Considered and rejected:** A server call that pins at a position. The
-existing append plus `PUT /navigation/pins` gives the same result with no
-API change, at the cost of a second write when the slot is not the end.
+**Considered and rejected:** A pin-at-position call. Append plus
+`PUT /navigation/pins` does the same with no API change.
 
-**Consequences:** A drop is two writes, and only the newest write's answer is
-applied, so a drop made while an earlier pin write is in flight takes the
-order the later write saves.
+**Consequences:** A drop is two writes. The second is skipped when a newer pin
+write has started (`latestPinWrite`), so it cannot overwrite that write's order.
+
+Shipped in [#1197](https://github.com/juno-ai-labs/avalon/pull/1197).
 
 ### 2026-10-10 — One pin table for threads, Channels and breakouts
 

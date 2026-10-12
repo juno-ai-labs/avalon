@@ -782,7 +782,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         people={context?.people}
         pinned={api && channelWritable ? {
           on: pinnedThreads.has(id),
-          onChange: (next) => pinThread('thread', id, next, undefined, parent.data),
+          onChange: (next) => pinThread('thread', id, next, undefined, context?.detail ?? parent.data ?? row),
         } : undefined}
         presentUserIds={context?.presentUserIds ?? []}
         renderAge={breakoutAge}
