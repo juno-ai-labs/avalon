@@ -32,7 +32,7 @@ import type { AttentionItem } from '../lib/attention-items';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { formatSidebarActivityTime, workstreamMarkerStatus } from '../lib/format';
-import { layoutRowAt } from '../lib/list-motion';
+import { layoutInsertIndex, layoutRowAt } from '../lib/list-motion';
 import { channelRoute, homeChannelId, threadRoute } from '../lib/navigation-routes';
 import { moveWithin } from '../lib/personal-order';
 import { compareChannels } from '../lib/sidebar-channel-order';
@@ -355,13 +355,122 @@ function usePinnedDrag(kind: PinKind, ids: readonly string[]): {
   };
 }
 
-/** What a pinned row takes from its list's drag. */
+/** What a row takes from a drag: reordering Pinned, or carrying a row into it. */
 type PinnedRowProps = React.HTMLAttributes<HTMLElement> & {
   draggable: boolean;
   'data-motion-hold'?: string | undefined;
-  'data-pin-id': string;
-  'data-pin-kind': PinKind;
+  'data-pin-id'?: string;
+  'data-pin-kind'?: PinKind;
 };
+
+/** An unpinned row being dragged toward Pinned: the slot it would take, and whether it was let go there. */
+interface PinDrop {
+  id: string;
+  kind: PinKind;
+  parentId: string | undefined;
+  index: number | null;
+  landed: boolean;
+}
+
+/**
+ * Pinning by dragging an unpinned row into the Pinned section. While the row
+ * is over the section, `drop.index` is the slot a placeholder holds open for
+ * it; letting go there pins it and, unless that slot is the end, saves the
+ * order with it in place, since a new pin is appended. A landed row stays
+ * drawn in Pinned until the pin list holds it, so it does not bounce back to
+ * the list while the write is in flight. `drop` is null once that happens.
+ */
+function usePinDrop(pinnedIds: ReadonlySet<string>, orderOf: (kind: PinKind) => readonly string[]): {
+  drop: PinDrop | null;
+  sourceProps: (kind: PinKind, id: string, parentId?: string) => PinnedRowProps;
+  targetProps: React.HTMLAttributes<HTMLElement>;
+} {
+  const { api } = useAppSession();
+  const write = usePinWrite();
+  const [state, setState] = useState<PinDrop | null>(null);
+  const drop = state && !pinnedIds.has(state.id) ? state : null;
+  return {
+    drop,
+    sourceProps: (kind, id, parentId) => ({
+      draggable: true,
+      onDragStart: (event) => {
+        event.dataTransfer.effectAllowed = 'move';
+        // Chromium will not start a drag with an empty payload.
+        event.dataTransfer.setData('text/plain', id);
+        setState({ id, kind, parentId, index: null, landed: false });
+      },
+      onDragEnd: () => setState((current) => (current?.landed ? current : null)),
+    }),
+    targetProps: {
+      onDragOver: (event) => {
+        if (!drop || drop.landed) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        // The placeholder carries no `data-pin-kind`, so it is not counted.
+        const index = layoutInsertIndex(event.currentTarget.querySelectorAll(`[data-pin-kind="${drop.kind}"]`), event.clientY);
+        if (index !== drop.index) setState({ ...drop, index });
+      },
+      onDragLeave: (event) => {
+        // Crossing from the section into one of its own rows is not leaving it.
+        if (!drop || drop.landed || event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+        setState({ ...drop, index: null });
+      },
+      onDrop: (event) => {
+        if (!drop || drop.landed || !api) return;
+        event.preventDefault();
+        const index = drop.index ?? orderOf(drop.kind).length;
+        setState({ ...drop, index, landed: true });
+        const pinned = api.setPinned(drop.kind, drop.id, true, drop.parentId).then((list) => {
+          const order = list.filter((item) => item.kind === drop.kind).map((item) => item.id);
+          return !order.includes(drop.id) || order.indexOf(drop.id) === index
+            ? list
+            : api.reorderPins(drop.kind, moveWithin(order, drop.id, index));
+        });
+        // A failure is reported by the write; the row goes back to its list.
+        write(pinned);
+        pinned.catch(() => setState((current) => (current?.id === drop.id && current.landed ? null : current)));
+      },
+    },
+  };
+}
+
+/**
+ * The Pinned section of a tab. It is always there, because it is where a row
+ * is dragged to pin it: with nothing pinned it says so, and it wakes in the
+ * accent while a row is being dragged. The whole section, heading included,
+ * is the drop target, so a release in a gap between rows still counts.
+ */
+function PinnedSection({ children, count, drop, label, noun, target }: {
+  children: ReactNode;
+  count: number;
+  drop: PinDrop | null;
+  label: string;
+  noun: string;
+  target: React.HTMLAttributes<HTMLElement>;
+}): React.JSX.Element {
+  return <section aria-label={label} className="navigation-section" {...target}>
+    <SectionHeading motionKey="pinned" trailing={count > 1 ? 'Drag to reorder' : undefined}>Pinned</SectionHeading>
+    {count === 0 && drop?.index == null && <div className={clsx('pinned-empty-drop-surface', drop && 'is-armed')}>
+      <IconPin aria-hidden="true" size={15} stroke={1.7} />
+      <span>Move a {noun} here to pin it</span>
+    </div>}
+    {children}
+  </section>;
+}
+
+/** A placeholder row: a picture of where a dragged row would land, out of reach of focus and assistive technology. */
+function ghostProps(ghost: boolean): React.HTMLAttributes<HTMLElement> {
+  return ghost ? { 'aria-hidden': true, tabIndex: -1 } : {};
+}
+
+/**
+ * A kind's pinned order as drawn: the dragged row is spliced in at the slot
+ * it is held over, as a placeholder until it lands and as itself after.
+ */
+function withPinDrop(kind: PinKind, order: readonly string[], drop: PinDrop | null): string[] {
+  if (!drop || drop.kind !== kind || drop.index === null) return [...order];
+  return moveWithin(order, drop.id, drop.index);
+}
 
 /**
  * A list's sort, which cycles on each click. The label is the current sort;
@@ -494,7 +603,10 @@ function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): 
   const threadDrag = usePinnedDrag('thread', threadPins);
   const breakoutDrag = usePinnedDrag('breakout', breakoutPins);
   const pinned = new Set([...threadPins, ...breakoutPins]);
-  const unpinned = rows.filter((row) => !pinned.has(row.id)).sort(compareChannels(sort, openThreadId));
+  const pinDrop = usePinDrop(pinned, (kind) => (kind === 'breakout' ? breakoutPins : threadPins));
+  const { drop } = pinDrop;
+  const unpinned = rows.filter((row) => !pinned.has(row.id) && !(drop?.landed && drop.id === row.id))
+    .sort(compareChannels(sort, openThreadId));
   // A row that changes place, a pin or a re-sort, travels there. A row keeps
   // its motion key between Pinned and the list, so a pin is one row moving.
   useListMotion(scroll);
@@ -510,32 +622,38 @@ function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): 
     row: SpaceConversationSummary,
     drag?: PinnedRowProps,
     moves?: PinMoves,
+    ghost = false,
   ): ReactNode => <ThreadRow
     active={row.id === openThreadId}
     drag={drag}
+    ghost={ghost}
     moves={moves}
-    key={row.id}
+    key={ghost ? `ghost:${row.id}` : row.id}
     onOpen={() => open(row)}
     onPin={(next) => pin(row.kind === 'breakout' ? 'breakout' : 'thread', row.id, next, row.breakoutOf?.workstreamId)}
     pinned={pinned.has(row.id)}
     row={row}
     spaces={spaces}
   />;
+  const pinnedRows = (kind: PinKind, drag: ReturnType<typeof usePinnedDrag>): ReactNode[] => withPinDrop(kind, drag.order, drop)
+    .map((id) => {
+      const row = byId.get(id);
+      if (!row) return null;
+      if (id === drop?.id) return renderRow(row, undefined, undefined, !drop.landed);
+      const index = drag.order.indexOf(id);
+      return renderRow(row, drag.rowProps(id, index), drag.moves(id, index));
+    });
   return <>
-    {pinned.size > 0 && <section aria-label="Pinned threads" className="navigation-section">
-      <SectionHeading motionKey="pinned" trailing="Drag to reorder">Pinned</SectionHeading>
-      {threadDrag.order.map((id, index) => {
-        const row = byId.get(id);
-        return row ? renderRow(row, threadDrag.rowProps(id, index), threadDrag.moves(id, index)) : null;
-      })}
-      {breakoutDrag.order.map((id, index) => {
-        const row = byId.get(id);
-        return row ? renderRow(row, breakoutDrag.rowProps(id, index), breakoutDrag.moves(id, index)) : null;
-      })}
-    </section>}
+    <PinnedSection count={pinned.size} drop={drop} label="Pinned threads" noun="thread" target={pinDrop.targetProps}>
+      {pinnedRows('thread', threadDrag)}
+      {pinnedRows('breakout', breakoutDrag)}
+    </PinnedSection>
     <section aria-label="Threads" className="navigation-section">
       <SectionHeading motionKey="threads" trailing={<SortButton onChange={setSort} sort={sort} sorts={THREAD_SORTS} />}>Threads</SectionHeading>
-      {unpinned.map((row) => renderRow(row))}
+      {unpinned.map((row) => renderRow(
+        row,
+        row.pending ? undefined : pinDrop.sourceProps(row.kind === 'breakout' ? 'breakout' : 'thread', row.id, row.breakoutOf?.workstreamId),
+      ))}
       {list.isSuccess && rows.length === 0 && <p className="navigation-empty">Threads you start or are added to appear here.</p>}
       {list.hasNextPage && <button className="navigation-more" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()} type="button">Show more</button>}
       {list.isError && <InlineError>Your threads couldn’t be loaded.</InlineError>}
@@ -543,9 +661,10 @@ function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): 
   </>;
 }
 
-function ThreadRow({ active, drag, moves, onOpen, onPin, pinned, row, spaces }: {
+function ThreadRow({ active, drag, ghost, moves, onOpen, onPin, pinned, row, spaces }: {
   active: boolean;
-  drag?: (PinnedRowProps) | undefined;
+  drag?: PinnedRowProps | undefined;
+  ghost: boolean;
   moves?: PinMoves | undefined;
   onOpen: () => void;
   onPin: (pinned: boolean) => void;
@@ -560,10 +679,12 @@ function ThreadRow({ active, drag, moves, onOpen, onPin, pinned, row, spaces }: 
     <ContextMenu.Trigger asChild>
       <button
         aria-current={active ? 'page' : undefined}
-        className={clsx('navigation-row navigation-thread-row', active && 'is-active', !quiet && 'has-activity')}
+        {...ghostProps(ghost)}
+        className={clsx('navigation-row navigation-thread-row', active && 'is-active', !quiet && 'has-activity', ghost && 'is-pin-ghost')}
         // A thread still starting slides in, and out again if its start fails.
         data-motion-insert={row.pending ? '' : undefined}
-        data-motion-key={`thread:${row.id}`}
+        // A placeholder is not the row: the row is still in its list.
+        data-motion-key={ghost ? undefined : `thread:${row.id}`}
         onClick={onOpen}
         type="button"
         {...drag}
@@ -625,7 +746,9 @@ function ChannelsSection({ guest, scroll }: { guest: boolean; scroll: RefObject<
   const channelPins = pins.filter((item) => item.kind === 'channel').map((item) => item.id).filter((id) => byId.has(id));
   const drag = usePinnedDrag('channel', channelPins);
   const pinned = new Set(channelPins);
-  const rest = channels.filter((space) => !pinned.has(space.id))
+  const pinDrop = usePinDrop(pinned, () => channelPins);
+  const { drop } = pinDrop;
+  const rest = channels.filter((space) => !pinned.has(space.id) && !(drop?.landed && drop.id === space.id))
     .sort(compareChannelRows(sort, statsById, openChannelId));
   // An archived Channel shares its motion key with its row in the list, so a
   // restore is the row moving up into place.
@@ -634,11 +757,13 @@ function ChannelsSection({ guest, scroll }: { guest: boolean; scroll: RefObject<
     space: SpaceSummary,
     rowDrag?: PinnedRowProps,
     moves?: PinMoves,
+    ghost = false,
   ): ReactNode => <ChannelRow
     active={space.id === openChannelId}
     drag={rowDrag}
+    ghost={ghost}
     moves={moves}
-    key={space.id}
+    key={ghost ? `ghost:${space.id}` : space.id}
     onOpen={() => void navigate(channelRoute(space.id))}
     onPin={(next) => pin('channel', space.id, next)}
     pinned={pinned.has(space.id)}
@@ -646,13 +771,15 @@ function ChannelsSection({ guest, scroll }: { guest: boolean; scroll: RefObject<
     stats={statsById.get(space.id)}
   />;
   return <>
-    {channelPins.length > 0 && <section aria-label="Pinned channels" className="navigation-section">
-      <SectionHeading motionKey="pinned" trailing="Drag to reorder">Pinned</SectionHeading>
-      {drag.order.map((id, index) => {
+    <PinnedSection count={channelPins.length} drop={drop} label="Pinned channels" noun="channel" target={pinDrop.targetProps}>
+      {withPinDrop('channel', drag.order, drop).map((id) => {
         const space = byId.get(id);
-        return space ? row(space, drag.rowProps(id, index), drag.moves(id, index)) : null;
+        if (!space) return null;
+        if (id === drop?.id) return row(space, undefined, undefined, !drop.landed);
+        const index = drag.order.indexOf(id);
+        return row(space, drag.rowProps(id, index), drag.moves(id, index));
       })}
-    </section>}
+    </PinnedSection>
     <section aria-label="All channels" className="navigation-section">
       <SectionHeading trailing={<>
         <SortButton onChange={setSort} sort={sort} sorts={CHANNEL_SORTS} />
@@ -660,7 +787,7 @@ function ChannelsSection({ guest, scroll }: { guest: boolean; scroll: RefObject<
           <IconPlus aria-hidden="true" size={14} stroke={1.9} />
         </button></Tip>}
       </>} motionKey="channels">All channels</SectionHeading>
-      {rest.map((space) => row(space))}
+      {rest.map((space) => row(space, pinDrop.sourceProps('channel', space.id)))}
       {active.data !== undefined && channels.length === 0 && <p className="navigation-empty">No channels yet.</p>}
     </section>
     {!guest && (inactive.data?.items.length ?? 0) > 0 && <ArchivedChannels archived={archived} channels={inactive.data!.items} />}
@@ -727,9 +854,10 @@ function ArchivedChannels({ archived, channels }: {
   </section>;
 }
 
-function ChannelRow({ active, drag, moves, onOpen, onPin, pinned, space, stats }: {
+function ChannelRow({ active, drag, ghost, moves, onOpen, onPin, pinned, space, stats }: {
   active: boolean;
-  drag?: (PinnedRowProps) | undefined;
+  drag?: PinnedRowProps | undefined;
+  ghost: boolean;
   moves?: PinMoves | undefined;
   onOpen: () => void;
   onPin: (pinned: boolean) => void;
@@ -742,8 +870,10 @@ function ChannelRow({ active, drag, moves, onOpen, onPin, pinned, space, stats }
     <ContextMenu.Trigger asChild>
       <button
         aria-current={active ? 'page' : undefined}
-        className={clsx('navigation-row navigation-channel-row', active && 'is-active', stats?.hasUnread && 'is-unread')}
-        data-motion-key={`channel:${space.id}`}
+        {...ghostProps(ghost)}
+        className={clsx('navigation-row navigation-channel-row', active && 'is-active', stats?.hasUnread && 'is-unread', ghost && 'is-pin-ghost')}
+        // A placeholder is not the row: the row is still in its list.
+        data-motion-key={ghost ? undefined : `channel:${space.id}`}
         onClick={onOpen}
         type="button"
         {...drag}

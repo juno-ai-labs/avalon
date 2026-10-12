@@ -6010,7 +6010,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   transition: margin-bottom var(--sidebar-layout-motion), margin-top var(--sidebar-layout-motion), padding-bottom var(--sidebar-layout-motion);
 }
 /* The empty Pinned section: a quiet outline that says what it is for, which
-   wakes in the accent while a Channel is being dragged and could land here. */
+   wakes in the accent while a row is being dragged and could land here. */
 .pinned-empty-drop-surface {
   align-items: center;
   border: 1px dashed var(--av-sys-color-border-strong);
@@ -8555,6 +8555,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   padding: 2px 4px;
 }
 .navigation-sort:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
+/* Where a row dragged into Pinned would land: a faded copy of it that the
+   pointer passes through, so the section beneath stays the drop target. */
+.navigation-row.is-pin-ghost { opacity: .45; pointer-events: none; }
 .navigation-row {
   align-items: center;
   background: transparent;
