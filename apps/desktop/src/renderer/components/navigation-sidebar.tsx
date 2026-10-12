@@ -406,6 +406,13 @@ function usePinDrop(pinnedIds: ReadonlySet<string>, orderOf: (kind: PinKind) => 
   const write = usePinWrite();
   const [state, setState] = useState<PinDrop | null>(null);
   const drop = state && !pinnedIds.has(state.id) ? state : null;
+  // A landed row is done once the pin list holds it. Cleared then rather than
+  // when the write resolves, which lands a render before the list does; left
+  // in place, it would come back the moment the row is unpinned.
+  const settled = state?.landed === true && pinnedIds.has(state.id);
+  useEffect(() => {
+    if (settled) setState(null);
+  }, [settled]);
   return {
     drop,
     sourceProps: (kind, id, parentId, thread) => ({
