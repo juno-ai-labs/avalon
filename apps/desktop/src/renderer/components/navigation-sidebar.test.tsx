@@ -483,9 +483,19 @@ describe('the navigation sidebar', () => {
       client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] });
     };
 
+    const scrollIntoView = vi.fn();
+
+    // Installed and removed in hooks, so a failing assertion cannot leak the
+    // stub into later tests. jsdom never defined it, so it is deleted.
     beforeEach(() => {
       useUiStore.getState().setSidebarSection('threads');
       warmedThreads.length = 0;
+      scrollIntoView.mockClear();
+      Element.prototype.scrollIntoView = scrollIntoView;
+    });
+
+    afterEach(() => {
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
     });
 
     it('gives a guest no Channels section, even when Channels was the section last chosen', async () => {
@@ -539,8 +549,6 @@ describe('the navigation sidebar', () => {
     });
 
     it('scrolls to a row a pin moved, and gives it focus when the move left focus nowhere', async () => {
-      const scrollIntoView = vi.fn();
-      Element.prototype.scrollIntoView = scrollIntoView;
       api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan] });
       api.setPinned.mockResolvedValue([{ kind: 'thread', id: plan.id, parentId: null }]);
       renderSidebar(seedThreads);
@@ -550,7 +558,6 @@ describe('the navigation sidebar', () => {
       const row = await pinned.findByRole('link', { name: /Q4 plan/u });
       await waitFor(() => expect(scrollIntoView.mock.contexts).toContain(row));
       expect(row).toHaveFocus();
-      delete (Element.prototype as Partial<Element>).scrollIntoView;
     });
 
     it('shows a timer on a thread with a wake-up coming', async () => {
@@ -579,8 +586,6 @@ describe('the navigation sidebar', () => {
     });
 
     it('loads pages until a thread opened from a link is listed, then scrolls it into view', async () => {
-      const scrollIntoView = vi.fn();
-      Element.prototype.scrollIntoView = scrollIntoView;
       const linked = thread('00000000-0000-4000-8000-000000000099', 'Linked thread');
       api.getMyThreads
         .mockResolvedValueOnce({ nextCursor: 'page-2', items: [plan] })
@@ -591,7 +596,57 @@ describe('the navigation sidebar', () => {
       expect(api.getMyThreads).toHaveBeenLastCalledWith('page-2', expect.anything());
       await waitFor(() => expect(scrollIntoView.mock.contexts).toContain(row));
       expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'auto' });
-      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    });
+
+    it('counts a pinned breakout’s place past the pinned threads, and offers no reorder when neither kind can move', async () => {
+      const site = thread('00000000-0000-4000-8000-000000000030', 'Make a website', {
+        kind: 'breakout', breakoutOf: { workstreamId: plan.id, substreamId: 'site', title: 'Q4 plan' },
+      });
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan, site] });
+      renderSidebar((client) => {
+        seedThreads(client);
+        client.setQueryData(PINS_QUERY_KEY, [
+          { kind: 'thread', id: plan.id, parentId: null },
+          { kind: 'breakout', id: site.id, parentId: plan.id },
+        ]);
+      });
+      const pinned = within(screen.getByRole('region', { name: 'Pinned threads' }));
+      expect(await pinned.findByText('Pinned, 1 of 2.')).toBeInTheDocument();
+      expect(pinned.getByText('Pinned, 2 of 2.')).toBeInTheDocument();
+      expect(screen.getByRole('region', { name: 'Pinned threads' })).not.toHaveAttribute('aria-describedby');
+    });
+
+    it('does not save an older drop’s order over a pin written after it', async () => {
+      let answer!: (list: unknown) => void;
+      api.setPinned
+        .mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }))
+        .mockResolvedValueOnce([
+          { kind: 'thread', id: plan.id, parentId: null },
+          { kind: 'thread', id: '00000000-0000-4000-8000-000000000031', parentId: null },
+        ]);
+      const other = thread('00000000-0000-4000-8000-000000000031', 'Hiring loop');
+      const first = thread('00000000-0000-4000-8000-000000000032', 'Launch notes');
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan, other, first] });
+      renderSidebar((client) => {
+        seedThreads(client);
+        client.setQueryData(PINS_QUERY_KEY, [{ kind: 'thread', id: first.id, parentId: null }]);
+      });
+      // Drop Q4 plan above Launch notes, then pin Hiring loop from its menu
+      // while the drop's pin is still in flight.
+      const section = screen.getByRole('region', { name: 'Pinned threads' });
+      const list = within(await screen.findByRole('region', { name: 'Threads' }));
+      fireEvent.dragStart(await list.findByRole('link', { name: /Q4 plan/u }), { dataTransfer: { effectAllowed: 'all', setData: vi.fn() } });
+      const over = createEvent.dragOver(section, { dataTransfer: { dropEffect: 'none' } });
+      Object.defineProperty(over, 'clientY', { value: -1 });
+      fireEvent(section, over);
+      fireEvent.drop(section);
+      fireEvent.contextMenu(list.getByRole('link', { name: /Hiring loop/u }));
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+      await waitFor(() => expect(api.setPinned).toHaveBeenCalledTimes(2));
+
+      answer([{ kind: 'thread', id: first.id, parentId: null }, { kind: 'thread', id: plan.id, parentId: null }]);
+      await waitFor(() => expect(telemetry.reportTelemetryProductIntent).toHaveBeenCalledWith(expect.objectContaining({ workstreamId: plan.id, action: 'pin' })));
+      expect(api.reorderPins).not.toHaveBeenCalled();
     });
 
     it('tells a screen reader how to reorder, once for the section', () => {
