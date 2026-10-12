@@ -75,6 +75,12 @@ function thread(id: string, title: string, overrides: Partial<SpaceConversationS
   } as SpaceConversationSummary;
 }
 
+/** Each thread row's name and second line. */
+function threadRows(list: ReturnType<typeof within>): Array<[string | null | undefined, string | null | undefined]> {
+  return list.getAllByRole('link').filter((row: HTMLElement) => row.classList.contains('navigation-thread-row'))
+    .map((row: HTMLElement) => [row.querySelector('.navigation-row-title')?.textContent, row.querySelector('.navigation-row-detail')?.textContent]);
+}
+
 function Location(): React.JSX.Element {
   const location = useLocation();
   return <div data-testid="location">{location.pathname}{location.search}</div>;
@@ -236,9 +242,11 @@ describe('the navigation sidebar', () => {
     ] });
     renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
 
-    const list = within(await screen.findByRole('region', { name: 'Threads' }));
-    await waitFor(() => expect(list.getAllByRole('link').filter((row) => row.classList.contains('navigation-thread-row'))
-      .map((row) => row.textContent)).toEqual(['Make a websiteQ4 plan', 'Q4 planOutbound']));
+    const list = within(await screen.findByRole('region', { name: 'Recent threads' }));
+    await waitFor(() => expect(threadRows(list)).toEqual([
+      ['Make a website', '↳ Q4 plan · Outbound'],
+      ['Q4 plan', 'Outbound'],
+    ]));
     fireEvent.click(list.getByRole('link', { name: /Make a website/u }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/plan?substream=site');
   });
@@ -276,6 +284,87 @@ describe('the navigation sidebar', () => {
     window.dispatchEvent(new Event('focus'));
     await waitFor(() => expect(api.markActivitySeen).toHaveBeenCalledWith(now.toISOString()));
     hasFocus.mockRestore();
+  });
+
+  it('marks a thread unread for new messages, a mention or never having opened it, and not for what its run is doing', async () => {
+    useUiStore.getState().setSidebarSection('threads');
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [
+      thread('new', 'New messages', { hasUnread: true }),
+      thread('named', 'Named', { youAreMentioned: true }),
+      thread('unseen', 'Never opened', { unseen: true }),
+      thread('running', 'Running', { harnessStatus: 'running' }),
+      thread('both', 'In two', { spaceIds: ['outbound', 'growth'] }),
+    ] });
+    renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound'), channel('growth', 'Growth')] }));
+
+    const list = within(await screen.findByRole('region', { name: 'Recent threads' }));
+    await waitFor(() => expect(list.getByRole('link', { name: /New messages/u })).toBeInTheDocument());
+    const unread = (name: string): boolean => within(list.getByRole('link', { name: new RegExp(name, 'u') })).queryByRole('img', { name: 'Unread' }) !== null;
+    expect(['New messages', 'Named', 'Never opened', 'Running', 'In two'].map(unread)).toEqual([true, true, true, false, false]);
+    expect(threadRows(list).find(([title]) => title === 'In two')).toEqual(['In two', 'Outbound · Growth']);
+  });
+
+  it('starts a thread from the Channel in view, or from General when none is', async () => {
+    useUiStore.getState().setSidebarSection('threads');
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [] });
+    renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [
+      channel('outbound', 'Outbound'), channel('general', 'General', { systemRole: 'general' }),
+    ] }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'New thread' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/channels/general');
+  });
+
+  it('opens New channel from the Channels header', () => {
+    renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
+    fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
+    expect(screen.getByRole('dialog', { name: 'New channel' })).toBeInTheDocument();
+  });
+
+  describe('the Activity tab’s filters', () => {
+    const now = new Date();
+    const earlier = new Date(now.getTime() - 60_000);
+    const item = (id: string, overrides: Record<string, unknown>) => ({
+      id, kind: 'added', occurredAt: now.toISOString(), actorUserId: 'maya', actorLabel: 'Maya K',
+      threadId: 'plan', threadTitle: id, breakout: null, channelIds: ['outbound'], unread: false, ...overrides,
+    });
+    const seed = (client: QueryClient): void => {
+      client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] });
+    };
+
+    beforeEach(() => {
+      useUiStore.getState().setSidebarSection('activity');
+      api.getActivity.mockImplementation(async (_cursor: string | null, only: string | null) => ({
+        nextCursor: null,
+        items: only === 'mentions'
+          ? [item('Named here', { kind: 'mentioned' })]
+          : [item('Fresh', { unread: true }), item('Old news', { occurredAt: earlier.toISOString() })],
+      }));
+    });
+
+    it('shows only unread rows under Unread, and asks the server for mentions under Mentions', async () => {
+      renderSidebar(seed);
+      const titles = (): string[] => screen.queryAllByRole('link').filter((row) => row.classList.contains('activity-row'))
+        .map((row) => row.querySelectorAll('strong')[1]?.textContent ?? '');
+      await waitFor(() => expect(titles()).toEqual(['Fresh', 'Old news']));
+
+      fireEvent.click(screen.getByRole('button', { name: 'Unread' }));
+      expect(titles()).toEqual(['Fresh']);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Mentions' }));
+      await waitFor(() => expect(titles()).toEqual(['Named here']));
+      expect(api.getActivity).toHaveBeenCalledWith(null, 'mentions', expect.anything());
+    });
+
+    it('clears every dot and moves the waterline on Mark all read', async () => {
+      renderSidebar(seed);
+      const today = within(await screen.findByRole('region', { name: 'Today' }));
+      await waitFor(() => expect(today.getAllByRole('img', { name: 'Unread' })).toHaveLength(1));
+
+      fireEvent.click(screen.getByRole('button', { name: 'Mark all read' }));
+      await waitFor(() => expect(today.queryAllByRole('img', { name: 'Unread' })).toEqual([]));
+      expect(api.markActivitySeen).toHaveBeenCalledWith(now.toISOString());
+    });
   });
 
   describe('the Channels tab’s unread state and sort', () => {
@@ -503,7 +592,7 @@ describe('the navigation sidebar', () => {
       api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan] });
       renderSidebar(seedThreads, 0, { person: { ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } } });
       expect(screen.queryByRole('button', { name: 'Channels' })).not.toBeInTheDocument();
-      expect(await screen.findByRole('region', { name: 'Threads' })).toBeInTheDocument();
+      expect(await screen.findByRole('region', { name: 'Recent threads' })).toBeInTheDocument();
       expect(screen.queryByRole('region', { name: 'All channels' })).not.toBeInTheDocument();
     });
 
@@ -573,7 +662,7 @@ describe('the navigation sidebar', () => {
         ...plan, title: 'can you plan q4 for me', titleStatus: 'naming', createdAt: new Date().toISOString(),
       }] });
       renderSidebar(seedThreads);
-      const list = within(await screen.findByRole('region', { name: 'Threads' }));
+      const list = within(await screen.findByRole('region', { name: 'Recent threads' }));
       expect(await list.findByText('Rally is choosing a name')).toBeInTheDocument();
       expect(list.queryByText('can you plan q4 for me')).not.toBeInTheDocument();
     });
@@ -581,8 +670,8 @@ describe('the navigation sidebar', () => {
     it('draws placeholder rows while the first page loads', () => {
       api.getMyThreads.mockReturnValue(new Promise(() => undefined));
       renderSidebar(seedThreads);
-      expect(screen.getByRole('region', { name: 'Threads' })).toHaveAttribute('aria-busy', 'true');
-      expect(screen.getByRole('region', { name: 'Threads' }).querySelectorAll('.skeleton-row').length).toBeGreaterThan(0);
+      expect(screen.getByRole('region', { name: 'Recent threads' })).toHaveAttribute('aria-busy', 'true');
+      expect(screen.getByRole('region', { name: 'Recent threads' }).querySelectorAll('.skeleton-row').length).toBeGreaterThan(0);
     });
 
     it('loads pages until a thread opened from a link is listed, then scrolls it into view', async () => {
@@ -634,7 +723,7 @@ describe('the navigation sidebar', () => {
       // Drop Q4 plan above Launch notes, then pin Hiring loop from its menu
       // while the drop's pin is still in flight.
       const section = screen.getByRole('region', { name: 'Pinned threads' });
-      const list = within(await screen.findByRole('region', { name: 'Threads' }));
+      const list = within(await screen.findByRole('region', { name: 'Recent threads' }));
       fireEvent.dragStart(await list.findByRole('link', { name: /Q4 plan/u }), { dataTransfer: { effectAllowed: 'all', setData: vi.fn() } });
       const over = createEvent.dragOver(section, { dataTransfer: { dropEffect: 'none' } });
       Object.defineProperty(over, 'clientY', { value: -1 });

@@ -19,7 +19,7 @@ token and which state wins.
 | --- | --- |
 | `apps/desktop/src/renderer/lib/format.ts` | `workstreamMarkerStatus` owns the ranking, reading `MARKER_PRECEDENCE` from `apps/desktop/src/common/attention-items.ts`, where it sits beside `readerMarkerStatus` (the three personal states alone, for the Threads button's count and the macOS menu bar's count; see the retired [attention menu](attention-menu.md)) so the main process can rank them too. Shared vocabulary, labels and `harnessMarkerStatus` live in `packages/ui/src/lib/format.ts` and are re-exported here. |
 | `packages/ui/src/components/primitives.tsx` | `StatusDot` — the one component that draws a marker, for every surface. |
-| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | A Threads-tab row's one dot (`ThreadRow`): this ranking, with a finished or stopped run and nothing unread drawn without a dot. |
+| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | Not a reader since 2026-10-12: a Threads-tab row (`ThreadRow`) draws only the reader's own states, collapsed to one unread dot (`threadUnread`: unread, mentioned or unseen). The run's states are the thread header's to show ([`desktop-shell.md`](desktop-shell.md#the-sidebar)). |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | The work-stream header's status line, which names the run's own marker rather than this viewer's. |
 | `apps/desktop/src/renderer/components/automation-header.tsx` | The Sidekick run history, the one surface that still draws `scheduled` under its own name. |
 | `config/design-tokens/registry.json` | The `sys.color.workstream` group: one token per state. |
