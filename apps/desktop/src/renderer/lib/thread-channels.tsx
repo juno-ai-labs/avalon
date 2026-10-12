@@ -1,3 +1,4 @@
+import type { SpaceColorKey } from '@rally/contracts';
 import type { ThreadChannels } from '@rally/ui/components/conversation-menus';
 import { SpaceIcon } from '@rally/ui/components/space-icon';
 import { markColors } from '@rally/ui/lib/project-palette';
@@ -60,4 +61,23 @@ export function useThreadChannels(threadId: string, spaceIds: readonly string[],
       onRemove: (channelId: string) => settle(channelId, api.removeChannelFromSpace(channelId, threadId), 'The thread couldn’t be taken out of that channel.'),
     } : {}),
   };
+}
+
+/**
+ * The colour a thread and its Breakouts wear: that of the Channel it is being
+ * read in, or else of the first Channel it sits in (`inChannelColor`).
+ *
+ * `channels` is whatever this client holds a colour for: the Space directory
+ * for a member, the shared navigation directory for a guest. A Channel in
+ * neither yields nothing, and the mark keeps its own colour until one arrives.
+ */
+export function threadChannelColor(
+  spaceIds: readonly string[],
+  channels: Iterable<{ id: string; colorKey: SpaceColorKey }>,
+  openedFrom?: string | null,
+): SpaceColorKey | undefined {
+  const spaceId = openedFrom && spaceIds.includes(openedFrom) ? openedFrom : spaceIds[0];
+  if (!spaceId) return undefined;
+  for (const channel of channels) if (channel.id === spaceId) return channel.colorKey;
+  return undefined;
 }
