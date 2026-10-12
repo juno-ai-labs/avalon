@@ -101,11 +101,8 @@ the retired token issues a new successor and keeps the retired one valid. That
 makes a *concurrent* pair of renewals with the same token dangerous: both
 succeed, and the second retires the first answer's token at once. A device that
 persisted the first answer then gets a 401 on its next renewal, which is
-terminal, and the credential is surrendered. A renewal that gets no answer, a
-server failure, or a rate limit is tried three times in all, one and then two
-seconds apart, before it fails; a refusal is never retried. On the Mac app, a
-terminal identity renewal failure ends the
-entire local session and shows **Your Rally session has ended.** in a native
+terminal, and the credential is surrendered. On the Mac app, a terminal
+identity renewal failure ends the entire local session and shows **Your Rally session has ended.** in a native
 modal. A signed-in organization with no account credential takes the same path
 when an account request discovers it. Main clears all credentials and profiles,
 broadcasts sign-out, and closes auxiliary windows before showing the notice;
@@ -483,9 +480,7 @@ best-effort remote revocation.
 **What changed:** `AuthService.refresh` accepts the token it retired until the
 device presents the successor, instead of for sixty seconds, and a renewal with
 the retired token no longer replaces it with the successor the device never
-received. `logout` honours the retired token the same way. The desktop tries a
-renewal three times when it gets no answer, a 5xx, a 408 or a 429
-(`retryTransient`, `refreshFailureIsTransient`).
+received. `logout` honours the retired token the same way.
 
 **Why:** People were signed out with "Your Rally session has ended." after
 their Mac slept. On wake, and on the short background wakes macOS makes while
@@ -494,8 +489,7 @@ and the expired identity token is renewed while Wi-Fi is still settling or just
 before the Mac sleeps again. When the service rotated but the answer was lost,
 the device kept a token that died sixty seconds later, and the next renewal was
 a terminal 401. Only the successor's first use proves the device received it,
-so that, not a clock, now retires the old token. The retries are safe for the
-same reason: repeating a renewal can no longer strand the device.
+so that, not a clock, now retires the old token.
 
 **Rejected:** A longer fixed window. Any number is a guess at how long a laptop
 sleeps. A client-only fix: the desktop cannot tell a lost rotation from a
@@ -505,8 +499,7 @@ revoked session, so the service has to keep the old token alive.
 the same exposure a stolen current token has. The sessions' thirty-day sliding
 and ninety-day ceiling still bound both. Concurrent renewals with one token
 remain harmful, so every desktop renewal must still go through
-`credential-refresh.ts`. The three tries and their delays are a product choice;
-change them in `requestRefresh`.
+`credential-refresh.ts`.
 
 ### 2026-10-10: A sign-in replaces stored credentials the app could not show
 
