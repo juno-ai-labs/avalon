@@ -8,6 +8,8 @@ import { ApiError } from '../lib/api';
 import { CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import type { ChannelStats } from '@rally/contracts';
 import type { SpaceConversationSummary, Workspace } from '../lib/types';
+import { markDeepLinkWorkstreamNavigation } from '../lib/deep-link-navigation';
+import type * as TelemetryModule from '../lib/telemetry';
 import { useUiStore } from '../lib/ui-store';
 import { NavigationSidebar } from './navigation-sidebar';
 
@@ -23,6 +25,22 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
 vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ data: [] }) }));
+const telemetry = vi.hoisted(() => ({
+  markWorkstreamFeedOpenStarted: vi.fn(),
+  markWorkstreamNavigation: vi.fn(),
+  markSurfaceEntrypoint: vi.fn(),
+  reportTelemetryProductIntent: vi.fn(),
+}));
+vi.mock('../lib/telemetry', async (original) => ({ ...await original<typeof TelemetryModule>(), ...telemetry }));
+const warmup = vi.hoisted(() => ({ onPointerCancel: vi.fn(), onPointerEnter: vi.fn(), onPointerLeave: vi.fn() }));
+const warmedThreads = vi.hoisted(() => [] as string[]);
+vi.mock('../lib/workstream-socket-pool', () => ({
+  useWorkstreamSocketHoverWarmup: (threadId: string) => {
+    warmedThreads.push(threadId);
+    return warmup;
+  },
+  useWorkstreamSocketOpenContext: () => () => ({ state: 'retained_pair', socketLeaseId: 'lease-1' }),
+}));
 
 const workspace: Workspace = {
   id: 'org', name: 'Rally', region: 'enterprise', timezone: 'UTC',
@@ -62,11 +80,11 @@ function Location(): React.JSX.Element {
   return <div data-testid="location">{location.pathname}{location.search}</div>;
 }
 
-function renderSidebar(seed: (client: QueryClient) => void, waiting = 0) {
+function renderSidebar(seed: (client: QueryClient) => void, waiting = 0, { route = '/', person = workspace }: { route?: string; person?: Workspace } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   seed(client);
   return render(<QueryClientProvider client={client}><Tooltip.Provider>
-    <MemoryRouter initialEntries={['/']}>
+    <MemoryRouter initialEntries={[route]}>
       <NavigationSidebar
         accessDecisionFailed={false}
         accessRequests={[]}
@@ -76,7 +94,7 @@ function renderSidebar(seed: (client: QueryClient) => void, waiting = 0) {
         downloadedUpdate={null}
         onDecideAccessRequest={vi.fn()}
         onOpenAccessRequest={vi.fn()}
-        workspace={workspace}
+        workspace={person}
       />
       <Routes><Route element={<Location />} path="*" /></Routes>
     </MemoryRouter>
@@ -106,9 +124,9 @@ describe('the navigation sidebar', () => {
     });
 
     const pinned = within(screen.getByRole('region', { name: 'Pinned channels' }));
-    expect(pinned.getAllByRole('button').map((row) => row.textContent)).toEqual(['Outbound0 threads', 'Growth0 threads']);
+    expect(pinned.getAllByRole('link').map((row) => row.textContent)).toEqual(['Outbound0 threadsPinned, 1 of 2.', 'Growth0 threadsPinned, 2 of 2.']);
     const all = within(screen.getByRole('region', { name: 'All channels' }));
-    expect(all.getAllByRole('button').filter((row) => row.classList.contains('navigation-channel-row')).map((row) => row.textContent))
+    expect(all.getAllByRole('link').filter((row) => row.classList.contains('navigation-channel-row')).map((row) => row.textContent))
       .toEqual(['Apple1 thread', 'Zebra0 threads']);
   });
 
@@ -124,10 +142,10 @@ describe('the navigation sidebar', () => {
     });
     const pinned = within(screen.getByRole('region', { name: 'Pinned channels' }));
 
-    fireEvent.keyDown(pinned.getByRole('button', { name: /Growth/u }), { key: 'ArrowUp', altKey: true });
+    fireEvent.keyDown(pinned.getByRole('link', { name: /Growth/u }), { key: 'ArrowUp', altKey: true });
     expect(api.reorderPins).toHaveBeenLastCalledWith('channel', ['growth', 'outbound']);
 
-    fireEvent.contextMenu(pinned.getByRole('button', { name: /Outbound/u }));
+    fireEvent.contextMenu(pinned.getByRole('link', { name: /Outbound/u }));
     expect(screen.queryByRole('menuitem', { name: 'Move up' })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Move down' }));
     expect(api.reorderPins).toHaveBeenLastCalledWith('channel', ['growth', 'outbound']);
@@ -138,9 +156,9 @@ describe('the navigation sidebar', () => {
     const pinned = within(screen.getByRole('region', { name: 'Pinned channels' }));
     const hint = pinned.getByText('Move a channel here to pin it').parentElement!;
     expect(hint).not.toHaveClass('is-armed');
-    fireEvent.dragStart(screen.getByRole('button', { name: /Outbound/u }), { dataTransfer: { effectAllowed: 'all', setData: vi.fn() } });
+    fireEvent.dragStart(screen.getByRole('link', { name: /Outbound/u }), { dataTransfer: { effectAllowed: 'all', setData: vi.fn() } });
     expect(hint).toHaveClass('is-armed');
-    fireEvent.dragEnd(screen.getByRole('button', { name: /Outbound/u }));
+    fireEvent.dragEnd(screen.getByRole('link', { name: /Outbound/u }));
     expect(hint).not.toHaveClass('is-armed');
 
     useUiStore.getState().setSidebarSection('threads');
@@ -151,7 +169,7 @@ describe('the navigation sidebar', () => {
   it('says why a pin did not save', async () => {
     api.setPinned.mockRejectedValue(new ApiError('limit', 409, 'pin_limit_reached'));
     renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
-    fireEvent.contextMenu(screen.getByRole('button', { name: /Outbound/u }));
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Outbound/u }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
     expect(await screen.findByText('You’ve pinned as many items as Rally allows. Unpin one first.')).toBeInTheDocument();
   });
@@ -168,14 +186,14 @@ describe('the navigation sidebar', () => {
     fireEvent.click(archived.getByRole('button', { name: 'Restore' }));
 
     const all = within(screen.getByRole('region', { name: 'All channels' }));
-    expect(await all.findByRole('button', { name: /Hiring/u })).toBeInTheDocument();
+    expect(await all.findByRole('link', { name: /Hiring/u })).toBeInTheDocument();
     expect(api.restoreSpace).toHaveBeenCalledWith('hiring');
     expect(screen.queryByRole('region', { name: 'Archived channels' })).not.toBeInTheDocument();
   });
 
   it('opens a Channel on its own route', () => {
     renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
-    fireEvent.click(screen.getByRole('button', { name: /Outbound/u }));
+    fireEvent.click(screen.getByRole('link', { name: /Outbound/u }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound');
   });
 
@@ -186,7 +204,7 @@ describe('the navigation sidebar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Channels' }));
     expect(screen.getByRole('button', { name: 'Close navigation' })).toHaveAttribute('aria-expanded', 'true');
 
-    fireEvent.click(screen.getByRole('button', { name: /Outbound/u }));
+    fireEvent.click(screen.getByRole('link', { name: /Outbound/u }));
 
     expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
   });
@@ -219,9 +237,9 @@ describe('the navigation sidebar', () => {
     renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
 
     const list = within(await screen.findByRole('region', { name: 'Threads' }));
-    await waitFor(() => expect(list.getAllByRole('button').filter((row) => row.classList.contains('navigation-thread-row'))
+    await waitFor(() => expect(list.getAllByRole('link').filter((row) => row.classList.contains('navigation-thread-row'))
       .map((row) => row.textContent)).toEqual(['Make a websiteQ4 plan', 'Q4 planOutbound']));
-    fireEvent.click(list.getByRole('button', { name: /Make a website/u }));
+    fireEvent.click(list.getByRole('link', { name: /Make a website/u }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/plan?substream=site');
   });
 
@@ -234,7 +252,7 @@ describe('the navigation sidebar', () => {
     renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
 
     const today = within(await screen.findByRole('region', { name: 'Today' }));
-    await waitFor(() => expect(today.getByRole('button')).toHaveTextContent('Maya K started Q4 plan'));
+    await waitFor(() => expect(today.getByRole('link')).toHaveTextContent('Maya K started Q4 plan'));
   });
 
   it('groups Activity by day, marks what is new, and marks it read once shown', async () => {
@@ -248,7 +266,7 @@ describe('the navigation sidebar', () => {
     renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
 
     const today = within(await screen.findByRole('region', { name: 'Today' }));
-    expect(today.getByRole('button')).toHaveTextContent('Maya K added you to Reply-handling playbook');
+    expect(today.getByRole('link')).toHaveTextContent('Maya K added you to Reply-handling playbook');
     expect(today.getByRole('img', { name: 'Unread' })).toBeInTheDocument();
     // A window in the background is not somebody looking: nothing is marked
     // until it takes focus.
@@ -278,13 +296,13 @@ describe('the navigation sidebar', () => {
       ]);
     };
     const names = (): Array<string | null | undefined> => within(screen.getByRole('region', { name: 'All channels' }))
-      .getAllByRole('button')
+      .getAllByRole('link')
       .filter((row) => row.classList.contains('navigation-channel-row'))
       .map((row) => row.querySelector('.navigation-row-title')?.textContent);
 
     it('marks only an unread Channel with a dot', () => {
       renderSidebar(seed);
-      expect(within(screen.getByRole('button', { name: /Mango/u })).getByRole('img', { name: 'Unread' })).toBeInTheDocument();
+      expect(within(screen.getByRole('link', { name: /Mango/u })).getByRole('img', { name: 'Unread' })).toBeInTheDocument();
       expect(screen.getAllByRole('img', { name: 'Unread' })).toHaveLength(1);
     });
 
@@ -356,10 +374,10 @@ describe('the navigation sidebar', () => {
       api.setPinned.mockResolvedValue([{ kind: 'channel', id: 'zebra', parentId: null }]);
       renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, fruit));
 
-      fireEvent.contextMenu(screen.getByRole('button', { name: /Zebra/u }));
+      fireEvent.contextMenu(screen.getByRole('link', { name: /Zebra/u }));
       fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
       const pinned = within(screen.getByRole('region', { name: 'Pinned channels' }));
-      await pinned.findByRole('button', { name: /Zebra/u });
+      await pinned.findByRole('link', { name: /Zebra/u });
 
       // Zebra rises three slots, from last under All channels to first under
       // Pinned: the row the Pinned section now renders is the one that plays.
@@ -378,7 +396,7 @@ describe('the navigation sidebar', () => {
       const archived = within(screen.getByRole('region', { name: 'Archived channels' }));
       fireEvent.click(archived.getByRole('button', { name: 'Show 1' }));
       fireEvent.click(archived.getByRole('button', { name: 'Restore' }));
-      await within(screen.getByRole('region', { name: 'All channels' })).findByRole('button', { name: /Hiring/u });
+      await within(screen.getByRole('region', { name: 'All channels' })).findByRole('link', { name: /Hiring/u });
 
       // From the fourth slot (under Archived) to the second (above Outbound).
       expect(playedOn('channel:hiring')?.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 96px)' }));
@@ -395,7 +413,7 @@ describe('the navigation sidebar', () => {
         ]);
       });
       const section = screen.getByRole('region', { name: 'Pinned channels' });
-      const zebra = within(screen.getByRole('region', { name: 'All channels' })).getByRole('button', { name: /Zebra/u });
+      const zebra = within(screen.getByRole('region', { name: 'All channels' })).getByRole('link', { name: /Zebra/u });
       fireEvent.dragStart(zebra, { dataTransfer: { effectAllowed: 'all', setData: vi.fn() } });
 
       // The Pinned heading is slot 0, Apple 1 and Mango 2: a pointer past
@@ -412,7 +430,7 @@ describe('the navigation sidebar', () => {
       // A new pin is appended, so the slot it was dropped in is saved after.
       await waitFor(() => expect(api.reorderPins).toHaveBeenCalledWith('channel', ['apple', 'zebra', 'mango']));
       expect(api.setPinned).toHaveBeenCalledWith('channel', 'zebra', true, undefined);
-      await waitFor(() => expect(within(section).getAllByRole('button').filter((row) => row.classList.contains('navigation-channel-row'))
+      await waitFor(() => expect(within(section).getAllByRole('link').filter((row) => row.classList.contains('navigation-channel-row'))
         .map((row) => row.textContent?.slice(0, 5))).toEqual(['Apple', 'Zebra', 'Mango']));
       expect(section.querySelector('.is-pin-ghost')).toBeNull();
     });
@@ -425,7 +443,7 @@ describe('the navigation sidebar', () => {
         client.setQueryData(PINS_QUERY_KEY, pins);
       });
       const pinned = within(screen.getByRole('region', { name: 'Pinned channels' }));
-      const zebra = pinned.getByRole('button', { name: /Zebra/u });
+      const zebra = pinned.getByRole('link', { name: /Zebra/u });
       fireEvent.dragStart(zebra, { dataTransfer: { effectAllowed: 'all' } });
       expect(zebra).toHaveAttribute('data-motion-hold');
 
@@ -433,12 +451,143 @@ describe('the navigation sidebar', () => {
       // (the Pinned heading is slot 0, Apple 1, Mango 2): a row drawn there
       // mid-motion is not the slot's owner.
       // jsdom has no DragEvent, so the pointer's position is set by hand.
-      const apple = pinned.getByRole('button', { name: /Apple/u });
+      const apple = pinned.getByRole('link', { name: /Apple/u });
       const over = createEvent.dragOver(apple);
       Object.defineProperty(over, 'clientY', { value: 100 });
       fireEvent(apple, over);
       fireEvent.drop(zebra);
       expect(api.reorderPins).toHaveBeenLastCalledWith('channel', ['apple', 'zebra', 'mango']);
+    });
+  });
+
+  describe('what the old sidebar did', () => {
+    const plan = thread('00000000-0000-4000-8000-000000000020', 'Q4 plan', { spaceIds: ['outbound'] });
+    const seedThreads = (client: QueryClient): void => {
+      client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] });
+    };
+
+    beforeEach(() => {
+      useUiStore.getState().setSidebarSection('threads');
+      warmedThreads.length = 0;
+    });
+
+    it('gives a guest no Channels section, even when Channels was the section last chosen', async () => {
+      useUiStore.getState().setSidebarSection('channels');
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan] });
+      renderSidebar(seedThreads, 0, { person: { ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } } });
+      expect(screen.queryByRole('button', { name: 'Channels' })).not.toBeInTheDocument();
+      expect(await screen.findByRole('region', { name: 'Threads' })).toBeInTheDocument();
+      expect(screen.queryByRole('region', { name: 'All channels' })).not.toBeInTheDocument();
+    });
+
+    it('draws rows as links, so a modified click can open one in a new tab', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan] });
+      renderSidebar(seedThreads);
+      expect(await screen.findByRole('link', { name: /Q4 plan/u })).toHaveAttribute('href', `/channels/outbound/threads/${plan.id}`);
+    });
+
+    it('starts the open measurement on a plain click, and not for the open thread clicked again', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan] });
+      renderSidebar(seedThreads);
+      fireEvent.click(await screen.findByRole('link', { name: /Q4 plan/u }));
+      expect(screen.getByTestId('location')).toHaveTextContent(`/channels/outbound/threads/${plan.id}`);
+      expect(telemetry.markWorkstreamFeedOpenStarted).toHaveBeenCalledWith(plan.id, 'recent', 'retained_pair', expect.any(Number), 'lease-1');
+      expect(telemetry.markWorkstreamNavigation).toHaveBeenCalledWith(plan.id, false);
+      expect(telemetry.markSurfaceEntrypoint).toHaveBeenCalledWith('sidebar_recent');
+
+      fireEvent.click(screen.getByRole('link', { name: /Q4 plan/u }));
+      expect(telemetry.markWorkstreamFeedOpenStarted).toHaveBeenCalledTimes(1);
+    });
+
+    it('warms a thread’s socket while the pointer rests on its row', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan] });
+      renderSidebar(seedThreads);
+      const row = await screen.findByRole('link', { name: /Q4 plan/u });
+      expect(warmedThreads).toContain(plan.id);
+      fireEvent.pointerEnter(row);
+      expect(warmup.onPointerEnter).toHaveBeenCalled();
+      fireEvent.pointerLeave(row);
+      expect(warmup.onPointerLeave).toHaveBeenCalled();
+    });
+
+    it('reports a thread pin once it saves', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan] });
+      api.setPinned.mockResolvedValue([{ kind: 'thread', id: plan.id, parentId: null }]);
+      renderSidebar(seedThreads);
+      fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+      await waitFor(() => expect(telemetry.reportTelemetryProductIntent).toHaveBeenCalledWith({
+        kind: 'workstream_action_completed', workstreamId: plan.id, action: 'pin', visibility: 'public', origin: 'ad_hoc', pinned: true,
+      }));
+    });
+
+    it('scrolls to a row a pin moved, and gives it focus when the move left focus nowhere', async () => {
+      const scrollIntoView = vi.fn();
+      Element.prototype.scrollIntoView = scrollIntoView;
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan] });
+      api.setPinned.mockResolvedValue([{ kind: 'thread', id: plan.id, parentId: null }]);
+      renderSidebar(seedThreads);
+      fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+      const pinned = within(screen.getByRole('region', { name: 'Pinned threads' }));
+      const row = await pinned.findByRole('link', { name: /Q4 plan/u });
+      await waitFor(() => expect(scrollIntoView.mock.contexts).toContain(row));
+      expect(row).toHaveFocus();
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    });
+
+    it('shows a timer on a thread with a wake-up coming', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [{
+        ...plan, nextPendingWakeup: { dueAt: '2026-10-13T09:00:00.000Z', promptPreview: 'Check the replies' },
+      }] });
+      renderSidebar(seedThreads);
+      expect(await screen.findByRole('img', { name: /^Active timer\. Next: .+\. Check the replies$/u })).toBeInTheDocument();
+    });
+
+    it('holds a thread Rally is still naming in place of its provisional title', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [{
+        ...plan, title: 'can you plan q4 for me', titleStatus: 'naming', createdAt: new Date().toISOString(),
+      }] });
+      renderSidebar(seedThreads);
+      const list = within(await screen.findByRole('region', { name: 'Threads' }));
+      expect(await list.findByText('Rally is choosing a name')).toBeInTheDocument();
+      expect(list.queryByText('can you plan q4 for me')).not.toBeInTheDocument();
+    });
+
+    it('draws placeholder rows while the first page loads', () => {
+      api.getMyThreads.mockReturnValue(new Promise(() => undefined));
+      renderSidebar(seedThreads);
+      expect(screen.getByRole('region', { name: 'Threads' })).toHaveAttribute('aria-busy', 'true');
+      expect(screen.getByRole('region', { name: 'Threads' }).querySelectorAll('.skeleton-row').length).toBeGreaterThan(0);
+    });
+
+    it('loads pages until a thread opened from a link is listed, then scrolls it into view', async () => {
+      const scrollIntoView = vi.fn();
+      Element.prototype.scrollIntoView = scrollIntoView;
+      const linked = thread('00000000-0000-4000-8000-000000000099', 'Linked thread');
+      api.getMyThreads
+        .mockResolvedValueOnce({ nextCursor: 'page-2', items: [plan] })
+        .mockResolvedValueOnce({ nextCursor: null, items: [linked] });
+      markDeepLinkWorkstreamNavigation(linked.id);
+      renderSidebar(seedThreads, 0, { route: `/channels/outbound/threads/${linked.id}` });
+      const row = await screen.findByRole('link', { name: /Linked thread/u });
+      expect(api.getMyThreads).toHaveBeenLastCalledWith('page-2', expect.anything());
+      await waitFor(() => expect(scrollIntoView.mock.contexts).toContain(row));
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'auto' });
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    });
+
+    it('tells a screen reader how to reorder, once for the section', () => {
+      useUiStore.getState().setSidebarSection('channels');
+      renderSidebar((client) => {
+        client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound'), channel('growth', 'Growth')] });
+        client.setQueryData(PINS_QUERY_KEY, [
+          { kind: 'channel', id: 'outbound', parentId: null },
+          { kind: 'channel', id: 'growth', parentId: null },
+        ]);
+      });
+      expect(screen.getByRole('region', { name: 'Pinned channels' }))
+        .toHaveAccessibleDescription('Hold Alt and press the up or down arrow to move a pinned channel.');
     });
   });
 });

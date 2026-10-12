@@ -4,6 +4,8 @@ import { useMemo } from 'react';
 
 import { ApiError, type RallyApi } from './api';
 import { fetchThroughOwner } from './fetch-through-owner';
+import { reportTelemetryProductIntent, telemetryVisibility } from './telemetry';
+import type { WorkstreamSummary } from './types';
 import { MY_THREADS_QUERY_KEY, PINS_QUERY_KEY } from './sidebar-list-store';
 
 /**
@@ -65,14 +67,37 @@ export function usePinWrite(): (write: Promise<PinList>) => void {
   };
 }
 
+/** The fields `workstream_action_completed` reports for a thread. */
+export type PinnedThread = Pick<WorkstreamSummary, 'id' | 'scope' | 'systemKind'>;
+
+/**
+ * Report a saved thread pin or unpin. Only threads: the event is about work
+ * streams, and a breakout or a Channel is not one.
+ */
+export function reportThreadPin(thread: PinnedThread, pinned: boolean): void {
+  reportTelemetryProductIntent({
+    kind: 'workstream_action_completed',
+    workstreamId: thread.id,
+    action: pinned ? 'pin' : 'unpin',
+    visibility: telemetryVisibility(thread.scope),
+    origin: thread.systemKind ? 'system' : 'ad_hoc',
+    pinned,
+  });
+}
+
 /**
  * Pin or unpin, answered with the whole list, which replaces what is held.
  * The caller passes its API client, because the thread screen reads its
- * session from the collaboration context rather than the app session.
+ * session from the collaboration context rather than the app session. A
+ * thread pin passes the thread, and is reported once it saves.
  */
-export function usePinAction(api: RallyApi | null): (kind: PinKind, id: string, pinned: boolean, parentId?: string) => void {
+export function usePinAction(api: RallyApi | null): (kind: PinKind, id: string, pinned: boolean, parentId?: string, thread?: PinnedThread) => void {
   const write = usePinWrite();
-  return (kind, id, pinned, parentId) => {
-    if (api) write(api.setPinned(kind, id, pinned, parentId));
+  return (kind, id, pinned, parentId, thread) => {
+    if (!api) return;
+    write(api.setPinned(kind, id, pinned, parentId).then((list) => {
+      if (kind === 'thread' && thread) reportThreadPin(thread, pinned);
+      return list;
+    }));
   };
 }

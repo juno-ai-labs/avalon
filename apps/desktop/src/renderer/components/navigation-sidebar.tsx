@@ -9,6 +9,7 @@ import {
   IconBell,
   IconCancel,
   IconCheck,
+  IconClock,
   IconCloudDownload,
   IconCornerDownRight,
   IconDeviceDesktopDown,
@@ -24,27 +25,33 @@ import {
 } from '@tabler/icons-react';
 import { notifyManager, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { matchPath, useLocation, useNavigate } from 'react-router-dom';
+import { Link, matchPath, useLocation, useNavigate } from 'react-router-dom';
 
 import type { AttentionItem } from '../lib/attention-items';
 import { useAppSession } from '../lib/app-session';
+import { consumeDeepLinkWorkstreamNavigation, useDeepLinkWorkstreamNavigation } from '../lib/deep-link-navigation';
 import { desktopBridge } from '../lib/platform';
-import { formatSidebarActivityTime, workstreamMarkerStatus } from '../lib/format';
+import { formatDateTime, formatSidebarActivityTime, workstreamMarkerStatus } from '../lib/format';
 import { layoutInsertIndex, layoutRowAt } from '../lib/list-motion';
 import { channelRoute, homeChannelId, threadRoute } from '../lib/navigation-routes';
 import { moveWithin } from '../lib/personal-order';
 import { compareChannels } from '../lib/sidebar-channel-order';
 import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, MY_THREADS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
-import { usePinAction, usePinFailure, usePins, usePinWrite } from '../lib/pins';
+import { useNamingSkeleton } from '../lib/naming-skeleton';
+import { reportThreadPin, usePinAction, usePinFailure, usePins, usePinWrite, type PinnedThread } from '../lib/pins';
+import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation } from '../lib/telemetry';
 import type { SpaceConversationSummary, Workspace } from '../lib/types';
 import { useUiStore, type SidebarChannelSort, type SidebarSection } from '../lib/ui-store';
 import { useListMotion } from '../lib/use-list-motion';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
-import { Button, IconButton, InlineError, Modal, StatusDot, Tip } from './primitives';
+import { openWorkstreamId } from '../lib/workstream-landing';
+import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
+import { Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton, Tip } from './primitives';
+import { SidebarSkeletonRows } from './sidebar-skeleton';
 import { RelativeTime } from './relative-time';
 import { ResizableSidebar, SidebarFooterItems, SidebarScroll } from '@rally/ui/components/resizable-sidebar';
 import type { ChannelStats, SpaceDirectory } from '@rally/contracts';
@@ -52,6 +59,11 @@ import type { ChannelStats, SpaceDirectory } from '@rally/contracts';
 const NAVIGATION_SHEET_ID = 'rally-navigation-sheet';
 /** The stylesheet's phone breakpoint: at or under it the sidebar is a sheet. */
 const PHONE_LAYOUT_MAX_WIDTH = 640;
+/**
+ * How long a pin's scroll-to-row waits for the list to carry the pin before
+ * giving up. Carried over from the sidebar this one replaced.
+ */
+const REVEAL_DEADLINE_MS = 2_000;
 
 const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNode }> = [
   { id: 'threads', label: 'Threads', icon: <IconMessages aria-hidden="true" size={20} stroke={1.7} /> },
@@ -143,7 +155,7 @@ export function NavigationSidebar({
   onOpenSearch?: (() => void) | undefined;
   workspace: Workspace;
 }): React.JSX.Element {
-  const section = useUiStore((state) => state.sidebarSection);
+  const chosenSection = useUiStore((state) => state.sidebarSection);
   const setSection = useUiStore((state) => state.setSidebarSection);
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
@@ -183,6 +195,10 @@ export function NavigationSidebar({
   const panel = useRef<HTMLElement>(null);
   const scroll = useRef<HTMLElement | null>(null);
   const guest = workspace.currentUser.accessClass === 'guest';
+  // A guest has no Channels section: they reach a Channel only through the
+  // threads shared with them (the navigation PRD's privacy rules).
+  const sections = guest ? SECTIONS.filter((candidate) => candidate.id !== 'channels') : SECTIONS;
+  const section = guest && chosenSection === 'channels' ? 'threads' : chosenSection;
   const pinFailure = usePinFailure();
   // The same number as the dock badge and the menu bar: every conversation
   // waiting on this reader, and every access request waiting on them.
@@ -202,7 +218,7 @@ export function NavigationSidebar({
     <div className="navigation-body">
       <nav aria-label="Sections" className="navigation-rail">
         <div className="navigation-rail-top window-drag" />
-        {SECTIONS.map((candidate) => <button
+        {sections.map((candidate) => <button
           aria-current={candidate.id === section ? 'page' : undefined}
           className={clsx('navigation-rail-button window-no-drag', candidate.id === section && 'is-active')}
           key={candidate.id}
@@ -253,7 +269,7 @@ export function NavigationSidebar({
         <SidebarScroll className="navigation-panel-scroll" scrollRef={scroll}>
           {pinFailure && <InlineError>{pinFailure}</InlineError>}
           {section === 'threads' && <ThreadsSection scroll={scroll} />}
-          {section === 'channels' && <ChannelsSection guest={guest} scroll={scroll} />}
+          {section === 'channels' && <ChannelsSection scroll={scroll} />}
           {section === 'activity' && <ActivitySection
             accessDecisionFailed={accessDecisionFailed}
             accessRequests={accessRequests}
@@ -368,6 +384,7 @@ interface PinDrop {
   id: string;
   kind: PinKind;
   parentId: string | undefined;
+  thread: PinnedThread | undefined;
   index: number | null;
   landed: boolean;
 }
@@ -382,7 +399,7 @@ interface PinDrop {
  */
 function usePinDrop(pinnedIds: ReadonlySet<string>, orderOf: (kind: PinKind) => readonly string[]): {
   drop: PinDrop | null;
-  sourceProps: (kind: PinKind, id: string, parentId?: string) => PinnedRowProps;
+  sourceProps: (kind: PinKind, id: string, parentId?: string, thread?: PinnedThread) => PinnedRowProps;
   targetProps: React.HTMLAttributes<HTMLElement>;
 } {
   const { api } = useAppSession();
@@ -391,13 +408,13 @@ function usePinDrop(pinnedIds: ReadonlySet<string>, orderOf: (kind: PinKind) => 
   const drop = state && !pinnedIds.has(state.id) ? state : null;
   return {
     drop,
-    sourceProps: (kind, id, parentId) => ({
+    sourceProps: (kind, id, parentId, thread) => ({
       draggable: true,
       onDragStart: (event) => {
         event.dataTransfer.effectAllowed = 'move';
         // Chromium will not start a drag with an empty payload.
         event.dataTransfer.setData('text/plain', id);
-        setState({ id, kind, parentId, index: null, landed: false });
+        setState({ id, kind, parentId, thread, index: null, landed: false });
       },
       onDragEnd: () => setState((current) => (current?.landed ? current : null)),
     }),
@@ -421,6 +438,7 @@ function usePinDrop(pinnedIds: ReadonlySet<string>, orderOf: (kind: PinKind) => 
         const index = drop.index ?? orderOf(drop.kind).length;
         setState({ ...drop, index, landed: true });
         const pinned = api.setPinned(drop.kind, drop.id, true, drop.parentId).then((list) => {
+          if (drop.kind === 'thread' && drop.thread) reportThreadPin(drop.thread, true);
           const order = list.filter((item) => item.kind === drop.kind).map((item) => item.id);
           return !order.includes(drop.id) || order.indexOf(drop.id) === index
             ? list
@@ -448,14 +466,73 @@ function PinnedSection({ children, count, drop, label, noun, target }: {
   noun: string;
   target: React.HTMLAttributes<HTMLElement>;
 }): React.JSX.Element {
-  return <section aria-label={label} className="navigation-section" {...target}>
-    <SectionHeading motionKey="pinned" trailing={count > 1 ? 'Drag to reorder' : undefined}>Pinned</SectionHeading>
+  const hint = useId();
+  // How to reorder is said once, for the section; each row says only its
+  // place (`pinnedPosition`). As a per-row description it would be repeated
+  // before every title.
+  return <section aria-describedby={count > 1 ? hint : undefined} aria-label={label} className="navigation-section" {...target}>
+    <SectionHeading motionKey="pinned" trailing={count > 1 ? <span aria-hidden="true">Drag to reorder</span> : undefined}>Pinned</SectionHeading>
+    {count > 1 && <p className="sr-only" id={hint}>Hold Alt and press the up or down arrow to move a pinned {noun}.</p>}
     {count === 0 && drop?.index == null && <div className={clsx('pinned-empty-drop-surface', drop && 'is-armed')}>
       <IconPin aria-hidden="true" size={15} stroke={1.7} />
       <span>Move a {noun} here to pin it</span>
     </div>}
     {children}
   </section>;
+}
+
+/** A pinned row's place, read after its title. */
+function pinnedPosition(index: number, count: number): string {
+  return `Pinned, ${index + 1} of ${count}.`;
+}
+
+/**
+ * Follows a row that a pin or unpin moved to the other section, which is off
+ * screen whenever the reader scrolled to reach it. Waits until the list
+ * carries the change, since the write's answer reaches the list a tick after
+ * it resolves, and gives up if it never does. Scrolls only as far as needed,
+ * and moves focus to the row only when the move left focus nowhere, as it
+ * does when the row remounts in its new section. Must be called before
+ * `useListMotion`: the motion's first frame draws the row back at its old
+ * slot, and a scroll after that would aim at where the row used to be.
+ */
+function usePinReveal(
+  scroll: RefObject<HTMLElement | null>,
+  motionKeyOf: (id: string) => string,
+  pinnedIds: ReadonlySet<string>,
+): (id: string, pinned: boolean) => void {
+  const [reveal, setReveal] = useState<{ id: string; pinned: boolean } | null>(null);
+  useEffect(() => {
+    if (reveal === null) return undefined;
+    const timer = setTimeout(() => setReveal(null), REVEAL_DEADLINE_MS);
+    return () => clearTimeout(timer);
+  }, [reveal]);
+  useLayoutEffect(() => {
+    if (reveal === null || pinnedIds.has(reveal.id) !== reveal.pinned) return;
+    setReveal(null);
+    const row = scroll.current?.querySelector<HTMLElement>(`[data-motion-key="${motionKeyOf(reveal.id)}"]`);
+    row?.scrollIntoView?.({
+      block: 'nearest',
+      behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    });
+    if (document.activeElement === null || document.activeElement === document.body) row?.focus({ preventScroll: true });
+  });
+  return useCallback((id, pinned) => setReveal({ id, pinned }), []);
+}
+
+/**
+ * Where a link's own click should be left to the browser: a modifier or a
+ * button other than the main one opens it somewhere else (a new tab, in the
+ * web app), so it is not this window opening the row.
+ */
+function opensElsewhere(event: React.MouseEvent): boolean {
+  return event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+}
+
+/** The open route, as a link's `to` would name it. */
+function useCurrentRoute(): string {
+  const location = useLocation();
+  return `${location.pathname}${location.search}`;
 }
 
 /** A placeholder row: a picture of where a dragged row would land, out of reach of focus and assistive technology. */
@@ -562,7 +639,6 @@ function useSpaceMap(): Map<string, SpaceSummary> {
  */
 function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
   const { api } = useAppSession();
-  const navigate = useNavigate();
   const sort = useUiStore((state) => state.threadSort);
   const setSort = useUiStore((state) => state.setThreadSort);
   const live = useWorkstreamsQuery();
@@ -607,31 +683,53 @@ function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): 
   const { drop } = pinDrop;
   const unpinned = rows.filter((row) => !pinned.has(row.id) && !(drop?.landed && drop.id === row.id))
     .sort(compareChannels(sort, openThreadId));
+  const pinKind = (row: SpaceConversationSummary): PinKind => (row.kind === 'breakout' ? 'breakout' : 'thread');
+  const revealPin = usePinReveal(scroll, (id) => `thread:${id}`, pinned);
+  // A thread opened from a desktop link is scrolled to, loading further pages
+  // until its row is there or the list runs out. The link is marked before
+  // the route changes, so a route still on another thread is waited out.
+  const deepLink = useDeepLinkWorkstreamNavigation();
+  useLayoutEffect(() => {
+    if (deepLink === null || deepLink.workstreamId !== openThreadId) return;
+    const row = scroll.current?.querySelector<HTMLElement>(`[data-motion-key="thread:${deepLink.workstreamId}"]`);
+    if (row) {
+      row.scrollIntoView?.({ block: 'center', behavior: 'auto' });
+      consumeDeepLinkWorkstreamNavigation(deepLink.revision);
+      return;
+    }
+    if (!list.isSuccess || list.isFetchingNextPage) return;
+    if (list.hasNextPage) void list.fetchNextPage();
+    else consumeDeepLinkWorkstreamNavigation(deepLink.revision);
+  });
   // A row that changes place, a pin or a re-sort, travels there. A row keeps
   // its motion key between Pinned and the list, so a pin is one row moving.
   useListMotion(scroll);
-  const open = (row: SpaceConversationSummary): void => {
+  const href = (row: SpaceConversationSummary): string => {
     if (row.kind === 'breakout' && row.breakoutOf) {
       const parent = live.data?.find((candidate) => candidate.id === row.breakoutOf!.workstreamId);
-      void navigate(threadRoute(row.breakoutOf.workstreamId, homeChannelId(parent?.spaceIds ?? row.spaceIds, openChannelId), row.id));
-      return;
+      return threadRoute(row.breakoutOf.workstreamId, homeChannelId(parent?.spaceIds ?? row.spaceIds, openChannelId), row.id);
     }
-    void navigate(threadRoute(row.id, homeChannelId(row.spaceIds, openChannelId)));
+    return threadRoute(row.id, homeChannelId(row.spaceIds, openChannelId));
   };
   const renderRow = (
     row: SpaceConversationSummary,
     drag?: PinnedRowProps,
     moves?: PinMoves,
     ghost = false,
+    position?: string,
   ): ReactNode => <ThreadRow
     active={row.id === openThreadId}
     drag={drag}
     ghost={ghost}
+    href={href(row)}
     moves={moves}
     key={ghost ? `ghost:${row.id}` : row.id}
-    onOpen={() => open(row)}
-    onPin={(next) => pin(row.kind === 'breakout' ? 'breakout' : 'thread', row.id, next, row.breakoutOf?.workstreamId)}
+    onPin={(next) => {
+      revealPin(row.id, next);
+      pin(pinKind(row), row.id, next, row.breakoutOf?.workstreamId, row);
+    }}
     pinned={pinned.has(row.id)}
+    position={position}
     row={row}
     spaces={spaces}
   />;
@@ -641,18 +739,19 @@ function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): 
       if (!row) return null;
       if (id === drop?.id) return renderRow(row, undefined, undefined, !drop.landed);
       const index = drag.order.indexOf(id);
-      return renderRow(row, drag.rowProps(id, index), drag.moves(id, index));
+      return renderRow(row, drag.rowProps(id, index), drag.moves(id, index), false, pinnedPosition(index, drag.order.length));
     });
   return <>
     <PinnedSection count={pinned.size} drop={drop} label="Pinned threads" noun="thread" target={pinDrop.targetProps}>
       {pinnedRows('thread', threadDrag)}
       {pinnedRows('breakout', breakoutDrag)}
     </PinnedSection>
-    <section aria-label="Threads" className="navigation-section">
+    <section aria-busy={list.isPending || undefined} aria-label="Threads" className="navigation-section">
       <SectionHeading motionKey="threads" trailing={<SortButton onChange={setSort} sort={sort} sorts={THREAD_SORTS} />}>Threads</SectionHeading>
+      {list.isPending && rows.length === 0 && <SidebarSkeletonRows count={6} hint />}
       {unpinned.map((row) => renderRow(
         row,
-        row.pending ? undefined : pinDrop.sourceProps(row.kind === 'breakout' ? 'breakout' : 'thread', row.id, row.breakoutOf?.workstreamId),
+        row.pending ? undefined : pinDrop.sourceProps(pinKind(row), row.id, row.breakoutOf?.workstreamId, row),
       ))}
       {list.isSuccess && rows.length === 0 && <p className="navigation-empty">Threads you start or are added to appear here.</p>}
       {list.hasNextPage && <button className="navigation-more" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()} type="button">Show more</button>}
@@ -661,23 +760,51 @@ function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): 
   </>;
 }
 
-function ThreadRow({ active, drag, ghost, moves, onOpen, onPin, pinned, row, spaces }: {
+/**
+ * A thread or breakout row: a link, so a modified click opens it elsewhere.
+ * Hovering it warms the thread's socket so the open is fast, and a plain
+ * click starts the open-latency measurement the thread screen finishes
+ * (`docs/realtime-sockets.md`). A breakout opens beside its thread, so both
+ * act on the thread.
+ */
+function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, row, spaces }: {
   active: boolean;
   drag?: PinnedRowProps | undefined;
   ghost: boolean;
+  href: string;
   moves?: PinMoves | undefined;
-  onOpen: () => void;
   onPin: (pinned: boolean) => void;
   pinned: boolean;
+  position?: string | undefined;
   row: SpaceConversationSummary;
   spaces: ReadonlyMap<string, SpaceSummary>;
 }): React.JSX.Element {
   const status = workstreamMarkerStatus(row);
   // A finished or stopped run with nothing unread is the resting state, drawn without a dot.
   const quiet = status === 'completed' || status === 'stopped';
+  const threadId = row.breakoutOf?.workstreamId ?? row.id;
+  const warmup = useWorkstreamSocketHoverWarmup(threadId);
+  const socketOpenContext = useWorkstreamSocketOpenContext(threadId);
+  const route = useCurrentRoute();
+  const { pathname } = useLocation();
+  const naming = useNamingSkeleton(row);
+  const live = !ghost && !row.pending;
+  const open = (event: React.MouseEvent): void => {
+    if (opensElsewhere(event)) return;
+    // The open row clicked again is not a new open.
+    if (route === href) {
+      event.preventDefault();
+      return;
+    }
+    const socket = socketOpenContext();
+    markWorkstreamFeedOpenStarted(threadId, pinned ? 'pinned' : 'recent', socket.state, performance.now(), socket.socketLeaseId);
+    markWorkstreamNavigation(threadId, openWorkstreamId(pathname) !== null);
+    markSurfaceEntrypoint(pinned ? 'sidebar_pinned' : 'sidebar_recent');
+  };
+  const wakeup = row.nextPendingWakeup;
   return <ContextMenu.Root>
     <ContextMenu.Trigger asChild>
-      <button
+      <Link
         aria-current={active ? 'page' : undefined}
         {...ghostProps(ghost)}
         className={clsx('navigation-row navigation-thread-row', active && 'is-active', !quiet && 'has-activity', ghost && 'is-pin-ghost')}
@@ -685,13 +812,40 @@ function ThreadRow({ active, drag, ghost, moves, onOpen, onPin, pinned, row, spa
         data-motion-insert={row.pending ? '' : undefined}
         // A placeholder is not the row: the row is still in its list.
         data-motion-key={ghost ? undefined : `thread:${row.id}`}
-        onClick={onOpen}
-        type="button"
+        // Not a link drag: a row drags only to pin or reorder, which `drag` says.
+        draggable={false}
+        onClick={open}
+        onPointerCancel={live ? warmup.onPointerCancel : undefined}
+        onPointerEnter={live ? warmup.onPointerEnter : undefined}
+        onPointerLeave={live ? warmup.onPointerLeave : undefined}
+        to={href}
         {...drag}
       >
         <span className="navigation-row-marker">{!quiet && <StatusDot compact status={status} tooltip />}</span>
         <span className="navigation-row-copy">
-          <span className="navigation-row-title">{row.pending ? 'Starting…' : row.title}</span>
+          <span className="navigation-row-line">
+            <span className="navigation-row-title">{row.pending ? 'Starting…' : naming ? <TitleSkeleton /> : row.title}</span>
+            {wakeup && <Tip
+              align="center"
+              className="workstream-timer-tooltip"
+              delayDuration={300}
+              disableHoverableContent
+              label={<>
+                <strong>Next: {formatDateTime(wakeup.dueAt)}</strong>
+                <span>{wakeup.promptPreview}</span>
+              </>}
+              side="right"
+              sideOffset={8}
+            >
+              <span
+                aria-label={`Active timer. Next: ${formatDateTime(wakeup.dueAt)}. ${wakeup.promptPreview}`}
+                className="sidebar-workstream-timer"
+                role="img"
+              >
+                <IconClock aria-hidden="true" size={13} stroke={1.8} />
+              </span>
+            </Tip>}
+          </span>
           {row.kind === 'breakout' && row.breakoutOf
             ? <span className="navigation-chips">
               <span className="navigation-chip">
@@ -701,7 +855,8 @@ function ThreadRow({ active, drag, ghost, moves, onOpen, onPin, pinned, row, spa
             </span>
             : <ChannelChips spaceIds={row.spaceIds} spaces={spaces} />}
         </span>
-      </button>
+        {position && <span className="sr-only">{position}</span>}
+      </Link>
     </ContextMenu.Trigger>
     <ContextMenu.Portal>
       <ContextMenu.Content className="menu-content">
@@ -721,8 +876,8 @@ function ThreadRow({ active, drag, ghost, moves, onOpen, onPin, pinned, row, spa
  * line is how many threads in it they may see; a dot and a bold name mean a
  * thread was placed in it since this person last had it open.
  */
-function ChannelsSection({ guest, scroll }: { guest: boolean; scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
-  const navigate = useNavigate();
+/** Members only: a guest has no Channels section. */
+function ChannelsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
   const { active, inactive } = useSpaceDirectories();
   const { api } = useAppSession();
   // The socket's Space snapshot seeds this; a placement nudge marks it stale
@@ -750,6 +905,7 @@ function ChannelsSection({ guest, scroll }: { guest: boolean; scroll: RefObject<
   const { drop } = pinDrop;
   const rest = channels.filter((space) => !pinned.has(space.id) && !(drop?.landed && drop.id === space.id))
     .sort(compareChannelRows(sort, statsById, openChannelId));
+  const revealPin = usePinReveal(scroll, (id) => `channel:${id}`, pinned);
   // An archived Channel shares its motion key with its row in the list, so a
   // restore is the row moving up into place.
   useListMotion(scroll);
@@ -758,15 +914,19 @@ function ChannelsSection({ guest, scroll }: { guest: boolean; scroll: RefObject<
     rowDrag?: PinnedRowProps,
     moves?: PinMoves,
     ghost = false,
+    position?: string,
   ): ReactNode => <ChannelRow
     active={space.id === openChannelId}
     drag={rowDrag}
     ghost={ghost}
     moves={moves}
     key={ghost ? `ghost:${space.id}` : space.id}
-    onOpen={() => void navigate(channelRoute(space.id))}
-    onPin={(next) => pin('channel', space.id, next)}
+    onPin={(next) => {
+      revealPin(space.id, next);
+      pin('channel', space.id, next);
+    }}
     pinned={pinned.has(space.id)}
+    position={position}
     space={space}
     stats={statsById.get(space.id)}
   />;
@@ -777,20 +937,21 @@ function ChannelsSection({ guest, scroll }: { guest: boolean; scroll: RefObject<
         if (!space) return null;
         if (id === drop?.id) return row(space, undefined, undefined, !drop.landed);
         const index = drag.order.indexOf(id);
-        return row(space, drag.rowProps(id, index), drag.moves(id, index));
+        return row(space, drag.rowProps(id, index), drag.moves(id, index), false, pinnedPosition(index, drag.order.length));
       })}
     </PinnedSection>
-    <section aria-label="All channels" className="navigation-section">
+    <section aria-busy={active.data === undefined || undefined} aria-label="All channels" className="navigation-section">
       <SectionHeading trailing={<>
         <SortButton onChange={setSort} sort={sort} sorts={CHANNEL_SORTS} />
-        {!guest && <Tip label="New channel"><button aria-label="New channel" className="navigation-sort" onClick={() => setCreating(true)} type="button">
+        <Tip label="New channel"><button aria-label="New channel" className="navigation-sort" onClick={() => setCreating(true)} type="button">
           <IconPlus aria-hidden="true" size={14} stroke={1.9} />
-        </button></Tip>}
+        </button></Tip>
       </>} motionKey="channels">All channels</SectionHeading>
+      {active.data === undefined && <SidebarSkeletonRows count={5} hint />}
       {rest.map((space) => row(space, pinDrop.sourceProps('channel', space.id)))}
       {active.data !== undefined && channels.length === 0 && <p className="navigation-empty">No channels yet.</p>}
     </section>
-    {!guest && (inactive.data?.items.length ?? 0) > 0 && <ArchivedChannels archived={archived} channels={inactive.data!.items} />}
+    {(inactive.data?.items.length ?? 0) > 0 && <ArchivedChannels archived={archived} channels={inactive.data!.items} />}
     {creating && <NewChannelDialog onClose={() => setCreating(false)} />}
   </>;
 }
@@ -854,28 +1015,33 @@ function ArchivedChannels({ archived, channels }: {
   </section>;
 }
 
-function ChannelRow({ active, drag, ghost, moves, onOpen, onPin, pinned, space, stats }: {
+/** A Channel row: a link, so a modified click opens it elsewhere. */
+function ChannelRow({ active, drag, ghost, moves, onPin, pinned, position, space, stats }: {
   active: boolean;
   drag?: PinnedRowProps | undefined;
   ghost: boolean;
   moves?: PinMoves | undefined;
-  onOpen: () => void;
   onPin: (pinned: boolean) => void;
   pinned: boolean;
+  position?: string | undefined;
   space: SpaceSummary;
   stats: ChannelStats | undefined;
 }): React.JSX.Element {
   const count = stats?.threadCount ?? 0;
+  const route = useCurrentRoute();
+  const href = channelRoute(space.id);
   return <ContextMenu.Root>
     <ContextMenu.Trigger asChild>
-      <button
+      <Link
         aria-current={active ? 'page' : undefined}
         {...ghostProps(ghost)}
         className={clsx('navigation-row navigation-channel-row', active && 'is-active', stats?.hasUnread && 'is-unread', ghost && 'is-pin-ghost')}
         // A placeholder is not the row: the row is still in its list.
         data-motion-key={ghost ? undefined : `channel:${space.id}`}
-        onClick={onOpen}
-        type="button"
+        draggable={false}
+        // The open Channel clicked again is not a new open.
+        onClick={(event) => { if (!opensElsewhere(event) && route === href) event.preventDefault(); }}
+        to={href}
         {...drag}
       >
         <span className="navigation-channel-mark" style={{ background: markColors(space.colorKey).tint }}>
@@ -890,7 +1056,8 @@ function ChannelRow({ active, drag, ghost, moves, onOpen, onPin, pinned, space, 
           </span>
           <span className="navigation-row-detail">{count === 1 ? '1 thread' : `${count} threads`}</span>
         </span>
-      </button>
+        {position && <span className="sr-only">{position}</span>}
+      </Link>
     </ContextMenu.Trigger>
     <ContextMenu.Portal>
       <ContextMenu.Content className="menu-content">
@@ -981,7 +1148,6 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
   scroll: RefObject<HTMLElement | null>;
 }): React.JSX.Element {
   const { api } = useAppSession();
-  const navigate = useNavigate();
   const live = useWorkstreamsQuery();
   const spaces = useSpaceMap();
   // A start names its starter by id; the name is the member directory's, the
@@ -1021,9 +1187,9 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
   // focused, and it is rechecked when either changes, so Activity arriving
   // in a background window keeps its dots until somebody looks.
   useVisibleReadAcknowledgement(acknowledge);
-  const open = (item: ActivityItem): void => {
+  const href = (item: ActivityItem): string => {
     const parent = live.data?.find((candidate) => candidate.id === item.threadId);
-    void navigate(threadRoute(item.threadId, homeChannelId(parent?.spaceIds ?? item.channelIds), item.breakout?.substreamId));
+    return threadRoute(item.threadId, homeChannelId(parent?.spaceIds ?? item.channelIds), item.breakout?.substreamId);
   };
   // New activity pushes the rows under it down, and a request arriving or
   // answered slides in or out, rather than the list jumping.
@@ -1058,16 +1224,18 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
         </span>
       </div>)}
     </section>}
+    {feed.isPending && <div aria-busy="true" aria-label="Loading activity" className="navigation-section" role="status">
+      <SidebarSkeletonRows count={5} hint />
+    </div>}
     {groups.map((group) => <section aria-label={group.label} className="navigation-section" key={group.label}>
       <SectionHeading motionKey={`day:${group.label}`}>{group.label}</SectionHeading>
       {group.items.map((item) => {
         const channel = item.channelIds.map((id) => spaces.get(id)).find(Boolean);
-        return <button
+        return <Link
           className={clsx('activity-row', item.unread && 'is-unread')}
           data-motion-key={`activity:${item.id}`}
           key={item.id}
-          onClick={() => open(item)}
-          type="button"
+          to={href(item)}
         >
           <span aria-hidden="true" className={clsx('activity-avatar', item.actorUserId === null && 'is-rally')}>
             {item.actorUserId === null ? '✦' : actorName(item).split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()}
@@ -1087,7 +1255,7 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
             </span>
           </span>
           {item.unread && <span aria-label="Unread" className="activity-unread-dot" role="img" />}
-        </button>;
+        </Link>;
       })}
     </section>)}
     {feed.isSuccess && items.length === 0 && accessRequests.length === 0 && <p className="navigation-empty">

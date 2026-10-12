@@ -93,7 +93,11 @@ appends, then saves the kind's order with the row in that slot unless the slot
 was the end. Until the pin list holds the row, it stays drawn in Pinned, so it
 does not bounce back to its list while the write is in flight. A failed write
 puts it back and says why, as a menu pin does. Dragging is pointer-only; the
-menu's **Pin** is the keyboard path.
+menu's **Pin** and `Alt`+`Arrow` are the keyboard paths, and a screen reader
+hears how to reorder once, for the section, and each pinned row's place
+("Pinned, 2 of 3."). A pin or unpin from a menu scrolls the moved row into
+view and, when the move left focus nowhere, focuses it. A saved thread pin
+reports `workstream_action_completed`.
 
 ### Older desktops' per-Space pins
 
@@ -346,7 +350,8 @@ placements, so the migration intentionally clears all existing pins.
 
 **What changed:** The Pinned part of the Threads and Channels tabs is always
 drawn, with an empty-state drop area, and an unpinned row dragged into it is
-pinned at the slot it is dropped in.
+pinned at the slot it is dropped in. A menu pin scrolls to and focuses the
+moved row again, and screen readers hear the reorder keys and each row's place.
 
 **Why:** The old sidebar had this, and the navigation redesign dropped it
 without a decision in the PRD: with nothing pinned there was no Pinned section
