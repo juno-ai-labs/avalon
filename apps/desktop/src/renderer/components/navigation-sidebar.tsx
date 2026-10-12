@@ -1218,7 +1218,7 @@ const ACTIVITY_VERBS: Record<ActivityItem['kind'], string> = {
   run_finished: 'finished',
 };
 
-/** The Activity tab's chips. Unread is the client's, Mentions the server's; see `ActivityFilterSchema`. */
+/** The Activity tab's chips; see `docs/digests.md#the-activity-tab`. */
 type ActivityChip = 'all' | 'unread' | 'mentions';
 const ACTIVITY_CHIPS: ReadonlyArray<{ chip: ActivityChip; label: string }> = [
   { chip: 'all', label: 'All' },
@@ -1304,8 +1304,6 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
     refetchOnMount: 'always',
   });
   const fetched = useMemo(() => (feed.data?.pages ?? []).flatMap((page) => page.items), [feed.data]);
-  // Unread is everything after one waterline, so in a newest-first feed it
-  // is a run at the top: filtering what is loaded misses nothing above it.
   const items = chip === 'unread' ? fetched.filter((item) => item.unread) : fetched;
   const markedThrough = useRef<string | null>(null);
   // Only the whole feed moves the waterline. Mentions holds some of what
@@ -1384,7 +1382,7 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
         const actor: TileBadge = item.actorUserId === null
           ? { key: 'actor', shape: 'circle', fill: 'var(--av-sys-color-text-default)', ink: 'var(--av-sys-color-surface-default)', icon: Sparkle }
           : { key: 'actor', shape: 'circle', fill: 'var(--av-sys-color-accent-wash)', ink: 'var(--av-sys-color-accent-strong)', text: initials(actorName(item)) };
-        const thread = resolveWorkstreamAppearance(item.threadId);
+        const thread = resolveWorkstreamAppearance(item.threadId, live.data?.find((candidate) => candidate.id === item.threadId)?.appearance);
         return <Link
           className={clsx('activity-row', item.unread && 'is-unread')}
           data-motion-key={`activity:${item.id}`}

@@ -107,23 +107,20 @@ its thread's socket, and a plain click starts the open-latency measurement
 (`markWorkstreamFeedOpenStarted`); the open thread clicked again starts
 nothing. A thread opened from a desktop link is scrolled into view, loading
 further pages until its row is listed. **New thread** opens the Channel in
-view, or General, whichever the person can start a thread in, and its
-composer takes focus: a thread is started from a Channel and nowhere else
-(the PRD's non-goal 6).
+view, or General, whichever the person can start a thread in: a thread is
+started from a Channel's composer and nowhere else (the PRD's non-goal 6).
+Opening a Channel focuses that composer; when the Channel is already open,
+the button changes nothing.
 
 **Activity**: requests to join waiting on this person (approve or decline in
 place), then what happened to them, grouped Today, Yesterday and by day
 (`GET /navigation/activity`; [`digests.md`](digests.md#the-activity-tab)).
 A row is the Channel's tile badged with who acted (Rally's sparkle, or a
 person's initials), the sentence, and the Channel with the time. Chips filter
-it: **All**, **Unread** (filtered in the client, since unread is everything
-after one waterline and so a run at the top of the newest-first feed) and
-**Mentions** (`?only=mentions`, filtered by the server, since mentions are
-sparse and a client filter could draw an empty page with more behind it).
-Opening it marks it read through its newest row, under All or Unread only:
-Mentions holds part of the feed, and reading through its newest would mark the
-rest seen. **Mark all read** moves the waterline to the newest row held and
-drops every held dot at once.
+it: **All**, **Unread** and **Mentions**
+([`digests.md`](digests.md#the-activity-tab) says which side filters each).
+Opening it marks it read, under All or Unread only. **Mark all read** clears
+every held dot at once.
 
 A row opened from any list opens the thread beside one of its Channels — the
 one already open when it sits there — so a Channel is always one step back.
