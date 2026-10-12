@@ -8474,6 +8474,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   flex-direction: column;
   gap: 6px;
   padding-bottom: 14px;
+  /* The main window centers its traffic lights over this width:
+     `apps/desktop/src/main/main-window-chrome.ts`. */
   width: 76px;
 }
 .navigation-rail-top { flex: none; height: 46px; width: 100%; }
