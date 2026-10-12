@@ -239,8 +239,8 @@ async function myThreads(userId: UserId) {
   return result.page;
 }
 
-async function activity(userId: UserId) {
-  const result = await workspace().listActivity({ workspaceId: WORKSPACE_ID, userId, cursor: null });
+async function activity(userId: UserId, only: "mentions" | null = null) {
+  const result = await workspace().listActivity({ workspaceId: WORKSPACE_ID, userId, cursor: null, only });
   if (!result.ok) throw new Error(`listActivity refused: ${result.code}`);
   return result.page;
 }
@@ -684,6 +684,30 @@ describe("Activity tab", () => {
     expect(await mentions()).toEqual([expect.objectContaining({
       kind: "mentioned", threadId: OPEN_THREAD, breakout: expect.objectContaining({ substreamId: BREAKOUT }),
     })]);
+  });
+
+  it("given a mention, an add and a start, when the member reads Activity filtered to mentions, then only the mention comes back", async () => {
+    await channelWithThreads();
+    await publish(OPEN_THREAD, [viewerEffect(MEMBER)]);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      for (const [eventId, relation, at] of [["mention-event", "mentioned", 1759708800000], ["added-event", "added", 1759708900000]] as const) {
+        state.storage.sql.exec(`INSERT INTO workspace_activity_events (
+            event_id, event_type, subject_type, subject_id, subject_sequence_number, actor_type, actor_user_id,
+            actor_label, title, body, canonical_url, audience_kind, audience_user_id, audience_workstream_id,
+            digestible, occurred_at, created_at, source_kind, source_id, dedupe_key, metadata_json
+          ) VALUES (?, ?, 'workstream', ?, 3, 'user', ?, 'Owner', 'Open', '',
+            NULL, 'workspace', NULL, NULL, 0, ?, ?, 'workstream_message', ?, ?, '{}')`,
+        eventId, relation === "added" ? "workstream_participant_added" : "workstream_message_created",
+        OPEN_THREAD, OWNER, at, at, eventId, `message:${eventId}`);
+        state.storage.sql.exec(`INSERT INTO workspace_activity_event_targets (event_id, user_id, relation, created_at)
+          VALUES (?, ?, ?, ?)`, eventId, MEMBER, relation, at);
+      }
+    });
+
+    expect((await activity(MEMBER)).items.map((item) => item.kind).sort()).toEqual(["added", "mentioned", "thread_started"]);
+    const mentions = await activity(MEMBER, "mentions");
+    expect(mentions.items.map((item) => [item.kind, item.id])).toEqual([["mentioned", "mention-event"]]);
+    expect(mentions.nextCursor).toBeNull();
   });
 
   it("given more hidden starts than a page holds, when a member reads Activity, then the page holds what they may list and its cursor names nothing hidden", async () => {
