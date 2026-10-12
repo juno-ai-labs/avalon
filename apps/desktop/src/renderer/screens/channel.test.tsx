@@ -13,6 +13,7 @@ const api = vi.hoisted(() => ({
   getChannelFeed: vi.fn(),
   getWorkspaceMembers: vi.fn(async () => []),
   archiveSpace: vi.fn(),
+  updateSpacePresentation: vi.fn(),
   acknowledgeChannelRead: vi.fn(),
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session: null }) }));
@@ -127,11 +128,29 @@ describe('a Channel', () => {
     api.archiveSpace.mockResolvedValue({ ...outbound('organization').items[0], status: 'archived' });
     renderChannel();
     fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Outbound' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive channel' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Archive' }));
 
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(/^\/$/u));
     expect(api.archiveSpace).toHaveBeenCalledWith('outbound');
+  });
+
+  it('saves an icon and a colour picked from its mark one after the other, the second keeping the first', async () => {
+    const first = Promise.withResolvers<unknown>();
+    api.updateSpacePresentation
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(async (_id: string, input: object) => ({ ...outbound('organization').items[0], ...input }));
+    renderChannel();
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Change Outbound icon and color' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Rocket' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Green' }));
+
+    await waitFor(() => expect(api.updateSpacePresentation).toHaveBeenCalledTimes(1));
+    expect(api.updateSpacePresentation).toHaveBeenLastCalledWith('outbound', { name: 'Outbound', iconKey: 'rocket', colorKey: 'blue' });
+    first.resolve({ ...outbound('organization').items[0], iconKey: 'rocket' });
+    await waitFor(() => expect(api.updateSpacePresentation).toHaveBeenCalledTimes(2));
+    expect(api.updateSpacePresentation).toHaveBeenLastCalledWith('outbound', { name: 'Outbound', iconKey: 'rocket', colorKey: 'green' });
   });
 
   describe('read in a focused window', () => {
