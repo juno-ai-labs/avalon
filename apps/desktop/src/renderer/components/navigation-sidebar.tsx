@@ -22,9 +22,9 @@ import {
   IconSearch,
   IconX,
 } from '@tabler/icons-react';
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { notifyManager, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 
@@ -32,6 +32,7 @@ import type { AttentionItem } from '../lib/attention-items';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { formatSidebarActivityTime, workstreamMarkerStatus } from '../lib/format';
+import { layoutRowAt } from '../lib/list-motion';
 import { channelRoute, homeChannelId, threadRoute } from '../lib/navigation-routes';
 import { moveWithin } from '../lib/personal-order';
 import { compareChannels } from '../lib/sidebar-channel-order';
@@ -39,6 +40,7 @@ import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY,
 import { usePinAction, usePinFailure, usePins, usePinWrite } from '../lib/pins';
 import type { SpaceConversationSummary, Workspace } from '../lib/types';
 import { useUiStore, type SidebarChannelSort, type SidebarSection } from '../lib/ui-store';
+import { useListMotion } from '../lib/use-list-motion';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
@@ -179,6 +181,7 @@ export function NavigationSidebar({
   }, [pathname, setSidebarOpen]);
   const [accountSlot, setAccountSlot] = useState<HTMLDivElement | null>(null);
   const panel = useRef<HTMLElement>(null);
+  const scroll = useRef<HTMLElement | null>(null);
   const guest = workspace.currentUser.accessClass === 'guest';
   const pinFailure = usePinFailure();
   // The same number as the dock badge and the menu bar: every conversation
@@ -247,10 +250,10 @@ export function NavigationSidebar({
             </IconButton>}
           </div>
         </header>
-        <SidebarScroll className="navigation-panel-scroll">
+        <SidebarScroll className="navigation-panel-scroll" scrollRef={scroll}>
           {pinFailure && <InlineError>{pinFailure}</InlineError>}
-          {section === 'threads' && <ThreadsSection />}
-          {section === 'channels' && <ChannelsSection guest={guest} />}
+          {section === 'threads' && <ThreadsSection scroll={scroll} />}
+          {section === 'channels' && <ChannelsSection guest={guest} scroll={scroll} />}
           {section === 'activity' && <ActivitySection
             accessDecisionFailed={accessDecisionFailed}
             accessRequests={accessRequests}
@@ -258,6 +261,7 @@ export function NavigationSidebar({
             guest={guest}
             onDecideAccessRequest={onDecideAccessRequest}
             onOpenAccessRequest={onOpenAccessRequest}
+            scroll={scroll}
           />}
         </SidebarScroll>
         {footerItems && <SidebarFooterItems>{footerItems}</SidebarFooterItems>}
@@ -285,11 +289,15 @@ function useOpenThreadId(): string | null {
 /**
  * A Pinned list arranged by dragging: the order moves under the pointer and is
  * saved on drop. The server answers with the whole pin list, which replaces the
- * one held.
+ * one held. The dragged row is held by the list motion, so it is placed rather
+ * than sent out of frame on every step, and the slot under the pointer is the
+ * row laid out there, not the row drawn there: mid-motion, a row gliding out
+ * of the slot the dragged row just took would otherwise be read as that slot's
+ * owner and the reorder would send it straight back (`docs/list-motion.md`).
  */
 function usePinnedDrag(kind: PinKind, ids: readonly string[]): {
   order: readonly string[];
-  rowProps: (id: string, index: number) => React.HTMLAttributes<HTMLElement> & { draggable: boolean };
+  rowProps: (id: string, index: number) => PinnedRowProps;
   moves: (id: string, index: number) => PinMoves;
 } {
   const { api } = useAppSession();
@@ -308,6 +316,9 @@ function usePinnedDrag(kind: PinKind, ids: readonly string[]): {
     moves: (id, index) => ({ up: moveTo(id, index - 1), down: moveTo(id, index + 1) }),
     rowProps: (id, index) => ({
       'aria-keyshortcuts': 'Alt+ArrowUp Alt+ArrowDown',
+      'data-motion-hold': drag?.id === id ? '' : undefined,
+      'data-pin-id': id,
+      'data-pin-kind': kind,
       onKeyDown: (event) => {
         if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
         const move = moveTo(id, index + (event.key === 'ArrowUp' ? -1 : 1));
@@ -323,7 +334,13 @@ function usePinnedDrag(kind: PinKind, ids: readonly string[]): {
       onDragOver: (event) => {
         if (!drag) return;
         event.preventDefault();
-        if (drag.order[index] !== drag.id) setDrag({ id: drag.id, order: moveWithin(drag.order, drag.id, index) });
+        // Where rows have no layout (jsdom), the row the event reached is the slot.
+        const slot = layoutRowAt(
+          event.currentTarget.parentElement?.querySelectorAll<HTMLElement>(`[data-pin-kind="${kind}"]`) ?? [],
+          event.clientY,
+        );
+        const target = slot ? drag.order.indexOf(slot.dataset.pinId ?? '') : index;
+        if (target >= 0 && drag.order[target] !== drag.id) setDrag({ id: drag.id, order: moveWithin(drag.order, drag.id, target) });
       },
       onDrop: (event) => {
         event.preventDefault();
@@ -337,6 +354,14 @@ function usePinnedDrag(kind: PinKind, ids: readonly string[]): {
     }),
   };
 }
+
+/** What a pinned row takes from its list's drag. */
+type PinnedRowProps = React.HTMLAttributes<HTMLElement> & {
+  draggable: boolean;
+  'data-motion-hold'?: string | undefined;
+  'data-pin-id': string;
+  'data-pin-kind': PinKind;
+};
 
 /**
  * A list's sort, which cycles on each click. The label is the current sort;
@@ -385,8 +410,17 @@ function PinMoveItems({ moves }: { moves: PinMoves | undefined }): React.JSX.Ele
   </>;
 }
 
-function SectionHeading({ children, trailing }: { children: ReactNode; trailing?: ReactNode }): React.JSX.Element {
-  return <div className="navigation-section-heading">
+/**
+ * A section's heading. It is a held row of the list motion, so it travels with
+ * the rows under it when a section above appears or goes, rather than being
+ * the thing seen to leave.
+ */
+function SectionHeading({ children, motionKey, trailing }: {
+  children: ReactNode;
+  motionKey: string;
+  trailing?: ReactNode;
+}): React.JSX.Element {
+  return <div className="navigation-section-heading" data-motion-hold="" data-motion-key={`heading:${motionKey}`}>
     <span>{children}</span>
     {trailing && <span className="navigation-section-trailing">{trailing}</span>}
   </div>;
@@ -417,7 +451,7 @@ function useSpaceMap(): Map<string, SpaceSummary> {
  * they take part in. The list is the server's (`GET /navigation/threads`); a
  * thread the socket holds is drawn from the socket, so its dot moves live.
  */
-function ThreadsSection(): React.JSX.Element {
+function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
   const { api } = useAppSession();
   const navigate = useNavigate();
   const sort = useUiStore((state) => state.threadSort);
@@ -461,6 +495,9 @@ function ThreadsSection(): React.JSX.Element {
   const breakoutDrag = usePinnedDrag('breakout', breakoutPins);
   const pinned = new Set([...threadPins, ...breakoutPins]);
   const unpinned = rows.filter((row) => !pinned.has(row.id)).sort(compareChannels(sort, openThreadId));
+  // A row that changes place, a pin or a re-sort, travels there. A row keeps
+  // its motion key between Pinned and the list, so a pin is one row moving.
+  useListMotion(scroll);
   const open = (row: SpaceConversationSummary): void => {
     if (row.kind === 'breakout' && row.breakoutOf) {
       const parent = live.data?.find((candidate) => candidate.id === row.breakoutOf!.workstreamId);
@@ -471,7 +508,7 @@ function ThreadsSection(): React.JSX.Element {
   };
   const renderRow = (
     row: SpaceConversationSummary,
-    drag?: React.HTMLAttributes<HTMLElement> & { draggable: boolean },
+    drag?: PinnedRowProps,
     moves?: PinMoves,
   ): ReactNode => <ThreadRow
     active={row.id === openThreadId}
@@ -486,7 +523,7 @@ function ThreadsSection(): React.JSX.Element {
   />;
   return <>
     {pinned.size > 0 && <section aria-label="Pinned threads" className="navigation-section">
-      <SectionHeading trailing="Drag to reorder">Pinned</SectionHeading>
+      <SectionHeading motionKey="pinned" trailing="Drag to reorder">Pinned</SectionHeading>
       {threadDrag.order.map((id, index) => {
         const row = byId.get(id);
         return row ? renderRow(row, threadDrag.rowProps(id, index), threadDrag.moves(id, index)) : null;
@@ -497,7 +534,7 @@ function ThreadsSection(): React.JSX.Element {
       })}
     </section>}
     <section aria-label="Threads" className="navigation-section">
-      <SectionHeading trailing={<SortButton onChange={setSort} sort={sort} sorts={THREAD_SORTS} />}>Threads</SectionHeading>
+      <SectionHeading motionKey="threads" trailing={<SortButton onChange={setSort} sort={sort} sorts={THREAD_SORTS} />}>Threads</SectionHeading>
       {unpinned.map((row) => renderRow(row))}
       {list.isSuccess && rows.length === 0 && <p className="navigation-empty">Threads you start or are added to appear here.</p>}
       {list.hasNextPage && <button className="navigation-more" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()} type="button">Show more</button>}
@@ -508,7 +545,7 @@ function ThreadsSection(): React.JSX.Element {
 
 function ThreadRow({ active, drag, moves, onOpen, onPin, pinned, row, spaces }: {
   active: boolean;
-  drag?: (React.HTMLAttributes<HTMLElement> & { draggable: boolean }) | undefined;
+  drag?: (PinnedRowProps) | undefined;
   moves?: PinMoves | undefined;
   onOpen: () => void;
   onPin: (pinned: boolean) => void;
@@ -524,6 +561,9 @@ function ThreadRow({ active, drag, moves, onOpen, onPin, pinned, row, spaces }: 
       <button
         aria-current={active ? 'page' : undefined}
         className={clsx('navigation-row navigation-thread-row', active && 'is-active', !quiet && 'has-activity')}
+        // A thread still starting slides in, and out again if its start fails.
+        data-motion-insert={row.pending ? '' : undefined}
+        data-motion-key={`thread:${row.id}`}
         onClick={onOpen}
         type="button"
         {...drag}
@@ -560,7 +600,7 @@ function ThreadRow({ active, drag, moves, onOpen, onPin, pinned, row, spaces }: 
  * line is how many threads in it they may see; a dot and a bold name mean a
  * thread was placed in it since this person last had it open.
  */
-function ChannelsSection({ guest }: { guest: boolean }): React.JSX.Element {
+function ChannelsSection({ guest, scroll }: { guest: boolean; scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
   const navigate = useNavigate();
   const { active, inactive } = useSpaceDirectories();
   const { api } = useAppSession();
@@ -578,6 +618,7 @@ function ChannelsSection({ guest }: { guest: boolean }): React.JSX.Element {
   const sort = useUiStore((state) => state.channelSort);
   const setSort = useUiStore((state) => state.setChannelSort);
   const [creating, setCreating] = useState(false);
+  const archived = useArchivedChannels();
   const statsById = useMemo(() => new Map((stats.data ?? []).map((item) => [item.channelId, item])), [stats.data]);
   const channels = active.data?.items ?? [];
   const byId = new Map(channels.map((space) => [space.id as string, space]));
@@ -586,9 +627,12 @@ function ChannelsSection({ guest }: { guest: boolean }): React.JSX.Element {
   const pinned = new Set(channelPins);
   const rest = channels.filter((space) => !pinned.has(space.id))
     .sort(compareChannelRows(sort, statsById, openChannelId));
+  // An archived Channel shares its motion key with its row in the list, so a
+  // restore is the row moving up into place.
+  useListMotion(scroll);
   const row = (
     space: SpaceSummary,
-    rowDrag?: React.HTMLAttributes<HTMLElement> & { draggable: boolean },
+    rowDrag?: PinnedRowProps,
     moves?: PinMoves,
   ): ReactNode => <ChannelRow
     active={space.id === openChannelId}
@@ -603,7 +647,7 @@ function ChannelsSection({ guest }: { guest: boolean }): React.JSX.Element {
   />;
   return <>
     {channelPins.length > 0 && <section aria-label="Pinned channels" className="navigation-section">
-      <SectionHeading trailing="Drag to reorder">Pinned</SectionHeading>
+      <SectionHeading motionKey="pinned" trailing="Drag to reorder">Pinned</SectionHeading>
       {drag.order.map((id, index) => {
         const space = byId.get(id);
         return space ? row(space, drag.rowProps(id, index), drag.moves(id, index)) : null;
@@ -615,21 +659,27 @@ function ChannelsSection({ guest }: { guest: boolean }): React.JSX.Element {
         {!guest && <Tip label="New channel"><button aria-label="New channel" className="navigation-sort" onClick={() => setCreating(true)} type="button">
           <IconPlus aria-hidden="true" size={14} stroke={1.9} />
         </button></Tip>}
-      </>}>All channels</SectionHeading>
+      </>} motionKey="channels">All channels</SectionHeading>
       {rest.map((space) => row(space))}
       {active.data !== undefined && channels.length === 0 && <p className="navigation-empty">No channels yet.</p>}
     </section>
-    {!guest && (inactive.data?.items.length ?? 0) > 0 && <ArchivedChannels channels={inactive.data!.items} />}
+    {!guest && (inactive.data?.items.length ?? 0) > 0 && <ArchivedChannels archived={archived} channels={inactive.data!.items} />}
     {creating && <NewChannelDialog onClose={() => setCreating(false)} />}
   </>;
 }
 
 /**
- * Archived Channels, folded away under their own heading, each with
- * **Restore**. A restore brings back the threads the archive took out; any it
- * moved to General stay there too.
+ * The Archived section's state. It is held by the Channels tab rather than
+ * the section, so that anything changing the section's rows (unfolding it, a
+ * failed restore's line) renders the component that runs the list motion, and
+ * an archived row is measured before a restore moves it.
  */
-function ArchivedChannels({ channels }: { channels: readonly SpaceSummary[] }): React.JSX.Element {
+function useArchivedChannels(): {
+  failed: string | null;
+  open: boolean;
+  restore: (space: SpaceSummary) => void;
+  toggle: () => void;
+} {
   const { api } = useAppSession();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -637,22 +687,37 @@ function ArchivedChannels({ channels }: { channels: readonly SpaceSummary[] }): 
   const restore = (space: SpaceSummary): void => {
     if (!api) return;
     setFailed(null);
-    void api.restoreSpace(space.id).then((restored) => {
+    // One render for both lists, so the list motion sees the row move rather
+    // than leave one render and arrive as a stranger the next.
+    void api.restoreSpace(space.id).then((restored) => notifyManager.batch(() => {
       queryClient.setQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY, (current) => current ? {
         ...current, items: current.items.filter((item) => item.id !== space.id),
       } : current);
       queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current ? {
         ...current, items: [...current.items.filter((item) => item.id !== space.id), restored],
       } : current);
-    }, () => setFailed(space.name));
+    }), () => setFailed(space.name));
   };
+  return { failed, open, restore, toggle: () => setOpen(!open) };
+}
+
+/**
+ * Archived Channels, folded away under their own heading, each with
+ * **Restore**. A restore brings back the threads the archive took out; any it
+ * moved to General stay there too.
+ */
+function ArchivedChannels({ archived, channels }: {
+  archived: ReturnType<typeof useArchivedChannels>;
+  channels: readonly SpaceSummary[];
+}): React.JSX.Element {
+  const { failed, open, restore, toggle } = archived;
   return <section aria-label="Archived channels" className="navigation-section">
-    <SectionHeading trailing={<button aria-expanded={open} className="navigation-sort" onClick={() => setOpen(!open)} type="button">
+    <SectionHeading motionKey="archived" trailing={<button aria-expanded={open} className="navigation-sort" onClick={toggle} type="button">
       {open ? 'Hide' : `Show ${channels.length}`}
     </button>}>Archived</SectionHeading>
     {failed && <InlineError>{failed} couldn’t be restored. Try again.</InlineError>}
     {open && [...channels].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }))
-      .map((space) => <div className="navigation-archived-row" key={space.id}>
+      .map((space) => <div className="navigation-archived-row" data-motion-key={`channel:${space.id}`} key={space.id}>
         <span className="navigation-channel-mark is-small" style={{ background: markColors(space.colorKey).tint }}>
           <SpaceIcon size={16} space={space} />
         </span>
@@ -664,7 +729,7 @@ function ArchivedChannels({ channels }: { channels: readonly SpaceSummary[] }): 
 
 function ChannelRow({ active, drag, moves, onOpen, onPin, pinned, space, stats }: {
   active: boolean;
-  drag?: (React.HTMLAttributes<HTMLElement> & { draggable: boolean }) | undefined;
+  drag?: (PinnedRowProps) | undefined;
   moves?: PinMoves | undefined;
   onOpen: () => void;
   onPin: (pinned: boolean) => void;
@@ -678,6 +743,7 @@ function ChannelRow({ active, drag, moves, onOpen, onPin, pinned, space, stats }
       <button
         aria-current={active ? 'page' : undefined}
         className={clsx('navigation-row navigation-channel-row', active && 'is-active', stats?.hasUnread && 'is-unread')}
+        data-motion-key={`channel:${space.id}`}
         onClick={onOpen}
         type="button"
         {...drag}
@@ -775,13 +841,14 @@ function dayLabel(value: string, now = new Date()): string {
  * happened to them, newest first and grouped by day. Opening it reads it, so
  * the next opening's dots are only what came after.
  */
-function ActivitySection({ accessDecisionFailed, accessRequests, attentionComplete, guest, onDecideAccessRequest, onOpenAccessRequest }: {
+function ActivitySection({ accessDecisionFailed, accessRequests, attentionComplete, guest, onDecideAccessRequest, onOpenAccessRequest, scroll }: {
   accessDecisionFailed: boolean;
   guest: boolean;
   accessRequests: readonly ConversationAccessRequestItem[];
   attentionComplete: boolean;
   onDecideAccessRequest: (request: ConversationAccessRequestItem, decision: AccessDecision) => void;
   onOpenAccessRequest: (request: ConversationAccessRequestItem) => void;
+  scroll: RefObject<HTMLElement | null>;
 }): React.JSX.Element {
   const { api } = useAppSession();
   const navigate = useNavigate();
@@ -828,6 +895,9 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
     const parent = live.data?.find((candidate) => candidate.id === item.threadId);
     void navigate(threadRoute(item.threadId, homeChannelId(parent?.spaceIds ?? item.channelIds), item.breakout?.substreamId));
   };
+  // New activity pushes the rows under it down, and a request arriving or
+  // answered slides in or out, rather than the list jumping.
+  useListMotion(scroll);
   const groups: Array<{ label: string; items: ActivityItem[] }> = [];
   for (const item of items) {
     const label = dayLabel(item.occurredAt);
@@ -838,8 +908,13 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
   return <>
     {accessDecisionFailed && <InlineError>That didn’t go through. Try again.</InlineError>}
     {accessRequests.length > 0 && <section aria-label="Requests to join" className="navigation-section">
-      <SectionHeading>Requests</SectionHeading>
-      {accessRequests.map((request) => <div className="activity-row activity-request" key={request.id}>
+      <SectionHeading motionKey="requests">Requests</SectionHeading>
+      {accessRequests.map((request) => <div
+        className="activity-row activity-request"
+        data-motion-insert=""
+        data-motion-key={`request:${request.id}`}
+        key={request.id}
+      >
         <button className="activity-row-body" onClick={() => onOpenAccessRequest(request)} type="button">
           <span className="activity-row-text"><strong>{request.requesterName}</strong> asked to join <strong>{request.title}</strong></span>
         </button>
@@ -854,10 +929,16 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
       </div>)}
     </section>}
     {groups.map((group) => <section aria-label={group.label} className="navigation-section" key={group.label}>
-      <SectionHeading>{group.label}</SectionHeading>
+      <SectionHeading motionKey={`day:${group.label}`}>{group.label}</SectionHeading>
       {group.items.map((item) => {
         const channel = item.channelIds.map((id) => spaces.get(id)).find(Boolean);
-        return <button className={clsx('activity-row', item.unread && 'is-unread')} key={item.id} onClick={() => open(item)} type="button">
+        return <button
+          className={clsx('activity-row', item.unread && 'is-unread')}
+          data-motion-key={`activity:${item.id}`}
+          key={item.id}
+          onClick={() => open(item)}
+          type="button"
+        >
           <span aria-hidden="true" className={clsx('activity-avatar', item.actorUserId === null && 'is-rally')}>
             {item.actorUserId === null ? '✦' : actorName(item).split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()}
           </span>
