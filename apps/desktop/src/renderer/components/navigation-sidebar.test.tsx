@@ -247,6 +247,13 @@ describe('the navigation sidebar', () => {
       ['Make a website', '↳ Q4 plan · Outbound'],
       ['Q4 plan', 'Outbound'],
     ]));
+    // A breakout's tile carries its thread, with the Channel nested on that;
+    // a thread's carries the Channel itself.
+    const breakoutRow = list.getByRole('link', { name: /Make a website/u });
+    expect(breakoutRow.querySelectorAll('.identity-tile > .identity-tile-badge.is-circle > .identity-tile-badge.is-nested.is-squircle')).toHaveLength(1);
+    const threadRow = list.getByRole('link', { name: /^Q4 plan/u });
+    expect(threadRow.querySelectorAll('.identity-tile > .identity-tile-badge.is-squircle')).toHaveLength(1);
+    expect(threadRow.querySelector('.is-nested')).toBeNull();
     fireEvent.click(list.getByRole('link', { name: /Make a website/u }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/plan?substream=site');
   });
