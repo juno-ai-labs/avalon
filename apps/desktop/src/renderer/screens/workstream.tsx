@@ -745,9 +745,10 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       ...(!onSelect && appearanceChange ? {
         iconAction: <AppearancePicker
           appearance={channelAppearance}
+          colors={false}
           id={id}
           key={id}
-          label={`Change ${title} icon and color`}
+          label={`Change ${title} icon`}
           onChange={appearanceChange}
           renderGlyph={(appearance) => <WorkstreamGlyph appearance={appearance} id={id} size={24} />}
         />,
@@ -764,7 +765,8 @@ function OpenWorkstreamScreen(): React.JSX.Element {
           icon={<IconPalette aria-hidden="true" size={16} stroke={1.8} />}
           id={id}
           key={id}
-          label="Icon and color"
+          colors={false}
+          label="Icon"
           onChange={appearanceChange}
         /> : undefined}
         addSidekick={(context || channelRail) && <SidekickPicker substreamId="0" workstreamId={id} />}
@@ -820,7 +822,8 @@ function OpenWorkstreamScreen(): React.JSX.Element {
           icon={<IconPalette aria-hidden="true" size={16} stroke={1.8} />}
           id={breakoutId}
           key={breakoutId}
-          label="Icon and color"
+          colors={false}
+          label="Icon"
           onChange={context.setAppearance}
         />}
         breakout={{ substreamId: breakoutId, title }}

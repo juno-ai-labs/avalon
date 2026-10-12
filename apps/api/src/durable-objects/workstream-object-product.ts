@@ -5499,7 +5499,11 @@ export class WorkstreamObjectProductService {
   }
 
   private async applyAppearance(auth: AuthContext, operationId: string, raw: WorkstreamAppearancePatch): Promise<void> {
-    const patch = WorkstreamAppearancePatchSchema.parse(raw);
+    const parsed = WorkstreamAppearancePatchSchema.parse(raw);
+    // A thread's or a Breakout's colour is its Channel's, and only the server
+    // writes it (`recolor`, `channel-color-sync.ts`). A Space keeps its own.
+    const patch: WorkstreamAppearancePatch = this.objectStore.identity()?.parentKind !== "workstream" ? parsed
+      : parsed.icon === undefined ? {} : { icon: parsed.icon };
     const requestHash = workstreamImportHash({ command: "set_workstream_appearance", patch });
     let changed = false;
     await this.objectStore.commitWithRegionalEffects((sql) => {

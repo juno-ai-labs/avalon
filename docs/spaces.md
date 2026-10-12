@@ -257,6 +257,14 @@ threads it moved. A restore reactivates the archived Space's memberships, so a
 re-homed thread ends up in both. Without a General (an Organization still
 opening), or for General itself, `space_membership_final` still refuses.
 
+**A placement moves a thread's colour.** For now a thread and its Breakouts
+store the colour of the thread's canonical Channel. Triggers on
+`space_channel_memberships` and `spaces` mark the thread whenever a placement
+or a Channel's colour, archive state or scope changes, and WorkspaceDO writes
+the colour into each conversation afterwards; none of the operations above
+does anything for it. The mechanism is
+[`workstream-appearance.md`](workstream-appearance.md)'s.
+
 **Legacy intents.** Before the Space-source code was removed, these operations
 staged a `space_intents` row and finished in a second transaction. A row
 staged before the deploy is finished by the alarm in one transaction

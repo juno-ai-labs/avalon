@@ -1149,7 +1149,9 @@ describe("conversation parent contract", () => {
     })).children).toEqual([expect.objectContaining({
       substreamId,
       title: "Private branch",
-      appearance: { icon: "rocket", color: "purple" },
+      // A Breakout's colour is its Channel's, written by the server alone
+      // (channel-color-sync.ts), so the colour a client sends is dropped.
+      appearance: { icon: "rocket", color: null },
     })]);
   });
 

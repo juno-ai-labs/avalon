@@ -11,6 +11,8 @@ import { workspaceSearchIndex, searchChunkIdentity } from '../services/text-sear
 import { ResourceSearchProjectionSchema } from '../durable-objects/resource-search-projection';
 import { SearchConversationProjectionMessageSchema, SearchProjectionMessageSchema } from '../durable-objects/search-projection-outbox';
 import { AuthorizationProjectionJobSchema } from '../durable-objects/authorization-projection';
+import { ChannelColorSyncMessageSchema } from "../durable-objects/channel-color-sync";
+import { createIdentityObjectPort } from "../runtime/identity-port";
 import { projectAuthorization } from '../services/authorization-projection-service';
 import { createSearchIndexingPipeline, indexSemanticBatch } from '../services/search-indexing-pipeline';
 import { projectConversationDisplay } from '../services/search-conversation-display';
@@ -551,6 +553,49 @@ async function consumeOne(message: Message<unknown>, env: Env,
       const attempts = Math.max(1, message.attempts);
       message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
     }
+    return;
+  }
+  const colorSync = ChannelColorSyncMessageSchema.safeParse(message.body);
+  if (colorSync.success) {
+    const target = colorSync.data;
+    if (target.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      target.workspaceId,
+      workspaceDOName(env.AVALON_REGION, target.workspaceId),
+    );
+    try {
+      const work = await workspace.channelColorWork(target);
+      if (work) {
+        // Main and each open Breakout, in turn. A failure part way leaves the
+        // row in place, and the alarm sends it again; `recolor` writes nothing
+        // where the colour already matches, and refuses this revision wherever
+        // a newer one has already landed.
+        for (const substreamId of work.substreamIds) {
+          await createIdentityObjectPort(env, target.workspaceId, target.workstreamId, undefined, substreamId)
+            .recolor({ color: work.color, revision: target.revision, now: Date.now() });
+        }
+        await workspace.completeChannelColorSync(target);
+      }
+    } catch (error) {
+      // A retired Organization's thread is never written again.
+      if (!isRetirementRefusal(error)) {
+        // Acked rather than retried: the row's own gate sends it again, and a
+        // Queue retry beside it would be a second copy of the same attempt.
+        // Released so it does not hold the rest of its batch's successors back.
+        logWarn(env, "channel_color_sync_failed", {
+          workspace_id: target.workspaceId,
+          workstream_id: target.workstreamId,
+          reason: diagnosticErrorCode(error, "channel_color_sync_failed"),
+        });
+        await workspace.releaseChannelColorSync(target).catch(() => undefined);
+      }
+    }
+    message.ack();
     return;
   }
   const bootstrap = SpaceBootstrapQueueMessageSchema.safeParse(message.body);
