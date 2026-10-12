@@ -61,8 +61,8 @@ import { createIdentityObjectPort } from "../runtime/identity-port";
  *
  * Nothing a person typed is lost here — the message itself is stored whole, as
  * the work stream's first message — and this value is the shortest-lived one in
- * the work stream: the loop below replaces it after the first run, at a quarter
- * of even this length. The bound is the storage ceiling rather than
+ * the work stream: the first naming pass replaces it with a summary of at most
+ * {@link MAXIMUM_DESCRIPTION_CHARACTERS} a moment after creation. The bound is the storage ceiling rather than
  * {@link MAXIMUM_DESCRIPTION_CHARACTERS} because this is the fallback that
  * stands when naming and the loop both fail, and truncating a person's own
  * first line further than the column requires would be inventing a summary.
