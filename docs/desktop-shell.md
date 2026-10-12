@@ -395,6 +395,8 @@ needs, and the 15px badge has no room for a second.
 second line still names them all. A deeper chain would shrink past legibility,
 so a new nesting level needs a new size, not another recursion.
 
+Shipped in [#1200](https://github.com/juno-ai-labs/avalon/pull/1200).
+
 
 ### 2026-10-12 — Shape says Channel or Thread; rows carry tiles and times
 
