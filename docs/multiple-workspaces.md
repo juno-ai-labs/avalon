@@ -102,8 +102,8 @@ makes a *concurrent* pair of renewals with the same token dangerous: both
 succeed, and the second retires the first answer's token at once. A device that
 persisted the first answer then gets a 401 on its next renewal, which is
 terminal, and the credential is surrendered. On the Mac app, a terminal
-identity renewal failure ends the entire local session and shows **Your Rally session has ended.** in a native
-modal. A signed-in organization with no account credential takes the same path
+identity renewal failure ends the entire local session and shows **Your Rally
+session has ended.** in a native modal. A signed-in organization with no account credential takes the same path
 when an account request discovers it. Main clears all credentials and profiles,
 broadcasts sign-out, and closes auxiliary windows before showing the notice;
 the person returns to sign-in rather than continuing with broken account
@@ -496,10 +496,11 @@ how long a laptop sleeps. A client-only fix: the desktop cannot tell a lost
 rotation from a revoked session, so the service has to keep the old token alive.
 
 **Consequences:** A stolen retired token now works until the device next
-renews, the same exposure a stolen current token has. The sessions' thirty-day sliding
-and ninety-day ceiling still bound both. Concurrent renewals with one token
-remain harmful, so every desktop renewal must still go through
-`credential-refresh.ts`.
+renews, the same exposure a stolen current token has. The sessions' thirty-day
+sliding and ninety-day ceiling still bound both. Concurrent renewals with one
+token remain harmful, so every renewal in the desktop's main process must still
+go through `credential-refresh.ts`. The browser bridge's `refreshSession` does
+not yet single-flight.
 
 Shipped in #1193.
 

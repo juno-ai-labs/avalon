@@ -179,9 +179,9 @@ function refreshRefused(error: unknown): boolean {
 }
 
 // One refresh at a time. The server rotates the refresh token on every call,
-// so two concurrent refreshes with the same token each rotate it, and keeping
-// whichever answer lands last can hold a token the server already superseded —
-// which the next refresh, outside the replay grace, is refused for.
+// so two concurrent refreshes with the same token each rotate it, and the
+// second retires the first one's answer at once. Keeping that answer holds a
+// token the next refresh is refused for.
 let refreshInFlight: Promise<Session> | null = null;
 
 async function refreshIfNeeded(force = false): Promise<Session> {
