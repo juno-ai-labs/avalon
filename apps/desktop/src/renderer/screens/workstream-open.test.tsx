@@ -83,7 +83,6 @@ vi.mock('../lib/use-transcript-follow', () => ({
 }));
 
 import { patchCachedWorkstreamAppearance, setCachedWorkstreams } from '../lib/workstreams-cache';
-import { SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import { workstreamFeedSourceQueryKey } from '../lib/telemetry';
 import { substreamInitialContextQueryKey } from '../lib/use-workstream-socket';
 import { desktopBridge } from '../lib/platform';
@@ -939,27 +938,6 @@ describe('socket-first channel open', () => {
     act(() => patchCachedWorkstreamAppearance(client, workstreamId, { icon: 'heart', color: 'blue' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Change Recovered channel icon' })
       .querySelector('.lucide-heart')).not.toBeNull());
-  });
-
-  it('draws the thread pill in its Channel\'s colour rather than its own', async () => {
-    const parent = recoveryBoot({ appearance: { icon: 'rocket', color: 'green' } });
-    const client = renderScreen((cache) => {
-      cache.setQueryData(['workstream', workstreamId], parent);
-      cache.setQueryData(['ordered-transcript', workstreamId], parent.transcript);
-    });
-    const trigger = await screen.findByRole('button', { name: 'Change Recovered channel icon' });
-    const fill = (): string | undefined => trigger.querySelector<HTMLElement>('.workstream-glyph-shape')?.style.background;
-    // Until the Channel is known the thread keeps its own colour.
-    expect(fill()).toBe('var(--av-sys-color-project-tint-green)');
-
-    act(() => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [{
-      id: parent.spaceIds[0], name: 'Launch', iconKey: 'briefcase', colorKey: 'red', scope: 'workspace', status: 'active',
-      systemRole: null, revision: 1, reach: 'organization', participants: [], channelCount: 1, attentionCount: 0,
-      defaultResourceIds: [], defaultSidekickIds: [], createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
-    }] }));
-    await waitFor(() => expect(fill()).toBe('var(--av-sys-color-project-tint-red)'));
-    // The icon stays the thread's own.
-    expect(trigger.querySelector('.lucide-rocket')).not.toBeNull();
   });
 
   it('manages the selected breakout roster without changing parent participants', async () => {

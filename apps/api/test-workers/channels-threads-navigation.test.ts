@@ -661,16 +661,19 @@ describe("Activity tab", () => {
     // What WorkspaceDO stores for a breakout's forwarded mention: no text, the
     // author as its only audience, the mention as its one target
     // (`breakout-activity.ts`; hosted-parent-local-effects.test.ts proves it).
+    // Dated now: the alarm's `activity_reap` deletes an event past its 90-day
+    // retention, and any write that arms the alarm would otherwise take it.
+    const now = Date.now();
     await runInDurableObject(workspace(), (_instance, state) => {
       state.storage.sql.exec(`INSERT INTO workspace_activity_events (
           event_id, event_type, subject_type, subject_id, subject_sequence_number, actor_type, actor_user_id,
           actor_label, title, body, canonical_url, audience_kind, audience_user_id, audience_workstream_id,
           digestible, occurred_at, created_at, source_kind, source_id, dedupe_key, metadata_json
         ) VALUES ('mention-event', 'workstream_message_created', 'workstream', ?, 3, 'user', ?, 'Owner', 'Side work', '',
-          NULL, 'user', ?, NULL, 0, 1759708800000, 1759708800000, 'workstream_message', 'breakout-turn',
-          'message:breakout-turn', ?)`, OPEN_THREAD, OWNER, OWNER, JSON.stringify({ substreamId: BREAKOUT }));
+          NULL, 'user', ?, NULL, 0, ?, ?, 'workstream_message', 'breakout-turn',
+          'message:breakout-turn', ?)`, OPEN_THREAD, OWNER, OWNER, now, now, JSON.stringify({ substreamId: BREAKOUT }));
       state.storage.sql.exec(`INSERT INTO workspace_activity_event_targets (event_id, user_id, relation, created_at)
-        VALUES ('mention-event', ?, 'mentioned', 1759708800000)`, MEMBER);
+        VALUES ('mention-event', ?, 'mentioned', ?)`, MEMBER, now);
     });
     const mentions = async () => (await activity(MEMBER)).items.filter((item) => item.kind === "mentioned");
 

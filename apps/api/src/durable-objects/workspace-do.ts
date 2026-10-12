@@ -781,6 +781,17 @@ import {
 } from "./workspace-space-storage";
 import { WorkspacePinStorage, WORKSPACE_PINS_MIGRATION } from "./workspace-pin-storage";
 import { type ChannelReadState, WORKSPACE_CHANNEL_READS_MIGRATION } from "./workspace-channel-read-storage";
+import {
+  CHANNEL_COLOR_SYNC_MIGRATION,
+  ChannelColorSyncMessageSchema,
+  ChannelColorWorkSchema,
+  channelColorWork,
+  completeChannelColorSync,
+  nextChannelColorSyncAt,
+  publishChannelColorSync,
+  type ChannelColorSyncMessage,
+  type ChannelColorWork,
+} from "./channel-color-sync";
 import { unreadState } from "./unread-state";
 import { WorkspaceActivityFeed } from "./workspace-activity-feed";
 import {
@@ -1137,6 +1148,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "conversation_access_requests",
   "workstream_notification_intents",
   "workspace_socket_unheard", // The first-frame watch's ledger.
+  "channel_color_sync", // Its triggers, the alarm lane and the channel-colour RPCs.
   // Converted to typed methods, so a generic statement naming one is a
   // mistake rather than a legacy caller. Refusing it here is what makes the
   // routing entries in `WORKSPACE_LOCAL_TABLES` more than a courtesy: the
@@ -4246,6 +4258,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // Breakout-identical columns, advanced only by placing a thread; see
   // workspace-channel-read-storage.ts and docs/spaces.md#channel-read-state.
   statements: WORKSPACE_CHANNEL_READS_MIGRATION,
+}, {
+  version: 99,
+  description: "threads and Breakouts store their Channel's colour, and every existing thread is marked to take it",
+  // Triggers mark a thread whenever its colour can move; see channel-color-sync.ts.
+  statements: CHANNEL_COLOR_SYNC_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -7122,6 +7139,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       resource_search: () => nextResourceSearchDueAt(sql, this.env, this.resourceSearchPace),
       space_default_publish: () => this.spaceStorage().nextDefaultPublicationDueAt(),
       space_bootstrap: () => this.spaceStorage().nextBootstrapDueAt(),
+      channel_color_sync: () => nextChannelColorSyncAt(sql),
       activity_reap: () => {
         const oldest = sql.exec<{ created_at: number | null }>(
           "SELECT MIN(created_at) AS created_at FROM workspace_activity_events",
@@ -7313,6 +7331,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           logWarn(this.env, "space_bootstrap_publication_failed", {
             workspace_id: workspaceId,
             reason: error instanceof Error ? error.message : "unknown",
+          });
+        }
+      });
+      // Threads whose colour can have moved; see channel-color-sync.ts.
+      if (due("channel_color_sync")) await this.instrumentWorkspaceAlarmPhase("channel_color_sync", undefined, async () => {
+        try {
+          await publishChannelColorSync({
+            sql: this.state.storage.sql,
+            queue: this.env.ACTIVITY_QUEUE,
+            workspaceId,
+            region: this.env.AVALON_REGION,
+            now,
+            retryAt: (attempt) => now + scheduledAlarmRetryDelay(attempt),
+          });
+        } catch (error) {
+          logWarn(this.env, "channel_color_sync_publication_failed", {
+            workspace_id: workspaceId,
+            reason: diagnosticErrorCode(error, "channel_color_sync_publication_failed"),
           });
         }
       });
@@ -9625,7 +9661,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const space = this.spaceStorage().applyPresentation(request);
     if (space === "stale") return { ok: false, code: "space_revision_conflict", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    if (space !== false) this.publishSpaceSnapshot();
+    if (space !== false) {
+      this.publishSpaceSnapshot();
+      // A new colour marks the Channel's threads (channel-color-sync.ts).
+      await this.armNextAlarm();
+    }
     return WorkspaceSpaceMutationResultSchema.parse(space === false
       ? { ok: false, code: "space_not_found" }
       : { ok: true, space });
@@ -9655,6 +9695,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const space = this.spaceStorage().applyAudience(request);
     if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
     this.publishSpaceSnapshot();
+    // A new scope can change which Channel decides a thread's colour.
+    await this.armNextAlarm();
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
 
@@ -10087,6 +10129,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     this.publishSpaceSnapshot();
     this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
+    // Its threads were marked for their colour as their placements came back.
+    await this.armNextAlarm();
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
 
@@ -10148,6 +10192,30 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     );
     this.assertWorkspace(request.workspaceId);
     return this.spaceStorage().recordDefaultTargetFailure(request, request.errorCode);
+  }
+
+  /**
+   * The colour one marked thread should carry and the conversations to write
+   * it into, or `null` (settling the row) when there is nothing to write.
+   * Server-to-server, like the default-target RPCs: there is no person on it.
+   */
+  async channelColorWork(input: ChannelColorSyncMessage): Promise<ChannelColorWork> {
+    await this.initialized;
+    const request = parseRpcInput(ChannelColorSyncMessageSchema, input, "channel_color_work");
+    this.assertWorkspace(request.workspaceId);
+    return ChannelColorWorkSchema.parse(this.state.storage.transactionSync(() => channelColorWork(this.state.storage.sql, {
+      workstreamId: request.workstreamId,
+      revision: request.revision,
+      color: this.spaceStorage().channelColor(request.workstreamId),
+    })));
+  }
+
+  /** Settle a thread every conversation of which now carries its colour. */
+  async completeChannelColorSync(input: ChannelColorSyncMessage): Promise<boolean> {
+    await this.initialized;
+    const request = parseRpcInput(ChannelColorSyncMessageSchema, input, "complete_channel_color_sync");
+    this.assertWorkspace(request.workspaceId);
+    return completeChannelColorSync(this.state.storage.sql, request.workstreamId, request.revision);
   }
 
   async failSpaceDefaultTarget(input: SpaceDefaultQueueMessage): Promise<boolean> {

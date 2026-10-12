@@ -2,7 +2,7 @@ import { BreakoutMenu, ChannelMenu, type ConversationRowTarget } from '@rally/ui
 import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { BreakoutPillIcon, TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { inChannelColor, WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
+import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -67,8 +67,7 @@ export {
 
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { channelRoute, useChannelPane } from '../lib/navigation-routes';
-import { threadChannelColor, useThreadChannels } from '../lib/thread-channels';
-import { useSpaceDirectories } from '../lib/use-space-directories';
+import { useThreadChannels } from '../lib/thread-channels';
 import { usePinAction, usePinnedIds } from '../lib/pins';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { normalizeHarnessStatus } from '../lib/api';
@@ -230,10 +229,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const requestedSpaceId = searchParams.get('space');
   const linkSpaceId = requestedSpaceId && linkSpaceIds.includes(requestedSpaceId)
     ? requestedSpaceId : linkSpaceIds[0] ?? null;
-  // For now the thread and its Breakouts wear this Channel's colour, not their own.
-  const { active: spaceDirectory } = useSpaceDirectories();
-  const channelColor = threadChannelColor(
-    linkSpaceIds, [...spaceDirectory.data?.items ?? [], ...conversationDirectory?.spaces ?? []], linkSpaceId);
   // The open substream's own detail, for its row in the rail below. Its title
   // and the header's are then one value rather than two that agree eventually.
   const openChild = useQuery<WorkstreamDetail | undefined>({
@@ -292,10 +287,10 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const [archiveTarget, setArchiveTarget] = useState<(ConversationRowTarget & { parentId: string }) | null>(null);
   const [substreamPending, setSubstreamPending] = useState(false);
   const [substreamMenuFailure, setSubstreamMenuFailure] = useState<WorkstreamSidebarFailure | FailureCopy | null>(null);
-  const selectedAppearance = inChannelColor(selectedSubstreamId === '0'
+  const selectedAppearance = selectedSubstreamId === '0'
     ? parent.data?.appearance
     : railChildren?.find((child) => child.substreamId === selectedSubstreamId)?.appearance
-      ?? openChild.data?.appearance, channelColor);
+      ?? openChild.data?.appearance;
   /**
    * The substream being written, if any. Nothing has been reserved on the
    * server while this is set: preparation and confirmation both happen on the
@@ -647,11 +642,11 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     })
     : undefined;
   const railTitle = parent.data?.title ?? row?.title ?? sharedParent?.title ?? undefined;
-  const channelAppearance = inChannelColor(rowAppearance ?? parent.data?.appearance ?? sharedParent?.appearance, channelColor);
+  const channelAppearance = rowAppearance ?? parent.data?.appearance ?? sharedParent?.appearance;
   const breakoutMarks = useMemo<BreakoutMark[] | undefined>(() => railChildren?.map((child) => ({
     substreamId: child.substreamId,
     title: child.title,
-    appearance: inChannelColor(child.appearance, channelColor),
+    appearance: child.appearance,
     originTurnId: child.originTurnId ?? null,
     lastActivityAt: ('lastActivityAt' in child ? child.lastActivityAt : undefined) ?? child.updatedAt,
     createdAt: child.createdAt,
@@ -660,7 +655,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     unseen: 'unseen' in child ? child.unseen : undefined,
     needsAttention: child.needsAttention,
     needsInput: child.needsInput,
-  })), [railChildren, channelColor]);
+  })), [railChildren]);
   const breakoutAge = (breakout: BreakoutMark): React.ReactNode => breakout.lastActivityAt
     ? <RelativeTime value={breakout.lastActivityAt} />
     : null;

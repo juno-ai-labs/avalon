@@ -1,8 +1,6 @@
 import { AccessRequestDialog } from './access-request-dialog';
 import { useAccessRequests, useDecideAccessRequest } from '../lib/access-requests';
-import type { SpaceColorKey, WorkspaceAttention } from '@rally/contracts';
-import { inChannelColor } from '@rally/ui/components/workstream-glyph';
-import { threadChannelColor } from '../lib/thread-channels';
+import type { WorkspaceAttention } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -104,30 +102,25 @@ export function spacesEnabledForSession(session: ClientSession | null): boolean 
  * The Channels search lists, each followed by its Breakouts: the ones the
  * socket holds for this reader as a member (`held`), and the ones a grant
  * reaches, which only the shared navigation directory lists. A Channel still
- * being created is left to the caller to drop. Each wears the colour of the
- * first of `spaces` it sits in (`threadChannelColor`).
+ * being created is left to the caller to drop.
  */
 export function searchChannelPlaces(
   channels: readonly WorkstreamSummary[],
   held: ChannelBreakoutLists,
   directory: SharedNavigationDirectory | undefined,
-  spaces: readonly { id: string; colorKey: SpaceColorKey }[] = [],
 ): SearchPlace[] {
   const shared = new Map((directory?.workstreams ?? []).map((entry) => [entry.parentId, entry.conversations]));
-  const colorSources = [...spaces, ...directory?.spaces ?? []];
   return channels.flatMap((channel): SearchPlace[] => {
-    const color = threadChannelColor(channel.spaceIds, colorSources);
-    const channelAppearance = inChannelColor(channel.appearance, color);
     const breakouts = new Map<string, { title: string; appearance?: WorkstreamSummary['appearance'] }>();
     for (const conversation of shared.get(channel.id) ?? []) {
       if (conversation.substreamId !== '0' && !conversation.archived) breakouts.set(conversation.substreamId, conversation);
     }
     for (const breakout of held[channel.id] ?? []) breakouts.set(breakout.substreamId, breakout);
     return [
-      { kind: 'channel', id: channel.id, name: channel.title, substreamId: channel.associativeSubstreamId, appearance: channelAppearance },
+      { kind: 'channel', id: channel.id, name: channel.title, substreamId: channel.associativeSubstreamId, appearance: channel.appearance },
       ...[...breakouts].map(([substreamId, breakout]): SearchPlace => ({
         kind: 'breakout', id: substreamId, channelId: channel.id, channelName: channel.title,
-        name: breakout.title, appearance: breakout.appearance && inChannelColor(breakout.appearance, color), channelAppearance })),
+        name: breakout.title, appearance: breakout.appearance, channelAppearance: channel.appearance })),
     ];
   });
 }
@@ -254,9 +247,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     if (!searchOpen) return [];
     const channels = sidebarWorkstreams.filter((channel) => !channel.pending);
     return searchChannelPlaces(channels, heldChannelBreakouts(queryClient, channels.map((channel) => channel.id)),
-      associativeNavigation.data, spaces.data?.items);
+      associativeNavigation.data);
     // `breakoutListsVersion` is how a Breakout list written to the cache reaches this read.
-  }, [searchOpen, sidebarWorkstreams, associativeNavigation.data, spaces.data, breakoutListsVersion, queryClient]);
+  }, [searchOpen, sidebarWorkstreams, associativeNavigation.data, breakoutListsVersion, queryClient]);
   const searchSpaces = useMemo(() => (spaces.data?.items ?? []).map((space): SearchPlace => (
     { kind: 'space', id: space.id, name: space.name, iconKey: space.iconKey, colorKey: space.colorKey })), [spaces.data]);
   const featureFlags = useClientFeatureFlags(api);

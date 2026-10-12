@@ -169,6 +169,31 @@ describe("identity authority on real workerd", () => {
     });
   });
 
+  it("puts the Channel's colour on a conversation, keeps its icon, and settles a repeat as unchanged", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state);
+      state.storage.sql.exec(
+        `UPDATE workstream SET appearance_json = '{"icon":"rocket","color":"green"}' WHERE id = 1`,
+      );
+    });
+
+    const first = await identity(stub, "recolor", { color: "red", now: 3 });
+
+    expect(first.value).toEqual({ outcome: "recolored" });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(JSON.parse(state.storage.sql.exec<{ appearance_json: string }>(
+        "SELECT appearance_json FROM workstream WHERE id = 1",
+      ).one().appearance_json)).toEqual({ icon: "rocket", color: "red" });
+      // The colour reaches the sidebar through the projection committed with it.
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM projection_keys WHERE projection_key = 'common'`,
+      ).one().count).toBe(1);
+    });
+    expect((await identity(stub, "recolor", { color: "red", now: 4 })).value).toEqual({ outcome: "unchanged" });
+  });
+
   it("takes an address once, and tells the second reservation it lost", async () => {
     const stub = agent();
     await boot(stub);
