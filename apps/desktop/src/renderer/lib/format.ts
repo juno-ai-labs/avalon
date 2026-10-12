@@ -105,10 +105,12 @@ const sidebarWeekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
 const sidebarMonthDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
 
 /**
- * A sidebar row's activity time: the time today, "Yesterday", a weekday within
- * the week, then a short date. The attention menu uses it too.
+ * The day something happened, as a heading names it: "Today", "Yesterday", a
+ * weekday within the week, then a short date. The Channel feed's day
+ * separators use it, and the sidebar's activity time is it with today's
+ * entries given as a time.
  */
-export function formatSidebarActivityTime(value: string, now = new Date()): string {
+export function formatDayLabel(value: string, now = new Date()): string {
   const date = new Date(value);
   const timestamp = date.getTime();
   if (!Number.isFinite(timestamp)) return 'Unknown time';
@@ -118,10 +120,19 @@ export function formatSidebarActivityTime(value: string, now = new Date()): stri
   const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
   const startOfWeekWindow = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime();
 
-  if (timestamp >= startOfToday && timestamp < startOfTomorrow) return formatTime(value);
+  if (timestamp >= startOfToday && timestamp < startOfTomorrow) return 'Today';
   if (timestamp >= startOfYesterday && timestamp < startOfToday) return 'Yesterday';
   if (timestamp >= startOfWeekWindow && timestamp < startOfYesterday) return sidebarWeekday.format(date);
   return sidebarMonthDay.format(date);
+}
+
+/**
+ * A sidebar row's activity time: the time today, then the day as
+ * `formatDayLabel` names it. The attention menu uses it too.
+ */
+export function formatSidebarActivityTime(value: string, now = new Date()): string {
+  const label = formatDayLabel(value, now);
+  return label === 'Today' ? formatTime(value) : label;
 }
 
 export function formatDuration(milliseconds?: number): string | undefined {

@@ -8738,24 +8738,76 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .channel-screen { display: grid; grid-template-rows: 55px minmax(0, 1fr) auto; height: 100%; min-width: 0; position: relative; }
 .channel-header { align-items: center; display: flex; padding: 0 12px; }
 .channel-header .title-pill-header { flex: 1; }
-.channel-feed { display: flex; flex-direction: column; padding: 8px 0 24px; }
-.channel-feed-list { display: flex; flex-direction: column; gap: 6px; list-style: none; margin: auto auto 0; max-width: 760px; padding: 0 24px; width: 100%; }
+/* The header's pill floats over the feed, which fades out beneath it. */
+.channel-header { position: relative; z-index: 1; }
+.channel-header::after {
+  background: linear-gradient(var(--av-sys-color-surface-default) 15%, transparent);
+  content: "";
+  height: 40px;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: 100%;
+}
+.channel-feed { display: flex; flex-direction: column; padding: 20px 0 24px; }
+.channel-feed-list { display: flex; flex-direction: column; gap: 28px; list-style: none; margin: auto auto 0; max-width: 760px; padding: 0 32px; width: 100%; }
 .channel-feed-more { display: flex; justify-content: center; padding: 8px 0; }
-.channel-feed-item { border-radius: 14px; display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; }
-.channel-feed-item:hover { background: var(--av-sys-color-state-hover); }
-.channel-feed-meta { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 12.5px; gap: 6px; }
-.channel-feed-meta strong { color: var(--av-sys-color-text-default); font-weight: 600; }
+/* "Thursday", "Today": a hairline either side of the day's name. */
+.channel-feed-day { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: 12px; gap: 12px; margin-top: 8px; }
+.channel-feed-day::before,
+.channel-feed-day::after { background: var(--av-sys-color-border-default); content: ""; flex: 1; height: 1px; }
+.channel-feed-item { display: flex; justify-content: flex-end; }
+/* A thread is its title, summary and byline set to the trailing side, with
+   its mark beside them. The whole entry is the button that opens it. */
+.channel-feed-thread {
+  align-items: flex-start;
+  background: transparent;
+  border: 0;
+  border-radius: 16px;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 12px;
+  margin: -8px -10px;
+  max-width: min(520px, 100%);
+  padding: 8px 10px;
+  text-align: right;
+}
+.channel-feed-thread:hover,
+.channel-feed-thread.is-open { background: var(--av-sys-color-state-hover); }
+.channel-feed-thread:focus-visible { box-shadow: var(--av-sys-focus-ring-default); outline: none; }
+.channel-feed-body { align-items: flex-end; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.channel-feed-title { align-items: center; color: var(--av-sys-color-text-default); display: flex; font-size: 15.5px; font-weight: 650; gap: 6px; max-width: 100%; }
+.channel-feed-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.channel-feed-caret { color: var(--av-sys-color-text-subtle); flex: none; }
+.channel-feed-news { color: var(--av-sys-color-workstream-news); flex: none; font-size: 12.5px; font-weight: 600; }
 .channel-feed-summary {
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  color: var(--av-sys-color-text-default);
+  -webkit-line-clamp: 3;
+  color: var(--av-sys-color-text-muted);
   display: -webkit-box;
-  font-size: 14.5px;
-  line-height: 21px;
-  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
   overflow: hidden;
+  text-wrap: pretty;
 }
-.channel-feed-item.is-locked .channel-feed-meta { color: var(--av-sys-color-text-subtle); }
+.channel-feed-meta { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: 12px; gap: 6px; margin-top: 2px; }
+.channel-feed-meta .avatar { height: 18px; margin-right: 2px; width: 18px; }
+.channel-feed-meta .avatar-fallback { font-size: 8px; }
+.channel-feed-mark {
+  background: var(--av-sys-color-surface-sunken);
+  border-radius: 50%;
+  color: var(--av-sys-color-text-muted);
+  display: grid;
+  flex: none;
+  height: 36px;
+  place-items: center;
+  width: 36px;
+}
+.channel-feed-item.is-locked .channel-feed-title { color: var(--av-sys-color-text-muted); }
+.channel-feed-request { color: var(--av-sys-color-text-default); font-weight: 600; }
 .channel-feed-empty { color: var(--av-sys-color-text-muted); margin: auto; max-width: 420px; padding: 24px; text-align: center; }
 .channel-composer-dock { position: relative; }
 .channel-composer-dock .composer-stack { margin: 0 auto; max-width: 760px; }
