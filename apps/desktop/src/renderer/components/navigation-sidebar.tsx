@@ -1,5 +1,5 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import type { ActivityFilter, ActivityItem, ActivityPage, ConversationAccessRequestItem, PinKind, SpaceSummary } from '@rally/contracts';
+import type { ActivityFilter, ActivityItem, ActivityPage, ConversationAccessRequestItem, PinKind, SpaceSummary, WorkstreamAppearance } from '@rally/contracts';
 import { IdentityTile, ShapeOutline, type TileBadge } from '@rally/ui/components/identity-tile';
 import { resolveWorkstreamAppearance, WORKSTREAM_ICON_COMPONENTS } from '@rally/ui/components/workstream-glyph';
 import { markColors } from '@rally/ui/lib/project-palette';
@@ -42,7 +42,7 @@ import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY,
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { latestPinWrite, reportThreadPin, usePinAction, usePinFailure, usePins, usePinWrite, type PinnedThread } from '../lib/pins';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation } from '../lib/telemetry';
-import type { SpaceConversationSummary, Workspace } from '../lib/types';
+import type { SpaceConversationSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { useUiStore, type SidebarChannelSort, type SidebarSection } from '../lib/ui-store';
 import { useListMotion } from '../lib/use-list-motion';
 import { useSpaceDirectories } from '../lib/use-space-directories';
@@ -676,6 +676,12 @@ function channelBadge(space: SpaceSummary): TileBadge {
   return { key: space.id, shape: 'squircle', fill: ink, ink: tint, icon: Icon };
 }
 
+/** A thread as a badge, inverted the same way, with its Channel on its corner. */
+function threadBadge(threadId: string, saved: WorkstreamAppearance | undefined, channel: SpaceSummary | undefined): TileBadge {
+  const { Icon, ink, tint } = resolveWorkstreamAppearance(threadId, saved);
+  return { key: threadId, shape: 'circle', fill: ink, ink: tint, icon: Icon, badge: channel && channelBadge(channel) };
+}
+
 /**
  * One row of any of the three lists: a tile, a name with its time, and a
  * second line with an optional unread dot at its end.
@@ -719,6 +725,19 @@ function useSpaceMap(): Map<string, SpaceSummary> {
 }
 
 /**
+ * A listed row with what the socket holds fresher: a thread takes its live
+ * copy, and a breakout its thread's live appearance for the badge on its tile.
+ */
+function withLiveThread(
+  row: SpaceConversationSummary,
+  liveById: ReadonlyMap<string, WorkstreamSummary>,
+): SpaceConversationSummary {
+  if (!row.breakoutOf) return { ...row, ...liveById.get(row.id), kind: row.kind, breakoutOf: row.breakoutOf };
+  const appearance = liveById.get(row.breakoutOf.workstreamId)?.appearance ?? row.breakoutOf.appearance;
+  return { ...row, breakoutOf: { ...row.breakoutOf, appearance } };
+}
+
+/**
  * The Threads tab: what this person pinned, then every thread and breakout
  * they take part in. The list is the server's (`GET /navigation/threads`); a
  * thread the socket holds is drawn from the socket, so its dot moves live.
@@ -748,16 +767,12 @@ function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): 
     // read again.
     const started = (live.data ?? []).filter((row) => row.pending && !known.has(row.id))
       .map((row): SpaceConversationSummary => ({ ...row, kind: 'channel', breakoutOf: null }));
-    return [...started, ...fetched.map((row) => row.kind === 'channel'
-      ? { ...row, ...liveById.get(row.id), kind: row.kind, breakoutOf: row.breakoutOf }
-      : row)];
+    return [...started, ...fetched.map((row) => withLiveThread(row, liveById))];
   }, [list.data, live.data, liveById]);
   // Pinned rows come whole with the first page, so a pin whose activity is
   // pages back is still drawn; a row on a loaded page is the fresher copy.
   const byId = useMemo(() => new Map([
-    ...(list.data?.pages[0]?.pinned ?? []).map((row): [string, SpaceConversationSummary] => [row.id, row.kind === 'channel'
-      ? { ...row, ...liveById.get(row.id), kind: row.kind, breakoutOf: row.breakoutOf }
-      : row]),
+    ...(list.data?.pages[0]?.pinned ?? []).map((row): [string, SpaceConversationSummary] => [row.id, withLiveThread(row, liveById)]),
     ...rows.map((row): [string, SpaceConversationSummary] => [row.id, row]),
   ]), [list.data, liveById, rows]);
   const threadPins = pins.filter((item) => item.kind === 'thread').map((item) => item.id);
@@ -896,6 +911,9 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
     return space ? [space] : [];
   });
   const appearance = resolveWorkstreamAppearance(row.id, row.appearance);
+  const badges = row.breakoutOf
+    ? [threadBadge(row.breakoutOf.workstreamId, row.breakoutOf.appearance, channels[0])]
+    : channels.map(channelBadge);
   const names = channels.map((space) => space.name).join(' · ');
   const detail = row.kind === 'breakout' && row.breakoutOf
     ? `↳ ${row.breakoutOf.title}${names ? ` · ${names}` : ''}`
@@ -941,7 +959,7 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
       >
         <RowLayout
           detail={detail}
-          tile={<IdentityTile badges={channels.map(channelBadge)} icon={appearance.Icon} ink={appearance.ink} shape="circle" tint={appearance.tint} />}
+          tile={<IdentityTile badges={badges} icon={appearance.Icon} ink={appearance.ink} shape="circle" tint={appearance.tint} />}
           time={!row.pending && <RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={row.lastActivityAt} />}
           title={row.pending ? 'Starting…' : naming ? <TitleSkeleton /> : row.title}
           titleExtra={wakeup && <Tip
