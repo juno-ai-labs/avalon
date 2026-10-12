@@ -8,6 +8,16 @@ catalog; where that pass produced none it keeps the deterministic icon derived
 from its id, which is also what every work stream created before this existed
 still shows.
 
+**For now a thread and its Breakouts are drawn in their Channel's colour.**
+Since the navigation redesign a thread (stored as a work stream) sits in one or
+more Channels (stored as Spaces), and every mark of a thread or a Breakout
+takes the colour of the Channel it is read in, or else of the first one it
+sits in. The icon stays the conversation's own, so the picker on a thread or a
+Breakout offers icons only. The stored colour is untouched: `inChannelColor`
+swaps it at draw time, which keeps going back a deletion rather than a
+migration. A client that does not know the Channel yet (the Space directory
+has not arrived) draws the stored colour until it does.
+
 **A Sidekick has one too, and it is the same palette.** Clicking the hexagon on
 its profile opens the picker this document owns, over the same catalog and the
 same colour ring. What differs is only where the value is stored and how it is
@@ -154,6 +164,9 @@ until someone picks a hue.
   cannot overwrite a later choice.
 - Omitted fields mean unchanged; null fields use the deterministic ID-based
   default. Older work streams retain their original appearance until edited.
+- A thread's or Breakout's mark goes through `inChannelColor` with
+  `threadChannelColor`'s answer. A new surface that draws one without it shows a
+  colour no other surface does.
 - Every common projection carries the appearance. Dropping it makes identity
   differ between the header, sidebar, and reopening a work stream.
 
@@ -192,8 +205,33 @@ mutation must fail the reopened snapshot assertion. Client control/state tests
 cover the common cache path. The Sidekick's half is proved in the real-workerd
 `automation-directory.test.ts`, which drives `setAppearance` and the effect
 legs and asserts the merge, the refusal, and the value on both directory
-listings. Inspect the actual Electron popup in light and dark,
+listings. `workstream-open.test.tsx` proves the thread pill moves to its
+Channel's colour once the Space directory lands and keeps its own icon, and that
+the thread and Breakout pickers offer no colour; `app-shell.test.tsx` proves
+search draws threads and Breakouts the same way. Inspect the actual Electron popup in light and dark,
 including scrolling, and check another connected window and reopening.
+
+### 2026-10-12 — Threads and Breakouts wear their Channel's colour
+
+**What changed:** Every mark of a thread or a Breakout (its title pill, the
+Breakout menu's way back to its thread, search) is drawn in the colour of the
+Channel it sits in, through `inChannelColor` and `threadChannelColor`. The
+thread and Breakout pickers lost their colour half (`colors={false}`).
+
+**Why:** Product call, stated as "for now": after Spaces became Channels and
+Channels became threads, a thread's own colour said nothing about where it
+lived, and a thread in red under a blue Channel read as belonging elsewhere.
+
+**Rejected:** Rewriting each stored colour to the Channel's. A thread can sit
+in several Channels and move between them, so a stored copy goes stale on every
+move, and undoing it later would need the original values back. Swapping at
+draw time costs nothing and keeps the stored choice for when conversations get
+their own colour again.
+
+**Respect:** The access-request screens still draw the stored colour: the
+server builds that mark (`conversationMark`) and the requester's client has no
+Channel to look up. Moving the swap to the server is the follow-up if it
+matters there.
 
 ### 2026-10-01 — One 253-icon catalog in sections, for every surface with an appearance
 
