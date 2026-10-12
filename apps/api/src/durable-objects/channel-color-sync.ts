@@ -24,12 +24,22 @@ import { z } from "zod";
  * nothing has marked the thread again since (`revision`). A repeat delivery is
  * harmless: `recolor` writes nothing when the colour already matches.
  *
+ * **One batch in flight per Organization.** Migration 99 marks every thread at
+ * once, and each message calls this object twice and then each conversation,
+ * whose `recolor` sends a child effect back here. Sent back to back, batches
+ * would repeat the resource-search backfill's overload (`docs/text-search.md`,
+ * 2026-09-26). So a claimed row is `in_flight`, and the lane sends nothing while
+ * any in-flight row's gate is still ahead: the next batch waits on the
+ * consumer settling or releasing this one, not on a chosen interval. A failed
+ * thread is released and retries at its own gate rather than holding the rest
+ * back; a lost message holds them only until its gate passes.
+ *
  * See `docs/workstream-appearance.md`.
  */
 
 const MARK = (workstreamId: string) => `INSERT INTO channel_color_sync(workstream_id, revision, attempts, not_before)
        VALUES (${workstreamId}, 1, 0, 0)
-       ON CONFLICT(workstream_id) DO UPDATE SET revision = revision + 1, attempts = 0, not_before = 0;`;
+       ON CONFLICT(workstream_id) DO UPDATE SET revision = revision + 1, attempts = 0, not_before = 0, in_flight = 0;`;
 
 /** WorkspaceDO migration 99; the backfill is its last statement. */
 export const CHANNEL_COLOR_SYNC_MIGRATION: readonly string[] = [
@@ -37,7 +47,8 @@ export const CHANNEL_COLOR_SYNC_MIGRATION: readonly string[] = [
     workstream_id TEXT PRIMARY KEY,
     revision INTEGER NOT NULL CHECK (revision > 0),
     attempts INTEGER NOT NULL CHECK (attempts >= 0),
-    not_before INTEGER NOT NULL
+    not_before INTEGER NOT NULL,
+    in_flight INTEGER NOT NULL DEFAULT 0 CHECK (in_flight IN (0, 1))
   ) STRICT`,
   `CREATE INDEX channel_color_sync_due_idx ON channel_color_sync(not_before, workstream_id)`,
   // A placement made, ended, archived with its Channel or restored. `UPDATE OF
@@ -61,7 +72,7 @@ export const CHANNEL_COLOR_SYNC_MIGRATION: readonly string[] = [
      INSERT INTO channel_color_sync(workstream_id, revision, attempts, not_before)
        SELECT workstream_id, 1, 0, 0 FROM space_channel_memberships
         WHERE space_id = NEW.space_id AND state = 'active'
-       ON CONFLICT(workstream_id) DO UPDATE SET revision = revision + 1, attempts = 0, not_before = 0;
+       ON CONFLICT(workstream_id) DO UPDATE SET revision = revision + 1, attempts = 0, not_before = 0, in_flight = 0;
    END`,
   // A thread's or a Breakout's first projection: the conversation exists now,
   // and starts without a colour. A thread restored from the archive is marked
@@ -114,7 +125,21 @@ export function nextChannelColorSyncAt(sql: SqlStorage): number | null {
     "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'channel_color_sync'",
   ).toArray().length > 0;
   if (!present) return null;
-  return sql.exec<{ due: number | null }>("SELECT MIN(not_before) AS due FROM channel_color_sync").one().due;
+  return sql.exec<{ due: number | null }>(
+    // While a batch is in flight the next wake is its earliest gate, not the
+    // pending rows' (which are due now and would wake the alarm for nothing).
+    `SELECT COALESCE(
+       (SELECT MIN(not_before) FROM channel_color_sync WHERE in_flight = 1 AND not_before > ?),
+       (SELECT MIN(not_before) FROM channel_color_sync)) AS due`,
+    Date.now(),
+  ).one().due;
+}
+
+/** Whether a batch sent earlier is still waiting on its consumer, as of `now`. */
+function batchInFlight(sql: SqlStorage, now: number): boolean {
+  return sql.exec(
+    "SELECT 1 FROM channel_color_sync WHERE in_flight = 1 AND not_before > ? LIMIT 1", now,
+  ).toArray().length > 0;
 }
 
 /**
@@ -130,7 +155,9 @@ export async function publishChannelColorSync(input: {
   now: number;
   retryAt: (attempt: number) => number;
 }): Promise<number> {
-  // Cloudflare Queue sendBatch accepts at most 100 messages.
+  if (batchInFlight(input.sql, input.now)) return 0;
+  // Cloudflare Queue sendBatch accepts at most 100 messages (Cloudflare Queues
+  // limits, read 2026-10-12); one batch is also the most in flight at once.
   const rows = input.sql.exec<{ workstream_id: string; revision: number; attempts: number }>(
     `SELECT workstream_id, revision, attempts FROM channel_color_sync
       WHERE not_before <= ? ORDER BY not_before, workstream_id LIMIT 100`,
@@ -139,7 +166,8 @@ export async function publishChannelColorSync(input: {
   if (rows.length === 0) return 0;
   for (const row of rows) {
     input.sql.exec(
-      "UPDATE channel_color_sync SET attempts = ?, not_before = ? WHERE workstream_id = ? AND revision = ?",
+      `UPDATE channel_color_sync SET attempts = ?, not_before = ?, in_flight = 1
+        WHERE workstream_id = ? AND revision = ?`,
       row.attempts + 1, input.retryAt(row.attempts + 1), row.workstream_id, row.revision,
     );
   }
@@ -159,6 +187,18 @@ export async function publishChannelColorSync(input: {
 export function completeChannelColorSync(sql: SqlStorage, workstreamId: string, revision: number): boolean {
   return sql.exec<{ workstream_id: string }>(
     "DELETE FROM channel_color_sync WHERE workstream_id = ? AND revision = ? RETURNING workstream_id",
+    workstreamId, revision,
+  ).toArray().length === 1;
+}
+
+/**
+ * Let a thread the consumer could not finish stop holding the next batch back.
+ * Its gate, set when it was claimed, still decides when it is sent again.
+ */
+export function releaseChannelColorSync(sql: SqlStorage, workstreamId: string, revision: number): boolean {
+  return sql.exec<{ workstream_id: string }>(
+    `UPDATE channel_color_sync SET in_flight = 0
+      WHERE workstream_id = ? AND revision = ? RETURNING workstream_id`,
     workstreamId, revision,
   ).toArray().length === 1;
 }

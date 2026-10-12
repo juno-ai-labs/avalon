@@ -31,6 +31,7 @@ import {
 
 import { conversationObjectName } from "../src/durable-objects/names";
 import { consumeActivityQueue } from "../src/queues/activity-consumer";
+import { nextChannelColorSyncAt, publishChannelColorSync } from "../src/durable-objects/channel-color-sync";
 import { hostedParentStub } from "./helpers/hosted-parent";
 import { boot, seedWorkstreamRoot } from "./helpers/substream-fixture";
 import { placeMembership } from "./helpers/space-membership";
@@ -271,4 +272,52 @@ describe("a thread carries its Channel's colour", () => {
     });
     expect(await marked()).toBeNull();
   }, 60_000);
+
+  it("keeps one batch in flight: later threads wait until the batch settles or is released", async () => {
+    const [first, second, later] = ["e711", "e712", "e713"].map((suffix) => `00000000-0000-7000-8000-00000000${suffix}`);
+    // Staged straight into the table: what is under test is the lane's pacing,
+    // not which writes mark a thread (the cases above).
+    const stage = (workstreamId: string) => runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        "INSERT INTO channel_color_sync(workstream_id, revision, attempts, not_before) VALUES (?, 1, 0, 0)",
+        workstreamId,
+      );
+    });
+    // The object's own alarm may run the lane too (settling arms it), so each
+    // step asserts on what the rows say rather than on which run sent them.
+    const publish = () => runInDurableObject(workspace(), async (_instance, state) => {
+      const now = Date.now();
+      await publishChannelColorSync({
+        sql: state.storage.sql,
+        queue: { sendBatch: async () => undefined },
+        workspaceId: WORKSPACE_ID,
+        region: "global",
+        now,
+        retryAt: () => now + 60_000,
+      });
+    });
+    const claims = (workstreamId: string) => runInDurableObject(workspace(), (_instance, state) => state.storage.sql
+      .exec<{ attempts: number }>("SELECT attempts FROM channel_color_sync WHERE workstream_id = ?", workstreamId)
+      .toArray()[0]?.attempts ?? null);
+    const settled = (workstreamId: string) => ({ ...message(1), workstreamId });
+    await runInDurableObject(workspace(), (_instance, state) => { state.storage.sql.exec("DELETE FROM channel_color_sync"); });
+    await stage(first!);
+    await stage(second!);
+
+    await publish();
+    expect([await claims(first!), await claims(second!)]).toEqual([1, 1]);
+    await stage(later!);
+    await publish();
+    expect(await claims(later!)).toBe(0);
+    // The wake waits for the batch's gate, not for the waiting row that is due now.
+    expect(await runInDurableObject(workspace(), (_instance, state) => nextChannelColorSyncAt(state.storage.sql)))
+      .toBeGreaterThan(Date.now());
+
+    expect(await workspace().completeChannelColorSync(settled(first!))).toBe(true);
+    await publish();
+    expect(await claims(later!)).toBe(0);
+    expect(await workspace().releaseChannelColorSync(settled(second!))).toBe(true);
+    await publish();
+    expect(await claims(later!)).toBe(1);
+  });
 });
