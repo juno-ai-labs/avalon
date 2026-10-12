@@ -1,6 +1,7 @@
 import { ParticipantAuthorityTransferStorage } from "./participant-authority-transfer";
 import type { SqlStorageCursor, SqlStorageValue } from "@cloudflare/workers-types";
 import {
+  type SpaceColorKey,
   WorkstreamAppearanceSchema,
   WorkstreamIconKeySchema,
   type WorkstreamIconKey,
@@ -314,6 +315,34 @@ export class WorkstreamIdentityStorage {
         input.now,
       );
       return { outcome: "renamed" as const, icon };
+    });
+  }
+
+  /**
+   * Put the thread's Channel colour on this conversation, keeping its icon.
+   *
+   * For now this is the only writer of a thread's or a Breakout's colour: the
+   * client's appearance command drops `color`, and WorkspaceDO decides the
+   * colour from the thread's Channel (`channel-color-sync.ts`). `unchanged`
+   * when it already matches, so a repeated delivery writes nothing. An
+   * appearance this object cannot read is replaced rather than kept, unlike
+   * `rename`: the colour is the server's to set, and the icon falls back to
+   * the id-derived default the way a stored `null` does.
+   */
+  recolor(input: { color: SpaceColorKey; now: number }): { outcome: "recolored" | "unchanged" } {
+    return this.storage.transactionSync(() => {
+      const root = this.identity();
+      if (!root) return { outcome: "unchanged" as const };
+      const stored = root.appearance_json
+        ? WorkstreamAppearanceSchema.safeParse(JSON.parse(root.appearance_json)).data
+        : undefined;
+      if (stored?.color === input.color) return { outcome: "unchanged" as const };
+      this.sql.exec(
+        "UPDATE workstream SET appearance_json = ?, updated_at = ? WHERE id = 1",
+        JSON.stringify(WorkstreamAppearanceSchema.parse({ icon: stored?.icon ?? null, color: input.color })),
+        input.now,
+      );
+      return { outcome: "recolored" as const };
     });
   }
 
