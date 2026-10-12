@@ -52,8 +52,8 @@ const NAVIGATION_SHEET_ID = 'rally-navigation-sheet';
 const PHONE_LAYOUT_MAX_WIDTH = 640;
 
 const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNode }> = [
-  { id: 'threads', label: 'Threads', icon: <IconMessages aria-hidden="true" size={20} stroke={1.7} /> },
   { id: 'channels', label: 'Channels', icon: <IconHash aria-hidden="true" size={20} stroke={1.7} /> },
+  { id: 'threads', label: 'Threads', icon: <IconMessages aria-hidden="true" size={20} stroke={1.7} /> },
   { id: 'activity', label: 'Activity', icon: <IconBell aria-hidden="true" size={20} stroke={1.7} /> },
 ];
 
@@ -109,7 +109,7 @@ export function compareChannelRows(
 export type AccessDecision = 'approve' | 'decline';
 
 /**
- * The sidebar: a section switcher (Threads, Channels, Activity) beside one
+ * The sidebar: a section switcher (Channels, Threads, Activity) beside one
  * list. One list column with a tab switcher, never stacked hierarchy rails —
  * the reason the 2026-10-01 change removed three of them still holds
  * (`docs/desktop-shell.md`). Shared by the Mac app and the browser.

@@ -25,7 +25,7 @@ a thread or a breakout opens, or who owns the right panel.
 | `packages/ui/src/components/conversation-menus.tsx` | `ChannelMenu` and `BreakoutMenu`: everything the deleted Channel sidebar held, as title-pill menus. Also `ConversationRowActions` and `PENDING_SUBSTREAM_DRAFT_ID`. |
 | `packages/ui/src/components/breakout-marks.tsx` | `BreakoutMark`, `breakoutsByOrigin`, `orderBreakoutsForTicks`, `breakoutHasActivity`, `BreakoutChipRow`, `BreakoutTickBar`. |
 | `packages/ui/src/components/split-conversation.tsx` | `SplitConversationLayout`, `SplitConversationMode`, `clampBreakoutWidth`. |
-| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the section switcher (Threads, Channels, Activity), the account menu under it, and the three lists with their Pinned sections, sort, and drag to reorder. |
+| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the section switcher (Channels, Threads, Activity), the account menu under it, and the three lists with their Pinned sections, sort, and drag to reorder. |
 | `apps/desktop/src/renderer/screens/channel.tsx` | The Channel screen: its pill and menu, the feed of threads with locked rows, the composer, and `ChannelStack`, the first two panes of the stack ([`pane-stack.md`](pane-stack.md)). |
 | `apps/desktop/src/renderer/components/channel-composer.tsx` | Starting a thread from a Channel. |
 | `apps/desktop/src/renderer/lib/thread-channels.tsx` | `useThreadChannels`: the thread menu's Channels level, where a thread is added to or taken out of a Channel. |
@@ -45,7 +45,7 @@ One `ResizableSidebar` on the left, at the width in `useUiStore.sidebarWidth`
 drags it), clamped to the shared minimum and maximum. It holds two columns:
 
 - **The section switcher**, a 76px rail under the macOS window controls:
-  **Threads**, **Channels** and **Activity**, each an icon over its name, and
+  **Channels**, **Threads** and **Activity**, each an icon over its name, and
   the account menu at the bottom (its trigger shows only the avatar here).
   The choice is a device preference (`rally.sidebar-section`). **Threads**
   carries a red count: every conversation waiting on this person and every
