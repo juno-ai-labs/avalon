@@ -78,19 +78,23 @@ function useAppearanceChoice(id: string, appearance: WorkstreamAppearance | unde
   return { selected, change, error, onOpenChange };
 }
 
-function AppearanceChoices({ selected, change, error }: Pick<ReturnType<typeof useAppearanceChoice>, 'selected' | 'change' | 'error'>): React.JSX.Element {
+function AppearanceChoices({ selected, change, error, colors = true }: Pick<ReturnType<typeof useAppearanceChoice>, 'selected' | 'change' | 'error'> & {
+  colors?: boolean | undefined;
+}): React.JSX.Element {
   return <>
-    <DropdownMenu.Label className="appearance-picker-label">Color</DropdownMenu.Label>
-    <DropdownMenu.RadioGroup value={selected.color ?? ''} className="appearance-picker-colors" aria-label="Color">
-      {projectColorCells().map((color, cell) => (color === null
-        ? <span aria-hidden="true" className="appearance-picker-gap" key={`gap-${cell}`} />
-        : <DropdownMenu.RadioItem key={color} value={color} aria-label={label(color)} title={label(color)} className="appearance-picker-choice" onSelect={(event) => { event.preventDefault(); change({ color }); }}>
-          {/* The pastel a mark of this colour gets, with its ink as a dot, so
-              the swatch previews the mark rather than the bare hue. */}
-          <span className="appearance-picker-swatch" style={{ background: markColors(color).tint, '--swatch-ink': markColors(color).ink } as React.CSSProperties} />
-        </DropdownMenu.RadioItem>))}
-    </DropdownMenu.RadioGroup>
-    <DropdownMenu.Separator className="appearance-picker-divider" />
+    {colors && <>
+      <DropdownMenu.Label className="appearance-picker-label">Color</DropdownMenu.Label>
+      <DropdownMenu.RadioGroup value={selected.color ?? ''} className="appearance-picker-colors" aria-label="Color">
+        {projectColorCells().map((color, cell) => (color === null
+          ? <span aria-hidden="true" className="appearance-picker-gap" key={`gap-${cell}`} />
+          : <DropdownMenu.RadioItem key={color} value={color} aria-label={label(color)} title={label(color)} className="appearance-picker-choice" onSelect={(event) => { event.preventDefault(); change({ color }); }}>
+            {/* The pastel a mark of this colour gets, with its ink as a dot, so
+                the swatch previews the mark rather than the bare hue. */}
+            <span className="appearance-picker-swatch" style={{ background: markColors(color).tint, '--swatch-ink': markColors(color).ink } as React.CSSProperties} />
+          </DropdownMenu.RadioItem>))}
+      </DropdownMenu.RadioGroup>
+      <DropdownMenu.Separator className="appearance-picker-divider" />
+    </>}
     <DropdownMenu.Label className="appearance-picker-label">Icon</DropdownMenu.Label>
     <DropdownMenu.RadioGroup value={selected.icon ?? ''} className="appearance-picker-icons" aria-label="Icon">
       <IconCatalog renderIcon={(icon) => {
@@ -108,25 +112,27 @@ function AppearanceChoices({ selected, change, error }: Pick<ReturnType<typeof u
  * The same palette as a submenu of a menu that is already open, for a mark the
  * surface does not draw as its own control, such as a Breakout's title pill.
  */
-export function AppearanceSubmenu({ id, appearance, label: itemLabel, icon, onChange }: {
+export function AppearanceSubmenu({ id, appearance, label: itemLabel, icon, onChange, colors }: {
   id: string;
   appearance?: WorkstreamAppearance;
   label: string;
   icon?: React.ReactNode;
   onChange: (patch: WorkstreamAppearancePatch) => Promise<void>;
+  /** False for a mark whose colour is not its own to choose; see `inChannelColor`. */
+  colors?: boolean;
 }): React.JSX.Element {
   const { selected, change, error, onOpenChange } = useAppearanceChoice(id, appearance, onChange);
   return <DropdownMenu.Sub onOpenChange={onOpenChange}>
     <DropdownMenu.SubTrigger className="menu-item title-menu-item">{icon}{itemLabel}</DropdownMenu.SubTrigger>
     <DropdownMenu.Portal>
       <DropdownMenu.SubContent className="menu-content appearance-picker-popup" sideOffset={8} collisionPadding={12} aria-label={itemLabel}>
-        <AppearanceChoices change={change} error={error} selected={selected} />
+        <AppearanceChoices change={change} colors={colors} error={error} selected={selected} />
       </DropdownMenu.SubContent>
     </DropdownMenu.Portal>
   </DropdownMenu.Sub>;
 }
 
-export function AppearancePicker({ id, appearance, label: triggerLabel, renderGlyph, onChange, triggerClassName }: {
+export function AppearancePicker({ id, appearance, label: triggerLabel, renderGlyph, onChange, triggerClassName, colors }: {
   id: string;
   appearance?: WorkstreamAppearance;
   /** The trigger's accessible name, and the popup's: "Change X icon and color". */
@@ -136,6 +142,8 @@ export function AppearancePicker({ id, appearance, label: triggerLabel, renderGl
   onChange: (patch: WorkstreamAppearancePatch) => Promise<void>;
   /** The trigger's frame, for a surface that draws its mark in a tile of its own. */
   triggerClassName?: string;
+  /** False for a mark whose colour is not its own to choose; see `inChannelColor`. */
+  colors?: boolean;
 }): React.JSX.Element {
   const { selected, change, error, onOpenChange } = useAppearanceChoice(id, appearance, onChange);
   return <DropdownMenu.Root onOpenChange={onOpenChange}>
@@ -146,7 +154,7 @@ export function AppearancePicker({ id, appearance, label: triggerLabel, renderGl
     </DropdownMenu.Trigger>
     <DropdownMenu.Portal>
       <DropdownMenu.Content className="menu-content appearance-picker-popup" align="start" sideOffset={8} collisionPadding={12} aria-label={triggerLabel}>
-        <AppearanceChoices change={change} error={error} selected={selected} />
+        <AppearanceChoices change={change} colors={colors} error={error} selected={selected} />
       </DropdownMenu.Content>
     </DropdownMenu.Portal>
   </DropdownMenu.Root>;

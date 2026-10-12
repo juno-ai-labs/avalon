@@ -120,6 +120,19 @@ describe('searchChannelPlaces', () => {
       ['breakout', granted, 'Granted notes'],
     ]);
   });
+
+  it('draws each thread and Breakout in the colour of the Channel the thread sits in', () => {
+    const channelId = '00000000-0000-7000-8000-0000000000c1';
+    const thread = { ...summary('completed'), spaceIds: [channelId], appearance: { icon: 'rocket' as const, color: 'green' as const } };
+    const places = searchChannelPlaces([thread], {}, directory, [{ id: channelId, colorKey: 'red' }]);
+    expect(places.map((place) => place.kind === 'space' ? null : [place.id, place.appearance])).toEqual([
+      [workstreamId, { icon: 'rocket', color: 'red' }],
+      // A Breakout without a look of its own borrows the thread's, already in the Channel's colour.
+      [member, undefined],
+      [granted, { icon: 'rocket', color: 'red' }],
+    ]);
+    expect(places[1]).toMatchObject({ channelAppearance: { icon: 'rocket', color: 'red' } });
+  });
 });
 
 describe('associativeWorkstreamsForSidebar', () => {

@@ -84,6 +84,25 @@ export interface ResolvableAppearance {
   color?: SavedAppearance['color'];
 }
 
+/**
+ * A thread's or a Breakout's appearance in its Channel's colour.
+ *
+ * For now a conversation does not keep a colour of its own on screen: every
+ * thread and Breakout wears the colour of the Channel it sits in, so a glance
+ * at a mark says where the work lives. The icon stays the conversation's own.
+ * The stored colour is left alone rather than rewritten, so letting
+ * conversations choose again is this function going away, not a migration.
+ *
+ * No colour (the Channel is not known on this client yet) leaves the
+ * appearance as it was.
+ */
+export function inChannelColor(
+  appearance: SavedAppearance | undefined,
+  color: ProjectColorKey | undefined,
+): SavedAppearance | undefined {
+  return color ? { icon: appearance?.icon ?? null, color } : appearance;
+}
+
 /** The icon map as a lookup that admits a miss, which is the whole point. */
 const ICON_BY_KEY: Record<string, LucideIcon | undefined> = WORKSTREAM_ICON_COMPONENTS;
 
