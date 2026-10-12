@@ -105,12 +105,7 @@ export const ActivityItemKindSchema = z.enum([
 ]);
 export type ActivityItemKind = z.infer<typeof ActivityItemKindSchema>;
 
-/**
- * A narrower Activity feed. `mentions` keeps only the rows where somebody
- * mentioned this person. Filtered by the server rather than the client
- * because mentions are sparse: a client filtering newest-first pages could
- * draw an empty page with more behind it.
- */
+/** A narrower Activity feed: `mentions` keeps only the rows where somebody mentioned this person. */
 export const ActivityFilterSchema = z.enum(["mentions"]);
 export type ActivityFilter = z.infer<typeof ActivityFilterSchema>;
 

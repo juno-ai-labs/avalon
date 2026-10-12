@@ -98,9 +98,8 @@ export class WorkspaceActivityFeed {
   }
 
   /**
-   * One page, newest first. `only: "mentions"` keeps the first arm alone and
-   * narrows it to the `mentioned` relation, so the page and its cursor are cut
-   * from mentions and nothing else; the other arms never run.
+   * One page, newest first. `only: "mentions"` runs the first arm alone,
+   * narrowed to the `mentioned` relation.
    */
   page(
     viewer: Viewer,
