@@ -24,7 +24,9 @@ const api = vi.hoisted(() => ({
   restoreSpace: vi.fn(),
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
-vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ data: [] }) }));
+/** The threads the workspace socket holds; empty unless a test puts some there. */
+const live = vi.hoisted(() => ({ rows: [] as unknown[] }));
+vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ data: live.rows }) }));
 const telemetry = vi.hoisted(() => ({
   markWorkstreamFeedOpenStarted: vi.fn(),
   markWorkstreamNavigation: vi.fn(),
@@ -110,6 +112,7 @@ function renderSidebar(seed: (client: QueryClient) => void, waiting = 0, { route
 describe('the navigation sidebar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    live.rows = [];
     localStorage.clear();
     useUiStore.getState().setSidebarSection('channels');
     useUiStore.getState().setThreadSort('recent');
@@ -247,8 +250,32 @@ describe('the navigation sidebar', () => {
       ['Make a website', '↳ Q4 plan · Outbound'],
       ['Q4 plan', 'Outbound'],
     ]));
+    // A breakout's tile carries its thread, with the Channel nested on that;
+    // a thread's carries the Channel itself.
+    const breakoutRow = list.getByRole('link', { name: /Make a website/u });
+    expect(breakoutRow.querySelectorAll('.identity-tile > .identity-tile-badge.is-circle > .identity-tile-badge.is-nested.is-squircle')).toHaveLength(1);
+    const threadRow = list.getByRole('link', { name: /^Q4 plan/u });
+    expect(threadRow.querySelectorAll('.identity-tile > .identity-tile-badge.is-squircle')).toHaveLength(1);
+    expect(threadRow.querySelector('.is-nested')).toBeNull();
     fireEvent.click(list.getByRole('link', { name: /Make a website/u }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/plan?substream=site');
+  });
+
+  it('badges a breakout with its thread’s live appearance, not the one its listed page carried', async () => {
+    useUiStore.getState().setSidebarSection('threads');
+    live.rows = [thread('plan', 'Q4 plan', { appearance: { icon: null, color: 'red' } })];
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [
+      thread('site', 'Make a website', {
+        kind: 'breakout',
+        breakoutOf: { workstreamId: 'plan', substreamId: 'site', title: 'Q4 plan', appearance: { icon: null, color: 'blue' } },
+      }),
+    ] });
+    renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
+
+    const list = within(await screen.findByRole('region', { name: 'Recent threads' }));
+    const row = await waitFor(() => list.getByRole('link', { name: /Make a website/u }));
+    const fill = row.querySelector<HTMLElement>('.identity-tile > .identity-tile-badge.is-circle > .identity-tile-badge-fill');
+    expect(fill?.style.background).toBe('var(--av-sys-color-project-ink-red)');
   });
 
   it('names who started a thread from the member directory when the row carries only their id', async () => {
