@@ -94,7 +94,7 @@ Organization-wide.
 thread and breakout they take part in (`GET /navigation/threads`), ordered
 **Recent** (default), **A–Z** or **Needs attention** (`rally.sidebar-thread-sort`).
 A row is the thread's circle tile with a squircle badge for each Channel it
-sits in, its title, its last activity time, and the Channels' names; a
+sits in (two at most, the room a tile has), its title, its last activity time, and the Channels' names; a
 breakout's second line starts `↳` and its thread's name. A row is unread
 (bold title, the time and a dot in the unread colour) when it has new
 messages, mentions the person, or was never opened, the three the Threads
@@ -109,8 +109,9 @@ nothing. A thread opened from a desktop link is scrolled into view, loading
 further pages until its row is listed. **New thread** opens the Channel in
 view, or General, whichever the person can start a thread in: a thread is
 started from a Channel's composer and nowhere else (the PRD's non-goal 6).
-Opening a Channel focuses that composer; when the Channel is already open,
-the button changes nothing.
+The composer takes focus whether or not the Channel was already open: the
+button asks for it in the navigation's state (`focusComposer`), which the
+mounted composer reads.
 
 **Activity**: requests to join waiting on this person (approve or decline in
 place), then what happened to them, grouped Today, Yesterday and by day
@@ -380,7 +381,7 @@ their time and lose the run-state dot. The panel header gains New channel,
 New thread and Mark all read, and Activity gains All, Unread and Mentions.
 
 **Why:** The founder's sidebar mock (4a, "squircle channels, circle threads")
-makes the two kinds of thing tell apart at a glance, since the redesign put
+makes the two kinds of thing easy to tell apart at a glance, since the redesign put
 both in lists that look alike. The product owner chose unread only on a
 thread row: the run state is the thread's to show, and the row answers whether
 there is something new for this person.
@@ -397,6 +398,9 @@ than its own grid. A thread's run state is no longer visible in the sidebar
 ([`workstream-markers.md`](workstream-markers.md)). The Activity query key
 carries its filter (`['activity', 'all' | 'mentions']`), so invalidating
 `['activity']` still reaches every chip.
+
+Shipped in [#1199](https://github.com/juno-ai-labs/avalon/pull/1199); PRD:
+[Channels, Threads, and navigation](PRDs/2026-10-10_channels-threads-navigation/prd.md).
 
 ### 2026-10-12 — The sidebar takes back what the redesign dropped
 

@@ -83,7 +83,7 @@ function threadRows(list: ReturnType<typeof within>): Array<[string | null | und
 
 function Location(): React.JSX.Element {
   const location = useLocation();
-  return <div data-testid="location">{location.pathname}{location.search}</div>;
+  return <div data-state={JSON.stringify(location.state)} data-testid="location">{location.pathname}{location.search}</div>;
 }
 
 function renderSidebar(seed: (client: QueryClient) => void, waiting = 0, { route = '/', person = workspace }: { route?: string; person?: Workspace } = {}) {
@@ -313,6 +313,9 @@ describe('the navigation sidebar', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'New thread' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/general');
+    // The composer may already be mounted, so the focus is asked for in the
+    // navigation rather than left to its mount.
+    expect(screen.getByTestId('location')).toHaveAttribute('data-state', '{"focusComposer":true}');
   });
 
   it('opens New channel from the Channels header', () => {
@@ -364,6 +367,18 @@ describe('the navigation sidebar', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Mark all read' }));
       await waitFor(() => expect(today.queryAllByRole('img', { name: 'Unread' })).toEqual([]));
       expect(api.markActivitySeen).toHaveBeenCalledWith(now.toISOString());
+    });
+
+    it('reads the feed again when Mark all read fails, so its dots come back', async () => {
+      api.markActivitySeen.mockRejectedValueOnce(new Error('offline'));
+      renderSidebar(seed);
+      const today = within(await screen.findByRole('region', { name: 'Today' }));
+      await waitFor(() => expect(today.getAllByRole('img', { name: 'Unread' })).toHaveLength(1));
+      const reads = api.getActivity.mock.calls.length;
+
+      fireEvent.click(screen.getByRole('button', { name: 'Mark all read' }));
+      await waitFor(() => expect(api.getActivity.mock.calls.length).toBeGreaterThan(reads));
+      await waitFor(() => expect(today.getAllByRole('img', { name: 'Unread' })).toHaveLength(1));
     });
   });
 
