@@ -44,7 +44,9 @@ One `ResizableSidebar` on the left, at the width in `useUiStore.sidebarWidth`
 (`rally.sidebar-width`; 340px, `SINGLE_SIDEBAR_DEFAULT_WIDTH`, until the person
 drags it), clamped to the shared minimum and maximum. It holds two columns:
 
-- **The section switcher**, a 76px rail under the macOS window controls:
+- **The section switcher**, a 76px rail under the macOS window controls,
+  which the main window centers over it (`main/main-window-chrome.ts`, sized
+  per macOS version because macOS 26 drew larger buttons):
   **Channels**, **Threads** and **Activity**, each an icon over its name, and
   the account menu at the bottom (its trigger shows only the avatar here).
   The choice is a device preference (`rally.sidebar-section`). **Threads**
