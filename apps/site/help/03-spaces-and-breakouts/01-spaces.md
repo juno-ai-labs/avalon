@@ -182,13 +182,6 @@ A Thread can sit in more than one Channel. It shows in each Channel's feed, and
 its row in your Threads list carries a chip for each, so work that belongs to
 two teams does not need copying.
 
-To change where a Thread sits, click its name in its title pill and choose
-**Channels**. The list shows the Channels it is in; under **Add to a channel**,
-click another to add it there. To take it out of one, click **…** beside that
-Channel and choose **Remove from this channel**. A Thread always keeps at least
-one Channel, so the last one cannot be removed. You can add a Thread to any
-Channel you could start a Thread in.
-
 If you open a link to a Channel that has been archived, that has been made
 private, or that you no longer have access to, Rally shows **Channel not found**
 and **It may have been archived, made private, or you may no longer have
