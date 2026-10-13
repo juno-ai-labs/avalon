@@ -377,7 +377,7 @@ function LockedCard({ onOpen, placedAt, threadId }: {
   </li>;
 }
 
-/** The Channel's pill and its menu: people, privacy, pin and Sidekicks. */
+/** The Channel's pill and its menu: people, audience, pin and Sidekicks. */
 function ChannelHeader({ members, space, workspace }: {
   members: readonly WorkspaceMember[];
   space: SpaceSummary;
@@ -538,9 +538,9 @@ function ChannelHeader({ members, space, workspace }: {
         on: pinned,
         onChange: (next) => pin('channel', space.id, next),
       } : undefined}
-      privacy={editable && !general ? {
-        on: space.scope === 'personal',
-        onChange: (next) => void setAudience(next ? 'personal' : 'workspace', participantIds),
+      publicToOrganization={editable && !general ? {
+        on: space.scope === 'workspace',
+        onChange: (next) => void setAudience(next ? 'workspace' : 'personal', participantIds),
       } : undefined}
       sidekicks={sidekicks}
     />,
