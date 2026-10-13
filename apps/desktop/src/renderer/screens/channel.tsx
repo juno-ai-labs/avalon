@@ -393,13 +393,18 @@ function ChannelHeader({ members, space, workspace }: {
     const found = members.find((candidate) => candidate.id === id);
     return found ? [found] : [];
   });
-  const stored = (next: SpaceSummary): void => {
+  // `null` is this person having left a private Channel: it is gone from
+  // their list now rather than when the snapshot lands, and so are they.
+  const stored = (next: SpaceSummary | null): void => {
     queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current ? {
       ...current,
-      items: current.items.map((item) => item.id === next.id ? next : item),
+      items: next
+        ? current.items.map((item) => item.id === next.id ? next : item)
+        : current.items.filter((item) => item.id !== space.id),
     } : current);
+    if (!next) void navigate(WORKSTREAM_LANDING_ROUTE, { replace: true, state: { skipWorkstreamIds: [] } });
   };
-  const run = async (write: () => Promise<SpaceSummary>, copy: string): Promise<void> => {
+  const run = async (write: () => Promise<SpaceSummary | null>, copy: string): Promise<void> => {
     setFailure(null);
     try {
       stored(await write());
@@ -408,12 +413,7 @@ function ChannelHeader({ members, space, workspace }: {
     }
   };
   const setAudience = (scope: 'personal' | 'workspace', ids: readonly string[]): Promise<void> => run(
-    () => api!.updateSpaceAudience(space.id, {
-      scope,
-      // A private Channel nobody is in is one nobody can open; the person
-      // making it private stays in it.
-      participantUserIds: [...new Set([...ids, ...(scope === 'personal' ? [workspace.currentUser.id] : [])])],
-    }),
+    () => api!.updateSpaceAudience(space.id, { scope, participantUserIds: [...ids] }),
     scope === 'personal' ? 'This channel couldn’t be made private.' : 'This channel’s people couldn’t be updated.',
   );
   const archive = async (): Promise<void> => {
@@ -545,7 +545,12 @@ function ChannelHeader({ members, space, workspace }: {
       } : undefined}
       publicToOrganization={editable && !general ? {
         on: space.scope === 'workspace',
-        onChange: (next) => void setAudience(next ? 'workspace' : 'personal', participantIds),
+        // A private Channel nobody is in is one nobody can open; the person
+        // making it private stays in it. Leaving it afterwards is theirs to do.
+        onChange: (next) => void setAudience(
+          next ? 'workspace' : 'personal',
+          next ? participantIds : [...new Set([...participantIds, workspace.currentUser.id])],
+        ),
       } : undefined}
       sidekicks={sidekicks}
     />,

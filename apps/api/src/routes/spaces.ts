@@ -125,12 +125,14 @@ spaceRoutes.patch(
   "/:id/audience",
   zValidator("param", idParam),
   zValidator("json", UpdateSpaceAudienceRequestSchema),
-  async (c) => c.json(SpaceSummarySchema.parse(
-    await new SpaceService(c.env, getAuth(c)).updateAudience(
+  async (c) => {
+    const space = await new SpaceService(c.env, getAuth(c)).updateAudience(
       c.req.valid("param").id,
       c.req.valid("json"),
-    ),
-  )),
+    );
+    // The caller left a private Channel: it is not theirs to be described.
+    return space === null ? c.body(null, 204) : c.json(SpaceSummarySchema.parse(space));
+  },
 );
 
 /** The Organization invitees a Space lists; see `SpaceInviteesSchema` for why this is not on the summary. */

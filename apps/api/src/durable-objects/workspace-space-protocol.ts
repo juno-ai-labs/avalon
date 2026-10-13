@@ -332,6 +332,17 @@ export const WorkspaceSpaceMutationResultSchema = z.union([
 ]);
 export type WorkspaceSpaceMutationResult = z.infer<typeof WorkspaceSpaceMutationResultSchema>;
 
+/**
+ * An audience change answers like any Space mutation, except that the actor
+ * may take themselves out of a private Space, after which it has no summary
+ * for them: `left` says the change was written all the same.
+ */
+export const WorkspaceSpaceAudienceResultSchema = z.union([
+  WorkspaceSpaceMutationResultSchema,
+  z.strictObject({ ok: z.literal(true), left: z.literal(true) }),
+]);
+export type WorkspaceSpaceAudienceResult = z.infer<typeof WorkspaceSpaceAudienceResultSchema>;
+
 export const WorkspaceSpaceReserveResultSchema = z.union([
   z.strictObject({ ok: z.literal(true), space: SpaceSummarySchema, created: z.boolean() }),
   WorkspaceSpaceAudienceFailureSchema,
