@@ -7914,6 +7914,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
     width: 36px;
   }
   .title-pill-ancestors > .title-pill-bridge { display: block; }
+  .title-pill-ancestors:has(> .title-pill-ancestor + .title-pill-ancestor) .title-pill-select:has(> .title-pill-mark) > .title-pill-icon { display: none; }
+  .title-pill-ancestors:has(> .title-pill-ancestor + .title-pill-ancestor) .title-pill-mark { display: grid; }
 }
 .title-pill-ancestor { position: relative; z-index: 1; }
 .title-pill-bridge {
@@ -7928,15 +7930,14 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   transform: translateY(-50%);
 }
 [data-theme='dark'] .title-pill-bridge { --title-pill-glass-shine: rgb(255 255 255 / .16); }
-.title-pill-bridge-body { fill: color-mix(in srgb, var(--av-sys-color-surface-raised) 80%, transparent); }
 .title-pill-bridge-sheen-from { stop-color: var(--title-pill-glass-shine); stop-opacity: .35; }
 .title-pill-bridge-sheen-to { stop-color: var(--title-pill-glass-shine); stop-opacity: 0; }
 .title-pill-bridge-rim-from { stop-color: var(--title-pill-glass-shine); }
 .title-pill-bridge-rim-to { stop-color: var(--title-pill-glass-shine); stop-opacity: 0; }
 .title-pill-bridge-edge { fill: none; stroke: var(--av-sys-color-border-strong); stroke-width: var(--av-sys-size-border-hairline); }
-@media (prefers-reduced-transparency: reduce) {
-  .title-pill-bridge-body { fill: var(--av-sys-color-surface-raised); }
-}
+/* A collapsed crumb's outline and symbol, stacked in one cell over its tint. */
+.title-pill-mark { display: none; flex: none; height: 36px; place-items: center; width: 36px; }
+.title-pill-mark > * { grid-area: 1 / 1; }
 /*
  * A pane too narrow to centre its pill between full ancestors (a breakout
  * standing alone on a phone, with its Channel and thread as breadcrumbs):

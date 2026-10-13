@@ -4,7 +4,7 @@ import { AppearancePicker, AppearanceSubmenu } from '@rally/ui/components/appear
 import { BreakoutChipRow, type BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { ChannelContainerMenu } from '@rally/ui/components/conversation-menus';
 import type { SidekickRow } from '@rally/ui/components/sidekick-section';
-import { ChannelGlyph } from '@rally/ui/components/space-icon';
+import { ChannelGlyph, spaceMark } from '@rally/ui/components/space-icon';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { TitleMenuItem, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { IconLock, IconPalette, IconPlus } from '@tabler/icons-react';
@@ -80,6 +80,7 @@ function ChannelStack({ channelId, threadId, workspace }: {
     crumb: {
       key: `channel-container:${channelId}`,
       icon: space ? <ChannelGlyph space={space} /> : null,
+      ...(space ? { mark: spaceMark(space) } : {}),
       title: space?.name ?? 'Channel',
       label: `Back to ${space?.name ?? 'the channel'}`,
       // Back one step: the Channel and this thread, whatever the thread had

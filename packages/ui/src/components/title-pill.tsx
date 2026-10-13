@@ -1,6 +1,7 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { IconChevronDown, IconChevronRight, IconCornerDownRight, IconSearch, IconX } from '@tabler/icons-react';
 
+import { ShapeOutline, type IdentityMark } from './identity-tile';
 import { IconButton } from './primitives';
 import clsx from 'clsx';
 import { isComposingKeyEvent } from '../lib/ime';
@@ -184,6 +185,12 @@ export interface TitlePillLevel {
    */
   iconAction?: ReactNode;
   /**
+   * The level as a mark, for when its crumb shrinks to one on the bridge: its
+   * outline and symbol in ink, over its tint. Without one the crumb keeps
+   * `icon` on a neutral fill.
+   */
+  mark?: IdentityMark;
+  /**
    * Which way the chevron points. Down by default; right for a Channel whose
    * Breakout is open beside it, pointing at where the conversation went.
    */
@@ -196,6 +203,7 @@ export function TitlePill({ level, variant = 'current' }: {
 }): React.JSX.Element {
   const body = <>
     <span className="title-pill-icon">{level.icon}</span>
+    {level.mark ? <CrumbMark mark={level.mark} /> : null}
     <span className="title-pill-title">{level.title}</span>
     {level.meta ? <span className="title-pill-meta">{level.meta}</span> : null}
   </>;
@@ -310,7 +318,7 @@ export function TitlePillHeader({ ancestors = [], className, current, trailing }
       {ancestors.map((level) => <span className="title-pill-ancestor window-no-drag" key={level.key}>
         <TitlePill level={level} variant="ancestor" />
       </span>)}
-      {ancestors.length > 1 ? <AncestorBridge count={ancestors.length} /> : null}
+      {ancestors.length > 1 ? <AncestorBridge tints={ancestors.map((level) => level.mark?.tint)} /> : null}
     </div>
     <div className="title-pill-current window-no-drag"><TitlePill level={current} /></div>
     <div className="title-pill-trailing">{trailing ? <span className="window-no-drag">{trailing}</span> : null}</div>
@@ -364,13 +372,61 @@ function bridgePath(count: number): string {
   return path.join(' ');
 }
 
+/** How far either side of a mark's centre its own tint holds before blending. */
+const BRIDGE_HOLD = 9;
+/** Stops in each blend; enough that straight runs between them read as one curve. */
+const BRIDGE_BLEND_STEPS = 8;
+/** A crumb with no mark sits on the surface a pill does. */
+const BRIDGE_NEUTRAL = 'var(--av-sys-color-surface-raised)';
+
 /**
- * The glass a pane's collapsed crumbs sit on, however many there are. Hidden
- * until the pane is narrow enough that the crumbs show only their marks.
+ * The bridge's fill: each mark's tint flat across its circle, blending into
+ * the next across the neck. An SVG gradient interpolates in sRGB, which runs
+ * two hues through a grey middle, so each blend is cut into stops that are
+ * themselves mixed in OKLCH: lightness, chroma and hue each move evenly.
  */
-function AncestorBridge({ count }: { count: number }): React.JSX.Element {
+function bridgeStops(tints: readonly (string | undefined)[]): { offset: number; color: string }[] {
+  const width = (tints.length - 1) * BRIDGE_SPAN + 2 * BRIDGE_RADIUS;
+  const fills = tints.map((tint) => tint ?? BRIDGE_NEUTRAL);
+  const stops: { offset: number; color: string }[] = [];
+  fills.forEach((fill, index) => {
+    const centre = BRIDGE_RADIUS + index * BRIDGE_SPAN;
+    stops.push({ offset: (centre - BRIDGE_HOLD) / width, color: fill }, { offset: (centre + BRIDGE_HOLD) / width, color: fill });
+    const next = fills[index + 1];
+    if (next === undefined || next === fill) return;
+    const from = centre + BRIDGE_HOLD;
+    const run = BRIDGE_SPAN - 2 * BRIDGE_HOLD;
+    for (let step = 1; step < BRIDGE_BLEND_STEPS; step += 1) {
+      const share = step / BRIDGE_BLEND_STEPS;
+      stops.push({ offset: (from + run * share) / width, color: `color-mix(in oklch, ${fill}, ${next} ${(share * 100).toFixed(1)}%)` });
+    }
+  });
+  return stops;
+}
+
+/**
+ * A level drawn as its mark, shown in place of its icon once the crumb has
+ * collapsed onto the bridge: the outline that says Channel or thread, and the
+ * object's own symbol inside it, both in its ink.
+ */
+function CrumbMark({ mark }: { mark: IdentityMark }): React.JSX.Element {
+  const Icon = mark.icon;
+  return <span aria-hidden="true" className="title-pill-mark" style={{ color: mark.ink }}>
+    <ShapeOutline className="title-pill-mark-outline" shape={mark.shape} size={36} strokeWidth={1.1} />
+    <Icon className="title-pill-mark-icon" size={14} strokeWidth={2} />
+  </span>;
+}
+
+/**
+ * The glass a pane's collapsed crumbs sit on, however many there are, each
+ * circle in its crumb's tint. Hidden until the pane is narrow enough that the
+ * crumbs show only their marks.
+ */
+function AncestorBridge({ tints }: { tints: readonly (string | undefined)[] }): React.JSX.Element {
   const id = useId();
+  const count = tints.length;
   const path = useMemo(() => bridgePath(count), [count]);
+  const stops = bridgeStops(tints);
   const width = (count - 1) * BRIDGE_SPAN + 2 * BRIDGE_RADIUS;
   const height = 2 * BRIDGE_RADIUS;
   return <svg
@@ -381,9 +437,14 @@ function AncestorBridge({ count }: { count: number }): React.JSX.Element {
     width={width + 2}
   >
     <defs>
+      <linearGradient gradientUnits="userSpaceOnUse" id={`${id}-tint`} x1="0" x2={width} y1="0" y2="0">
+        {stops.map((stop, index) => <stop key={index} offset={stop.offset} style={{ stopColor: stop.color }} />)}
+      </linearGradient>
+      {/* Ends above the symbols, so each one sits on its raw tint: the pair's
+          contrast is measured against that colour alone. */}
       <linearGradient id={`${id}-sheen`} x1="0" x2="0" y1="0" y2="1">
         <stop className="title-pill-bridge-sheen-from" offset="0" />
-        <stop className="title-pill-bridge-sheen-to" offset="0.6" />
+        <stop className="title-pill-bridge-sheen-to" offset="0.32" />
       </linearGradient>
       <linearGradient id={`${id}-rim`} x1="0" x2="0" y1="0" y2="1">
         <stop className="title-pill-bridge-rim-from" offset="0" />
@@ -391,7 +452,7 @@ function AncestorBridge({ count }: { count: number }): React.JSX.Element {
       </linearGradient>
       <clipPath id={`${id}-inside`}><path d={path} /></clipPath>
     </defs>
-    <path className="title-pill-bridge-body" d={path} />
+    <path className="title-pill-bridge-body" d={path} fill={`url(#${id}-tint)`} />
     <path d={path} fill={`url(#${id}-sheen)`} />
     <path clipPath={`url(#${id}-inside)`} d={path} fill="none" stroke={`url(#${id}-rim)`} strokeWidth="3" />
     <path className="title-pill-bridge-edge" d={path} />

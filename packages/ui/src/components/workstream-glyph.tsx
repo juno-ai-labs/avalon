@@ -19,6 +19,7 @@ import clsx from 'clsx';
 import { useId } from 'react';
 import { markColors } from '../lib/project-palette';
 import { APPEARANCE_ICON_COMPONENTS } from './appearance-icons';
+import type { IdentityMark } from './identity-tile';
 
 const WORKSTREAM_ICONS = [
   Aperture,
@@ -122,6 +123,12 @@ export function resolveWorkstreamAppearance(id: string, saved?: ResolvableAppear
     color: `var(--av-sys-color-project-${colorKey})`,
     ...markColors(colorKey),
   };
+}
+
+/** A thread or a Breakout as a mark: its symbol in a circle, in its pastel pair. */
+export function workstreamMark(id: string, saved?: ResolvableAppearance): IdentityMark {
+  const { Icon, tint, ink } = resolveWorkstreamAppearance(id, saved);
+  return { shape: 'circle', icon: Icon, tint, ink };
 }
 
 /**
