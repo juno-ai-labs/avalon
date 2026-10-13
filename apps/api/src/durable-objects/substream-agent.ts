@@ -138,7 +138,7 @@ import { settleDigestRun } from "../services/digest-run-settlement";
 import { canonicalExternalResultText } from "../services/external-result-delivery";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
-import { refreshWorkstreamName } from "../services/workstream-naming-service";
+import { refreshWorkstreamName, summarizeExistingDescription } from "../services/workstream-naming-service";
 import { loadOpenRouterContextWindows } from "../services/openrouter-context-windows";
 import {
   objectOwnsWorkstreamAuthorities,
@@ -5541,6 +5541,25 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         workspaceId: input.workspaceId,
         workstreamId: input.parentId,
       });
+      // A Breakout keeps a description of its own even where nothing shows it
+      // yet. One opened without a message was provisioned with none, and one
+      // whose first-pass summary failed still has its opening line; either is
+      // summarized here, after the run that gave it something to summarize.
+      // Every other Breakout costs two reads and no model call.
+      if (input.substreamId !== "0") {
+        await summarizeExistingDescription(executionEnv, {
+          workspaceId: input.workspaceId,
+          workstreamId: input.parentId,
+          substreamId: input.substreamId,
+        }).catch((error: unknown) => {
+          logWarn(executionEnv, "breakout_description_summary_failed", {
+            workspace_id: input.workspaceId,
+            workstream_id: input.parentId,
+            substream_id: input.substreamId,
+            reason: diagnosticErrorCode(error, "breakout_description_summary_failed"),
+          });
+        });
+      }
     }
     return canvaCleanupDiagnostic ?? settlementDiagnosticCode;
   }

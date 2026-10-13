@@ -190,11 +190,13 @@ export type DescriptionSummaryOutcome =
   | "not_the_opening_line";
 
 /**
- * Summarize the description of a thread or Breakout created before the first
- * naming pass asked for one: the backfill's whole step for one conversation.
+ * Summarize the description of a thread or Breakout that has none worth the
+ * name: one created before the first naming pass asked for a summary, or a
+ * Breakout opened without a message. The backfill's whole step for one
+ * conversation, and what a Breakout's run settlement calls.
  *
- * Only a description that is still the opening message's first line, exactly
- * as creation derived it, is sent to the model. That one comparison is what
+ * Only a description that is empty or still the opening message's first line,
+ * exactly as creation derived it, is sent to the model. That one comparison is what
  * makes the backfill safe to run twice and cheap to run over everything: a
  * description a person wrote, one the description loop already rewrote, and
  * one this step already summarized all fail it before any model call. The
@@ -218,12 +220,15 @@ export async function summarizeExistingDescription(env: Env, input: {
     env, input.workspaceId, input.workstreamId, undefined, input.substreamId,
   ).saidMessages({ messageTypes: { include: ["text"] }, order: "oldest", limit: 1 });
   if (!opening) return "no_opening_message";
-  if (identity.description !== provisionalWorkstreamDescription(opening.text_content, "")) return "not_the_opening_line";
+  const openingLine = provisionalWorkstreamDescription(opening.text_content, "");
+  // Empty is the other description still waiting for one: a Breakout opened
+  // without a message is provisioned with none, and nothing else writes it.
+  if (identity.description !== "" && identity.description !== openingLine) return "not_the_opening_line";
 
   const generated = await generateName(env, {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
-    objective: identity.description,
+    objective: identity.description || openingLine,
     openingMessage: opening.text_content,
     summarize: true,
   });
