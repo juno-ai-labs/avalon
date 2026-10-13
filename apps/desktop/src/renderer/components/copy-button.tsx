@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { Check, CircleAlert, Copy } from 'lucide-react';
+import { IconAlertCircle, IconCheck, IconCopy } from '@tabler/icons-react';
 import { forwardRef, useId, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { useCopy, type CopyState, type UseCopyOptions } from '../lib/use-copy';
 import { IconButton } from './primitives';
@@ -57,10 +57,10 @@ export const CopyButton = forwardRef<HTMLButtonElement, CopyButtonProps>(functio
         {...props}
       >
         {state === 'copied'
-          ? <Check aria-hidden="true" size={size} />
+          ? <IconCheck aria-hidden="true" size={size} stroke={1.9} />
           : state === 'failed'
-            ? <CircleAlert aria-hidden="true" size={size} />
-            : <Copy aria-hidden="true" size={size} />}
+            ? <IconAlertCircle aria-hidden="true" size={size} stroke={1.9} />
+            : <IconCopy aria-hidden="true" size={size} stroke={1.9} />}
       </IconButton>
       <CopyStatus state={state} />
     </>

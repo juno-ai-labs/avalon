@@ -569,18 +569,25 @@ link and Open in browser are now `IconGroupAction`s the detail declares with
 `useDetailHeaderActions`, and the panel header puts them in its `IconGroup`
 beside Expand. They are round like Close and fold into "⋯" when the header is
 crowded or at phone width. `IconGroupAction` gained `pressed`, for the Stored
-data toggle (a check on its row once folded), and `tooltipSide`.
+data toggle (a check on its row once folded). Over a live site the header's
+labels, "⋯" and Close included, open to the left of their buttons. The rail and
+copy button now draw Tabler icons, like the header around them.
 
 **Why:** The product owner flagged the four buttons as not following the
-standard icon group. They were portaled into the header as finished buttons,
+standard icon group, and asked for one icon set and for the "⋯" label to be
+visible. They were portaled into the header as finished buttons,
 so they kept the old rail's square look and spacing and could not fold.
 
 **Considered and rejected:** Restyling the portaled buttons with CSS that keys
 on where the slot sits. It fixed the look but not the fold, because
-`IconGroup` can only fold actions it was given as data.
+`IconGroup` can only fold actions it was given as data. For the labels, opening
+them upward: at the top of the window Radix flips them back down, which is why
+the old buttons' labels were hidden despite asking for `top`. Moving the page
+aside while a label shows would make it jump on every hover.
 
 **Consequences:** A detail's actions are limited to what `IconGroupAction`
-carries: a label, an icon, a click, disabled, pressed and a tooltip side. Copy
+carries: a label, an icon, a click, disabled and pressed. Which way labels open
+is the host's call, set once for the header with `tooltipSide`. Copy
 feedback is the label and glyph changing, with the live region rendered by the
 detail. A detail must memoise the array it declares, since each new one
 re-renders the host.
