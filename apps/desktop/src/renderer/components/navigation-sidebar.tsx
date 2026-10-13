@@ -11,7 +11,6 @@ import {
   IconCheck,
   IconChecks,
   IconClock,
-  IconCloudDownload,
   IconCornerDownRight,
   IconDeviceDesktopDown,
   IconLock,
@@ -142,7 +141,6 @@ export function NavigationSidebar({
   footerItems,
   onDecideAccessRequest,
   onOpenAccessRequest,
-  onOpenImport,
   onOpenSearch,
   workspace,
 }: {
@@ -155,7 +153,6 @@ export function NavigationSidebar({
   footerItems?: ReactNode;
   onDecideAccessRequest: (request: ConversationAccessRequestItem, decision: AccessDecision) => void;
   onOpenAccessRequest: (request: ConversationAccessRequestItem) => void;
-  onOpenImport?: (() => void) | undefined;
   onOpenSearch?: (() => void) | undefined;
   workspace: Workspace;
 }): React.JSX.Element {
@@ -263,9 +260,6 @@ export function NavigationSidebar({
           <div className="navigation-panel-actions window-no-drag">
             {downloadedUpdate !== null && <IconButton label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
               <IconDeviceDesktopDown aria-hidden="true" size={17} stroke={1.8} />
-            </IconButton>}
-            {!guest && onOpenImport && <IconButton label="Import a conversation" onClick={onOpenImport}>
-              <IconCloudDownload aria-hidden="true" size={17} stroke={1.8} />
             </IconButton>}
             <IconButton disabled={!onOpenSearch} label="Search organization" onClick={onOpenSearch}>
               <IconSearch aria-hidden="true" size={18} stroke={1.8} />
