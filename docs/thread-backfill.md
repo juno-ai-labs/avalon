@@ -66,9 +66,9 @@ arms its own alarm.
   pacing case in `test-workers/thread-backfill.test.ts`.
 - **A job is safe to run twice over the same conversation.** A row whose
   consumer failed part way is sent again whole, including the conversations
-  it already did. `description_summary` holds this by sending only a
-  description that is empty or still the opening message's first line to the
-  model.
+  it already did. `description_summary` writes nothing over a description
+  that is no longer empty or the opening message's first line, so a second
+  run can repeat a model call but never a write.
   Guard: `workstream-naming.test.ts`, "backfilling an existing thread's
   summary".
 - **A row is settled only after every conversation ran.** Settling first
@@ -100,6 +100,14 @@ revisions.
 - **A retired Organization** refuses the write; the consumer acks without
   releasing the row or logging a failure.
 - **Batch size** is 100, Cloudflare Queues' `sendBatch` ceiling.
+- **One batch in flight holds only while consumers keep up.** A claimed row
+  stops counting as in flight when its first retry gate passes
+  (`scheduledAlarmRetryDelay(1)`, 30 to 60 seconds). During a fleet-wide wake,
+  every Organization's batch shares the activity Queue, and a row still
+  waiting there is sent again with the next batch. Both copies call the model;
+  the compare-and-swap keeps one write, and a settled row's late copy does
+  nothing. The cost is duplicate model calls and a longer activity backlog
+  while the backfill runs.
 
 ## Testing
 
@@ -114,7 +122,7 @@ revisions.
 
 | Event | Means |
 | --- | --- |
-| `thread_backfill_conversation` | One conversation ran. `outcome` is the handler's: for `description_summary`, `summarized`, `unchanged`, `superseded`, or the reason it was skipped (`authored`, `not_the_opening_line`, `no_opening_message`, `archived`, `not_a_thread`, `not_found`). |
+| `thread_backfill_conversation` | One conversation ran. `outcome` is the handler's; for `description_summary`, a `DescriptionSummaryOutcome`. |
 | `thread_backfill_failed` | A thread's job threw; its row retries at its gate. |
 | `thread_backfill_publication_failed` | The alarm could not send a batch; its rows retry at their gates. |
 

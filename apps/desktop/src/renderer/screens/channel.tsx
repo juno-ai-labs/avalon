@@ -357,7 +357,7 @@ function ThreadCard({ author, onOpen, open, placedAt, thread }: {
     <button
       aria-label={[mark.naming ? 'Rally is choosing a name' : thread.title, news, open && 'Open'].filter(Boolean).join(', ')}
       aria-pressed={open}
-      className={clsx('channel-feed-thread', open && 'is-open', news && 'has-news')}
+      className={clsx('channel-feed-thread', open && 'is-open')}
       onClick={() => onOpen(thread.id)}
       type="button"
     >
@@ -394,7 +394,7 @@ function LockedCard({ onOpen, placedAt, threadId }: {
   threadId: string;
 }): React.JSX.Element {
   return <li className="channel-feed-item is-locked">
-    <button aria-label="Request access" className="channel-feed-thread" onClick={() => onOpen(threadId)} type="button">
+    <button aria-label="Private thread, request access" className="channel-feed-thread" onClick={() => onOpen(threadId)} type="button">
       <span className="channel-feed-body">
         <span className="channel-feed-title">
           <span className="channel-feed-title-text">Private thread</span>

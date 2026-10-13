@@ -798,7 +798,6 @@ import {
 import {
   THREAD_BACKFILL_MIGRATION,
   ThreadBackfillMessageSchema,
-  ThreadBackfillWorkSchema,
   completeThreadBackfill,
   nextThreadBackfillAt,
   publishThreadBackfill,
@@ -10282,9 +10281,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(ThreadBackfillMessageSchema, input, "thread_backfill_work");
     this.assertWorkspace(request.workspaceId);
-    const work = ThreadBackfillWorkSchema.parse(this.state.storage.transactionSync(() => threadBackfillWork(
+    const work = this.state.storage.transactionSync(() => threadBackfillWork(
       this.state.storage.sql, { job: request.job, workstreamId: request.workstreamId },
-    )));
+    ));
     // A settled row may be the last of its batch, which lets the next one go.
     if (work === null) await this.armNextAlarm();
     return work;
