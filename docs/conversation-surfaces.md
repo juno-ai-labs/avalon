@@ -174,14 +174,17 @@ above it, which no automated test covers for the rules naming either class; it
 is verified in a real window.
 
 Every surface with a composer renders the same one, dressed the same way: the
-message capsule, keyed on `:is(.workstream-screen, .workstream-launch-screen)
+message capsule, keyed on `.has-message-capsule
 .workstream-composer.is-message-capsule` — one 44px pill on a 22px corner, a
 42px-tall field, the plus in the left column and the send or dictation control
 in the right. `ComposerInput` takes `layout: 'message-capsule'` on every
-surface, and no surface states a treatment of its own. Every surface also draws
-it through the same host, `WorkstreamComposer`: the conversation, the
-new-breakout dock and the new-Channel launcher. The host reads only a
-`ComposerConversation` — participants, scope, run status and stop state — plus
+surface, and no surface states a treatment of its own. The capsule rules apply
+only under a root carrying `has-message-capsule` (today `.workstream-screen`
+and `.channel-screen`), so a new screen that hosts the composer adds that class
+to its root, or its composer falls back to the toolbar layout. Every surface
+also draws it through the same host, `WorkstreamComposer`: the conversation,
+the new-breakout dock, the new-Channel launcher and the Channel's own composer.
+The host reads only a `ComposerConversation` — participants, scope, run status and stop state — plus
 a `draftKey`, so a conversation that does not exist yet supplies those rather
 than a whole `WorkstreamDetail`. Wrapped
 text and staged attachments span the controls' own grid row, so the reserve at
@@ -345,10 +348,9 @@ across every surface that has a composer. A turn is capped at `--turn-width-cap`
 the column; `--composer-width` is three quarters of that, and the
 field is centred on it, so the field and the bubbles it produces read as one
 column rather than as a full-width row under a narrow transcript. Four rules read
-that property: the composer stack under `:is(.workstream-screen,
-.workstream-launch-screen)` — which is the settled conversation, the new-chat
-screen and the new-substream dock, because a launcher is a conversation that has
-not happened yet — plus the two rows a launcher stacks over its field, the
+that property: the composer stack under `.has-message-capsule` — which is the
+settled conversation, the new-substream dock and the Channel, because a
+launcher is a conversation that has not happened yet — plus the two rows a launcher stacks over its field, the
 substream banner and the participant chips, which are centred siblings of the
 stack rather than children of it and so each state the measure for themselves.
 The draft moves from a launcher to the conversation on one keystroke without the
@@ -678,6 +680,23 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-10-13 — The capsule keys on a host class
+
+**What changed:** The capsule rules key on `.has-message-capsule`, which the
+thread and Channel roots carry, in place of a list of screens copied into 33
+selectors. The Channel composer now wears the capsule.
+
+**Why:** The Channel screen rendered the capsule layout, but `.channel-screen`
+was not in the list, so its composer fell back to the toolbar look: a square
+box, a visible footer hint and an attachments scrollbar. A list every new host
+has to join is how that happened.
+
+**Considered and rejected:** Keying on `.is-message-capsule` alone. Dropping
+the scope lowers every rule's specificity by one class, so rules elsewhere that
+now lose to the capsule would start winning. One host class keeps it.
+
+Shipped in [#1232](https://github.com/juno-ai-labs/avalon/pull/1232); PRD: [channels and threads navigation](PRDs/2026-10-10_channels-threads-navigation/prd.md).
 
 ### 2026-10-13 — Every artifact and attachment opens in the right panel
 
