@@ -5,6 +5,7 @@ import { MemberPreferencesSchema, PersonalSystemPromptSchema, SessionImportRunSc
 import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepartureOutcome } from "@rally/contracts";
 import {
   ActivityPageSchema,
+  ChannelFeedItemSchema,
   ChannelFeedPageSchema,
   MyThreadsPageSchema,
   ChannelStatsListSchema,
@@ -252,6 +253,15 @@ const wireResourcePageSchema = CursorPageSchema(WireResourceSchema).extend({ com
 const wireMemberPageSchema = z.object({ items: z.array(WireWorkspaceMemberSchema) });
 const wireInvitationPageSchema = z.object({ items: z.array(WireWorkspaceInvitationSchema) });
 const wireInviteePageSchema = z.object({ items: z.array(WorkspaceInviteeSchema) });
+/**
+ * A Channel feed page as an API from before 2026-10-13 may still send it, with
+ * a `locked` row for a private thread the reader is not in. The client drops
+ * those rather than refusing the page, so a client that updates before the API
+ * still opens the Channel. Remove once every region serves thread rows only.
+ */
+const wireChannelFeedPageSchema = ChannelFeedPageSchema.extend({
+  items: z.array(z.union([ChannelFeedItemSchema, z.object({ kind: z.literal('locked') }).passthrough()])),
+});
 const wireAutomationPageSchema = z.object({ items: z.array(WireAutomationSummarySchema) });
 const wireExecutionPrincipalClaimSchema = AutomationExecutionPrincipalClaimSchema;
 const wireWorkstreamAutomationPageSchema = z.object({
@@ -1473,29 +1483,20 @@ export class RallyApi {
 
   /**
    * One page of a Channel's feed (a stored Space's threads), newest placement
-   * first. A thread this person may not open is a locked row with its id and
-   * time only; see `docs/listing-rules.md`.
+   * first. A thread this person may not open is not listed.
    */
   async getChannelFeed(channelId: string, cursor: string | null, signal?: AbortSignal): Promise<ChannelFeedPageView> {
     const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
     const page = await this.request(`/spaces/${encodeURIComponent(channelId)}/feed${query}`, {
-      schema: ChannelFeedPageSchema,
+      schema: wireChannelFeedPageSchema,
       ...(signal ? { signal } : {}),
     });
     return {
-      items: page.items.map((item) => item.kind === 'thread'
-        ? {
-            kind: 'thread' as const,
-            placedAt: item.placedAt,
-            attentionSequenceNumber: item.attentionSequenceNumber,
-            thread: mapWorkstreamSummary(item.thread),
-          }
-        : {
-            kind: 'locked' as const,
-            placedAt: item.placedAt,
-            attentionSequenceNumber: item.attentionSequenceNumber,
-            threadId: item.threadId,
-          }),
+      items: page.items.flatMap((item) => item.kind === 'thread' ? [item] : []).map((item) => ({
+        placedAt: item.placedAt,
+        attentionSequenceNumber: item.attentionSequenceNumber,
+        thread: mapWorkstreamSummary(item.thread),
+      })),
       nextCursor: page.nextCursor,
       latestAttentionSequenceNumber: page.latestAttentionSequenceNumber,
     };
@@ -2718,10 +2719,7 @@ export class RallyApi {
 
 /** A Channel feed page with its threads in the client's row shape. */
 export interface ChannelFeedPageView {
-  items: Array<
-    | { kind: 'thread'; placedAt: string; attentionSequenceNumber: number; thread: WorkstreamSummary }
-    | { kind: 'locked'; placedAt: string; attentionSequenceNumber: number; threadId: string }
-  >;
+  items: Array<{ placedAt: string; attentionSequenceNumber: number; thread: WorkstreamSummary }>;
   nextCursor: string | null;
   /** The Channel's latest attention sequence number as the first page was read; null on a later page. */
   latestAttentionSequenceNumber: number | null;

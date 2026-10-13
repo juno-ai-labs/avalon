@@ -1759,17 +1759,13 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
-   * One page of a Channel's feed: the threads placed in it, newest placement
-   * first, each marked whether this viewer may open it.
+   * One page of a Channel's feed: the threads placed in it that this viewer
+   * may open, newest placement first.
    *
-   * A Channel is the storage `space`, and a thread the storage Channel. Rows a
-   * member may not open come back too, as `openable: false`, and the caller
-   * renders them as locked rows with nothing but an id and a time — the one
-   * place the listing rules let a thread be named to somebody it is not listed
-   * to (`docs/listing-rules.md`). A guest gets no locked rows: they reach a
-   * Channel only through the threads they may list, and the rest of an
-   * Organization's work is none of theirs to count. Archived threads and
-   * system conversations are left out.
+   * A Channel is the storage `space`, and a thread the storage Channel. A
+   * private thread this viewer is not in is left out, for a member exactly as
+   * for a guest: the feed does not say it is there. Archived threads and
+   * system conversations are left out too.
    *
    * Ordered by `(joined_at, workstream_id)`, which migration 97's index on the
    * membership table serves directly; the cursor is the conversation cursor
@@ -1780,7 +1776,7 @@ export class WorkspaceSpaceStorage {
     spaceId: string,
     cursor: string | null,
   ): {
-    items: Array<{ workstreamId: string; placedAt: number; attentionOrdinal: number; openable: boolean }>;
+    items: Array<{ workstreamId: string; placedAt: number; attentionOrdinal: number }>;
     nextCursor: string | null;
     /** The Channel's latest placement ordinal as this first page was read; null on a later page. */
     latestAttentionOrdinal: number | null;
@@ -1793,10 +1789,8 @@ export class WorkspaceSpaceStorage {
       workstream_id: string;
       joined_at: number;
       attention_ordinal: number;
-      openable: number;
     } & Record<string, SqlStorageValue>>(
-      `SELECT membership.workstream_id, membership.joined_at, ${attention} AS attention_ordinal,
-              CASE WHEN ${mainOpenableSql("directory", "viewer", viewer.accessClass)} THEN 1 ELSE 0 END AS openable
+      `SELECT membership.workstream_id, membership.joined_at, ${attention} AS attention_ordinal
          FROM space_channel_memberships membership
          JOIN channels directory
            ON directory.workstream_id = membership.workstream_id
@@ -1807,25 +1801,25 @@ export class WorkspaceSpaceStorage {
         WHERE membership.space_id = ?2 AND membership.state = 'active'
           AND directory.archived_at IS NULL
           AND directory.system_kind IS NULL
-          AND (?5 = 1 OR ${mainOpenableSql("directory", "viewer", viewer.accessClass)})
+          AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
           AND (?3 IS NULL
                OR membership.joined_at < ?3
                OR (membership.joined_at = ?3 AND membership.workstream_id > ?4))
         ORDER BY membership.joined_at DESC, membership.workstream_id
-        LIMIT ?6`,
+        LIMIT ?5`,
       viewer.userId,
       spaceId,
       after?.lastActivityAt ?? null,
       after?.conversationId ?? "",
-      viewer.accessClass === "member" ? 1 : 0,
       SPACE_CHANNEL_PAGE_SIZE + 1,
     ).toArray();
     const hasMore = rows.length > SPACE_CHANNEL_PAGE_SIZE;
     if (hasMore) rows.pop();
     const last = rows.at(-1);
     // Read with the page, in the same synchronous turn: every placement at or
-    // below it is on this page or gone, so reading the page reads the Channel
-    // through it, including a newest placement since removed or archived.
+    // below it is on this page, gone, or not this viewer's to open, so reading
+    // the page reads the Channel through it, including a newest placement since
+    // removed or archived, or one placed privately.
     const latestAttentionOrdinal = cursor !== null || !this.readsReady() ? null
       : this.storage.sql.exec<{ latest_attention_ordinal: number } & Record<string, SqlStorageValue>>(
         "SELECT latest_attention_ordinal FROM spaces WHERE space_id = ?",
@@ -1837,7 +1831,6 @@ export class WorkspaceSpaceStorage {
         workstreamId: row.workstream_id,
         placedAt: row.joined_at,
         attentionOrdinal: row.attention_ordinal,
-        openable: row.openable === 1,
       })),
       nextCursor: hasMore && last
         ? encodeConversationCursor({ lastActivityAt: last.joined_at, kind: "channel", conversationId: last.workstream_id })
@@ -1974,9 +1967,13 @@ export class WorkspaceSpaceStorage {
    * it is still answered, with zero and no time.
    *
    * `newThreadCount` counts the rows the Channel feed would show this viewer
-   * above their read position: every active placement for a member, locked
-   * rows included, so it can exceed `threadCount`; a placement moved out
-   * again is not a row and is not counted. A guest is never unread, so zero.
+   * above their read position; a placement moved out again is not a row and
+   * is not counted. A guest is never unread, so zero. The read position is the
+   * Channel's, over every placement, so a private thread placed since this
+   * member last read it moves `latestAttentionSequenceNumber` without being
+   * a row: `hasUnread` is true only while there is a row to count, or the
+   * Channel would read as unread over nothing they can see, and
+   * `firstUnreadSequenceNumber` is the first such row.
    */
   channelStats(viewer: Viewer, onlySpaceId?: string): Array<{
     spaceId: string;
@@ -2018,22 +2015,28 @@ export class WorkspaceSpaceStorage {
         counted.set(row.space_id, { count: row.count, last: row.last_activity_at });
       }
     }
-    const fresh = new Map<string, number>();
+    const fresh = new Map<string, { count: number; first: number }>();
     if (viewer.accessClass === "member" && this.readsReady()) {
       for (const chunk of boundParameterChunks(spaceIds)) {
-        // The feed's member predicate, above the read position unreadState
+        // The feed's predicate, above the read position unreadState
         // derives: the reader's own, else where tracking started.
-        for (const row of this.storage.sql.exec<{ space_id: string; count: number } & Record<string, SqlStorageValue>>(
-          `SELECT membership.space_id, COUNT(*) AS count
+        for (const row of this.storage.sql.exec<{ space_id: string; count: number; first: number } & Record<string, SqlStorageValue>>(
+          `SELECT membership.space_id, COUNT(*) AS count,
+                  MIN(COALESCE(membership.attention_ordinal, 0)) AS first
              FROM space_channel_memberships membership
              JOIN spaces space ON space.space_id = membership.space_id
              LEFT JOIN space_reads reads
-               ON reads.space_id = membership.space_id AND reads.user_id = ?
+               ON reads.space_id = membership.space_id AND reads.user_id = ?1
              JOIN channels directory
                ON directory.workstream_id = membership.workstream_id
+             LEFT JOIN channel_viewers viewer
+               ON viewer.workstream_id = directory.workstream_id
+              AND viewer.user_id = ?1
+              AND viewer.authority_generation = directory.authority_generation
             WHERE membership.state = 'active'
               AND directory.archived_at IS NULL
               AND directory.system_kind IS NULL
+              AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
               AND COALESCE(membership.attention_ordinal, 0)
                   > COALESCE(reads.seen_attention_ordinal, space.unread_tracking_start_ordinal)
               AND membership.space_id IN (${chunk.map(() => "?").join(", ")})
@@ -2041,17 +2044,27 @@ export class WorkspaceSpaceStorage {
           viewer.userId,
           ...chunk,
         ).toArray()) {
-          fresh.set(row.space_id, row.count);
+          fresh.set(row.space_id, { count: row.count, first: row.first });
         }
       }
     }
-    return spaceIds.map((spaceId) => ({
-      spaceId,
-      threadCount: counted.get(spaceId)?.count ?? 0,
-      newThreadCount: fresh.get(spaceId) ?? 0,
-      lastActivityAt: counted.get(spaceId)?.last ?? null,
-      read: reads.get(spaceId) as ChannelReadState,
-    }));
+    return spaceIds.map((spaceId) => {
+      const read = reads.get(spaceId) as ChannelReadState;
+      const visible = fresh.get(spaceId);
+      return {
+        spaceId,
+        threadCount: counted.get(spaceId)?.count ?? 0,
+        newThreadCount: visible?.count ?? 0,
+        lastActivityAt: counted.get(spaceId)?.last ?? null,
+        // The first unread row is the first one this viewer can see, so the
+        // three unread fields agree with each other and with the feed.
+        read: {
+          ...read,
+          hasUnread: read.hasUnread && visible !== undefined,
+          firstUnreadSequenceNumber: read.hasUnread && visible ? visible.first : null,
+        },
+      };
+    });
   }
 
   /**

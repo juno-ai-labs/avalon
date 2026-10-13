@@ -129,7 +129,7 @@ and every unshared Breakout; such a Breakout opens alone, in Main's place. The
 Channel's canonical parent in WorkspaceDO independently re-authorizes every
 thread and Breakout. The Organization root and a Channel link open the same
 landing route and Channel screen a member's do; a guest's Channel screen lists
-only the threads they may open, with no locked rows and no composer. A guest's
+only the threads they may open, and no composer. A guest's
 shell holds background thread sockets as a member's does, for every thread
 whose Main is theirs (`mainReachable`).
 
