@@ -60,7 +60,8 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   **Import** (Mac app only, into any Channel the person may place threads in),
   **Restart to update** when one is downloaded, and **New channel** on
   Channels or **Mark all read** on Activity. Threads has no header action: a
-  thread starts from a Channel's composer.
+  thread starts from a Channel's composer. Search is always the right-most
+  button, so it holds its place as the person moves between the three lists.
 
 Every row in the three lists is one layout (`RowLayout`): an `IdentityTile`
 (`packages/ui/src/components/identity-tile.tsx`), a name with a time, and a

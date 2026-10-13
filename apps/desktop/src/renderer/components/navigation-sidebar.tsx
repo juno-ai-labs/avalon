@@ -263,15 +263,15 @@ export function NavigationSidebar({
             {downloadedUpdate !== null && <IconButton label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
               <IconDeviceDesktopDown aria-hidden="true" size={17} stroke={1.8} />
             </IconButton>}
-            <IconButton disabled={!onOpenSearch} label="Search organization" onClick={onOpenSearch}>
-              <IconSearch aria-hidden="true" size={18} stroke={1.8} />
-            </IconButton>
             {section === 'channels' && <IconButton label="New channel" onClick={() => setCreatingChannel(true)}>
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
             {section === 'activity' && <IconButton label="Mark all read" onClick={markActivityRead}>
               <IconChecks aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
+            <IconButton disabled={!onOpenSearch} label="Search organization" onClick={onOpenSearch}>
+              <IconSearch aria-hidden="true" size={18} stroke={1.8} />
+            </IconButton>
           </div>
         </header>
         <SidebarScroll className="navigation-panel-scroll" scrollRef={scroll}>
