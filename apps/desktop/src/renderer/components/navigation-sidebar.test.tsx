@@ -310,11 +310,11 @@ describe('the navigation sidebar', () => {
     await waitFor(() => expect(today.getByRole('link')).toHaveTextContent('Maya K started Q4 plan'));
   });
 
-  it('badges Activity with Rally’s R and each person’s chosen accent', async () => {
+  it('badges Activity with Rally’s mark and each person’s own avatar', async () => {
     useUiStore.getState().setSidebarSection('activity');
     api.getWorkspaceMembers.mockResolvedValueOnce([{
       id: 'maya', name: 'Maya K', email: 'maya@rally.test', timezone: 'UTC',
-      presentation: { color: 'orange', avatar: 'circle', initials: 'MK', revision: 1 },
+      presentation: { color: 'orange', avatar: 'flower', initials: 'MK', revision: 1 },
     } as never]);
     const now = new Date().toISOString();
     api.getActivity.mockResolvedValue({ nextCursor: null, items: [
@@ -327,12 +327,11 @@ describe('the navigation sidebar', () => {
 
     const today = within(await screen.findByRole('region', { name: 'Today' }));
     const badge = (name: RegExp) => today.getByRole('link', { name }).querySelector<HTMLElement>('.identity-tile > .identity-tile-badge.is-circle > .identity-tile-badge-fill');
-    await waitFor(() => expect(badge(/Maya K started/u)?.style.background).toBe('var(--av-sys-color-project-orange)'));
+    await waitFor(() => expect(badge(/Maya K started/u)?.querySelector('.personal-avatar')).toHaveClass('personal-avatar-flower'));
+    expect(badge(/Maya K started/u)?.querySelector<HTMLElement>('.personal-avatar')?.style.color).toBe('var(--av-sys-color-project-orange)');
     expect(badge(/Maya K started/u)).toHaveTextContent('MK');
-    expect(badge(/Maya K started/u)?.style.color).toBe('var(--personal-ink-light)');
+    expect(badge(/Rally started/u)?.querySelector('.avatar')).toHaveClass('avatar-rally');
     expect(badge(/Rally started/u)).toHaveTextContent('R');
-    expect(badge(/Rally started/u)?.style.background).toBe('var(--av-sys-color-brand-on)');
-    expect(badge(/Rally started/u)?.querySelector('svg')).toBeNull();
   });
 
   it('groups Activity by day and keeps what is new unread while it is shown, focused or not', async () => {

@@ -38,30 +38,45 @@ const BADGE_ROOM = 2;
  */
 const NESTED_OVERHANG = 5;
 
-/** A small tile pinned to a larger one's bottom-right corner. */
-export interface TileBadge extends NestedTileBadge {
-  /**
-   * A smaller badge on this badge's own corner, for a chain of containers: a
-   * breakout's tile carries its thread, and the thread carries its Channel.
-   * One level: the 15px nested badge has no room for another.
-   */
-  badge?: NestedTileBadge | undefined;
-}
-
-/** A badge's look, without a badge of its own. */
-export interface NestedTileBadge {
+/** What every badge has, whatever is drawn in it. */
+interface BadgeBase {
   key: string;
   shape: TileShape;
-  /** The badge's fill. */
-  fill: string;
-  /** What its symbol or text is drawn in over that fill. */
-  ink: string;
-  icon?: LucideIcon | undefined;
-  /** Text in place of a symbol, such as a person's initials. */
-  text?: string | undefined;
   /** What the badge stands for, shown as a tooltip on hover. */
   label?: string | undefined;
 }
+
+/** A symbol the tile draws, in an ink over a fill. */
+interface SymbolBadge extends BadgeBase {
+  /** The badge's fill. */
+  fill: string;
+  /** What its symbol is drawn in over that fill. */
+  ink: string;
+  icon: LucideIcon;
+  content?: never;
+}
+
+/**
+ * Something the caller draws, such as a person's avatar, which paints its own
+ * fill. The tile sizes it to the badge and keeps the ring.
+ */
+interface ContentBadge extends BadgeBase {
+  content: ReactNode;
+  fill?: never;
+  ink?: never;
+  icon?: never;
+}
+
+/** A badge's look, without a badge of its own. */
+export type NestedTileBadge = SymbolBadge | ContentBadge;
+
+/**
+ * A small tile pinned to a larger one's bottom-right corner, and optionally a
+ * smaller badge on its own corner, for a chain of containers: a breakout's
+ * tile carries its thread, and the thread carries its Channel. One level: the
+ * 15px nested badge has no room for another.
+ */
+export type TileBadge = NestedTileBadge & { badge?: NestedTileBadge | undefined };
 
 /** A badge in its ring, and the badge nested on its corner, if any. */
 function Badge({ badge, bottom, nested = false, right }: {
@@ -72,9 +87,11 @@ function Badge({ badge, bottom, nested = false, right }: {
 }): React.JSX.Element {
   // The tip sits on the fill, not the ring, so hovering a nested badge, which
   // is inside its parent's ring, opens only the nested badge's tip.
-  const fill = <span className={clsx('identity-tile-badge-fill', `is-${badge.shape}`)} style={{ background: badge.fill, color: badge.ink }}>
-    {badge.icon ? <badge.icon size={nested ? 7 : 10} strokeWidth={2.2} /> : badge.text}
-  </span>;
+  const fill = badge.icon
+    ? <span className={clsx('identity-tile-badge-fill', `is-${badge.shape}`)} style={{ background: badge.fill, color: badge.ink }}>
+      <badge.icon size={nested ? 7 : 10} strokeWidth={2.2} />
+    </span>
+    : <span className={clsx('identity-tile-badge-fill', `is-${badge.shape}`)}>{badge.content}</span>;
   return <span
     className={clsx('identity-tile-badge', `is-${badge.shape}`, nested && 'is-nested')}
     style={{ bottom, right }}
