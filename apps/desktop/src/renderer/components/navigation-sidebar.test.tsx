@@ -239,7 +239,7 @@ describe('the navigation sidebar', () => {
 
     const list = within(await screen.findByRole('region', { name: 'All threads' }));
     await waitFor(() => expect(threadRows(list)).toEqual([
-      ['Make a website', '↳ Q4 plan · Outbound'],
+      ['Make a website', 'Q4 plan · Outbound'],
       ['Q4 plan', 'Outbound'],
     ]));
     // A breakout's tile carries its thread, with the Channel nested on that;
@@ -249,6 +249,13 @@ describe('the navigation sidebar', () => {
     const threadRow = list.getByRole('link', { name: /^Q4 plan/u });
     expect(threadRow.querySelectorAll('.identity-tile > .identity-tile-badge.is-squircle')).toHaveLength(1);
     expect(threadRow.querySelector('.is-nested')).toBeNull();
+    // Each badge names what it stands for on hover, the nested one included.
+    const nested = breakoutRow.querySelector<HTMLElement>('.identity-tile-badge.is-nested > .identity-tile-badge-fill');
+    fireEvent.pointerMove(nested!, { pointerType: 'mouse' });
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Outbound');
+    const parent = breakoutRow.querySelector<HTMLElement>('.identity-tile > .identity-tile-badge.is-circle > .identity-tile-badge-fill');
+    fireEvent.pointerMove(parent!, { pointerType: 'mouse' });
+    await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent('Q4 plan'));
     fireEvent.click(list.getByRole('link', { name: /Make a website/u }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/plan?substream=site');
   });
