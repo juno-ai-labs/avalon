@@ -336,6 +336,14 @@ unfolded, centred layout rather than from where things sit, so folding or
 moving the pill never undoes the decision; read live, the distance would grow
 as soon as the row folded and the header would flip back.
 
+A detail's own actions (a live site's Stored data, New window, Copy link and
+Open in browser) reach the header through `useDetailHeaderActions`, as data.
+The rail adds them to the group's `actions` ahead of Expand, so they share its
+look and fold with it.
+`TitlePillHeader` and `TitlePillClose` take a `tooltipSide` for every label in
+the header. The rail sets it to `left` over a live site, whose composited page
+would cover a label hanging down; upward does not fit at the window's top.
+
 ### Web links
 
 `useBrowserRailLinks` registers one host per surface, with that surface's

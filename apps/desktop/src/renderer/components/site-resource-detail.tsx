@@ -1,11 +1,12 @@
-import { IconWindowMaximize } from '@tabler/icons-react';
-import { Database, ExternalLink } from 'lucide-react';
+import { IconAlertCircle, IconCheck, IconCopy, IconDatabase, IconExternalLink, IconWindowMaximize } from '@tabler/icons-react';
 import React from 'react';
 import type { DesktopSiteArtifactWindowRequest } from '../../common/desktop';
 
-import { DetailHeaderActions } from './detail-header-actions';
-import { CopyButton } from './copy-button';
-import { EmptyState, IconButton, InsetSurface, SegmentedControl } from './primitives';
+import type { IconGroupAction } from '@rally/ui/components/icon-group';
+import { useCopy } from '../lib/use-copy';
+import { useDetailHeaderActions } from './detail-header-actions';
+import { CopyButton, CopyStatus, copyStateLabel } from './copy-button';
+import { EmptyState, InsetSurface, SegmentedControl } from './primitives';
 
 /**
  * The rail's detail for a **live artifact**: a published site Rally serves.
@@ -284,76 +285,73 @@ export function SiteResourceDetail({
     };
   }, [measure, previewShown, showingData, surface]);
 
+  // The canonical public link carries no access code or viewer identity.
+  // Copying it shares the current site with anyone.
+  const { copy, state: copyState } = useCopy({ copyText: surface.copyText, value: access?.canonicalUrl ?? '' });
+
+  /*
+   * Into the host's header, beside its own controls, rather than into a row of
+   * this detail's own: chrome drawn over a page reads as the page's. Which way
+   * their labels open is the host's call, since only it knows where its header
+   * sits against the composited page below.
+   */
+  const headerActions = React.useMemo((): IconGroupAction[] => [
+    ...(access?.stateful ? [{
+      key: 'stored-data',
+      // The name stays the same in both states: `pressed` is what says which
+      // one it is in, and a name that changes with it makes a screen reader
+      // announce the state twice.
+      label: 'Stored data',
+      icon: <IconDatabase aria-hidden="true" size={16} stroke={1.9} />,
+      pressed: showingData,
+      onSelect: () => setShowingData((showing) => !showing),
+    }] : []),
+    {
+      key: 'new-window',
+      label: 'Open in a new window',
+      icon: <IconWindowMaximize aria-hidden="true" size={16} stroke={1.9} />,
+      disabled: !access,
+      onSelect: () => {
+        if (!access) return;
+        void mintAccess().then(
+          async (navigation) => await surface.popOut({
+            kind: 'site',
+            resourceId,
+            version,
+            artifactId: navigation.artifactId,
+            url: navigation.openUrl,
+            title,
+          }),
+        );
+      },
+    },
+    {
+      key: 'copy-link',
+      label: copyStateLabel(copyState, 'Copy public link'),
+      // The header's own set (Tabler), not `CopyButton`'s, so it matches its neighbours.
+      icon: copyState === 'copied'
+        ? <IconCheck aria-hidden="true" size={16} stroke={1.9} />
+        : copyState === 'failed'
+          ? <IconAlertCircle aria-hidden="true" size={16} stroke={1.9} />
+          : <IconCopy aria-hidden="true" size={16} stroke={1.9} />,
+      disabled: !access,
+      onSelect: () => void copy(),
+    },
+    {
+      key: 'open-browser',
+      label: 'Open in browser',
+      icon: <IconExternalLink aria-hidden="true" size={16} stroke={1.9} />,
+      disabled: !access,
+      onSelect: () => void mintAccess().then(
+        async (navigation) => await surface.openExternal(navigation.openUrl),
+      ),
+    },
+  ], [access, copy, copyState, mintAccess, resourceId, showingData, surface, title, version]);
+  useDetailHeaderActions(headerActions);
+
   return (
     <div className="site-detail">
-      {/*
-        Into the host's header, beside its own controls, rather than into a row
-        of this detail's own: chrome drawn over a page reads as the page's.
-      */}
-      <DetailHeaderActions>
-      {/*
-        Every one of these opens *upward*. The pane below the header is covered
-        by a composited `WebContentsView` whenever a live artifact is showing,
-        and that view paints above all renderer DOM: a tooltip hanging down from
-        this header lands behind the page, and no `z-index` reaches it, because
-        it is not a DOM sibling. Radix flips to the other side only when there
-        is no room above, and this dialog is inset from the top of the window.
-      */}
-        {access?.stateful && (
-          <IconButton
-            aria-pressed={showingData}
-            className="icon-button-toggle"
-            tooltipSide="top"
-            // The name stays the same in both states: `aria-pressed` is what
-            // says which one it is in, and a name that changes with it makes a
-            // screen reader announce the state twice.
-            label="Stored data"
-            onClick={() => setShowingData((showing) => !showing)}
-          >
-            <Database size={15} />
-          </IconButton>
-        )}
-        <IconButton
-          disabled={!access}
-          label="Open in a new window"
-          tooltipSide="top"
-          onClick={() => {
-            if (!access) return;
-            void mintAccess().then(
-              async (navigation) => await surface.popOut({
-                kind: 'site',
-                resourceId,
-                version,
-                artifactId: navigation.artifactId,
-                url: navigation.openUrl,
-                title,
-              }),
-            );
-          }}
-        >
-          <IconWindowMaximize size={15} />
-        </IconButton>
-        {/* The canonical public link carries no access code or viewer
-            identity. Copying it shares the current site with anyone. */}
-        <CopyButton
-          copyText={surface.copyText}
-          disabled={!access}
-          label="Copy public link"
-          size={15}
-          tooltipSide="top"
-          value={access?.canonicalUrl ?? ''}
-        />
-        <IconButton
-          disabled={!access}
-          label="Open in browser"
-          tooltipSide="top"
-          onClick={() => void mintAccess().then(
-            async (navigation) => await surface.openExternal(navigation.openUrl),
-          )}
-        >
-          <ExternalLink size={15} />
-        </IconButton>
-      </DetailHeaderActions>
+      <CopyStatus state={copyState} />
 
       {showingData && access
         ? <SiteDataPanel describeData={describeData} loadTable={loadTable} resourceId={resourceId} surface={surface} />
