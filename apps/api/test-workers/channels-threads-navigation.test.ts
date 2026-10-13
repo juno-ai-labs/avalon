@@ -24,6 +24,7 @@ import {
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
+  type ActivitySubject,
   type SpaceId,
   type UserId,
   type WorkstreamId,
@@ -97,6 +98,7 @@ function threadEffect(title: string, overrides: {
   state?: string;
   completedAt?: string | null;
   lastActivityAt?: string;
+  latestAttentionOrdinal?: number;
 } = {}): ParentEffect {
   return {
     kind: "directory_common",
@@ -110,7 +112,7 @@ function threadEffect(title: string, overrides: {
     completedAt: overrides.completedAt ?? null,
     archivedAt: null,
     createdByUserId: OWNER,
-    latestAttentionOrdinal: 0,
+    latestAttentionOrdinal: overrides.latestAttentionOrdinal ?? 0,
     unreadTrackingStartOrdinal: 0,
     createdAt: "2026-10-01T00:00:00.000Z",
     updatedAt: "2026-10-01T00:00:00.000Z",
@@ -816,5 +818,84 @@ describe("Activity tab", () => {
       workspaceId: WORKSPACE_ID, userId: MEMBER, seenThrough: Date.parse("2026-10-06T00:00:00.000Z"),
     });
     expect((await finished()).map((item) => item.unread)).toEqual([false]);
+  });
+});
+
+describe("Activity settled by the app's events", () => {
+  /** One event naming the member, dated now so the retention reap leaves it. */
+  async function nameMember(eventId: string, relation: "added" | "mentioned", metadata: Record<string, unknown>): Promise<void> {
+    const now = Date.now();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO workspace_activity_events (
+          event_id, event_type, subject_type, subject_id, subject_sequence_number, actor_type, actor_user_id,
+          actor_label, title, body, canonical_url, audience_kind, audience_user_id, audience_workstream_id,
+          digestible, occurred_at, created_at, source_kind, source_id, dedupe_key, metadata_json
+        ) VALUES (?, ?, 'workstream', ?, 3, 'user', ?, 'Owner', 'Open', '',
+          NULL, 'workspace', NULL, NULL, 0, ?, ?, 'workstream_message', ?, ?, ?)`,
+      eventId, relation === "added" ? "workstream_participant_added" : "workstream_message_created",
+      OPEN_THREAD, OWNER, now, now, eventId, `message:${eventId}`, JSON.stringify(metadata));
+      state.storage.sql.exec(`INSERT INTO workspace_activity_event_targets (event_id, user_id, relation, created_at)
+        VALUES (?, ?, ?, ?)`, eventId, MEMBER, relation, now);
+    });
+  }
+
+  async function read(subject: ActivitySubject, through: number): Promise<void> {
+    await workspace().recordActivityEvents({ workspaceId: WORKSPACE_ID, userId: MEMBER, events: [{ kind: "read", subject, through }] });
+  }
+
+  async function unread(): Promise<Record<string, boolean>> {
+    return Object.fromEntries((await activity(MEMBER)).items.map((item) => [item.id, item.unread]));
+  }
+
+  it("given mentions at messages 29 and 30, when the member reads the thread through 29, then only the mention at 29 is done", async () => {
+    await openThreadObject(OPEN_THREAD);
+    await publish(OPEN_THREAD, [threadEffect("Cold outreach", { latestAttentionOrdinal: 30 }), viewerEffect(MEMBER)]);
+    await nameMember("mention-29", "mentioned", { substreamId: "0", attentionOrdinal: 29 });
+    await nameMember("mention-30", "mentioned", { substreamId: "0", attentionOrdinal: 30 });
+
+    await read({ kind: "thread", threadId: OPEN_THREAD }, 29);
+    expect(await unread()).toMatchObject({ "mention-29": false, "mention-30": true });
+
+    // A late event short of where the member already read moves nothing back.
+    await read({ kind: "thread", threadId: OPEN_THREAD }, 3);
+    expect(await unread()).toMatchObject({ "mention-29": false, "mention-30": true });
+  });
+
+  it("given a mention in a breakout, when the member reads the thread through it, then the breakout's mention stays until the breakout is read", async () => {
+    await channelWithThreads();
+    await publish(OPEN_THREAD, [viewerEffect(MEMBER)]);
+    await publish(OPEN_THREAD, [breakoutEffect("Side work"), viewerEffect(OWNER), viewerEffect(MEMBER)], BREAKOUT);
+    await nameMember("breakout-mention", "mentioned", { substreamId: BREAKOUT, attentionOrdinal: 2 });
+
+    await read({ kind: "thread", threadId: OPEN_THREAD }, 2);
+    expect(await unread()).toMatchObject({ "breakout-mention": true });
+
+    await read({ kind: "breakout", threadId: OPEN_THREAD, substreamId: BREAKOUT }, 2);
+    expect(await unread()).toMatchObject({ "breakout-mention": false });
+  });
+
+  it("given the member was added to a thread, when the app reports it opened, then the add is done", async () => {
+    await openThreadObject(OPEN_THREAD);
+    await publish(OPEN_THREAD, [threadEffect("Cold outreach", { latestAttentionOrdinal: 2 }), viewerEffect(MEMBER)]);
+    await nameMember("added-event", "added", { substreamId: "0" });
+    expect(await unread()).toMatchObject({ "added-event": true });
+
+    await read({ kind: "thread", threadId: OPEN_THREAD }, 0);
+    expect(await unread()).toMatchObject({ "added-event": false });
+  });
+
+  it("given a finished run, when the member reads the thread to its newest message, then the finish is done", async () => {
+    await openThreadObject(MEMBER_THREAD);
+    await publish(MEMBER_THREAD, [
+      threadEffect("Funnel report", { state: "completed", completedAt: "2026-10-06T00:00:00.000Z", latestAttentionOrdinal: 4 }),
+      viewerEffect(MEMBER),
+    ]);
+    const finished = async () => (await activity(MEMBER)).items.filter((item) => item.kind === "run_finished").map((item) => item.unread);
+
+    await read({ kind: "thread", threadId: MEMBER_THREAD }, 3);
+    expect(await finished()).toEqual([true]);
+
+    await read({ kind: "thread", threadId: MEMBER_THREAD }, 4);
+    expect(await finished()).toEqual([false]);
   });
 });

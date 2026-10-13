@@ -1184,8 +1184,9 @@ function activityQueryKey(only: ActivityFilter | null): readonly unknown[] {
 }
 
 /**
- * Mark all read, the one way Activity is read: the server's waterline moves to
- * the newest row held, and every held page drops its dots now. Showing the tab
+ * Mark all read: the server's waterline moves to the newest row held, and
+ * every held page drops its dots now. Reading what a row names is the other
+ * way a row is read (`lib/activity-events.ts`). Showing the tab
  * reads nothing, so Unread still lists what came in after a refetch.
  */
 function useMarkActivityRead(): () => void {
@@ -1217,7 +1218,8 @@ function dayLabel(value: string, now = new Date()): string {
 /**
  * The Activity tab: requests to join waiting on this person, then what
  * happened to them, newest first and grouped by day. A row stays unread until
- * Mark all read, so Unread is a list to work through rather than one glance.
+ * the person reads what it names (`lib/activity-events.ts`) or chooses Mark
+ * all read, so Unread is a list to work through rather than one glance.
  */
 function ActivitySection({ accessDecisionFailed, accessRequests, attentionComplete, guest, onDecideAccessRequest, onOpenAccessRequest, scroll }: {
   accessDecisionFailed: boolean;

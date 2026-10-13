@@ -10,6 +10,7 @@ import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { ChannelScreen } from './channel';
 
 const api = vi.hoisted(() => ({
+  recordActivityEvents: vi.fn(async () => undefined),
   getChannelFeed: vi.fn(),
   getWorkspaceMembers: vi.fn(async () => []),
   getWorkspaceInvitees: vi.fn(async () => []),
@@ -462,6 +463,10 @@ describe('a Channel', () => {
 
       await waitFor(() => expect(api.acknowledgeChannelRead).toHaveBeenCalledWith('outbound', 2));
       expect(api.acknowledgeChannelRead).toHaveBeenCalledTimes(1);
+      // The same read, told to Activity, which settles the starts it covers.
+      expect(api.recordActivityEvents).toHaveBeenCalledWith([
+        { kind: 'read', subject: { kind: 'channel', channelId: 'outbound' }, through: 2 },
+      ]);
       await waitFor(() => expect(client.getQueryData<ChannelStats[]>(CHANNEL_STATS_QUERY_KEY)?.[0])
         .toMatchObject({ readThroughSequenceNumber: 2, hasUnread: false }));
     });

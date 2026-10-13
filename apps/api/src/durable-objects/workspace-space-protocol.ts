@@ -6,6 +6,7 @@ import {
   CreateSpaceRequestSchema,
   IdSchema,
   ScopeSchema,
+  ActivityEventSchema,
   ActivityFilterSchema,
   ActivityPageSchema,
   ChannelFeedPageSchema,
@@ -397,6 +398,11 @@ export const WorkspaceActivitySeenRequestSchema = SpaceActorSchema.extend({
   seenThrough: z.number().int().nonnegative(),
 }).strict();
 export type WorkspaceActivitySeenRequest = z.infer<typeof WorkspaceActivitySeenRequestSchema>;
+
+export const WorkspaceActivityEventsRequestSchema = SpaceActorSchema.extend({
+  events: z.array(ActivityEventSchema).min(1),
+}).strict();
+export type WorkspaceActivityEventsRequest = z.infer<typeof WorkspaceActivityEventsRequestSchema>;
 
 /** Pin or unpin one item. `parentId` is a breakout's thread and nothing else's. */
 export const WorkspacePinChangeRequestSchema = SpaceActorSchema.extend({
