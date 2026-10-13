@@ -56,7 +56,11 @@ export const CopyButton = forwardRef<HTMLButtonElement, CopyButtonProps>(functio
         tooltipSide={tooltipSide}
         {...props}
       >
-        <CopyGlyph size={size} state={state} />
+        {state === 'copied'
+          ? <Check aria-hidden="true" size={size} />
+          : state === 'failed'
+            ? <CircleAlert aria-hidden="true" size={size} />
+            : <Copy aria-hidden="true" size={size} />}
       </IconButton>
       <CopyStatus state={state} />
     </>
@@ -65,19 +69,11 @@ export const CopyButton = forwardRef<HTMLButtonElement, CopyButtonProps>(functio
 
 /**
  * The pieces of `CopyButton` for a host that draws the button itself, such as
- * a copy action in a header's `IconGroup`: its name, its glyph, and the live
- * region, which the caller renders once wherever it likes.
+ * a copy action in a header's `IconGroup`: its name and the live region, which
+ * the caller renders once wherever it likes. The glyph is the host's own set.
  */
 export function copyStateLabel(state: CopyState, label: string): string {
   return state === 'idle' ? label : stateLabel[state];
-}
-
-export function CopyGlyph({ size = 14, state }: { size?: number; state: CopyState }): React.JSX.Element {
-  return state === 'copied'
-    ? <Check aria-hidden="true" size={size} />
-    : state === 'failed'
-      ? <CircleAlert aria-hidden="true" size={size} />
-      : <Copy aria-hidden="true" size={size} />;
 }
 
 export function CopyStatus({ state }: { state: CopyState }): React.JSX.Element {

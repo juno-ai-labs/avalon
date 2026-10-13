@@ -1,12 +1,11 @@
-import { IconWindowMaximize } from '@tabler/icons-react';
-import { Database, ExternalLink } from 'lucide-react';
+import { IconAlertCircle, IconCheck, IconCopy, IconDatabase, IconExternalLink, IconWindowMaximize } from '@tabler/icons-react';
 import React from 'react';
 import type { DesktopSiteArtifactWindowRequest } from '../../common/desktop';
 
 import type { IconGroupAction } from '@rally/ui/components/icon-group';
 import { useCopy } from '../lib/use-copy';
 import { useDetailHeaderActions } from './detail-header-actions';
-import { CopyButton, CopyGlyph, CopyStatus, copyStateLabel } from './copy-button';
+import { CopyButton, CopyStatus, copyStateLabel } from './copy-button';
 import { EmptyState, InsetSurface, SegmentedControl } from './primitives';
 
 /**
@@ -307,7 +306,7 @@ export function SiteResourceDetail({
       // one it is in, and a name that changes with it makes a screen reader
       // announce the state twice.
       label: 'Stored data',
-      icon: <Database aria-hidden="true" size={16} />,
+      icon: <IconDatabase aria-hidden="true" size={16} stroke={1.9} />,
       pressed: showingData,
       tooltipSide: 'top' as const,
       onSelect: () => setShowingData((showing) => !showing),
@@ -335,7 +334,12 @@ export function SiteResourceDetail({
     {
       key: 'copy-link',
       label: copyStateLabel(copyState, 'Copy public link'),
-      icon: <CopyGlyph size={16} state={copyState} />,
+      // The header's own set (Tabler), not `CopyButton`'s, so it matches its neighbours.
+      icon: copyState === 'copied'
+        ? <IconCheck aria-hidden="true" size={16} stroke={1.9} />
+        : copyState === 'failed'
+          ? <IconAlertCircle aria-hidden="true" size={16} stroke={1.9} />
+          : <IconCopy aria-hidden="true" size={16} stroke={1.9} />,
       disabled: !access,
       tooltipSide: 'top',
       onSelect: () => void copy(),
@@ -343,7 +347,7 @@ export function SiteResourceDetail({
     {
       key: 'open-browser',
       label: 'Open in browser',
-      icon: <ExternalLink aria-hidden="true" size={16} />,
+      icon: <IconExternalLink aria-hidden="true" size={16} stroke={1.9} />,
       disabled: !access,
       tooltipSide: 'top',
       onSelect: () => void mintAccess().then(
