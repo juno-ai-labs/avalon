@@ -363,7 +363,7 @@ export class WorkspaceActivityFeed {
       ? this.spaces.placementOrdinals(viewer, placedThreadIds)
       : new Map<string, Array<{ channelId: string; ordinal: number }>>();
     const facts = new Map(keys.map((key) => [key.id, activityRowFacts(key, placements.get(key.thread_id) ?? [])]));
-    const waterlines = this.readsReady()
+    const waterlines = this.activityReadsReady()
       ? this.reads(viewer.userId, [...new Set(keys.flatMap((key) => (
         consultedSubjects(ACTIVITY_CLEAR_RULES[key.kind], facts.get(key.id)?.roles ?? {})
       )))])
@@ -395,7 +395,7 @@ export class WorkspaceActivityFeed {
   }
 
   /** Whether this object has reached migration 101. */
-  readsReady(): boolean {
+  activityReadsReady(): boolean {
     return this.storage.sql.exec(
       `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_activity_reads'`,
     ).toArray().length === 1;

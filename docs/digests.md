@@ -245,55 +245,29 @@ Nothing here changes what a digest reads.
   moves it back. Reading message 29 of a thread settles a mention at 29 or
   earlier and leaves one at 30 standing.
 
-**What clears an item is a rule in a small language**
-(`apps/api/src/durable-objects/activity-clear-rules.ts`), not code per kind. A
-rule is plain data:
+**What clears an item is a rule** in a small data language: its grammar, the
+rule for each kind, and the evaluator live in
+`apps/api/src/durable-objects/activity-clear-rules.ts`, and the feed only binds
+each row's subjects (`activityRowFacts`). In words:
 
-```
-rule    := { read: role, through: ordinal | ordinal[], since?: time }
-         | { any: rule[] } | { all: rule[] }
-role    := "conversation" | "placement"
-ordinal := "opened" | "message" | "placement"
-time    := "occurred"
-```
+- `mentioned`: the conversation read through the mentioning message.
+- `added`: the conversation opened after the add.
+- `breakout_started`: the breakout opened.
+- `thread_started`: the thread opened, or a Channel it was placed in read past
+  that placement, removed placements included.
+- `run_finished`: the conversation opened after the run finished.
 
-`read` holds when some subject bound to the role has a waterline at or above
-the ordinal; a list of ordinals is a fallback chain, the first one the subject
-binds being the one compared. `since` also asks that the subject was read at
-or after the row happened: a waterline keeps how far and when, so an open from
-before an add cannot clear it. The feed binds each row's roles
-(`activityRowFacts`): `conversation` is the breakout the row names, else its
-thread, knowing `opened` (0), and `message` when the event recorded one;
-`placement` is each Channel the thread has been placed in, removed placements
-included, at the placement's ordinal. A role is bound, and its read made, only
-for rows whose rule reads it.
+A rule only compares against things that move forward, so a cleared row stays
+cleared; a new rule has to keep that.
 
-**A clause turns true and stays true.** A waterline and its read time only
-move forward, a bound ordinal does not move, and a subject once bound stays
-bound, so a cleared row stays cleared. A new role or ordinal has to keep that:
-the newest message, which moves, was rejected as a `run_finished` target for
-exactly this. The one exception is a thread placed in a Channel again, whose
-placement takes a fresh ordinal. The table:
-
-| Item | Rule |
-| --- | --- |
-| `mentioned` | `{ read: "conversation", through: ["message", "opened"] }`: through its message; an event from before messages carried their ordinal falls back to an open |
-| `added` | `{ read: "conversation", through: "opened", since: "occurred" }`: opened after being added |
-| `breakout_started` | `{ read: "conversation", through: "opened" }` |
-| `thread_started` | `{ any: [{ read: "conversation", through: "opened" }, { read: "placement", through: "placement" }] }` |
-| `run_finished` | `{ read: "conversation", through: "opened", since: "occurred" }`: opened after the run finished |
-
-A new item kind is one row in `ACTIVITY_CLEAR_RULES`. A new way to clear one is
-a new role, ordinal or time bound in `activityRowFacts`, then named in a rule; the
-evaluator (`cleared`) does not change.
-
-The desktop sends an open when a conversation's detail loads, and a `read`
-beside each read acknowledgement of a conversation or a Channel
-(`lib/activity-events.ts`), then reads Activity again if it is on screen. The
-event is the client's to send rather than a side effect of the
-acknowledgement routes, so a new kind of event — a viewed document, a
-dismissed row — joins the same endpoint without touching how a conversation
-keeps its own unread state.
+The desktop reports reads from the visible-read path of a conversation and a
+Channel (`lib/activity-events.ts`): the highest ordinal on screen, once per
+opening and again when it rises, whether or not the room's own read position
+needs moving. A hidden pane reports nothing. Activity is read again only when
+it holds an unread row about that subject. Events are the client's to send
+rather than a side effect of the acknowledgement routes, so a new kind of
+event joins the same endpoint without touching how a conversation keeps its
+own unread state.
 
 Starts are not read from the opening message's event. Driving the local stack
 showed that event does not reliably reach WorkspaceDO (only a handful of
@@ -851,41 +825,31 @@ owns device registration, provider delivery and retry receipts.
 
 ### 2026-10-13 — Activity rows are settled by what the person does
 
-**What changed:** The app reports semantic events (`read` a thread, breakout
-or Channel through an ordinal, 0 for an open) to `POST
-/navigation/activity/events`; WorkspaceDO keeps one waterline per person and
-subject (migration 101), and an Activity item is done once one of its targets
-is at or below its subject's waterline, as well as when Mark all read covers
-it. What clears each kind is a rule in a small data language
-(`activity-clear-rules.ts`) evaluated over those waterlines. Message events now
-carry their attention ordinal in `metadata`.
+**What changed:** The app reports what the person read as events; WorkspaceDO
+keeps one waterline per person and subject (migration 101), and an Activity
+item is done once its kind's rule holds over those waterlines, as well as when
+Mark all read covers it.
 
 **Why:** The PRD says each item keeps its dot until the person opens it, and
 the tab cleared dots only through Mark all read, so reading the mention you
-were told about left it unread. A waterline per subject rather than a row per
-item means one event settles every item it covers, including ones on pages not
-loaded.
+were told about left it unread.
 
 **Considered and rejected:** Deriving "done" from each conversation's own read
-position (`channel_viewers`, `breakout_viewers`, `space_reads`). It needed no
-new write, but tied Activity to three projections with different rules
-(unseen, manual unread, a guest's Channel) and left no way to settle an item
-from anything but a read acknowledgement. A per-item read table: it records
-the same fact once per item, and an item not yet on a page could not be
-settled.
+position (`channel_viewers`, `breakout_viewers`, `space_reads`): it tied
+Activity to three projections with different rules (unseen, manual unread, a
+guest's Channel). Moving the waterline inside the read-acknowledgement routes:
+it covers other clients for free, but misses every read whose position was
+already moved (by another client, or before this shipped), which is when a
+mention most needs clearing. A per-item read table: it records the same fact
+once per item and cannot clear a row not yet on a page. Comparing a finish
+with the newest message: a later message made a cleared row unread again.
 
-**Consequences:** A cleared row stays cleared: every clause compares against
-something that only moves forward. A `run_finished` row is cleared by an open
-after the finish rather than by reading to the newest message, which moved
-with every later message and made a cleared row unread again; the directory
-keeps no ordinal for the finish itself. An event names any
-subject without a listing check: the waterline is the reader's alone and the
-feed lists only what they may see. A new event kind goes in
-`ActivityEventSchema` and `WorkspaceActivityFeed.record`; a new item kind
-needs a rule in `ACTIVITY_CLEAR_RULES`, and a new way to clear one a role,
-ordinal or time bound in `activityRowFacts`; the evaluator stays as it is. A per-kind
-`switch` was rejected because each new kind or condition grew another branch
-that only its author could read as a rule.
+**Consequences:** Only the desktop reports reads; iOS and any other client
+clear rows only through Mark all read until they send events too. An event
+names any subject without a listing check: the waterline is the reader's
+alone and the feed lists only what they may see.
+
+Shipped in [#1225](https://github.com/juno-ai-labs/avalon/pull/1225). PRD: [Activity section](PRDs/2026-10-10_channels-threads-navigation/prd.md#activity-section).
 
 ### 2026-10-10 — The activity log feeds the Activity tab too
 
