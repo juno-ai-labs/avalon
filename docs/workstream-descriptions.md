@@ -67,18 +67,11 @@ already that short comes back as written, and nothing is stored.
 - **The composer's threads and every new Breakout ask.** A Slack-opened thread
   is named without a summary.
 - **Every Breakout keeps a description, even though no surface shows one
-  yet.** A Breakout opened without a message is provisioned with an empty
-  description, and the loop below only reads Main. So each Breakout's run
-  settlement calls `summarizeExistingDescription`, which writes one from the
-  first message where the description is empty, or still the opening line
-  because the first pass's summary failed. Any other Breakout costs two reads
-  and no model call.
-- **Existing threads and Breakouts were backfilled** by the
-  `description_summary` job ([`thread-backfill.md`](thread-backfill.md)),
-  through `summarizeExistingDescription`. It sends a description to the model
-  only while it is empty or still exactly the opening message's first line, so a
-  description a person wrote, one this loop rewrote, and one already
-  summarized are all left alone, and running it twice costs nothing.
+  yet.** One opened without a message is provisioned with an empty one, and
+  the loop below only reads Main, so a Breakout's run settlement writes one
+  from its first message while it is still empty.
+- **Existing threads and Breakouts are backfilled** by the
+  `description_summary` job; see [`thread-backfill.md`](thread-backfill.md).
 
 Then the work stream is used, and two things drift apart:
 

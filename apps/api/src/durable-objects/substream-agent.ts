@@ -5542,15 +5542,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         workstreamId: input.parentId,
       });
       // A Breakout keeps a description of its own even where nothing shows it
-      // yet. One opened without a message was provisioned with none, and one
-      // whose first-pass summary failed still has its opening line; either is
-      // summarized here, after the run that gave it something to summarize.
-      // Every other Breakout costs two reads and no model call.
+      // yet. One opened without a message was provisioned with none, and gets
+      // one here, after the run that gave it something to summarize. Only an
+      // empty one: an opening line the first pass left standing stays, as a
+      // thread's does, or every later run would ask the model again. Every
+      // other Breakout costs one read.
       if (input.substreamId !== "0") {
         await summarizeExistingDescription(executionEnv, {
           workspaceId: input.workspaceId,
           workstreamId: input.parentId,
           substreamId: input.substreamId,
+          onlyWhenEmpty: true,
         }).catch((error: unknown) => {
           logWarn(executionEnv, "breakout_description_summary_failed", {
             workspace_id: input.workspaceId,
