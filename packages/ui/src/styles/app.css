@@ -7915,7 +7915,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
  * element it measures.
  */
 @container conversation-pane (width < 460px) {
-  .title-pill-header { grid-template-columns: auto minmax(0, 1fr) auto; }
+  /* The crumbs' column fits its content up to the same 45% a first crumb may
+     take above, so a named bridge ellipsizes rather than squeezing the pill. */
+  .title-pill-header { grid-template-columns: fit-content(45%) minmax(0, 1fr) auto; }
   .title-pill-ancestors.is-bridged > .title-pill-ancestor { display: none; }
   .title-pill-ancestors.is-bridged > .title-pill-bridge { display: inline-block; }
   .title-pill-current { display: flex; justify-content: center; justify-self: stretch; }
