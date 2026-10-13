@@ -10,7 +10,7 @@ import {
   useState,
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { AccountOnboarding, SupportPerson, SupportWorkspace, UpdateAccountOnboarding, WorkspaceDeparture, WorkspaceDepartureOutcome } from '@rally/contracts';
+import type { AccountOnboarding, OrganizationNameSuggestion, SupportPerson, SupportWorkspace, UpdateAccountOnboarding, WorkspaceDeparture, WorkspaceDepartureOutcome } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
 import {
@@ -149,6 +149,8 @@ export interface AppSessionValue {
   /** The signed-in person's account onboarding, read and written at identity scope. */
   getAccountOnboarding: () => Promise<AccountOnboarding>;
   updateAccountOnboarding: (input: UpdateAccountOnboarding) => Promise<AccountOnboarding>;
+  /** A name to prefill when creating an organization, read at identity scope. */
+  getOrganizationNameSuggestion: () => Promise<OrganizationNameSuggestion>;
   signOut: () => Promise<void>;
   signOutIfCredentialCleared: () => Promise<void>;
   surrenderActiveWorkspace: () => Promise<void>;
@@ -182,6 +184,7 @@ export type AppSessionDesktopBridge = Pick<
   | 'getOnboardingState'
   | 'getAccountOnboarding'
   | 'updateAccountOnboarding'
+  | 'getOrganizationNameSuggestion'
   | 'getRuntimeConfig'
   | 'getSession'
   | 'hasStoredCredential'
@@ -1384,6 +1387,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       signOut,
       signOutIfCredentialCleared,
       surrenderActiveWorkspace,
+      getOrganizationNameSuggestion: () => bridge.getOrganizationNameSuggestion(),
       listSupportWorkspaces: () => bridge.listSupportWorkspaces(),
       listSupportPeople: (workspaceId: string) => bridge.listSupportPeople(workspaceId),
       startSupportSession,
