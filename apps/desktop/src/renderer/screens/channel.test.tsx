@@ -258,6 +258,23 @@ describe('a Channel', () => {
     await waitFor(() => expect(api.updateSpaceAudience).toHaveBeenCalledWith('outbound', { scope: 'personal', participantUserIds: ['me'] }));
   });
 
+  it('lets a participant leave a private Channel, which leaves their list', async () => {
+    const colleague = { id: 'jordan', name: 'Jordan', email: 'jordan@rally.test', timezone: 'UTC' };
+    const participants = [{ userId: 'me' }, { userId: 'jordan' }];
+    spaces.data = { ...outbound('participant'), items: [{ ...outbound('participant').items[0], scope: 'personal', participants }] };
+    api.getWorkspaceMembers.mockResolvedValue([workspace.currentUser, colleague] as never);
+    api.updateSpaceAudience.mockResolvedValue(null);
+    const { client } = renderChannel('/channels/outbound', (seeded) => seeded.setQueryData(['spaces'], spaces.data));
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Outbound' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Me actions' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Leave the channel' }));
+
+    await waitFor(() => expect(api.updateSpaceAudience).toHaveBeenCalledWith('outbound', { scope: 'personal', participantUserIds: ['jordan'] }));
+    await waitFor(() => expect(client.getQueryData<{ items: unknown[] }>(['spaces'])?.items).toEqual([]));
+    expect(screen.getByTestId('location')).not.toHaveTextContent('/channels/outbound');
+  });
+
   describe('read in a focused window', () => {
     const restore: Array<() => void> = [];
     beforeEach(() => {

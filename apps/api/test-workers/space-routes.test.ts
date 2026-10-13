@@ -133,7 +133,7 @@ async function request(
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   }, routeEnv(), context);
-  const value: unknown = await response.json();
+  const value: unknown = response.status === 204 ? null : await response.json();
   // Import admission returns while its deliberately held model is still running.
   if (importModelHeld) importContexts.push(context);
   else await waitOnExecutionContext(context);
@@ -682,6 +682,22 @@ describe("PATCH /spaces/:id/audience", () => {
 
     expect(saved.status).toBe(200);
     expect(await spaceDirectoryRow(created.id)).toMatchObject({ scope: "personal" });
+  });
+
+  it("lets a participant leave a private Channel, after which it is gone from their list and not from the others'", async () => {
+    const created = await createSpace("Hiring");
+    await request(`/spaces/${created.id}/audience`, OWNER_AUTH, {
+      scope: "personal", participantUserIds: [OWNER, MEMBER],
+    }, "PATCH");
+
+    const left = await request(`/spaces/${created.id}/audience`, MEMBER_AUTH, {
+      scope: "personal", participantUserIds: [OWNER],
+    }, "PATCH");
+
+    expect(left).toEqual({ status: 204, body: null });
+    expect((await spaceDirectories(MEMBER)).active.items.map((item) => item.id)).not.toContain(created.id);
+    const kept = (await spaceDirectories(OWNER)).active.items.find((item) => item.id === created.id);
+    expect(kept?.participants.map((participant) => participant.userId)).toEqual([OWNER]);
   });
 });
 

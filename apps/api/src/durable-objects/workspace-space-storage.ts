@@ -1356,11 +1356,15 @@ export class WorkspaceSpaceStorage {
    * Participants are the viewer rows, which is the same table the
    * `directory_user` projection writes: the Space's own object decides who its
    * participants are, and this is the provisional copy of that answer.
+   *
+   * `"left"` is the actor taking themselves out of a private Space: the change
+   * is written, and the Space no longer exists for them, so there is no
+   * summary to answer with.
    */
   applyAudience(
     request: WorkspaceSpaceAudienceNoteRequest,
     now = Date.now(),
-  ): SpaceSummary | false {
+  ): SpaceSummary | "left" | false {
     return this.storage.transactionSync(() => {
       if (!this.canEdit(request.userId, request.spaceId)) return false;
       const updated = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
@@ -1406,7 +1410,7 @@ export class WorkspaceSpaceStorage {
         }
       }
       this.advanceWaterline(now);
-      return this.space(request.spaceId, member(request.userId));
+      return this.space(request.spaceId, member(request.userId)) || "left";
     });
   }
 
