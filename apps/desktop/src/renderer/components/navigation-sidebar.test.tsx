@@ -290,7 +290,7 @@ describe('the navigation sidebar', () => {
     ] });
     renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
 
-    const list = within(await screen.findByRole('region', { name: 'Recent threads' }));
+    const list = within(await screen.findByRole('region', { name: 'All threads' }));
     const row = await waitFor(() => list.getByRole('link', { name: /Make a website/u }));
     const tile = row.querySelector<HTMLElement>('.identity-tile > .identity-tile-shape');
     expect(tile?.style.color).toBe('var(--av-sys-color-project-ink-purple)');
