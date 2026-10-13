@@ -467,6 +467,10 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     }
   };
   const startCreation = (throughTurnId: string | null): void => {
+    // As `openBreakout` does: a panel the thread holds would hide the new
+    // breakout's launch surface.
+    const rail = useUiStore.getState();
+    if (rail.railOpen && rail.railScope === id) rail.closeRail();
     resetCreation();
     setCreation({
       parentId: id,

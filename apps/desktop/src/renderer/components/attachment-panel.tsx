@@ -1,5 +1,5 @@
 import { ResourceIcon } from '@rally/ui/components/resource-icon';
-import { ActionTile, ActionTiles, TitleMenuHeader, TitlePillAction, TitlePillClose, TitlePillHeader } from '@rally/ui/components/title-pill';
+import { ActionTile, ActionTiles, TitleMenuHeader, TitlePillClose, TitlePillHeader } from '@rally/ui/components/title-pill';
 import { IconArrowsDiagonal, IconDownload, IconHistory, IconInfoCircle } from '@tabler/icons-react';
 import { ChevronLeft, ChevronRight, History } from 'lucide-react';
 import type { AttachmentPreview } from './attachments';
@@ -65,12 +65,13 @@ export function AttachmentPanel({ preview, leaving = false, onClose, onExpand, o
             </ActionTiles>
           </>,
         }}
-        trailing={<>
-          {onExpand && <TitlePillAction label="Expand" onClick={() => onExpand(many ? { ...preview, galleryIndex: view.activeIndex } : preview)}>
-            <IconArrowsDiagonal aria-hidden="true" size={16} stroke={1.9} />
-          </TitlePillAction>}
-          <TitlePillClose label="Close panel" onClose={onClose} />
-        </>}
+        {...(onExpand ? { actions: [{
+          key: 'expand',
+          label: 'Expand',
+          icon: <IconArrowsDiagonal aria-hidden="true" size={16} stroke={1.9} />,
+          onSelect: () => onExpand(many ? { ...preview, galleryIndex: view.activeIndex } : preview),
+        }] } : {})}
+        trailing={<TitlePillClose label="Close panel" onClose={onClose} />}
       />
       <div
         aria-busy={view.loading || undefined}

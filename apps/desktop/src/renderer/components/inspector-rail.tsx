@@ -3,7 +3,7 @@ import { desktopBridge } from '../lib/platform';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { IconArchive, IconArrowsDiagonal, IconExternalLink, IconHistory, IconRefresh, IconWindowMaximize } from '@tabler/icons-react';
-import { ActionTile, ActionTiles, LevelRow, TitleMenuHeader, TitleMenuItem, TitleMenuSeparator, TitlePillAction, TitlePillClose, TitlePillHeader, useTitleMenuNav } from '@rally/ui/components/title-pill';
+import { ActionTile, ActionTiles, LevelRow, TitleMenuHeader, TitleMenuItem, TitleMenuSeparator, TitlePillClose, TitlePillHeader, useTitleMenuNav } from '@rally/ui/components/title-pill';
 import {
   Archive,
   ArrowLeft,
@@ -815,18 +815,18 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
           }}
         /> } : {}),
       }}
+      // A live site has no single file to show full-window; its menu has New window.
+      {...(resource && props.panel.onExpand && !isSiteResource(resource) && resource.contentAvailable ? { actions: [{
+        key: 'expand',
+        label: 'Expand',
+        icon: <IconArrowsDiagonal aria-hidden="true" size={16} stroke={1.9} />,
+        onSelect: () => props.panel?.onExpand?.(resource),
+      }] } : {})}
       trailing={<>
         {/* A detail's own actions, such as a live artifact's, ahead of Close.
             Their tooltips open upward: a live artifact composites a native
             view under this strip that paints above all renderer DOM. */}
         <div className="rail-header-detail-actions" ref={setDetailActionsTarget} />
-        {/* A live site has no single file to show full-window; it has New
-            window in its menu instead. */}
-        {resource && props.panel.onExpand && !isSiteResource(resource) && resource.contentAvailable && (
-          <TitlePillAction label="Expand" onClick={() => props.panel?.onExpand?.(resource)}>
-            <IconArrowsDiagonal aria-hidden="true" size={16} stroke={1.9} />
-          </TitlePillAction>
-        )}
         <TitlePillClose label="Close panel" onClose={closeRail} />
       </>}
     />

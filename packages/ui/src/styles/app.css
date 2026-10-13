@@ -4843,6 +4843,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    where they always have. */
 .rail-header-detail-actions { align-items: center; display: flex; gap: 2px; }
 .rail-header-detail-actions:not(:empty) { margin-right: 6px; }
+.icon-group > .rail-header-detail-actions { margin-right: 0; }
 .rail-title { flex: 1; min-width: 0; }
 .rail-title h2 { color: var(--av-sys-color-text-subtle); font-size: 12px; margin: 0 0 0 2px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-header-actions { flex-shrink: 0; }
@@ -6137,7 +6138,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 /* A panel's header is a conversation pane's: its title pill centred and
    Close at the right, the same height as the pane beside it. */
 .rail-surface-content:has(> .panel-title-header) { grid-template-rows: 64px minmax(0, 1fr); }
-.panel-title-header .rail-header-detail-actions:not(:empty) { margin-right: 0; }
 .attachment-panel-body { display: flex; flex-direction: column; min-height: 0; min-width: 0; outline: 0; }
 .attachment-panel-superseded { align-self: flex-start; margin: 12px 16px 0; }
 .attachment-panel-content { flex: 1 1 auto; min-height: 0; overflow: auto; }
@@ -7840,6 +7840,23 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .title-pill.is-ancestor .title-pill-select { min-width: 0; }
 .title-pill-current { justify-self: center; min-width: 0; }
 .title-pill-trailing { align-items: center; display: flex; gap: 8px; justify-self: end; }
+/* Crowded: the trailing buttons would come within a gap of the centred pill.
+   They fold, and the pill moves left just far enough to keep that gap. */
+.title-pill-header.is-crowded .title-pill-current { transform: translateX(calc(-1 * var(--title-pill-shift, 0px))); }
+/* Icon buttons in a row, spaced by the group rather than by each caller. An
+   empty slot (a detail's actions host with nothing in it) takes no room. */
+.icon-group { align-items: center; display: inline-flex; gap: 8px; }
+.icon-group > :empty { display: none; }
+/* The actions' wrapper adds no box, so its buttons share the group's gap. */
+.icon-group-actions { display: contents; }
+.icon-group-more { display: none; }
+/* Folded by its host, or at phone width: the actions fold into one "More" button. */
+.icon-group.is-folded .icon-group-actions { display: none; }
+.icon-group.is-folded .icon-group-more { display: inline-flex; }
+@media (max-width: 640px) {
+  .icon-group-actions { display: none; }
+  .icon-group-more { display: inline-flex; }
+}
 /*
  * A breakout's Channel and thread crumbs need about twice the room of one, so
  * a pane short of desktop width shows both as marks while the pill stays
