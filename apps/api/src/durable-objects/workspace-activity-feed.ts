@@ -1,6 +1,13 @@
 import type { SqlStorageValue } from "@cloudflare/workers-types";
 import type { ActivityEvent, ActivityFilter, ActivityItem, ActivityItemKind, ActivitySubject } from "@rally/contracts";
 
+import {
+  ACTIVITY_CLEAR_RULES,
+  cleared,
+  consultedSubjects,
+  readsRole,
+  type ActivityBindings,
+} from "./activity-clear-rules";
 import { boundParameterChunks } from "./bound-parameters";
 import { breakoutListedSql, channelListedSql, type Viewer } from "./listing-rules";
 import { SPACE_CHANNEL_PAGE_SIZE, type WorkspaceSpaceStorage } from "./workspace-space-storage";
@@ -34,9 +41,11 @@ import { SPACE_CHANNEL_PAGE_SIZE, type WorkspaceSpaceStorage } from "./workspace
  * "opened breakout Y", "read Channel Z through placement 4" — as a subject and
  * an ordinal ({@link WorkspaceActivityFeed.record}). Each subject keeps one
  * waterline per person (`workspace_activity_reads`, migration 101), and an
- * item is done once any of its targets ({@link activityTargets}) is at or
- * below its subject's waterline. Neither is a row per item, so an event
- * settles every item it covers, including ones not yet on a page.
+ * item is done once its kind's rule holds over those waterlines: the rule
+ * language and the table of rules are `activity-clear-rules.ts`, and this
+ * file only binds each row's subjects ({@link activityBindings}). Neither is a
+ * row per item, so an event settles every item it covers, including ones not
+ * yet on a page.
  */
 
 /** A subject's waterline key; one shape per kind, so two kinds never collide. */
@@ -77,51 +86,35 @@ interface ActivityKey extends Record<string, SqlStorageValue> {
   attention_ordinal: number | null;
 }
 
-/** A subject and the ordinal an item needs read on it. */
-interface ActivityTarget {
-  key: string;
-  ordinal: number;
-}
-
 /**
- * Where an item is settled: its conversation (the breakout when it names one,
- * else the thread) at an ordinal, and for a thread's start, also each Channel
- * it is placed in at its placement. Ordinal 0 is "opened it".
- *
- * - **mentioned**: the message's own ordinal. An event from before messages
- *   carried one is settled by an open.
- * - **added**, **thread_started**, **breakout_started**: an open. Being added
- *   leaves the newest message unread, so opening is reading to where you were
- *   put; a start is the conversation itself.
- * - **run_finished**: the conversation's newest message. The directory keeps
- *   no ordinal for the finish, so a message after it moves the target too.
+ * The subjects one row binds for its clear rule. `conversation` is the
+ * breakout when the row names one, else the thread, and knows `opened`,
+ * `latest`, and `message` when the event recorded it. `placement` is each
+ * Channel the thread sits in, at the placement's own ordinal.
  */
-function activityTargets(
+function activityBindings(
   key: ActivityKey,
   latestAttentionOrdinal: number,
   placements: ReadonlyArray<{ channelId: string; ordinal: number }>,
-): ActivityTarget[] {
+): ActivityBindings {
   const threadId = key.thread_id as ActivityItem["threadId"];
   const conversation = activitySubjectKey(key.substream_id !== null && key.substream_id !== "0"
     ? { kind: "breakout", threadId, substreamId: key.substream_id }
     : { kind: "thread", threadId });
-  switch (key.kind) {
-    case "mentioned":
-      return [{ key: conversation, ordinal: Number(key.attention_ordinal ?? 0) }];
-    case "added":
-    case "breakout_started":
-      return [{ key: conversation, ordinal: 0 }];
-    case "thread_started":
-      return [
-        { key: conversation, ordinal: 0 },
-        ...placements.map((placement) => ({
-          key: activitySubjectKey({ kind: "channel", channelId: placement.channelId }),
-          ordinal: placement.ordinal,
-        })),
-      ];
-    case "run_finished":
-      return [{ key: conversation, ordinal: latestAttentionOrdinal }];
-  }
+  return {
+    conversation: [{
+      key: conversation,
+      ordinals: {
+        opened: 0,
+        latest: latestAttentionOrdinal,
+        ...(key.attention_ordinal === null ? {} : { message: Number(key.attention_ordinal) }),
+      },
+    }],
+    placement: placements.map((placement) => ({
+      key: activitySubjectKey({ kind: "channel", channelId: placement.channelId }),
+      ordinals: { opened: 0, placement: placement.ordinal },
+    })),
+  };
 }
 
 interface ActivityCursor {
@@ -373,20 +366,24 @@ export class WorkspaceActivityFeed {
     }
     const channelIds = this.spaces.spaceIdsByChannel(viewer, threadIds);
     const seenThrough = this.seenThrough(viewer.userId);
-    const startedThreadIds = keys.flatMap((key) => key.kind === "thread_started" ? [key.thread_id] : []);
-    const placements = startedThreadIds.length > 0
-      ? this.spaces.placementOrdinals(viewer, startedThreadIds)
+    // Placements are a read of their own, made only for rows whose rule reads them.
+    const placedThreadIds = [...new Set(keys.flatMap((key) => (
+      readsRole(ACTIVITY_CLEAR_RULES[key.kind], "placement") ? [key.thread_id] : []
+    )))];
+    const placements = placedThreadIds.length > 0
+      ? this.spaces.placementOrdinals(viewer, placedThreadIds)
       : new Map<string, Array<{ channelId: string; ordinal: number }>>();
-    const targets = new Map(keys.map((key) => {
+    const bindings = new Map(keys.map((key) => {
       const onBreakout = key.substream_id !== null && key.substream_id !== "0";
       const latest = (onBreakout ? breakouts.get(key.substream_id as string) : threads.get(key.thread_id))?.latest ?? 0;
-      return [key.id, activityTargets(key, latest, placements.get(key.thread_id) ?? [])];
+      return [key.id, activityBindings(key, latest, placements.get(key.thread_id) ?? [])];
     }));
-    const reads = this.readsReady()
-      ? this.reads(viewer.userId, [...new Set([...targets.values()].flatMap((list) => list.map((target) => target.key)))])
+    const waterlines = this.readsReady()
+      ? this.reads(viewer.userId, [...new Set(keys.flatMap((key) => (
+        consultedSubjects(ACTIVITY_CLEAR_RULES[key.kind], bindings.get(key.id) ?? {})
+      )))])
       : new Map<string, number>();
-    const done = (key: ActivityKey): boolean => (targets.get(key.id) ?? [])
-      .some((target) => (reads.get(target.key) ?? -1) >= target.ordinal);
+    const done = (key: ActivityKey): boolean => cleared(ACTIVITY_CLEAR_RULES[key.kind], bindings.get(key.id) ?? {}, waterlines);
     return keys.flatMap((key): ActivityItem[] => {
       const thread = threads.get(key.thread_id);
       const threadTitle = thread?.title;
