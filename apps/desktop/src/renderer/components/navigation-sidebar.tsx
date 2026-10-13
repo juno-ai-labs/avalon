@@ -903,10 +903,7 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
     : channels.map(channelBadge);
   const names = channels.map((space) => space.name).join(' · ');
   const detail = row.kind === 'breakout' && row.breakoutOf
-    ? <>
-      <IconCornerDownRight aria-hidden="true" className="breakout-chip-icon navigation-row-breakout-icon" size={13} stroke={1.9} />
-      {`${row.breakoutOf.title}${names ? ` · ${names}` : ''}`}
-    </>
+    ? `${row.breakoutOf.title}${names ? ` · ${names}` : ''}`
     : names;
   const threadId = row.breakoutOf?.workstreamId ?? row.id;
   const warmup = useWorkstreamSocketHoverWarmup(threadId);
