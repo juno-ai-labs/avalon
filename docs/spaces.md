@@ -51,7 +51,7 @@ them; the product design is in
 | `apps/api/src/routes/navigation.ts` | The new client's reads: `GET /navigation/threads`, `GET /navigation/channel-stats`, the pin routes and the Activity tab. |
 | `apps/api/src/queues/activity-consumer.ts` | The `space_default`, `space_intent_resume` and `space_bootstrap` handlers. |
 | `packages/ui/src/components/space-icon.tsx` | The mark both hosts draw a Space with. `docs/shared-ui.md` owns the split. |
-| `apps/desktop/src/renderer/components/navigation-sidebar.tsx`, `screens/channel.tsx` | The Channels list and the Channel screen (feed, locked rows, composer, menu). [`desktop-shell.md`](desktop-shell.md) owns both. |
+| `apps/desktop/src/renderer/components/navigation-sidebar.tsx`, `screens/channel.tsx` | The Channels list and the Channel screen (feed, composer, menu). [`desktop-shell.md`](desktop-shell.md) owns both. |
 | `apps/desktop/src/renderer/lib/deep-link-navigation.ts` | The renderer-local signal that distinguishes an externally opened Channel from ordinary in-app navigation so the sidebar reveals it once. |
 | `apps/desktop/src/renderer/lib/sidebar-list-store.ts`, `use-space-directories.ts`, `workspace-socket.tsx`, `workspace-directory-cache.ts` | The client's Space state: one versioned receiver, the two socket-owned directories, and the local cache slice. |
 | `packages/ui/src/components/conversation-menus.tsx` | The Channel menu's Breakout list, newest activity first; a Breakout opens beside Main. |
@@ -1108,10 +1108,9 @@ read over the listing rules:
   placed in a Space, newest placement first, ordered by migration 97's
   `space_channel_memberships(space_id, state, joined_at, workstream_id)` index.
   A Channel the viewer may open comes back whole, with its description as the
-  one-to-two-line summary; one a member may not open is a locked row with its id
-  and placement time only. A guest gets no locked rows. Archived and system
-  Channels are left out. Every row, locked or not, carries its placement's
-  `attentionSequenceNumber` ([read state](#the-channels-read-state)).
+  one-to-two-line summary; one the viewer may not open is left out, for a member
+  as for a guest. Archived and system Channels are left out. Every row carries
+  its placement's `attentionSequenceNumber` ([read state](#the-channels-read-state)).
 - **`participatingPage`** (`GET /navigation/threads`, `listMyThreads`): the
   Channels and breakouts a person takes part in or pinned, newest activity
   first — the conversation page's two-arm shape started from the person, through
@@ -1119,8 +1118,9 @@ read over the listing rules:
 - **`channelStats`**: per listed Space, how many Channels in it the viewer may
   list, when the newest of those last moved, the viewer's
   [read state](#the-channels-read-state) in it, and `newThreadCount`: how many
-  of the feed's rows sit above their read position, locked rows included for
-  a member, zero for a guest. It rides the connect payload
+  of the feed's rows sit above their read position, zero for a guest.
+  `hasUnread` is true only while that count is above zero: a private placement
+  the viewer cannot see moves the Channel's latest number but is not news. It rides the connect payload
   as `channelStats`, beside the Spaces rather than on `SpaceSummary`, which
   shipped desktops parse strictly. It does not ride the broadcast Space
   snapshot: that goes to every member, and the stats are one person's. After
@@ -1170,8 +1170,8 @@ Channel, from `unreadState` in `unread-state.ts` — the one helper
 `directoryWorkstream` and `breakoutConversation` use too. `seen` falls back to
 the tracking start when the person has no `space_reads` row, which is why a
 Channel nobody has opened is not unread to everyone. **A guest is never
-unread**: they reach a Channel only through threads they may list and see no
-locked rows, so their read position is reported as the waterline.
+unread**: they reach a Channel only through threads they may list, so their
+read position is reported as the waterline.
 
 **Acknowledgement.** `PATCH /spaces/:id/read-state` (body
 `AcknowledgeWorkstreamReadRequestSchema`, RPC `acknowledgeSpaceRead`) moves the
@@ -1249,8 +1249,8 @@ active keep `NULL`, which the feed reports as zero.
   can list; any other stranded thread (private, or one the archiver cannot
   list) keeps the archive refused `space_membership_final`. The moves and the
   archive are one WorkspaceDO transaction, so a refused archive rolls back
-  whole and moves nothing. Moving a private thread would put its existence in
-  front of every General reader as a locked row, and moving one the archiver
+  whole and moves nothing. Moving a private thread would place it somewhere its
+  participants did not choose, and moving one the archiver
   cannot list would let them act on work they cannot see. An archived thread
   keeps its membership so restoring the Space returns it, but no list renders
   it, so it is not a stranded home that has to move first. A thread the
@@ -1487,7 +1487,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/api/test/client-contract.test.ts` | Which builds the cutover still answers: a browser build that declares nothing or declares an older contract is told to update; a native client that declares nothing is admitted. |
 | `packages/contracts/src/spaces.test.ts` | The closed schemas, the appearance registry, and the container address: a Space's and a Channel's need an id, the Organization's is refused one. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | That a nudge invalidates the named Channels' feeds and no others. |
-| `apps/desktop/src/renderer/screens/channel.test.tsx` | The Channel screen over the feed: thread rows, locked rows, the composer's absence for a reader who reaches the Channel only through a thread, and the read acknowledgement. [`desktop-shell.md`](desktop-shell.md) owns the screen. |
+| `apps/desktop/src/renderer/screens/channel.test.tsx` | The Channel screen over the feed: thread rows, the composer's absence for a reader who reaches the Channel only through a thread, and the read acknowledgement. [`desktop-shell.md`](desktop-shell.md) owns the screen. |
 | `apps/desktop/src/renderer/lib/browser-collaboration.test.tsx` | The cookie-scoped browser's single sidebar and split Breakout pane; selected-Space filtering and accessibility state; multi-Space route stability; active-before-archived selection; and the local fallback that keeps an admitted Channel reachable when no visible Space is returned. |
 | `apps/desktop/src/renderer/lib/personal-order.test.ts` | The one arrangement rule: stored ids first, the rest in their natural order, an id the list does not carry dropped, an empty arrangement as the identity, and a container addressed by both halves of its key. |
 

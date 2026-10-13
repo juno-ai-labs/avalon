@@ -33,10 +33,9 @@ Thread is public to the Organization, or if they are one of its participants.
 
 Two things follow from that:
 
-- A private Thread in an Organization-wide Channel stays private. Everyone in
-  the Channel sees that it exists, as a **Private thread** entry in the feed with
-  a **Request access** chip, but nobody outside the Thread sees its name, its
-  summary or who is in it.
+- A private Thread in an Organization-wide Channel stays private. It is not in
+  the Channel's feed for anyone outside the Thread, who sees nothing of it: not
+  its name, its summary, who is in it, or that it exists.
 - A public Thread in a private Channel is still public. Anyone in the
   Organization can open it from a link or find it in search, even though they
   cannot see the Channel.
@@ -67,8 +66,7 @@ the Thread. See [Breakouts](03-breakouts.md#who-can-see-a-breakout).
 ### Asking to join from a link
 
 If you open a link to a private Thread or Breakout you are not in, Rally shows
-its name, color and icon and a **Request access** button. A **Private thread**
-entry in a Channel's feed has a **Request access** chip that does the same. Pressing it sends the
+its name, color and icon and a **Request access** button. Pressing it sends the
 request to whoever created it. Once they approve, you are added, the Thread
 opens on its own within about half a minute, and you get an email. You get an
 email if they decline, too. Guests do not see this; they are shared in by email

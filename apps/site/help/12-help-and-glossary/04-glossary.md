@@ -58,8 +58,8 @@ Organization starts with one called **General**. Old names: Space, Project.
 [Channels](../03-spaces-and-breakouts/01-spaces.md).
 
 **Channel feed.** The list of a Channel's Threads on its screen, oldest at the
-top and newest beside the message box. A Thread you cannot open shows there as
-**Private thread**, with a **Request access** chip. See
+top and newest beside the message box. A private Thread you are not in is not
+listed. See
 [Channels](../03-spaces-and-breakouts/01-spaces.md#the-feed).
 
 **Connection.** One link between Rally and another tool, such as your Gmail or
