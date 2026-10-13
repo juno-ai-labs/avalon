@@ -134,6 +134,7 @@
     "sys.color.selection.background": "rgba(224, 140, 58, 0.24)",
     "sys.color.scrollbar.thumb": "#2f2f2f",
     "sys.color.shimmer.default": "rgba(252, 252, 252, 0.05)",
+    "sys.color.glass.shine": "rgba(255, 255, 255, 0.16)",
     "sys.color.syntax.plain": "#e4dbcb",
     "sys.color.syntax.comment": "#777772",
     "sys.color.syntax.punctuation": "#a19684",

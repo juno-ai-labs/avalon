@@ -7900,7 +7900,12 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
     white-space: nowrap;
     width: 1px;
   }
+  /* Where every crumb has a mark, the pills give way to one bridge of them
+     (`MarkBridge`), each mark linking where its pill did. */
+  .title-pill-ancestors.is-bridged > .title-pill-ancestor { display: none; }
+  .title-pill-ancestors.is-bridged > .title-pill-bridge { display: inline-block; }
 }
+.title-pill-ancestors > .title-pill-bridge { display: none; }
 /*
  * A pane too narrow to centre its pill between full ancestors (a breakout
  * standing alone on a phone, with its Channel and thread as breadcrumbs):
@@ -8627,6 +8632,45 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 }
 .navigation-filter-chip:hover { color: var(--av-sys-color-text-default); }
 .navigation-filter-chip.is-active { background: var(--av-sys-color-text-default); box-shadow: none; color: var(--av-sys-color-surface-default); }
+
+/* Marks fused into one glass shape; see `mark-bridge.tsx`. Its geometry is
+   the component's: 36px circles, 42px apart. */
+.mark-bridge {
+  display: inline-block;
+  flex: none;
+  position: relative;
+}
+.mark-bridge-glass {
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / .08)) drop-shadow(0 4px 10px rgb(0 0 0 / .06));
+  left: -1px;
+  overflow: visible;
+  pointer-events: none;
+  position: absolute;
+  top: -1px;
+}
+.mark-bridge-sheen-from { stop-color: var(--av-sys-color-glass-shine); stop-opacity: .35; }
+.mark-bridge-sheen-to { stop-color: var(--av-sys-color-glass-shine); stop-opacity: 0; }
+.mark-bridge-rim-from { stop-color: var(--av-sys-color-glass-shine); }
+.mark-bridge-rim-to { stop-color: var(--av-sys-color-glass-shine); stop-opacity: 0; }
+.mark-bridge-edge { fill: none; stroke: var(--av-sys-color-border-strong); stroke-width: var(--av-sys-size-border-hairline); }
+/* Each mark's outline and symbol, stacked in one cell over its own tint. */
+.mark-bridge-mark {
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  color: inherit;
+  display: grid;
+  height: 36px;
+  padding: 0;
+  place-items: center;
+  position: absolute;
+  top: 0;
+  width: 36px;
+}
+.mark-bridge-mark > * { grid-area: 1 / 1; }
+button.mark-bridge-mark { cursor: pointer; }
+button.mark-bridge-mark:hover { background: var(--av-sys-color-state-hover); }
+button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-border-highlight); outline-offset: -2px; }
 
 /* A shaped identity tile and the badges on its corner; see `identity-tile.tsx`. */
 .identity-tile { display: inline-flex; flex: none; position: relative; }

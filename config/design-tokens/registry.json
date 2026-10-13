@@ -27,6 +27,7 @@
     "sys.color.selection": "Selected text.",
     "sys.color.scrollbar": "The scrollbar thumb.",
     "sys.color.shimmer": "The sweep across a loading skeleton.",
+    "sys.color.glass": "The light a glass shape catches: its sheen and the rim along its top edge. Brighter on a light surface than a dark one, where white reads as glare.",
     "sys.color.syntax": "Syntax highlighting. `prism-react-renderer` takes a JavaScript object rather than a class, so these reach it as `var()` inside an inline style.",
     "sys.color.person": "One per participant, chosen by a hash of their id. Six is enough that a repeat is rare in a room and few enough that each stays distinguishable.",
     "sys.elevation.shadow": "Depth. A theme that lifts nothing sets these to `none`.",
@@ -527,6 +528,9 @@
       "$type": "color"
     },
     "sys.color.shimmer.default": {
+      "$type": "color"
+    },
+    "sys.color.glass.shine": {
       "$type": "color"
     },
     "sys.color.syntax.plain": {

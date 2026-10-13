@@ -2,7 +2,7 @@ import { BreakoutMenu, ChannelMenu, type ConversationRowTarget } from '@rally/ui
 import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { BreakoutPillIcon, TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
+import { WorkstreamGlyph, workstreamMark } from '@rally/ui/components/workstream-glyph';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -707,6 +707,11 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     if (breakoutOwnsRail) closeRail();
     if (turnId) setScrollToTurn((current) => ({ turnId, nonce: (current?.nonce ?? 0) + 1 }));
   };
+  /**
+   * The thread on its own. Closing the breakout closes a panel it held: a
+   * surface closes its own panel as it unmounts.
+   */
+  const openThreadAlone = (): void => selectSubstream('0');
   const openBreakout = (substreamId: string): void => {
     // A panel the Channel has open would hide the Breakout being asked for.
     if (mainOwnsRail) closeRail();
@@ -742,6 +747,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     return {
       key: `channel:${id}`,
       icon: glyph,
+      bridge: { mark: workstreamMark(id, channelAppearance ?? undefined), name: title, action: 'Open thread' },
       ...(!onSelect && appearanceChange ? {
         iconAction: <AppearancePicker
           appearance={channelAppearance}
@@ -812,6 +818,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       // The design's Breakout mark: the arrow every Breakout chip and row
       // wears. Its own icon and colour are chosen from the menu instead.
       icon: <BreakoutPillIcon />,
+      bridge: { mark: workstreamMark(breakoutId, selectedAppearance ?? undefined), name: title, action: 'Open breakout' },
       title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
       label: `Breakout menu: ${title}`,
       ...(context.replyCount ? { meta: `${context.replyCount} ${context.replyCount === 1 ? 'reply' : 'replies'}` } : {}),
@@ -889,7 +896,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     parentId={id}
     parentKind="workstream"
     renderHeader={(context) => <TitlePillHeader
-      ancestors={shownMode === 'breakout' && mainVisible ? [...channelCrumbs, channelLevel(null, splitMode === 'breakout' ? closeRail : () => selectSubstream('0'))] : []}
+      ancestors={shownMode === 'breakout' && mainVisible ? [...channelCrumbs, channelLevel(null, openThreadAlone)] : []}
       current={breakoutLevel(context)}
       trailing={mainVisible ? closeBreakout : undefined}
     />}
