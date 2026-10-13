@@ -204,6 +204,20 @@ describe('the right sidebar does not follow a channel switch', () => {
     expect(retainedSocket).toHaveBeenCalledWith(api, firstWorkstreamId, false, 'workstream', '0');
   });
 
+  it('expands a breakout over its thread and puts it back', async () => {
+    renderScreen(true);
+    await screen.findByRole('button', { name: 'Breakout menu: Shared child' });
+    // Each conversation on screen has its own composer.
+    expect(screen.getAllByRole('textbox')).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+    expect(screen.getAllByRole('textbox')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Breakout menu: Shared child' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse' }));
+    expect(screen.getAllByRole('textbox')).toHaveLength(2);
+  });
+
   it('closes the inspector rail, and drops the document it was showing', async () => {
     renderScreen();
     await screen.findByRole('button', { name: 'Thread menu: First channel' });
