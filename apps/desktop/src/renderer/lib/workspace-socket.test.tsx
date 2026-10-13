@@ -2321,7 +2321,9 @@ describe('a Channel\'s breakouts and background agents on the organization socke
         .toEqual([workstreamId, other].sort());
       expect(queryClient.getQueryData(['channel-rail', workstreamId]))
         .toMatchObject({ railWaterline: 2, rail: { participantUserIds: [creator] } });
-      expect(api().loadedSpaceIds).toEqual(new Set([design, general, archive]));
+      // Set as each Space's walk ends, after the answer's `act` has returned,
+      // so the render carrying it is the scheduler's, not `act`'s: wait for it.
+      await vi.waitFor(() => expect(api().loadedSpaceIds).toEqual(new Set([design, general, archive])));
       // The rail came with its row, so nothing is asked for by name.
       expect(railsSent(socket)).toEqual([]);
     });
@@ -2388,8 +2390,7 @@ describe('a Channel\'s breakouts and background agents on the organization socke
       const [, created] = spaceSent(socket);
       expect(created).toMatchObject({ spaceId: design });
       act(() => socket.message(spaceAnswer(created!['requestId'], [], null)));
-      await flushPromises();
-      expect(api().loadedSpaceIds).toEqual(new Set([general, design]));
+      await vi.waitFor(() => expect(api().loadedSpaceIds).toEqual(new Set([general, design])));
       // Loaded now: putting it on screen again asks nothing.
       act(() => api().prioritizeSpace(general));
       act(() => api().prioritizeSpace(design));
@@ -2424,7 +2425,7 @@ describe('a Channel\'s breakouts and background agents on the organization socke
       act(() => socket.message(spaceAnswer(spaceSent(socket)[2]!['requestId'], [], null)));
       await flushPromises();
       // Every Space stays loaded: what is held keeps painting.
-      expect(api().loadedSpaceIds).toEqual(new Set([general, design]));
+      await vi.waitFor(() => expect(api().loadedSpaceIds).toEqual(new Set([general, design])));
 
       act(() => api().prioritizeSpace(design));
       await flushPromises();
@@ -2442,8 +2443,7 @@ describe('a Channel\'s breakouts and background agents on the organization socke
       await flushPromises();
       act(() => socket.message(spaceAnswer(spaceSent(socket)[0]!['requestId'], [], null)));
       await walked;
-      await flushPromises();
-      expect(api().loadedSpaceIds).toEqual(new Set([general]));
+      await vi.waitFor(() => expect(api().loadedSpaceIds).toEqual(new Set([general])));
 
       act(() => socket.message(bySpaceSidebar()));
       await flushPromises();
