@@ -52,6 +52,24 @@ const MARK = (workstreamId: string) => `${NEXT_REVISION}
        VALUES (${workstreamId}, ${CURRENT_REVISION}, 0, 0)
        ${REMARK}`;
 
+/**
+ * A Channel recoloured, archived, restored, or made private, which moves it
+ * in `canonicalChannelSpaceId`'s order. Every thread placed in it is marked;
+ * the consumer works out whether this Channel is the one that decides.
+ * Exported because a rebuild of `spaces` (migration 102) drops it and has to
+ * put the same text back.
+ */
+export const CHANNEL_COLOR_SPACE_CHANGE_TRIGGER =
+`CREATE TRIGGER channel_color_space_change AFTER UPDATE OF appearance_json, archived_at, scope ON spaces
+   WHEN json_extract(OLD.appearance_json, '$.color') IS NOT json_extract(NEW.appearance_json, '$.color')
+     OR OLD.archived_at IS NOT NEW.archived_at OR OLD.scope IS NOT NEW.scope BEGIN
+     ${NEXT_REVISION}
+     INSERT INTO channel_color_sync(workstream_id, revision, attempts, not_before)
+       SELECT workstream_id, ${CURRENT_REVISION}, 0, 0 FROM space_channel_memberships
+        WHERE space_id = NEW.space_id AND state = 'active'
+       ${REMARK}
+   END`;
+
 /** WorkspaceDO migration 99; the backfill is its last statement. */
 export const CHANNEL_COLOR_SYNC_MIGRATION: readonly string[] = [
   `CREATE TABLE channel_color_sync (
@@ -80,18 +98,7 @@ export const CHANNEL_COLOR_SYNC_MIGRATION: readonly string[] = [
   `CREATE TRIGGER channel_color_membership_delete AFTER DELETE ON space_channel_memberships BEGIN
      ${MARK("OLD.workstream_id")}
    END`,
-  // A Channel recoloured, archived, restored, or made private, which moves it
-  // in `canonicalChannelSpaceId`'s order. Every thread placed in it is marked;
-  // the consumer works out whether this Channel is the one that decides.
-  `CREATE TRIGGER channel_color_space_change AFTER UPDATE OF appearance_json, archived_at, scope ON spaces
-   WHEN json_extract(OLD.appearance_json, '$.color') IS NOT json_extract(NEW.appearance_json, '$.color')
-     OR OLD.archived_at IS NOT NEW.archived_at OR OLD.scope IS NOT NEW.scope BEGIN
-     ${NEXT_REVISION}
-     INSERT INTO channel_color_sync(workstream_id, revision, attempts, not_before)
-       SELECT workstream_id, ${CURRENT_REVISION}, 0, 0 FROM space_channel_memberships
-        WHERE space_id = NEW.space_id AND state = 'active'
-       ${REMARK}
-   END`,
+  CHANNEL_COLOR_SPACE_CHANGE_TRIGGER,
   // A thread's or a Breakout's first projection: the conversation exists now,
   // and starts without a colour. A thread restored from the archive is marked
   // too, since its Channels may have changed colour while it was away.

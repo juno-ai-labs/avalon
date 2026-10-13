@@ -192,6 +192,21 @@ describe('the navigation sidebar', () => {
     expect(await screen.findByText('You’ve pinned as many items as Rally allows. Unpin one first.')).toBeInTheDocument();
   });
 
+  it('locks a Personal Channel and a private Channel, and not an Organization-wide one', () => {
+    renderSidebar((client) => {
+      client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [
+        channel('mine', 'Your Personal Channel', { scope: 'individual' }),
+        channel('secret', 'Secret', { scope: 'personal' }),
+        channel('general', 'General'),
+      ] });
+    });
+
+    const all = within(screen.getByRole('region', { name: 'All channels' }));
+    expect(all.getAllByRole('link').filter((row) => row.classList.contains('navigation-channel-row'))
+      .map((row) => [row.textContent, within(row).queryByLabelText('Private') !== null]))
+      .toEqual([['General', false], ['Secret', true], ['Your Personal Channel', true]]);
+  });
+
   it('opens a Channel on its own route', () => {
     renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
     fireEvent.click(screen.getByRole('link', { name: /Outbound/u }));

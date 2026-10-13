@@ -23,6 +23,7 @@ export type WorkspaceScheduledAlarmPhase =
 export type ObservableWorkspaceScheduledAlarmKind =
   | "product"
   | "schedule_bootstrap"
+  | "personal_channel_backfill"
   | "schedule"
   | "watch"
   | "maintenance"
@@ -38,6 +39,7 @@ export type ObservableWorkspaceScheduledAlarmKind =
 const OBSERVABLE_ALARM_KINDS = new Set<ObservableWorkspaceScheduledAlarmKind>([
   "product",
   "schedule_bootstrap",
+  "personal_channel_backfill",
   "schedule",
   "watch",
   "maintenance",

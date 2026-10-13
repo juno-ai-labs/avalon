@@ -10,15 +10,18 @@ import {
   SpaceIdSchema,
   SpaceInviteesSchema,
   SpaceSummarySchema,
+  spaceScopeForClient,
+  type SpaceSummary,
   UpdateSpaceAudienceRequestSchema,
   UpdateSpacePresentationRequestSchema,
   WorkstreamIdSchema,
   IdSchema,
 } from "@rally/contracts";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 
 import type { HonoAppEnv } from "../env";
+import { clientReadsChannelMessages, clientReadsIndividualSpaces } from "../lib/client-contract";
 import { requestDeferral } from "../lib/defer";
 import { getAuth, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
@@ -46,14 +49,24 @@ const channelPageQuery = z.strictObject({ cursor: z.string().min(1).max(200).opt
  */
 export const spaceRoutes = new Hono<HonoAppEnv>();
 
+/**
+ * A Space summary as the calling build reads it: a desktop that predates
+ * `individual` is answered `personal` for a Personal Channel, as the socket
+ * does (`spaceScopeForClient`).
+ */
+function forClient(c: Context<HonoAppEnv>): (space: SpaceSummary) => SpaceSummary {
+  const individual = clientReadsIndividualSpaces((name) => c.req.header(name));
+  return (space) => ({ ...space, scope: spaceScopeForClient(space.scope, individual) });
+}
+
 spaceRoutes.post("/", zValidator("json", CreateSpaceRequestSchema), async (c) =>
-  c.json(SpaceSummarySchema.parse(
+  c.json(SpaceSummarySchema.parse(forClient(c)(
     await new SpaceService(c.env, getAuth(c)).create(
       c.req.valid("json"),
       undefined,
       requestDeferral(c),
     ),
-  ), 201),
+  )), 201),
 );
 
 /**
@@ -76,18 +89,26 @@ spaceReadRoutes.get(
   )),
 );
 
-/** A Channel's feed: the threads placed in it, newest first; see `ChannelFeedItemSchema`. */
+/**
+ * A Channel's feed: the threads placed in it and Rally's messages, newest
+ * first; see `ChannelFeedItemSchema`. A desktop that predates messages is
+ * served the feed without them, since it parses the union strictly.
+ */
 spaceReadRoutes.get(
   "/:id/feed",
   requireWorkspaceAuth,
   zValidator("param", idParam),
   zValidator("query", channelPageQuery),
-  async (c) => c.json(ChannelFeedPageSchema.parse(
-    await new SpaceService(c.env, getWorkspaceAuth(c)).listFeed(
+  async (c) => {
+    const page = await new SpaceService(c.env, getWorkspaceAuth(c)).listFeed(
       c.req.valid("param").id,
       c.req.valid("query").cursor ?? null,
-    ),
-  )),
+    );
+    const messages = clientReadsChannelMessages((name) => c.req.header(name));
+    return c.json(ChannelFeedPageSchema.parse(messages ? page : {
+      ...page, items: page.items.filter((item) => item.kind !== "message"),
+    }));
+  },
 );
 
 /**
@@ -113,12 +134,12 @@ spaceRoutes.patch(
   "/:id",
   zValidator("param", idParam),
   zValidator("json", UpdateSpacePresentationRequestSchema),
-  async (c) => c.json(SpaceSummarySchema.parse(
+  async (c) => c.json(SpaceSummarySchema.parse(forClient(c)(
     await new SpaceService(c.env, getAuth(c)).updatePresentation(
       c.req.valid("param").id,
       c.req.valid("json"),
     ),
-  )),
+  ))),
 );
 
 spaceRoutes.patch(
@@ -131,7 +152,7 @@ spaceRoutes.patch(
       c.req.valid("json"),
     );
     // The caller left a private Channel: it is not theirs to be described.
-    return space === null ? c.body(null, 204) : c.json(SpaceSummarySchema.parse(space));
+    return space === null ? c.body(null, 204) : c.json(SpaceSummarySchema.parse(forClient(c)(space)));
   },
 );
 
@@ -147,53 +168,57 @@ spaceRoutes.get(
 spaceRoutes.post(
   "/:id/archive",
   zValidator("param", idParam),
-  async (c) => c.json(SpaceSummarySchema.parse(
+  async (c) => c.json(SpaceSummarySchema.parse(forClient(c)(
     await new SpaceService(c.env, getAuth(c)).archive(c.req.valid("param").id),
-  )),
+  ))),
 );
 
 spaceRoutes.post(
   "/:id/restore",
   zValidator("param", idParam),
-  async (c) => c.json(SpaceSummarySchema.parse(
+  async (c) => c.json(SpaceSummarySchema.parse(forClient(c)(
     await new SpaceService(c.env, getAuth(c)).restore(c.req.valid("param").id),
-  )),
+  ))),
 );
 
 spaceRoutes.post(
   "/:id/channels",
   zValidator("param", idParam),
   zValidator("json", channelBody),
-  async (c) => c.json(SpaceSummarySchema.parse(
+  async (c) => c.json(SpaceSummarySchema.parse(forClient(c)(
     await new SpaceService(c.env, getAuth(c)).addChannel(
       c.req.valid("param").id,
       c.req.valid("json").workstreamId,
     ),
-  )),
+  ))),
 );
 
 spaceRoutes.delete(
   "/:id/channels/:workstreamId",
   zValidator("param", channelParam),
-  async (c) => c.json(SpaceSummarySchema.parse(
+  async (c) => c.json(SpaceSummarySchema.parse(forClient(c)(
     await new SpaceService(c.env, getAuth(c)).removeChannel(
       c.req.valid("param").id,
       c.req.valid("param").workstreamId,
     ),
-  )),
+  ))),
 );
 
 spaceRoutes.post(
   "/:id/channels/:workstreamId/move",
   zValidator("param", channelParam),
   zValidator("json", MoveChannelBetweenSpacesRequestSchema),
-  async (c) => c.json(MoveChannelBetweenSpacesResultSchema.parse(
-    await new SpaceService(c.env, getAuth(c)).moveChannel(
-      c.req.valid("json").sourceSpaceId,
-      c.req.valid("param").id,
-      c.req.valid("param").workstreamId,
-    ),
-  )),
+  async (c) => {
+    const moved = MoveChannelBetweenSpacesResultSchema.parse(
+      await new SpaceService(c.env, getAuth(c)).moveChannel(
+        c.req.valid("json").sourceSpaceId,
+        c.req.valid("param").id,
+        c.req.valid("param").workstreamId,
+      ),
+    );
+    const summary = forClient(c);
+    return c.json(MoveChannelBetweenSpacesResultSchema.parse({ source: summary(moved.source), target: summary(moved.target) }));
+  },
 );
 
 // One route per kind would be two routes that differ in a literal. The kind is
@@ -203,23 +228,23 @@ spaceRoutes.post(
   "/:id/defaults",
   zValidator("param", idParam),
   zValidator("json", defaultBody),
-  async (c) => c.json(SpaceSummarySchema.parse(
+  async (c) => c.json(SpaceSummarySchema.parse(forClient(c)(
     await new SpaceService(c.env, getAuth(c)).addDefault(
       c.req.valid("param").id,
       c.req.valid("json").kind,
       c.req.valid("json").targetId,
     ),
-  )),
+  ))),
 );
 
 spaceRoutes.delete(
   "/:id/defaults/:kind/:targetId",
   zValidator("param", defaultParam),
-  async (c) => c.json(SpaceSummarySchema.parse(
+  async (c) => c.json(SpaceSummarySchema.parse(forClient(c)(
     await new SpaceService(c.env, getAuth(c)).removeDefault(
       c.req.valid("param").id,
       c.req.valid("param").kind,
       c.req.valid("param").targetId,
     ),
-  )),
+  ))),
 );

@@ -20,6 +20,7 @@ import {
 import { isRetirementRefusal } from "../durable-objects/object-retirement";
 import { logInfo, logWarn } from "../observability/logger";
 import { WorkspaceRelationshipChangeMessageSchema, type WorkspaceRelationshipChangeMessage } from "../services/workspace-relationship-delivery";
+import { seatOrganizationMember } from "../services/space-bootstrap-service";
 import { publishWorkspaceSync } from "../services/workspace-realtime-service";
 import {
   AccessRevocationMessageSchema,
@@ -369,6 +370,12 @@ export async function applyWorkspaceRelationshipChange(env: Env, message: Worksp
     }
     await publishWorkspaceSync(env, relationship.workspaceId,
       ["workspace_profile", "member_directory", "workstream_directory"], { memberUserIds: [relationship.userId] });
+    // Joining, or a guest becoming a member: General and their own Personal
+    // Channel. Last, so a failure here retries a message whose earlier steps
+    // are all fenced against applying twice.
+    if (!removed && relationship.status === "active" && relationship.accessClass === "member") {
+      await seatOrganizationMember(env, relationship.workspaceId, relationship.userId);
+    }
   } catch (error) {
     // Retirement is terminal and has already fenced the object's readers.
     // Match the existing revocation consumer's terminal treatment.

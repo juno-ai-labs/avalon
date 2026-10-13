@@ -17,11 +17,12 @@
 import { env } from "cloudflare:workers";
 import { runDurableObjectAlarm } from "cloudflare:test";
 
-import { asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
+import { asSpaceId, asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
 
 import type { Env } from "../../src/env";
 import { conversationObjectName, workspaceDOName } from "../../src/durable-objects/names";
 import type { SubstreamAgent } from "../../src/durable-objects/substream-agent";
+import { personalSpaceIdFor } from "../../src/durable-objects/workspace-space-protocol";
 import { DemoPackSchema } from "../../src/services/demo-pack";
 import {
   applyDemoSeedAction,
@@ -30,6 +31,8 @@ import {
   type DemoSeedReceipt,
   type DemoSeedSession,
 } from "../../src/services/demo-seeder";
+import { seatOrganizationMember } from "../../src/services/space-bootstrap-service";
+import { claimParentAnchor } from "../../src/services/workstream-runtime-database";
 import { seedWorkspaceControlPlane } from "./substream-fixture";
 
 export const DEMO_WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000d5a1");
@@ -333,7 +336,21 @@ export async function seedDemoWorkspaceControlPlane(): Promise<void> {
       )
     )`),
   ]);
-  await demoWorkspaceStub().initializeWorkspace(DEMO_WORKSPACE_ID, "wnam");
+  // As preparation opens it: `createOwnedWorkspace` anchors General and the
+  // presenter's Personal Channel and opens both in the one object call, and
+  // `creating_workspace` then seats the cast in General and gives each theirs.
+  const generalId = asSpaceId("00000000-0000-7000-8000-00000000d5b0");
+  const personalSpaceId = await personalSpaceIdFor(DEMO_WORKSPACE_ID, DEMO_PRESENTER_ID);
+  let authorityGeneration = 1;
+  for (const spaceId of [generalId, personalSpaceId]) {
+    ({ generation: authorityGeneration } = await claimParentAnchor(demoSeedEnv(), DEMO_WORKSPACE_ID, spaceId, "space"));
+  }
+  await demoWorkspaceStub().initializeWorkspace(DEMO_WORKSPACE_ID, "wnam", {
+    creatorUserId: DEMO_PRESENTER_ID, spaceId: generalId, personalSpaceId, authorityGeneration,
+  });
+  for (const userId of [DEMO_PRIYA_ID, DEMO_MARCUS_ID]) {
+    await seatOrganizationMember(demoSeedEnv(), DEMO_WORKSPACE_ID, userId);
+  }
 }
 
 export async function openDemoTestSession(pack = DEMO_TEST_PACK): Promise<DemoSeedSession> {

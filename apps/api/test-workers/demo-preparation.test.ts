@@ -18,7 +18,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset } from "cloudflare:test";
+import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { ParentEffectEnvelope } from "@rally/contracts/conversation-effects";
@@ -289,6 +289,17 @@ describe("preparing a demo", () => {
       { user_id: PRESENTER_ID, role: "owner" },
     ]));
     expect(members.results).toHaveLength(4);
+    // Everyone seated is in General and owns a Personal Channel before seeding
+    // starts, not when the relationship dispatch next runs.
+    const everyone = [PRESENTER_ID, priya, marcus, dana].sort();
+    await runInDurableObject(workspaceStub(workspaceId), (_instance, state) => {
+      expect(state.storage.sql.exec(`SELECT viewer.user_id FROM space_viewers viewer
+          JOIN spaces space ON space.space_id = viewer.space_id
+         WHERE space.system_role = 'general' AND viewer.is_participant = 1 ORDER BY viewer.user_id`)
+        .toArray().map((row) => row.user_id)).toEqual(everyone);
+      expect(state.storage.sql.exec(`SELECT created_by_user_id FROM spaces WHERE scope = 'individual' ORDER BY created_by_user_id`)
+        .toArray().map((row) => row.created_by_user_id)).toEqual(everyone);
+    });
     expect(await env.DB.prepare(`SELECT name FROM workspaces WHERE id = ?`).bind(workspaceId).first<{ name: string }>())
       .toEqual({ name: "Alto Capital-demo" });
     expect(await env.DB.prepare(`SELECT action FROM regional_onboarding_operations WHERE operation_id = ?`).bind(OPERATION_ID).first())

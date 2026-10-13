@@ -243,6 +243,7 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "channel_color_sync_state", // The revision counter those triggers number marks from.
   "thread_backfill", // The alarm lane and the thread-backfill RPCs only.
   "space_reads", // Each person's Channel read position; only the Space read RPCs.
+  "space_messages", // Rally's messages in a Channel; written at Space creation, read by the feed RPC.
   "workspace_sidebar_list_state",
   "workspace_socket_ticket_receipts",
   "workspace_socket_unheard", // The first-frame watch's ledger; socket paths and the alarm only.

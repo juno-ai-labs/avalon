@@ -152,25 +152,36 @@ Each tab runs the list motion on the shared scroll box;
 ### The Channel screen
 
 `screens/channel.tsx` draws a Channel: its pill and menu at the top, a feed of
-its threads, and a composer at the foot.
+its threads and messages, and a composer at the foot.
 
 - **Feed.** `GET /spaces/:id/feed`, newest nearest the composer; it opens at
   the newest row and stays there as threads arrive unless the reader has
-  scrolled up, and **Show earlier threads** loads the next page without moving
-  what they were reading. A hairline with the day's name ("Today",
+  scrolled up, and loading an earlier page does not move what they were
+  reading. A hairline with the day's name ("Today",
   "Yesterday", a weekday, then a date; `formatDayLabel`) sits above the first
   thread of each day. Each thread is one button that opens it beside the
   Channel: its title, its description, and who started it and when, with the
   thread's own mark beside them. A row the socket holds is drawn from the
   socket, so its dot and title move live, and a thread started here a moment
-  ago shows at once.
+  ago shows at once. **Show earlier** loads the next page.
+- **Messages.** A Channel's own messages
+  ([`spaces.md`](spaces.md#channel-messages)) sit in the same feed, in time
+  order with its threads: `MessageCard` draws the author (Rally's mark, or the
+  member's avatar), the markdown body and the time. They are not buttons; a
+  message opens nothing.
 - **Private threads.** A thread this person may not open is not in the feed
   at all, for a member as for a guest. The server leaves it out
   ([`listing-rules.md`](listing-rules.md)); only a link to it reaches the
   access request screen ([`channel-access-requests.md`](channel-access-requests.md)).
 - **Composer.** `ChannelComposer` starts a thread
   ([`workstream-creation.md`](workstream-creation.md)). A guest, and a reader
-  who reaches the Channel only through a thread in it, get no composer.
+  who reaches the Channel only through a thread in it, get no composer. In a
+  Channel that is not Organization-wide, a Personal Channel included, the
+  composer starts a private thread.
+- **A Personal Channel** ([`spaces.md`](spaces.md#the-personal-channel)) wears
+  the sidebar's lock like any private Channel. Its menu's **Add people** is
+  disabled, and it offers no audience switch and no archive: it is its
+  owner's alone.
 - **Empty and failed.** An empty feed says "No threads yet. Describe the work
   below and Rally starts a thread for it." A failed page says "The threads in
   this channel couldn't be loaded." A Channel the person cannot see (archived,

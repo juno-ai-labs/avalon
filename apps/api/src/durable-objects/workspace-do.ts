@@ -124,7 +124,9 @@ import {
   type PersonalOrder,
   type SpaceErrorCode,
   type SpaceId,
+  type SpaceDirectory,
   type SpaceSummary,
+  spaceScopeForClient,
   type SpaceSnapshot,
   type Workstream,
   type WorkstreamId,
@@ -234,6 +236,8 @@ import {
   acceptsNewWorkstreamWork,
   readWorkstreamAuthorityControl,
 } from "../services/workstream-authority";
+import { claimParentAnchor } from "../services/workstream-runtime-database";
+import { GENERAL_CHANNEL, PERSONAL_CHANNEL } from "./system-channels";
 import { boundParameterChunks } from "./bound-parameters";
 import { isBreakoutActivityEvent } from "./breakout-activity";
 import { projectionSupersedes, type StoredProjection } from "./projection-fence";
@@ -704,6 +708,10 @@ import {
   WorkspaceSpaceGeneralOpenResultSchema,
   WorkspaceSpaceGeneralRequestSchema,
   WorkspaceGeneralOpeningSchema,
+  WorkspaceSeatMemberRequestSchema,
+  personalSpaceIdFor,
+  type WorkspaceSeatMemberRequest,
+  type WorkspaceSeatMemberResult,
   type WorkspaceGeneralOpening,
   WorkspaceSpaceMembershipMoveOutcomeSchema,
   WorkspaceSpaceMembershipMoveRequestSchema,
@@ -780,6 +788,8 @@ import {
   WORKSPACE_SPACE_SCHEMA_STATEMENTS,
   WORKSPACE_PINNED_ORDER_MIGRATION,
   SPACE_PUBLIC_ONLY_MIGRATION,
+  SPACE_INDIVIDUAL_SCOPE_MIGRATION,
+  SPACE_MESSAGES_MIGRATION,
   SPACE_INVITEES_MIGRATION,
   WorkspaceSpaceStorage,
   type WorkspaceSpaceIntentClaim,
@@ -1276,6 +1286,12 @@ interface WorkspaceSocketAttachment extends SocketIdentity {
    * socket was.
    */
   accessClass?: "member" | "guest";
+  /**
+   * Whether this socket's build reads a Space scoped `individual`, from its
+   * signed ticket. Absent, as on every socket attached before it existed,
+   * reads as no: such a build is shown a Personal Channel as `personal`.
+   */
+  readsIndividualSpaces?: boolean;
   connectionId: string;
   connectedAt: string;
   subscribed: boolean;
@@ -1465,6 +1481,8 @@ const PRODUCT_ALARM_KIND = "product";
 const PRODUCT_ALARM_KEY = "workspace";
 /** The one-shot entry a migrating object uses to reconcile itself once. */
 const SCHEDULE_BOOTSTRAP_ALARM_KIND = "schedule_bootstrap";
+/** One-shot, written by migration 103: seat every existing member. See docs/spaces.md#the-personal-channel. */
+const PERSONAL_CHANNEL_BACKFILL_ALARM_KIND = "personal_channel_backfill";
 /** The kinds `refreshSchedule` reconciles, each dispatched to the schedule runner. */
 
 
@@ -4292,6 +4310,30 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "how far each person has read each thread, breakout and Channel, as the app reports it for Activity",
   // One waterline per person and subject, moved by app events; see workspace-activity-feed.ts.
   statements: WORKSPACE_ACTIVITY_READS_MIGRATION,
+}, {
+  version: 102,
+  description: "a Space may be individual: each member's Personal Channel",
+  // A rebuild, because SQLite cannot widen a CHECK; see
+  // SPACE_INDIVIDUAL_SCOPE_MIGRATION and docs/spaces.md#the-personal-channel.
+  statements: SPACE_INDIVIDUAL_SCOPE_MIGRATION,
+}, {
+  version: 103,
+  description: "seat every existing member in General and give them a Personal Channel",
+  // One alarm per Organization that has an identity; it walks the members and
+  // takes the same steps a joining member's relationship change does. A fresh
+  // object has no identity and no members, and pays nothing.
+  statements: [`INSERT INTO _internal_durable_alarms
+       (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json, created_at, updated_at)
+     SELECT 'personal_channel_backfill', 'workspace', unixepoch() * 1000, NULL, 0, 0, NULL,
+            unixepoch() * 1000, unixepoch() * 1000
+      WHERE EXISTS (SELECT 1 FROM workspace_identity WHERE id = 1)
+     ON CONFLICT(kind, alarm_key) DO NOTHING`],
+}, {
+  version: 104,
+  description: "messages in a Channel itself, outside any thread",
+  // Existing Generals get what General opens with from migration 103's pass; see
+  // SPACE_MESSAGES_MIGRATION and docs/spaces.md#channel-messages.
+  statements: SPACE_MESSAGES_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -4363,6 +4405,7 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
       // for a socket that predates it: `member` is what every attachment
       // written before Spaces existed meant.
       accessClass: z.enum(["member", "guest"]).default("member"),
+      readsIndividualSpaces: z.boolean().default(false),
     }).safeParse(socket.deserializeAttachment());
     return parsed.success ? parsed.data : null;
   } catch {
@@ -7471,6 +7514,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           await this.runProductAlarm(workspaceId);
           return;
         }
+        if (alarm.kind === PERSONAL_CHANNEL_BACKFILL_ALARM_KIND) {
+          await this.backfillPersonalChannels(workspaceId);
+          return;
+        }
         if (alarm.kind === SCHEDULE_BOOTSTRAP_ALARM_KIND) {
           // One-shot, written by the migration that created this index: it exists
           // so an object that has never been asked to reconcile does it once,
@@ -8193,9 +8240,146 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         return false;
       }
     }
+    // The creator's Personal Channel, outside General's branch so a replayed
+    // creation whose General committed but whose Personal Channel did not
+    // tries it again. A refusal is logged by the reservation; the creator's
+    // own relationship delivery seats them as well.
+    if (general?.personalSpaceId !== undefined && storage.personalSpaceId(general.creatorUserId) === null) {
+      await this.reservePersonalSpace(workspaceId, general.creatorUserId, general.personalSpaceId, general.authorityGeneration);
+    }
     if (storage.completeBootstrap() !== "complete") return false;
     this.publishSpaceSnapshot();
     return true;
+  }
+
+  /**
+   * Queue the one seating pass migration 103 runs (`backfillPersonalChannels`)
+   * when the cutover closes. A member who joined while it was open was
+   * answered `spaces_not_open` and is seated here, as is anybody a backfill
+   * pass skipped for the same reason, so no relationship delivery or alarm
+   * waits on a cutover that may never close. Idempotent: the pass seats nobody
+   * twice. Not called when a new Organization opens: its creator is seated in
+   * that same call, and it has nobody else yet.
+   */
+  private async seatEveryoneOnceSpacesOpen(): Promise<void> {
+    if (!this.hasUnseatedMember()) return;
+    this.scheduledAlarms.schedule({ kind: PERSONAL_CHANNEL_BACKFILL_ALARM_KIND, key: "workspace", dueAt: Date.now() });
+    await this.armNextAlarm();
+  }
+
+  /**
+   * Whether this object knows an active non-guest member who is not in
+   * General or has no Personal Channel: one read of its own tables, so a
+   * cutover with nobody to seat queues nothing.
+   */
+  private hasUnseatedMember(): boolean {
+    const generalSpaceId = this.spaceStorage().generalSpaceId();
+    return this.state.storage.sql.exec(
+      `SELECT 1 FROM workspace_member_status status
+        WHERE status.active = 1
+          AND json_extract(status.relationship_json, '$.accessClass') = 'member'
+          AND (NOT EXISTS (SELECT 1 FROM space_viewers viewer
+                            WHERE viewer.space_id = ? AND viewer.user_id = status.user_id AND viewer.is_participant = 1)
+               OR NOT EXISTS (SELECT 1 FROM spaces space
+                               WHERE space.scope = 'individual' AND space.created_by_user_id = status.user_id))
+        LIMIT 1`,
+      generalSpaceId,
+    ).toArray().length > 0;
+  }
+
+  /**
+   * Put a member who just became active in General and give them their
+   * Personal Channel; see docs/spaces.md#the-personal-channel. Server-to-server,
+   * from the relationship change, and idempotent: a redelivery seats nobody
+   * twice and finds the Personal Channel present.
+   *
+   * Two calls, the way `openGeneralSpace` is: the Personal Channel needs its
+   * D1 anchor before it exists, and only this object knows whether it does.
+   * The first answers `absent`; the caller writes the anchor under
+   * `personalSpaceId` and asks again with the generation it wrote it at.
+   */
+  async seatOrganizationMember(input: WorkspaceSeatMemberRequest): Promise<WorkspaceSeatMemberResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSeatMemberRequestSchema, input, "seat_organization_member");
+    this.assertWorkspace(request.workspaceId);
+    const storage = this.spaceStorage();
+    if (!storage.ready() || !storage.bootstrapStatus().ready) return { seated: false, reason: "spaces_not_open" };
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) return { seated: false, reason: "not_member" };
+    if (storage.seatMember(request.userId)) this.publishSpaceSnapshot();
+    if (storage.personalSpaceId(request.userId) !== null) return { seated: true, personalSpace: "present" };
+    if (request.authorityGeneration === undefined) return { seated: true, personalSpace: "absent" };
+    const refusal = await this.reservePersonalSpace(
+      request.workspaceId, request.userId, request.personalSpaceId, request.authorityGeneration,
+    );
+    // Thrown so the relationship delivery retries; the code names why.
+    if (refusal !== null) throw new Error(refusal);
+    return { seated: true, personalSpace: "present" };
+  }
+
+  /**
+   * Migration 103's one pass: every active non-guest member of an Organization
+   * that existed before Personal Channels is seated in General and given one,
+   * anchoring each in D1 here as `seatOrganizationMember`'s caller does. Each
+   * member's steps are idempotent, so a pass that throws part way is retried
+   * by the alarm from the top and redoes nothing.
+   *
+   * Settles without seating anybody while the Organization's Spaces are not
+   * open: closing the cutover queues this pass again
+   * (`seatEveryoneOnceSpacesOpen`), and a cutover blocked for good would
+   * otherwise retry this alarm for ever.
+   */
+  private async backfillPersonalChannels(workspaceId: string): Promise<void> {
+    const storage = this.spaceStorage();
+    if (!storage.ready() || !storage.bootstrapStatus().ready) return;
+    const members = await this.env.DB.prepare(
+      `SELECT user_id FROM workspace_members
+        WHERE workspace_id = ? AND status = 'active' AND access_class = 'member'
+        ORDER BY user_id`,
+    ).bind(workspaceId).all<{ user_id: string }>();
+    let seated = false;
+    for (const { user_id: userId } of members.results) {
+      // The object's own copy decides, as it does for every other seating.
+      if (!await this.activeSpaceMember(workspaceId, userId)) continue;
+      if (storage.seatMember(userId)) seated = true;
+      if (storage.personalSpaceId(userId) !== null) continue;
+      const spaceId = await personalSpaceIdFor(workspaceId, userId);
+      const { generation } = await claimParentAnchor(this.env, workspaceId, spaceId, "space");
+      const refusal = await this.reservePersonalSpace(workspaceId, userId, spaceId, generation);
+      if (refusal !== null) throw new Error(refusal);
+    }
+    // An Organization from before Channel messages: what General opens with,
+    // dated when General was made, so it is still the first thing there.
+    const generalSpaceId = storage.generalSpaceId();
+    if (generalSpaceId !== null) storage.postStartingMessages(generalSpaceId, GENERAL_CHANNEL.messages);
+    if (seated) this.publishSpaceSnapshot();
+  }
+
+  /**
+   * Write a member's Personal Channel and its hosted parent under `spaceId`,
+   * whose D1 anchor the caller has written, in one transaction; or seat them
+   * in the one they already have. Answers why not when the id names
+   * something other than a Space, or the authority generation is unusable.
+   */
+  private async reservePersonalSpace(
+    workspaceId: string,
+    userId: string,
+    spaceId: string,
+    authorityGeneration: number,
+  ): Promise<SpaceErrorCode | null> {
+    const storage = this.spaceStorage();
+    const parent = await this.spaceParentReservation(spaceId, authorityGeneration);
+    if (!parent.ok) {
+      logWarn(this.env, "space_personal_reserve_refused", { workspace_id: workspaceId, reason: parent.code });
+      return parent.code;
+    }
+    const personal = await this.withMembersLearned(() => this.state.storage.transactionSync(() => {
+      const reserved = storage.reservePersonal(workspaceId, userId, spaceId, PERSONAL_CHANNEL);
+      if (reserved.created) parent.reserve(userId, reserved.space);
+      return reserved;
+    }));
+    this.publishSpaceSnapshot();
+    if (personal.created) await this.afterParentWrite();
+    return null;
   }
 
   /** Which room owns an automation, and which of its conversations is home, for a caller resolving participation. */
@@ -9053,7 +9237,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           directory: {
             title: space.name,
             description: "",
-            scope: space.scope,
+            // A conversation parent's scope is a thread's: the participants,
+            // or everyone. A Personal Channel's participants are its owner.
+            scope: space.scope === "individual" ? "personal" : space.scope,
             systemKind: null,
             emailAddress: null,
             titleStatus: "settled",
@@ -9075,6 +9261,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * made is the answer (`created: false`) and the unique partial index is
    * still what decided it.
    */
+  /**
+   * General as this caller may read it, or `null` while there is none.
+   * Writes nothing, unlike `openGeneralSpace`, which records General on the
+   * cutover's row: for a reader that polls, such as demo readiness.
+   */
+  async readGeneralSpace(input: WorkspaceSpaceGeneralRequest): Promise<{ ok: true; space: SpaceSummary | null } | { ok: false; code: SpaceErrorCode }> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceGeneralRequestSchema, input, "read_general_space");
+    this.assertWorkspace(request.workspaceId);
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "read");
+    if (refusal) return { ok: false, code: refusal };
+    const storage = this.spaceStorage();
+    const generalSpaceId = storage.generalSpaceId();
+    if (generalSpaceId === null) return { ok: true, space: null };
+    const space = storage.readable(member(request.userId), generalSpaceId);
+    return space === false ? { ok: false, code: "space_not_found" } : { ok: true, space };
+  }
+
   async openGeneralSpace(input: WorkspaceSpaceGeneralRequest): Promise<WorkspaceSpaceGeneralOpenResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceGeneralRequestSchema, input, "open_general_space");
@@ -9110,7 +9314,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const parent = await this.spaceParentReservation(spaceId, authorityGeneration);
     if (!parent.ok) return { ok: false, code: parent.code };
     const general = await this.withMembersLearned(() => this.state.storage.transactionSync(() => {
-      const ensured = storage.ensureGeneral(WorkspaceDO.generalReservation(request), spaceId);
+      const ensured = storage.ensureGeneral(WorkspaceDO.generalReservation(request), spaceId, GENERAL_CHANNEL.messages);
       if (ensured.created) parent.reserve(request.userId, ensured.space);
       return ensured;
     }));
@@ -9129,7 +9333,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return {
       workspaceId: asWorkspaceId(request.workspaceId),
       userId: asUserId(request.userId),
-      space: { name: "General", iconKey: "building-2", colorKey: "blue", scope: "workspace" },
+      space: { name: GENERAL_CHANNEL.name, iconKey: GENERAL_CHANNEL.iconKey, colorKey: GENERAL_CHANNEL.colorKey, scope: "workspace" },
     };
   }
 
@@ -9399,18 +9603,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const threads = new Map(this.conversationRows(
       viewer,
       request.workspaceId,
-      page.items.map((item) => ({ kind: "channel" as const, workstreamId: item.workstreamId, substreamId: null })),
+      page.items.flatMap((item) => (item.kind === "thread"
+        ? [{ kind: "channel" as const, workstreamId: item.workstreamId, substreamId: null }]
+        : [])),
     ).map((thread) => [thread.id as string, thread]));
     return WorkspaceChannelFeedResultSchema.parse({
       ok: true,
       page: {
-        // A row the directory no longer resolves is dropped, as on every Space page.
-        items: page.items.flatMap((item) => {
+        // Checked by the result schema below.
+        items: page.items.flatMap((item): unknown[] => {
+          const placedAt = iso(item.placedAt);
+          if (item.kind === "message") return [{ kind: "message", placedAt, message: item.message }];
+          // A row the directory no longer resolves is dropped, as on every Space page.
           const thread = threads.get(item.workstreamId);
           if (!thread) return [];
           return [{
             kind: "thread",
-            placedAt: iso(item.placedAt),
+            placedAt,
             attentionSequenceNumber: item.attentionOrdinal,
             thread: WorkstreamSchema.parse(thread),
           }];
@@ -9768,8 +9977,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     // General is every thread's fallback home, so it stays Organization-wide:
-    // a private General would hide every unplaced thread's Channel.
-    if (request.audience.scope === "personal" && this.spaceStorage().generalSpaceId() === request.spaceId) {
+    // a private General would hide every unplaced thread's Channel. A
+    // Personal Channel's audience is its owner, always.
+    const storage = this.spaceStorage();
+    if ((request.audience.scope === "personal" && storage.generalSpaceId() === request.spaceId)
+      || storage.isPersonalSpace(request.spaceId)) {
       return { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] };
     }
     const activeMembers = await Promise.all(request.audience.participantUserIds.map((userId) => (
@@ -10539,7 +10751,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     );
     this.assertWorkspace(request.workspaceId);
     const outcome = this.spaceStorage().completeBootstrap();
-    if (outcome === "complete") this.publishSpaceSnapshot();
+    if (outcome === "complete") {
+      this.publishSpaceSnapshot();
+      await this.seatEveryoneOnceSpacesOpen();
+    }
     return WorkspaceSpaceBootstrapFinalizeResultSchema.parse({ outcome });
   }
 
@@ -14991,7 +15206,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * The title of whatever a shared link names, or null when nothing here has
    * that id. Holding the link is the permission: a link's title is shown to
-   * anyone who has it, so this reads no viewer and checks no scope. A deleted
+   * anyone who has it, so this reads no viewer and checks no scope, except
+   * that a Personal Channel is never named. A deleted
    * Sidekick is gone; an archived Channel, Breakout or Space keeps its name.
    */
   async linkTitle(input: unknown): Promise<{ title: string | null }> {
@@ -15010,7 +15226,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           target.workstreamId, target.substreamId,
         ).toArray()[0]
         : target.kind === "space"
-          ? sql.exec<{ title: string }>(`SELECT title FROM spaces WHERE space_id = ?`, target.spaceId).toArray()[0]
+          // A Personal Channel is its owner's alone, so a link to it names
+          // nothing: its owner may have renamed it.
+          ? sql.exec<{ title: string }>(
+            `SELECT title FROM spaces WHERE space_id = ? AND scope <> 'individual'`,
+            target.spaceId,
+          ).toArray()[0]
           : sql.exec<{ title: string }>(
             `SELECT title FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
             target.sidekickId,
@@ -15786,6 +16007,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const attachment: WorkspaceSocketAttachment = {
       ...identity.data,
       accessClass: auth.accessClass ?? "member",
+      readsIndividualSpaces: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_READS_INDIVIDUAL_SPACES) === "1",
       connectionId: uuidV7(),
       connectedAt: new Date(connectedAt).toISOString(),
       subscribed: false,
@@ -17021,8 +17243,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // orders taken ahead of it would answer without the Space the directory
     // beside it is about to carry.
     const active = spaces.list(attachment.workspaceId, viewer);
+    const readable = (directory: SpaceDirectory): SpaceDirectory => attachment.readsIndividualSpaces ? directory : {
+      ...directory,
+      items: directory.items.map((space) => ({ ...space, scope: spaceScopeForClient(space.scope, false) })),
+    };
     return {
-      spaces: { active, inactive: spaces.listInactive(viewer) },
+      spaces: { active: readable(active), inactive: readable(spaces.listInactive(viewer)) },
       ordering: spaces.readOrders(attachment.workspaceId, viewer),
       pinnedOrder: spaces.readPinnedOrder(viewer),
       pins: new WorkspacePinStorage(this.state.storage).list(viewer.userId),

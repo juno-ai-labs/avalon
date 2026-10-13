@@ -35,10 +35,13 @@ import {
   type WorkspaceSidebar,
   type WorkstreamId,
 } from "@rally/contracts";
+import { INDIVIDUAL_SPACE_CLIENT_CONTRACT } from "@rally/contracts/http-headers";
 
 import { createApp } from "../src/app";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
+import { personalSpaceIdFor } from "../src/durable-objects/workspace-space-protocol";
+import { seatOrganizationMember } from "../src/services/space-bootstrap-service";
 import { SpaceService } from "../src/services/space-service";
 import { seatSpaceInvitee } from "../src/services/workspace-realtime-service";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
@@ -671,6 +674,22 @@ describe("a Space and its hosted parent", () => {
   });
 });
 
+describe("PATCH /spaces/:id", () => {
+  // A Personal Channel is `individual`; a desktop built before that scope reads
+  // it as the private Channel it is rather than failing to parse the summary.
+  it("answers a Personal Channel as private to a client that predates its scope", async () => {
+    await seatOrganizationMember(routeEnv(), WORKSPACE_ID, OWNER);
+    const personal = await personalSpaceIdFor(WORKSPACE_ID, OWNER);
+    const rename = { name: "Scratch", iconKey: "briefcase", colorKey: "blue" };
+
+    const released = await request(`/spaces/${personal}`, OWNER_AUTH, rename, "PATCH", "3");
+    const current = await request(`/spaces/${personal}`, OWNER_AUTH, rename, "PATCH", String(INDIVIDUAL_SPACE_CLIENT_CONTRACT));
+
+    expect([released.status, released.body]).toEqual([200, expect.objectContaining({ name: "Scratch", scope: "personal" })]);
+    expect([current.status, current.body]).toEqual([200, expect.objectContaining({ name: "Scratch", scope: "individual" })]);
+  });
+});
+
 describe("PATCH /spaces/:id/audience", () => {
   it("changes who a Space lists, stages nothing for its member Channel, and leaves that Channel's audience alone", async () => {
     const created = await createSpace("Hiring");
@@ -1064,6 +1083,19 @@ describe("the navigation routes", () => {
     expect((await request("/navigation/activity/events", MEMBER_AUTH, {
       events: [{ kind: "read", subject: { kind: "channel", channelId: "x" }, through: -1 }],
     })).status).toBe(400);
+  });
+
+  it("serves a Channel's messages to a build that reads them, and withholds them from one that does not", async () => {
+    const opened = await workspace().openGeneralSpace({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId("00000000-0000-7000-8000-00000000d2a4"),
+    });
+    if (!opened.ok || "absent" in opened) throw new Error("openGeneralSpace refused");
+    const path = `/spaces/${opened.space.id}/feed`;
+    expect(await request(path, MEMBER_AUTH, undefined, "GET", "6")).toMatchObject({
+      status: 200,
+      body: { items: [{ kind: "message", message: { author: { kind: "rally" }, body: expect.stringMatching(/^Welcome to Rally, we’ve created a channel/u) } }] },
+    });
+    expect(await request(path, MEMBER_AUTH, undefined, "GET", "5")).toMatchObject({ status: 200, body: { items: [] } });
   });
 
   it("answers nobody who is not signed in", async () => {
