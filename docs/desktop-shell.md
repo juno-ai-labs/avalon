@@ -400,9 +400,16 @@ what they are, and for the middle badge to show more of itself; at 2px the
 nested badge hid most of it. The product owner also asked for the arrow on
 the second line to go; the nested tile already marks the row as a breakout.
 
-**Consequences:** A badge's tip opens from its fill, not its ring, because the
-nested badge sits inside its parent's ring; a tip on the ring would open both
-at once.
+**Considered and rejected:** The tip on the badge's ring, the outer element.
+The nested badge sits inside its parent's ring, so hovering it would open both
+tips at once.
+
+**Consequences:** A badge's tip must stay on its fill. A badge drawn without a
+`label` shows no tip, so a new caller of `TileBadge` has to name it to get one.
+The 5px inset covers more of the tile under the parent badge; a deeper nest
+would need the geometry worked out again.
+
+Shipped in [#1208](https://github.com/juno-ai-labs/avalon/pull/1208).
 
 ### 2026-10-13 — Channel rows count new threads only; no Archived list
 
