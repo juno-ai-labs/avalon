@@ -8821,6 +8821,8 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   font-size: 13.5px;
   line-height: 1.5;
   overflow: hidden;
+  /* A long URL is one word; let it break rather than spill past the card. */
+  overflow-wrap: anywhere;
   text-wrap: pretty;
 }
 .channel-feed-meta { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: 12px; gap: 6px; margin-top: 2px; }
