@@ -55,7 +55,7 @@ export async function persistVerifiedGoogleIdentity(db: D1Database, input: {
  * never an account-linking operation. Concurrent first logins converge through
  * the unique email and provider-subject constraints in one D1 batch.
  */
-export async function resolveVerifiedEmailIdentity(db: D1Database, verifiedEmail: string, signup?: SignupFlow): Promise<string> {
+export async function resolveVerifiedEmailIdentity(db: D1Database, verifiedEmail: string, signup?: SignupFlow): Promise<{ id: string; created: boolean }> {
   const email = EmailSchema.parse(verifiedEmail);
   const id = newId();
   const at = nowIso();
@@ -77,5 +77,5 @@ export async function resolveVerifiedEmailIdentity(db: D1Database, verifiedEmail
     JOIN users u ON u.id = identity.user_id AND u.email = verified.email
     WHERE identity.provider = 'email' AND identity.subject = ?`).bind(email).first<{ user_id: string }>();
   if (!row) throw new ApiError(409, "verified_identity_required", "This address needs an explicit account link before email sign-in");
-  return row.user_id;
+  return { id: row.user_id, created: row.user_id === id };
 }

@@ -1,7 +1,8 @@
-import { attentionItems, type BreakoutLists } from '../common/attention-items';
+import type { ActivityItem } from '@rally/contracts';
 import { compareRecentChannels } from '../common/recency-groups';
+import type { ActivityFeedSnapshot } from './activity-feed-watch';
 import type { ChannelDirectorySnapshot } from './channel-directory-watch';
-import type { MenuBarContent, MenuBarWorkstream } from './menu-bar-menu';
+import type { MenuBarAttentionRow, MenuBarContent, MenuBarWorkstream } from './menu-bar-menu';
 
 /** Shown for a Channel Rally has not finished naming. The renderer draws a
  * skeleton in that state; a menu row cannot, and the placeholder title on the
@@ -9,27 +10,51 @@ import type { MenuBarContent, MenuBarWorkstream } from './menu-bar-menu';
 const UNNAMED_WORKSTREAM_LABEL = 'Untitled thread';
 
 /**
- * The menu's content, derived from the Channel directory the main process
- * holds over its own workspace socket.
+ * What happened, as the row's detail line. The Activity tab writes it as
+ * "*actor* *verb* *title*"; a menu row leads with the title, so the actor and
+ * verb move under it. A start carries no name (the tab resolves it from the
+ * member directory, which the main process does not hold), so it reads as
+ * what it is rather than as "Someone".
+ */
+function activityDetail(item: ActivityItem): string {
+  const actor = item.actorLabel.trim();
+  switch (item.kind) {
+    case 'mentioned': return actor ? `${actor} mentioned you` : 'Mentioned you';
+    case 'added': return actor ? `${actor} added you` : 'Added you';
+    case 'thread_started': return actor ? `${actor} started it` : 'New thread';
+    case 'breakout_started': return actor ? `${actor} started it` : 'New breakout';
+    case 'run_finished': return actor ? `${actor} finished` : 'Finished';
+  }
+}
+
+/** One unread Activity row as a menu row, opening where the tab's row opens. */
+function attentionRow(item: ActivityItem): MenuBarAttentionRow {
+  const detail = activityDetail(item);
+  const title = item.breakout?.title ?? item.threadTitle;
+  return {
+    key: item.id,
+    workstreamId: item.threadId,
+    substreamId: item.breakout?.substreamId ?? null,
+    title: title.trim().length > 0 ? title : UNNAMED_WORKSTREAM_LABEL,
+    detail: item.breakout ? `${detail} in ${item.threadTitle}` : detail,
+  };
+}
+
+/**
+ * The menu's content, from the two lists the main process holds:
  *
- * Both sections are the sidebar's lists computed the sidebar's way, from the
- * same rows:
- *
- * - **Needs attention** is `attentionItems`, the function behind the sidebar's
- *   attention button. Breakout lists are read only for a Channel whose row
- *   counts a Breakout needing the reader, exactly as `useAttentionItems` reads
- *   them, so a Breakout the sidebar would not list is not counted here either.
+ * - **Needs attention** is the Activity tab's unread rows, in its order
+ *   (newest first), under the access requests the tab also lists first. It
+ *   is the tab's list rather than the Threads tab's attention list, so the
+ *   menu and the tab never disagree about what is new: a row stays until
+ *   Mark all read, as the tab's dot does.
  * - **Most recent** is every listed Channel in the sidebar's Recent order,
  *   unfiltered by Space and ignoring pins, which belong to one Space. A Channel
  *   listed to the reader only through a Breakout (`mainWithheld`) opens that
  *   Breakout, as its sidebar row does, since Main is not theirs to open; one
  *   whose Breakout list has not arrived is left out rather than opening Main.
  */
-export function menuBarContentFromDirectory(directory: ChannelDirectorySnapshot): MenuBarContent {
-  const breakouts: Record<string, BreakoutLists[string]> = {};
-  for (const channel of directory.channels) {
-    if ((channel.breakoutAttentionCount ?? 0) > 0) breakouts[channel.id] = directory.breakouts[channel.id];
-  }
+export function menuBarContent(directory: ChannelDirectorySnapshot, activity: ActivityFeedSnapshot): MenuBarContent {
   const named = directory.channels.map((channel) => (
     channel.titleStatus === 'naming' || channel.title.trim().length === 0
       ? { ...channel, title: UNNAMED_WORKSTREAM_LABEL }
@@ -39,15 +64,9 @@ export function menuBarContentFromDirectory(directory: ChannelDirectorySnapshot)
     accessRequests: directory.accessRequests.map((request) => ({
       id: request.id, requesterName: request.requesterName, title: request.title,
     })),
-    attention: attentionItems(named, breakouts).map((item) => ({
-      key: item.key,
-      workstreamId: item.workstreamId,
-      substreamId: item.substreamId,
-      title: item.title,
-      channelTitle: item.channelTitle,
-      reason: item.reason,
-    })),
-    attentionComplete: directory.complete,
+    attention: activity.items.filter((item) => item.unread).map(attentionRow),
+    attentionComplete: activity.complete,
+    recentsComplete: directory.complete,
     recents: named
       .filter((channel) => !channel.archivedAt && !channel.systemKind)
       .sort(compareRecentChannels)
