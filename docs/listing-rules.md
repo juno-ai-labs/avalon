@@ -192,6 +192,8 @@ on the wire so a row can grow another kind without a breaking change. The
 unread dot is gated on the visible count rather than the Channel's own
 waterline, because the waterline still moves for every placement.
 
+PR [#1226](https://github.com/juno-ai-labs/avalon/pull/1226).
+
 ### 2026-10-10 — A private Space is listed to its participants alone, and the feed names locked threads
 
 **What changed:** The Space rule's third arm, reach through a listable thread,
