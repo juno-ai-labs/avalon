@@ -149,6 +149,8 @@ component test runner is needed for the same implementations.
 
 **Consequences:** The shape is measured after layout (`ResizeObserver` on the label and the bridge), so a caller sees one layout pass with the label before the glass fits it. The bridge asks for the name's full width but never grows past its container: Channel and thread names run to 180 characters, so a long one ends in an ellipsis and the pill is drawn to the width the container gave. The circles never shrink. The tint gradient spans the circles and holds the last tint across the stretch.
 
+Shipped in #1209.
+
 ### 2026-10-13 — `MarkBridge` fuses a row of marks into one tinted glass shape
 
 **What changed:** `MarkBridge` is new, with `IdentityMark` and its two

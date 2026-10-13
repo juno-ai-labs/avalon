@@ -138,7 +138,8 @@ export function MarkBridge({ className, items, labelLast = false }: {
   // bridge was actually given once its container had its say.
   const [size, setSize] = useState({ name: 0, given: 0 });
   const labelled = labelLast && items.length > 0;
-  const lastName = items.at(-1)?.name;
+  // A different last object is a new label element: observe that one.
+  const last = items.at(-1);
   useLayoutEffect(() => {
     const box = root.current;
     const element = label.current;
@@ -152,7 +153,7 @@ export function MarkBridge({ className, items, labelLast = false }: {
     observer.observe(box);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [labelled, lastName]);
+  }, [labelled, last?.key, last?.name]);
   const count = items.length;
   // Nothing to join: the geometry below assumes at least one mark.
   if (count === 0) return null;
