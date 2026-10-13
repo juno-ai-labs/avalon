@@ -113,10 +113,10 @@ async function project(sourceVersion: number, substreamId?: string, archivedAt: 
   });
 }
 
-function message(workstreamId: string = THREAD) {
+function message(workstreamId: string = THREAD, attempt = 1) {
   return {
     type: "thread_backfill" as const, job: "description_summary" as const,
-    region: "global" as const, workspaceId: WORKSPACE_ID, workstreamId,
+    region: "global" as const, workspaceId: WORKSPACE_ID, workstreamId, attempt,
   };
 }
 
@@ -225,5 +225,24 @@ describe("a one-off job over every thread", () => {
     expect(await workspace().releaseThreadBackfill(message(second!))).toBe(true);
     await publish();
     expect(await claims(later!)).toBe(1);
+  });
+
+  it("refuses a release from a delivery the alarm has since claimed the row again for", async () => {
+    await project(1);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("DELETE FROM thread_backfill");
+      // Claimed twice: the first delivery outlived its gate and the alarm sent the row again.
+      state.storage.sql.exec(
+        `INSERT INTO thread_backfill(job, workstream_id, attempts, not_before, in_flight)
+           VALUES ('description_summary', ?, 2, ?, 1)`,
+        THREAD, Date.now() + 60_000,
+      );
+    });
+
+    expect(await workspace().releaseThreadBackfill(message(THREAD, 1))).toBe(false);
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql
+      .exec<{ in_flight: number }>("SELECT in_flight FROM thread_backfill WHERE workstream_id = ?", THREAD).one().in_flight))
+      .toBe(1);
+    expect(await workspace().releaseThreadBackfill(message(THREAD, 2))).toBe(true);
   });
 });
