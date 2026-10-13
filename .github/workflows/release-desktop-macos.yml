@@ -206,13 +206,9 @@ jobs:
       # portable gates on the frozen release commit, on the inexpensive runner,
       # before signing and notarization can claim macOS.
       - name: Lint
-        env:
-          NODE_OPTIONS: --max-old-space-size=8192
         run: pnpm lint
 
       - name: Typecheck
-        env:
-          NODE_OPTIONS: --max-old-space-size=8192
         run: pnpm typecheck
 
       - name: Test
