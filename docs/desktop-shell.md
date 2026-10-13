@@ -419,6 +419,18 @@ chevron pointing down. The arrow said "breakout", but the stacked thread pill
 beside it already says that. Breakout chips and rows keep the arrow; only the
 title pill changed.
 
+**Considered and rejected:** Keeping the right chevron on the thread pill and
+turning the Breakout's right too, so both pointed the same way. A Breakout pill
+has nothing beside it to point at, and a down chevron is what opens a menu on
+every other pill.
+
+**Consequences:** A pill's chevron always means "open this menu", never a
+direction. A new kind of title pill wears its own glyph through `icon` and, when
+it can change its appearance, an `AppearancePicker` through `iconAction`, rather
+than a fixed type mark.
+
+Shipped in [#1216](https://github.com/juno-ai-labs/avalon/pull/1216).
+
 ### 2026-10-13 — The right slot holds every opened item, with a pane header
 
 **What changed:** The right panel now holds whatever a conversation opens, not

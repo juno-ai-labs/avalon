@@ -905,6 +905,15 @@ describe('socket-first channel open', () => {
       cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
     }, childId);
 
+    // The pill's own icon picker, like a thread pill's.
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Change Private child icon' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Rocket' }));
+    await waitFor(() => expect(childAppearance).toHaveBeenCalledWith({ icon: 'rocket' }));
+    expect(mainAppearance).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+
+    // And the menu's Icon submenu.
     fireEvent.pointerDown(await screen.findByRole('button', { name: 'Breakout menu: Private child' }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
     fireEvent.keyDown(await screen.findByRole('menuitem', { name: 'Icon' }), { key: 'ArrowRight' });
