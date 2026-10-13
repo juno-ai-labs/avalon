@@ -3,12 +3,14 @@ import {
   WorkspaceAccessRequestsEventSchema,
   WorkspaceSocketSyncEventSchema,
   type ConversationAccessRequestItem,
+  WORKSPACE_SYNC_TOPICS,
   WorkspaceSpaceChannelsEventSchema,
   WorkspaceSpaceSnapshotEventSchema,
   WorkspaceWorkstreamPageEventSchema,
   WorkspaceWorkstreamRecencyEventSchema,
   WorkspaceWorkstreamStateEventSchema,
   type Workstream,
+  type WorkspaceSyncTopic,
   type WorkstreamStateVersion,
 } from '@rally/contracts';
 import type { WorkspaceSocketConnection, WorkspaceSocketWatchDependencies } from '@rally/contracts/workspace-reach-watch';
@@ -53,6 +55,12 @@ export interface ChannelDirectoryWatchDependencies {
   readonly socket: ChannelDirectorySocket;
   /** Called after any change to the snapshot, coalesced to one call per frame. */
   readonly onChange: () => void;
+  /**
+   * The topics a `workspace_sync` frame says moved, for the lists this watch
+   * does not hold itself. A subscribe names every topic: nothing is replayed
+   * across a reconnect, so anything may have moved while the socket was down.
+   */
+  readonly onSync?: (topics: readonly WorkspaceSyncTopic[]) => void;
   readonly requestId: () => string;
   readonly logWarning: (message: string, error: unknown) => void;
 }
@@ -119,17 +127,19 @@ function hasUnread(row: StoredRow): boolean {
  * The Organization's Channel list, held by the main process over a workspace
  * socket of its own.
  *
- * The menu bar is the one surface that outlives every window, and its count has
- * to be the sidebar's count. That count is drawn from data only the workspace
- * socket carries — each row's reader marks and each Channel's Breakout list —
- * so a REST read cannot reproduce it, and a renderer is not always there to
- * ask. This holds the same rows the sidebar holds, from the same frames:
+ * The menu bar is the one surface that outlives every window, and its Most
+ * recent section is the sidebar's Channel list, which only the workspace socket
+ * carries; a renderer is not always there to ask. This holds the same rows the
+ * sidebar holds, from the same frames:
  *
  * - the subscribe answer, then a walk of every Space with `space_channels`
  *   (or, for an Organization still opening, the paged directory);
  * - `workspace_workstream_state` and `workspace_workstream_recency` pushes,
  *   ordered by their state version exactly as the renderer orders them;
  * - `workspace_space_snapshot`, which names a Space the walk has not read.
+ *
+ * It also hands on the topics each `workspace_sync` frame names (`onSync`),
+ * which is how the menu bar learns its Activity page is stale.
  *
  * Each subscribe starts the walk again, because nothing is replayed across a
  * reconnect: a push missed while the socket was down is only recovered by
@@ -219,6 +229,7 @@ export class ChannelDirectoryWatch {
 
   private subscribed(answer: unknown, connection: WorkspaceSocketConnection): void {
     this.connection = connection;
+    this.dependencies.onSync?.(WORKSPACE_SYNC_TOPICS);
     const parsed = safeParseSocketEvent(WorkspaceSocketSyncEventSchema, answer);
     const sidebar = parsed.success ? parsed.data.sidebar : undefined;
     if (!sidebar) {
@@ -351,6 +362,12 @@ export class ChannelDirectoryWatch {
       const entry = this.pending.get(requestId)!;
       this.pending.delete(requestId);
       entry.resolve(message);
+      return;
+    }
+    if (type === 'workspace_sync') {
+      const event = safeParseSocketEvent(WorkspaceSocketSyncEventSchema, message);
+      if (!event.success) return this.unreadable(type, event.error);
+      if (event.data.topics.length > 0) this.dependencies.onSync?.(event.data.topics);
       return;
     }
     if (type === 'workspace_access_requests') {

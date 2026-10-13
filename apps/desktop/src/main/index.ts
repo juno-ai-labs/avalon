@@ -31,6 +31,7 @@ import {
   type WorkspaceAttention,
   type WorkspaceDeparture,
   AccountOnboardingSchema,
+  ActivityPageSchema,
   OrganizationNameSuggestionSchema,
   UpdateAccountOnboardingSchema,
 } from '@rally/contracts';
@@ -187,7 +188,8 @@ import {
   allowsTrustedAudioCapture,
 } from './media-permission';
 import { MenuBarController, type MenuBarTray } from './menu-bar';
-import { menuBarContentFromDirectory } from './menu-bar-content';
+import { ActivityFeedWatch } from './activity-feed-watch';
+import { menuBarContent } from './menu-bar-content';
 import {
   MENU_BAR_SECTION_LIMIT,
   supportsSectionHeaders,
@@ -929,7 +931,7 @@ function broadcastSessionChanged(value: WireSession | null): void {
   // sign-out directly. Leaving the previous account's Channel titles in the
   // menu would keep them readable to whoever signs in next, so a sign-out
   // drops them here, synchronously, before the queued sync below runs.
-  if (!exposed) channelDirectoryWatch.stop();
+  if (!exposed) stopMenuBarDirectory();
   syncMenuBarDirectory();
   menuBarController.refresh();
 
@@ -1336,13 +1338,29 @@ const channelDirectoryWatch = new ChannelDirectoryWatch({
       // the socket will not redial. Forget the rows rather than keep showing
       // titles and a count this account may no longer see; the next session
       // change finds the watch stopped and opens it again.
-      if (diagnostic.code === 'stopped') channelDirectoryWatch.stop();
+      if (diagnostic.code === 'stopped') stopMenuBarDirectory();
     },
   }),
   onChange: () => menuBarController.refresh(),
+  // Activity is not a list the socket carries; the socket only says when it
+  // may have moved, which is when the sidebar's Activity tab reads it again.
+  onSync: (topics) => { if (topics.includes('activity')) activityFeedWatch.refresh(); },
   requestId: uuidV7,
   logWarning: (message, error) => logWarn('rally', message, error),
 });
+
+/** The first page of Activity behind the menu bar's Needs attention. See `docs/menu-bar.md`. */
+const activityFeedWatch = new ActivityFeedWatch({
+  fetchPage: async () => ActivityPageSchema.parse(await rallyApiRequest('/navigation/activity')),
+  onChange: () => menuBarController.refresh(),
+  logWarning: (message, error) => logWarn('rally', message, error),
+});
+
+/** Closes the menu bar's socket and forgets everything both lists held. */
+function stopMenuBarDirectory(): void {
+  channelDirectoryWatch.stop();
+  activityFeedWatch.stop();
+}
 
 /** Which account and Organization the socket serves; a token renewal keeps it. */
 let menuBarDirectoryIdentity: string | null = null;
@@ -1376,7 +1394,7 @@ function syncMenuBarDirectory(): void {
     const runningAsIdentified = (identity !== null) === channelDirectoryWatch.running();
     if (identity === menuBarDirectoryIdentity && runningAsIdentified) return;
     menuBarDirectoryIdentity = identity;
-    channelDirectoryWatch.stop();
+    stopMenuBarDirectory();
     if (identity !== null) channelDirectoryWatch.start();
   }).catch((error: unknown) => {
     logWarn('rally', 'could not open the menu bar workspace socket', error);
@@ -1434,8 +1452,9 @@ const menuBarController = new MenuBarController({
   appName: app.name,
   createTray: createMenuBarTray,
   content: () => {
-    const snapshot = channelDirectoryWatch.snapshot();
-    return menuBarContentFromDirectory(menuBarDirectoryUnavailable ? { ...snapshot, complete: true } : snapshot);
+    // A guest has no socket, so nothing will load: say "nothing" rather than "loading".
+    const activity = activityFeedWatch.snapshot();
+    return menuBarContent(channelDirectoryWatch.snapshot(), menuBarDirectoryUnavailable ? { ...activity, complete: true } : activity);
   },
   // The in-memory credential rather than a live session: this is read while the
   // menu is being built, and it only decides which empty state to show.
@@ -4530,7 +4549,7 @@ function createMenuBarTray(): MenuBarTray {
   // The drop-down opens from what the main process's workspace socket already
   // holds, so a click costs no request: freshness arrives as socket pushes.
   const openObserver = new MenuBarOpenObserver(() => {
-    const content = menuBarContentFromDirectory(channelDirectoryWatch.snapshot());
+    const content = menuBarContent(channelDirectoryWatch.snapshot(), activityFeedWatch.snapshot());
     void telemetryReporter?.menuBarOpened({
       signedIn: Boolean(inMemoryAuthSet),
       recentCount: Math.min(content.recents.length, MENU_BAR_SECTION_LIMIT),

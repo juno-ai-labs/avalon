@@ -1,7 +1,14 @@
 import { watchWorkspaceSocket, type ReachSocket } from '@rally/contracts/workspace-reach-watch';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChannelDirectoryWatch } from './channel-directory-watch';
-import { menuBarContentFromDirectory } from './menu-bar-content';
+import { compareRecentChannels } from '../common/recency-groups';
+import { attentionItems } from '../common/attention-items';
+import type { ChannelDirectorySnapshot } from './channel-directory-watch';
+
+/** The sidebar's attention list over what the watch holds. */
+function attention(snapshot: ChannelDirectorySnapshot) {
+  return attentionItems(snapshot.channels, snapshot.breakouts);
+}
 
 type Listener = (event: never) => void;
 
@@ -128,6 +135,7 @@ const flush = (): Promise<void> => new Promise((resolve) => { setImmediate(resol
 function harness() {
   const sockets: FakeSocket[] = [];
   const onChange = vi.fn();
+  const onSync = vi.fn();
   const logWarning = vi.fn();
   let nextRequest = 0;
   const watch = new ChannelDirectoryWatch({
@@ -141,6 +149,7 @@ function harness() {
       ...handlers,
     }),
     onChange,
+    onSync,
     requestId: () => `00000000-0000-7000-8000-${(nextRequest += 1).toString(16).padStart(12, '0')}`,
     logWarning,
   });
@@ -150,7 +159,7 @@ function harness() {
     socket.emit('open');
     return socket;
   };
-  return { watch, sockets, onChange, logWarning, connected };
+  return { watch, sockets, onChange, onSync, logWarning, connected };
 }
 
 beforeEach(() => {
@@ -194,13 +203,32 @@ describe('channel directory watch', () => {
 
     const snapshot = subject.watch.snapshot();
     expect(snapshot.complete).toBe(true);
-    const content = menuBarContentFromDirectory(snapshot);
-    expect(content.attention.map((item) => [item.title, item.substreamId, item.reason])).toEqual([
+    expect(attention(snapshot).map((item) => [item.title, item.substreamId, item.reason])).toEqual([
       ['Discount call', BREAKOUT, 'mentioned'],
       ['Acme renewal', null, 'unread'],
     ]);
-    expect(content.recents.map((item) => item.title)).toEqual(['Pricing', 'Quiet', 'Acme renewal']);
+    expect([...snapshot.channels].sort(compareRecentChannels).map((item) => item.title)).toEqual(['Pricing', 'Quiet', 'Acme renewal']);
     expect(subject.onChange).toHaveBeenCalled();
+  });
+
+  it('says every topic moved on a subscribe, then names the topics each sync frame names', async () => {
+    const subject = harness();
+    subject.watch.start();
+    const socket = await subject.connected();
+    socket.message(subscribeAnswer([GENERAL]));
+    // Nothing is replayed across a reconnect, so any list may have moved.
+    expect(subject.onSync).toHaveBeenLastCalledWith(expect.arrayContaining(['activity', 'workstream_directory']));
+
+    socket.message({
+      type: 'workspace_sync',
+      eventId: '00000000-0000-7000-8000-000000000018',
+      waterline: 5,
+      occurredAt: '2026-10-06T10:01:00.000Z',
+      topics: ['activity'],
+      reason: 'change',
+    });
+    expect(subject.onSync).toHaveBeenLastCalledWith(['activity']);
+    expect(subject.onSync).toHaveBeenCalledTimes(2);
   });
 
   it('follows a Space\'s pages to the end before calling the list whole', async () => {
@@ -230,7 +258,7 @@ describe('channel directory watch', () => {
 
     // A new message arrives: the common half moves and the reader has not read it.
     socket.message(stateFrame(ACME, version(8), row(ACME, { title: 'Acme', latestAttentionSequenceNumber: 9 })));
-    expect(menuBarContentFromDirectory(subject.watch.snapshot()).attention.map((item) => item.title)).toEqual(['Acme']);
+    expect(attention(subject.watch.snapshot()).map((item) => item.title)).toEqual(['Acme']);
 
     // A push delayed behind it says the older state; it must not undo the unread.
     socket.message(stateFrame(ACME, version(6), row(ACME, { title: 'Stale title' })));

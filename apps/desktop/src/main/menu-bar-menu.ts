@@ -1,6 +1,4 @@
 import type { MenuItemConstructorOptions } from 'electron';
-import { statusLabel } from '@rally/ui/lib/format';
-import type { ReaderMarkerStatus } from '../common/attention-items';
 import { macosMajorVersion } from './macos-version';
 
 export interface MenuBarWorkstream {
@@ -10,16 +8,16 @@ export interface MenuBarWorkstream {
   readonly substreamId: string | null;
 }
 
-/** One conversation waiting for the reader: a Channel's Main, or a Breakout in it. */
+/** One unread Activity row: what happened, in a thread's Main or a Breakout in it. */
 export interface MenuBarAttentionRow {
   readonly key: string;
   readonly workstreamId: string;
   /** Null for Main. */
   readonly substreamId: string | null;
+  /** The thread's title, or the Breakout's. */
   readonly title: string;
-  /** The Channel a Breakout sits in; null for Main. */
-  readonly channelTitle: string | null;
-  readonly reason: ReaderMarkerStatus;
+  /** What happened, and the thread for a Breakout: "Rally finished", "Ana mentioned you in Pricing". */
+  readonly detail: string;
 }
 
 /** A request to join a Channel or Breakout, waiting on this person. */
@@ -32,9 +30,9 @@ export interface MenuBarAccessRequestRow {
 export interface MenuBarContent {
   /** Access requests waiting on this person, newest first; listed above the conversations and counted with them. */
   readonly accessRequests: readonly MenuBarAccessRequestRow[];
-  /** Every waiting conversation, in the sidebar's attention order. The menu draws the first few; the count is all of them. */
+  /** Every unread Activity row, newest first. The menu draws the first few; the count is all of them. */
   readonly attention: readonly MenuBarAttentionRow[];
-  /** False while the Channel directory is still being read, so an empty list is not yet "nothing". */
+  /** False until Activity has been read once, so an empty list is not yet "nothing". */
   readonly attentionComplete: boolean;
   /** Channels in the sidebar's Recent order under All. */
   readonly recents: readonly MenuBarWorkstream[];
@@ -88,9 +86,9 @@ function sectionHeader(label: string, supported: boolean): MenuItemConstructorOp
 export const MENU_BAR_SECTION_LIMIT = 5;
 
 /**
- * The status item's title: the sidebar attention button's number, capped the
- * same way, so the two never read differently. Empty when nothing is waiting,
- * which leaves the icon alone.
+ * The status item's title: the number of rows Needs attention holds, capped
+ * as the sidebar caps its badge. Empty when nothing is waiting, which leaves
+ * the icon alone.
  */
 export function menuBarTitle(count: number): string {
   if (count <= 0) return '';
@@ -156,7 +154,7 @@ const RECENT_HEADER = 'Most recent';
  * mapping from content to menu is testable without a display server.
  *
  * Two sections, each the top of a list the sidebar also draws: **Needs
- * attention**, the sidebar attention menu's rows in its order, and **Most
+ * attention**, the Activity tab's unread rows in its order, and **Most
  * recent**, the Channels in the sidebar's Recent order under All. The menu has
  * no selected Space, so neither section filters by one or shows a pin.
  *
@@ -208,17 +206,13 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
     }));
     const conversations = content.attention.slice(0, Math.max(0, MENU_BAR_SECTION_LIMIT - requests.length)).map((row): MenuItemConstructorOptions => ({
       label: menuBarLabel(row.title),
-      // The sidebar menu's detail line: why it is waiting, and where for a Breakout.
-      sublabel: menuBarLabel(row.channelTitle === null
-        ? statusLabel[row.reason]
-        : `${statusLabel[row.reason]} in ${row.channelTitle}`),
+      sublabel: menuBarLabel(row.detail),
       click: tracked('attention_conversation', () => actions.openConversation(row.workstreamId, row.substreamId)),
     }));
-    // The sidebar's own wording: "nothing" only once every Channel has been
-    // read, and "still loading" under rows that may not be all of them.
+    // "Nothing" only once Activity has been read, and "still loading" before.
     const attention = [...requests, ...conversations];
     const attentionTrailing = !content.attentionComplete
-      ? 'Still loading threads'
+      ? 'Still loading activity'
       : attention.length === 0 ? 'Nothing needs your attention' : null;
     pushSection(ATTENTION_HEADER, attention, attentionTrailing);
 
