@@ -775,8 +775,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
       label: `Thread menu: ${title}`,
       ...(onSelect ? { onSelect } : {}),
-      // Beside an open Breakout the Channel's pill points at it.
-      ...(!onSelect && breakoutPaneOpen ? { chevron: 'right' as const } : {}),
       menu: <ChannelMenu
         actions={mainActions}
         appearance={appearanceChange ? <AppearanceSubmenu

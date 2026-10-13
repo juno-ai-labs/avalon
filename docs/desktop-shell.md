@@ -197,14 +197,13 @@ controls at the right, and ancestors stacked at the left. The header row is
 Each control at the right is a `TitlePillAction`, the raised circle the pills
 wear: a Channel's import, a thread's or Breakout's close. The phone's top bar
 gives its own actions (search, new Channel) the same circle as its menu
-button. A thread or Breakout pill's icon
-is its own glyph and its appearance picker, so the two pills match; the rest of
-the pill opens its menu. A thread pill's chevron points right while a Breakout
-is open beside it. A Breakout pill also shows, once its whole history is
-loaded, its reply count (`ConversationHeaderContext.replyCount`, one per turn of
-what people and Rally said); its menu's **Icon and color** (`AppearanceSubmenu`)
-sets the same appearance. An open pill fills
-solid and drops its lift to the bare ring.
+button. A thread or Breakout pill's icon is its own glyph and its appearance
+picker, so the two pills match; the rest of the pill opens its menu, and every
+pill's chevron points down. A Breakout pill also shows, once its whole history
+is loaded, its reply count (`ConversationHeaderContext.replyCount`, one per turn
+of what people and Rally said); its menu's **Icon and color**
+(`AppearanceSubmenu`) sets the same appearance. An open pill fills solid and
+drops its lift to the bare ring.
 
 Each menu has a root and levels. The root is a row of action tiles (Add people,
 Rename, Copy link, More), under a header on a Breakout, and one row each for People,
@@ -411,10 +410,12 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 
 **What changed:** The Breakout pill's icon is now the Breakout's own glyph and
 appearance picker, the same as a thread pill, instead of the fixed breakout
-arrow. `BreakoutPillIcon` is gone.
+arrow. `BreakoutPillIcon` is gone. A thread pill's chevron no longer turns
+right while a Breakout is open beside it; every pill's chevron points down.
 
 **Why:** The two pills sat side by side and looked like different controls for
-the same kind of thing. The arrow said "breakout", but the stacked thread pill
+the same kind of thing, down to a thread chevron pointing right beside a Breakout
+chevron pointing down. The arrow said "breakout", but the stacked thread pill
 beside it already says that. Breakout chips and rows keep the arrow; only the
 title pill changed.
 
