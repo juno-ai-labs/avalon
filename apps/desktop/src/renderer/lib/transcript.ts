@@ -219,27 +219,31 @@ export function prepareDraftMentions(
 
 /**
  * Text the app kept without its mentions, such as a thread's opening line,
- * rendered the way a message is. A name in durable `[@Name](person://<id>)`
- * form, as Rally's rewrites write it, keeps that identity; failing any, each
- * typed `@Name` the send path would resolve becomes one. A person who is not a
- * member here stays as written.
+ * rendered the way a message is. A name already in durable
+ * `[@Name](person://<id>)` form, as Rally's rewrites write it, keeps that
+ * identity, and each typed `@Name` outside those links that the send path
+ * would resolve becomes one. A person who is not a member here stays as
+ * written.
  */
 export function typedMentionRendering(
   text: string,
   members: readonly WorkspaceMember[],
 ): { text: string; mentions: MessageMention[] } {
   if (!text.includes('@') || members.length === 0) return { text, mentions: [] };
+  // A link's own `[@Name` label reads as a typed name too; rewriting it again
+  // would nest one link inside another.
   const linked = personMentionMarkdownRanges(text);
-  if (linked.length === 0) {
-    const discovered = members
-      .filter((member) => (member.status ?? 'active') === 'active')
-      .map((member) => ({ type: 'person' as const, label: member.name, userId: member.id, connectorType: null }));
-    return optimisticMentionRendering(text, resolveMentionPayload(text, [], discovered), members);
-  }
+  const discovered = members
+    .filter((member) => (member.status ?? 'active') === 'active')
+    .map((member) => ({ type: 'person' as const, label: member.name, userId: member.id, connectorType: null }));
+  const typed = resolveMentionPayload(text, [], discovered).filter((mention) => !linked.some((range) => (
+    mention.startOffset < range.endOffset && range.startOffset < mention.endOffset
+  )));
+  const rendered = typed.length > 0 ? optimisticMentionRendering(text, typed, members).text : text;
   const byId = new Map(members.map((member) => [member.id.toLowerCase(), member]));
   return {
-    text,
-    mentions: linked.flatMap((range) => {
+    text: rendered,
+    mentions: personMentionMarkdownRanges(rendered).flatMap((range) => {
       const member = byId.get(range.personId);
       return member ? [{
         type: 'person' as const,
