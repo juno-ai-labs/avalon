@@ -1,5 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { IconDots } from '@tabler/icons-react';
+import { IconCheck, IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRef, type ReactNode } from 'react';
 import { IconButton } from './primitives';
@@ -11,7 +11,11 @@ export interface IconGroupAction {
   icon: ReactNode;
   onSelect: () => void;
   disabled?: boolean;
+  /** Set for a toggle: the button carries `aria-pressed`, its menu row a check. */
+  pressed?: boolean;
 }
+
+export type TooltipSide = 'top' | 'right' | 'bottom' | 'left';
 
 /**
  * A row of icon buttons with the spacing between them built in, so a header
@@ -25,8 +29,11 @@ export interface IconGroupAction {
  *
  * `folded` folds them at any width, for a host that has measured the row as
  * crowding its neighbour (`TitlePillHeader` does).
+ *
+ * `tooltipSide` applies to every button the group draws, "More" included, so a
+ * host whose content would cover a downward label moves all of them at once.
  */
-export function IconGroup({ actions = [], buttonClassName, children, className, folded = false, moreLabel = 'More actions' }: {
+export function IconGroup({ actions = [], buttonClassName, children, className, folded = false, moreLabel = 'More actions', tooltipSide }: {
   actions?: readonly IconGroupAction[];
   folded?: boolean;
   /** The look every button in the group shares, the "More" button included. */
@@ -34,32 +41,54 @@ export function IconGroup({ actions = [], buttonClassName, children, className, 
   children?: ReactNode;
   className?: string;
   moreLabel?: string;
+  tooltipSide?: TooltipSide | undefined;
 }): React.JSX.Element {
   const moreRef = useRef<HTMLButtonElement>(null);
   return <div className={clsx('icon-group', folded && 'is-folded', className)}>
     {actions.length > 0 && <>
       <span className="icon-group-actions">
-        {actions.map((action) => <IconButton className={buttonClassName} disabled={action.disabled} key={action.key} label={action.label} onClick={action.onSelect}>
+        {actions.map((action) => <IconButton
+          aria-pressed={action.pressed}
+          className={clsx(buttonClassName, action.pressed !== undefined && 'icon-button-toggle')}
+          disabled={action.disabled}
+          key={action.key}
+          label={action.label}
+          onClick={action.onSelect}
+          tooltipSide={tooltipSide}
+        >
           {action.icon}
         </IconButton>)}
       </span>
       <DropdownMenu.Root modal={false}>
         <DropdownMenu.Trigger asChild>
-          <IconButton className={clsx('icon-group-more', buttonClassName)} label={moreLabel} ref={moreRef}>
+          <IconButton className={clsx('icon-group-more', buttonClassName)} label={moreLabel} ref={moreRef} tooltipSide={tooltipSide}>
             <IconDots aria-hidden="true" size={16} stroke={1.9} />
           </IconButton>
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
           <DropdownMenu.Content align="end" className="menu-content icon-group-menu" collisionPadding={12} sideOffset={8}>
-            {actions.map((action) => <DropdownMenu.Item className="menu-item" disabled={action.disabled} key={action.key} onSelect={() => {
-              // The item is about to unmount with its menu. An action that
-              // remembers where focus was (Expand, to return to it) should
-              // find the "More" button, which stays.
-              moreRef.current?.focus();
-              action.onSelect();
-            }}>
-              {action.icon}{action.label}
-            </DropdownMenu.Item>)}
+            {actions.map((action) => {
+              const common = {
+                className: 'menu-item',
+                disabled: action.disabled,
+                onSelect: () => {
+                  // The item is about to unmount with its menu. An action that
+                  // remembers where focus was (Expand, to return to it) should
+                  // find the "More" button, which stays.
+                  moreRef.current?.focus();
+                  action.onSelect();
+                },
+              };
+              return action.pressed === undefined
+                ? <DropdownMenu.Item {...common} key={action.key}>{action.icon}{action.label}</DropdownMenu.Item>
+                : <DropdownMenu.CheckboxItem {...common} checked={action.pressed} key={action.key}>
+                  {action.icon}{action.label}
+                  {/* At the end, so the row keeps the icon its button shows. */}
+                  <DropdownMenu.ItemIndicator className="icon-group-menu-check">
+                    <IconCheck aria-hidden="true" size={15} stroke={1.9} />
+                  </DropdownMenu.ItemIndicator>
+                </DropdownMenu.CheckboxItem>;
+            })}
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>

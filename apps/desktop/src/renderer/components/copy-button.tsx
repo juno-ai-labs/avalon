@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { Check, CircleAlert, Copy } from 'lucide-react';
+import { IconAlertCircle, IconCheck, IconCopy } from '@tabler/icons-react';
 import { forwardRef, useId, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { useCopy, type CopyState, type UseCopyOptions } from '../lib/use-copy';
 import { IconButton } from './primitives';
@@ -51,21 +51,34 @@ export const CopyButton = forwardRef<HTMLButtonElement, CopyButtonProps>(functio
       <IconButton
         ref={ref}
         className={clsx('copy-button', state !== 'idle' && `copy-button-${state}`, className)}
-        label={state === 'idle' ? label : stateLabel[state]}
+        label={copyStateLabel(state, label)}
         onClick={() => void copy()}
         tooltipSide={tooltipSide}
         {...props}
       >
         {state === 'copied'
-          ? <Check aria-hidden="true" size={size} />
+          ? <IconCheck aria-hidden="true" size={size} stroke={1.9} />
           : state === 'failed'
-            ? <CircleAlert aria-hidden="true" size={size} />
-            : <Copy aria-hidden="true" size={size} />}
+            ? <IconAlertCircle aria-hidden="true" size={size} stroke={1.9} />
+            : <IconCopy aria-hidden="true" size={size} stroke={1.9} />}
       </IconButton>
-      <span aria-live="polite" className="sr-only" role="status">{stateStatus[state]}</span>
+      <CopyStatus state={state} />
     </>
   );
 });
+
+/**
+ * The pieces of `CopyButton` for a host that draws the button itself, such as
+ * a copy action in a header's `IconGroup`: its name and the live region, which
+ * the caller renders once wherever it likes. The glyph is the host's own set.
+ */
+export function copyStateLabel(state: CopyState, label: string): string {
+  return state === 'idle' ? label : stateLabel[state];
+}
+
+export function CopyStatus({ state }: { state: CopyState }): React.JSX.Element {
+  return <span aria-live="polite" className="sr-only" role="status">{stateStatus[state]}</span>;
+}
 
 /**
  * A value shown to be copied rather than read: a caption, the value in a
