@@ -315,8 +315,8 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
   current: TitlePillLevel;
   trailing?: ReactNode;
 }): React.JSX.Element {
-  // Where the pane is too narrow for the ancestors' names, the stylesheet
-  // swaps their pills for one bridge of their marks.
+  // Ancestors that all have marks are drawn as one bridge of them, at every
+  // width; pills are the fallback while any lacks one.
   const bridge: MarkBridgeItem[] = [];
   for (const level of ancestors) {
     if (level.bridge) bridge.push({ key: level.key, ...level.bridge, onSelect: level.onSelect });
@@ -332,7 +332,9 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
     style={shift ? { '--title-pill-shift': `${shift}px` } as React.CSSProperties : undefined}
   >
     <div className={clsx('title-pill-ancestors', bridged && 'is-bridged')}>
-      {ancestors.map((level) => <span className="title-pill-ancestor window-no-drag" key={level.key}>
+      {/* Crumbs that all have marks are always one bridge of them; pills are
+          the fallback for a crumb without one. */}
+      {bridged ? null : ancestors.map((level) => <span className="title-pill-ancestor window-no-drag" key={level.key}>
         <TitlePill level={level} variant="ancestor" />
       </span>)}
       {/* The nearest crumb keeps its name, which a bare mark does not say. A
