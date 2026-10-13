@@ -174,13 +174,13 @@ above it, which no automated test covers for the rules naming either class; it
 is verified in a real window.
 
 Every surface with a composer renders the same one, dressed the same way: the
-message capsule, keyed on `:is(.workstream-screen, .workstream-launch-screen)
-.workstream-composer.is-message-capsule` — one 44px pill on a 22px corner, a
+message capsule, keyed on `:is(.workstream-screen, .workstream-launch-screen,
+.channel-screen) .workstream-composer.is-message-capsule` — one 44px pill on a 22px corner, a
 42px-tall field, the plus in the left column and the send or dictation control
 in the right. `ComposerInput` takes `layout: 'message-capsule'` on every
 surface, and no surface states a treatment of its own. Every surface also draws
 it through the same host, `WorkstreamComposer`: the conversation, the
-new-breakout dock and the new-Channel launcher. The host reads only a
+new-breakout dock, the new-Channel launcher and the Channel's own composer. The host reads only a
 `ComposerConversation` — participants, scope, run status and stop state — plus
 a `draftKey`, so a conversation that does not exist yet supplies those rather
 than a whole `WorkstreamDetail`. Wrapped
@@ -678,6 +678,29 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-10-13 — The Channel composer wears the thread's capsule
+
+**What changed:** `.channel-screen` joins the screens the capsule rules are
+scoped to, and the Channel's dock takes the thread dock's padding and no scrim.
+The Channel composer is now the thread composer: the same 44px pill, the same
+480px width, no footer hint and no attachment scrollbar.
+
+**Why:** The Channel screen from the navigation redesign rendered
+`WorkstreamComposer` with `layout: 'message-capsule'`, but every capsule rule
+names the screen it applies on, and `.channel-screen` was not one. The field
+fell back to the toolbar layout: a square box, the "Enter to start a thread"
+hint, a bare attachments strip showing its scrollbar, and a 760px stack.
+
+**Considered and rejected:** Keying the capsule on `.is-message-capsule` alone.
+It is the right end state, but dropping the screen class lowers every rule's
+specificity by one, and rules elsewhere that now lose to the capsule would start
+winning. Adding the screen keeps specificity where it was.
+
+**Consequences:** A new screen that hosts `WorkstreamComposer` must join that
+`:is()` list, or its composer is the toolbar layout again. The scope's
+`font-family` rule was left out on purpose: it would retype the whole Channel
+screen, not just its composer.
 
 ### 2026-10-13 — Every artifact and attachment opens in the right panel
 
