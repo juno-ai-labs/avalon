@@ -324,9 +324,10 @@ export function TitlePillHeader({ ancestors = [], className, current, trailing }
       {ancestors.map((level) => <span className="title-pill-ancestor window-no-drag" key={level.key}>
         <TitlePill level={level} variant="ancestor" />
       </span>)}
-      {/* A lone crumb keeps its name: there is room for one, and a bare mark
-          does not say which Channel it is. */}
-      {bridged ? <MarkBridge className="title-pill-bridge window-no-drag" items={bridge} labelLast={bridge.length === 1} /> : null}
+      {/* The nearest crumb keeps its name, which a bare mark does not say. A
+          phone has no room for it and the stylesheet hides it there; the
+          shape is measured from the name, so it closes back to a circle. */}
+      {bridged ? <MarkBridge className="title-pill-bridge window-no-drag" items={bridge} labelLast /> : null}
     </div>
     <div className="title-pill-current window-no-drag"><TitlePill level={current} /></div>
     <div className="title-pill-trailing">{trailing ? <span className="window-no-drag">{trailing}</span> : null}</div>
