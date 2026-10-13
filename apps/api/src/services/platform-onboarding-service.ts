@@ -37,7 +37,7 @@ import {
 import { workspaceDOName } from "../durable-objects/names";
 import { BrowserSessionService } from "./browser-session-service";
 import { AuthService } from "./auth-service";
-import { openGeneralSpaceForNewWorkspace } from "./space-bootstrap-service";
+import { openGeneralSpaceForNewWorkspace, personalSpaceIdFor } from "./space-bootstrap-service";
 import {
   acceptsNewWorkstreamWork,
   readWorkstreamAuthorityControl,
@@ -519,10 +519,19 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
   ): Promise<D1Result[]> {
     const at = nowIso();
     const slug = workspaceSlug(input.name, input.workspaceId);
-    // Minted here and never seen outside this call, so no Channel create can
-    // have claimed it and the claim read `claimParentAnchor` makes is not needed.
+    // Minted here, or derived from the Organization this call creates, and
+    // never seen outside it, so no Channel create can have claimed either and
+    // the claim read `claimParentAnchor` makes is not needed.
     const general = acceptsNewWorkstreamWork(authority) && authority.generation >= 1
-      ? { creatorUserId: asUserId(userId), spaceId: asSpaceId(uuidV7()), authorityGeneration: authority.generation }
+      ? {
+        creatorUserId: asUserId(userId),
+        spaceId: asSpaceId(uuidV7()),
+        // The creator's Personal Channel, anchored in this batch too so the
+        // object makes it in the same call. Derived, so the relationship
+        // change that follows names the same one rather than a second.
+        personalSpaceId: await personalSpaceIdFor(input.workspaceId, userId),
+        authorityGeneration: authority.generation,
+      }
       : undefined;
     const results = await this.env.DB.batch([
       this.env.DB.prepare(
@@ -548,12 +557,12 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
          ON CONFLICT(workspace_id, user_id) DO UPDATE SET status = 'active'`,
       ).bind(input.workspaceId, userId, at, input.workspaceId, this.env.AVALON_REGION),
       this.operationStatement(input, "create", null, at),
-      ...(general ? [
-        regionalWorkstreamAnchorStatement(this.env, input.workspaceId, general.spaceId),
+      ...(general ? [general.spaceId, general.personalSpaceId].flatMap((parentId) => [
+        regionalWorkstreamAnchorStatement(this.env, input.workspaceId, parentId),
         parentRouteStatement(this.env, {
-          workspaceId: input.workspaceId, parentId: general.spaceId, generation: general.authorityGeneration, at,
+          workspaceId: input.workspaceId, parentId, generation: general.authorityGeneration, at,
         }),
-      ] : []),
+      ]) : []),
       ...trailing,
     ]);
     await this.initializeWorkspaceObject(asWorkspaceId(input.workspaceId), input.placementAffinity, general);

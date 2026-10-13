@@ -1,6 +1,8 @@
 import {
+  asSpaceId,
   asUserId,
   asWorkspaceId,
+  type SpaceId,
   type WorkstreamId,
 } from "@rally/contracts";
 
@@ -9,14 +11,17 @@ import {
   WorkspaceSpaceBootstrapFinalizeResultSchema,
   WorkspaceSpaceBootstrapPageSchema,
   WorkspaceSpaceChannelChangeResultSchema,
+  WorkspaceSeatMemberResultSchema,
   type SpaceBootstrapChannel,
   type WorkspaceSpaceBootstrapSettleRequest,
 } from "../durable-objects/workspace-space-protocol";
 import type { AuthContext, Env } from "../env";
 import { boundParameterChunks } from "../durable-objects/bound-parameters";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { stableUuid } from "../lib/stable-uuid";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { SpaceService } from "./space-service";
+import { claimParentAnchor } from "./workstream-runtime-database";
 
 /**
  * The one-time cutover that gives an existing Organization its hierarchy.
@@ -443,4 +448,36 @@ export async function placeConnectorChannelInGeneral(
       });
     });
   }
+}
+
+/**
+ * The id a member's Personal Channel is created under: derived, so every
+ * attempt for the same person (organization creation, a redelivered
+ * relationship change, a retry) names the same Space and anchors it once.
+ */
+export async function personalSpaceIdFor(workspaceId: string, userId: string): Promise<SpaceId> {
+  return asSpaceId(await stableUuid(["personal_channel", workspaceId, userId]));
+}
+
+/**
+ * Put a member who just became active in General and give them their Personal
+ * Channel; see docs/spaces.md#the-personal-channel.
+ *
+ * One object call when the Personal Channel exists, which is every call after
+ * the person's first. Otherwise its D1 anchor is written (as `ensureGeneral`
+ * writes General's) and the object asked again to create it. Throws so the
+ * relationship delivery that called it retries; every step is idempotent.
+ */
+export async function seatOrganizationMember(env: Env, workspaceId: string, userId: string): Promise<void> {
+  const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)));
+  const request = {
+    workspaceId: asWorkspaceId(workspaceId),
+    userId: asUserId(userId),
+    personalSpaceId: await personalSpaceIdFor(workspaceId, userId),
+  };
+  const seated = WorkspaceSeatMemberResultSchema.parse(await workspace.seatOrganizationMember(request));
+  if (!seated.seated || seated.personalSpace === "present") return;
+  const { generation } = await claimParentAnchor(env, workspaceId, request.personalSpaceId, "space");
+  WorkspaceSeatMemberResultSchema.parse(await workspace.seatOrganizationMember({ ...request, authorityGeneration: generation }));
 }

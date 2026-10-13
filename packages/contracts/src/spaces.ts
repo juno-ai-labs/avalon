@@ -80,8 +80,28 @@ export type SpaceColorKey = z.infer<typeof SpaceColorKeySchema>;
  * the same audience a Channel scope names, and two spellings of it would need a
  * translation at every seam that compares them.
  */
-export const SpaceScopeSchema = z.enum(["personal", "workspace"]);
+export const SpaceScopeSchema = z.enum(["personal", "workspace", "individual"]);
 export type SpaceScope = z.infer<typeof SpaceScopeSchema>;
+
+/**
+ * The two audiences a person can choose for a Space or a thread:
+ * Organization-wide, or private to its participants. `individual` is not one
+ * of them because nobody chooses it: Rally gives each member exactly one
+ * Space of that scope, their Personal Channel, when they join
+ * (`docs/spaces.md#the-personal-channel`). Its audience is its owner and never
+ * changes, so no request names it.
+ */
+export const AudienceScopeSchema = z.enum(["personal", "workspace"]);
+
+/**
+ * The scope a desktop older than `INDIVIDUAL_SPACE_CLIENT_CONTRACT` is shown
+ * for a Space. Those builds parse a Space summary strictly and would drop the
+ * whole snapshot on `individual`, so a Personal Channel reaches them as what
+ * it is there: private, with one participant.
+ */
+export function spaceScopeForClient(scope: SpaceScope, servesIndividual: boolean): SpaceScope {
+  return scope === "individual" && !servesIndividual ? "personal" : scope;
+}
 
 /**
  * The audience a Space may be given: Organization-wide, or private to its
@@ -94,7 +114,7 @@ export type SpaceScope = z.infer<typeof SpaceScopeSchema>;
  * Organization-wide. General stays Organization-wide. A Space's audience still
  * grants nothing to the threads in it: each owns its own.
  */
-export const SpaceRequestScopeSchema = SpaceScopeSchema;
+export const SpaceRequestScopeSchema = AudienceScopeSchema;
 
 /**
  * A creation's scope, which is always Organization-wide: every Channel starts
@@ -446,7 +466,7 @@ export type SpaceDefaultKind = z.infer<typeof SpaceDefaultKindSchema>;
  */
 export const ChannelAccessSourcesSchema = z.strictObject({
   direct: z.strictObject({
-    scope: SpaceScopeSchema,
+    scope: AudienceScopeSchema,
     participantUserIds: z.array(UserIdSchema),
   }),
   spaces: z.array(z.strictObject({

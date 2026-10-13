@@ -53,8 +53,9 @@ export const LEGACY_RALLY_HEADER_PREFIXES: readonly string[] = Object.freeze([
  * `2` adds browser script/reset support.
  * `3` adds explicit import verification checks and parallel file downloads, required by import admission.
  * `4` opens a guest relationship: platform discovery lists one and activation admits it.
+ * `5` reads a Space whose scope is `individual` (a Personal Channel).
  */
-export const CLIENT_CONTRACT_VERSION = 4;
+export const CLIENT_CONTRACT_VERSION = 5;
 /** Import verification includes explicit check outcomes and parallel file downloads. */
 export const SESSION_IMPORT_CLIENT_CONTRACT = 3;
 /**
@@ -62,6 +63,12 @@ export const SESSION_IMPORT_CLIENT_CONTRACT = 3;
  * asks member-only routes for every stored workspace, so it is not offered one.
  */
 export const GUEST_WORKSPACES_CLIENT_CONTRACT = 4;
+/**
+ * First client contract that reads a Space scoped `individual`. An older
+ * desktop parses Space summaries strictly, so it is shown such a Space as
+ * `personal` (`spaceScopeForClient`) rather than dropping every snapshot.
+ */
+export const INDIVIDUAL_SPACE_CLIENT_CONTRACT = 5;
 
 /**
  * The oldest client contract a Worker still answers.
@@ -121,6 +128,13 @@ export const RALLY_HEADERS = Object.freeze({
    * its own. Internal only; the edge strips every inbound spelling first.
    */
   SOCKET_IMPERSONATOR_ID: "x-rally-socket-impersonator-id",
+  /**
+   * `1` when the build that asked for a workspace socket ticket reads a Space
+   * scoped `individual` (`INDIVIDUAL_SPACE_CLIENT_CONTRACT`), signed into the
+   * ticket and forwarded on upgrade. Internal only, stripped like the
+   * impersonator id; a socket without it is told `personal`.
+   */
+  SOCKET_READS_INDIVIDUAL_SPACES: "x-rally-socket-reads-individual-spaces",
   SOCKET_SPECULATIVE: "x-rally-socket-speculative",
   SOCKET_TICKET_EXPIRES_AT: "x-rally-socket-ticket-expires-at",
   SOCKET_TICKET_ID: "x-rally-socket-ticket-id",

@@ -124,7 +124,9 @@ import {
   type PersonalOrder,
   type SpaceErrorCode,
   type SpaceId,
+  type SpaceDirectory,
   type SpaceSummary,
+  spaceScopeForClient,
   type SpaceSnapshot,
   type Workstream,
   type WorkstreamId,
@@ -704,6 +706,9 @@ import {
   WorkspaceSpaceGeneralOpenResultSchema,
   WorkspaceSpaceGeneralRequestSchema,
   WorkspaceGeneralOpeningSchema,
+  WorkspaceSeatMemberRequestSchema,
+  type WorkspaceSeatMemberRequest,
+  type WorkspaceSeatMemberResult,
   type WorkspaceGeneralOpening,
   WorkspaceSpaceMembershipMoveOutcomeSchema,
   WorkspaceSpaceMembershipMoveRequestSchema,
@@ -780,6 +785,7 @@ import {
   WORKSPACE_SPACE_SCHEMA_STATEMENTS,
   WORKSPACE_PINNED_ORDER_MIGRATION,
   SPACE_PUBLIC_ONLY_MIGRATION,
+  SPACE_INDIVIDUAL_SCOPE_MIGRATION,
   SPACE_INVITEES_MIGRATION,
   WorkspaceSpaceStorage,
   type WorkspaceSpaceIntentClaim,
@@ -1276,6 +1282,12 @@ interface WorkspaceSocketAttachment extends SocketIdentity {
    * socket was.
    */
   accessClass?: "member" | "guest";
+  /**
+   * Whether this socket's build reads a Space scoped `individual`, from its
+   * signed ticket. Absent, as on every socket attached before it existed,
+   * reads as no: such a build is shown a Personal Channel as `personal`.
+   */
+  readsIndividualSpaces?: boolean;
   connectionId: string;
   connectedAt: string;
   subscribed: boolean;
@@ -4292,6 +4304,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "how far each person has read each thread, breakout and Channel, as the app reports it for Activity",
   // One waterline per person and subject, moved by app events; see workspace-activity-feed.ts.
   statements: WORKSPACE_ACTIVITY_READS_MIGRATION,
+}, {
+  version: 102,
+  description: "a Space may be individual: each member's Personal Channel",
+  // A rebuild, because SQLite cannot widen a CHECK; see
+  // SPACE_INDIVIDUAL_SCOPE_MIGRATION and docs/spaces.md#the-personal-channel.
+  statements: SPACE_INDIVIDUAL_SCOPE_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -4363,6 +4381,7 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
       // for a socket that predates it: `member` is what every attachment
       // written before Spaces existed meant.
       accessClass: z.enum(["member", "guest"]).default("member"),
+      readsIndividualSpaces: z.boolean().default(false),
     }).safeParse(socket.deserializeAttachment());
     return parsed.success ? parsed.data : null;
   } catch {
@@ -8192,10 +8211,70 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         logWarn(this.env, "space_general_open_refused", { workspace_id: workspaceId, reason: opened.code });
         return false;
       }
+      if (opening.personalSpaceId !== undefined) {
+        await this.reservePersonalSpace(workspaceId, opening.creatorUserId, opening.personalSpaceId, opening.authorityGeneration);
+      }
     }
     if (storage.completeBootstrap() !== "complete") return false;
     this.publishSpaceSnapshot();
     return true;
+  }
+
+  /**
+   * Put a member who just became active in General and give them their
+   * Personal Channel; see docs/spaces.md#the-personal-channel. Server-to-server,
+   * from the relationship change, and idempotent: a redelivery seats nobody
+   * twice and finds the Personal Channel present.
+   *
+   * Two calls, the way `openGeneralSpace` is: the Personal Channel needs its
+   * D1 anchor before it exists, and only this object knows whether it does.
+   * The first answers `absent`; the caller writes the anchor under
+   * `personalSpaceId` and asks again with the generation it wrote it at.
+   */
+  async seatOrganizationMember(input: WorkspaceSeatMemberRequest): Promise<WorkspaceSeatMemberResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSeatMemberRequestSchema, input, "seat_organization_member");
+    this.assertWorkspace(request.workspaceId);
+    const storage = this.spaceStorage();
+    if (!storage.ready() || !storage.bootstrapStatus().ready) return { seated: false };
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) return { seated: false };
+    if (storage.seatMember(request.userId)) this.publishSpaceSnapshot();
+    if (storage.personalSpaceId(request.userId) !== null) return { seated: true, personalSpace: "present" };
+    if (request.authorityGeneration === undefined) return { seated: true, personalSpace: "absent" };
+    const refusal = await this.reservePersonalSpace(
+      request.workspaceId, request.userId, request.personalSpaceId, request.authorityGeneration,
+    );
+    // Thrown so the relationship delivery retries; the code names why.
+    if (refusal !== null) throw new Error(refusal);
+    return { seated: true, personalSpace: "present" };
+  }
+
+  /**
+   * Write a member's Personal Channel and its hosted parent under `spaceId`,
+   * whose D1 anchor the caller has written, in one transaction; or seat them
+   * in the one they already have. Answers why not when the id names
+   * something other than a Space, or the authority generation is unusable.
+   */
+  private async reservePersonalSpace(
+    workspaceId: string,
+    userId: string,
+    spaceId: string,
+    authorityGeneration: number,
+  ): Promise<SpaceErrorCode | null> {
+    const storage = this.spaceStorage();
+    const parent = await this.spaceParentReservation(spaceId, authorityGeneration);
+    if (!parent.ok) {
+      logWarn(this.env, "space_personal_reserve_refused", { workspace_id: workspaceId, reason: parent.code });
+      return parent.code;
+    }
+    const personal = await this.withMembersLearned(() => this.state.storage.transactionSync(() => {
+      const reserved = storage.reservePersonal(workspaceId, userId, spaceId);
+      if (reserved.created) parent.reserve(userId, reserved.space);
+      return reserved;
+    }));
+    this.publishSpaceSnapshot();
+    if (personal.created) await this.afterParentWrite();
+    return null;
   }
 
   /** Which room owns an automation, and which of its conversations is home, for a caller resolving participation. */
@@ -9053,7 +9132,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           directory: {
             title: space.name,
             description: "",
-            scope: space.scope,
+            // A conversation parent's scope is a thread's: the participants,
+            // or everyone. A Personal Channel's participants are its owner.
+            scope: space.scope === "individual" ? "personal" : space.scope,
             systemKind: null,
             emailAddress: null,
             titleStatus: "settled",
@@ -9768,8 +9849,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     // General is every thread's fallback home, so it stays Organization-wide:
-    // a private General would hide every unplaced thread's Channel.
-    if (request.audience.scope === "personal" && this.spaceStorage().generalSpaceId() === request.spaceId) {
+    // a private General would hide every unplaced thread's Channel. A
+    // Personal Channel's audience is its owner, always.
+    const storage = this.spaceStorage();
+    if ((request.audience.scope === "personal" && storage.generalSpaceId() === request.spaceId)
+      || storage.isPersonalSpace(request.spaceId)) {
       return { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] };
     }
     const activeMembers = await Promise.all(request.audience.participantUserIds.map((userId) => (
@@ -15786,6 +15870,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const attachment: WorkspaceSocketAttachment = {
       ...identity.data,
       accessClass: auth.accessClass ?? "member",
+      readsIndividualSpaces: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_READS_INDIVIDUAL_SPACES) === "1",
       connectionId: uuidV7(),
       connectedAt: new Date(connectedAt).toISOString(),
       subscribed: false,
@@ -17021,8 +17106,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // orders taken ahead of it would answer without the Space the directory
     // beside it is about to carry.
     const active = spaces.list(attachment.workspaceId, viewer);
+    const readable = (directory: SpaceDirectory): SpaceDirectory => attachment.readsIndividualSpaces ? directory : {
+      ...directory,
+      items: directory.items.map((space) => ({ ...space, scope: spaceScopeForClient(space.scope, false) })),
+    };
     return {
-      spaces: { active, inactive: spaces.listInactive(viewer) },
+      spaces: { active: readable(active), inactive: readable(spaces.listInactive(viewer)) },
       ordering: spaces.readOrders(attachment.workspaceId, viewer),
       pinnedOrder: spaces.readPinnedOrder(viewer),
       pins: new WorkspacePinStorage(this.state.storage).list(viewer.userId),

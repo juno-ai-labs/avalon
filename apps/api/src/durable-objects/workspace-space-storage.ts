@@ -23,10 +23,12 @@ import {
   type SpaceDefaultKind,
   type SpaceDirectory,
   type SpaceReach,
+  type SpaceScope,
   type SpaceSummary,
 } from "@rally/contracts";
 
 import { boundParameterChunks } from "./bound-parameters";
+import { CHANNEL_COLOR_SPACE_CHANGE_TRIGGER } from "./channel-color-sync";
 import { channelReadState, type ChannelReadRow, type ChannelReadState } from "./workspace-channel-read-storage";
 import {
   breakoutListedSql,
@@ -115,6 +117,12 @@ export const SPACE_BOOTSTRAP_PAGE_SIZE = 50;
 function spaceMatchName(name: string): string {
   return name.toLowerCase().replace(/[\s_-]+/gu, "");
 }
+
+/**
+ * What a Personal Channel starts as. Its owner may rename and recolour it like
+ * any Space they edit; only its audience is fixed.
+ */
+const PERSONAL_CHANNEL = { name: "Your Personal Channel", iconKey: "user", colorKey: "violet" } as const;
 
 const SPACE_ICON_FALLBACK = "briefcase";
 const SPACE_COLOR_FALLBACK = "blue";
@@ -472,6 +480,63 @@ export const SPACE_PUBLIC_ONLY_MIGRATION: readonly string[] = [
 ];
 
 /**
+ * WorkspaceDO migration 101: `spaces.scope` admits `individual`, the Personal
+ * Channel each member is given (`docs/spaces.md#the-personal-channel`).
+ *
+ * SQLite cannot change a `CHECK`, so the table is rebuilt: held, dropped,
+ * created with the wider check, refilled, and the hold dropped. No rename, so
+ * no trigger elsewhere is re-parsed against a missing table. Nothing holds a
+ * foreign key to `spaces` (deliberately; see `SPACE_INVITEES_MIGRATION`), so the
+ * drop cascades nowhere. Its two indexes and the colour trigger go with the old
+ * table and are created again under the same names and text.
+ *
+ * `spaces_individual_owner_idx` is the one-per-member rule: two seatings
+ * racing for the same person cannot both leave a Personal Channel, whatever
+ * id each was given.
+ */
+export const SPACE_INDIVIDUAL_SCOPE_MIGRATION: readonly string[] = [
+  `CREATE TABLE spaces_hold AS SELECT * FROM spaces`,
+  `DROP TABLE spaces`,
+  `CREATE TABLE spaces (
+    space_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace', 'individual')),
+    appearance_json TEXT CHECK (appearance_json IS NULL OR json_valid(appearance_json)),
+    archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0),
+    created_by_user_id TEXT,
+    system_role TEXT CHECK (system_role IS NULL OR system_role = 'general'),
+    authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
+    source_version INTEGER NOT NULL CHECK (source_version >= 0),
+    payload_hash TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    source_created_at INTEGER NOT NULL DEFAULT 0 CHECK (source_created_at >= 0),
+    source_updated_at INTEGER NOT NULL DEFAULT 0 CHECK (source_updated_at >= 0),
+    latest_attention_ordinal INTEGER NOT NULL DEFAULT 0 CHECK (latest_attention_ordinal >= 0),
+    unread_tracking_start_ordinal INTEGER NOT NULL DEFAULT 0 CHECK (unread_tracking_start_ordinal >= 0),
+    CHECK (scope <> 'individual' OR (created_by_user_id IS NOT NULL AND system_role IS NULL))
+  ) STRICT`,
+  `INSERT INTO spaces (
+     space_id, title, scope, appearance_json, archived_at, created_by_user_id, system_role,
+     authority_generation, source_version, payload_hash, revision, created_at, updated_at,
+     source_created_at, source_updated_at, latest_attention_ordinal, unread_tracking_start_ordinal
+   )
+   SELECT space_id, title, scope, appearance_json, archived_at, created_by_user_id, system_role,
+          authority_generation, source_version, payload_hash, revision, created_at, updated_at,
+          source_created_at, source_updated_at, latest_attention_ordinal, unread_tracking_start_ordinal
+     FROM spaces_hold`,
+  `DROP TABLE spaces_hold`,
+  `CREATE UNIQUE INDEX workspace_space_directory_system_role_idx
+    ON spaces(system_role) WHERE system_role IS NOT NULL`,
+  `CREATE INDEX workspace_space_directory_active_idx
+    ON spaces(archived_at, created_at, space_id)`,
+  `CREATE UNIQUE INDEX spaces_individual_owner_idx
+    ON spaces(created_by_user_id) WHERE scope = 'individual'`,
+  CHANNEL_COLOR_SPACE_CHANGE_TRIGGER,
+];
+
+/**
  * The run states a conversation is live in on its own account.
  *
  * The `exact_state` vocabulary rather than the wire's, because this predicate
@@ -603,7 +668,7 @@ interface SpaceRow extends Record<string, SqlStorageValue> {
   reach: SpaceReach;
   space_id: string;
   title: string;
-  scope: "personal" | "workspace";
+  scope: SpaceScope;
   appearance_json: string | null;
   archived_at: number | null;
   created_by_user_id: string | null;
@@ -904,6 +969,7 @@ export class WorkspaceSpaceStorage {
     spaceId: string,
     systemRole: "general" | null,
     now = Date.now(),
+    scope: SpaceScope = request.space.scope,
   ): SpaceSummary {
     return this.storage.transactionSync(() => {
       const previousCreatedAt = this.storage.sql.exec<{ created_at: number | null } & Record<string, SqlStorageValue>>(
@@ -918,7 +984,7 @@ export class WorkspaceSpaceStorage {
          ) VALUES (?, ?, ?, ?, NULL, ?, ?, 1, 0, '', 1, ?, ?, ?, ?)`,
         spaceId,
         request.space.name.trim(),
-        request.space.scope,
+        scope,
         JSON.stringify({ icon: request.space.iconKey, color: request.space.colorKey }),
         request.userId,
         systemRole,
@@ -980,6 +1046,66 @@ export class WorkspaceSpaceStorage {
       if (winner === null) throw error;
       return { space: this.writtenSpace(winner, request.userId), created: false };
     }
+  }
+
+  /**
+   * This member's Personal Channel under `spaceId`, reserved once.
+   *
+   * Present already (a redelivery, or a member who left and came back), it
+   * only seats its owner again: leaving the Organization deleted their viewer
+   * row, and the Space is still theirs. `spaces_individual_owner_idx` refuses a
+   * second one under another id, and the caller is answered with the first.
+   */
+  reservePersonal(
+    workspaceId: string,
+    userId: string,
+    spaceId: string,
+    now = Date.now(),
+  ): { space: SpaceSummary; created: boolean } {
+    return this.storage.transactionSync(() => {
+      const existing = this.personalSpaceId(userId);
+      if (existing !== null) {
+        this.seat(existing, userId, now);
+        return { space: this.writtenSpace(existing, userId), created: false };
+      }
+      const space = this.reserve({
+        workspaceId: asWorkspaceId(workspaceId),
+        userId: asUserId(userId),
+        space: { ...PERSONAL_CHANNEL, scope: "workspace" },
+      }, spaceId, null, now, "individual");
+      return { space, created: true };
+    });
+  }
+
+  /** Whether this Space is somebody's Personal Channel. */
+  isPersonalSpace(spaceId: string): boolean {
+    if (!this.ready()) return false;
+    return this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
+      "SELECT space_id FROM spaces WHERE space_id = ? AND scope = 'individual'",
+      spaceId,
+    ).toArray().length > 0;
+  }
+
+  /** This member's Personal Channel, archived or not, or nothing. */
+  personalSpaceId(userId: string): string | null {
+    if (!this.ready()) return null;
+    return this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
+      "SELECT space_id FROM spaces WHERE scope = 'individual' AND created_by_user_id = ?",
+      userId,
+    ).toArray()[0]?.space_id ?? null;
+  }
+
+  /**
+   * Make an active member a participant of General and of their own Personal
+   * Channel, whichever exist. A member who left and came back lost both viewer
+   * rows when they left. False when nothing changed, so a redelivery writes
+   * nothing.
+   */
+  seatMember(userId: string, now = Date.now()): boolean {
+    return this.storage.transactionSync(() => [this.generalSpaceId(), this.personalSpaceId(userId)]
+      .filter((spaceId): spaceId is string => spaceId !== null)
+      .map((spaceId) => this.seat(spaceId, userId, now))
+      .some(Boolean));
   }
 
   list(workspaceId: string, viewer: Viewer, now = Date.now()): SpaceDirectory {
@@ -1433,28 +1559,39 @@ export class WorkspaceSpaceStorage {
         "DELETE FROM space_invitees WHERE email = ? RETURNING space_id",
         email.toLowerCase(),
       ).toArray().map((row) => row.space_id);
-      const seated: string[] = [];
-      for (const spaceId of spaceIds) {
-        const space = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
-          `UPDATE spaces SET revision = revision + 1, updated_at = ?
-            WHERE space_id = ? AND archived_at IS NULL RETURNING space_id`,
-          now,
-          spaceId,
-        ).toArray()[0];
-        if (!space) continue;
-        this.storage.sql.exec(
-          `INSERT INTO space_viewers
-             (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
-           VALUES (?, ?, 1, 1, 0, '')
-           ON CONFLICT(space_id, user_id) DO UPDATE SET is_participant = 1`,
-          spaceId,
-          userId,
-        );
-        seated.push(spaceId);
-      }
-      if (seated.length > 0) this.advanceWaterline(now);
-      return seated;
+      return spaceIds.filter((spaceId) => this.seat(spaceId, userId, now));
     });
+  }
+
+  /**
+   * Make `userId` a participant of a live Space, advancing its revision and the
+   * waterline. False, writing nothing, when the Space is archived or they
+   * already are one. Inside the caller's transaction.
+   */
+  private seat(spaceId: string, userId: string, now: number): boolean {
+    const seated = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT space_id FROM space_viewers WHERE space_id = ? AND user_id = ? AND is_participant = 1`,
+      spaceId,
+      userId,
+    ).toArray().length > 0;
+    if (seated) return false;
+    const space = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
+      `UPDATE spaces SET revision = revision + 1, updated_at = ?
+        WHERE space_id = ? AND archived_at IS NULL RETURNING space_id`,
+      now,
+      spaceId,
+    ).toArray()[0];
+    if (!space) return false;
+    this.storage.sql.exec(
+      `INSERT INTO space_viewers
+         (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
+       VALUES (?, ?, 1, 1, 0, '')
+       ON CONFLICT(space_id, user_id) DO UPDATE SET is_participant = 1`,
+      spaceId,
+      userId,
+    );
+    this.advanceWaterline(now);
+    return true;
   }
 
   /**
@@ -1496,9 +1633,10 @@ export class WorkspaceSpaceStorage {
     // A projection never writes `archived_at`: only `finalizeArchive` and
     // `restore` do. Taking the conversation's value, always null, un-archived a
     // Space on its next rename and left it where `restore` refused it.
-    // Every Space is Organization-wide (migration 94). A stale effect that
-    // still says `personal` must not bring a private Space back.
-    const scope = "workspace";
+    // A Space's scope is WorkspaceDO's (`applyAudience`, or `individual` from
+    // the reservation); its parent's projection never moves it. A new row
+    // starts Organization-wide, as every creation does.
+    const scope = current?.scope ?? "workspace";
     const changed = !current
       || current.title !== projection.title
       || current.scope !== scope
@@ -2371,7 +2509,7 @@ export class WorkspaceSpaceStorage {
           WHERE membership.state = 'active' AND space.archived_at IS NULL
             AND ${listed.sql}
             AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})
-          ORDER BY membership.workstream_id, (space.scope = 'personal'), membership.space_id`,
+          ORDER BY membership.workstream_id, (space.scope <> 'workspace'), membership.space_id`,
         viewer.userId,
         ...listed.binds,
         ...chunk,
@@ -2457,7 +2595,7 @@ export class WorkspaceSpaceStorage {
         WHERE membership.workstream_id = ?
           AND membership.state = 'active'
           AND space.archived_at IS NULL
-        ORDER BY (space.scope = 'personal'), membership.space_id
+        ORDER BY (space.scope <> 'workspace'), membership.space_id
         LIMIT 1`,
       workstreamId,
     ).toArray()[0]?.space_id ?? null;
@@ -3240,12 +3378,15 @@ export class WorkspaceSpaceStorage {
       }
       const row = this.storage.sql.exec<{
         system_role: string | null;
+        scope: SpaceScope;
         revision: number;
       } & Record<string, SqlStorageValue>>(
-        "SELECT system_role, revision FROM spaces WHERE space_id = ?",
+        "SELECT system_role, scope, revision FROM spaces WHERE space_id = ?",
         spaceId,
       ).one();
-      if (row.system_role === "general") {
+      // General is every thread's fallback home; a Personal Channel is its
+      // owner's for as long as they are a member.
+      if (row.system_role === "general" || row.scope === "individual") {
         return { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] };
       }
       const stranded: string[] = [];
