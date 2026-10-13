@@ -15,6 +15,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
 
 import { ChannelComposer } from '../components/channel-composer';
+import { MarkdownBody } from '../components/workstream-blocks';
 import { Avatar, Button, EmptyState, InlineError, LoadingState, Modal, TitleSkeleton } from '../components/primitives';
 import { RelativeTime } from '../components/relative-time';
 import { useAppSession } from '../lib/app-session';
@@ -29,6 +30,8 @@ import { CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY, c
 import { usePinAction, usePinnedIds } from '../lib/pins';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { WORKSTREAM_LANDING_ROUTE } from '../lib/workstream-landing';
+import { typedMentionRendering } from '../lib/transcript';
+import { EmailMentionContext, emailMentionDirectory, NO_INVITEES, useWorkspaceInvitees } from '../lib/workspace-invitees';
 import type { AutomationSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
@@ -242,6 +245,13 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
     staleTime: 60_000,
   });
   const memberById = useMemo(() => new Map((members.data ?? []).map((member) => [member.id, member])), [members.data]);
+  // A summary's typed `@address` resolves against the directory the composer
+  // below already reads, so it chips as it does in the thread.
+  const invitees = useWorkspaceInvitees(api, workspace.currentUser.accessClass !== 'guest');
+  const emailMentions = useMemo(
+    () => emailMentionDirectory(members.data ?? NO_MEMBERS, invitees.data ?? NO_INVITEES),
+    [invitees.data, members.data],
+  );
   // The feed reads down to now, so it opens at its newest row, beside the
   // composer, and stays there as threads arrive, unless the reader has
   // scrolled up to read something older. Loading an earlier page keeps the
@@ -290,7 +300,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
       ref={feedScroll}
     >
       {/* Newest nearest the composer: the list reads down to now. */}
-      <ol aria-label={`Threads in ${space.name}`} className="channel-feed-list">
+      <EmailMentionContext.Provider value={emailMentions}><ol aria-label={`Threads in ${space.name}`} className="channel-feed-list">
         {feed.hasNextPage && <li className="channel-feed-more">
           <Button disabled={feed.isFetchingNextPage} onClick={() => void feed.fetchNextPage()}>Show earlier threads</Button>
         </li>}
@@ -302,6 +312,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
             ? <ThreadCard
               author={row.thread.createdByUserId ? memberById.get(row.thread.createdByUserId) : undefined}
               key={row.thread.id}
+              members={members.data ?? NO_MEMBERS}
               onOpen={openThread}
               open={row.thread.id === openThreadId}
               placedAt={row.placedAt}
@@ -312,7 +323,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
           if (previous && new Date(previous.placedAt).toDateString() === day) return [card];
           return [<DaySeparator key={`day:${row.kind === 'thread' ? row.thread.id : row.threadId}`} placedAt={row.placedAt} />, card];
         })}
-      </ol>
+      </ol></EmailMentionContext.Provider>
       {feed.isSuccess && rows.length === 0 && <p className="channel-feed-empty">No threads yet. Describe the work below and Rally starts a thread for it.</p>}
       {feed.isError && <InlineError>The threads in this channel couldn’t be loaded.</InlineError>}
     </div>
@@ -332,14 +343,18 @@ function DaySeparator({ placedAt }: { placedAt: string }): React.JSX.Element {
   </li>;
 }
 
+/** The default for a member list not yet loaded, hoisted so each card's memo holds. */
+const NO_MEMBERS: WorkspaceMember[] = [];
+
 /**
  * One thread in the feed: its title, its summary in a line or two, who started
  * it and when, and its mark beside them. The whole entry opens the thread.
  * Threads sit to the trailing side, as what people started; nothing else is
  * said in a Channel.
  */
-function ThreadCard({ author, onOpen, open, placedAt, thread }: {
+function ThreadCard({ author, members, onOpen, open, placedAt, thread }: {
   author: WorkspaceMember | undefined;
+  members: readonly WorkspaceMember[];
   onOpen: (threadId: string) => void;
   open: boolean;
   placedAt: string;
@@ -364,6 +379,10 @@ function ThreadCard({ author, onOpen, open, placedAt, thread }: {
   // look up (a guest has no member list, and a member's loads after the feed)
   // is somebody, not Rally.
   const byline = author?.name ?? (thread.createdByUserId ? 'Someone' : 'Rally');
+  // The summary is the opening message's text without its mentions, so the
+  // names in it are found again the way the send path found them, and drawn
+  // by the renderer the message itself uses.
+  const summary = useMemo(() => typedMentionRendering(thread.objective ?? '', members), [members, thread.objective]);
   return <li className="channel-feed-item">
     <button
       aria-label={[mark.naming ? 'Rally is choosing a name' : thread.title, news, open && 'Open'].filter(Boolean).join(', ')}
@@ -380,7 +399,9 @@ function ThreadCard({ author, onOpen, open, placedAt, thread }: {
           <span className="channel-feed-title-text">{mark.naming ? <TitleSkeleton className="breakout-chip-skeleton" /> : thread.title}</span>
           <IconChevronRight aria-hidden="true" className="channel-feed-caret" size={13} stroke={2} />
         </span>
-        {thread.objective && <span className="channel-feed-summary">{thread.objective}</span>}
+        {thread.objective && <span className="channel-feed-summary">
+          <MarkdownBody glance mentions={summary.mentions} preserveLineBreaks rallyMentions verbatim>{summary.text}</MarkdownBody>
+        </span>}
         <span className="channel-feed-meta">
           {author && <Avatar member={author} size="small" title={null} />}
           <span>{byline}</span>

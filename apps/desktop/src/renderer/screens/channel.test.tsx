@@ -12,6 +12,7 @@ import { ChannelScreen } from './channel';
 const api = vi.hoisted(() => ({
   getChannelFeed: vi.fn(),
   getWorkspaceMembers: vi.fn(async () => []),
+  getWorkspaceInvitees: vi.fn(async () => []),
   archiveSpace: vi.fn(),
   updateSpacePresentation: vi.fn(),
   updateSpaceAudience: vi.fn(),
@@ -157,6 +158,39 @@ describe('a Channel', () => {
     renderChannel();
     const feed = within(await screen.findByRole('list', { name: 'Threads in Outbound' }));
     expect((await feed.findAllByRole('listitem'))[0]).toHaveTextContent('Someone');
+  });
+
+  it('renders a thread’s summary as its message would, a member named in it as a mention chip', async () => {
+    const alex = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b';
+    api.getWorkspaceMembers.mockResolvedValueOnce([
+      { id: alex, name: 'Alex Todorovic', email: 'alex@rally.test', role: 'member' },
+    ] as never);
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [
+      { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, objective: '@Alex Todorovic @Nobody here are the **mockups**' } },
+    ] });
+    const { container } = renderChannel();
+    await waitFor(() => expect(container.querySelector('.channel-feed-summary .mention-chip')).not.toBeNull());
+    const summary = container.querySelector('.channel-feed-summary')!;
+    expect(summary.querySelectorAll('.mention-chip')).toHaveLength(1);
+    expect(summary.querySelector('.mention-chip')).toHaveAttribute('data-person-id', alex);
+    expect(summary.querySelector('.mention-chip-label')).toHaveTextContent('Alex Todorovic');
+    expect(summary.querySelector('strong')).toHaveTextContent('mockups');
+    expect(summary).toHaveTextContent('Alex Todorovic @Nobody here are the mockups');
+  });
+
+  it('chips a member’s typed address in a thread’s summary, and draws a task list without its checkboxes', async () => {
+    api.getWorkspaceMembers.mockResolvedValueOnce([
+      { id: 'alex', name: 'Alex Todorovic', email: 'alex@rally.test', role: 'member' },
+    ] as never);
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [
+      { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, objective: 'Ask @alex@rally.test\n\n- [ ] Follow up' } },
+    ] });
+    const { container } = renderChannel();
+    await waitFor(() => expect(container.querySelector('.channel-feed-summary .mention-chip')).not.toBeNull());
+    const summary = container.querySelector('.channel-feed-summary')!;
+    expect(summary.querySelector('.mention-chip')).toHaveAttribute('data-person-id', 'alex');
+    expect(summary).toHaveTextContent('Follow up');
+    expect(summary.querySelector('input')).toBeNull();
   });
 
   it('offers no composer to somebody who reaches the Channel only through a thread in it', async () => {

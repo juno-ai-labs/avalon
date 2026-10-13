@@ -8809,6 +8809,13 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   overflow-wrap: anywhere;
   text-wrap: pretty;
 }
+/* The summary is drawn by the message renderer, but reads as the card's own
+   line: its size and ink, and no paragraph or heading spacing to spend the
+   clamp on. */
+.channel-feed-summary .markdown-body { --markdown-ink: currentColor; --markdown-ink-strong: currentColor; color: inherit; font-size: inherit; line-height: inherit; }
+.channel-feed-summary .markdown-body :is(p, h1, h2, h3, h4, h5, h6) { font-size: inherit; margin: 0; }
+.channel-feed-summary .markdown-body :is(ul, ol, blockquote, pre, table, hr, .markdown-code-block) { margin: 0; }
+.channel-feed-summary .markdown-body :is(ul, ol, li, blockquote) { border: 0; display: block; list-style: none; padding: 0; text-align: inherit; }
 .channel-feed-meta { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: 12px; gap: 6px; margin-top: 2px; }
 .channel-feed-meta .avatar { height: 18px; margin-right: 2px; width: 18px; }
 .channel-feed-meta .avatar-fallback { font-size: 8px; }
