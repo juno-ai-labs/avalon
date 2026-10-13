@@ -397,10 +397,23 @@ though the server refuses only archiving General or making it private.
 **Why:** The product owner asked for the Channel and thread menus to match,
 and for a Channel's look to be changed from its mark. A space's icon and colour
 are not a patch on the server: `PATCH /spaces/:id` takes name, icon and colour
-together. So the screen queues picks and builds each from the one before; two
-picks made before the first save answers would otherwise send the old icon back
-with the new colour. A change that moves the presentation to a patch endpoint
-can drop the queue.
+together. So the screen sends every presentation write, picks and renames
+alike, through one queue, each built from the last one sent for the same
+Channel. Without it, an icon picked and then a rename sent before the first
+save answered would send the old icon back.
+
+**Considered and rejected:** Making `PATCH /spaces/:id` accept any of the three
+fields and apply only those present, which would drop the queue. It is a
+contract and server change to a write path other clients use, larger than the
+menu change it would serve; the queue is a few lines in one component.
+
+**Consequences:** Any new write of a Channel's name, icon or colour from this
+screen must go through `writePresentation`, or it can undo a pick or rename
+still in flight. The pending presentation is keyed by Channel id because the
+header stays mounted from one Channel to the next. If the endpoint becomes a
+patch, the queue can go.
+
+Shipped in [#1202](https://github.com/juno-ai-labs/avalon/pull/1202).
 
 ### 2026-10-12 — Threads loses its New thread button
 
