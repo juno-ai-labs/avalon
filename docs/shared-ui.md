@@ -81,16 +81,11 @@ projection cannot authorize. At the existing 920px responsive boundary and
 below, the host shows an unsupported-width state instead of presenting a
 compressed or partial hierarchy.
 
-`MarkBridge` fuses a row of `IdentityMark`s (shape, symbol, tint, ink;
-`spaceMark` for a Channel, `workstreamMark` for a thread or Breakout) into one
-glass shape: a circle per object in its tint, joined by narrow necks, blending
-tint to tint in OKLCH. Each mark shows its object's outline (squircle or
-circle) and symbol in ink, and is its own control with a two-line tooltip: the
-name, then what selecting it does. It knows nothing about objects or routes;
-the caller hands it marks, names, actions and handlers. `TitlePillHeader` is
-one caller: a level may carry a `bridge` entry, and where a pane is too narrow
-for the ancestors' names and every one has an entry, the pills give way to a
-bridge whose marks select what the pills did.
+`MarkBridge` draws a row of `IdentityMark`s (`spaceMark` for a Channel,
+`workstreamMark` for a thread or Breakout) as one glass shape, each mark a
+control with its own tooltip. It knows nothing about routes; the caller hands
+it names, actions and handlers. `TitlePillHeader` uses it for ancestor crumbs
+too narrow to show their names, when every level carries a `bridge` entry.
 
 Theme application stamps the same `data-theme` attribute before rendering. Desktop
 installs the native theme reporter/broadcast adapter; browser and Sideline install system
@@ -133,8 +128,6 @@ Run `pnpm lint`, `pnpm typecheck`, and `pnpm --filter @rally/desktop exec vitest
 src/renderer/components/sidekick-picker.test.tsx
 src/renderer/components/sidekick-section.test.tsx` (as one command). The desktop
 suite imports the real shared implementations through their re-export adapters.
-`src/renderer/components/mark-bridge.test.tsx` covers a bridge's controls,
-tooltips, and when a title header fuses its crumbs into one.
 Run `pnpm --filter @rally/desktop exec electron-vite build` and inspect the changed
 surfaces in Electron. The browser host in #825 adds Chrome verification; no second
 component test runner is needed for the same implementations.
@@ -143,32 +136,27 @@ component test runner is needed for the same implementations.
 
 ### 2026-10-13 — `MarkBridge` fuses a row of marks into one tinted glass shape
 
-**What changed:** `mark-bridge.tsx` is new: given `IdentityMark`s, names,
-actions and handlers, it draws a 36px circle per mark, 42px apart, each joined
-to the next by a curved neck, in one SVG. Each mark shows its object's outline
-(squircle for a Channel, circle for a thread or Breakout) and symbol in its
-ink over its tint, and is a button with a `Tip` naming the object and the
-action. `IdentityMark`, `spaceMark` and `workstreamMark` are new beside the
-tile they describe. `TitlePillHeader` swaps a breakout's collapsed Channel and
-thread crumbs for one.
+**What changed:** `MarkBridge` is new, with `IdentityMark` and its two
+builders beside the tile they describe. A breakout's collapsed Channel and
+thread crumbs use it.
 
 **Why:** Two loose round buttons read as two unrelated controls; one shape
-reads as one path. The outlines repeat the sidebar's shape language, so a mark
-says Channel or thread before its name does. SVG gradients interpolate in
-sRGB, which drags two hues through grey, so each neck's blend is cut into
-stops mixed with `color-mix(in oklch, …)`. It is its own component so any row
-of related objects can use it, not only title crumbs.
+reads as one path, and the outlines say Channel or thread before a name does.
+SVG gradients interpolate in sRGB, which drags two hues through grey, so each
+neck's blend is cut into stops mixed in OKLCH. It is its own component so any
+row of related objects can use it.
 
 **Considered and rejected:** A CSS goo filter (blur and threshold), which loses
 the hairline edge and the sheen; a flat capsule, the first pass, which did not
 read as joined marks; drawing the shape behind the existing pills, which tied
-the geometry to the pills' CSS.
+its geometry to the pills' CSS.
 
-**Consequences:** The geometry lives in the component; its CSS assumes the same
-36px and 42px. The sheen stops above the symbols so each ink sits on its raw
-tint, the colour its contrast was measured against. Its tooltips are not
-hoverable: the next mark is 6px away, and a hoverable tip held open over it
-blocked the next tip. A header level with no `bridge` entry keeps the pills.
+**Consequences:** The sheen stops above the symbols so each ink sits on its
+raw tint, the colour its contrast was measured against. Its tooltips are not
+hoverable: a hoverable tip held open over the next mark, 6px away, blocked
+that mark's tip.
+
+Shipped in #1203.
 
 ### 2026-10-05 — The sidebar's minimum width fits five top-bar buttons beside the traffic lights
 

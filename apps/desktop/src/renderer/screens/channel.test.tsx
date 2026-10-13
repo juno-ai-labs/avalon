@@ -24,7 +24,16 @@ vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ d
 vi.mock('../components/channel-composer', () => ({
   ChannelComposer: ({ threadOpen }: { threadOpen?: boolean }) => <div data-thread-open={String(threadOpen)}>composer</div>,
 }));
-vi.mock('./workstream', () => ({ WorkstreamScreen: () => <div>thread pane</div> }));
+// The thread pane, with the Channel crumb it would draw once it is off screen.
+vi.mock('./workstream', async () => {
+  const { useChannelPane } = await import('../lib/navigation-routes');
+  return {
+    WorkstreamScreen: () => {
+      const pane = useChannelPane();
+      return <div>thread pane{pane && <button onClick={pane.crumb.onSelect} type="button">Channel crumb</button>}</div>;
+    },
+  };
+});
 
 const workspace: Workspace = {
   id: 'org', name: 'Rally', region: 'enterprise', timezone: 'UTC',
@@ -100,6 +109,15 @@ describe('a Channel', () => {
     expect(await screen.findByText('thread pane')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Request access' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/secret');
+  });
+
+  it('opens the Channel alone from its crumb, leaving the thread and its breakout', async () => {
+    renderChannel('/channels/outbound/threads/plan?substream=rollout');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Channel crumb' }));
+
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/channels\/outbound$/u);
+    expect(screen.queryByText('thread pane')).toBeNull();
   });
 
   it('hands the composer focus and paste back while a thread is open beside it', async () => {

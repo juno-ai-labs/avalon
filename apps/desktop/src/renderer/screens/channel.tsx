@@ -11,7 +11,6 @@ import { IconLock, IconPalette, IconPlus } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { useUiStore } from '../lib/ui-store';
 
 import { ChannelComposer } from '../components/channel-composer';
 import { Button, EmptyState, InlineError, LoadingState, Modal } from '../components/primitives';
@@ -82,14 +81,9 @@ function ChannelStack({ channelId, threadId, workspace }: {
       ...(space ? { bridge: { mark: spaceMark(space), name: space.name, action: 'Open channel' } } : {}),
       title: space?.name ?? 'Channel',
       label: `Open ${space?.name ?? 'the channel'}`,
-      // The Channel alone: the thread, its breakout, and a panel either of
-      // them holds all close. The breakout goes with the thread's route; a
-      // panel is not in the route, so it is closed here.
-      onSelect: () => {
-        const ui = useUiStore.getState();
-        if (ui.railOpen && (ui.railScope === threadId || ui.railScope?.startsWith(`${threadId}:`))) ui.closeRail();
-        void navigate(channelRoute(channelId));
-      },
+      // The Channel alone. The thread and its breakout leave with the
+      // thread's route, and each surface closes its own panel as it unmounts.
+      onSelect: () => void navigate(channelRoute(channelId)),
     },
     shifted,
     setThreadUsesTwoPanes,

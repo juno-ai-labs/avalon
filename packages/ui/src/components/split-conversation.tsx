@@ -32,7 +32,7 @@ export function clampBreakoutWidth(requested: number, containerWidth: number): n
  * single pane neither reconnects a conversation nor loses its scroll. The host
  * owns persistence of the width; null means half.
  */
-export function SplitConversationLayout({ breakout, breakoutWidth, main, mode, onBreakoutWidthChange, onNarrowChange, onShownChange }: {
+export function SplitConversationLayout({ breakout, breakoutWidth, main, mode, onBreakoutWidthChange, onShownChange }: {
   breakout: ReactNode | null;
   breakoutWidth: number | null;
   main: ReactNode | null;
@@ -45,12 +45,6 @@ export function SplitConversationLayout({ breakout, breakoutWidth, main, mode, o
    * has to carry the left one as a breadcrumb.
    */
   onShownChange?: (shown: SplitConversationMode) => void;
-  /**
-   * Whether the layout is too narrow for two panes, whatever `mode` asks for.
-   * A breadcrumb back to the left pane reads it: where only one pane fits,
-   * stepping back means showing the left pane alone.
-   */
-  onNarrowChange?: (narrow: boolean) => void;
 }): React.JSX.Element {
   const container = useRef<HTMLDivElement>(null);
   const [resizing, setResizing] = useState(false);
@@ -96,7 +90,6 @@ export function SplitConversationLayout({ breakout, breakoutWidth, main, mode, o
   }, [onBreakoutWidthChange, resizing]);
   const shown: SplitConversationMode = mode === 'split' && narrow ? 'breakout' : mode;
   useEffect(() => { onShownChange?.(shown); }, [onShownChange, shown]);
-  useEffect(() => { onNarrowChange?.(narrow); }, [onNarrowChange, narrow]);
   // Moving along the stack is drawn as movement: the pane that opens slides in
   // from the right, a pane taking the whole width slides over from where it
   // was, and stepping back reverses that. Measured, not assumed, so a resized

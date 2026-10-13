@@ -32,7 +32,7 @@ const HOLD = 9;
 const BLEND_STEPS = 8;
 
 /** The width of `count` marks on a bridge. */
-export function markBridgeWidth(count: number): number {
+function markBridgeWidth(count: number): number {
   return (count - 1) * SPAN + 2 * RADIUS;
 }
 
@@ -109,9 +109,11 @@ function bridgeStops(tints: readonly string[]): { offset: number; color: string 
 export function MarkBridge({ className, items }: {
   className?: string | undefined;
   items: readonly MarkBridgeItem[];
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const id = useId();
   const count = items.length;
+  // Nothing to join: the geometry below assumes at least one mark.
+  if (count === 0) return null;
   const path = bridgePath(count);
   const stops = bridgeStops(items.map((item) => item.mark.tint));
   const width = markBridgeWidth(count);

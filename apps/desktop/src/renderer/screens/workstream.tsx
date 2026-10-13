@@ -707,12 +707,12 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     if (breakoutOwnsRail) closeRail();
     if (turnId) setScrollToTurn((current) => ({ turnId, nonce: (current?.nonce ?? 0) + 1 }));
   };
-  /** The thread on its own: its breakout and a panel either of them holds close. */
-  const openThreadAlone = (): void => {
-    if (breakoutOwnsRail || mainOwnsRail) closeRail();
-    selectSubstream('0');
-  };
-    const openBreakout = (substreamId: string): void => {
+  /**
+   * The thread on its own. Closing the breakout closes a panel it held: a
+   * surface closes its own panel as it unmounts.
+   */
+  const openThreadAlone = (): void => selectSubstream('0');
+  const openBreakout = (substreamId: string): void => {
     // A panel the Channel has open would hide the Breakout being asked for.
     if (mainOwnsRail) closeRail();
     selectSubstream(substreamId);

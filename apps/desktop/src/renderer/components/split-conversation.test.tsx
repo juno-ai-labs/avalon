@@ -69,24 +69,4 @@ describe('SplitConversationLayout', () => {
       rect.mockRestore();
     }
   });
-
-  it('tells its host whether two panes fit, whatever the mode', () => {
-    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
-      bottom: 800, height: 800, left: 0, right: 600, top: 0, width: 600, x: 0, y: 0, toJSON: () => ({}),
-    });
-    const onNarrowChange = vi.fn();
-    try {
-      render(<SplitConversationLayout
-        breakout={<p>Breakout pane</p>}
-        breakoutWidth={null}
-        main={<p>Main pane</p>}
-        mode="breakout"
-        onBreakoutWidthChange={vi.fn()}
-        onNarrowChange={onNarrowChange}
-      />);
-      expect(onNarrowChange).toHaveBeenLastCalledWith(true);
-    } finally {
-      rect.mockRestore();
-    }
-  });
 });

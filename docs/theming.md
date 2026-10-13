@@ -238,6 +238,8 @@ a loading sweep, and in light it is near-black at 5%, not a highlight.
 
 **Consequences:** A theme that wants flat glass sets this to `transparent`.
 
+Shipped in #1203.
+
 ### 2026-10-02 — Marks take a pastel pair; people keep the hue
 
 **What changed:** Two themed token families, `sys.color.project-tint.<key>` and
