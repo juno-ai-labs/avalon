@@ -12,6 +12,7 @@ import { ChannelScreen } from './channel';
 const api = vi.hoisted(() => ({
   getChannelFeed: vi.fn(),
   getWorkspaceMembers: vi.fn(async () => []),
+  getWorkspaceInvitees: vi.fn(async () => []),
   archiveSpace: vi.fn(),
   updateSpacePresentation: vi.fn(),
   updateSpaceAudience: vi.fn(),
@@ -175,6 +176,21 @@ describe('a Channel', () => {
     expect(summary.querySelector('.mention-chip-label')).toHaveTextContent('Casey Lane');
     expect(summary.querySelector('strong')).toHaveTextContent('mockups');
     expect(summary).toHaveTextContent('Casey Lane @Nobody here are the mockups');
+  });
+
+  it('chips a member’s typed address in a thread’s summary, and draws a task list without its checkboxes', async () => {
+    api.getWorkspaceMembers.mockResolvedValueOnce([
+      { id: 'alex', name: 'Casey Lane', email: 'alex@rally.test', role: 'member' },
+    ] as never);
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [
+      { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, objective: 'Ask @alex@rally.test\n\n- [ ] Follow up' } },
+    ] });
+    const { container } = renderChannel();
+    await waitFor(() => expect(container.querySelector('.channel-feed-summary .mention-chip')).not.toBeNull());
+    const summary = container.querySelector('.channel-feed-summary')!;
+    expect(summary.querySelector('.mention-chip')).toHaveAttribute('data-person-id', 'alex');
+    expect(summary).toHaveTextContent('Follow up');
+    expect(summary.querySelector('input')).toBeNull();
   });
 
   it('offers no composer to somebody who reaches the Channel only through a thread in it', async () => {

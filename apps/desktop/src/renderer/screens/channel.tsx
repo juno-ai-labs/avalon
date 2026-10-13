@@ -31,6 +31,7 @@ import { usePinAction, usePinnedIds } from '../lib/pins';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { WORKSTREAM_LANDING_ROUTE } from '../lib/workstream-landing';
 import { typedMentionRendering } from '../lib/transcript';
+import { EmailMentionContext, emailMentionDirectory, NO_INVITEES, useWorkspaceInvitees } from '../lib/workspace-invitees';
 import type { AutomationSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
@@ -244,6 +245,13 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
     staleTime: 60_000,
   });
   const memberById = useMemo(() => new Map((members.data ?? []).map((member) => [member.id, member])), [members.data]);
+  // A summary's typed `@address` resolves against the directory the composer
+  // below already reads, so it chips as it does in the thread.
+  const invitees = useWorkspaceInvitees(api, workspace.currentUser.accessClass !== 'guest');
+  const emailMentions = useMemo(
+    () => emailMentionDirectory(members.data ?? NO_MEMBERS, invitees.data ?? NO_INVITEES),
+    [invitees.data, members.data],
+  );
   // The feed reads down to now, so it opens at its newest row, beside the
   // composer, and stays there as threads arrive, unless the reader has
   // scrolled up to read something older. Loading an earlier page keeps the
@@ -292,7 +300,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
       ref={feedScroll}
     >
       {/* Newest nearest the composer: the list reads down to now. */}
-      <ol aria-label={`Threads in ${space.name}`} className="channel-feed-list">
+      <EmailMentionContext.Provider value={emailMentions}><ol aria-label={`Threads in ${space.name}`} className="channel-feed-list">
         {feed.hasNextPage && <li className="channel-feed-more">
           <Button disabled={feed.isFetchingNextPage} onClick={() => void feed.fetchNextPage()}>Show earlier threads</Button>
         </li>}
@@ -315,7 +323,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
           if (previous && new Date(previous.placedAt).toDateString() === day) return [card];
           return [<DaySeparator key={`day:${row.kind === 'thread' ? row.thread.id : row.threadId}`} placedAt={row.placedAt} />, card];
         })}
-      </ol>
+      </ol></EmailMentionContext.Provider>
       {feed.isSuccess && rows.length === 0 && <p className="channel-feed-empty">No threads yet. Describe the work below and Rally starts a thread for it.</p>}
       {feed.isError && <InlineError>The threads in this channel couldn’t be loaded.</InlineError>}
     </div>
