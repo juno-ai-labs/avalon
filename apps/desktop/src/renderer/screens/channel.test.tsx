@@ -25,13 +25,17 @@ vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ d
 vi.mock('../components/channel-composer', () => ({
   ChannelComposer: ({ threadOpen }: { threadOpen?: boolean }) => <div data-thread-open={String(threadOpen)}>composer</div>,
 }));
-// The thread pane, with the Channel crumb it would draw once it is off screen.
+// The thread pane, with the Channel crumb it would draw once it is off screen
+// and the button that expands it over the Channel.
 vi.mock('./workstream', async () => {
   const { useChannelPane } = await import('../lib/navigation-routes');
   return {
     WorkstreamScreen: () => {
       const pane = useChannelPane();
-      return <div>thread pane{pane && <button onClick={pane.crumb.onSelect} type="button">Channel crumb</button>}</div>;
+      return <div>thread pane{pane && <>
+        <button onClick={pane.crumb.onSelect} type="button">Channel crumb</button>
+        <button onClick={() => pane.setExpanded(!pane.expanded)} type="button">{pane.expanded ? 'Collapse' : 'Expand'}</button>
+      </>}</div>;
     },
   };
 });
@@ -119,6 +123,25 @@ describe('a Channel', () => {
 
     expect(screen.getByTestId('location')).toHaveTextContent(/^\/channels\/outbound$/u);
     expect(screen.queryByText('thread pane')).toBeNull();
+  });
+
+  it('expands a thread over the Channel and puts it back, and opens the next thread beside it', async () => {
+    renderChannel('/channels/outbound/threads/plan');
+    expect(await screen.findByText('composer')).toBeVisible();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Expand' }));
+    expect(screen.getByText('composer')).not.toBeVisible();
+    expect(screen.getByText('thread pane')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse' }));
+    expect(screen.getByText('composer')).toBeVisible();
+
+    // Another thread opens while this one is expanded, as a link from
+    // elsewhere would open it; the Channel is hidden, not gone.
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+    fireEvent.click(screen.getByRole('button', { hidden: true, name: 'Private thread, request access' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/secret');
+    expect(screen.getByText('composer')).toBeVisible();
   });
 
   it('hands the composer focus and paste back while a thread is open beside it', async () => {
