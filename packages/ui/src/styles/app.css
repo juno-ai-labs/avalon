@@ -8613,8 +8613,6 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .navigation-row-lock { color: var(--av-sys-color-text-muted); flex: none; }
 .navigation-row-detail { color: var(--av-sys-color-text-muted); flex: 1; font-size: 12.5px; line-height: 17px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .navigation-row-news { color: var(--av-sys-color-workstream-news); font-weight: 500; }
-/* The breakout chip's arrow, ahead of the thread a breakout row belongs to. */
-.navigation-row-breakout-icon { display: inline-block; margin-right: 3px; vertical-align: -2px; }
 .navigation-empty { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 8px 12px; }
 .navigation-more { background: transparent; border: 0; color: var(--av-sys-color-text-muted); cursor: pointer; font: inherit; font-size: 13px; padding: 6px 12px; text-align: left; }
 .navigation-more:hover { color: var(--av-sys-color-text-default); }
