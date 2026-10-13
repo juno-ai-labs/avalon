@@ -101,7 +101,7 @@ export function spaceRefusal(
     case "space_not_found":
       return new ApiError(404, code, "Channel not found");
     case "space_protected":
-      return new ApiError(409, code, "General cannot be archived or made private");
+      return new ApiError(409, code, "This channel cannot be archived and its audience cannot be changed");
     case "space_membership_final":
       return new ApiError(409, code,
         `A thread in ${subject} belongs to no other channel, so it would have no home`, details);

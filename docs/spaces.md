@@ -480,8 +480,9 @@ participants". `spaces_individual_owner_idx` holds one per member.
   with an identity. The alarm reads the active non-guest members from D1, and
   for each one the object's own relationship copy still calls a member, seats
   them in General, writes their Personal Channel's anchor and reserves it. A
-  throw retries the whole pass, which redoes nothing; while the Spaces are not
-  open it throws `personal_channel_backfill_spaces_not_open`.
+  throw retries the whole pass, which redoes nothing. While the Spaces are not
+  open the pass settles without seating anybody, and closing the cutover
+  queues it again (`seatEveryoneOnceSpacesOpen`).
 
 The Personal Channel's id is `stableUuid(["personal_channel", workspaceId,
 userId])`, so the creation path and the relationship event name the same
@@ -524,7 +525,11 @@ mechanism knows what a message is for.
 - **What the Channels Rally makes open with** is data in
   `system-channels.ts`: General and the Personal Channel each have a name, an
   icon, a colour and a list of messages, today one from Rally apiece. Changing
-  what one says, or adding a second message, is an edit there.
+  what one says, or adding a second message, is an edit there, and reaches
+  only Channels made after it: a message is keyed by its position, and a key
+  already posted writes nothing, so an existing General keeps the words it
+  opened with, and a message added at a new position is posted only when
+  something calls `postStartingMessages` for that Channel again.
 - **In the feed.** `feedPage` reads a Channel's messages under the same seek
   as its placements and merges the two by time, then id, so one order runs
   across both and a cursor ending on either kind resumes correctly. A message
@@ -1403,6 +1408,19 @@ active keep `NULL`, which the feed reports as zero.
   Channel's, and the Space authority has no operation that adds or removes one.
   A **Remove** control on a breakout row would be offering a write nothing
   implements.
+- **A Personal Channel's audience is its owner, and never changes.** Only
+  seating writes `individual`; no request names it, and `noteSpaceAudience`
+  and archive refuse it `space_protected`, as they refuse to make General
+  private or archive it. It is listed to `created_by_user_id` alone, and only while they are
+  an active member ([`listing-rules.md`](listing-rules.md)). Nothing else names
+  it, a shared link included.
+- **A thread started in a Channel that is not Organization-wide starts
+  private.** `resolveSpaceWorkstreamStart` narrows on `scope <> 'workspace'`,
+  so a scope added later is private until it says otherwise.
+- **Seating is idempotent per member.** A Personal Channel's id is derived from
+  the Organization and the member, and `spaces_individual_owner_idx` holds one
+  per member, so a redelivery, a second seating path or the backfill finds the
+  one they have rather than making another.
 
 ## Boundary
 
@@ -1592,6 +1610,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/api/test-workers/space-creation.test.ts` | A Channel born in General with an active membership and the private audience it asked for; one General across creations; a Channel born in a named Space keeping its own audience and inheriting the Space's defaults; and that a creation whose membership cannot settle publishes no directory row by either path. |
 | `apps/api/test/workspace-space-retirement-migration.test.ts` | Migration 62 against the real ledger: a queued Project default settled before the drops rather than dropped under, an applied default leaving the Channel's own attachment alone, and the consumer's tombstone acknowledging a redelivered Project message by name. |
 | `apps/api/test/client-contract.test.ts` | Which builds the cutover still answers: a browser build that declares nothing or declares an older contract is told to update; a native client that declares nothing is admitted. |
+| `apps/api/test-workers/personal-channel.test.ts` | General and a Personal Channel on real workerd: a new Organization's creator gets both; seating a member asks for an anchor, then seats them once, and a guest gets neither; a member who joins while Spaces are not open is seated when the cutover closes; a member who left and came back is seated again; a Personal Channel is listed only to its owner and never named by a link; Channel messages post once per key and merge into the feed by time; and migrations 102 and 103 against a pre-upgrade store, workstream pins included. |
 | `packages/contracts/src/spaces.test.ts` | The closed schemas, the appearance registry, and the container address: a Space's and a Channel's need an id, the Organization's is refused one. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | That a nudge invalidates the named Channels' feeds and no others. |
 | `apps/desktop/src/renderer/screens/channel.test.tsx` | The Channel screen over the feed: thread rows, the composer's absence for a reader who reaches the Channel only through a thread, and the read acknowledgement. [`desktop-shell.md`](desktop-shell.md) owns the screen. |
@@ -1752,6 +1771,15 @@ described under [Operations](#operations) and children-before-parents, because
 `PRAGMA foreign_keys = OFF` is a no-op once a Durable Object event has touched
 SQLite. [`projects.md`](projects.md) records what was deleted and what survived
 it.
+
+**Migration 102 rebuilds `spaces`** so its scope check admits `individual`, and
+adds `spaces_individual_owner_idx`, unique on `created_by_user_id` where the
+scope is `individual`. The rebuild holds `workspace_workstream_pins` aside and
+puts it back, because those rows reference `spaces` with `ON DELETE CASCADE`
+and the drop would otherwise empty them. **Migration 103** queues the one-time
+seating alarm. **Migration 104 adds `space_messages`**: one row per Channel
+message, keyed by `message_id`, with `space_id`, an optional `message_key`,
+`author_kind` (`rally` or `member`), `author_user_id`, `body` and `posted_at`.
 
 ## Regional impact
 
@@ -1920,6 +1948,12 @@ intent is resumed in WorkspaceDO and never reaches a queue, so its signal is
 and `last_error_code` on the `space_intents` row, which holds the same word for
 whoever reads it afterwards; `space_default_delivery_failed` does the same for a
 default target.
+
+The Personal Channel backfill is one alarm (`personal_channel_backfill`) per
+Organization. A member it cannot seat logs `space_personal_reserve_refused`
+with the reason and throws, so the alarm retries; it settles without seating
+while Spaces are not open, and closing the cutover queues it again when a
+member is still unseated.
 
 ## Changelog
 

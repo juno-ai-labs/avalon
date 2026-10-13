@@ -380,6 +380,18 @@ describe('a Channel', () => {
       .toEqual(['Icon', 'Pinned in my sidebar']);
   });
 
+  it('offers a Personal Channel no people, no audience switch and no archive', async () => {
+    spaces.data = { waterline: 1, items: [{ ...outbound('participant').items[0]!, scope: 'individual' }] };
+    renderChannel();
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Outbound' }), { button: 0, ctrlKey: false });
+
+    expect(await screen.findByRole('menuitem', { name: 'Add people' })).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'More' }));
+    await screen.findByRole('menuitem', { name: 'Icon' });
+    expect([...screen.getByRole('menu').querySelectorAll('[role^="menuitem"]')].map((item) => item.textContent?.trim()))
+      .toEqual(['Icon', 'Pinned in my sidebar']);
+  });
+
   it('offers its icon and colour in More, beside its settings', async () => {
     renderChannel();
     fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Outbound' }), { button: 0, ctrlKey: false });
