@@ -787,7 +787,9 @@ export class RallyApi {
     return cookie ? 'handoff=browser' : 'desktopHandoffVersion=2';
   }
 
-  private async request<T>(path: string, options: RequestOptions<T>): Promise<T> {
+  private async request<T>(path: string, options: RequestOptions<T>): Promise<T>;
+  private async request<T, E>(path: string, options: RequestOptions<T> & { emptyAs: E }): Promise<T | E>;
+  private async request<T, E>(path: string, options: RequestOptions<T> & { emptyAs?: E }): Promise<T | E> {
     const headers = new Headers(options.headers);
     if (options.body !== undefined) headers.set('Content-Type', 'application/json');
     const method = options.method ?? 'GET';
@@ -798,7 +800,10 @@ export class RallyApi {
       ...(options.signal ? { signal: options.signal } : {}),
     }));
     if (!response.ok) return this.throwResponseError(response);
-    if (response.status === 204) throw new ApiError('The service returned no response body.', 502, 'unexpected_empty_response');
+    if (response.status === 204) {
+      if ('emptyAs' in options) return options.emptyAs as E;
+      throw new ApiError('The service returned no response body.', 502, 'unexpected_empty_response');
+    }
     const payload: unknown = await response.json();
     const parsed = options.schema.safeParse(payload);
     if (!parsed.success) {
@@ -1396,14 +1401,19 @@ export class RallyApi {
     return page.items.map((item) => item.email);
   }
 
+  /**
+   * Change a Channel's scope and participants. `null` when this person took
+   * themselves out of a private Channel, which no longer exists for them.
+   */
   updateSpaceAudience(
     id: string,
     input: { scope: SpaceScope; participantUserIds: string[]; inviteeEmails?: string[] },
-  ): Promise<SpaceSummary> {
+  ): Promise<SpaceSummary | null> {
     return this.request(`/spaces/${encodeURIComponent(id)}/audience`, {
       method: 'PATCH',
       body: input,
       schema: WireSpaceSummarySchema,
+      emptyAs: null,
     });
   }
 

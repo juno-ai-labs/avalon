@@ -706,6 +706,7 @@ import {
   WorkspaceSpaceMembershipMoveOutcomeSchema,
   WorkspaceSpaceMembershipMoveRequestSchema,
   WorkspaceSpaceMutationResultSchema,
+  WorkspaceSpaceAudienceResultSchema,
   WorkspaceSpaceReserveResultSchema,
   WorkspaceSpacePresentationRequestSchema,
   WorkspaceContainerOrderRequestSchema,
@@ -750,6 +751,7 @@ import {
   type WorkspaceSpaceMembershipMoveOutcome,
   type WorkspaceSpaceMembershipMoveRequest,
   type WorkspaceSpaceMutationResult,
+  type WorkspaceSpaceAudienceResult,
   type WorkspaceSpaceReserveResult,
   type WorkspaceSpacePresentationRequest,
   type WorkspaceContainerOrderRequest,
@@ -9675,10 +9677,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Record a Space's participants. Every Space is Organization-wide and grants no
-   * reader to its Channels, so this is the whole change: no intent, no walk.
+   * Record a Space's scope and participants. A Space grants no reader to its
+   * Channels, so this is the whole change: no intent, no walk. The actor may
+   * leave a private Space this way, and is answered `left`.
    */
-  async noteSpaceAudience(input: WorkspaceSpaceAudienceNoteRequest): Promise<WorkspaceSpaceMutationResult> {
+  async noteSpaceAudience(input: WorkspaceSpaceAudienceNoteRequest): Promise<WorkspaceSpaceAudienceResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceAudienceNoteRequestSchema, input, "note_space_audience");
     this.assertWorkspace(request.workspaceId);
@@ -9700,7 +9703,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.publishSpaceSnapshot();
     // A new scope can change which Channel decides a thread's colour.
     await this.armNextAlarm();
-    return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
+    return WorkspaceSpaceAudienceResultSchema.parse(space === "left" ? { ok: true, left: true } : { ok: true, space });
   }
 
   /**

@@ -169,6 +169,15 @@ Space private still grants and removes no reader of any Channel in it, and only
 a participant may place a Channel into it (`canEdit`). Guests are shown only
 Organization-wide Spaces through `sharedNavigationSpaces`.
 
+A participant leaves a private Space by sending its audience without
+themselves; any participant may take themselves out, and only an owner or admin
+may take out somebody else. The Space then no longer exists for them, so
+WorkspaceDO answers `{ ok: true, left: true }` and `PATCH /spaces/:id/audience`
+answers `204` rather than a summary. The desktop adds the actor to the list only
+when they turn **Public to organization** off, so that the person making a
+Channel private is not locked out of it; their **Leave the channel** sends the
+list as it stands.
+
 ### A Space starts Organization-wide and grants no reader
 
 A Space (the product's Channel) starts Organization-wide and becomes private
@@ -1802,6 +1811,29 @@ whoever reads it afterwards; `space_default_delivery_failed` does the same for a
 default target.
 
 ## Changelog
+
+### 2026-10-13: A participant can leave a private Space
+
+**What changed:** An audience change that takes the actor out of a private
+Space answers `left` from WorkspaceDO and `204` from the route, and publishes
+the Space snapshot like any other audience change. The desktop no longer adds
+the actor back on every audience change to a private Space, only when making
+one private.
+
+**Why:** **Leave the channel** did nothing on a private Channel. The desktop
+put the actor back into every `personal` audience it sent, so the request asked
+for no change. Had it reached the server without them, the write committed but
+the read-back could not render the Space for its former participant, so the
+route answered `space_not_found` and skipped the snapshot that tells other
+sockets.
+
+**Considered and rejected:** Answering the leaver with the Space's summary as
+the authority holds it. That labels a non-participant `participant` and names
+the remaining participants to somebody who just lost the right to see them.
+
+**Consequences:** A released desktop never sends a leave, so it never meets the
+`204`. Any new client that sends an audience without its own user must accept
+a `204`.
 
 ### 2026-10-10: A Space is the product's Channel, and may be private again
 
