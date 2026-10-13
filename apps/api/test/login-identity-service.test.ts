@@ -19,8 +19,8 @@ describe("verified login identities", () => {
     const db = database();
     const binding = sqliteD1(db);
     const [first, second] = await Promise.all([
-      resolveVerifiedEmailIdentity(binding, "Guest@Example.com"),
-      resolveVerifiedEmailIdentity(binding, "guest@example.com"),
+      resolveVerifiedEmailIdentity(binding, "Guest@Example.com").then((user) => user.id),
+      resolveVerifiedEmailIdentity(binding, "guest@example.com").then((user) => user.id),
     ]);
     expect(second).toBe(first);
     expect(db.prepare("SELECT id, platform_user_id, google_subject, onboarding_eligible FROM users").get())
@@ -34,7 +34,7 @@ describe("verified login identities", () => {
     const { id, created } = await persistVerifiedGoogleIdentity(binding, google);
     expect(created).toBe(true);
     db.prepare("UPDATE users SET presentation_json = ? WHERE id = ?").run('{"displayName":"Chosen name"}', id);
-    expect(await resolveVerifiedEmailIdentity(binding, "PERSON@example.com")).toBe(id);
+    expect(await resolveVerifiedEmailIdentity(binding, "PERSON@example.com")).toEqual({ id, created: false });
     expect(await persistVerifiedGoogleIdentity(binding, google)).toEqual({ id, created: false });
     expect(db.prepare("SELECT name FROM users WHERE id = ?").get(id)).toEqual({ name: "Chosen name" });
     expect(db.prepare("SELECT provider,user_id FROM user_login_identities ORDER BY provider").all())
@@ -48,8 +48,8 @@ describe("verified login identities", () => {
     expect(created).toBe(true);
     await resolveVerifiedEmailIdentity(binding, google.email);
     expect(await persistVerifiedGoogleIdentity(binding, { ...google, email: "new@example.com" })).toEqual({ id, created: false });
-    expect(await resolveVerifiedEmailIdentity(binding, "new@example.com")).toBe(id);
-    const formerMailboxOwner = await resolveVerifiedEmailIdentity(binding, google.email);
+    expect((await resolveVerifiedEmailIdentity(binding, "new@example.com")).id).toBe(id);
+    const formerMailboxOwner = (await resolveVerifiedEmailIdentity(binding, google.email)).id;
     expect(formerMailboxOwner).not.toBe(id);
     expect(db.prepare("SELECT email FROM user_verified_emails WHERE user_id = ?").all(id)).toEqual([{ email: "new@example.com" }]);
   });
@@ -59,9 +59,10 @@ describe("verified login identities", () => {
     const binding = sqliteD1(db);
     db.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES ('unverified','raw@example.com','Raw','now','now')").run();
     await expect(resolveVerifiedEmailIdentity(binding, "raw@example.com")).rejects.toMatchObject({ code: "verified_identity_required" });
-    const guest = await resolveVerifiedEmailIdentity(binding, google.email);
+    const { id: guest, created } = await resolveVerifiedEmailIdentity(binding, google.email);
+    expect(created).toBe(true);
     expect(await persistVerifiedGoogleIdentity(binding, google)).toEqual({ id: guest, created: false });
-    expect(await resolveVerifiedEmailIdentity(binding, google.email)).toBe(guest);
+    expect((await resolveVerifiedEmailIdentity(binding, google.email)).id).toBe(guest);
     expect(db.prepare("SELECT user_id FROM user_login_identities WHERE provider = 'google'").all()).toEqual([{ user_id: guest }]);
     expect(db.prepare("SELECT platform_user_id FROM users WHERE id = ?").get(guest)).toEqual({ platform_user_id: guest });
   });

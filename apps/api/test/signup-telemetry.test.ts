@@ -197,7 +197,7 @@ describe('complete signup analytics', () => {
 
   it('authenticates a returning user with no signup lineage without counting a new account', async () => {
     const env = bindings();
-    const existingId = await resolveVerifiedEmailIdentity(env.DB, 'new@example.test');
+    const existingId = (await resolveVerifiedEmailIdentity(env.DB, 'new@example.test')).id;
     const { session, flowId } = await emailSignup();
     expect(session.user.id).toBe(existingId);
     expect(events().map(event => event.name)).toEqual(['signup_viewed', 'signup_started', 'signup_email_submitted',
@@ -215,7 +215,7 @@ describe('complete signup analytics', () => {
     await drainWaitUntil();
     expect(events().at(-1)).toMatchObject({ name: 'signup_failed', properties: { method: 'otp', result: 'failed' } });
     const otherFlow = newId();
-    const user = await resolveVerifiedEmailIdentity(env.DB, 'new@example.test', { flowId: otherFlow, clientPlatform: 'desktop' });
+    const user = (await resolveVerifiedEmailIdentity(env.DB, 'new@example.test', { flowId: otherFlow, clientPlatform: 'desktop' })).id;
     expect(user).toBe(session.user.id);
     expect(db.prepare('SELECT signup_flow_id FROM users WHERE id=?').get(user)?.signup_flow_id).not.toBe(otherFlow);
   });
