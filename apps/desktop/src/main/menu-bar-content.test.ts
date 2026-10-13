@@ -12,9 +12,6 @@ function channel(id: string, title: string, extra: Partial<DirectoryChannel> = {
     lastActivityAt: '2026-10-06T10:00:00.000Z',
     archivedAt: null,
     systemKind: null,
-    hasUnread: false,
-    unseen: false,
-    youAreMentioned: false,
     ...extra,
   };
 }
