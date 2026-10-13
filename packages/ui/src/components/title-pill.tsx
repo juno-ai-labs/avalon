@@ -191,11 +191,6 @@ export interface TitlePillLevel {
    * Ancestors fuse into a bridge only when every one of them has this.
    */
   bridge?: Omit<MarkBridgeItem, 'key' | 'onSelect'>;
-  /**
-   * Which way the chevron points. Down by default; right for a Channel whose
-   * Breakout is open beside it, pointing at where the conversation went.
-   */
-  chevron?: 'down' | 'right';
 }
 
 export function TitlePill({ level, variant = 'current' }: {
@@ -218,8 +213,7 @@ export function TitlePill({ level, variant = 'current' }: {
   }), [back, direction, view]);
   // A menu reopens at its root, wherever it was left.
   const onOpenChange = (open: boolean): void => { if (!open) { setDirection('in'); setView(null); } };
-  const Chevron = level.chevron === 'right' ? IconChevronRight : IconChevronDown;
-  const chevron = <Chevron aria-hidden="true" className="title-pill-chevron" size={13} stroke={2} />;
+  const chevron = <IconChevronDown aria-hidden="true" className="title-pill-chevron" size={13} stroke={2} />;
   /**
    * The title, and the level open below it. While a level is open the title is
    * the breadcrumb's first step and takes the menu back to its root: on
