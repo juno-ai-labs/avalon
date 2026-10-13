@@ -218,11 +218,12 @@ export function prepareDraftMentions(
 }
 
 /**
- * Text the app kept without its mentions, such as a thread's opening line,
+ * Text the app kept without its mentions, such as a thread's description,
  * rendered the way a message is. A name already in durable
- * `[@Name](person://<id>)` form, as Rally's rewrites write it, keeps that
- * identity, and each typed `@Name` outside those links that the send path
- * would resolve becomes one. A person who is not a member here stays as
+ * `[@Name](person://<id>)` form keeps that identity: the description loop
+ * (`workstream-description-service.ts`) rewrites from transcript text, which
+ * carries those links. Each typed `@Name` outside them that the send path
+ * would resolve becomes one too. A person who is not a member here stays as
  * written.
  */
 export function typedMentionRendering(
@@ -232,7 +233,7 @@ export function typedMentionRendering(
   if (!text.includes('@') || members.length === 0) return { text, mentions: [] };
   // A link's own `[@Name` label reads as a typed name too; rewriting it again
   // would nest one link inside another.
-  const linked = personMentionMarkdownRanges(text);
+  const linked = text.includes('person:') ? personMentionMarkdownRanges(text) : [];
   const discovered = members
     .filter((member) => (member.status ?? 'active') === 'active')
     .map((member) => ({ type: 'person' as const, label: member.name, userId: member.id, connectorType: null }));
