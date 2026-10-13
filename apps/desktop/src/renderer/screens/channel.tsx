@@ -6,7 +6,7 @@ import { ChannelContainerMenu } from '@rally/ui/components/conversation-menus';
 import type { SidekickRow } from '@rally/ui/components/sidekick-section';
 import { ChannelGlyph, spaceMark } from '@rally/ui/components/space-icon';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
-import { TitleMenuItem, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { TitleMenuItem, TitlePillAction, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { resolveWorkstreamAppearance } from '@rally/ui/components/workstream-glyph';
 import { IconChevronRight, IconCloudDownload, IconLock, IconPalette, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -15,7 +15,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
 
 import { ChannelComposer } from '../components/channel-composer';
-import { Avatar, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, TitleSkeleton } from '../components/primitives';
+import { Avatar, Button, EmptyState, InlineError, LoadingState, Modal, TitleSkeleton } from '../components/primitives';
 import { RelativeTime } from '../components/relative-time';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
@@ -544,12 +544,12 @@ function ChannelHeader({ members, space, workspace }: {
   // header and is locked to it. Only the Mac app has the embedded browser the
   // import runs in, and only someone who may start a thread here sees it.
   const openBrowserImport = typeof window === 'undefined' ? undefined : window.rally?.openBrowserImport;
-  const importButton = editable && openBrowserImport ? <IconButton
+  const importButton = editable && openBrowserImport ? <TitlePillAction
     label="Import from Claude or ChatGPT"
     onClick={() => void openBrowserImport({ spaces: [{ id: space.id, name: space.name }], spaceLocked: true })}
   >
-    <IconCloudDownload aria-hidden="true" size={17} stroke={1.8} />
-  </IconButton> : undefined;
+    <IconCloudDownload aria-hidden="true" size={16} stroke={1.9} />
+  </TitlePillAction> : undefined;
   const pinned = pinnedChannels.has(space.id);
   const recommended = new Set(space.defaultSidekickIds);
   const sidekicks: SidekickRow[] = (library.data ?? [])

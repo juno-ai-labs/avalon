@@ -21,7 +21,7 @@ a thread or a breakout opens, or who owns the right panel.
 | Path | Responsibility |
 | --- | --- |
 | `packages/ui/src/components/resizable-sidebar.tsx` | `ResizableSidebar`. The shell passes `collapsible={false}`: the edge resizes between `MIN_SIDEBAR_WIDTH` and `MAX_SIDEBAR_WIDTH` and never collapses. |
-| `packages/ui/src/components/title-pill.tsx` | `TitlePill`, `TitlePillHeader` (ancestors left, current centred, trailing right), the menu building blocks, `TitlePillClose`. |
+| `packages/ui/src/components/title-pill.tsx` | `TitlePill`, `TitlePillHeader` (ancestors left, current centred, trailing right), the menu building blocks, `TitlePillAction` and `TitlePillClose`. |
 | `packages/ui/src/components/conversation-menus.tsx` | `ChannelMenu` and `BreakoutMenu`: everything the deleted Channel sidebar held, as title-pill menus. Also `ConversationRowActions` and `PENDING_SUBSTREAM_DRAFT_ID`. |
 | `packages/ui/src/components/breakout-marks.tsx` | `BreakoutMark`, `breakoutsByOrigin`, `orderBreakoutsForTicks`, `breakoutHasActivity`, `BreakoutChipRow`, `BreakoutTickBar`. |
 | `packages/ui/src/components/split-conversation.tsx` | `SplitConversationLayout`, `SplitConversationMode`, `clampBreakoutWidth`. |
@@ -184,7 +184,12 @@ picked.
 ### Title pills
 
 Every pane's header is a `TitlePillHeader`: its own pill centred, the pane's
-controls at the right, and ancestors stacked at the left. A thread pill's icon
+controls at the right, and ancestors stacked at the left. The header row is
+64px in every pane, the Channel included, so pills sit level side by side.
+Each control at the right is a `TitlePillAction`, the raised circle the pills
+wear: a Channel's import, a thread's or Breakout's close. The phone's top bar
+gives its own actions (search, new Channel) the same circle as its menu
+button. A thread pill's icon
 is its appearance picker; the rest of the pill opens its
 menu, and its chevron points right while a Breakout is open beside it. A
 Breakout pill wears the breakout arrow (`BreakoutPillIcon`) and, once its
@@ -378,6 +383,14 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-13 — Every header control wears the same circle
+
+**Why:** The Channel header's import button was a bare glyph while the close button beside it in the thread header was a raised circle, and on a phone the menu button was round while search and new Channel were not. The Channel's header row was also 55px against the thread's 64px, so the two pills sat at different heights side by side.
+
+**Changed:** `TitlePillAction` is the one round header control; `TitlePillClose` is built on it. The Channel row is 64px. The phone top bar's actions take the round fill the menu button's comment already said they had.
+
+**Consequences:** A new header control uses `TitlePillAction` rather than a bare `IconButton`. The desktop sidebar's own header icons stay bare: they sit on the sidebar, not in a pane header.
 
 ### 2026-10-13 — The Channel feed reads thread-first
 
