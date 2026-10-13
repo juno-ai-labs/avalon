@@ -1,6 +1,7 @@
 import clsx from 'clsx';
 import type { LucideIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { Tip } from './primitives';
 
 /**
  * What a tile's outline says about the thing it stands for. A Channel is a
@@ -32,9 +33,10 @@ const BADGE_ROOM = 2;
 /**
  * How far a nested badge reaches past its parent badge's corner. The parent
  * moves in by the same amount, so the deepest badge's corner is where a lone
- * badge's would be, at every depth.
+ * badge's would be, at every depth. Large enough that the parent shows above
+ * and left of the nested badge rather than hiding under it.
  */
-const NESTED_OVERHANG = 2;
+const NESTED_OVERHANG = 5;
 
 /** A small tile pinned to a larger one's bottom-right corner. */
 export interface TileBadge extends NestedTileBadge {
@@ -57,6 +59,8 @@ export interface NestedTileBadge {
   icon?: LucideIcon | undefined;
   /** Text in place of a symbol, such as a person's initials. */
   text?: string | undefined;
+  /** What the badge stands for, shown as a tooltip on hover. */
+  label?: string | undefined;
 }
 
 /** A badge in its ring, and the badge nested on its corner, if any. */
@@ -66,13 +70,16 @@ function Badge({ badge, bottom, nested = false, right }: {
   nested?: boolean;
   right: number;
 }): React.JSX.Element {
+  // The tip sits on the fill, not the ring, so hovering a nested badge, which
+  // is inside its parent's ring, opens only the nested badge's tip.
+  const fill = <span className={clsx('identity-tile-badge-fill', `is-${badge.shape}`)} style={{ background: badge.fill, color: badge.ink }}>
+    {badge.icon ? <badge.icon size={nested ? 7 : 10} strokeWidth={2.2} /> : badge.text}
+  </span>;
   return <span
     className={clsx('identity-tile-badge', `is-${badge.shape}`, nested && 'is-nested')}
     style={{ bottom, right }}
   >
-    <span className={clsx('identity-tile-badge-fill', `is-${badge.shape}`)} style={{ background: badge.fill, color: badge.ink }}>
-      {badge.icon ? <badge.icon size={nested ? 7 : 10} strokeWidth={2.2} /> : badge.text}
-    </span>
+    {badge.label ? <Tip disableHoverableContent label={badge.label}>{fill}</Tip> : fill}
     {!nested && 'badge' in badge && badge.badge && <Badge
       badge={badge.badge}
       bottom={-NESTED_OVERHANG}
