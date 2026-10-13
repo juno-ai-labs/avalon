@@ -393,6 +393,15 @@ describe('transcript messages', () => {
       text: linked,
       mentions: [{ type: 'person', personId: sam, displayName: 'Sam Lee', startOffset: 4, endOffset: 61 }],
     });
+    const alex = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c';
+    const both = [...members, { id: alex, name: 'Alex', email: 'alex@example.com', timezone: 'UTC' }];
+    expect(typedMentionRendering(`[@Sam Lee](person://${sam}) and @Alex`, both)).toEqual({
+      text: `[@Sam Lee](person://${sam}) and [@Alex](person://${alex})`,
+      mentions: [
+        { type: 'person', personId: sam, displayName: 'Sam Lee', startOffset: 0, endOffset: 57 },
+        { type: 'person', personId: alex, displayName: 'Alex', startOffset: 62, endOffset: 116 },
+      ],
+    });
   });
 
   it('leaves a draft alone when the selection carries no offsets to rewrite', () => {
