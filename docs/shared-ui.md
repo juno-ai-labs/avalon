@@ -164,6 +164,8 @@ is off centre.
 **Consequences:** When the room below is short, the menu runs past the
 bottom of the screen rather than flipping; its `max-height` is what bounds it.
 
+Shipped in #1222.
+
 ### 2026-10-13 — Crumbs are always a `MarkBridge`
 
 **What changed:** `TitlePillHeader` draws its ancestors as a bridge at every
