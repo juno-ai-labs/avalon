@@ -295,8 +295,11 @@ Each Breakout row the thread receives carries `originTurnId` and
 
 ### One right slot
 
-The right panel (an artifact, or the desktop's embedded browser) and the
-Breakout pane share one place. `ConversationSurface` scopes the panel to the
+The right panel and the Breakout pane share one place. The panel holds the
+desktop's embedded browser, or whatever the conversation opened: a resource
+with its actions, an attachment, a citation's file, or a prior version. None of
+these opens as a modal. The panel's header is a pane header: the item's title
+pill, its actions in the pill's menu, and the round close button. `ConversationSurface` scopes the panel to the
 conversation that opened it: `railScope` is the parent id for Main and
 `parentId:substreamId` for a Breakout, with `#launch` for the launch surface. A
 surface only closes, fades or restores a panel it owns.

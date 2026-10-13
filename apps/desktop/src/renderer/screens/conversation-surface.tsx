@@ -110,8 +110,8 @@ import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Parti
 import { workstreamSidekickRows, type SidekickRow, type SidekickSectionFailure } from '../components/sidekick-section';
 import { AgentCompactionIndicator, AgentWorkTiming, RunStopAcknowledgement, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
-import { ArtifactSidebar, InspectorRail } from '../components/inspector-rail';
-import { AttachmentLightbox } from '../components/attachment-lightbox';
+import { InspectorRail } from '../components/inspector-rail';
+import { AttachmentPanel } from '../components/attachment-panel';
 import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
 import { ConversationAccessRequest } from '../components/conversation-access-request';
@@ -1044,6 +1044,16 @@ const NO_WORKSPACE_PRESENCE: Record<string, string[]> = {};
 const NO_RESOURCES: WorkstreamDetail['resources'] = [];
 
 /**
+ * What a conversation's right panel holds: one of its resources, with the
+ * resource's own actions, or a file to read (an attachment, a citation's file,
+ * a prior version). `workstreamScoped` marks a resource of the thread's Main
+ * opened from a Breakout's sidebar.
+ */
+type ConversationPanel =
+  | { kind: 'resource'; resourceId: string; workstreamScoped?: boolean }
+  | { kind: 'attachment'; preview: AttachmentPreview };
+
+/**
  * What the surface hands whoever renders the strip above the feed. A work
  * stream puts its header there; an automation's screen renders its own header
  * outside the surface and passes nothing.
@@ -1272,17 +1282,24 @@ export function ConversationSurface({
   const activeConversationAddressRef = useRef(conversationAddress);
   const pendingSendCount = useRef(0);
   const poppedOutArtifactRefreshes = useRef(new Set<string>());
-  const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
-  const [resourcePreview, setResourcePreview] = useState<{ resourceId: string; returnFocus: HTMLElement; workstreamScoped?: boolean } | null>(null);
-  const [artifactSidebar, setArtifactSidebar] = useState<{ resourceId: string; workstreamScoped?: boolean } | null>(null);
-  const openResourceDetails = useCallback((resourceId: string, returnFocus: HTMLElement): void => {
-    setAttachmentPreview(null);
-    setResourcePreview({ resourceId, returnFocus });
-  }, []);
-  const openWorkstreamResourceDetails = useCallback((resourceId: string, returnFocus: HTMLElement): void => {
-    setAttachmentPreview(null);
-    setResourcePreview({ resourceId, returnFocus, workstreamScoped: true });
-  }, []);
+  // What the right panel holds. Every artifact and attachment this
+  // conversation opens lands here rather than in a modal. Closing keeps the
+  // occupant so the panel has something to draw while it fades out.
+  const [panel, setPanel] = useState<ConversationPanel | null>(null);
+  const openPanel = useCallback((next: ConversationPanel): void => {
+    setPanel(next);
+    openOwnRail('context');
+  }, [openOwnRail]);
+  const resourcePanel = panel?.kind === 'resource' ? panel : null;
+  const openAttachment = useCallback((preview: AttachmentPreview): void => {
+    openPanel({ kind: 'attachment', preview });
+  }, [openPanel]);
+  const openResourceDetails = useCallback((resourceId: string): void => {
+    openPanel({ kind: 'resource', resourceId });
+  }, [openPanel]);
+  const openWorkstreamResourceDetails = useCallback((resourceId: string): void => {
+    openPanel({ kind: 'resource', resourceId, workstreamScoped: true });
+  }, [openPanel]);
   const workspaceId = session?.workspace?.id ?? 'unbound';
   // Requests to join waiting on this reader, kept by the workspace socket; the
   // People level lists the ones for the conversation on screen.
@@ -1319,10 +1336,8 @@ export function ConversationSurface({
   // move together, or the render that changes the route reads an open rail that
   // belongs to the stream it just left.
   useLayoutEffect(() => {
-    setAttachmentPreview(null);
-    setResourcePreview(null);
     const savedPanel = readArtifactPanel(artifactPanelKey);
-    setArtifactSidebar(savedPanel);
+    setPanel(savedPanel ? { kind: 'resource', ...savedPanel } : null);
     setResourceDialogOpen(false);
     // Claimed on arrival when there is a panel to restore, or when nobody holds
     // the slot; a Breakout opening beside its Channel must not take a panel
@@ -1516,14 +1531,14 @@ export function ConversationSurface({
     };
   }, [browserHost, api, featureFlags.data?.liveArtifactsEnabled]);
   useEffect(() => {
-    if (!artifactSidebar) return;
-    const resourceOwner = artifactSidebar.workstreamScoped
+    if (!resourcePanel) return;
+    const resourceOwner = resourcePanel.workstreamScoped
       ? workstreamContext?.id === id ? workstreamContext : null
       : routedDetail;
-    if (!resourceOwner || resourceOwner.resources.some((resource) => resource.id === artifactSidebar.resourceId)) return;
-    setArtifactSidebar(null);
+    if (!resourceOwner || resourceOwner.resources.some((resource) => resource.id === resourcePanel.resourceId)) return;
+    setPanel(null);
     closeOwnRail();
-  }, [artifactSidebar, closeOwnRail, id, routedDetail, workstreamContext]);
+  }, [resourcePanel, closeOwnRail, id, routedDetail, workstreamContext]);
   useEffect(() => {
     if (!routedDetail) return;
     const controller = new AbortController();
@@ -1580,13 +1595,13 @@ export function ConversationSurface({
   const citations = useCitations({
     actions: citationActions,
     loadResourceContent,
-    onOpenPreview: setAttachmentPreview,
+    onOpenPreview: openAttachment,
     onOpenResourceDetails: openResourceDetails,
     resources: routedDetail?.resources ?? NO_RESOURCES,
   });
   const sidebarCitations = useCitations({
     loadResourceContent,
-    onOpenPreview: setAttachmentPreview,
+    onOpenPreview: openAttachment,
     onOpenResourceDetails: openWorkstreamResourceDetails,
     resources: workstreamContext?.id === id ? workstreamContext.resources : NO_RESOURCES,
   });
@@ -1596,16 +1611,18 @@ export function ConversationSurface({
   // from laying out, or starting a fade for, a panel belonging to the stream
   // just left; every path that opens the rail writes the store, and each is
   // honoured from the moment the scope names this stream.
-  const railOpen = (railVariant === 'browser' || Boolean(artifactSidebar)) && storeRailOpen && railScope === railScopeKey;
+  const railOpen = (railVariant === 'browser' || Boolean(panel)) && storeRailOpen && railScope === railScopeKey;
   useEffect(() => {
     if (restoredPanelKey.current !== artifactPanelKey) return;
     // A link opened in the browser covers the artifact panel rather than
     // closing it, so the saved panel stays for when the browser closes.
-    if (railVariant === 'browser' && artifactSidebar) return;
-    writeLayout(artifactPanelKey, railOpen && railVariant === 'context' && artifactSidebar
-      ? JSON.stringify({ resourceId: artifactSidebar.resourceId,
-        workstreamScoped: artifactSidebar.workstreamScoped === true }) : null);
-  }, [artifactPanelKey, artifactSidebar, railOpen, railVariant]);
+    if (railVariant === 'browser' && panel) return;
+    // Only a resource is restored after relaunch: an attachment preview is a
+    // loader closure, with nothing to write down.
+    writeLayout(artifactPanelKey, railOpen && railVariant === 'context' && resourcePanel
+      ? JSON.stringify({ resourceId: resourcePanel.resourceId,
+        workstreamScoped: resourcePanel.workstreamScoped === true }) : null);
+  }, [artifactPanelKey, panel, resourcePanel, railOpen, railVariant]);
   // A route switch is not a sidebar hand-off: scope the fade to the work stream
   // so the previous stream's inspector never dissolves over the arriving feed.
   const railLeaving = useRailExitFade(railOpen, railScopeKey);
@@ -2237,8 +2254,8 @@ export function ConversationSurface({
 
   // The rail's detail shows one resource at a time, so its history is fetched
   // for that one rather than for every attachment the work stream carries.
-  const inspectedResourceId = resourcePreview ? resourcePreview.resourceId : inspector?.type === 'resource' ? inspector.id : null;
-  const inspectedResourceVersion = (resourcePreview?.workstreamScoped ? workstreamContext : workstream.data)?.resources
+  const inspectedResourceId = resourcePanel ? resourcePanel.resourceId : inspector?.type === 'resource' ? inspector.id : null;
+  const inspectedResourceVersion = (resourcePanel?.workstreamScoped ? workstreamContext : workstream.data)?.resources
     .find((resource) => resource.id === inspectedResourceId)?.currentVersion ?? null;
   const resourceVersions = useQuery({
     queryKey: resourceVersionsQueryKey(inspectedResourceId, inspectedResourceVersion),
@@ -2246,7 +2263,7 @@ export function ConversationSurface({
     // `closeRail` deliberately keeps the inspector's selection, so without the
     // rail's own state here the query keeps refetching for a panel nobody can
     // see.
-    enabled: Boolean(api && inspectedResourceId && (railOpen || resourcePreview)),
+    enabled: Boolean(api && inspectedResourceId && railOpen),
   });
 
   // Creating the automation a proposal card names. Invalidates the rail so a
@@ -2350,29 +2367,25 @@ export function ConversationSurface({
   const openResourceVersion = useCallback((
     resource: WorkstreamResource,
     version: ResourceVersion,
-    returnFocus: HTMLElement,
   ) => {
-    setAttachmentPreview({
+    // Opened from the resource panel's Versions menu, so the way back is that
+    // same panel, scoped as it was.
+    const current = resourcePanel?.resourceId === resource.id ? resourcePanel : { kind: 'resource' as const, resourceId: resource.id };
+    openAttachment({
       // The version's own title and type. A rename is itself what captured the
       // version being opened, so the current name over old bytes would name
       // the wrong thing in the one surface built to keep them apart.
       name: version.title,
       ...(version.mimeType ? { mimeType: version.mimeType } : {}),
       loadContent: (signal?: AbortSignal) => api!.getResourceVersionContent(resource.id, version.version, signal),
-      returnFocus,
       superseded: {
         // Says which version and that it is not the live one, in that order:
         // "of N" alone leaves a reader to work out that V2 of 3 is history.
         label: `Version ${version.version} · not current`,
-        onReturnToCurrent: () => setAttachmentPreview({
-          name: resource.title,
-          ...(resource.mimeType ? { mimeType: resource.mimeType } : {}),
-          loadContent: (signal?: AbortSignal) => loadAttachmentContent(resource.id, signal),
-          returnFocus,
-        }),
+        onReturnToCurrent: () => openPanel(current),
       },
     });
-  }, [api, loadAttachmentContent]);
+  }, [api, openAttachment, openPanel, resourcePanel]);
 
   const activeElicitation = transcript.find((message) =>
     message.messageType === 'elicitation' && message.elicitation?.status === 'open')?.elicitation;
@@ -2809,11 +2822,7 @@ export function ConversationSurface({
   const sidebarDetail = sidebarScope === "conversation" ? displayedDetail : workstreamContext?.id === id ? workstreamContext : {
     ...displayedDetail, resources: [], participants: [], viewers: [],
   };
-  const resourceManagementDetail = resourcePreview?.workstreamScoped ? sidebarDetail : displayedDetail;
-  const artifactSidebarDetail = artifactSidebar?.workstreamScoped ? sidebarDetail : displayedDetail;
-  const artifactSidebarResource = artifactSidebar
-    ? artifactSidebarDetail.resources.find((resource) => resource.id === artifactSidebar.resourceId)
-    : undefined;
+  const resourceManagementDetail = resourcePanel?.workstreamScoped ? sidebarDetail : displayedDetail;
   // One list for both rails, composed once: the room's own Sidekicks and its
   // conversation's attachments are two answers about the same objects, and
   // only a participant may detach one.
@@ -2932,7 +2941,7 @@ export function ConversationSurface({
         invitees={visibleInvitees}
         onCancel={substreamLaunch.onCancel}
         onCreate={substreamLaunch.onCreate}
-        onOpenAttachment={setAttachmentPreview}
+        onOpenAttachment={openAttachment}
         parent={displayedDetail}
         sendBlocked={feedFromLocalCache}
         titlePill={parentKind !== 'automation'}
@@ -3144,7 +3153,7 @@ export function ConversationSurface({
               messages={visibleTranscript}
               liveMessageIds={liveMessageIds}
               onAnswerElicitation={answerElicitation}
-              onOpenAttachment={setAttachmentPreview}
+              onOpenAttachment={openAttachment}
               onStartSubstream={parentKind === 'workstream' && substreamId === '0' ? onStartSubstream : undefined}
               {...(breakoutChips ? { breakoutChips } : {})}
               {...(api ? { onAcceptDraft: (automationId: string) => {
@@ -3226,7 +3235,7 @@ export function ConversationSurface({
               pinned: (displayedDetail.modelOverride ?? null) !== null,
             }}
             onAttach={attachmentDraft.addFiles}
-            onOpenAttachment={setAttachmentPreview}
+            onOpenAttachment={openAttachment}
             onRemoveAttachment={attachmentDraft.removeAttachment}
             onRetryAttachment={attachmentDraft.retryAttachment}
             onSend={sendMessage}
@@ -3246,19 +3255,8 @@ export function ConversationSurface({
       </div>
       </>}
 
-      {resourcePreview && <InspectorRail
-        lightbox={{
-          ...resourcePreview,
-          onClose: () => setResourcePreview(null),
-          onOpenSidebar: (resourceId) => {
-            setArtifactSidebar({
-              resourceId,
-              ...(resourcePreview.workstreamScoped ? { workstreamScoped: true } : {}),
-            });
-            setResourcePreview(null);
-            openOwnRail('context');
-          },
-        }}
+      {railVariant === 'context' && resourcePanel && (railOpen || railLeaving) && <InspectorRail
+        panel={{ resourceId: resourcePanel.resourceId, onClose: closeOwnRail }}
         dropTarget={railDrop}
         {...(api ? { loadResourceContent: loadResourceContent } : {})}
         failure={watchResource.error
@@ -3269,8 +3267,8 @@ export function ConversationSurface({
               ? 'refresh'
               : attachResource.error ? 'attach' : undefined}
         leaving={railLeaving}
-        onAddParticipant={() => { setParticipantDialogSubstreamId(resourcePreview?.workstreamScoped ? '0' : substreamId); setParticipantDialogOpen(true); }}
-        {...(substreamId === '0' || resourcePreview?.workstreamScoped ? {
+        onAddParticipant={() => { setParticipantDialogSubstreamId(resourcePanel?.workstreamScoped ? '0' : substreamId); setParticipantDialogOpen(true); }}
+        {...(substreamId === '0' || resourcePanel?.workstreamScoped ? {
           onAddResource: () => setResourceDialogOpen(true),
           onDetachResource: (resource: WorkstreamResource) => detachResource.mutateAsync(resource),
           onRefreshResource: (resource: WorkstreamResource) => refreshResource.mutate(resource),
@@ -3289,18 +3287,16 @@ export function ConversationSurface({
 
       {railVariant === 'browser' && (railOpen || railLeaving) && window.rally && <EmbeddedBrowserRail
         leaving={railLeaving}
-        onClose={artifactSidebar ? () => setRailVariant('context') : closeOwnRail}
+        onClose={panel ? () => setRailVariant('context') : closeOwnRail}
         onResize={setRailWidth}
         width={railWidth}
       />}
 
-      {railVariant === 'context' && artifactSidebarResource && (railOpen || railLeaving) && <ArtifactSidebar
+      {railVariant === 'context' && panel?.kind === 'attachment' && (railOpen || railLeaving) && <AttachmentPanel
         leaving={railLeaving}
-        {...(api ? { loadResourceContent } : {})}
         onClose={closeOwnRail}
         onResize={setRailWidth}
-        resource={artifactSidebarResource}
-        {...(siteArtifacts ? { siteArtifacts } : {})}
+        preview={panel.preview}
         width={railWidth}
       />}
 
@@ -3376,20 +3372,19 @@ export function ConversationSurface({
         onSearchChange={setResourceSearch}
         onUpload={() => {
           setResourceDialogOpen(false);
-          if (resourcePreview?.workstreamScoped && substreamId !== '0') {
-            setResourcePreview(null);
+          if (resourcePanel?.workstreamScoped && substreamId !== '0') {
+            closeOwnRail();
             void navigate(`/workstreams/${id}`);
             return;
           }
           fileInputRef.current?.click();
         }}
-        uploadLabel={resourcePreview?.workstreamScoped && substreamId !== '0' ? 'Upload in Main log' : 'Upload file'}
+        uploadLabel={resourcePanel?.workstreamScoped && substreamId !== '0' ? 'Upload in Main log' : 'Upload file'}
         open={resourceDialogOpen}
         pending={attachResource.isPending}
         resources={discoveredResources}
         search={resourceSearch}
       />
-      <AttachmentLightbox onClose={() => setAttachmentPreview(null)} preview={attachmentPreview} />
     </div>
     </div>
     </ConnectorConnectionsProvider>

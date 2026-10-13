@@ -11,7 +11,7 @@ import type {
 } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { ApiError } from '../lib/api';
-import { ArtifactSidebar, InspectorRail } from './inspector-rail';
+import { InspectorRail } from './inspector-rail';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from '../lib/resource-preview';
 
 const copyText = vi.hoisted(() => vi.fn());
@@ -173,27 +173,22 @@ describe('InspectorRail details', () => {
     fireEvent.pointerUp(handle, { pointerId: 1 });
   });
 
-  it('opens individual resource details without offering the resource-management popup', () => {
+  it('opens one resource in the right panel without opening the shell rail', () => {
     useUiStore.setState({ railOpen: false });
-    render(<Tooltip.Provider><InspectorRail workstream={{ ...workstream, resources: [watched] }} lightbox={{ resourceId: watched.id, returnFocus: document.body, onClose: vi.fn(), onOpenSidebar: vi.fn() }} /></Tooltip.Provider>);
-    expect(screen.getByRole('dialog', { name: watched.title })).toBeVisible();
-    expect(document.querySelector('.rail-surface')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Back to resources' })).toBeNull();
-    expect(screen.queryByRole('dialog', { name: 'Resources' })).toBeNull();
+    render(<Tooltip.Provider><InspectorRail workstream={{ ...workstream, resources: [watched] }} panel={{ resourceId: watched.id, onClose: vi.fn() }} /></Tooltip.Provider>);
+    expect(screen.getByRole('complementary', { name: `Resource: ${watched.title}` })).toBeVisible();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Back to context' })).toBeNull();
     expect(useUiStore.getState().railOpen).toBe(false);
   });
 
-  it('opens without a tooltip nobody asked for, and closes on the first Escape', () => {
-    // Radix opens a tooltip on focus, and a dialog hands focus to its first
-    // control, which here is always an icon button. The tooltip that pops is
-    // then the topmost dismissable layer, so it is what Escape closes: the
-    // preview stayed open and a label appeared over it on every open.
+  it('opens the resource panel without a tooltip nobody asked for, and closes on the first Escape', () => {
     useUiStore.setState({ railOpen: false });
     const onClose = vi.fn();
-    render(<Tooltip.Provider><InspectorRail workstream={{ ...workstream, resources: [watched] }} lightbox={{ resourceId: watched.id, returnFocus: document.body, onClose, onOpenSidebar: vi.fn() }} /></Tooltip.Provider>);
+    render(<Tooltip.Provider><InspectorRail workstream={{ ...workstream, resources: [watched] }} panel={{ resourceId: watched.id, onClose }} /></Tooltip.Provider>);
 
     expect(screen.queryByRole('tooltip')).toBeNull();
-    fireEvent.keyDown(screen.getByRole('dialog', { name: watched.title }), { key: 'Escape' });
+    fireEvent.keyDown(screen.getByRole('complementary', { name: `Resource: ${watched.title}` }), { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -514,9 +509,6 @@ describe('InspectorRail details', () => {
     expect(onOpenResourceVersion).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'resource-1' }),
       expect.objectContaining({ version: 2 }),
-      // The control that opened it, so the preview can hand focus back to the
-      // rail instead of dropping it on the document.
-      expect.any(HTMLElement),
     );
   });
 
@@ -784,60 +776,46 @@ describe('resource detail content preview', () => {
     mimeType: SITE_MANIFEST_MIME_TYPE,
   };
 
-  it('hands every generated artifact lightbox to the document sidebar', () => {
-    const onOpenSidebar = vi.fn();
+  it('renders a resource panel with its document, a resize edge, and close', async () => {
+    const onClose = vi.fn();
     render(
       <Tooltip.Provider>
         <InspectorRail
-          lightbox={{ resourceId: note.id, returnFocus: document.body, onClose: vi.fn(), onOpenSidebar }}
           loadResourceContent={vi.fn(async () => new Blob(['# Quarterly plan'], { type: 'text/markdown' }))}
+          panel={{ resourceId: note.id, onClose }}
           workstream={{ ...workstream, resources: [note] }}
         />
       </Tooltip.Provider>,
     );
 
-    const button = screen.getByRole('button', { name: 'Open in a righthand sidebar' });
-    expect(button.querySelector('.tabler-icon-layout-sidebar-right-inactive')).not.toBeNull();
-    fireEvent.click(button);
-    expect(onOpenSidebar).toHaveBeenCalledWith(note.id);
+    expect(screen.getByRole('complementary', { name: `Resource: ${note.title}` })).toBeVisible();
+    expect(screen.getByRole('separator', { name: 'Resize inspector' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Open in a righthand sidebar' })).toBeNull();
+    expect(await screen.findByRole('heading', { name: 'Quarterly plan', level: 1 })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Close panel' }));
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it('does not offer the document sidebar from a source lightbox', () => {
+  it('offers the resource panel actions from its title pill menu', async () => {
+    const onOpenResourceVersion = vi.fn();
+    const version: ResourceVersion = { version: 1, title: note.title, mimeType: 'text/markdown', capturedAt: '2026-10-01T00:00:00.000Z', author: null, cause: null, contentAvailable: true };
     render(
       <Tooltip.Provider>
         <InspectorRail
-          lightbox={{ resourceId: note.id, returnFocus: document.body, onClose: vi.fn(), onOpenSidebar: vi.fn() }}
-          loadResourceContent={vi.fn(async () => new Blob(['source']))}
-          workstream={{ ...workstream, resources: [{ ...note, direction: 'source' }] }}
-        />
-      </Tooltip.Provider>,
-    );
-    expect(screen.queryByRole('button', { name: 'Open in a righthand sidebar' })).not.toBeInTheDocument();
-  });
-
-  it('renders a resizable document-only sidebar with title and close', async () => {
-    const onClose = vi.fn();
-    const onResize = vi.fn();
-    render(
-      <Tooltip.Provider>
-        <ArtifactSidebar
           loadResourceContent={vi.fn(async () => new Blob(['# Quarterly plan'], { type: 'text/markdown' }))}
-          onClose={onClose}
-          onResize={onResize}
-          resource={note}
-          width={360}
+          onOpenResourceVersion={onOpenResourceVersion}
+          panel={{ resourceId: note.id, onClose: vi.fn() }}
+          resourceVersions={[{ ...version, version: 2 }, version]}
+          workstream={{ ...workstream, resources: [note] }}
         />
       </Tooltip.Provider>,
     );
 
-    expect(screen.getByRole('complementary', { name: `Artifact: ${note.title}` })).toBeVisible();
-    const resize = screen.getByRole('separator', { name: 'Resize artifact sidebar' });
-    expect(resize).toBeVisible();
-    fireEvent.keyDown(resize, { key: 'ArrowLeft' });
-    expect(onResize).toHaveBeenCalled();
-    expect(await screen.findByRole('heading', { name: 'Quarterly plan', level: 1 })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Close sidebar' }));
-    expect(onClose).toHaveBeenCalledOnce();
+    fireEvent.pointerDown(screen.getByRole('button', { name: `Artifact menu: ${note.title}` }), { button: 0, ctrlKey: false });
+    expect(await screen.findByRole('menuitem', { name: 'New window' })).toBeVisible();
+    fireEvent.click(screen.getByRole('menuitem', { name: /Versions/ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /V1/ }));
+    expect(onOpenResourceVersion).toHaveBeenCalledWith(note, version);
   });
 
   it('pops every non-site artifact out through its authorized preview bytes', async () => {
@@ -891,21 +869,6 @@ describe('resource detail content preview', () => {
       },
     };
   }
-
-  it('offers Sidebar for a generated live-site lightbox too', () => {
-    const onOpenSidebar = vi.fn();
-    render(
-      <Tooltip.Provider>
-        <InspectorRail
-          lightbox={{ resourceId: site.id, returnFocus: document.body, onClose: vi.fn(), onOpenSidebar }}
-          siteArtifacts={siteArtifacts()}
-          workstream={{ ...workstream, resources: [site] }}
-        />
-      </Tooltip.Provider>,
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Open in a righthand sidebar' }));
-    expect(onOpenSidebar).toHaveBeenCalledWith(site.id);
-  });
 
   it('shows a live artifact as a page to open rather than a record to describe', async () => {
     const artifacts = siteArtifacts();
