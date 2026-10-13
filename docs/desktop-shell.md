@@ -389,7 +389,8 @@ link and More, the same four a thread's menu has. Its two switches and
 and **Private to its members** became **Public to organization**, the same
 switch, the same way round, as a thread's. The
 Channel pill's icon opens the same icon-and-colour picker in place, as a
-thread's icon already did. General gained Rename: the client had hidden it,
+thread's icon already did, and the pill draws the Channel as the sidebar's
+squircle tile (`ChannelGlyph`), as a thread's pill draws its circle. General gained Rename: the client had hidden it,
 though the server refuses only archiving General or making it private.
 
 **Why:** The product owner asked for the Channel and thread menus to match,
