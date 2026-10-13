@@ -942,6 +942,11 @@ function EmailMentionChip({ children, email }: PropsWithChildren<{ email: string
   );
 }
 
+/** Whether a link names a person or connector, which a glance still draws as a chip. */
+function isIdentityHref(href: string | undefined): boolean {
+  return href !== undefined && (citationScheme(href) === 'person' || isConnectorHref(href));
+}
+
 /** The schemes whose cells need the target the model actually wrote. */
 const INTERNAL_CITATION_SCHEMES: ReadonlySet<string> = new Set(['resource', 'person']);
 
@@ -1219,11 +1224,11 @@ export function MarkdownBody({
    */
   collapseHeadings?: boolean;
   /**
-   * This body is a glance inside an embed card, not a reader. Links, images,
-   * and code-block copy controls stay out of the DOM so the card remains one
+   * This body is a glance inside a card, not a reader. Links, images, and
+   * code-block copy controls stay out of the DOM so the card remains one
    * button: an `<a>` or a nested `<button>` inside it is invalid HTML, and an
    * external image would fetch from a URL the document chose merely because
-   * the card painted.
+   * the card painted. Mentions still draw as chips, which have no destination.
    */
   glance?: boolean;
   mentions?: MessageMention[];
@@ -1329,7 +1334,7 @@ export function MarkdownBody({
     components: {
       a: ({ children: linkChildren, href, node, ...props }) => (
         glance
-          ? <>{linkChildren}</>
+          ? isIdentityHref(href) ? renderIdentity(href, linkChildren, stableMentions, token) : <>{linkChildren}</>
           : (
             <CitationLink
               anchor={{ ...props, href }}
@@ -1355,6 +1360,12 @@ export function MarkdownBody({
           return <ConnectorEmbedCard connectorType={connectorType} label={alt} />;
         }
         return <CitationImage alt={alt} image={{ ...props, alt, src }} src={src} />;
+      },
+      // A task list's checkbox is a form control, which a glance's button
+      // may not hold.
+      input: ({ node, ...props }) => {
+        void node;
+        return glance ? null : <input {...props} />;
       },
       span: ({ children: spanChildren, node, ...props }) => {
         const email = node?.properties?.dataEmailMention;
