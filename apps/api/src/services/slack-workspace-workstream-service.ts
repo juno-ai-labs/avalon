@@ -311,6 +311,8 @@ export class SlackWorkspaceWorkstreamService {
         objective: input.objective,
         openingMessage: input.text,
         provisionalTitle: title,
+        // Stored as derived, so the first pass may replace it with a summary.
+        provisionalDescription: input.objective,
       });
     }
     return created;

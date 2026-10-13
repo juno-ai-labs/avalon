@@ -143,13 +143,16 @@ its threads, and a composer at the foot.
 - **Feed.** `GET /spaces/:id/feed`, newest nearest the composer; it opens at
   the newest row and stays there as threads arrive unless the reader has
   scrolled up, and **Show earlier threads** loads the next page without moving
-  what they were reading. Each row is who started the thread and when, its
-  description in a line or two, and one breakout-style chip that opens it
-  beside the Channel. A row the socket holds is drawn from the socket, so its
-  dot and title move live, and a thread started here a moment ago shows at
-  once.
-- **Locked rows.** A thread a member may not open shows as **Private thread**,
-  when it was placed, and a **Request access** chip, which opens the thread's
+  what they were reading. A hairline with the day's name ("Today",
+  "Yesterday", a weekday, then a date; `formatDayLabel`) sits above the first
+  thread of each day. Each thread is one button that opens it beside the
+  Channel: its title, its description, and who started it and when, with the
+  thread's own mark beside them. A row the socket holds is drawn from the
+  socket, so its dot and title move live, and a thread started here a moment
+  ago shows at once.
+- **Locked rows.** A thread a member may not open shows in the same shape,
+  with a lock for its mark: **Private thread**, **Request access** and when it
+  was placed. The entry opens the thread's
   address, where the access request flow takes over
   ([`channel-access-requests.md`](channel-access-requests.md)). The client holds
   nothing else about it. A guest gets no locked rows.
@@ -375,6 +378,28 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-13 — The Channel feed reads thread-first
+
+**What changed:** Each thread in a Channel's feed is a trailing-side entry:
+title and caret, a three-line description, the starter's avatar and when, and
+the thread's own mark beside it. The whole entry opens the thread, replacing
+the breakout-style chip. Day separators split the feed, and it fades under the
+pill. `formatDayLabel` names the day; the sidebar's activity time now reuses it.
+
+**Why:** The product owner shared a design for the feed (thread-first, no
+bubble) and asked for Channels to match it. The chip made the title a small
+control under the description; the thread is the thing in a Channel, so its
+title leads.
+
+**Considered and rejected:** The design also shows "merged by" rows, where a
+thread's outcome is posted back into the Channel with any document it made.
+No such event exists on the server or in the feed contract, so the client
+does not fake one; it waits on that work.
+
+**Consequences:** The feed no longer uses `BreakoutChipRow`, so a change to
+the chip does not reach it. The entry's accessible name is the chip's (title,
+news, "Open"), so the feed reads the same to a screen reader.
 
 ### 2026-10-13 — The thread menu drops its Channels row
 
