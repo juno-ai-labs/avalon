@@ -86,7 +86,8 @@ bold (the time stays muted) and the second line reads "N new threads" in the unr
 (`--av-sys-color-workstream-news`), with the same dot at its end a thread
 row has. N is
 `latestAttentionSequenceNumber − readThroughSequenceNumber`, capped at
-`threadCount` because a placement moved out again keeps its number.
+`threadCount` because a placement moved out again keeps its number; a
+Channel whose new threads all moved out again draws as read.
 Hovering the time shows "Last update at" and the exact local time.
 Opening the Channel in a focused, visible window acknowledges the newest
 loaded placement's `attentionSequenceNumber` (`PATCH /spaces/:id/read-state`),
