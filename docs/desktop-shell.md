@@ -295,8 +295,13 @@ Each Breakout row the thread receives carries `originTurnId` and
 
 ### One right slot
 
-The right panel (an artifact, or the desktop's embedded browser) and the
-Breakout pane share one place. `ConversationSurface` scopes the panel to the
+The right panel and the Breakout pane share one place. The panel holds the
+desktop's embedded browser, or whatever the conversation opened: a resource
+with its actions, an attachment, a citation's file, or a prior version. None of
+these opens as a modal. The panel's header is a pane header: the item's title
+pill, its actions in the pill's menu, and the round close button. At phone
+width (640px and under) the panel takes the whole width, with no resize edge.
+`ConversationSurface` scopes the panel to the
 conversation that opened it: `railScope` is the parent id for Main and
 `parentId:substreamId` for a Breakout, with `#launch` for the launch surface. A
 surface only closes, fades or restores a panel it owns.
@@ -313,12 +318,22 @@ surface only closes, fades or restores a panel it owns.
 A hidden pane stays mounted, so returning to the split neither reconnects nor
 loses scroll. When the Breakout has the thread's place, the thread's pill
 stacks at the left of the Breakout's header, and pressing its title closes the
-panel to return to the split. Opening a Breakout while the thread holds a
-panel closes that panel first. The split's width is device-local under
+panel to return to the split. Opening a Breakout, or starting one from a message, while the thread
+holds a panel closes that panel first. The split's width is device-local under
 `layoutKey(…, 'breakout-width')` and clamps both panes to the conversation
 minimum. A split too narrow for two minimums (under 848px of content) shows
 the Breakout alone instead, measured by `SplitConversationLayout` itself; its
 close button returns to the thread.
+
+A pane header's trailing buttons are one `IconGroup`
+(`packages/ui/src/components/icon-group.tsx`), which spaces them. Its `actions`
+fold into a "⋯" dropdown at phone width (640px and under), and whenever
+`TitlePillHeader` measures the unfolded row coming closer to the centred pill
+than the gap between the buttons. Folded, the pill moves left just far enough
+to keep that same gap from "⋯", and no further. The measure is taken from the
+unfolded, centred layout rather than from where things sit, so folding or
+moving the pill never undoes the decision; read live, the distance would grow
+as soon as the row folded and the header would flip back.
 
 ### Web links
 
@@ -391,6 +406,27 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-13 — The right slot holds every opened item, with a pane header
+
+**What changed:** The right panel now holds whatever a conversation opens, not
+only an artifact or the browser, and heads itself like a pane: a title pill and
+round buttons. A pane header's trailing buttons are an `IconGroup`, whose
+actions fold into "⋯" at phone width or when they would crowd the pill. Starting
+a Breakout from a message closes the thread's panel, as opening one did. At
+phone width the panel is full width. `conversation-surfaces.md` has the entry
+for the panel itself.
+
+**Why:** The navigation PRD opens anything from a conversation in the pane
+beside it, and the product owner asked for the panel's header to match the
+panes'. A Breakout started from a message opened behind the thread's panel.
+
+**Considered and rejected:** Re-centring a crowded pill in the room the buttons
+leave; the product owner asked for it to move only as far as one gap needs.
+
+**Consequences:** Anything new that opens beside a conversation goes in this
+slot. A pane header's trailing controls go through `IconGroup` rather than a
+wrapper of their own, so their spacing and folding stay in one place.
 
 ### 2026-10-13 — Tile badges name themselves on hover
 

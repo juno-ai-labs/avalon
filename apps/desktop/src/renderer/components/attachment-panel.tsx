@@ -1,0 +1,102 @@
+import { ResourceIcon } from '@rally/ui/components/resource-icon';
+import { ActionTile, ActionTiles, TitleMenuHeader, TitlePillClose, TitlePillHeader } from '@rally/ui/components/title-pill';
+import { IconArrowsDiagonal, IconDownload, IconHistory, IconInfoCircle } from '@tabler/icons-react';
+import { ChevronLeft, ChevronRight, History } from 'lucide-react';
+import type { AttachmentPreview } from './attachments';
+import { AttachmentGalleryThumbnails, AttachmentViewBody, useAttachmentView } from './attachment-lightbox';
+import { IconButton } from './primitives';
+import { RailSurface } from './rail-surface';
+
+/**
+ * An attachment, a file a citation names, or a prior version of a resource,
+ * shown in the conversation's right panel.
+ *
+ * The same content the lightbox renders, in the slot an artifact uses, so a
+ * person reads it beside the conversation rather than over it. The lightbox
+ * stays for the surfaces that have no panel of their own: search and the
+ * Channel composer.
+ */
+export function AttachmentPanel({ preview, leaving = false, onClose, onExpand, onResize, width }: {
+  preview: AttachmentPreview;
+  leaving?: boolean;
+  onClose: () => void;
+  /** Shows the item the panel is on in the full-window lightbox. */
+  onExpand?: (preview: AttachmentPreview) => void;
+  onResize: (width: number) => void;
+  width: number;
+}): React.JSX.Element | null {
+  const view = useAttachmentView(preview);
+  const { gallery, active, mode, src, error, step } = view;
+  if (!active || !mode) return null;
+  const many = gallery.length > 1;
+  const icon = <ResourceIcon resource={{ resourceType: 'uploaded_file', mimeType: active.mimeType ?? null, title: active.name }} />;
+  return (
+    <RailSurface
+      className="attachment-panel"
+      label={`Attachment: ${active.name}`}
+      leaving={leaving}
+      onClose={onClose}
+      onKeyDown={(event) => {
+        // Scoped to the panel, unlike the lightbox's window listener: the
+        // composer beside it owns the arrow keys everywhere else.
+        if (!many || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+        if (event.target instanceof HTMLElement && event.target.closest('audio, video, input, textarea')) return;
+        event.preventDefault();
+        step(event.key === 'ArrowLeft' ? -1 : 1);
+      }}
+      onResize={onResize}
+      resizeLabel="Resize attachment panel"
+      scrimLabel="Close attachment panel"
+      width={width}
+    >
+      <TitlePillHeader
+        className="panel-title-header"
+        current={{
+          key: 'attachment',
+          icon,
+          title: active.name,
+          label: `Attachment menu: ${active.name}`,
+          menu: <>
+            <TitleMenuHeader eyebrow={preview.superseded ? preview.superseded.label : 'Attachment'} icon={icon} title={active.name} />
+            <ActionTiles>
+              <ActionTile disabled={Boolean(error) || !(src || active.loadContent)} icon={<IconDownload aria-hidden="true" size={20} stroke={1.6} />} label="Download" onSelect={view.download} />
+              {active.onDetails && <ActionTile icon={<IconInfoCircle aria-hidden="true" size={20} stroke={1.6} />} label="Details" onSelect={active.onDetails} />}
+              {preview.superseded && <ActionTile icon={<IconHistory aria-hidden="true" size={20} stroke={1.6} />} label="Current" onSelect={preview.superseded.onReturnToCurrent} />}
+            </ActionTiles>
+          </>,
+        }}
+        {...(onExpand ? { actions: [{
+          key: 'expand',
+          label: 'Expand',
+          icon: <IconArrowsDiagonal aria-hidden="true" size={16} stroke={1.9} />,
+          onSelect: () => onExpand(many ? { ...preview, galleryIndex: view.activeIndex } : preview),
+        }] } : {})}
+        trailing={<TitlePillClose label="Close panel" onClose={onClose} />}
+      />
+      <div
+        aria-busy={view.loading || undefined}
+        className={`attachment-panel-body is-${mode}${many ? ' has-gallery' : ''}`}
+      >
+        {preview.superseded && (
+          <p className="attachment-lightbox-superseded attachment-panel-superseded" role="status">
+            <History aria-hidden="true" size={14} /> {preview.superseded.label}
+            <button onClick={preview.superseded.onReturnToCurrent} type="button">Return to current</button>
+          </p>
+        )}
+        <div className="attachment-panel-content">
+          <AttachmentViewBody view={view} />
+        </div>
+        {many && (
+          <footer className="attachment-panel-gallery">
+            <div className="attachment-panel-gallery-nav">
+              <IconButton label="Previous attachment" onClick={() => step(-1)} tooltipSide="top"><ChevronLeft size={16} /></IconButton>
+              <span aria-live="polite">{view.activeIndex + 1} / {gallery.length}</span>
+              <IconButton label="Next attachment" onClick={() => step(1)} tooltipSide="top"><ChevronRight size={16} /></IconButton>
+            </div>
+            <AttachmentGalleryThumbnails view={view} />
+          </footer>
+        )}
+      </div>
+    </RailSurface>
+  );
+}

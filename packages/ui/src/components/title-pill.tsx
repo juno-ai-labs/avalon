@@ -1,11 +1,12 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { IconChevronDown, IconChevronRight, IconCornerDownRight, IconSearch, IconX } from '@tabler/icons-react';
 
+import { IconGroup, type IconGroupAction } from './icon-group';
 import { MarkBridge, type MarkBridgeItem } from './mark-bridge';
 import { IconButton } from './primitives';
 import clsx from 'clsx';
 import { isComposingKeyEvent } from '../lib/ime';
-import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 
 /**
  * One level inside a title pill's menu, e.g. People. The pill names it as a
@@ -306,7 +307,9 @@ export function TitlePill({ level, variant = 'current' }: {
  * at the left in nesting order, and the pane's trailing controls at the right.
  * The centre column stays centred however many ancestors there are.
  */
-export function TitlePillHeader({ ancestors = [], className, current, trailing }: {
+export function TitlePillHeader({ actions, ancestors = [], className, current, trailing }: {
+  /** Round buttons ahead of `trailing`, folded into a "More" dropdown at phone width. */
+  actions?: readonly IconGroupAction[];
   ancestors?: readonly TitlePillLevel[];
   className?: string;
   current: TitlePillLevel;
@@ -319,7 +322,15 @@ export function TitlePillHeader({ ancestors = [], className, current, trailing }
     if (level.bridge) bridge.push({ key: level.key, ...level.bridge, onSelect: level.onSelect });
   }
   const bridged = ancestors.length > 0 && bridge.length === ancestors.length;
-  return <header className={clsx('title-pill-header window-drag', className)}>
+  const headerRef = useRef<HTMLElement>(null);
+  const currentRef = useRef<HTMLDivElement>(null);
+  const trailingRef = useRef<HTMLDivElement>(null);
+  const { crowded, shift } = useTrailingCrowded(headerRef, currentRef, trailingRef, actions?.length ?? 0);
+  return <header
+    className={clsx('title-pill-header window-drag', crowded && 'is-crowded', className)}
+    ref={headerRef}
+    style={shift ? { '--title-pill-shift': `${shift}px` } as React.CSSProperties : undefined}
+  >
     <div className={clsx('title-pill-ancestors', bridged && 'is-bridged')}>
       {ancestors.map((level) => <span className="title-pill-ancestor window-no-drag" key={level.key}>
         <TitlePill level={level} variant="ancestor" />
@@ -329,9 +340,74 @@ export function TitlePillHeader({ ancestors = [], className, current, trailing }
           shape is measured from the name, so it closes back to a circle. */}
       {bridged ? <MarkBridge className="title-pill-bridge window-no-drag" items={bridge} labelLast /> : null}
     </div>
-    <div className="title-pill-current window-no-drag"><TitlePill level={current} /></div>
-    <div className="title-pill-trailing">{trailing ? <span className="window-no-drag">{trailing}</span> : null}</div>
+    <div className="title-pill-current window-no-drag" ref={currentRef}><TitlePill level={current} /></div>
+    <div className="title-pill-trailing" ref={trailingRef}>{trailing || actions?.length
+      ? <IconGroup actions={actions} buttonClassName="title-pill-action" className="window-no-drag" folded={crowded}>{trailing}</IconGroup>
+      : null}</div>
   </header>;
+}
+
+/**
+ * Whether the header's trailing buttons, unfolded, would come closer to the
+ * centred pill than the gap between the buttons themselves, and if so how far
+ * left the pill moves to keep that gap from the folded row.
+ *
+ * Decided from the layout the header would have unfolded and centred, not
+ * from where things sit now: folding narrows the row and crowding moves
+ * the pill, and reading either back would undo the decision that caused it.
+ */
+function useTrailingCrowded(
+  headerRef: RefObject<HTMLElement | null>,
+  currentRef: RefObject<HTMLElement | null>,
+  trailingRef: RefObject<HTMLElement | null>,
+  actionCount: number,
+): { crowded: boolean; shift: number } {
+  const [state, setState] = useState({ crowded: false, shift: 0 });
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    const current = currentRef.current;
+    const trailing = trailingRef.current;
+    // Only a header with actions has anything to fold. Without them it is
+    // never crowded and pays for no observer.
+    if (actionCount === 0) {
+      setState((was) => was.crowded || was.shift ? { crowded: false, shift: 0 } : was);
+      return;
+    }
+    if (!header || !current || !trailing || typeof ResizeObserver === 'undefined') return;
+    const measure = (): void => {
+      const group = trailing.querySelector<HTMLElement>('.icon-group');
+      const pill = current.firstElementChild;
+      if (!group || !(pill instanceof HTMLElement)) return;
+      const gap = Number.parseFloat(getComputedStyle(group).columnGap) || 0;
+      const style = getComputedStyle(header);
+      const box = header.getBoundingClientRect();
+      const left = box.left + (Number.parseFloat(style.paddingLeft) || 0);
+      const right = box.right - (Number.parseFloat(style.paddingRight) || 0);
+      // Folded by this hook or by the phone-width rule; either way the row is narrower.
+      const actions = group.querySelector('.icon-group-actions');
+      const folded = actions ? getComputedStyle(actions).display === 'none' : false;
+      const more = group.querySelector<HTMLElement>('.icon-group-more');
+      const button = more && more.offsetWidth ? more.offsetWidth : 0;
+      const step = (actionCount - 1) * (button + gap);
+      const rowWidth = group.offsetWidth + (folded ? step : 0);
+      // The pill only ever moves, never shrinks, so its width is its own even
+      // while crowded, and follows a title that gets shorter.
+      const pillRight = (left + right) / 2 + pill.offsetWidth / 2;
+      const crowded = right - rowWidth - pillRight < gap;
+      // Folded, the row is one "More" button narrower by `step`; the pill moves
+      // only as far as it takes to sit a gap from it.
+      const foldedLeft = right - (rowWidth - step);
+      const shift = crowded ? Math.max(0, Math.ceil(pillRight + gap - foldedLeft)) : 0;
+      setState((was) => was.crowded === crowded && was.shift === shift ? was : { crowded, shift });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    observer.observe(current);
+    observer.observe(trailing);
+    return () => observer.disconnect();
+  }, [actionCount, currentRef, headerRef, trailingRef]);
+  return state;
 }
 
 /** The identity row at the top of a title menu: what this is and where it lives. */
@@ -374,6 +450,37 @@ export function TitlePillAction({ children, label, onClick }: {
   children: ReactNode; label: string; onClick: () => void;
 }): React.JSX.Element {
   return <IconButton className="title-pill-action" label={label} onClick={onClick}>{children}</IconButton>;
+}
+
+/** A row of square actions under the menu's header, the most used things done to it. */
+export function ActionTiles({ children }: { children: ReactNode }): React.JSX.Element {
+  return <div className="title-menu-tiles" role="group" aria-label="Actions">{children}</div>;
+}
+
+export function ActionTile({ icon, label, onSelect, disabled }: {
+  icon: ReactNode; label: string; onSelect: (event: Event) => void; disabled?: boolean | undefined;
+}): React.JSX.Element {
+  return <DropdownMenu.Item className="title-menu-tile" disabled={disabled} onSelect={onSelect}>
+    {icon}<span>{label}</span>
+  </DropdownMenu.Item>;
+}
+
+/** A row that opens a level of the menu in place: People, Sidekicks, Breakouts. */
+export function LevelRow({ icon, label, meta, view }: {
+  icon: ReactNode; label: string; meta?: ReactNode; view: TitleMenuView;
+}): React.JSX.Element {
+  const nav = useTitleMenuNav();
+  return <DropdownMenu.Item className="menu-item title-menu-level-row" data-title-menu-level={view.key} onSelect={(event) => { event.preventDefault(); nav.open(view); }}>
+    {icon}
+    <span className="title-menu-item-copy">{label}</span>
+    {meta !== undefined && <span className="title-menu-level-meta">{meta}</span>}
+    <IconChevronRight aria-hidden="true" className="title-menu-level-chevron" size={15} stroke={1.8} />
+  </DropdownMenu.Item>;
+}
+
+/** Selecting a tile that leads to a level keeps the menu open and moves to it. */
+export function openLevel(nav: ReturnType<typeof useTitleMenuNav>, view: TitleMenuView) {
+  return (event: Event): void => { event.preventDefault(); nav.open(view); };
 }
 
 /** The round control that closes a pane, at the right of its header. */
