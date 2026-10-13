@@ -370,6 +370,12 @@ function useTrailingCrowded(
     const header = headerRef.current;
     const current = currentRef.current;
     const trailing = trailingRef.current;
+    // Only a header with actions has anything to fold. Without them it is
+    // never crowded and pays for no observer.
+    if (actionCount === 0) {
+      setState((was) => was.crowded || was.shift ? { crowded: false, shift: 0 } : was);
+      return;
+    }
     if (!header || !current || !trailing || typeof ResizeObserver === 'undefined') return;
     const measure = (): void => {
       const group = trailing.querySelector<HTMLElement>('.icon-group');

@@ -9,6 +9,7 @@ import type {
   WorkstreamDetail,
   WorkstreamResource,
 } from '../lib/types';
+import { useState } from 'react';
 import { useUiStore } from '../lib/ui-store';
 import { ApiError } from '../lib/api';
 import { InspectorRail } from './inspector-rail';
@@ -835,6 +836,35 @@ describe('resource detail content preview', () => {
       </Tooltip.Provider>,
     );
     expect(screen.queryByRole('button', { name: 'Expand' })).toBeNull();
+  });
+
+  it('hands focus back to what opened the panel once an archive closes it', async () => {
+    // The surface drops a panel whose resource is gone, as `ConversationSurface`
+    // does after Archive; the panel's frame returns focus as it leaves.
+    function Host(): React.JSX.Element {
+      const [open, setOpen] = useState(false);
+      const [resources, setResources] = useState([note]);
+      return <Tooltip.Provider>
+        <button onClick={() => setOpen(true)} type="button">Open note</button>
+        {open && resources.length > 0 && <InspectorRail
+          onDetachResource={() => { setResources([]); }}
+          panel={{ resourceId: note.id, onClose: () => setOpen(false) }}
+          workstream={{ ...workstream, resources }}
+        />}
+      </Tooltip.Provider>;
+    }
+    render(<Host />);
+    const opener = screen.getByRole('button', { name: 'Open note' });
+    opener.focus();
+    fireEvent.click(opener);
+    await screen.findByRole('complementary', { name: `Resource: ${note.title}` });
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: `Artifact menu: ${note.title}` }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => expect(screen.queryByRole('complementary')).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(opener));
   });
 
   it('pops every non-site artifact out through its authorized preview bytes', async () => {

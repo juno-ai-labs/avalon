@@ -681,31 +681,13 @@ activation event without losing the warning; later clears replace that retained 
 
 ### 2026-10-13 — Every artifact and attachment opens in the right panel
 
-**What changed:** A conversation's right panel now holds whatever it opens:
-a message or composer attachment, a citation's file, a prior version of a
-resource, or a resource with its own actions (versions, pop-out, archive,
-refresh). `ConversationSurface` keeps one `ConversationPanel` state, either
-`{ kind: 'resource' }` or `{ kind: 'attachment' }`, in place of the attachment
-lightbox, the resource lightbox and the document-only `ArtifactSidebar`.
-`InspectorRail` takes a `panel` prop and draws in `RailSurface` instead of a
-dialog, so the **Open in a righthand sidebar** hand-off is gone. The new
-`AttachmentPanel` renders through `useAttachmentView` and `AttachmentViewBody`,
-which the lightbox now shares. Both panels head themselves the way a thread or
-Breakout pane does: `TitlePillHeader` with the item's own `TitlePill`, whose
-menu holds its actions (a resource's New window, Open source, Refresh, a
-Versions level and Archive; an attachment's Download and Details), and
-`TitlePillClose`, with a round **Expand** beside Close (both `TitlePillAction`,
-spaced by `IconGroup`, which `TitlePillHeader` wraps its trailing controls in;
-Expand is an `IconGroup` action, so it folds into a "⋯" dropdown at phone width
-or when the header measures it crowding the pill)
-that shows the panel's item in the full-window `AttachmentLightbox` over the
-panel; closing it leaves the panel as it was and returns focus to Expand. A live
-site has no Expand, since it has no single file to show; its menu offers New
-window. `ActionTiles`, `ActionTile`, `LevelRow` and `openLevel` moved
-from `conversation-menus.tsx` into `title-pill.tsx` so a panel builds its menu
-from the same parts. A prior version's **Return to current** goes back to the
-resource panel it was opened from. Only a resource is restored after
-relaunch; an attachment is a loader closure with nothing to save.
+**What changed:** Every artifact and attachment a conversation opens (a
+message or composer attachment, a citation's file, a prior version, a resource
+with its actions) lands in its right panel, replacing both lightboxes and the
+document-only sidebar. The panel heads itself like a thread pane, its actions in
+the title pill's menu, with an Expand that shows the item full-window over it.
+Only a resource panel is restored after relaunch; an attachment is a loader
+closure with nothing to save.
 
 **Why:** The navigation redesign puts anything opened from a conversation in
 the pane beside it (the pane stack), so a person reads it next to the thread

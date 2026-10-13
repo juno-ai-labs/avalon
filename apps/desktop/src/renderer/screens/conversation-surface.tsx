@@ -1635,6 +1635,12 @@ export function ConversationSurface({
   // A route switch is not a sidebar hand-off: scope the fade to the work stream
   // so the previous stream's inspector never dissolves over the arriving feed.
   const railLeaving = useRailExitFade(railOpen, railScopeKey);
+  // Once a closed panel has faded out it is gone. Kept any longer, a browser
+  // opened later would hand the slot back to it on close (below), bringing
+  // back an attachment the person had already closed.
+  useEffect(() => {
+    if (panel && !railOpen && !railLeaving) setPanel(null);
+  }, [panel, railLeaving, railOpen]);
   const members = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
