@@ -1,5 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { IconDots } from '@tabler/icons-react';
+import { IconCheck, IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRef, type ReactNode } from 'react';
 import { IconButton } from './primitives';
@@ -77,7 +77,13 @@ export function IconGroup({ actions = [], buttonClassName, children, className, 
               };
               return action.pressed === undefined
                 ? <DropdownMenu.Item {...common} key={action.key}>{action.icon}{action.label}</DropdownMenu.Item>
-                : <DropdownMenu.CheckboxItem {...common} checked={action.pressed} key={action.key}>{action.icon}{action.label}</DropdownMenu.CheckboxItem>;
+                : <DropdownMenu.CheckboxItem {...common} checked={action.pressed} key={action.key}>
+                  {action.icon}{action.label}
+                  {/* At the end, so the row keeps the icon its button shows. */}
+                  <DropdownMenu.ItemIndicator className="icon-group-menu-check">
+                    <IconCheck aria-hidden="true" size={15} stroke={1.9} />
+                  </DropdownMenu.ItemIndicator>
+                </DropdownMenu.CheckboxItem>;
             })}
           </DropdownMenu.Content>
         </DropdownMenu.Portal>

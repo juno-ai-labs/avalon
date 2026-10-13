@@ -7851,6 +7851,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 /* The actions' wrapper adds no box, so its buttons share the group's gap. */
 .icon-group-actions { display: contents; }
 .icon-group-more { display: none; }
+.icon-group-menu-check { color: var(--av-sys-color-accent-base); display: inline-flex; margin-left: auto; }
 /* Folded by its host, or at phone width: the actions fold into one "More" button. */
 .icon-group.is-folded .icon-group-actions { display: none; }
 .icon-group.is-folded .icon-group-more { display: inline-flex; }

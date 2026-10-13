@@ -569,7 +569,7 @@ link and Open in browser are now `IconGroupAction`s the detail declares with
 `useDetailHeaderActions`, and the panel header puts them in its `IconGroup`
 beside Expand. They are round like Close and fold into "⋯" when the header is
 crowded or at phone width. `IconGroupAction` gained `pressed`, for the Stored
-data toggle, and `tooltipSide`.
+data toggle (a check on its row once folded), and `tooltipSide`.
 
 **Why:** The product owner flagged the four buttons as not following the
 standard icon group. They were portaled into the header as finished buttons,
