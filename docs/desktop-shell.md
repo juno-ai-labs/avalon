@@ -28,7 +28,6 @@ a thread or a breakout opens, or who owns the right panel.
 | `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the section switcher (Channels, Threads, Activity), the account menu under it, and the three lists with their Pinned sections, sort, and drag to reorder. |
 | `apps/desktop/src/renderer/screens/channel.tsx` | The Channel screen: its pill and menu, the feed of threads with locked rows, the composer, and `ChannelStack`, the first two panes of the stack ([`pane-stack.md`](pane-stack.md)). |
 | `apps/desktop/src/renderer/components/channel-composer.tsx` | Starting a thread from a Channel. |
-| `apps/desktop/src/renderer/lib/thread-channels.tsx` | `useThreadChannels`: the thread menu's Channels level, where a thread is added to or taken out of a Channel. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | The thread screen: the thread and breakout panes, both pills, the one-slot rule, breakout creation in the right pane, and the Channel breadcrumb once the thread has shifted left. |
 | `apps/desktop/src/renderer/lib/navigation-routes.ts` | `channelRoute`, `threadRoute`, `homeChannelId`, and the context a thread pane reads its Channel from. |
 | `packages/ui/src/styles/app.css` | The "Single sidebar", "Title pills", "Breakouts in the Channel" and "Split conversation" blocks. |
@@ -219,12 +218,7 @@ from; reduced motion turns both off.
   disabled for the last participant; the host confirms in a Cancel/Continue
   dialog before it removes. A waiting invitation's dots menu offers **Cancel
   invite**. Sidekicks is the Sidekick section. Breakouts
-  is the list, newest activity first, filtered past six. **Channels**
-  (`lib/thread-channels.tsx`) lists the Channels the thread sits in, each with
-  **Remove from this channel** (disabled on the last one, since a thread always
-  has a home), then **Add to a channel** listing every other Channel the person
-  may start a thread in, with a search past eight; a guest sees the list and
-  changes nothing. More is **Icon and
+  is the list, newest activity first, filtered past six. More is **Icon and
   color** (the same choice as the pill's icon), **Pinned in
   my sidebar** (the sidebar's own pin action, lent through `useUiStore.pinChannel`),
   **Public to organization** (a switch both ways; a refusal to make it private
@@ -381,6 +375,18 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-13 — The thread menu drops its Channels row
+
+**What changed:** A thread's title-pill menu no longer has a **Channels** row
+or level, so the desktop no longer lists, adds or removes a thread's Channel
+placements from it. `lib/thread-channels.tsx` and the `channels` prop of
+`ChannelMenu` went with it. The server's add and remove routes, and their
+client methods, stay.
+
+**Why:** The product owner asked for the row to go. The reasoning beyond that
+was not recorded. A change that brings placement editing back should decide
+where it lives rather than restore this row by default.
 
 ### 2026-10-12 — The Channel menu gains Copy link and More; its icon picks its look
 

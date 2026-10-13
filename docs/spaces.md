@@ -1050,10 +1050,9 @@ guest is shown carries a Space write.
 
 **A placement is not a copy.** A thread in two Channels is one record listed in
 both feeds, with one unread state, one running state and one destination. The
-thread menu's **Channels** level (`lib/thread-channels.tsx`) shows where it
-sits, adds it to any Channel the person reaches as more than a reader of one
-thread in it, and takes it out of any Channel but its last; the server refuses
-the last with `space_membership_final`. The move RPC (`moveSpaceMembership`)
+server takes a thread out of any Channel but its last, refusing the last with
+`space_membership_final`; the desktop no longer offers adding or removing a
+placement from the thread menu. The move RPC (`moveSpaceMembership`)
 stays for older desktops' drag between Space pills: when both Spaces grant the
 same scope and roster it switches both placements in one WorkspaceDO
 transaction, and otherwise it answers `moved: false` and the server adds the
