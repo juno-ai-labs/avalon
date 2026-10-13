@@ -37,14 +37,14 @@ import {
 import { workspaceDOName } from "../durable-objects/names";
 import { BrowserSessionService } from "./browser-session-service";
 import { AuthService } from "./auth-service";
-import { openGeneralSpaceForNewWorkspace, personalSpaceIdFor } from "./space-bootstrap-service";
+import { openGeneralSpaceForNewWorkspace } from "./space-bootstrap-service";
 import {
   acceptsNewWorkstreamWork,
   readWorkstreamAuthorityControl,
   type WorkstreamAuthorityControl,
 } from "./workstream-authority";
 import { parentRouteStatement, regionalWorkstreamAnchorStatement } from "./workstream-runtime-database";
-import type { WorkspaceGeneralOpening } from "../durable-objects/workspace-space-protocol";
+import { personalSpaceIdFor, type WorkspaceGeneralOpening } from "../durable-objects/workspace-space-protocol";
 import { uuidV7 } from "../lib/uuid-v7";
 import {
   demoWorkspaceAdmission,

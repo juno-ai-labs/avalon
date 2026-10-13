@@ -150,6 +150,11 @@ export function spaceReachedThroughChannelSql(
  * private Channel to somebody its owners did not add, which is the one thing
  * making it private is for.
  *
+ * A Personal Channel (`individual`) is narrower still: its owner, and only
+ * while they are a member. A participant row for anybody else does not list
+ * it, and a guest has no Personal Channel, including one kept from before
+ * they became a guest. See docs/spaces.md#the-personal-channel.
+ *
  * `viewer` is the Space's own viewer row, already narrowed to participants by
  * its join, so `user_id IS NOT NULL` is participation.
  */
@@ -159,8 +164,11 @@ export function spaceListedSql(
   accessClass: AccessClass,
   options: { breakouts: boolean; userId?: string },
 ): string {
+  const owned = admitsOrganizationWide(accessClass)
+    ? `${space}.created_by_user_id = ${viewer}.user_id`
+    : "0";
   return `(${organizationWideSql(`${space}.scope`, accessClass)}
-            OR ${viewer}.user_id IS NOT NULL
+            OR (${viewer}.user_id IS NOT NULL AND (${space}.scope <> 'individual' OR ${owned}))
             OR (${space}.scope = 'workspace'
                 AND ${spaceReachedThroughChannelSql(space, accessClass, options)}))`;
 }

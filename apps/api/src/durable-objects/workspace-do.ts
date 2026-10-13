@@ -236,6 +236,7 @@ import {
   acceptsNewWorkstreamWork,
   readWorkstreamAuthorityControl,
 } from "../services/workstream-authority";
+import { claimParentAnchor } from "../services/workstream-runtime-database";
 import { boundParameterChunks } from "./bound-parameters";
 import { isBreakoutActivityEvent } from "./breakout-activity";
 import { projectionSupersedes, type StoredProjection } from "./projection-fence";
@@ -707,6 +708,7 @@ import {
   WorkspaceSpaceGeneralRequestSchema,
   WorkspaceGeneralOpeningSchema,
   WorkspaceSeatMemberRequestSchema,
+  personalSpaceIdFor,
   type WorkspaceSeatMemberRequest,
   type WorkspaceSeatMemberResult,
   type WorkspaceGeneralOpening,
@@ -1477,6 +1479,8 @@ const PRODUCT_ALARM_KIND = "product";
 const PRODUCT_ALARM_KEY = "workspace";
 /** The one-shot entry a migrating object uses to reconcile itself once. */
 const SCHEDULE_BOOTSTRAP_ALARM_KIND = "schedule_bootstrap";
+/** One-shot, written by migration 102: seat every existing member. See docs/spaces.md#the-personal-channel. */
+const PERSONAL_CHANNEL_BACKFILL_ALARM_KIND = "personal_channel_backfill";
 /** The kinds `refreshSchedule` reconciles, each dispatched to the schedule runner. */
 
 
@@ -4310,6 +4314,18 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // A rebuild, because SQLite cannot widen a CHECK; see
   // SPACE_INDIVIDUAL_SCOPE_MIGRATION and docs/spaces.md#the-personal-channel.
   statements: SPACE_INDIVIDUAL_SCOPE_MIGRATION,
+}, {
+  version: 102,
+  description: "seat every existing member in General and give them a Personal Channel",
+  // One alarm per Organization that has an identity; it walks the members and
+  // takes the same steps a joining member's relationship change does. A fresh
+  // object has no identity and no members, and pays nothing.
+  statements: [`INSERT INTO _internal_durable_alarms
+       (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json, created_at, updated_at)
+     SELECT 'personal_channel_backfill', 'workspace', unixepoch() * 1000, NULL, 0, 0, NULL,
+            unixepoch() * 1000, unixepoch() * 1000
+      WHERE EXISTS (SELECT 1 FROM workspace_identity WHERE id = 1)
+     ON CONFLICT(kind, alarm_key) DO NOTHING`],
 }];
 
 function conversationToolEntry(conversation: {
@@ -7490,6 +7506,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           await this.runProductAlarm(workspaceId);
           return;
         }
+        if (alarm.kind === PERSONAL_CHANNEL_BACKFILL_ALARM_KIND) {
+          await this.backfillPersonalChannels(workspaceId);
+          return;
+        }
         if (alarm.kind === SCHEDULE_BOOTSTRAP_ALARM_KIND) {
           // One-shot, written by the migration that created this index: it exists
           // so an object that has never been asked to reconcile does it once,
@@ -8247,6 +8267,38 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // Thrown so the relationship delivery retries; the code names why.
     if (refusal !== null) throw new Error(refusal);
     return { seated: true, personalSpace: "present" };
+  }
+
+  /**
+   * Migration 102's one pass: every active non-guest member of an Organization
+   * that existed before Personal Channels is seated in General and given one,
+   * anchoring each in D1 here as `seatOrganizationMember`'s caller does. Each
+   * member's steps are idempotent, so a pass that throws part way is retried
+   * by the alarm from the top and redoes nothing.
+   *
+   * Throws while the Organization's Spaces are not open, so the alarm retries
+   * rather than settling with nobody seated.
+   */
+  private async backfillPersonalChannels(workspaceId: string): Promise<void> {
+    const storage = this.spaceStorage();
+    if (!storage.ready() || !storage.bootstrapStatus().ready) throw new Error("personal_channel_backfill_spaces_not_open");
+    const members = await this.env.DB.prepare(
+      `SELECT user_id FROM workspace_members
+        WHERE workspace_id = ? AND status = 'active' AND access_class = 'member'
+        ORDER BY user_id`,
+    ).bind(workspaceId).all<{ user_id: string }>();
+    let seated = false;
+    for (const { user_id: userId } of members.results) {
+      // The object's own copy decides, as it does for every other seating.
+      if (!await this.activeSpaceMember(workspaceId, userId)) continue;
+      if (storage.seatMember(userId)) seated = true;
+      if (storage.personalSpaceId(userId) !== null) continue;
+      const spaceId = await personalSpaceIdFor(workspaceId, userId);
+      const { generation } = await claimParentAnchor(this.env, workspaceId, spaceId, "space");
+      const refusal = await this.reservePersonalSpace(workspaceId, userId, spaceId, generation);
+      if (refusal !== null) throw new Error(refusal);
+    }
+    if (seated) this.publishSpaceSnapshot();
   }
 
   /**

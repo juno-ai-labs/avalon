@@ -1,8 +1,6 @@
 import {
-  asSpaceId,
   asUserId,
   asWorkspaceId,
-  type SpaceId,
   type WorkstreamId,
 } from "@rally/contracts";
 
@@ -12,13 +10,13 @@ import {
   WorkspaceSpaceBootstrapPageSchema,
   WorkspaceSpaceChannelChangeResultSchema,
   WorkspaceSeatMemberResultSchema,
+  personalSpaceIdFor,
   type SpaceBootstrapChannel,
   type WorkspaceSpaceBootstrapSettleRequest,
 } from "../durable-objects/workspace-space-protocol";
 import type { AuthContext, Env } from "../env";
 import { boundParameterChunks } from "../durable-objects/bound-parameters";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { stableUuid } from "../lib/stable-uuid";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { SpaceService } from "./space-service";
 import { claimParentAnchor } from "./workstream-runtime-database";
@@ -448,15 +446,6 @@ export async function placeConnectorChannelInGeneral(
       });
     });
   }
-}
-
-/**
- * The id a member's Personal Channel is created under: derived, so every
- * attempt for the same person (organization creation, a redelivered
- * relationship change, a retry) names the same Space and anchors it once.
- */
-export async function personalSpaceIdFor(workspaceId: string, userId: string): Promise<SpaceId> {
-  return asSpaceId(await stableUuid(["personal_channel", workspaceId, userId]));
 }
 
 /**

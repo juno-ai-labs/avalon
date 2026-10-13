@@ -440,17 +440,20 @@ one **Personal Channel**: a Space named "Your Personal Channel" whose scope is
 `UpdateSpaceAudienceRequest` take `AudienceScopeSchema` (`personal` or
 `workspace`), and only the seating below writes `individual`.
 
-**What the scope means.** The listing rules treat any scope but `workspace` as
-participants-only, so a Personal Channel is listed to its owner alone, an
-Organization owner included; somebody who can read a thread placed in it
-reaches it `through_channel`, as for any private Space. Its audience never
+**What the scope means.** A Personal Channel is listed to its owner and
+nobody else: not an Organization owner or admin, not somebody who can read a
+thread placed in it (no private Space is reached through a thread), and not
+anybody given a participant row by mistake. `spaceListedSql` checks
+`created_by_user_id` rather than the viewer row for this scope. A guest has no
+Personal Channel: seating refuses guests, and an owner who becomes a guest
+stops being listed theirs until they are a member again. Its audience never
 changes: `noteSpaceAudience` refuses it `space_protected`, so nobody is added,
 it is never made public, and its owner cannot leave it. `archive` refuses it
 the same way. Its owner may rename and recolour it. Its hosted parent's
 `parent_metadata.scope` is `personal`, the thread vocabulary for "its
 participants". `spaces_individual_owner_idx` holds one per member.
 
-**When it is made.** Two paths, both idempotent:
+**When it is made.** Three paths, all idempotent:
 
 - **Creating an Organization.** `createOwnedWorkspace` writes General's anchor
   and the creator's Personal Channel's in the batch that creates the
@@ -465,6 +468,13 @@ participants". `spaces_individual_owner_idx` holds one per member.
   anchor and asks again with the generation, as `ensureGeneral` does. A failure
   throws, so the relationship delivery retries; every step is fenced against
   applying twice.
+- **Every Organization that existed before this** (WorkspaceDO migration 102).
+  The migration queues one `personal_channel_backfill` alarm in each object
+  with an identity. The alarm reads the active non-guest members from D1, and
+  for each one the object's own relationship copy still calls a member, seats
+  them in General, writes their Personal Channel's anchor and reserves it. A
+  throw retries the whole pass, which redoes nothing; while the Spaces are not
+  open it throws `personal_channel_backfill_spaces_not_open`.
 
 The Personal Channel's id is `stableUuid(["personal_channel", workspaceId,
 userId])`, so the creation path and the relationship event name the same
@@ -481,10 +491,10 @@ routes serve such a build `personal` through `spaceScopeForClient`. A native
 client that declares no contract is served `individual`, as
 `requireCurrentClientContract` admits it.
 
-**Not done:** Members of Organizations that existed before this change are not
-backfilled. They get General and a Personal Channel at their next relationship
-change, or never. A backfill would be one `seatOrganizationMember` per active
-member, run once.
+**Rollout.** A migration runs when its object next wakes, so an Organization
+nobody opens is backfilled when somebody does. To backfill the whole fleet at
+once, force a WorkspaceDO migration from `/migrations`
+([`durable-object-migration-tracking.md`](durable-object-migration-tracking.md)).
 
 ### The cutover
 
@@ -1878,7 +1888,9 @@ reserves its creator's Personal Channel beside General in `initializeWorkspace`,
 and every relationship change that leaves somebody an active member runs
 `seatOrganizationMember`, which seats them in General and creates their
 Personal Channel. WorkspaceDO migration 101 rebuilds `spaces` to widen its
-scope check and adds `spaces_individual_owner_idx`. A Space's own
+scope check and adds `spaces_individual_owner_idx`; migration 102 queues a one-time alarm that
+seats every existing member the same way. A Personal Channel is listed to its
+owner alone, never to a guest. A Space's own
 `directory_common` projection no longer writes `spaces.scope`. Client contract
 5 marks a build that reads `individual`; older desktops are served `personal`.
 
@@ -1900,8 +1912,8 @@ build out of every Organization.
 public when its parent next publishes; `applyAudience` and the reservation are
 the only writers of scope. Anything that compares `scope = 'personal'` to mean
 "private" must use `scope <> 'workspace'`. A change to General's or a Personal
-Channel's creation has to hold for both paths. Existing members are not
-backfilled (see [The Personal Channel](#the-personal-channel)).
+Channel's creation has to hold for all three paths. Dormant Organizations are
+backfilled when they wake unless the WorkspaceDO migration is forced.
 
 ### 2026-10-13: Channel stats count the new rows
 
