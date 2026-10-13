@@ -44,6 +44,13 @@ its headers is leftmost. The same happens when the window is too narrow for
 two panes: `onShownChange` reports the thread standing alone, and the thread
 carries the crumb.
 
+The reader can also ask for it. A thread beside its Channel, and a breakout
+beside its thread, has **Expand** and **Collapse** in its header; expanded,
+its level draws in `breakout` mode and the pane carries the crumbs as above.
+An expansion is held for the pane it was asked on and dropped when that pane
+closes or another opens, or when it opens a breakout or a panel of its own,
+which then split the window as they would have.
+
 Each step is drawn as movement, by `SplitConversationLayout` itself so both
 levels share it. A pane that opens beside another slides in from the right; a
 pane that takes the whole width slides over from where it was (the distance is
@@ -98,13 +105,18 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
   the pane's own pill keeps its room and truncates last. Where every crumb
   has a mark, the marks fuse into one `MarkBridge`
   ([`shared-ui.md`](shared-ui.md)), each linking where its pill does.
+- **Collapse in a narrow window** clears the expansion, but the pane still
+  stands alone, as it would unexpanded; Collapse then simply goes away.
 - **A thread with no visible Channel** opens on `/workstreams/:id`, alone; it
   has nothing to step back to.
 
 ## Testing
 
 - `apps/desktop/src/renderer/screens/channel.test.tsx` (a thread opens beside
-  the Channel) and `lib/navigation-routes.test.ts`.
+  the Channel, expands over it and collapses back, and a breakout ends the
+  expansion, and a thread closed while expanded reopens beside the Channel);
+  `workstream-sidebar-switch.test.tsx` (the real header's Expand and Collapse,
+  and a breakout expanding, collapsing and reopening beside its thread) and `lib/navigation-routes.test.ts`.
 - `apps/desktop/src/renderer/lib/pane-visibility.test.tsx`: no read is
   acknowledged in a pane the layout is not drawing, and one is once it is.
 - `apps/desktop/src/renderer/components/split-conversation.test.tsx`: the two
@@ -114,6 +126,27 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
   window under Xvfb, per [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-13 — A thread can expand over its Channel, a breakout over its thread
+
+**What changed:** The thread beside a Channel, and a breakout beside its
+thread, each have Expand and Collapse actions in their header. Expanded, the
+pane takes the whole window and what it covered rides as its crumb.
+
+**Why:** The product asked for a way to give the right pane the whole window
+without closing the Channel.
+
+**Considered and rejected:** A third layout mode in `SplitConversationLayout`.
+Expanded is the same picture as a thread using both its slots, so it reuses
+that mode and the crumb that comes with it.
+
+**Consequences:** Expansion is not stored and lasts only while the pane it
+was asked on stays open, and only until that pane opens a breakout or a panel: the product
+chose the ordinary thread-and-breakout split there over keeping the breakout
+full width. The Channel crumb still opens the Channel alone, closing the thread;
+Collapse is the way back to the pair.
+
+Shipped in #1213.
 
 ### 2026-10-13 — A crumb opens its level and closes what is nested under it
 

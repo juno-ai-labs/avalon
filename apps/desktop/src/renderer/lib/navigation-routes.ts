@@ -46,6 +46,10 @@ export interface ChannelPaneContext {
   shifted: boolean;
   /** The thread reports whether it is using two panes (a breakout or a panel). */
   setThreadUsesTwoPanes: (twoPanes: boolean) => void;
+  /** Whether the reader expanded the thread to take the whole window. */
+  expanded: boolean;
+  /** Expand the thread over the Channel, or put it back beside it. */
+  setExpanded: (expanded: boolean) => void;
 }
 
 export const ChannelPaneContextValue = createContext<ChannelPaneContext | null>(null);

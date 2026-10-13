@@ -25,13 +25,21 @@ vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ d
 vi.mock('../components/channel-composer', () => ({
   ChannelComposer: ({ threadOpen }: { threadOpen?: boolean }) => <div data-thread-open={String(threadOpen)}>composer</div>,
 }));
-// The thread pane, with the Channel crumb it would draw once it is off screen.
+// The thread pane, with the Channel crumb it would draw once it is off screen
+// and the button that expands it over the Channel.
 vi.mock('./workstream', async () => {
   const { useChannelPane } = await import('../lib/navigation-routes');
+  const { Link: RouterLink } = await import('react-router-dom');
   return {
     WorkstreamScreen: () => {
       const pane = useChannelPane();
-      return <div>thread pane{pane && <button onClick={pane.crumb.onSelect} type="button">Channel crumb</button>}</div>;
+      return <div>thread pane{pane && <>
+        <RouterLink to="/channels/outbound/threads/secret">Next thread</RouterLink>
+        <button onClick={pane.crumb.onSelect} type="button">Channel crumb</button>
+        <button onClick={() => pane.setExpanded(!pane.expanded)} type="button">{pane.expanded ? 'Collapse' : 'Expand'}</button>
+        <button onClick={() => pane.setThreadUsesTwoPanes(true)} type="button">Open breakout</button>
+        <button onClick={() => pane.setThreadUsesTwoPanes(false)} type="button">Close breakout</button>
+      </>}</div>;
     },
   };
 });
@@ -119,6 +127,44 @@ describe('a Channel', () => {
 
     expect(screen.getByTestId('location')).toHaveTextContent(/^\/channels\/outbound$/u);
     expect(screen.queryByText('thread pane')).toBeNull();
+  });
+
+  it('expands a thread over the Channel and puts it back, and opens the next thread beside it', async () => {
+    renderChannel('/channels/outbound/threads/plan');
+    expect(await screen.findByText('composer')).toBeVisible();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Expand' }));
+    expect(screen.getByText('composer')).not.toBeVisible();
+    expect(screen.getByText('thread pane')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse' }));
+    expect(screen.getByText('composer')).toBeVisible();
+
+    // Another thread opened from the expanded one comes up beside the Channel.
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Next thread' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/secret');
+    expect(screen.getByText('composer')).toBeVisible();
+  });
+
+  it('opens a thread beside the Channel again after it was closed while expanded', async () => {
+    renderChannel('/channels/outbound/threads/plan');
+    fireEvent.click(await screen.findByRole('button', { name: 'Expand' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Channel crumb' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Q4 plan' }));
+
+    expect(await screen.findByText('thread pane')).toBeVisible();
+    expect(screen.getByText('composer')).toBeVisible();
+  });
+
+  it('ends the expansion when the thread opens a breakout, so closing it returns to the Channel and the thread', async () => {
+    renderChannel('/channels/outbound/threads/plan');
+    fireEvent.click(await screen.findByRole('button', { name: 'Expand' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open breakout' }));
+    expect(screen.getByRole('button', { name: 'Expand' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close breakout' }));
+    expect(screen.getByText('composer')).toBeVisible();
   });
 
   it('hands the composer focus and paste back while a thread is open beside it', async () => {
