@@ -9,6 +9,7 @@ import {
   MoveChannelBetweenSpacesResultSchema,
   type SpaceChannelPage,
   SpaceChannelPageSchema,
+  type ActivityEvent,
   type ActivityFilter,
   type ActivityPage,
   type ChannelFeedPage,
@@ -262,6 +263,16 @@ export class SpaceService {
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       seenThrough,
+    });
+  }
+
+  /** What the person did that settles Activity rows; a support session settles nothing. */
+  async recordActivityEvents(events: readonly ActivityEvent[]): Promise<void> {
+    if (this.auth.impersonatorUserId) return;
+    await (await this.workspace()).recordActivityEvents({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      events: [...events],
     });
   }
 

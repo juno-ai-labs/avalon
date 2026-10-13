@@ -12,6 +12,7 @@ import {
   type ChannelStats,
   type ChannelStatsList,
   PinListSchema,
+  type ActivityEvent,
   type ActivityFilter,
   type ActivityPage,
   type PinKind,
@@ -1558,6 +1559,11 @@ export class RallyApi {
 
   markActivitySeen(seenThrough: string): Promise<void> {
     return this.requestVoid('/navigation/activity/seen', { method: 'PUT', body: { seenThrough } });
+  }
+
+  /** What the person did that settles Activity rows; see `ActivityEventSchema`. */
+  recordActivityEvents(events: readonly ActivityEvent[]): Promise<void> {
+    return this.requestVoid('/navigation/activity/events', { method: 'POST', body: { events } });
   }
 
   moveChannelBetweenSpaces(sourceSpaceId: string, targetSpaceId: string, workstreamId: string) {

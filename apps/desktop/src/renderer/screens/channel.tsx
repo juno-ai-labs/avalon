@@ -18,6 +18,7 @@ import { ChannelComposer } from '../components/channel-composer';
 import { MarkdownBody } from '../components/workstream-blocks';
 import { Avatar, Button, EmptyState, InlineError, LoadingState, Modal, TitleSkeleton } from '../components/primitives';
 import { RelativeTime } from '../components/relative-time';
+import { reportActivityEvent } from '../lib/activity-events';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { copySpaceLink } from '../lib/copy-workstream-link';
@@ -230,11 +231,23 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
   });
   const stats = channelStats.data?.find((row) => row.channelId === channelId);
   const ackInFlight = useRef<string | null>(null);
+  const activityReportedRef = useRef<{ channelId: string; through: number } | null>(null);
   // The pane stays mounted from one Channel to the next; coming back to one
   // whose acknowledgement failed is opening it again, and may send again.
   useEffect(() => { ackInFlight.current = null; }, [channelId]);
   const acknowledgeRead = useCallback((): void => {
     if (!api || !stats || document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    // Activity is told what is on screen whether or not the Channel's own read
+    // position needs moving, once per Channel and again when it rises.
+    const reported = activityReportedRef.current;
+    if (newestLoadedSequence > 0 && (reported?.channelId !== channelId || newestLoadedSequence > reported.through)) {
+      activityReportedRef.current = { channelId, through: newestLoadedSequence };
+      reportActivityEvent(api, queryClient, {
+        kind: 'read',
+        subject: { kind: 'channel', channelId },
+        through: newestLoadedSequence,
+      });
+    }
     const pending = channelReadAcknowledgement(newestLoadedSequence, stats);
     if (!pending) return;
     const key = `${channelId}:${pending.readThroughSequenceNumber}`;

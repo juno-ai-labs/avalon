@@ -1693,8 +1693,11 @@ export class WorkstreamObjectProductService {
             sourceId: messageId,
             dedupeKey: `message:${messageId}`,
             // Which conversation of the thread spoke: "0" for the thread itself,
-            // a breakout's id otherwise. The Activity tab tells the two apart.
-            metadata: { substreamId: this.externalSubstreamId() },
+            // a breakout's id otherwise. The Activity tab tells the two apart,
+            // and reads a mention as read once the reader's position in that
+            // conversation reaches `attentionOrdinal` — the one the mention
+            // rows above were stamped with.
+            metadata: { substreamId: this.externalSubstreamId(), attentionOrdinal: 1 },
             targets: activityTargets(memberIds, mentionedPersonIds, input.creatorUserId),
           },
         };
@@ -3796,7 +3799,7 @@ export class WorkstreamObjectProductService {
           sourceKind: "workstream_message",
           sourceId: delivery.turnId,
           dedupeKey: `message:${delivery.turnId}`,
-          metadata: { substreamId: this.externalSubstreamId() },
+          metadata: { substreamId: this.externalSubstreamId(), attentionOrdinal: delivery.attentionOrdinal },
           targets: activityTargets(
             delivery.affectedUserIds,
             delivery.authorUserId === null ? [] : delivery.mentionedUserIds,
@@ -5087,7 +5090,7 @@ export class WorkstreamObjectProductService {
             sourceKind: "workstream_message",
             sourceId: messageId,
             dedupeKey: `message:${messageId}`,
-            metadata: { substreamId: this.externalSubstreamId() },
+            metadata: { substreamId: this.externalSubstreamId(), attentionOrdinal: write.attentionOrdinal },
             targets: activityTargets(affectedUsers, personIds, auth.userId),
           },
         };

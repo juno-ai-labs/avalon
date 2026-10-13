@@ -126,6 +126,7 @@ export const ActivityItemSchema = z.strictObject({
   breakout: z.strictObject({ substreamId: IdSchema, title: z.string() }).nullable(),
   /** The Channels the thread sits in that the viewer may list. */
   channelIds: z.array(IdSchema),
+  /** Until Mark all read covers it, or an event settles it; see `ActivityEventSchema`. */
   unread: z.boolean(),
 });
 export type ActivityItem = z.infer<typeof ActivityItemSchema>;
@@ -142,3 +143,34 @@ export const ActivitySeenRequestSchema = z.strictObject({
   seenThrough: z.string().datetime({ offset: true }),
 });
 export type ActivitySeenRequest = z.infer<typeof ActivitySeenRequestSchema>;
+
+/** What an Activity event is about: a thread, one of its breakouts, or a Channel. */
+export const ActivitySubjectSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("thread"), threadId: WorkstreamIdSchema }),
+  z.strictObject({ kind: z.literal("breakout"), threadId: WorkstreamIdSchema, substreamId: IdSchema }),
+  z.strictObject({ kind: z.literal("channel"), channelId: IdSchema }),
+]);
+export type ActivitySubject = z.infer<typeof ActivitySubjectSchema>;
+
+/**
+ * Something the person did that can settle Activity rows, reported by the app.
+ *
+ * `read`: they saw `subject` through `through`, its attention ordinal (a
+ * thread's or breakout's message, a Channel's placement), and 0 when they
+ * only opened it. Every row the subject settles at or below that is done:
+ * reading message 29 of a thread settles a mention at 29 or earlier, and
+ * leaves one at 30 standing.
+ */
+export const ActivityEventSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("read"),
+    subject: ActivitySubjectSchema,
+    through: z.number().int().nonnegative(),
+  }),
+]);
+export type ActivityEvent = z.infer<typeof ActivityEventSchema>;
+
+export const ActivityEventsRequestSchema = z.strictObject({
+  events: z.array(ActivityEventSchema).min(1),
+});
+export type ActivityEventsRequest = z.infer<typeof ActivityEventsRequestSchema>;
