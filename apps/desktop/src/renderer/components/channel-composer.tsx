@@ -282,7 +282,6 @@ export function ChannelComposer({ channelId, channelName, channelScope, threadOp
           draftKey={draftKey}
           error={(tooLong ? MESSAGE_TOO_LONG_MESSAGE : undefined) ?? create.error?.message ?? attachmentDraft.error}
           fileInputRef={fileInputRef}
-          footerHint="Enter to start a thread · Shift+Enter for a new line"
           members={members.data ?? []}
           invitees={visibleInvitees}
           model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
