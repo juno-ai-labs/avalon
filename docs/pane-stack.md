@@ -51,13 +51,9 @@ An expansion is held for the pane it was asked on and dropped when that pane
 closes or another opens, or when it opens a breakout or a panel of its own,
 which then split the window as they would have.
 
-The navigation sidebar asks for it too. Its Threads and Activity rows link with
-`OPEN_EXPANDED` as the location state, and `expandRequest` reads it back: the
-Channel stack expands the thread, and the thread screen expands the breakout, a
-breakout row doing both. Each request is keyed by the navigation, so a sidebar
-open counts once, even onto the pane already open, and Collapse holds until the
-next one. Links inside a pane pass no state, so what they open comes up beside
-it. A Channel row needs nothing: a Channel alone already fills the window.
+The navigation sidebar asks for it too: its Threads and Activity rows ask
+through location state, which both levels read with `usePaneExpansion`. Links
+inside a pane don't, so what they open comes up beside it.
 
 Each step is drawn as movement, by `SplitConversationLayout` itself so both
 levels share it. A pane that opens beside another slides in from the right; a
@@ -149,9 +145,8 @@ window: the reader came for that room, not for the pair.
 about how one navigation opens, so it rides on that navigation's location
 state, and Back to that entry opens it the same way.
 
-**Consequences:** Expansion is still not stored. A pane that reads the
-request has to key it by the location, not just by the pane id, or a sidebar
-open of the pane already open is lost.
+**Consequences:** Expansion is still not stored. Both levels hold it through
+one hook, `usePaneExpansion`, so a new level gets the same rules by calling it.
 
 Shipped in #1229.
 
