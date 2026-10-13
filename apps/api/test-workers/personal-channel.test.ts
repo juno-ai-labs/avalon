@@ -184,12 +184,26 @@ describe("seatOrganizationMember", () => {
   it("gives a guest neither", async () => {
     await expect(workspace().seatOrganizationMember({
       workspaceId: WORKSPACE_ID, userId: GUEST, personalSpaceId: MEMBER_PERSONAL, authorityGeneration: 1,
-    })).resolves.toEqual({ seated: false });
+    })).resolves.toEqual({ seated: false, reason: "not_member" });
     await runInDurableObject(workspace(), (_instance, state) => {
       expect(state.storage.sql.exec("SELECT space_id FROM space_viewers WHERE user_id = ?", GUEST).toArray()).toEqual([]);
       expect(state.storage.sql.exec("SELECT COUNT(*) AS count FROM spaces WHERE scope = 'individual'").one())
         .toEqual({ count: 1 });
     });
+  });
+
+  it("seats a member who joined while the Organization's Spaces were not open once they open", async () => {
+    await workspace().reopenSpaceBootstrap({ workspaceId: WORKSPACE_ID });
+    await expect(workspace().seatOrganizationMember({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, personalSpaceId: MEMBER_PERSONAL,
+    })).resolves.toEqual({ seated: false, reason: "spaces_not_open" });
+    // The cutover closes; the seating pass it queues reaches the member.
+    await expect(workspace().finalizeSpaceBootstrap({ workspaceId: WORKSPACE_ID }))
+      .resolves.toMatchObject({ outcome: "complete" });
+    await expect.poll(async () => withSpaceStorage(workspace(), (storage) => storage.personalSpaceId(MEMBER)), {
+      timeout: 15_000,
+    }).not.toBeNull();
+    expect(participants((await activeSpaces(MEMBER)).find((space) => space.id === GENERAL))).toEqual([OWNER, MEMBER].sort());
   });
 
   it("seats a member who left and came back in General and their Personal Channel again", async () => {

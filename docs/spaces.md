@@ -450,7 +450,9 @@ Personal Channel: seating refuses guests, and an owner who becomes a guest
 stops being listed theirs until they are a member again. Its audience never
 changes: `noteSpaceAudience` refuses it `space_protected`, so nobody is added,
 it is never made public, and its owner cannot leave it. `archive` refuses it
-the same way. Its owner may rename and recolour it. Its hosted parent's
+the same way. Its owner may rename and recolour it. A thread started in it is
+private, as in any Channel that is not Organization-wide
+(`resolveSpaceWorkstreamStart` narrows on `scope <> 'workspace'`). Its hosted parent's
 `parent_metadata.scope` is `personal`, the thread vocabulary for "its
 participants". `spaces_individual_owner_idx` holds one per member.
 
@@ -468,7 +470,11 @@ participants". `spaces_individual_owner_idx` holds one per member.
   exists, and answers `absent` when it does not; the service then writes the D1
   anchor and asks again with the generation, as `ensureGeneral` does. A failure
   throws, so the relationship delivery retries; every step is fenced against
-  applying twice.
+  applying twice. An Organization whose Spaces are not open answers
+  `spaces_not_open` and the delivery settles; when the cutover closes the
+  object queues the same seating pass as the backfill
+  (`seatEveryoneOnceSpacesOpen`), so somebody who joined meanwhile is seated
+  then, and no delivery waits on a cutover that may never close.
 - **Every Organization that existed before this** (WorkspaceDO migration 103).
   The migration queues one `personal_channel_backfill` alarm in each object
   with an identity. The alarm reads the active non-guest members from D1, and

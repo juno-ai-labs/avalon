@@ -115,12 +115,6 @@ export const WorkspaceSeatMemberRequestSchema = z.strictObject({
 export type WorkspaceSeatMemberRequest = z.infer<typeof WorkspaceSeatMemberRequestSchema>;
 
 /**
- * `seated: false` for somebody who is not an active non-guest member, or an
- * Organization whose Spaces are not open yet; nothing was written. A guest
- * gets neither: General is Organization-wide discovery, which a guest does
- * not have.
- */
-/**
  * The id a member's Personal Channel is created under: derived, so every
  * attempt for the same person (organization creation, a redelivered
  * relationship change, the backfill, a retry) names the same Space and
@@ -130,8 +124,15 @@ export async function personalSpaceIdFor(workspaceId: string, userId: string): P
   return asSpaceId(await stableUuid(["personal_channel", workspaceId, userId]));
 }
 
+/**
+ * `seated: false`, with nothing written, for somebody who is not an active
+ * non-guest member (`not_member`: final, a guest gets neither, because General
+ * is Organization-wide discovery a guest does not have) or an Organization
+ * whose Spaces are not open (`spaces_not_open`: the object seats every member
+ * when they open, so the caller need not retry).
+ */
 export const WorkspaceSeatMemberResultSchema = z.union([
-  z.strictObject({ seated: z.literal(false) }),
+  z.strictObject({ seated: z.literal(false), reason: z.enum(["not_member", "spaces_not_open"]) }),
   z.strictObject({ seated: z.literal(true), personalSpace: z.enum(["present", "absent"]) }),
 ]);
 export type WorkspaceSeatMemberResult = z.infer<typeof WorkspaceSeatMemberResultSchema>;

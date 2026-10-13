@@ -456,6 +456,9 @@ export async function placeConnectorChannelInGeneral(
  * the person's first. Otherwise its D1 anchor is written (as `ensureGeneral`
  * writes General's) and the object asked again to create it. Throws so the
  * relationship delivery that called it retries; every step is idempotent.
+ * Spaces that are not open settle the call: the object seats everyone when
+ * they open (`seatEveryoneOnceSpacesOpen`), and a delivery retried until then
+ * would wait on a cutover that may never close.
  */
 export async function seatOrganizationMember(env: Env, workspaceId: string, userId: string): Promise<void> {
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
