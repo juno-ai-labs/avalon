@@ -220,7 +220,7 @@ export class SpaceService {
     return result.itemIds;
   }
 
-  /** A Channel's feed: its threads, newest placement first, unopenable ones locked. */
+  /** A Channel's feed: the threads this person may open, newest placement first. */
   async listFeed(spaceId: SpaceId, cursor: string | null): Promise<ChannelFeedPage> {
     const result = WorkspaceChannelFeedResultSchema.parse(await (await this.workspace()).listChannelFeed({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
