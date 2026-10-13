@@ -265,8 +265,9 @@ revision); the
 `message-to-output-pipeline.test.ts` appearance case proves a client's colour
 is dropped. `workspace-channel-color-migration.test.ts` proves the backfill.
 `space-creation.test.ts` proves a thread is born in its Channel's colour on
-Main and on its directory row before the lane runs, and the cache suite that
-the pending row carries it through the naming pass's icon.
+Main and on its directory row before the lane runs; `identity-authority.test.ts`
+proves `provision` stores it and keeps an appearance already stored; and the
+cache suite proves the pending row carries it through the naming pass's icon.
 Inspect the actual Electron popup in light and dark,
 including scrolling, and check another connected window and reopening.
 
@@ -288,6 +289,8 @@ this change's scope.
 **Consequences:** `recolor` is no longer the only writer of a colour, only
 the only one after birth. The birth write must stay the `channelColor` read,
 or a thread is born in a colour the lane then changes.
+
+Shipped in [#1233](https://github.com/juno-ai-labs/avalon/pull/1233).
 
 ### 2026-10-13 — A breakout row in the Threads list follows its thread's live colour
 

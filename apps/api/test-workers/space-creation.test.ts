@@ -296,7 +296,7 @@ describe("a Channel created inside a Space", () => {
     expect(created.workstream.scope).toBe("personal");
   });
 
-  it("is born in the Space's colour, on its own record and on its directory row", async () => {
+  it("starts a thread in its Channel's colour, on the thread and on its directory row", async () => {
     const reserved = await workspace().reserveSpace({
       workspaceId: WORKSPACE_ID,
       userId: USER_ID,
