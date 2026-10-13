@@ -134,6 +134,12 @@ export function addPendingWorkstream(queryClient: QueryClient, input: {
   /** Who started it and what they asked, so every surface shows it before the server answers. */
   createdByUserId?: string;
   objective?: string;
+  /**
+   * The colour of the Channel it is started in. The server gives the thread
+   * that colour at birth, so the row shows it now rather than the id-derived
+   * one it would otherwise draw until the server's row arrives.
+   */
+  color?: NonNullable<WorkstreamAppearance['color']>;
 }): void {
   const row: WorkstreamSummary = {
     id: input.id,
@@ -158,6 +164,7 @@ export function addPendingWorkstream(queryClient: QueryClient, input: {
     ...(input.origin ? { pendingOrigin: input.origin } : {}),
     ...(input.createdByUserId ? { createdByUserId: input.createdByUserId } : {}),
     ...(input.objective ? { objective: input.objective } : {}),
+    ...(input.color ? { appearance: { icon: null, color: input.color } } : {}),
   };
   setCachedWorkstreams(queryClient, (current) => [
     row,

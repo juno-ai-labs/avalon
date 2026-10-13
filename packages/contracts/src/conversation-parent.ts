@@ -91,6 +91,12 @@ export const ConversationParentReserveChildRequestSchema = z.strictObject({
     emailAddress: z.string().email().max(254).nullable(),
     titleStatus: z.enum(["naming", "automatic", "settled"]),
     createdAt: z.string().datetime({ offset: true }),
+    /**
+     * A thread's birth appearance: no icon yet, and its Channel's colour, so
+     * the provisional row is drawn in the colour it will keep. Absent for a
+     * Breakout and for a parent that has no Channel.
+     */
+    appearance: WorkstreamAppearanceSchema.optional(),
   }).optional(),
   /**
    * Creation may overlap the provisional workspace-directory delivery with

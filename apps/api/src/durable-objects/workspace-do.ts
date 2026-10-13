@@ -124,6 +124,7 @@ import {
   type PersonalOrder,
   type SpaceErrorCode,
   type SpaceId,
+  type SpaceColorKey,
   type SpaceDirectory,
   type SpaceSummary,
   spaceScopeForClient,
@@ -10127,7 +10128,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const parent = await this.hostedParent(request.workstreamId, request.workspaceId);
     const workstreamId = request.workstreamId;
     const followUpMark = this.pendingParentFollowUps.length;
-    let reserved: { authorityGeneration: number; spaces: SpaceSummary[] };
+    let reserved: { authorityGeneration: number; spaces: SpaceSummary[]; color: SpaceColorKey | null };
     try {
       reserved = await this.withMembersLearned(() => this.state.storage.transactionSync(() => {
         const placed: { space: SpaceSummary; membershipGeneration: number }[] = [];
@@ -10144,6 +10145,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           spaces, scope: request.requestedScope, requestedParticipantUserIds: request.requestedParticipantUserIds,
           narrowInPrivateSpaces: request.narrowInPrivateSpaces === true,
         });
+        // The colour the sync lane would write, read now so the thread is
+        // born in it. The lane still runs for this thread (its first
+        // projection marks it) and writes nothing when the colour matches.
+        const color = storage.channelColor(workstreamId);
         const child = parent.reserveChild({
           workspaceId: request.workspaceId,
           parentId: workstreamId,
@@ -10151,7 +10156,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           kind: "main",
           createdByUserId: request.createdByUserId === undefined ? request.userId : request.createdByUserId,
           authorityGeneration: request.authorityGeneration,
-          directory: { ...request.directory, scope: start.scope, systemKind: null },
+          directory: {
+            ...request.directory,
+            scope: start.scope,
+            systemKind: null,
+            ...(color ? { appearance: { icon: null, color } } : {}),
+          },
         });
         if (request.externalBinding) {
           const claimed = this.externalBindings().claim(request.externalBinding, {
@@ -10159,7 +10169,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           }, new Date().toISOString());
           if (claimed.outcome !== "claimed") throw new ChannelBindingRefused(claimed.outcome);
         }
-        return { authorityGeneration: child.authorityGeneration, spaces };
+        return { authorityGeneration: child.authorityGeneration, spaces, color };
       }));
     } catch (error) {
       // The directory follow-ups the reservation recorded were rolled back
