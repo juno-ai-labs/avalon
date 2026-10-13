@@ -29,6 +29,7 @@ import {
   asWorkspaceId,
   asWorkstreamId,
   WorkspaceSocketSyncEventSchema,
+  WorkspaceSpaceSnapshotEventSchema,
   type SpaceId,
   type SpaceSummary,
   type WorkspaceSidebar,
@@ -133,7 +134,7 @@ async function request(
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   }, routeEnv(), context);
-  const value: unknown = await response.json();
+  const value: unknown = response.status === 204 ? null : await response.json();
   // Import admission returns while its deliberately held model is still running.
   if (importModelHeld) importContexts.push(context);
   else await waitOnExecutionContext(context);
@@ -172,6 +173,16 @@ let ticketSequence = 0;
  * path, and asserting through it is asserting on what a person is shown.
  */
 async function spaceDirectories(userId: string): Promise<NonNullable<WorkspaceSidebar["spaces"]>> {
+  const { socket, spaces } = await subscribedSocket(userId);
+  socket.close();
+  return spaces;
+}
+
+/** A subscribed workspace socket, left open, with the Space directories its connect payload carried. */
+async function subscribedSocket(userId: string): Promise<{
+  socket: WebSocket;
+  spaces: NonNullable<WorkspaceSidebar["spaces"]>;
+}> {
   ticketSequence += 1;
   const response = await workspace().fetch("https://workspace.test/socket", {
     headers: {
@@ -194,9 +205,22 @@ async function spaceDirectories(userId: string): Promise<NonNullable<WorkspaceSi
     socket.addEventListener("message", resolve, { once: true }));
   socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
   const answer = WorkspaceSocketSyncEventSchema.parse(JSON.parse(String((await first).data)));
-  socket.close();
   if (!answer.sidebar?.spaces) throw new Error("workspace sidebar answered without Space directories");
-  return answer.sidebar.spaces;
+  return { socket, spaces: answer.sidebar.spaces };
+}
+
+/** The next Space snapshot pushed to an open socket. */
+function nextSpaceSnapshot(socket: WebSocket) {
+  return new Promise<ReturnType<typeof WorkspaceSpaceSnapshotEventSchema.parse>>((resolve) => {
+    const listener = (event: MessageEvent) => {
+      const message: unknown = JSON.parse(String(event.data));
+      const parsed = WorkspaceSpaceSnapshotEventSchema.safeParse(message);
+      if (!parsed.success) return;
+      socket.removeEventListener("message", listener);
+      resolve(parsed.data);
+    };
+    socket.addEventListener("message", listener);
+  });
 }
 
 /** One real Channel, born through the creation coordinator the product uses. */
@@ -682,6 +706,27 @@ describe("PATCH /spaces/:id/audience", () => {
 
     expect(saved.status).toBe(200);
     expect(await spaceDirectoryRow(created.id)).toMatchObject({ scope: "personal" });
+  });
+
+  it("lets a participant leave a private Channel, after which it is gone from their list and not from the others'", async () => {
+    const created = await createSpace("Hiring");
+    await request(`/spaces/${created.id}/audience`, OWNER_AUTH, {
+      scope: "personal", participantUserIds: [OWNER, MEMBER],
+    }, "PATCH");
+
+    // The owner is already connected: the leave has to be pushed to them.
+    const owner = await subscribedSocket(OWNER);
+    const pushed = nextSpaceSnapshot(owner.socket);
+
+    const left = await request(`/spaces/${created.id}/audience`, MEMBER_AUTH, {
+      scope: "personal", participantUserIds: [OWNER],
+    }, "PATCH");
+
+    expect(left).toEqual({ status: 204, body: null });
+    expect((await spaceDirectories(MEMBER)).active.items.map((item) => item.id)).not.toContain(created.id);
+    const kept = (await pushed).spaces.active.items.find((item) => item.id === created.id);
+    owner.socket.close();
+    expect(kept?.participants.map((participant) => participant.userId)).toEqual([OWNER]);
   });
 });
 
