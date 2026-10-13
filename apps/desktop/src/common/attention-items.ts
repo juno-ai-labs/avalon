@@ -11,8 +11,8 @@ import type { WorkstreamMarkerStatus } from '@rally/ui/lib/format';
  * states are deliberately not grouped together: being mentioned outranks a run
  * that is working, while merely being unread does not.
  *
- * In `common/` because the menu bar, in the main process, ranks the same
- * attention list the sidebar does.
+ * In `common/` because the main process's Channel directory rows are typed
+ * against `AttentionChannel`.
  */
 export const MARKER_PRECEDENCE: readonly WorkstreamMarkerStatus[] = [
   'unseen',

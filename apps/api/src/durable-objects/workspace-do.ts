@@ -9455,6 +9455,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const feed = new WorkspaceActivityFeed(this.state.storage, this.spaceStorage());
     if (!feed.ready()) return;
     feed.markSeen(request.userId, request.seenThrough, Date.now());
+    // The mark is this person's alone, so only their sockets re-read Activity:
+    // another window, and the menu bar, which lists the unread rows.
+    try {
+      await this.publishSync(["activity"], request.workspaceId,
+        this.placementAffinity() ?? await workspacePlacementAffinity(this.env, request.workspaceId),
+        { audienceUserIds: [request.userId] });
+    } catch (error) {
+      logWarn(this.env, "activity_seen_sync_failed", {
+        workspace_id: request.workspaceId,
+        reason: diagnosticErrorCode(error, "activity_seen_sync_failed"),
+      });
+    }
   }
 
   /** This person's pins, every kind. */

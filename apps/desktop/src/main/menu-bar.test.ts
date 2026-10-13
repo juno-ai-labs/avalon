@@ -200,8 +200,7 @@ describe('menu bar controller', () => {
       workstreamId: `c${index}`,
       substreamId: null,
       title: `Channel ${index}`,
-      channelTitle: null,
-      reason: 'unread' as const,
+      detail: 'Rally finished',
     }));
     const subject = harness({ content: { accessRequests: [], attention, attentionComplete: true, recents: [] } });
     await subject.controller.initialize();
@@ -217,7 +216,7 @@ describe('menu bar controller', () => {
     const signedOut = harness({
       signedIn: false,
       content: {
-        attention: [{ key: 'a', workstreamId: 'a', substreamId: null, title: 'A', channelTitle: null, reason: 'unread' }],
+        attention: [{ key: 'a', workstreamId: 'a', substreamId: null, title: 'A', detail: 'Rally finished' }],
         accessRequests: [],
         attentionComplete: true,
         recents: [],
