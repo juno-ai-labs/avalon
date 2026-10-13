@@ -81,6 +81,13 @@ projection cannot authorize. At the existing 920px responsive boundary and
 below, the host shows an unsupported-width state instead of presenting a
 compressed or partial hierarchy.
 
+A title pill level may carry an `IdentityMark` (shape, symbol, tint, ink;
+`spaceMark` for a Channel, `workstreamMark` for a thread or Breakout). When a
+pane is too narrow for two or more ancestor crumbs to show their names, each
+crumb shows its mark instead (a squircle or circle outline in ink, its symbol
+inside) and `AncestorBridge` draws one glass shape under them: a circle per
+crumb in its tint, joined by narrow necks, blending tint to tint in OKLCH.
+
 Theme application stamps the same `data-theme` attribute before rendering. Desktop
 installs the native theme reporter/broadcast adapter; browser and Sideline install system
 appearance observation. Visual primitives share the same theme subscription.
@@ -127,6 +134,31 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-10-13 — Collapsed title crumbs fuse into one tinted glass bridge
+
+**What changed:** A breakout's Channel and thread crumbs, once a narrow pane
+reduces them to marks, sit on one SVG shape (`AncestorBridge` in
+`title-pill.tsx`): a 36px circle per crumb, 42px apart, each joined to the next
+by a curved neck. Each crumb shows its object's outline (squircle for a
+Channel, circle for a thread or Breakout) and symbol in its ink, over its tint.
+The outline is computed for any number of crumbs.
+
+**Why:** Two loose round buttons read as two unrelated controls; one shape
+reads as one path. The outline repeats the shape language the sidebar already
+uses, so a crumb says Channel or thread before its name does. SVG gradients
+interpolate in sRGB, which drags two hues through grey, so each neck's blend
+is cut into stops mixed with `color-mix(in oklch, …)`.
+
+**Considered and rejected:** A CSS goo filter (blur and threshold), which loses
+the hairline edge and the glass sheen; a flat capsule, which was the first
+pass and did not read as two joined marks.
+
+**Consequences:** The geometry constants in `title-pill.tsx` and the 36px and
+6px values in `app.css` must change together. The sheen stops above the
+symbols so each ink sits on its raw tint, the colour its contrast was measured
+against; a change that paints over the middle of a circle breaks that. A level
+with no `mark` keeps its `icon` on the neutral raised surface.
 
 ### 2026-10-05 — The sidebar's minimum width fits five top-bar buttons beside the traffic lights
 

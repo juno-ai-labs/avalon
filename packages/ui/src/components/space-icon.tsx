@@ -2,7 +2,7 @@ import { type SpaceColorKey, type SpaceIconKey } from '@rally/contracts';
 
 import { markColors } from '../lib/project-palette';
 import { APPEARANCE_ICON_COMPONENTS } from './appearance-icons';
-import { IdentityTile } from './identity-tile';
+import { IdentityTile, type IdentityMark } from './identity-tile';
 
 export interface SpaceAppearance {
   iconKey: SpaceIconKey;
@@ -37,4 +37,10 @@ export function SpaceIcon({ space, size = 15 }: { space: SpaceAppearance; size?:
 export function ChannelGlyph({ space, size = 24 }: { space: SpaceAppearance; size?: number }): React.JSX.Element {
   const { ink, tint } = markColors(space.colorKey);
   return <IdentityTile icon={APPEARANCE_ICON_COMPONENTS[space.iconKey]} ink={ink} shape="squircle" size={size} tint={tint} />;
+}
+
+/** A Space (a Channel) as a mark: its glyph in a squircle, in its hue's pair. */
+export function spaceMark(space: SpaceAppearance): IdentityMark {
+  const { tint, ink } = markColors(space.colorKey);
+  return { shape: 'squircle', icon: APPEARANCE_ICON_COMPONENTS[space.iconKey], tint, ink };
 }
