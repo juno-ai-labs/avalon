@@ -8641,7 +8641,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
    the component's: 36px circles, 42px apart. */
 .mark-bridge {
   display: inline-block;
-  flex: none;
+  flex: 0 1 auto;
+  max-width: 100%;
+  min-width: 0;
   position: relative;
 }
 .mark-bridge-glass {
@@ -8677,7 +8679,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .mark-bridge-mark.is-labelled { border-radius: 18px; display: flex; justify-content: flex-start; }
 .mark-bridge-cell { display: grid; flex: none; height: 36px; place-items: center; width: 36px; }
 .mark-bridge-cell > * { grid-area: 1 / 1; }
-.mark-bridge-label { flex: none; font-size: 14.5px; font-weight: 600; white-space: nowrap; }
+.mark-bridge-label { flex: 0 1 auto; font-size: 14.5px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A header's bridge names its nearest crumb on desktop only; a phone's header
    has room for the marks alone. */
 @media (max-width: 640px) {
