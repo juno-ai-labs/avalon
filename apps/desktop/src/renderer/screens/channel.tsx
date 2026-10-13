@@ -74,6 +74,12 @@ function ChannelStack({ channelId, threadId, workspace }: {
   const [expandedThreadId, setExpandedThreadId] = useState<string | null>(null);
   const expanded = threadId !== null && expandedThreadId === threadId;
   const setExpanded = useCallback((expand: boolean): void => setExpandedThreadId(expand ? threadId : null), [threadId]);
+  // A breakout or a panel ends the expansion: the thread and what it opened
+  // split the window as they would have, and closing it returns to the pair.
+  const reportThreadUsesTwoPanes = useCallback((twoPanes: boolean): void => {
+    setThreadUsesTwoPanes(twoPanes);
+    if (twoPanes) setExpandedThreadId(null);
+  }, []);
   const [shown, setShown] = useState<SplitConversationMode>('split');
   const widthKey = layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', 'thread-width');
   const [threadWidth, setThreadWidth] = useState<number | null>(() => {
@@ -98,10 +104,10 @@ function ChannelStack({ channelId, threadId, workspace }: {
       onSelect: () => void navigate(channelRoute(channelId)),
     },
     shifted,
-    setThreadUsesTwoPanes,
+    setThreadUsesTwoPanes: reportThreadUsesTwoPanes,
     expanded,
     setExpanded,
-  }), [channelId, expanded, navigate, setExpanded, shifted, space, threadId]);
+  }), [channelId, expanded, navigate, reportThreadUsesTwoPanes, setExpanded, shifted, space, threadId]);
   return <ChannelPaneContextValue.Provider value={pane}>
     <SplitConversationLayout
       breakout={threadId === null ? null : <WorkstreamRoute key={threadId} />}

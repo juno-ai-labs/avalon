@@ -677,8 +677,15 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const breakoutScope = openBreakoutId === null ? null : `${id}:${openBreakoutId}`;
   const breakoutOwnsRail = storeRailOpen && breakoutScope !== null && railScope === breakoutScope;
   const mainOwnsRail = storeRailOpen && railScope === id;
+  // A breakout the reader expanded over its thread, held by id so the next
+  // breakout opens beside the thread. A panel the breakout opens ends it.
+  const [expandedBreakoutId, setExpandedBreakoutId] = useState<string | null>(null);
+  const breakoutExpanded = openBreakoutId !== null && expandedBreakoutId === openBreakoutId;
+  useEffect(() => {
+    if (breakoutOwnsRail) setExpandedBreakoutId(null);
+  }, [breakoutOwnsRail]);
   const splitMode: SplitConversationMode = !breakoutPaneOpen ? 'main'
-    : !mainVisible || breakoutOwnsRail ? 'breakout'
+    : !mainVisible || breakoutOwnsRail || breakoutExpanded ? 'breakout'
       : mainOwnsRail ? 'main' : 'split';
   // What the layout shows, which is the breakout alone in a window too narrow
   // for the split: the thread then rides as the breakout's breadcrumb.
@@ -857,21 +864,11 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   };
 
   // Beside its Channel, the thread can take the whole window, and give it
-  // back once it is the only pane on screen because the reader asked.
-  const expandAction: IconGroupAction[] | undefined = !channelPane ? undefined
-    : !channelPane.shifted ? [{
-      key: 'expand',
-      label: 'Expand',
-      icon: <IconArrowsDiagonal aria-hidden="true" size={16} stroke={1.9} />,
-      onSelect: () => channelPane.setExpanded(true),
-    }]
-    : channelPane.expanded && !threadUsesTwoPanes ? [{
-      key: 'collapse',
-      label: 'Collapse',
-      icon: <IconArrowsDiagonalMinimize2 aria-hidden="true" size={16} stroke={1.9} />,
-      onSelect: () => channelPane.setExpanded(false),
-    }]
-    : undefined;
+  // back. Opening a breakout or a panel ends the expansion.
+  const threadExpandAction = !channelPane ? undefined
+    : expandToggle(channelPane.expanded, !channelPane.shifted, channelPane.setExpanded);
+  // A breakout beside its thread can do the same, one level down.
+  const breakoutExpandAction = expandToggle(breakoutExpanded, shownMode === 'split', (expand) => setExpandedBreakoutId(expand ? openBreakoutId : null));
 
   const mainPane = !mainVisible ? null : <ConversationSurface
     breakouts={breakoutMarks}
@@ -884,7 +881,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     renderHeader={(context) => <TitlePillHeader
       ancestors={channelCrumbs}
       current={channelLevel(context)}
-      actions={expandAction}
+      actions={threadExpandAction}
       trailing={channelPane && !channelPane.shifted
         ? <TitlePillClose label="Close thread" onClose={() => void navigate(channelRoute(channelPane.channelId))} />
         : undefined}
@@ -918,6 +915,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     renderHeader={(context) => <TitlePillHeader
       ancestors={shownMode === 'breakout' && mainVisible ? [...channelCrumbs, channelLevel(null, openThreadAlone)] : []}
       current={breakoutLevel(context)}
+      actions={breakoutExpandAction}
       trailing={mainVisible ? closeBreakout : undefined}
     />}
     sidebarScope={conversationScoped ? 'conversation' : 'workstream'}
@@ -984,4 +982,26 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     </Modal>
     </>
   );
+}
+
+/**
+ * The header action that expands a pane over the one beside it, or puts it
+ * back: Expand while both are on screen, Collapse while it is expanded.
+ */
+function expandToggle(expanded: boolean, beside: boolean, setExpanded: (expanded: boolean) => void): IconGroupAction[] | undefined {
+  if (expanded) {
+    return [{
+      key: 'collapse',
+      label: 'Collapse',
+      icon: <IconArrowsDiagonalMinimize2 aria-hidden="true" size={16} stroke={1.9} />,
+      onSelect: () => setExpanded(false),
+    }];
+  }
+  if (!beside) return undefined;
+  return [{
+    key: 'expand',
+    label: 'Expand',
+    icon: <IconArrowsDiagonal aria-hidden="true" size={16} stroke={1.9} />,
+    onSelect: () => setExpanded(true),
+  }];
 }

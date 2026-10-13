@@ -35,6 +35,8 @@ vi.mock('./workstream', async () => {
       return <div>thread pane{pane && <>
         <button onClick={pane.crumb.onSelect} type="button">Channel crumb</button>
         <button onClick={() => pane.setExpanded(!pane.expanded)} type="button">{pane.expanded ? 'Collapse' : 'Expand'}</button>
+        <button onClick={() => pane.setThreadUsesTwoPanes(true)} type="button">Open breakout</button>
+        <button onClick={() => pane.setThreadUsesTwoPanes(false)} type="button">Close breakout</button>
       </>}</div>;
     },
   };
@@ -141,6 +143,16 @@ describe('a Channel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
     fireEvent.click(screen.getByRole('button', { hidden: true, name: 'Private thread, request access' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/secret');
+    expect(screen.getByText('composer')).toBeVisible();
+  });
+
+  it('ends the expansion when the thread opens a breakout, so closing it returns to the Channel and the thread', async () => {
+    renderChannel('/channels/outbound/threads/plan');
+    fireEvent.click(await screen.findByRole('button', { name: 'Expand' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open breakout' }));
+    expect(screen.getByRole('button', { name: 'Expand' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close breakout' }));
     expect(screen.getByText('composer')).toBeVisible();
   });
 

@@ -47,10 +47,19 @@ carries the crumb.
 The reader can also ask for it. Beside its Channel, the thread's header has an
 **Expand** action in its `IconGroup`; it calls `setExpanded(true)`, the stack
 shows only its right slot, and the thread carries the crumb as above. While
-expanded and not otherwise using both slots, the same place offers
-**Collapse**, which puts the thread back beside the Channel. Expansion belongs
-to one thread: `ChannelStack` holds the id it was asked for, so the next
-thread opens beside the Channel.
+expanded, the same place offers **Collapse**, which puts the thread back
+beside the Channel. Opening a breakout or a panel ends the expansion
+(`setThreadUsesTwoPanes(true)` clears it), so the thread and what it opened
+split the window as they would have, and closing that returns to the Channel
+and the thread. Expansion belongs to one thread: `ChannelStack` holds the id
+it was asked for, so the next thread opens beside the Channel.
+
+A breakout does the same one level down. Beside its thread, its header offers
+**Expand**; the thread screen holds the expanded breakout's id and draws its
+own layout in `breakout` mode, so the breakout stands alone with the Channel
+and the thread as crumbs, and **Collapse** puts it back. A panel the breakout
+opens ends its expansion. Both levels build the action with `expandToggle` in
+`workstream.tsx`.
 
 Each step is drawn as movement, by `SplitConversationLayout` itself so both
 levels share it. A pane that opens beside another slides in from the right; a
@@ -112,7 +121,9 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
 ## Testing
 
 - `apps/desktop/src/renderer/screens/channel.test.tsx` (a thread opens beside
-  the Channel, expands over it and collapses back) and `lib/navigation-routes.test.ts`.
+  the Channel, expands over it and collapses back, and a breakout ends the
+  expansion); `workstream-sidebar-switch.test.tsx` (a breakout expands over
+  its thread and collapses back) and `lib/navigation-routes.test.ts`.
 - `apps/desktop/src/renderer/lib/pane-visibility.test.tsx`: no read is
   acknowledged in a pane the layout is not drawing, and one is once it is.
 - `apps/desktop/src/renderer/components/split-conversation.test.tsx`: the two
@@ -123,11 +134,11 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
 
 ## Changelog
 
-### 2026-10-13 — A thread can expand over its Channel
+### 2026-10-13 — A thread can expand over its Channel, a breakout over its thread
 
-**What changed:** The thread beside a Channel has Expand and Collapse actions
-in its header. Expanded, it takes the whole window and the Channel rides as
-its crumb.
+**What changed:** The thread beside a Channel, and a breakout beside its
+thread, each have Expand and Collapse actions in their header. Expanded, the
+pane takes the whole window and what it covered rides as its crumb.
 
 **Why:** The product asked for a way to give the right pane the whole window
 without closing the Channel.
@@ -136,8 +147,10 @@ without closing the Channel.
 Expanded is the same picture as a thread using both its slots, so it reuses
 that mode and the crumb that comes with it.
 
-**Consequences:** Expansion is not stored and lasts only for the thread it was
-asked on. The Channel crumb still opens the Channel alone, closing the thread;
+**Consequences:** Expansion is not stored and lasts only for the pane it was
+asked on, and only until that pane opens a breakout or a panel: the product
+chose the ordinary thread-and-breakout split there over keeping the breakout
+full width. The Channel crumb still opens the Channel alone, closing the thread;
 Collapse is the way back to the pair.
 
 ### 2026-10-13 — A crumb opens its level and closes what is nested under it
