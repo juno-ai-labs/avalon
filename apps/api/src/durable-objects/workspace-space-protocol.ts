@@ -19,6 +19,8 @@ import {
   SpaceErrorCodeSchema,
   SpaceIconKeySchema,
   SpaceIdSchema,
+  asSpaceId,
+  type SpaceId,
   SpaceColorKeySchema,
   SpaceDefaultKindSchema,
   SpaceRequestScopeSchema,
@@ -29,6 +31,7 @@ import {
   WorkstreamIdSchema,
 } from "@rally/contracts";
 import { z } from "zod";
+import { stableUuid } from "../lib/stable-uuid";
 import { ExternalBindingClaimSchema } from "./workspace-external-binding-protocol";
 
 /**
@@ -117,6 +120,16 @@ export type WorkspaceSeatMemberRequest = z.infer<typeof WorkspaceSeatMemberReque
  * gets neither: General is Organization-wide discovery, which a guest does
  * not have.
  */
+/**
+ * The id a member's Personal Channel is created under: derived, so every
+ * attempt for the same person (organization creation, a redelivered
+ * relationship change, the backfill, a retry) names the same Space and
+ * anchors it once.
+ */
+export async function personalSpaceIdFor(workspaceId: string, userId: string): Promise<SpaceId> {
+  return asSpaceId(await stableUuid(["personal_channel", workspaceId, userId]));
+}
+
 export const WorkspaceSeatMemberResultSchema = z.union([
   z.strictObject({ seated: z.literal(false) }),
   z.strictObject({ seated: z.literal(true), personalSpace: z.enum(["present", "absent"]) }),

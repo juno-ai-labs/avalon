@@ -44,6 +44,9 @@ built from the one below it:
    only while the Space is Organization-wide — an active placement of a Channel
    this person may list (`spaceReachedThroughChannelSql`). A private Space is
    the product's private Channel, so it is listed to its participants alone.
+   A Personal Channel (`individual`) is listed to its owner alone, and only
+   while they are a member: a participant row for anybody else, or the owner
+   as a guest, does not list it.
 
 In product words a Space is a **Channel** and a stored Channel is a **thread**
 ([the navigation PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)).
@@ -130,6 +133,11 @@ everyone's, because each answers only for what the person may already reach.
   last read a Channel moves its latest number but leaves it read. Guard: the
   same file, "given a private thread placed since a member last read a
   Channel, when they read the stats, then the Channel is not unread for them".
+- **A Personal Channel reaches nobody but its owner.** A participant row is not
+  enough, because a row written by mistake would otherwise hand someone
+  another member's channel; the owner is `created_by_user_id`. Guard:
+  `personal-channel.test.ts` "is listed to nobody but its owner, even one given
+  a participant row" and "is not listed to its owner while they are a guest".
 
 ## Boundary
 
@@ -167,6 +175,19 @@ Each rule has a test that fails when it is broken: Breakout reach
 (`channel-rails`). The client half is `app-shell.test.tsx`.
 
 ## Changelog
+
+### 2026-10-13 — A Personal Channel is listed to its owner alone
+
+**What changed:** `spaceListedSql` lists an `individual` Space only when the
+viewer is its creator and a member; other participant rows and guest viewers
+do not list it.
+
+**Why:** A Personal Channel is for exactly one person. The participant rule
+alone would list it to anybody given a viewer row, and to its owner after they
+became a guest, who has no Personal Channel.
+
+**Consequences:** Reach for an `individual` Space depends on
+`created_by_user_id`, so that column must stay the owner.
 
 ### 2026-10-13 — The Channel feed no longer shows locked threads
 

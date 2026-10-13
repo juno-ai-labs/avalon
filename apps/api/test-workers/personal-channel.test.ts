@@ -23,6 +23,7 @@ import {
 import { workspaceDOName } from "../src/durable-objects/names";
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
+import { withSpaceStorage } from "./helpers/space-membership";
 
 /** Its own workspace id: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000fe100");
@@ -63,6 +64,25 @@ async function establishWorkspace(): Promise<void> {
       (id, phase, generation, required_serving_contract_version, serving_contract_version)
       VALUES (1, 'durable_object_open', 1, 1, 1)`),
     env.DB.prepare(`INSERT OR REPLACE INTO workspaces(id, region) VALUES (?, 'global')`).bind(WORKSPACE_ID),
+    // What `claimParentAnchor` writes and reads when the backfill anchors a
+    // Personal Channel, as the D1 migrations declare them.
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstreams (
+      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, do_identity_anchor INTEGER NOT NULL DEFAULT 0
+    )`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_create_receipts (
+      workspace_id TEXT NOT NULL, creator_user_id TEXT NOT NULL, client_message_id TEXT NOT NULL,
+      workstream_id TEXT NOT NULL, generation INTEGER NOT NULL, request_hash TEXT NOT NULL,
+      state TEXT NOT NULL, message_id TEXT, harness_run_id TEXT, error_code TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      PRIMARY KEY (workspace_id, creator_user_id, client_message_id), UNIQUE (workstream_id)
+    )`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_routes (
+      workspace_id TEXT NOT NULL, workstream_id TEXT PRIMARY KEY, generation INTEGER NOT NULL,
+      object_name TEXT NOT NULL, state TEXT NOT NULL, stage_index INTEGER NOT NULL DEFAULT 0,
+      source_cursor INTEGER NOT NULL DEFAULT 0, source_fence_sequence INTEGER NOT NULL,
+      source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
+      verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL
+    )`),
     ...([[OWNER, "owner", "member"], [MEMBER, "member", "member"], [GUEST, null, "guest"]] as const).flatMap(
       ([userId, role, accessClass]) => [
         env.DB.prepare(`INSERT OR REPLACE INTO workspace_members
@@ -198,9 +218,53 @@ describe("a Personal Channel", () => {
     expect(participants((await activeSpaces(OWNER)).find((space) => space.id === OWNER_PERSONAL))).toEqual([OWNER]);
   });
 
+  it("is listed to nobody but its owner, even one given a participant row", async () => {
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO space_viewers
+        (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
+        VALUES (?, ?, 1, 1, 0, '')`, OWNER_PERSONAL, MEMBER);
+    });
+    expect((await activeSpaces(MEMBER)).map((space) => space.id)).toEqual([GENERAL]);
+    expect((await activeSpaces(OWNER)).map((space) => space.id)).toContain(OWNER_PERSONAL);
+  });
+
+  it("is not listed to its owner while they are a guest", async () => {
+    const listed = (accessClass: "member" | "guest") => withSpaceStorage(workspace(), (storage) => (
+      storage.list(WORKSPACE_ID, { userId: OWNER, accessClass }).items.map((space) => space.id)
+    ));
+    expect(await listed("member")).toContain(OWNER_PERSONAL);
+    expect(await listed("guest")).not.toContain(OWNER_PERSONAL);
+  });
+
   it("reaches a desktop that predates the scope as private", async () => {
     const spaces = await activeSpaces(OWNER, false);
     expect(spaces.find((space) => space.id === OWNER_PERSONAL)?.scope).toBe("personal");
+  });
+});
+
+describe("migration 102", () => {
+  it("seats every existing member in General and gives each a Personal Channel, and no guest either", async () => {
+    // An Organization from before Personal Channels: its creator's was made
+    // above, and nobody else has one or sits in General.
+    const backfill = WORKSPACE_DO_SCHEMA_MIGRATIONS.find((migration) => migration.version === 102);
+    await runInDurableObject(workspace(), async (_instance, state) => {
+      for (const statement of backfill?.statements ?? []) state.storage.sql.exec(statement);
+      await state.storage.setAlarm(Date.now());
+    });
+    // The alarm is the delivery; poll what it settles rather than forcing it.
+    await expect.poll(async () => withSpaceStorage(workspace(), (storage) => storage.personalSpaceId(MEMBER)), {
+      timeout: 15_000,
+    }).not.toBeNull();
+    const memberSpaces = await activeSpaces(MEMBER);
+    expect(participants(memberSpaces.find((space) => space.id === GENERAL))).toEqual([OWNER, MEMBER].sort());
+    expect(memberSpaces.filter((space) => space.scope === "individual").map(participants)).toEqual([[MEMBER]]);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT created_by_user_id FROM spaces WHERE scope = 'individual'")
+        .toArray().map((row) => row.created_by_user_id).sort()).toEqual([OWNER, MEMBER].sort());
+      expect(state.storage.sql.exec("SELECT space_id FROM space_viewers WHERE user_id = ?", GUEST).toArray()).toEqual([]);
+    });
+    // The member's anchor was written by the pass; the creator's predates it.
+    expect((await env.DB.prepare("SELECT COUNT(*) AS count FROM workstreams").first<{ count: number }>())?.count).toBe(1);
   });
 });
 
