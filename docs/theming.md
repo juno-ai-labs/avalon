@@ -221,6 +221,25 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-10-13 — `sys.color.glass.shine` lights a glass shape
+
+**What changed:** A new themed token, `sys.color.glass.shine`: white at 75% in
+light and 16% in dark. `MarkBridge` paints its sheen and the rim along its top
+edge in it ([`shared-ui.md`](shared-ui.md)).
+
+**Why:** The highlight has to differ by appearance (full-strength white on a
+dark surface reads as glare), and a value that differs by appearance is a
+theme's to set, not a rule-local property in `app.css` overridden under
+`[data-theme='dark']`. The first version did that, and the token-reference
+test rejected it.
+
+**Considered and rejected:** Reusing `sys.color.shimmer.default`. Its job is
+a loading sweep, and in light it is near-black at 5%, not a highlight.
+
+**Consequences:** A theme that wants flat glass sets this to `transparent`.
+
+Shipped in #1203.
+
 ### 2026-10-02 — Marks take a pastel pair; people keep the hue
 
 **What changed:** Two themed token families, `sys.color.project-tint.<key>` and

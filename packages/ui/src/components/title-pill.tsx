@@ -1,6 +1,7 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { IconChevronDown, IconChevronRight, IconCornerDownRight, IconSearch, IconX } from '@tabler/icons-react';
 
+import { MarkBridge, type MarkBridgeItem } from './mark-bridge';
 import { IconButton } from './primitives';
 import clsx from 'clsx';
 import { isComposingKeyEvent } from '../lib/ime';
@@ -184,6 +185,12 @@ export interface TitlePillLevel {
    */
   iconAction?: ReactNode;
   /**
+   * The level as a mark, its name, and what selecting it does, for when its
+   * crumb collapses onto a `MarkBridge`; selecting the mark is `onSelect`.
+   * Ancestors fuse into a bridge only when every one of them has this.
+   */
+  bridge?: Omit<MarkBridgeItem, 'key' | 'onSelect'>;
+  /**
    * Which way the chevron points. Down by default; right for a Channel whose
    * Breakout is open beside it, pointing at where the conversation went.
    */
@@ -305,11 +312,19 @@ export function TitlePillHeader({ ancestors = [], className, current, trailing }
   current: TitlePillLevel;
   trailing?: ReactNode;
 }): React.JSX.Element {
+  // Where the pane is too narrow for the ancestors' names, the stylesheet
+  // swaps their pills for one bridge of their marks.
+  const bridge: MarkBridgeItem[] = [];
+  for (const level of ancestors) {
+    if (level.bridge) bridge.push({ key: level.key, ...level.bridge, onSelect: level.onSelect });
+  }
+  const bridged = ancestors.length > 1 && bridge.length === ancestors.length;
   return <header className={clsx('title-pill-header window-drag', className)}>
-    <div className="title-pill-ancestors">
+    <div className={clsx('title-pill-ancestors', bridged && 'is-bridged')}>
       {ancestors.map((level) => <span className="title-pill-ancestor window-no-drag" key={level.key}>
         <TitlePill level={level} variant="ancestor" />
       </span>)}
+      {bridged ? <MarkBridge className="title-pill-bridge window-no-drag" items={bridge} /> : null}
     </div>
     <div className="title-pill-current window-no-drag"><TitlePill level={current} /></div>
     <div className="title-pill-trailing">{trailing ? <span className="window-no-drag">{trailing}</span> : null}</div>

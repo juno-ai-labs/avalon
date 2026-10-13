@@ -295,6 +295,10 @@
   /* The sweep across a loading skeleton. */
   --av-sys-color-shimmer-default: rgba(20, 20, 20, 0.05);
 
+  /* The light a glass shape catches: its sheen and the rim along its top edge.
+   * Brighter on a light surface than a dark one, where white reads as glare. */
+  --av-sys-color-glass-shine: rgba(255, 255, 255, 0.75);
+
   /* Syntax highlighting. `prism-react-renderer` takes a JavaScript object
    * rather than a class, so these reach it as `var()` inside an inline style. */
   --av-sys-color-syntax-plain: #24231e;
@@ -751,6 +755,8 @@
   --av-sys-color-scrollbar-thumb: #2f2f2f;
 
   --av-sys-color-shimmer-default: rgba(252, 252, 252, 0.05);
+
+  --av-sys-color-glass-shine: rgba(255, 255, 255, 0.16);
 
   --av-sys-color-syntax-plain: #e4dbcb;
   --av-sys-color-syntax-comment: #777772;
