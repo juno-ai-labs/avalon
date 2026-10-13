@@ -10,6 +10,7 @@ import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { ChannelScreen } from './channel';
 
 const api = vi.hoisted(() => ({
+  recordActivityEvents: vi.fn(async () => undefined),
   getChannelFeed: vi.fn(),
   getWorkspaceMembers: vi.fn(async () => []),
   getWorkspaceInvitees: vi.fn(async () => []),
@@ -462,11 +463,15 @@ describe('a Channel', () => {
 
       await waitFor(() => expect(api.acknowledgeChannelRead).toHaveBeenCalledWith('outbound', 2));
       expect(api.acknowledgeChannelRead).toHaveBeenCalledTimes(1);
+      // The same read, told to Activity, which settles the starts it covers.
+      expect(api.recordActivityEvents).toHaveBeenCalledWith([
+        { kind: 'read', subject: { kind: 'channel', channelId: 'outbound' }, through: 2 },
+      ]);
       await waitFor(() => expect(client.getQueryData<ChannelStats[]>(CHANNEL_STATS_QUERY_KEY)?.[0])
         .toMatchObject({ readThroughSequenceNumber: 2, hasUnread: false }));
     });
 
-    it('sends nothing for a Channel already read through its newest placement', async () => {
+    it('acknowledges nothing for a Channel already read through its newest placement, and still tells Activity once', async () => {
       renderChannel('/channels/outbound', (seeded) => seeded.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
         readThroughSequenceNumber: 2, firstUnreadSequenceNumber: null, hasUnread: false,
       })]));
@@ -475,6 +480,11 @@ describe('a Channel', () => {
       // Past the acknowledgement's debounce, so a send would have happened.
       await new Promise((resolve) => setTimeout(resolve, 400));
       expect(api.acknowledgeChannelRead).not.toHaveBeenCalled();
+      // Read elsewhere, or before Activity kept waterlines: Activity still owes the read.
+      expect(api.recordActivityEvents).toHaveBeenCalledTimes(1);
+      expect(api.recordActivityEvents).toHaveBeenCalledWith([
+        { kind: 'read', subject: { kind: 'channel', channelId: 'outbound' }, through: 2 },
+      ]);
     });
 
     it('puts the dot back when the read was not recorded, and does not try again', async () => {

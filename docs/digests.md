@@ -211,8 +211,10 @@ short, or empty with a cursor that names a hidden row.
 relation, so the page and its cursor are cut from mentions and nothing else.
 The tab's Mentions chip reads it, because mentions are sparse and a client
 filter over newest-first pages could draw an empty page with more behind it.
-Unread is the client's: unread is everything after one waterline, so it is
-already a run at the top of the feed.
+Unread is the client's, filtered over the pages it holds. Once events settle
+rows one subject at a time, unread is no longer a run at the top of the feed,
+so the Unread chip can show a short page with more behind it; **Show more**
+reads the next. A server filter like `only=mentions` is the fix if that bites.
 
 **A breakout's mentions** reach the log in one narrow shape
 (`breakout-activity.ts`). A breakout is private to the people in it, and a
@@ -229,13 +231,48 @@ outbox and sent to no further consumer. The Activity tab reads its target edge,
 and the breakout listing check above decides whether the person named sees it.
 Nothing here changes what a digest reads.
 
-**Read state is one time per person** (`workspace_activity_seen`, migration
-97), moved forward by `PUT /navigation/activity/seen` when the person chooses
-**Mark all read**. Showing the tab reads nothing.
-An item is unread when it is newer than that time. Moving the mark publishes
-the `activity` sync topic to that person's sockets alone, so their other
-windows and the macOS menu bar, which lists the unread rows
-([`menu-bar.md`](menu-bar.md)), read the feed again.
+**An item is done two ways**, and neither is a row per item.
+
+- **Mark all read** moves one time per person (`workspace_activity_seen`,
+  migration 97) through `PUT /navigation/activity/seen`; every item at or
+  before it is done. Showing the tab reads nothing. Moving the mark publishes
+  the `activity` sync topic to that person's sockets alone, so their other
+  windows and the macOS menu bar, which lists the unread rows
+  ([`menu-bar.md`](menu-bar.md)), read the feed again.
+- **Events.** The app reports what the person did through
+  `POST /navigation/activity/events` (`ActivityEventSchema`). Today there is
+  one kind, `read`: a subject (a thread, a breakout, or a Channel) and the
+  attention ordinal it was read through, 0 for an open. Each subject keeps one
+  waterline per person (`workspace_activity_reads`, migration 101), moved to
+  the higher of where it was and the event's ordinal, so a late event never
+  moves it back. Reading message 29 of a thread settles a mention at 29 or
+  earlier and leaves one at 30 standing. An event that makes a waterline new
+  or higher publishes the same per-person `activity` topic Mark all read does;
+  one that moves nothing publishes nothing.
+
+**What clears an item is a rule** in a small data language: its grammar, the
+rule for each kind, and the evaluator live in
+`apps/api/src/durable-objects/activity-clear-rules.ts`, and the feed only binds
+each row's subjects (`activityRowFacts`). In words:
+
+- `mentioned`: the conversation read through the mentioning message.
+- `added`: the conversation opened after the add.
+- `breakout_started`: the breakout opened.
+- `thread_started`: the thread opened, or a Channel it was placed in read past
+  that placement, removed placements included.
+- `run_finished`: the conversation opened after the run finished.
+
+A rule only compares against things that move forward, so a cleared row stays
+cleared; a new rule has to keep that.
+
+The desktop reports reads from the visible-read path of a conversation and a
+Channel (`lib/activity-events.ts`): the highest ordinal on screen, once per
+opening and again when it rises, whether or not the room's own read position
+needs moving. A hidden pane reports nothing. Activity is read again only when
+it holds an unread row about that subject. Events are the client's to send
+rather than a side effect of the acknowledgement routes, so a new kind of
+event joins the same endpoint without touching how a conversation keeps its
+own unread state.
 
 Starts are not read from the opening message's event. Driving the local stack
 showed that event does not reliably reach WorkspaceDO (only a handful of
@@ -790,6 +827,34 @@ existing audience and projection semantics. [Apple push](push-notifications.md)
 owns device registration, provider delivery and retry receipts.
 
 ## Changelog
+
+### 2026-10-13 — Activity rows are settled by what the person does
+
+**What changed:** The app reports what the person read as events; WorkspaceDO
+keeps one waterline per person and subject (migration 101), and an Activity
+item is done once its kind's rule holds over those waterlines, as well as when
+Mark all read covers it.
+
+**Why:** The PRD says each item keeps its dot until the person opens it, and
+the tab cleared dots only through Mark all read, so reading the mention you
+were told about left it unread.
+
+**Considered and rejected:** Deriving "done" from each conversation's own read
+position (`channel_viewers`, `breakout_viewers`, `space_reads`): it tied
+Activity to three projections with different rules (unseen, manual unread, a
+guest's Channel). Moving the waterline inside the read-acknowledgement routes:
+it covers other clients for free, but misses every read whose position was
+already moved (by another client, or before this shipped), which is when a
+mention most needs clearing. A per-item read table: it records the same fact
+once per item and cannot clear a row not yet on a page. Comparing a finish
+with the newest message: a later message made a cleared row unread again.
+
+**Consequences:** Only the desktop reports reads; iOS and any other client
+clear rows only through Mark all read until they send events too. An event
+names any subject without a listing check: the waterline is the reader's
+alone and the feed lists only what they may see.
+
+Shipped in [#1225](https://github.com/juno-ai-labs/avalon/pull/1225). PRD: [Activity section](PRDs/2026-10-10_channels-threads-navigation/prd.md#activity-section).
 
 ### 2026-10-10 — The activity log feeds the Activity tab too
 

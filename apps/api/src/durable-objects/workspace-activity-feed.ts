@@ -1,6 +1,14 @@
 import type { SqlStorageValue } from "@cloudflare/workers-types";
-import type { ActivityFilter, ActivityItem, ActivityItemKind } from "@rally/contracts";
+import type { ActivityEvent, ActivityFilter, ActivityItem, ActivityItemKind, ActivitySubject } from "@rally/contracts";
 
+import {
+  ACTIVITY_CLEAR_RULES,
+  cleared,
+  consultedSubjects,
+  readsRole,
+  type ActivityRowFacts,
+  type ActivityWaterline,
+} from "./activity-clear-rules";
 import { boundParameterChunks } from "./bound-parameters";
 import { breakoutListedSql, channelListedSql, type Viewer } from "./listing-rules";
 import { SPACE_CHANNEL_PAGE_SIZE, type WorkspaceSpaceStorage } from "./workspace-space-storage";
@@ -28,9 +36,44 @@ import { SPACE_CHANNEL_PAGE_SIZE, type WorkspaceSpaceStorage } from "./workspace
  * what lists it here. Titles are read now, not from the event's snapshot, so a
  * renamed thread reads under its new name.
  *
- * Read state is one time per person (`workspace_activity_seen`): Mark all
- * read moves it, and everything older is read.
+ * An item is done two ways. **Mark all read** moves one time per person
+ * (`workspace_activity_seen`), and everything older is done. And **events**:
+ * the app reports what the person did — "read thread X through message 29",
+ * "opened breakout Y", "read Channel Z through placement 4" — as a subject and
+ * an ordinal ({@link WorkspaceActivityFeed.record}). Each subject keeps one
+ * waterline per person (`workspace_activity_reads`, migration 101), and an
+ * item is done once its kind's rule holds over those waterlines: the rule
+ * language and the table of rules are `activity-clear-rules.ts`, and this
+ * file only binds each row's subjects ({@link activityRowFacts}). Neither is a
+ * row per item, so an event settles every item it covers, including ones not
+ * yet on a page.
  */
+
+/** A subject's waterline key; one shape per kind, so two kinds never collide. */
+export function activitySubjectKey(subject: ActivitySubject): string {
+  switch (subject.kind) {
+    case "thread": return `thread:${subject.threadId}`;
+    case "breakout": return `breakout:${subject.threadId}:${subject.substreamId}`;
+    case "channel": return `channel:${subject.channelId}`;
+  }
+}
+
+/**
+ * Migration 101: how far each person has read each subject, as the app
+ * reported it. Written by the reader alone, like `workspace_activity_seen`,
+ * and no foreign key: a subject is a thread, a breakout or a Channel, and a
+ * row naming one that is gone costs its reader one row and nobody else
+ * anything.
+ */
+export const WORKSPACE_ACTIVITY_READS_MIGRATION: readonly string[] = [
+  `CREATE TABLE workspace_activity_reads (
+    user_id TEXT NOT NULL,
+    subject_key TEXT NOT NULL,
+    read_through INTEGER NOT NULL CHECK (read_through >= 0),
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, subject_key)
+  ) STRICT`,
+];
 
 interface ActivityKey extends Record<string, SqlStorageValue> {
   id: string;
@@ -40,6 +83,37 @@ interface ActivityKey extends Record<string, SqlStorageValue> {
   actor_label: string;
   thread_id: string;
   substream_id: string | null;
+  /** The message's attention ordinal, on a message event that recorded one. */
+  attention_ordinal: number | null;
+}
+
+/**
+ * One row's facts for its clear rule. `conversation` is the breakout when the
+ * row names one, else the thread, and knows `opened`, and `message` when the
+ * event recorded it. `placement` is each Channel the thread was placed in, at
+ * that placement's ordinal. `occurred` is when the row happened.
+ */
+function activityRowFacts(
+  key: ActivityKey,
+  placements: ReadonlyArray<{ channelId: string; ordinal: number }>,
+): ActivityRowFacts {
+  const threadId = key.thread_id as ActivityItem["threadId"];
+  const conversation = activitySubjectKey(key.substream_id !== null && key.substream_id !== "0"
+    ? { kind: "breakout", threadId, substreamId: key.substream_id }
+    : { kind: "thread", threadId });
+  return {
+    roles: {
+      conversation: [{
+        key: conversation,
+        ordinals: { opened: 0, ...(key.attention_ordinal === null ? {} : { message: Number(key.attention_ordinal) }) },
+      }],
+      placement: placements.map((placement) => ({
+        key: activitySubjectKey({ kind: "channel", channelId: placement.channelId }),
+        ordinals: { opened: 0, placement: placement.ordinal },
+      })),
+    },
+    times: { occurred: Number(key.occurred_at) },
+  };
 }
 
 interface ActivityCursor {
@@ -129,7 +203,8 @@ export class WorkspaceActivityFeed {
                      CASE target.relation WHEN 'added' THEN 'added' ELSE 'mentioned' END AS kind,
                      event.occurred_at, event.actor_user_id, event.actor_label,
                      event.subject_id AS thread_id,
-                     json_extract(event.metadata_json, '$.substreamId') AS substream_id
+                     json_extract(event.metadata_json, '$.substreamId') AS substream_id,
+                     json_extract(event.metadata_json, '$.attentionOrdinal') AS attention_ordinal
                 FROM workspace_activity_event_targets target
                 JOIN workspace_activity_events event ON event.event_id = target.event_id
                 JOIN channels directory ON directory.workstream_id = event.subject_id
@@ -157,7 +232,8 @@ export class WorkspaceActivityFeed {
                      'thread_started' AS kind,
                      directory.source_created_at AS occurred_at,
                      directory.created_by_user_id AS actor_user_id, '' AS actor_label,
-                     directory.workstream_id AS thread_id, '0' AS substream_id
+                     directory.workstream_id AS thread_id, '0' AS substream_id,
+                     NULL AS attention_ordinal
                 FROM channels directory
                 ${CHANNEL_VIEWER}
                WHERE ${threadListed}
@@ -170,7 +246,8 @@ export class WorkspaceActivityFeed {
                      'breakout_started' AS kind,
                      breakout.source_created_at AS occurred_at,
                      breakout.created_by_user_id AS actor_user_id, '' AS actor_label,
-                     breakout.workstream_id AS thread_id, breakout.substream_id AS substream_id
+                     breakout.workstream_id AS thread_id, breakout.substream_id AS substream_id,
+                     NULL AS attention_ordinal
                 FROM breakouts breakout
                 JOIN channels directory ON directory.workstream_id = breakout.workstream_id
                 ${CHANNEL_VIEWER}
@@ -185,7 +262,8 @@ export class WorkspaceActivityFeed {
                      'run_finished' AS kind,
                      directory.completed_at AS occurred_at,
                      NULL AS actor_user_id, 'Rally' AS actor_label,
-                     directory.workstream_id AS thread_id, '0' AS substream_id
+                     directory.workstream_id AS thread_id, '0' AS substream_id,
+                     NULL AS attention_ordinal
                 FROM channel_viewers viewer
                 JOIN channels directory
                   ON directory.workstream_id = viewer.workstream_id
@@ -198,7 +276,8 @@ export class WorkspaceActivityFeed {
                      'run_finished' AS kind,
                      breakout.completed_at AS occurred_at,
                      NULL AS actor_user_id, 'Rally' AS actor_label,
-                     breakout.workstream_id AS thread_id, breakout.substream_id AS substream_id
+                     breakout.workstream_id AS thread_id, breakout.substream_id AS substream_id,
+                     NULL AS attention_ordinal
                 FROM breakout_viewers breakout_viewer
                 JOIN breakouts breakout
                   ON breakout.workstream_id = breakout_viewer.workstream_id
@@ -276,6 +355,23 @@ export class WorkspaceActivityFeed {
     }
     const channelIds = this.spaces.spaceIdsByChannel(viewer, threadIds);
     const seenThrough = this.seenThrough(viewer.userId);
+    // Placements are a read of their own, made only for rows whose rule reads them.
+    const placedThreadIds = [...new Set(keys.flatMap((key) => (
+      readsRole(ACTIVITY_CLEAR_RULES[key.kind], "placement") ? [key.thread_id] : []
+    )))];
+    const placements = placedThreadIds.length > 0
+      ? this.spaces.placementOrdinals(viewer, placedThreadIds)
+      : new Map<string, Array<{ channelId: string; ordinal: number }>>();
+    const facts = new Map(keys.map((key) => [key.id, activityRowFacts(key, placements.get(key.thread_id) ?? [])]));
+    const waterlines = this.activityReadsReady()
+      ? this.reads(viewer.userId, [...new Set(keys.flatMap((key) => (
+        consultedSubjects(ACTIVITY_CLEAR_RULES[key.kind], facts.get(key.id)?.roles ?? {})
+      )))])
+      : new Map<string, ActivityWaterline>();
+    const done = (key: ActivityKey): boolean => {
+      const row = facts.get(key.id);
+      return row !== undefined && cleared(ACTIVITY_CLEAR_RULES[key.kind], row, waterlines);
+    };
     return keys.flatMap((key): ActivityItem[] => {
       const threadTitle = threads.get(key.thread_id);
       const onBreakout = key.substream_id !== null && key.substream_id !== "0";
@@ -293,9 +389,67 @@ export class WorkspaceActivityFeed {
         threadTitle: threadTitle ?? "",
         breakout: breakout ? { substreamId: key.substream_id as string, title: breakout.title } : null,
         channelIds: channelIds.get(key.thread_id) ?? [],
-        unread: key.occurred_at > seenThrough,
+        unread: key.occurred_at > seenThrough && !done(key),
       }];
     });
+  }
+
+  /** Whether this object has reached migration 101. */
+  activityReadsReady(): boolean {
+    return this.storage.sql.exec(
+      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_activity_reads'`,
+    ).toArray().length === 1;
+  }
+
+  /** This person's waterline on each of these subjects that has one, and when they last read it. */
+  private reads(userId: string, subjectKeys: readonly string[]): Map<string, ActivityWaterline> {
+    const reads = new Map<string, ActivityWaterline>();
+    for (const chunk of boundParameterChunks(subjectKeys)) {
+      for (const row of this.storage.sql.exec<{ subject_key: string; read_through: number; updated_at: number }>(
+        `SELECT subject_key, read_through, updated_at FROM workspace_activity_reads
+          WHERE user_id = ?1 AND subject_key IN (${chunk.map((_, index) => `?${index + 2}`).join(", ")})`,
+        userId,
+        ...chunk,
+      ).toArray()) reads.set(row.subject_key, { through: Number(row.read_through), at: Number(row.updated_at) });
+    }
+    return reads;
+  }
+
+  /**
+   * Apply what the person did. Each `read` moves that subject's waterline to
+   * the higher of where it was and `through`, and its read time to now; never
+   * back, so events arriving out of order settle the same way. The read time
+   * is what a rule's `since` compares, whatever ordinal the read carried.
+   * Nothing checks the subject is one the person may list: the row is theirs
+   * alone, and the feed lists only what they may see.
+   *
+   * Answers whether any waterline was new or rose, which is when the person's
+   * other surfaces are worth telling; a read that only refreshed the time is
+   * left to the window that sent it.
+   */
+  record(userId: string, events: readonly ActivityEvent[], now: number): boolean {
+    let advanced = false;
+    for (const event of events) {
+      const key = activitySubjectKey(event.subject);
+      const before = this.storage.sql.exec<{ read_through: number }>(
+        `SELECT read_through FROM workspace_activity_reads WHERE user_id = ? AND subject_key = ?`,
+        userId,
+        key,
+      ).toArray()[0];
+      if (before === undefined || event.through > Number(before.read_through)) advanced = true;
+      this.storage.sql.exec(
+        `INSERT INTO workspace_activity_reads (user_id, subject_key, read_through, updated_at)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(user_id, subject_key) DO UPDATE
+           SET read_through = MAX(read_through, excluded.read_through),
+               updated_at = MAX(updated_at, excluded.updated_at)`,
+        userId,
+        key,
+        event.through,
+        now,
+      );
+    }
+    return advanced;
   }
 
   private seenThrough(userId: string): number {

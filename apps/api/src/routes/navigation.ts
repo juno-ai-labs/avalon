@@ -1,6 +1,7 @@
 import {
   ActivityFilterSchema,
   ActivityPageSchema,
+  ActivityEventsRequestSchema,
   ActivitySeenRequestSchema,
   ChannelStatsListSchema,
   IdSchema,
@@ -71,6 +72,11 @@ navigationRoutes.get("/activity", zValidator("query", activityQuery), async (c) 
   return c.json(ActivityPageSchema.parse(
     await new SpaceService(c.env, getWorkspaceAuth(c)).listActivity(cursor ?? null, only ?? null),
   ));
+});
+
+navigationRoutes.post("/activity/events", zValidator("json", ActivityEventsRequestSchema), async (c) => {
+  await new SpaceService(c.env, getWorkspaceAuth(c)).recordActivityEvents(c.req.valid("json").events);
+  return c.body(null, 204);
 });
 
 navigationRoutes.put("/activity/seen", zValidator("json", ActivitySeenRequestSchema), async (c) => {

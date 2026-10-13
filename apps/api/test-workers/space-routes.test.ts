@@ -1013,6 +1013,59 @@ describe("the navigation routes", () => {
       .toMatchObject({ status: 200, body: { channelId: space.id, hasUnread: false } });
   });
 
+  /** The member's one Activity row about this thread. */
+  async function activityRow(workstreamId: WorkstreamId): Promise<Record<string, unknown> | undefined> {
+    const page = await request("/navigation/activity", MEMBER_AUTH);
+    expect(page.status).toBe(200);
+    return (page.body as { items: Array<Record<string, unknown>> }).items
+      .find((item) => item.threadId === workstreamId);
+  }
+
+  it("settles a started thread's Activity row when the app reports the Channel read past its placement", async () => {
+    const space = await createSpace("Outbound");
+    const workstreamId = await createChannel("activity-channel-read", [asSpaceId(space.id)], { scope: "workspace" });
+    await deliverEffectsToWorkspace(env, spaceConversation(workstreamId));
+    expect(await activityRow(workstreamId)).toMatchObject({ kind: "thread_started", unread: true });
+
+    const stats = await request("/navigation/channel-stats", MEMBER_AUTH);
+    const placement = (stats.body as Array<{ channelId: string; latestAttentionSequenceNumber: number }>)
+      .find((row) => row.channelId === space.id)?.latestAttentionSequenceNumber;
+    expect(placement).toBe(1);
+    // Short of the placement settles nothing.
+    expect((await request("/navigation/activity/events", MEMBER_AUTH, {
+      events: [{ kind: "read", subject: { kind: "channel", channelId: space.id }, through: 0 }],
+    })).status).toBe(204);
+    expect(await activityRow(workstreamId)).toMatchObject({ unread: true });
+
+    expect((await request("/navigation/activity/events", MEMBER_AUTH, {
+      events: [{ kind: "read", subject: { kind: "channel", channelId: space.id }, through: 1 }],
+    })).status).toBe(204);
+    expect(await activityRow(workstreamId)).toMatchObject({ kind: "thread_started", unread: false });
+  });
+
+  it("settles a started thread's Activity row when the app reports the thread opened", async () => {
+    const space = await createSpace("Outbound");
+    const workstreamId = await createChannel("activity-thread-open", [asSpaceId(space.id)], { scope: "workspace" });
+    await deliverEffectsToWorkspace(env, spaceConversation(workstreamId));
+    expect(await activityRow(workstreamId)).toMatchObject({ kind: "thread_started", unread: true });
+
+    expect((await request("/navigation/activity/events", MEMBER_AUTH, {
+      events: [{ kind: "read", subject: { kind: "thread", threadId: workstreamId }, through: 0 }],
+    })).status).toBe(204);
+
+    expect(await activityRow(workstreamId)).toMatchObject({ kind: "thread_started", unread: false });
+  });
+
+  it("refuses an Activity event its schema does not admit", async () => {
+    expect((await request("/navigation/activity/events", MEMBER_AUTH, { events: [] })).status).toBe(400);
+    expect((await request("/navigation/activity/events", MEMBER_AUTH, {
+      events: [{ kind: "read", subject: { kind: "folder", id: "x" }, through: 0 }],
+    })).status).toBe(400);
+    expect((await request("/navigation/activity/events", MEMBER_AUTH, {
+      events: [{ kind: "read", subject: { kind: "channel", channelId: "x" }, through: -1 }],
+    })).status).toBe(400);
+  });
+
   it("answers nobody who is not signed in", async () => {
     const response = await app.request("/navigation/threads", {}, routeEnv(), createExecutionContext());
     expect(response.status).toBe(401);

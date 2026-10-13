@@ -668,9 +668,11 @@ import {
   WorkspaceActivityRequestSchema,
   WorkspaceActivityResultSchema,
   WorkspaceActivitySeenRequestSchema,
+  WorkspaceActivityEventsRequestSchema,
   type WorkspaceActivityRequest,
   type WorkspaceActivityResult,
   type WorkspaceActivitySeenRequest,
+  type WorkspaceActivityEventsRequest,
   WorkspaceMyThreadsRequestSchema,
   WorkspaceMyThreadsResultSchema,
   WorkspacePinChangeRequestSchema,
@@ -809,7 +811,7 @@ import {
   type ThreadBackfillWork,
 } from "./thread-backfill";
 import { unreadState } from "./unread-state";
-import { WorkspaceActivityFeed } from "./workspace-activity-feed";
+import { WorkspaceActivityFeed, WORKSPACE_ACTIVITY_READS_MIGRATION } from "./workspace-activity-feed";
 import {
   PersonalSystemPromptReadRequestSchema,
   PersonalSystemPromptWriteRequestSchema,
@@ -4285,6 +4287,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "a work list of one-off jobs over every thread, and every thread listed to have its description summarized",
   // The lane is channel colour sync's without triggers; see thread-backfill.ts.
   statements: THREAD_BACKFILL_MIGRATION,
+}, {
+  version: 101,
+  description: "how far each person has read each thread, breakout and Channel, as the app reports it for Activity",
+  // One waterline per person and subject, moved by app events; see workspace-activity-feed.ts.
+  statements: WORKSPACE_ACTIVITY_READS_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -9465,6 +9472,30 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       logWarn(this.env, "activity_seen_sync_failed", {
         workspace_id: request.workspaceId,
         reason: diagnosticErrorCode(error, "activity_seen_sync_failed"),
+      });
+    }
+  }
+
+  /** Settle the Activity rows these events cover; see `workspace-activity-feed.ts`. */
+  async recordActivityEvents(input: WorkspaceActivityEventsRequest): Promise<void> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceActivityEventsRequestSchema, input, "record_activity_events");
+    this.assertWorkspace(request.workspaceId);
+    const feed = new WorkspaceActivityFeed(this.state.storage, this.spaceStorage());
+    if (!feed.activityReadsReady()) return;
+    // A waterline that is new or rose can clear rows, so this person's other
+    // windows and the menu bar re-read Activity, as they do after Mark all
+    // read. A read that moved nothing tells nobody: the sending window already
+    // re-reads Activity itself when it holds a row the read could clear.
+    if (!feed.record(request.userId, request.events, Date.now())) return;
+    try {
+      await this.publishSync(["activity"], request.workspaceId,
+        this.placementAffinity() ?? await workspacePlacementAffinity(this.env, request.workspaceId),
+        { audienceUserIds: [request.userId] });
+    } catch (error) {
+      logWarn(this.env, "activity_events_sync_failed", {
+        workspace_id: request.workspaceId,
+        reason: diagnosticErrorCode(error, "activity_events_sync_failed"),
       });
     }
   }
