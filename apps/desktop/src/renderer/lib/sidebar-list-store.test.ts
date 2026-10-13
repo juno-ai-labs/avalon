@@ -86,6 +86,7 @@ describe('applyVersionedSidebarList', () => {
     const channelStats = [{
       channelId: SPACE_ID,
       threadCount: 2,
+      newThreadCount: 0,
       lastActivityAt: '2026-10-10T18:00:00.000Z',
       latestAttentionSequenceNumber: 3,
       readThroughSequenceNumber: 3,
@@ -173,7 +174,7 @@ describe('applyVersionedSidebarList', () => {
 
 describe('applyNavigationState', () => {
   const row = (channelId: string, hasUnread: boolean) => ({
-    channelId, threadCount: 1, lastActivityAt: null, latestAttentionSequenceNumber: 1,
+    channelId, threadCount: 1, newThreadCount: hasUnread ? 1 : 0, lastActivityAt: null, latestAttentionSequenceNumber: 1,
     readThroughSequenceNumber: hasUnread ? 0 : 1, firstUnreadSequenceNumber: hasUnread ? 1 : null, hasUnread,
   });
 

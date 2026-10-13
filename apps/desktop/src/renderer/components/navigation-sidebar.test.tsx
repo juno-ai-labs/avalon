@@ -59,7 +59,7 @@ function channel(id: string, name: string, overrides: Record<string, unknown> = 
 
 function stats(channelId: string, overrides: Partial<ChannelStats> = {}): ChannelStats {
   return {
-    channelId, threadCount: 0, lastActivityAt: null,
+    channelId, threadCount: 0, newThreadCount: 0, lastActivityAt: null,
     latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0, firstUnreadSequenceNumber: null, hasUnread: false,
     ...overrides,
   };
@@ -130,11 +130,11 @@ describe('the navigation sidebar', () => {
         { kind: 'channel', id: 'growth', parentId: null },
       ]);
       client.setQueryData(CHANNEL_STATS_QUERY_KEY, [
-        stats('apple', { threadCount: 4, latestAttentionSequenceNumber: 5, readThroughSequenceNumber: 3, firstUnreadSequenceNumber: 4, hasUnread: true }),
-        // Six placed since the last read, but four of them moved out again.
-        stats('growth', { threadCount: 2, latestAttentionSequenceNumber: 6, readThroughSequenceNumber: 0, firstUnreadSequenceNumber: 1, hasUnread: true }),
+        stats('apple', { threadCount: 4, newThreadCount: 2, latestAttentionSequenceNumber: 5, readThroughSequenceNumber: 3, firstUnreadSequenceNumber: 4, hasUnread: true }),
+        // Two new rows, both private: more than this person may list.
+        stats('growth', { threadCount: 0, newThreadCount: 2, latestAttentionSequenceNumber: 2, firstUnreadSequenceNumber: 1, hasUnread: true }),
         stats('zebra', { threadCount: 7, latestAttentionSequenceNumber: 7, readThroughSequenceNumber: 7 }),
-        stats('outbound', { threadCount: 1, latestAttentionSequenceNumber: 1, firstUnreadSequenceNumber: 1, hasUnread: true }),
+        stats('outbound', { threadCount: 1, newThreadCount: 1, latestAttentionSequenceNumber: 1, firstUnreadSequenceNumber: 1, hasUnread: true }),
         // Its one new thread moved out again: nothing new is left to show.
         stats('zebra-empty', { threadCount: 0, latestAttentionSequenceNumber: 1, firstUnreadSequenceNumber: 1, hasUnread: true }),
       ]);
@@ -438,7 +438,7 @@ describe('the navigation sidebar', () => {
       client.setQueryData(CHANNEL_STATS_QUERY_KEY, [
         stats('zebra', { threadCount: 3, lastActivityAt: '2026-10-05T00:00:00.000Z', latestAttentionSequenceNumber: 3, readThroughSequenceNumber: 3 }),
         stats('mango', {
-          threadCount: 1, lastActivityAt: '2026-10-03T00:00:00.000Z', latestAttentionSequenceNumber: 1,
+          threadCount: 1, newThreadCount: 1, lastActivityAt: '2026-10-03T00:00:00.000Z', latestAttentionSequenceNumber: 1,
           firstUnreadSequenceNumber: 1, hasUnread: true,
         }),
         stats('kiwi', { threadCount: 2, lastActivityAt: '2026-10-04T00:00:00.000Z', latestAttentionSequenceNumber: 2, readThroughSequenceNumber: 2 }),

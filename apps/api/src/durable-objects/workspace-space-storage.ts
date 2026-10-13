@@ -1972,10 +1972,16 @@ export class WorkspaceSpaceStorage {
    * same cost {@link attentionCounts} pays, plus the listing query reading the
    * waterline columns beside each Space id. A Space with nothing listable in
    * it is still answered, with zero and no time.
+   *
+   * `newThreadCount` counts the rows the Channel feed would show this viewer
+   * above their read position: every active placement for a member, locked
+   * rows included, so it can exceed `threadCount`; a placement moved out
+   * again is not a row and is not counted. A guest is never unread, so zero.
    */
   channelStats(viewer: Viewer, onlySpaceId?: string): Array<{
     spaceId: string;
     threadCount: number;
+    newThreadCount: number;
     lastActivityAt: number | null;
     read: ChannelReadState;
   }> {
@@ -2012,9 +2018,37 @@ export class WorkspaceSpaceStorage {
         counted.set(row.space_id, { count: row.count, last: row.last_activity_at });
       }
     }
+    const fresh = new Map<string, number>();
+    if (viewer.accessClass === "member" && this.readsReady()) {
+      for (const chunk of boundParameterChunks(spaceIds)) {
+        // The feed's member predicate, above the read position unreadState
+        // derives: the reader's own, else where tracking started.
+        for (const row of this.storage.sql.exec<{ space_id: string; count: number } & Record<string, SqlStorageValue>>(
+          `SELECT membership.space_id, COUNT(*) AS count
+             FROM space_channel_memberships membership
+             JOIN spaces space ON space.space_id = membership.space_id
+             LEFT JOIN space_reads reads
+               ON reads.space_id = membership.space_id AND reads.user_id = ?
+             JOIN channels directory
+               ON directory.workstream_id = membership.workstream_id
+            WHERE membership.state = 'active'
+              AND directory.archived_at IS NULL
+              AND directory.system_kind IS NULL
+              AND COALESCE(membership.attention_ordinal, 0)
+                  > COALESCE(reads.seen_attention_ordinal, space.unread_tracking_start_ordinal)
+              AND membership.space_id IN (${chunk.map(() => "?").join(", ")})
+            GROUP BY membership.space_id`,
+          viewer.userId,
+          ...chunk,
+        ).toArray()) {
+          fresh.set(row.space_id, row.count);
+        }
+      }
+    }
     return spaceIds.map((spaceId) => ({
       spaceId,
       threadCount: counted.get(spaceId)?.count ?? 0,
+      newThreadCount: fresh.get(spaceId) ?? 0,
       lastActivityAt: counted.get(spaceId)?.last ?? null,
       read: reads.get(spaceId) as ChannelReadState,
     }));
