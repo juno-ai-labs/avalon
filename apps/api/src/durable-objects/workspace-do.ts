@@ -9483,7 +9483,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const feed = new WorkspaceActivityFeed(this.state.storage, this.spaceStorage());
     if (!feed.activityReadsReady()) return;
-    feed.record(request.userId, request.events, Date.now());
+    // A waterline that is new or rose can clear rows, so this person's other
+    // windows and the menu bar re-read Activity, as they do after Mark all
+    // read. A read that moved nothing tells nobody: the sending window already
+    // re-reads Activity itself when it holds a row the read could clear.
+    if (!feed.record(request.userId, request.events, Date.now())) return;
+    try {
+      await this.publishSync(["activity"], request.workspaceId,
+        this.placementAffinity() ?? await workspacePlacementAffinity(this.env, request.workspaceId),
+        { audienceUserIds: [request.userId] });
+    } catch (error) {
+      logWarn(this.env, "activity_events_sync_failed", {
+        workspace_id: request.workspaceId,
+        reason: diagnosticErrorCode(error, "activity_events_sync_failed"),
+      });
+    }
   }
 
   /** This person's pins, every kind. */

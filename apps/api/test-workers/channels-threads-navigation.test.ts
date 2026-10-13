@@ -944,6 +944,22 @@ describe("Activity settled by the app's events", () => {
     expect(await finished()).toEqual([false]);
   });
 
+  it("given a read that moves a waterline, then the member's sockets alone are told to read Activity again, and a repeat tells nobody", async () => {
+    const published = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
+      topics_json: string;
+      audience_json: string | null;
+    }>("SELECT topics_json, audience_json FROM workspace_sync_events ORDER BY waterline DESC").toArray());
+
+    const before = (await published()).length;
+    await read({ kind: "thread", threadId: OPEN_THREAD }, 3);
+    const afterFirst = await published();
+    expect(afterFirst.length).toBe(before + 1);
+    expect(afterFirst[0]).toEqual({ topics_json: JSON.stringify(["activity"]), audience_json: JSON.stringify([MEMBER]) });
+
+    await read({ kind: "thread", threadId: OPEN_THREAD }, 3);
+    expect((await published()).length).toBe(before + 1);
+  });
+
   it("given a start cleared by reading its Channel, when the thread moves out of that Channel, then it stays cleared", async () => {
     const channelId = await channelWithThreads();
     const elsewhere = await reserveChannel("Elsewhere");
