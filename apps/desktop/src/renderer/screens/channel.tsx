@@ -18,6 +18,7 @@ import { ChannelComposer } from '../components/channel-composer';
 import { MarkdownBody } from '../components/workstream-blocks';
 import { Avatar, Button, EmptyState, InlineError, LoadingState, Modal, TitleSkeleton } from '../components/primitives';
 import { RelativeTime } from '../components/relative-time';
+import { reportActivityEvent } from '../lib/activity-events';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { copySpaceLink } from '../lib/copy-workstream-link';
@@ -243,6 +244,11 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
     const previous = stats;
     queryClient.setQueryData<ChannelStatsList>(CHANNEL_STATS_QUERY_KEY, (list) =>
       writeChannelStats(list, channelId, (row) => ({ ...row, hasUnread: false })));
+    reportActivityEvent(api, queryClient, {
+      kind: 'read',
+      subject: { kind: 'channel', channelId },
+      through: pending.readThroughSequenceNumber,
+    });
     void api.acknowledgeChannelRead(channelId, pending.readThroughSequenceNumber)
       .then((updated) => {
         queryClient.setQueryData<ChannelStatsList>(CHANNEL_STATS_QUERY_KEY, (list) =>

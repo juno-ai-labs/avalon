@@ -2371,6 +2371,47 @@ export class WorkspaceSpaceStorage {
     return byWorkstream;
   }
 
+  /**
+   * Each of these threads' active placements in a Channel this viewer may
+   * list, with the ordinal the placement took (migration 98). The Activity
+   * tab settles a thread's start by a read of the Channel past it.
+   */
+  placementOrdinals(
+    viewer: Viewer,
+    workstreamIds: readonly string[],
+  ): Map<string, Array<{ channelId: string; ordinal: number }>> {
+    const placements = new Map<string, Array<{ channelId: string; ordinal: number }>>();
+    if (!this.ready() || !this.readsReady()) return placements;
+    const listed = this.spaceListing(viewer);
+    for (const chunk of boundParameterChunks(workstreamIds)) {
+      for (const row of this.storage.sql.exec<{
+        workstream_id: string;
+        space_id: string;
+        attention_ordinal: number;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT membership.workstream_id, membership.space_id, membership.attention_ordinal
+           FROM space_channel_memberships membership
+           JOIN spaces space ON space.space_id = membership.space_id
+           LEFT JOIN space_viewers viewer
+             ON viewer.space_id = space.space_id
+            AND viewer.user_id = ? AND viewer.is_participant = 1
+          WHERE membership.state = 'active' AND space.archived_at IS NULL
+            AND membership.attention_ordinal IS NOT NULL
+            AND ${listed.sql}
+            AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})`,
+        viewer.userId,
+        ...listed.binds,
+        ...chunk,
+      ).toArray()) {
+        const placement = { channelId: row.space_id, ordinal: Number(row.attention_ordinal) };
+        const existing = placements.get(row.workstream_id);
+        if (existing) existing.push(placement);
+        else placements.set(row.workstream_id, [placement]);
+      }
+    }
+    return placements;
+  }
+
   /** The active Spaces a Channel is in, as this viewer may see them. */
   channelSpaceIds(viewer: Viewer, workstreamId: string): string[] {
     return this.spaceIdsByChannel(viewer, [workstreamId]).get(workstreamId) ?? [];

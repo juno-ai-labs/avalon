@@ -1,6 +1,7 @@
 import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
 import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, NO_INVITEES, useWorkspaceInvitees } from "../lib/workspace-invitees";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
+import { conversationActivitySubject, reportActivityEvent } from '../lib/activity-events';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { skipToken, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -1455,6 +1456,17 @@ export function ConversationSurface({
     orderedTranscript.data,
   );
   const routedDetail = payloadBelongsToRoute ? workstream.data : undefined;
+  // Opening a conversation is an Activity event of its own: it settles the
+  // rows that ask only for an open (an add, a start), which a read
+  // acknowledgement never covers when nothing new is on screen. Once per
+  // opening, when the room has loaded.
+  const reportedOpenRef = useRef<string | null>(null);
+  const opened = routedDetail !== undefined;
+  useEffect(() => {
+    if (!api || !opened || reportedOpenRef.current === conversationAddress) return;
+    reportedOpenRef.current = conversationAddress;
+    reportActivityEvent(api, queryClient, { kind: 'read', subject: conversationActivitySubject(id, substreamId), through: 0 });
+  }, [api, conversationAddress, id, opened, queryClient, substreamId]);
   const feedSource = useQuery<WorkstreamFeedSource | null>({
     queryKey: workstreamFeedSourceQueryKey(id, substreamId),
     queryFn: async () => null,
@@ -2697,6 +2709,11 @@ export function ConversationSurface({
     if (!pending) return;
     if (readAckInFlightRef.current === pending.key) return;
     readAckInFlightRef.current = pending.key;
+    reportActivityEvent(api, queryClient, {
+      kind: 'read',
+      subject: conversationActivitySubject(pending.parentId, pending.substreamId),
+      through: pending.readThroughSequenceNumber,
+    });
     void api.acknowledgeConversationRead(
       pending.parentId,
       pending.substreamId,

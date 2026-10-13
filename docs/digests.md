@@ -211,8 +211,10 @@ short, or empty with a cursor that names a hidden row.
 relation, so the page and its cursor are cut from mentions and nothing else.
 The tab's Mentions chip reads it, because mentions are sparse and a client
 filter over newest-first pages could draw an empty page with more behind it.
-Unread is the client's: unread is everything after one waterline, so it is
-already a run at the top of the feed.
+Unread is the client's, filtered over the pages it holds. Once events settle
+rows one subject at a time, unread is no longer a run at the top of the feed,
+so the Unread chip can show a short page with more behind it; **Show more**
+reads the next. A server filter like `only=mentions` is the fix if that bites.
 
 **A breakout's mentions** reach the log in one narrow shape
 (`breakout-activity.ts`). A breakout is private to the people in it, and a
@@ -229,10 +231,38 @@ outbox and sent to no further consumer. The Activity tab reads its target edge,
 and the breakout listing check above decides whether the person named sees it.
 Nothing here changes what a digest reads.
 
-**Read state is one time per person** (`workspace_activity_seen`, migration
-97), moved forward by `PUT /navigation/activity/seen` when the person chooses
-**Mark all read**. Showing the tab reads nothing.
-An item is unread when it is newer than that time.
+**An item is done two ways**, and neither is a row per item.
+
+- **Mark all read** moves one time per person (`workspace_activity_seen`,
+  migration 97) through `PUT /navigation/activity/seen`; every item at or
+  before it is done. Showing the tab reads nothing.
+- **Events.** The app reports what the person did through
+  `POST /navigation/activity/events` (`ActivityEventSchema`). Today there is
+  one kind, `read`: a subject (a thread, a breakout, or a Channel) and the
+  attention ordinal it was read through, 0 for an open. Each subject keeps one
+  waterline per person (`workspace_activity_reads`, migration 101), moved to
+  the higher of where it was and the event's ordinal, so a late event never
+  moves it back. Reading message 29 of a thread settles a mention at 29 or
+  earlier and leaves one at 30 standing.
+
+Each item names its **targets** (`activityTargets` in
+`workspace-activity-feed.ts`): a subject and an ordinal. It is done once any
+target is at or below its subject's waterline.
+
+| Item | Target |
+| --- | --- |
+| `mentioned` | its conversation (the breakout when it names one) at the message's ordinal, which message events carry as `metadata.attentionOrdinal`; an older event without one is settled by an open |
+| `added`, `breakout_started` | its conversation, opened |
+| `thread_started` | the thread, opened; or any Channel it is placed in, read past that placement's ordinal |
+| `run_finished` | its conversation at its newest message |
+
+The desktop sends an open when a conversation's detail loads, and a `read`
+beside each read acknowledgement of a conversation or a Channel
+(`lib/activity-events.ts`), then reads Activity again if it is on screen. The
+event is the client's to send rather than a side effect of the
+acknowledgement routes, so a new kind of event — a viewed document, a
+dismissed row — joins the same endpoint without touching how a conversation
+keeps its own unread state.
 
 Starts are not read from the opening message's event. Driving the local stack
 showed that event does not reliably reach WorkspaceDO (only a handful of
@@ -787,6 +817,38 @@ existing audience and projection semantics. [Apple push](push-notifications.md)
 owns device registration, provider delivery and retry receipts.
 
 ## Changelog
+
+### 2026-10-13 — Activity rows are settled by what the person does
+
+**What changed:** The app reports semantic events (`read` a thread, breakout
+or Channel through an ordinal, 0 for an open) to `POST
+/navigation/activity/events`; WorkspaceDO keeps one waterline per person and
+subject (migration 101), and an Activity item is done once one of its targets
+is at or below its subject's waterline, as well as when Mark all read covers
+it. Message events now carry their attention ordinal in `metadata`.
+
+**Why:** The PRD says each item keeps its dot until the person opens it, and
+the tab cleared dots only through Mark all read, so reading the mention you
+were told about left it unread. A waterline per subject rather than a row per
+item means one event settles every item it covers, including ones on pages not
+loaded.
+
+**Considered and rejected:** Deriving "done" from each conversation's own read
+position (`channel_viewers`, `breakout_viewers`, `space_reads`). It needed no
+new write, but tied Activity to three projections with different rules
+(unseen, manual unread, a guest's Channel) and left no way to settle an item
+from anything but a read acknowledgement. A per-item read table: it records
+the same fact once per item, and an item not yet on a page could not be
+settled.
+
+**Consequences:** A `run_finished` row's target is the conversation's newest
+message, not the finish's own ordinal, because the directory does not keep the
+latter; a message after the finish makes the row unread again until it is
+read. Projecting a completion ordinal would fix that. An event names any
+subject without a listing check: the waterline is the reader's alone and the
+feed lists only what they may see. A new event kind goes in
+`ActivityEventSchema` and `WorkspaceActivityFeed.record`; a new item kind
+needs its targets in `activityTargets`.
 
 ### 2026-10-10 — The activity log feeds the Activity tab too
 
