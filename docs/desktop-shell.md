@@ -82,7 +82,7 @@ from `channelStats`, seeded by the socket's snapshot and read again
 (`GET /navigation/channel-stats`) when a placement nudge names a Channel. The
 second line is empty unless a thread was placed in the Channel since this
 person last had it open (`hasUnread` on its stats row); then the name goes
-bold, the time red, and the second line reads "N new threads" in the unread colour
+bold (the time stays muted) and the second line reads "N new threads" in the unread colour
 (`--av-sys-color-workstream-news`), with the same dot at its end a thread
 row has. N is
 `latestAttentionSequenceNumber − readThroughSequenceNumber`, capped at

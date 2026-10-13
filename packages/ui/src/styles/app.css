@@ -8609,7 +8609,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .navigation-row.is-unread .navigation-row-title { font-weight: 650; }
 .navigation-row-unread-dot { background: var(--av-sys-color-workstream-news); border-radius: 999px; flex: none; height: 8px; width: 8px; }
 .navigation-row-time { color: var(--av-sys-color-text-muted); flex: none; font-size: 12px; }
-.navigation-row.is-unread .navigation-row-time { color: var(--av-sys-color-workstream-news); }
+.navigation-row.is-unread:not(.navigation-channel-row) .navigation-row-time { color: var(--av-sys-color-workstream-news); }
 .navigation-row-lock { color: var(--av-sys-color-text-muted); flex: none; }
 .navigation-row-detail { color: var(--av-sys-color-text-muted); flex: 1; font-size: 12.5px; line-height: 17px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .navigation-row-news { color: var(--av-sys-color-workstream-news); font-weight: 500; }
