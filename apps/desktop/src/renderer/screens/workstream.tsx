@@ -2,6 +2,7 @@ import { BreakoutMenu, ChannelMenu, type ConversationRowTarget } from '@rally/ui
 import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { BreakoutPillIcon, TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import type { IconGroupAction } from '@rally/ui/components/icon-group';
 import { WorkstreamGlyph, workstreamMark } from '@rally/ui/components/workstream-glyph';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -22,7 +23,7 @@ import { holdCreationTraceUntilSendReady, startPerfTrace } from '../lib/perf-tra
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
 import { AppearancePicker, AppearanceSubmenu } from '../components/appearance-picker';
-import { IconPalette } from '@tabler/icons-react';
+import { IconArrowsDiagonal, IconArrowsDiagonalMinimize2, IconPalette } from '@tabler/icons-react';
 import { RelativeTime } from '../components/relative-time';
 
 import type { WorkstreamChildDirectory } from '../lib/channel-viewer-state';
@@ -855,6 +856,23 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     };
   };
 
+  // Beside its Channel, the thread can take the whole window, and give it
+  // back once it is the only pane on screen because the reader asked.
+  const expandAction: IconGroupAction[] | undefined = !channelPane ? undefined
+    : !channelPane.shifted ? [{
+      key: 'expand',
+      label: 'Expand',
+      icon: <IconArrowsDiagonal aria-hidden="true" size={16} stroke={1.9} />,
+      onSelect: () => channelPane.setExpanded(true),
+    }]
+    : channelPane.expanded && !threadUsesTwoPanes ? [{
+      key: 'collapse',
+      label: 'Collapse',
+      icon: <IconArrowsDiagonalMinimize2 aria-hidden="true" size={16} stroke={1.9} />,
+      onSelect: () => channelPane.setExpanded(false),
+    }]
+    : undefined;
+
   const mainPane = !mainVisible ? null : <ConversationSurface
     breakouts={breakoutMarks}
     honorsSearchTarget={openBreakoutId === null}
@@ -866,6 +884,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     renderHeader={(context) => <TitlePillHeader
       ancestors={channelCrumbs}
       current={channelLevel(context)}
+      actions={expandAction}
       trailing={channelPane && !channelPane.shifted
         ? <TitlePillClose label="Close thread" onClose={() => void navigate(channelRoute(channelPane.channelId))} />
         : undefined}

@@ -70,6 +70,10 @@ function ChannelStack({ channelId, threadId, workspace }: {
   const { session } = useAppSession();
   const space = useChannel(channelId);
   const [threadUsesTwoPanes, setThreadUsesTwoPanes] = useState(false);
+  // Held per thread, so the next thread opens beside the Channel again.
+  const [expandedThreadId, setExpandedThreadId] = useState<string | null>(null);
+  const expanded = threadId !== null && expandedThreadId === threadId;
+  const setExpanded = useCallback((expand: boolean): void => setExpandedThreadId(expand ? threadId : null), [threadId]);
   const [shown, setShown] = useState<SplitConversationMode>('split');
   const widthKey = layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', 'thread-width');
   const [threadWidth, setThreadWidth] = useState<number | null>(() => {
@@ -80,7 +84,7 @@ function ChannelStack({ channelId, threadId, workspace }: {
     setThreadWidth(width);
     writeLayout(widthKey, String(width));
   }, [widthKey]);
-  const shifted = threadId !== null && (threadUsesTwoPanes || shown === 'breakout');
+  const shifted = threadId !== null && (threadUsesTwoPanes || expanded || shown === 'breakout');
   const pane = useMemo<ChannelPaneContext | null>(() => threadId === null ? null : ({
     channelId,
     crumb: {
@@ -95,7 +99,9 @@ function ChannelStack({ channelId, threadId, workspace }: {
     },
     shifted,
     setThreadUsesTwoPanes,
-  }), [channelId, navigate, shifted, space, threadId]);
+    expanded,
+    setExpanded,
+  }), [channelId, expanded, navigate, setExpanded, shifted, space, threadId]);
   return <ChannelPaneContextValue.Provider value={pane}>
     <SplitConversationLayout
       breakout={threadId === null ? null : <WorkstreamRoute key={threadId} />}
@@ -103,7 +109,7 @@ function ChannelStack({ channelId, threadId, workspace }: {
       main={<PaneVisibility visible={shown !== 'breakout'}>
         <ChannelPane channelId={channelId} openThreadId={threadId} workspace={workspace} />
       </PaneVisibility>}
-      mode={threadId === null ? 'main' : threadUsesTwoPanes ? 'breakout' : 'split'}
+      mode={threadId === null ? 'main' : threadUsesTwoPanes || expanded ? 'breakout' : 'split'}
       onBreakoutWidthChange={changeThreadWidth}
       onShownChange={setShown}
     />

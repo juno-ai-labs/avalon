@@ -44,6 +44,14 @@ its headers is leftmost. The same happens when the window is too narrow for
 two panes: `onShownChange` reports the thread standing alone, and the thread
 carries the crumb.
 
+The reader can also ask for it. Beside its Channel, the thread's header has an
+**Expand** action in its `IconGroup`; it calls `setExpanded(true)`, the stack
+shows only its right slot, and the thread carries the crumb as above. While
+expanded and not otherwise using both slots, the same place offers
+**Collapse**, which puts the thread back beside the Channel. Expansion belongs
+to one thread: `ChannelStack` holds the id it was asked for, so the next
+thread opens beside the Channel.
+
 Each step is drawn as movement, by `SplitConversationLayout` itself so both
 levels share it. A pane that opens beside another slides in from the right; a
 pane that takes the whole width slides over from where it was (the distance is
@@ -104,7 +112,7 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
 ## Testing
 
 - `apps/desktop/src/renderer/screens/channel.test.tsx` (a thread opens beside
-  the Channel) and `lib/navigation-routes.test.ts`.
+  the Channel, expands over it and collapses back) and `lib/navigation-routes.test.ts`.
 - `apps/desktop/src/renderer/lib/pane-visibility.test.tsx`: no read is
   acknowledged in a pane the layout is not drawing, and one is once it is.
 - `apps/desktop/src/renderer/components/split-conversation.test.tsx`: the two
@@ -114,6 +122,23 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
   window under Xvfb, per [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-13 — A thread can expand over its Channel
+
+**What changed:** The thread beside a Channel has Expand and Collapse actions
+in its header. Expanded, it takes the whole window and the Channel rides as
+its crumb.
+
+**Why:** The product asked for a way to give the right pane the whole window
+without closing the Channel.
+
+**Considered and rejected:** A third layout mode in `SplitConversationLayout`.
+Expanded is the same picture as a thread using both its slots, so it reuses
+that mode and the crumb that comes with it.
+
+**Consequences:** Expansion is not stored and lasts only for the thread it was
+asked on. The Channel crumb still opens the Channel alone, closing the thread;
+Collapse is the way back to the pair.
 
 ### 2026-10-13 — A crumb opens its level and closes what is nested under it
 
