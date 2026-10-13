@@ -58,10 +58,12 @@ the like) and RFC 2606 test names are never fetched. Every failure answers
 The answer is cached per domain in Global D1 (`organization_name_suggestions`,
 migration 0123) for 30 days, and creating an account (Google or email sign-in)
 reads it into the cache in the background, so the create step normally answers
-from one D1 read. A homepage that answers but names nothing is cached as NULL;
-one that cannot be reached (a network error or a 5xx) is not cached, so one bad
-minute does not hide a name for a month. An expired row is replaced on the next
-read. The card
+from one D1 read. Each read ends in one `OrganizationNameOutcome`: `named`,
+`unnamed` (HTML that names nothing), `missing` (a 4xx or no body), `not_html`,
+or `unreachable` (a network error or a 5xx). The row stores the outcome, and
+the table's checks hold `name` set exactly when it is `named` and refuse
+`unreachable`, so one bad minute never hides a name for a month. An expired row
+is replaced on the next read. The card
 opens without waiting for it and fills the field only while it is empty and
 untouched, so the suggestion never replaces what the person typed or a
 remembered name.
@@ -175,7 +177,10 @@ email names, so it must keep refusing anything that is not a public hostname
 name. It has no timeout of its own: nothing waits on it, and a hung homepage
 holds only that one request. The 30-day TTL is the product's number
 (`ORGANIZATION_NAME_SUGGESTION_TTL_MS`). Anything that starts caching
-unreachable homepages turns a transient outage into a month without a name.
+unreachable homepages turns a transient outage into a month without a name; the
+outcome enum, not a null-versus-undefined convention, is what keeps the two
+apart, and a new outcome has to be placed on one side of it in both the enum
+and the table's check.
 
 ### 2026-10-12 — Remove the introduction screens
 

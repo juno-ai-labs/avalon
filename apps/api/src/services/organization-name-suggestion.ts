@@ -1,4 +1,5 @@
 import { WorkspaceNameSchema } from "@rally/contracts";
+import { z } from "zod";
 
 import { runtimeDeferral } from "../lib/defer";
 import { htmlElementText, htmlMetaContent, normalizeHtmlText } from "../lib/html-metadata";
@@ -46,6 +47,35 @@ export function organizationEmailDomain(email: string): string | null {
 export const ORGANIZATION_NAME_SUGGESTION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
+ * What reading a domain's homepage found. Every outcome but `unreachable` is
+ * the domain's answer and is cached; `unreachable` says nothing about the
+ * domain, and caching it would hide its name for thirty days because of one
+ * bad minute.
+ */
+export const OrganizationNameOutcomeSchema = z.enum([
+  /** The homepage named the organization. */
+  "named",
+  /** The homepage is HTML but names nothing usable. */
+  "unnamed",
+  /** The homepage answered with a 4xx or no body. */
+  "missing",
+  /** The homepage answered with something other than HTML. */
+  "not_html",
+  /** A network error or a 5xx: no answer from the domain. Never cached. */
+  "unreachable",
+]);
+export type OrganizationNameOutcome = z.infer<typeof OrganizationNameOutcomeSchema>;
+
+export type OrganizationNameReading =
+  | { outcome: "named"; name: string }
+  | { outcome: Exclude<OrganizationNameOutcome, "named">; name: null };
+
+const CachedReadingSchema = z.discriminatedUnion("outcome", [
+  z.object({ outcome: z.literal("named"), name: z.string(), fetched_at: z.string() }),
+  z.object({ outcome: z.enum(["unnamed", "missing", "not_html"]), name: z.null(), fetched_at: z.string() }),
+]);
+
+/**
  * The suggestion for this address, from the domain's cached answer while it is
  * younger than the TTL, and otherwise from its homepage, caching the result.
  */
@@ -57,38 +87,47 @@ export async function suggestOrganizationName(
 ): Promise<string | null> {
   const domain = organizationEmailDomain(email);
   if (!domain) return null;
-  const cached = await db.prepare("SELECT name, fetched_at FROM organization_name_suggestions WHERE domain = ?")
-    .bind(domain).first<{ name: string | null; fetched_at: string }>();
+  const row = await db.prepare("SELECT outcome, name, fetched_at FROM organization_name_suggestions WHERE domain = ?")
+    .bind(domain).first();
+  const cached = row ? CachedReadingSchema.parse(row) : null;
   if (cached && now.getTime() - Date.parse(cached.fetched_at) < ORGANIZATION_NAME_SUGGESTION_TTL_MS) return cached.name;
-  const name = await readOrganizationName(domain, fetcher);
-  // An unreachable homepage is not an answer: caching it would hide the name
-  // for thirty days because of one bad minute.
-  if (name === undefined) return cached?.name ?? null;
-  await db.prepare(`INSERT INTO organization_name_suggestions (domain, name, fetched_at) VALUES (?, ?, ?)
-    ON CONFLICT(domain) DO UPDATE SET name = excluded.name, fetched_at = excluded.fetched_at`)
-    .bind(domain, name, now.toISOString()).run();
-  return name;
+  const reading = await readOrganizationName(domain, fetcher);
+  if (reading.outcome === "unreachable") return cached?.name ?? null;
+  await db.prepare(`INSERT INTO organization_name_suggestions (domain, outcome, name, fetched_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT(domain) DO UPDATE SET outcome = excluded.outcome, name = excluded.name, fetched_at = excluded.fetched_at`)
+    .bind(domain, reading.outcome, reading.name, now.toISOString()).run();
+  return reading.name;
 }
 
-/**
- * The name the domain's homepage gives, null when it answered but named
- * nothing usable, and undefined when it could not be read at all.
- */
-async function readOrganizationName(domain: string, fetcher: typeof fetch): Promise<string | null | undefined> {
+async function readOrganizationName(domain: string, fetcher: typeof fetch): Promise<OrganizationNameReading> {
   const url = `https://${domain}/`;
+  let response: Response;
   try {
     assertSafePublicUrl(url);
-    const response = await fetcher(url, {
+    response = await fetcher(url, {
       headers: { Accept: "text/html" },
       redirect: "follow",
     });
-    if (response.status >= 500) return undefined;
-    if (!response.ok || !response.body) return null;
-    if (!(response.headers.get("content-type") ?? "").toLowerCase().includes("html")) return null;
-    return organizationNameFromHtml(await readHead(response.body), domain);
   } catch {
-    return undefined;
+    return { outcome: "unreachable", name: null };
   }
+  if (response.status >= 500) return { outcome: "unreachable", name: null };
+  if (!response.ok || !response.body) return { outcome: "missing", name: null };
+  if (!isHtml(response.headers.get("content-type"))) return { outcome: "not_html", name: null };
+  let head: string;
+  try {
+    head = await readHead(response.body);
+  } catch {
+    return { outcome: "unreachable", name: null };
+  }
+  const name = organizationNameFromHtml(head, domain);
+  return name ? { outcome: "named", name } : { outcome: "unnamed", name: null };
+}
+
+/** Whether a Content-Type's media type is HTML, ignoring its parameters. */
+function isHtml(contentType: string | null): boolean {
+  const mediaType = contentType?.split(";")[0]?.trim().toLowerCase();
+  return mediaType === "text/html" || mediaType === "application/xhtml+xml";
 }
 
 /**
