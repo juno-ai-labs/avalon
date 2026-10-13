@@ -90,13 +90,14 @@ onboardingRoutes.get("/", async (c) =>
       .state({ guests: clientOpensGuestWorkspaces((name) => c.req.header(name)) }))),
 );
 
-// Read from the homepage of the person's email domain. The create screen does
-// not wait for it: it fills the name only if the person has not typed one.
+// Read from the homepage of the person's email domain, normally already cached
+// by account creation. The create screen does not wait for it: it fills the
+// name only if the person has not typed one.
 onboardingRoutes.get("/organization-suggestion", async (c) => {
   const user = await c.env.DB.prepare("SELECT email FROM users WHERE id = ?")
     .bind(getIdentityAuth(c).userId).first<{ email: string }>();
   return c.json(OrganizationNameSuggestionSchema.parse({
-    name: user ? await suggestOrganizationName(user.email) : null,
+    name: user ? await suggestOrganizationName(c.env.DB, user.email) : null,
   }));
 });
 

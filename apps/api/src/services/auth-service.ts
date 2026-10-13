@@ -13,6 +13,7 @@ import { publishSessionRevocations, type RevokedSessionRow } from "./access-revo
 import { logWarn } from "../observability/logger";
 import { openString, randomToken, sealString, sha256, timingSafeEqualText } from "../lib/crypto";
 import { persistVerifiedGoogleIdentity } from "./login-identity-service";
+import { prefetchOrganizationNameSuggestion } from "./organization-name-suggestion";
 import { supportOrganizationId, supportSessionLiveSql } from "./support-access";
 
 const encoder = new TextEncoder();
@@ -691,6 +692,7 @@ export class AuthService {
     if (Number(platformLink.meta.changes ?? 0) !== 1) {
       throw new ApiError(409, "platform_identity_conflict", "The Global identity could not be linked safely");
     }
+    if (user.created) prefetchOrganizationNameSuggestion(this.env.DB, input.email);
     return { ...await this.loadIdentity(user.id, null), signup_created: user.created };
   }
 
