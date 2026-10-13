@@ -535,6 +535,14 @@ describe('Rally API wire adapter', () => {
     await expect(api.cancelSubstream(workstreamId, 'cancel-operation')).resolves.toBeUndefined();
   });
 
+  it('answers a Channel audience that left this person out of a private Channel as null', async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+    await expect(api.updateSpaceAudience('space-1', { scope: 'personal', participantUserIds: ['user-2'] })).resolves.toBeNull();
+    expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toBe('https://api.rally.test/spaces/space-1/audience');
+  });
+
   it.each(['addSubstreamParticipant', 'removeSubstreamParticipant'] as const)('validates %s membership receipts', async (method) => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(Response.json({ outcome: 'unchanged', membershipVersion: 1 }))
