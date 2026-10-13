@@ -153,6 +153,29 @@ describe('a Channel', () => {
     expect(api.updateSpacePresentation).toHaveBeenLastCalledWith('outbound', { name: 'Outbound', iconKey: 'rocket', colorKey: 'green' });
   });
 
+  it('renames General from its title menu, which only refuses archiving it or making it private', async () => {
+    const general = { ...outbound('organization').items[0]!, systemRole: 'general' };
+    spaces.data = { waterline: 1, items: [general] };
+    api.updateSpacePresentation.mockImplementation(async (_id: string, input: object) => ({ ...general, ...input }));
+    renderChannel();
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Outbound' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Name' }), { target: { value: 'Everyone' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+    await waitFor(() => expect(api.updateSpacePresentation).toHaveBeenCalledWith('outbound', { name: 'Everyone', iconKey: 'briefcase', colorKey: 'blue' }));
+  });
+
+  it('offers its icon and colour in More, beside its settings', async () => {
+    renderChannel();
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Outbound' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
+
+    await screen.findByRole('menuitem', { name: 'Icon' });
+    expect([...screen.getByRole('menu').querySelectorAll('[role^="menuitem"]')].map((item) => item.textContent?.trim()))
+      .toEqual(['Icon', 'Private to its members', 'Pinned in my sidebar', 'Archive channel']);
+  });
+
   describe('read in a focused window', () => {
     const restore: Array<() => void> = [];
     beforeEach(() => {
