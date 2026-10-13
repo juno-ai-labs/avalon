@@ -154,8 +154,12 @@ without it appears behind whatever is frontmost.
 **The main process holds a workspace socket of its own.** Most recent is the
 sidebar's Channel list, which only the workspace socket carries, and a renderer
 is not there to ask on a login launch or after the last window closes.
-`ChannelDirectoryWatch` therefore holds the same rows the sidebar holds, from
-the same frames:
+`ChannelDirectoryWatch` therefore holds the sidebar's rows, from the same
+frames, but only the fields Most recent reads: title, naming state, last
+activity, archive and system state, `mainWithheld`, and each Channel's Breakout
+list (`privateChildren`, read for a withheld Channel's first Breakout). No
+unread, mention or attention field is kept, because nothing in the menu reads
+one:
 
 - It dials through `watchWorkspaceSocket` with a ticket from
   `GET /workspace/socket`, over the main-process Node broker's route
@@ -173,9 +177,7 @@ the same frames:
 - `workspace_workstream_state` and `workspace_workstream_recency` pushes are
   applied under their state version with the renderer's ordering: a superseded
   authority generation is refused, each half (common, viewer) is taken only when
-  its waterline has not gone back, and a tombstone removes the row. Unread is
-  derived from both halves, as `withDerivedUnread` derives it, rather than
-  stored with one.
+  its waterline has not gone back, and a tombstone removes the row.
 - `workspace_space_snapshot` naming a Space the walk has not read walks it.
 - `workspace_sync` frames are handed to `onSync` with their topics, and a
   subscribe answer as every topic, because nothing is replayed across a
@@ -356,10 +358,11 @@ It depends on the `avalon://` deep-link vocabulary already handled in
 `app-session.tsx`. Adding a menu row that navigates somewhere new means adding
 the link there first, not a second navigation channel here.
 
-It shares `common/attention-items.ts` and `common/recency-groups.ts` with the
-renderer's sidebar and owns neither: a change to what is counted or how Channels
-are ordered changes both surfaces, which is the point of the modules being there
-rather than beside either one.
+It shares `common/recency-groups.ts` with the renderer's sidebar and owns it:
+a change to how Channels are ordered changes both surfaces, which is the point
+of the module being there rather than beside either one. What counts as
+needing attention is the Activity feed's
+([`digests.md`](digests.md#the-activity-tab)), not this module's.
 
 ## Failure modes and limits
 
@@ -473,7 +476,10 @@ from the Activity tab's feed (`GET /navigation/activity`) rather than from
 `attentionItems` over the Channel rows. `ActivityFeedWatch` holds the first
 page and reads it again when the workspace socket names the `activity` topic;
 `ChannelDirectoryWatch` hands its sync topics on through `onSync`. Marking
-Activity read now publishes `activity` to the reader's own sockets.
+Activity read now publishes `activity` to the reader's own sockets. The Channel
+rows the watch keeps lost every unread, mention and attention field, and
+`attention-items.ts` moved from `common/` to `renderer/lib/attention-ranking.ts`,
+since no main-process code reads either any more.
 
 **Why:** The menu and the Activity tab disagreed in front of the person: the
 menu said "Nothing needs your attention" beside a tab full of unread dots.

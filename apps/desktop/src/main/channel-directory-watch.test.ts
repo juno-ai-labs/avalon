@@ -2,13 +2,6 @@ import { watchWorkspaceSocket, type ReachSocket } from '@rally/contracts/workspa
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChannelDirectoryWatch } from './channel-directory-watch';
 import { compareRecentChannels } from '../common/recency-groups';
-import { attentionItems } from '../common/attention-items';
-import type { ChannelDirectorySnapshot } from './channel-directory-watch';
-
-/** The sidebar's attention list over what the watch holds. */
-function attention(snapshot: ChannelDirectorySnapshot) {
-  return attentionItems(snapshot.channels, snapshot.breakouts);
-}
 
 type Listener = (event: never) => void;
 
@@ -171,7 +164,7 @@ afterEach(() => {
 });
 
 describe('channel directory watch', () => {
-  it('walks every Space after subscribing and yields the sidebar\'s attention list and recent order', async () => {
+  it('walks every Space after subscribing and yields the sidebar\'s rows, Breakout lists and recent order', async () => {
     const subject = harness();
     subject.watch.start();
     const socket = await subject.connected();
@@ -184,13 +177,12 @@ describe('channel directory watch', () => {
     expect(subject.watch.snapshot().complete).toBe(false);
 
     socket.message(spaceAnswer(general!, [
-      // Unread Main: the attention ordinal is past the reader's read point.
-      row(ACME, { title: 'Acme renewal', latestAttentionSequenceNumber: 6, lastActivityAt: '2026-10-06T09:00:00.000Z' }),
-      // Caught-up Main, with one Breakout that mentions the reader.
+      row(ACME, { title: 'Acme renewal', lastActivityAt: '2026-10-06T09:00:00.000Z' }),
+      // Listed to this reader only through its one Breakout.
       row(PRICING, {
         title: 'Pricing',
         lastActivityAt: '2026-10-06T11:00:00.000Z',
-        breakoutAttentionCount: 1,
+        mainWithheld: true,
         privateChildren: [{
           substreamId: BREAKOUT, title: 'Discount call', youAreMentioned: true, createdByUserId: USER,
           createdAt: '2026-10-05T10:00:00.000Z', updatedAt: '2026-10-06T08:00:00.000Z',
@@ -203,10 +195,8 @@ describe('channel directory watch', () => {
 
     const snapshot = subject.watch.snapshot();
     expect(snapshot.complete).toBe(true);
-    expect(attention(snapshot).map((item) => [item.title, item.substreamId, item.reason])).toEqual([
-      ['Discount call', BREAKOUT, 'mentioned'],
-      ['Acme renewal', null, 'unread'],
-    ]);
+    expect(snapshot.channels.find((channel) => channel.id === PRICING)).toMatchObject({ mainWithheld: true });
+    expect(snapshot.breakouts[PRICING]?.map((breakout) => breakout.substreamId)).toEqual([BREAKOUT]);
     expect([...snapshot.channels].sort(compareRecentChannels).map((item) => item.title)).toEqual(['Pricing', 'Quiet', 'Acme renewal']);
     expect(subject.onChange).toHaveBeenCalled();
   });
@@ -256,14 +246,15 @@ describe('channel directory watch', () => {
     socket.message(spaceAnswer(socket.requests('space_channels')[0]!, [row(ACME, { title: 'Acme' }), row(PRICING)]));
     await flush();
 
-    // A new message arrives: the common half moves and the reader has not read it.
-    socket.message(stateFrame(ACME, version(8), row(ACME, { title: 'Acme', latestAttentionSequenceNumber: 9 })));
-    expect(attention(subject.watch.snapshot()).map((item) => item.title)).toEqual(['Acme']);
+    // A new message arrives: the common half moves and the thread is newer.
+    socket.message(stateFrame(ACME, version(8), row(ACME, { title: 'Acme', lastActivityAt: '2026-10-06T11:00:00.000Z' })));
+    expect(subject.watch.snapshot().channels.find((channel) => channel.id === ACME))
+      .toMatchObject({ lastActivityAt: '2026-10-06T11:00:00.000Z' });
 
-    // A push delayed behind it says the older state; it must not undo the unread.
+    // A push delayed behind it says the older state; it must not undo the move.
     socket.message(stateFrame(ACME, version(6), row(ACME, { title: 'Stale title' })));
     const channels = subject.watch.snapshot().channels;
-    expect(channels.find((channel) => channel.id === ACME)).toMatchObject({ title: 'Acme', hasUnread: true });
+    expect(channels.find((channel) => channel.id === ACME)).toMatchObject({ title: 'Acme', lastActivityAt: '2026-10-06T11:00:00.000Z' });
 
     socket.message(stateFrame(PRICING, version(8), null));
     expect(subject.watch.snapshot().channels.map((channel) => channel.id)).toEqual([ACME]);
@@ -292,7 +283,7 @@ describe('channel directory watch', () => {
     expect(hiring).toBeDefined();
     expect(subject.watch.snapshot().complete).toBe(false);
 
-    socket.message(spaceAnswer(hiring!, [row(PRICING, { latestAttentionSequenceNumber: 6 })]));
+    socket.message(spaceAnswer(hiring!, [row(PRICING)]));
     await flush();
     expect(subject.watch.snapshot().complete).toBe(true);
     expect(subject.watch.snapshot().channels.map((channel) => channel.id)).toEqual([ACME, PRICING]);
