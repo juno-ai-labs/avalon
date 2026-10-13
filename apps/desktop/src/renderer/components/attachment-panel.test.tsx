@@ -43,6 +43,18 @@ describe('AttachmentPanel', () => {
     expect(screen.getByText('2 / 2')).toBeVisible();
   });
 
+  it('leaves the gallery alone when an arrow key is pressed in the panel\'s own menu', async () => {
+    const first = { name: 'first.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['first'])) };
+    const second = { name: 'second.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['second'])) };
+    renderPanel({ ...first, gallery: [first, second], galleryIndex: 0 });
+    await screen.findByRole('img', { name: 'first.png' });
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Attachment menu: first.png' }), { button: 0, ctrlKey: false });
+    fireEvent.keyDown(await screen.findByRole('menuitem', { name: 'Download' }), { key: 'ArrowRight' });
+    expect(screen.getByRole('img', { name: 'first.png' })).toBeInTheDocument();
+    expect(second.loadContent).not.toHaveBeenCalled();
+  });
+
   it('expands the item it is showing, gallery position included, to the full window', async () => {
     const onExpand = vi.fn();
     const first = { name: 'first.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['first'])) };
