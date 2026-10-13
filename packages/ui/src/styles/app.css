@@ -404,7 +404,10 @@ pre {
   width: 30px;
 }
 
-.button:hover:not(:disabled) {
+/* Radix moves a menu item's focus by setting `data-highlighted`, not by
+   hover, so a `.button` inside a menu takes the same look in that state. */
+.button:hover:not(:disabled),
+.button[data-highlighted] {
   background-image: var(--hover-layer);
   border-color: var(--av-ref-color-line-4);
   color: var(--av-sys-color-text-default);
@@ -8173,11 +8176,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .title-menu-header-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .title-menu-eyebrow { color: var(--av-sys-color-text-muted); font-size: 11px; }
 .title-menu-title { font-size: 14.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* A menu item wearing the standard `.button`. Radix moves focus by setting
-   `data-highlighted` rather than by hover, so that state takes the button's
-   own hover look. */
-.title-menu-link { cursor: pointer; flex: none; outline: 0; }
-.title-menu-link[data-highlighted] { background-image: var(--hover-layer); border-color: var(--av-ref-color-line-4); color: var(--av-sys-color-text-default); }
+/* A menu item wearing the standard `.button`. Its highlighted state shares
+   the `.button:hover` rule above. */
+.title-menu-button { cursor: pointer; flex: none; outline: 0; }
 .title-menu-origin {
   background: var(--av-sys-color-surface-sunken);
   border-radius: 12px;
