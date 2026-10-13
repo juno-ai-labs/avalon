@@ -359,7 +359,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
       {feed.isSuccess && rows.length === 0 && <p className="channel-feed-empty">No threads yet. Describe the work below and Rally starts a thread for it.</p>}
       {feed.isError && <InlineError>The threads in this channel couldn’t be loaded.</InlineError>}
     </div>
-    {canStart && <ChannelComposer channelId={channelId} channelName={space.name} channelScope={space.scope === 'workspace' ? 'workspace' : 'personal'} threadOpen={openThreadId !== null} workspace={workspace} />}
+    {canStart && <ChannelComposer channelColor={space.colorKey} channelId={channelId} channelName={space.name} channelScope={space.scope === 'workspace' ? 'workspace' : 'personal'} threadOpen={openThreadId !== null} workspace={workspace} />}
   </div>;
 }
 

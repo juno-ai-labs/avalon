@@ -86,6 +86,12 @@ export interface WorkstreamProvisionInput {
    * omitted for an ordinary conversation.
    */
   agentProfile?: string | null;
+  /**
+   * A thread's Channel colour, as its birth appearance; see
+   * `InitializeWorkstreamObjectInputSchema.color`. Absent for a conversation
+   * that is not a thread's Main.
+   */
+  color?: SpaceColorKey | null;
   now: number;
 }
 
@@ -671,6 +677,7 @@ export class WorkstreamIdentityStorage {
                 email_address = COALESCE(?, email_address),
                 email_route_status = COALESCE(?, email_route_status),
                 model_override = ?, agent_profile = ?,
+                appearance_json = COALESCE(appearance_json, ?),
                 exact_state = ?, state_reason_code = ?, title_status = ?,
                 description_source = 'derived', listing_epoch = listing_epoch + 1,
                 created_at = ?, last_people_activity_at = ?, state_changed_at = ?,
@@ -685,6 +692,7 @@ export class WorkstreamIdentityStorage {
         input.emailRouteStatus,
         input.modelOverride,
         input.agentProfile ?? null,
+        input.color ? JSON.stringify({ icon: null, color: input.color }) : null,
         exactState,
         exactState === "idle" ? "provisioned" : `run_${exactState}`,
         input.titleStatus ?? "settled",
