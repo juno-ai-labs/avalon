@@ -4475,7 +4475,6 @@ pre {
   padding: var(--space-2);
   position: relative;
 }
-.attachment-file-card.is-pending { margin-block: 0; width: 220px; }
 .attachment-file-card.is-failed { border-color: var(--av-sys-color-danger-base); }
 .attachment-file-open { align-items: center; background: transparent; display: grid; flex: 1 1 auto; gap: var(--space-2); grid-template-columns: 36px minmax(0, 1fr); min-width: 0; padding: 0; text-align: left; }
 .attachment-file-open:hover:not(:disabled) .attachment-file-name { text-decoration: underline; text-underline-offset: 2px; }
@@ -6527,16 +6526,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   flex: 0 0 var(--attachment-media-size);
   height: var(--attachment-media-size);
   width: var(--attachment-media-size);
-}
-
-:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-attachments .attachment-file-card.is-pending {
-  background: transparent;
-  border-color: var(--av-ref-color-line-4);
-  flex: 0 0 220px;
-  height: var(--attachment-file-card-height);
-  min-height: var(--attachment-file-card-height);
-  min-width: 0;
-  width: 100%;
 }
 
 :is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-input-shell {
