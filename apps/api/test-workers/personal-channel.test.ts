@@ -413,7 +413,7 @@ describe("Channel messages", () => {
     const tie = madeAt + 1_000;
     const posted = await withSpaceStorage(workspace(), (storage) => {
       const tied = storage.postMessages(GENERAL, [{ author: { kind: "rally" }, body: "tied" }], tie)[0]!;
-      const newer = Array.from({ length: SPACE_CHANNEL_PAGE_SIZE - 1 - short }, (_, index) => (
+      const newer = Array.from({ length: SPACE_CHANNEL_PAGE_SIZE - short }, (_, index) => (
         storage.postMessages(GENERAL, [{ author: { kind: "rally" }, body: `newer ${index}` }], tie + 1 + index)[0]!
       ));
       return { tied, newer };
