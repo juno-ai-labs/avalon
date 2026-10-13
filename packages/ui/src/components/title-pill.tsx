@@ -362,11 +362,22 @@ export function TitleMenuSeparator(): React.JSX.Element {
   return <DropdownMenu.Separator className="menu-separator" />;
 }
 
+/**
+ * A round control at the right of a pane's header. Every icon in a header
+ * wears the same raised circle as the pills beside it, so one header never
+ * mixes bare glyphs with round ones.
+ */
+export function TitlePillAction({ children, label, onClick }: {
+  children: ReactNode; label: string; onClick: () => void;
+}): React.JSX.Element {
+  return <IconButton className="title-pill-action" label={label} onClick={onClick}>{children}</IconButton>;
+}
+
 /** The round control that closes a pane, at the right of its header. */
 export function TitlePillClose({ label, onClose }: { label: string; onClose: () => void }): React.JSX.Element {
-  return <IconButton className="title-pill-close" label={label} onClick={onClose}>
+  return <TitlePillAction label={label} onClick={onClose}>
     <IconX aria-hidden="true" size={16} stroke={1.9} />
-  </IconButton>;
+  </TitlePillAction>;
 }
 
 /** A Breakout's mark in its title pill: the arrow its chips and rows wear. */
