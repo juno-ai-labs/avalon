@@ -1,4 +1,4 @@
-import type { AccountOnboarding, SupportPerson, SupportWorkspace } from '@rally/contracts';
+import type { AccountOnboarding, OrganizationNameSuggestion, SupportPerson, SupportWorkspace } from '@rally/contracts';
 import { NETWORK_RECOVERY_IPC, NetworkRecoveryInbox } from '../common/network-recovery';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ApplicationIconId, DesktopApplicationIconState } from '../common/application-icons';
@@ -216,6 +216,7 @@ const bridge: RallyDesktopBridge = {
   createDevelopmentSession: (apiBaseUrl, workspaceName) => ipcRenderer.invoke('auth:create-development-session', { apiBaseUrl, workspaceName }) as Promise<DesktopSession>,
   getAccountOnboarding: () => ipcRenderer.invoke('onboarding:get-account') as Promise<AccountOnboarding>,
   updateAccountOnboarding: (input) => ipcRenderer.invoke('onboarding:update-account', input) as Promise<AccountOnboarding>,
+  getOrganizationNameSuggestion: () => ipcRenderer.invoke('onboarding:get-organization-suggestion') as Promise<OrganizationNameSuggestion>,
   getOnboardingState: () => ipcRenderer.invoke('onboarding:get-state') as Promise<DesktopWorkspaceOnboardingState>,
   getWorkspaceAttention: (input) => ipcRenderer.invoke('workspace:get-attention', input),
   leaveWorkspace: (input) => ipcRenderer.invoke('workspace:leave', input),

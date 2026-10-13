@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query';
 import { LoaderCircle } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { RallyDesktopBridge } from '../../common/desktop';
@@ -118,10 +119,18 @@ export function SignInScreen(): React.JSX.Element {
 }
 
 export function RegionOnboarding(): React.JSX.Element {
-  const { finishWorkspaceSetup, session, signOut, workspaceName } = useAppSession();
+  const { finishWorkspaceSetup, getOrganizationNameSuggestion, session, signOut, workspaceName } = useAppSession();
+  // A prefill, not a step: the card opens at once and a failure leaves it empty.
+  const suggestion = useQuery({
+    queryKey: ['organization-name-suggestion', session?.user.id],
+    queryFn: getOrganizationNameSuggestion,
+    enabled: Boolean(session) && !workspaceName.trim(),
+    retry: false,
+    staleTime: Infinity,
+  });
   return (
     <main className="onboarding-shell workspace-setup-shell window-drag">
-      <CreateOrganizationCard initialName={workspaceName} onCreate={(name, operationId) => finishWorkspaceSetup(name, 'global', operationId)}>
+      <CreateOrganizationCard initialName={workspaceName} suggestedName={suggestion.data?.name ?? null} onCreate={(name, operationId) => finishWorkspaceSetup(name, 'global', operationId)}>
         {session && <p className="signed-in-identity">Signed in as {session.user.email}</p>}
         <button className="text-button onboarding-signout" onClick={() => void signOut()} type="button">Sign out</button>
       </CreateOrganizationCard>

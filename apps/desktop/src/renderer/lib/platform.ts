@@ -1,4 +1,4 @@
-import { AccountOnboardingSchema, UpdateAccountOnboardingSchema } from '@rally/contracts';
+import { AccountOnboardingSchema, OrganizationNameSuggestionSchema, UpdateAccountOnboardingSchema } from '@rally/contracts';
 import type { Region } from "@rally/contracts/regions";
 import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
 import {
@@ -404,6 +404,9 @@ const browserBridge: RallyDesktopBridge = {
     return AccountOnboardingSchema.parse(await browserOnboardingRequest('/onboarding/account', {
       method: 'PATCH', body: UpdateAccountOnboardingSchema.parse(input),
     }));
+  },
+  async getOrganizationNameSuggestion() {
+    return OrganizationNameSuggestionSchema.parse(await browserOnboardingRequest('/onboarding/organization-suggestion'));
   },
   async getOnboardingState() {
     // The browser holds no stored set to merge and no identity credential to
