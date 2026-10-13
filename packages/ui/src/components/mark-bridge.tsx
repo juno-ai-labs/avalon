@@ -122,7 +122,9 @@ function bridgeStops(tints: readonly string[]): { offset: number; color: string 
  *
  * `labelLast` writes the last object's name beside its mark, stretching that
  * mark into a pill the name's width; the shape is measured from the name as
- * laid out, so it fits whatever font and size it renders in.
+ * laid out, so it fits whatever font and size it renders in. The bridge never
+ * grows past its container: a name too long for the room ends in an ellipsis
+ * and the pill is drawn to the width it was given.
  */
 export function MarkBridge({ className, items, labelLast = false }: {
   className?: string | undefined;
@@ -130,29 +132,40 @@ export function MarkBridge({ className, items, labelLast = false }: {
   labelLast?: boolean | undefined;
 }): React.JSX.Element | null {
   const id = useId();
+  const root = useRef<HTMLSpanElement>(null);
   const label = useRef<HTMLSpanElement>(null);
-  const [labelWidth, setLabelWidth] = useState(0);
+  // The name's full width, however much of it shows, and the width the
+  // bridge was actually given once its container had its say.
+  const [size, setSize] = useState({ name: 0, given: 0 });
   const labelled = labelLast && items.length > 0;
+  const lastName = items.at(-1)?.name;
   useLayoutEffect(() => {
+    const box = root.current;
     const element = label.current;
-    if (!labelled || !element) { setLabelWidth(0); return undefined; }
-    const measure = (): void => setLabelWidth(element.offsetWidth);
+    if (!labelled || !box || !element) { setSize({ name: 0, given: 0 }); return undefined; }
+    const measure = (): void => setSize((current) => {
+      const next = { name: element.scrollWidth, given: box.offsetWidth };
+      return next.name === current.name && next.given === current.given ? current : next;
+    });
     measure();
     const observer = new ResizeObserver(measure);
+    observer.observe(box);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [labelled]);
+  }, [labelled, lastName]);
   const count = items.length;
   // Nothing to join: the geometry below assumes at least one mark.
   if (count === 0) return null;
-  const extra = labelled && labelWidth > 0 ? labelWidth + LABEL_END : 0;
-  const path = bridgePath(count, extra);
-  const stops = bridgeStops(items.map((item) => item.mark.tint));
   // The gradient spans the circles; past the last it holds the last tint.
   const tintWidth = markBridgeWidth(count);
-  const width = tintWidth + extra;
+  // Asked for the whole name; drawn to what the container allowed.
+  const wanted = labelled && size.name > 0 ? tintWidth + size.name + LABEL_END : tintWidth;
+  const width = labelled && size.name > 0 && size.given > 0 ? Math.max(tintWidth, Math.min(wanted, size.given)) : wanted;
+  const extra = width - tintWidth;
+  const path = bridgePath(count, extra);
+  const stops = bridgeStops(items.map((item) => item.mark.tint));
   const height = 2 * RADIUS;
-  return <span className={clsx('mark-bridge', className)} style={{ height, width }}>
+  return <span className={clsx('mark-bridge', className)} ref={root} style={{ height, minWidth: tintWidth, width: wanted }}>
     <svg
       aria-hidden="true"
       className="mark-bridge-glass"
@@ -192,7 +205,7 @@ export function MarkBridge({ className, items, labelLast = false }: {
         <span className="mark-bridge-cell">{symbol}</span>
         <span className="mark-bridge-label" ref={label}>{item.name}</span>
       </> : symbol;
-      const style = { color: item.mark.ink, left: index * SPAN, ...(named ? { width: 2 * RADIUS + extra } : {}) };
+      const style = { color: item.mark.ink, left: index * SPAN, ...(named ? { paddingRight: LABEL_END, width: 2 * RADIUS + extra } : {}) };
       const markClass = clsx('mark-bridge-mark', named && 'is-labelled');
       const accessibleName = item.action ? `${item.action}: ${item.name}` : item.name;
       const mark = item.onSelect
