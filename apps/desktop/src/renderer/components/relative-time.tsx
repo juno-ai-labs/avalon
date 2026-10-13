@@ -17,6 +17,7 @@ import { formatDateTime, formatRelative } from '../lib/format';
 export function RelativeTime({
   className,
   format = formatRelative,
+  tipPrefix,
   value,
 }: {
   /** A class for the `<time>` itself, where a surface styles it by name. */
@@ -27,6 +28,8 @@ export function RelativeTime({
    * vocabulary ("Yesterday", a weekday) passes its own and still ticks.
    */
   format?: (value: string, now: Date) => string;
+  /** Words before the exact time on hover, such as "Last update at". */
+  tipPrefix?: string;
   /** An ISO-8601 instant. */
   value: string;
 }): React.JSX.Element {
@@ -46,7 +49,7 @@ export function RelativeTime({
         </Tooltip.Trigger>
         <Tooltip.Portal>
           <Tooltip.Content className="tooltip" side="top" sideOffset={6}>
-            {formatDateTime(value)}
+            {tipPrefix ? `${tipPrefix} ${formatDateTime(value)}` : formatDateTime(value)}
             <Tooltip.Arrow className="tooltip-arrow" />
           </Tooltip.Content>
         </Tooltip.Portal>
