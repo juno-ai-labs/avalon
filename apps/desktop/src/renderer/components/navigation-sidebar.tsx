@@ -1100,7 +1100,7 @@ function ChannelRow({ active, drag, ghost, moves, onPin, pinned, position, space
           tile={<ChannelTile space={space} />}
           time={stats?.lastActivityAt && <RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} tipPrefix="Last update at" value={stats.lastActivityAt} />}
           title={space.name}
-          titleExtra={space.scope === 'personal' && <IconLock aria-label="Private" className="navigation-row-lock" size={13} stroke={1.8} />}
+          titleExtra={space.scope !== 'workspace' && <IconLock aria-label="Private" className="navigation-row-lock" size={13} stroke={1.8} />}
           unread={unread}
         />
         {position && <span className="sr-only">{position}</span>}

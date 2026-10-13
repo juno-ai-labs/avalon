@@ -352,7 +352,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
       {feed.isSuccess && rows.length === 0 && <p className="channel-feed-empty">No threads yet. Describe the work below and Rally starts a thread for it.</p>}
       {feed.isError && <InlineError>The threads in this channel couldn’t be loaded.</InlineError>}
     </div>
-    {canStart && <ChannelComposer channelId={channelId} channelName={space.name} channelScope={space.scope} threadOpen={openThreadId !== null} workspace={workspace} />}
+    {canStart && <ChannelComposer channelId={channelId} channelName={space.name} channelScope={space.scope === 'workspace' ? 'workspace' : 'personal'} threadOpen={openThreadId !== null} workspace={workspace} />}
   </div>;
 }
 
@@ -463,6 +463,10 @@ function ChannelHeader({ members, space, workspace }: {
   const member = workspace.currentUser.accessClass !== 'guest';
   const editable = member && space.reach !== 'through_channel';
   const general = space.systemRole === 'general';
+  // A Personal Channel is its owner's alone: nobody can be added, it cannot
+  // be made public or left, and it cannot be archived. It reads as private.
+  const personal = space.scope === 'individual';
+  const audienceScope = space.scope === 'workspace' ? 'workspace' : 'personal';
   const participantIds = space.participants.map((participant) => participant.userId as string);
   const roster = participantIds.flatMap((id) => {
     const found = members.find((candidate) => candidate.id === id);
@@ -495,7 +499,7 @@ function ChannelHeader({ members, space, workspace }: {
     setRemoving({ member: person, pending: true });
     try {
       const next = await api!.updateSpaceAudience(space.id, {
-        scope: space.scope,
+        scope: audienceScope,
         participantUserIds: participantIds.filter((id) => id !== person.id),
       });
       setRemoving(null);
@@ -620,20 +624,20 @@ function ChannelHeader({ members, space, workspace }: {
         label="Icon"
         onChange={changeAppearance}
       /> : undefined}
-      channel={{ name: space.name, scope: space.scope }}
+      channel={{ name: space.name, scope: audienceScope }}
       members={roster}
-      onArchive={editable && !general ? () => setArchiving('confirm') : undefined}
+      onArchive={editable && !general && !personal ? () => setArchiving('confirm') : undefined}
       onCopyLink={copyLink}
       onOpenSidekick={(id) => void desktopBridge().openSidekicks(id)}
       onRename={editable ? () => setRenaming(space.name) : undefined}
-      people={editable ? {
+      people={editable && !personal ? {
         candidates: members.filter((candidate) => !participantIds.includes(candidate.id) && (candidate.status ?? 'active') === 'active'),
         adding,
         currentUserId: workspace.currentUser.id,
         ...(failure ? { error: failure } : {}),
         onAdd: async (person) => {
           setAdding(true);
-          try { await setAudience(space.scope, [...participantIds, person.id]); } finally { setAdding(false); }
+          try { await setAudience(audienceScope, [...participantIds, person.id]); } finally { setAdding(false); }
         },
         onRemove: (person) => setRemoving({ member: person, pending: false }),
       } : undefined}
@@ -641,7 +645,7 @@ function ChannelHeader({ members, space, workspace }: {
         on: pinned,
         onChange: (next) => pin('channel', space.id, next),
       } : undefined}
-      publicToOrganization={editable && !general ? {
+      publicToOrganization={editable && !general && !personal ? {
         on: space.scope === 'workspace',
         // A private Channel nobody is in is one nobody can open; the person
         // making it private stays in it. Leaving it afterwards is theirs to do.

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
 import { sha256 } from "../src/lib/crypto";
 import { RegionalOnboardingService } from "../src/services/platform-onboarding-service";
+import { personalSpaceIdFor } from "../src/services/space-bootstrap-service";
 import {
   createCloudflareTestBinding,
   createTestDurableObjectId,
@@ -120,20 +121,25 @@ describe("creating an Organization in its region", () => {
       "SELECT workspace_id, revoked_at FROM sessions WHERE user_id = ? AND refresh_token_hash = ?",
     ).get(platformUserId, await sha256(session.refreshToken))).toEqual({ workspace_id: workspaceId, revoked_at: null });
 
+    // General's anchor and the creator's Personal Channel's, in the one batch.
+    const personalId = await personalSpaceIdFor(workspaceId, platformUserId);
     const routes = database.prepare(
       "SELECT workstream_id, generation, state FROM workstream_authority_routes WHERE workspace_id = ?",
     ).all(workspaceId) as Array<{ workstream_id: string; generation: number; state: string }>;
-    expect(routes).toHaveLength(1);
-    expect(routes[0]).toMatchObject({ generation: 1, state: "active" });
-    const generalId = routes[0]!.workstream_id;
-    expect(database.prepare("SELECT workspace_id FROM workstreams WHERE id = ?").get(generalId))
-      .toEqual({ workspace_id: workspaceId });
+    expect(routes).toHaveLength(2);
+    expect(routes.every((route) => route.generation === 1 && route.state === "active")).toBe(true);
+    const generalId = routes.find((route) => route.workstream_id !== personalId)!.workstream_id;
+    expect(routes.map((route) => route.workstream_id)).toContain(personalId);
+    for (const parentId of [generalId, personalId]) {
+      expect(database.prepare("SELECT workspace_id FROM workstreams WHERE id = ?").get(parentId))
+        .toEqual({ workspace_id: workspaceId });
+    }
 
     expect(generalOpens).toEqual([]);
     expect(initialized).toEqual([[
       workspaceId,
       "wnam",
-      { creatorUserId: platformUserId, spaceId: generalId, authorityGeneration: 1 },
+      { creatorUserId: platformUserId, spaceId: generalId, personalSpaceId: personalId, authorityGeneration: 1 },
     ]]);
   });
 

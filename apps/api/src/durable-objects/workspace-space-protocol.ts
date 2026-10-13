@@ -22,7 +22,7 @@ import {
   SpaceColorKeySchema,
   SpaceDefaultKindSchema,
   SpaceRequestScopeSchema,
-  SpaceScopeSchema,
+  AudienceScopeSchema,
   SpaceSummarySchema,
   UserIdSchema,
   WorkspaceIdSchema,
@@ -73,11 +73,14 @@ export type WorkspaceSpaceGeneralRequest = z.infer<typeof WorkspaceSpaceGeneralR
 /**
  * `initializeWorkspace`'s General Space for a new Organization: the person
  * creating it, the id whose D1 anchor the caller has written, and the
- * authority generation it wrote that anchor at.
+ * authority generation it wrote that anchor at. `personalSpaceId` is the
+ * creator's Personal Channel, anchored in the same batch; optional so a
+ * Worker that predates it still opens General.
  */
 export const WorkspaceGeneralOpeningSchema = z.strictObject({
   creatorUserId: UserIdSchema,
   spaceId: SpaceIdSchema,
+  personalSpaceId: SpaceIdSchema.optional(),
   authorityGeneration: z.number().int().positive(),
 });
 export type WorkspaceGeneralOpening = z.infer<typeof WorkspaceGeneralOpeningSchema>;
@@ -93,6 +96,32 @@ export const WorkspaceSpaceReserveRequestSchema = SpaceActorSchema.extend({
   spaceId: SpaceIdSchema.optional(),
 }).strict();
 export type WorkspaceSpaceReserveRequest = z.infer<typeof WorkspaceSpaceReserveRequestSchema>;
+
+/**
+ * `seatOrganizationMember`: put a member who just became active in General and
+ * give them their Personal Channel. Without `authorityGeneration` it only
+ * answers whether the Personal Channel still needs its D1 anchor; with it (the
+ * caller has written that anchor) the Personal Channel is created.
+ */
+export const WorkspaceSeatMemberRequestSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  userId: UserIdSchema,
+  personalSpaceId: SpaceIdSchema,
+  authorityGeneration: z.number().int().positive().optional(),
+});
+export type WorkspaceSeatMemberRequest = z.infer<typeof WorkspaceSeatMemberRequestSchema>;
+
+/**
+ * `seated: false` for somebody who is not an active non-guest member, or an
+ * Organization whose Spaces are not open yet; nothing was written. A guest
+ * gets neither: General is Organization-wide discovery, which a guest does
+ * not have.
+ */
+export const WorkspaceSeatMemberResultSchema = z.union([
+  z.strictObject({ seated: z.literal(false) }),
+  z.strictObject({ seated: z.literal(true), personalSpace: z.enum(["present", "absent"]) }),
+]);
+export type WorkspaceSeatMemberResult = z.infer<typeof WorkspaceSeatMemberResultSchema>;
 
 export const WorkspaceSpaceRequestSchema = SpaceActorSchema.extend({
   spaceId: SpaceIdSchema,
@@ -632,7 +661,7 @@ export type SpaceBootstrapQueueMessage = z.infer<typeof SpaceBootstrapQueueMessa
  */
 export const SpaceBootstrapChannelSchema = z.strictObject({
   workstreamId: WorkstreamIdSchema,
-  scope: SpaceScopeSchema,
+  scope: AudienceScopeSchema,
   placed: z.boolean(),
   participantUserIds: z.array(UserIdSchema),
 });

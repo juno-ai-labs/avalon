@@ -1,5 +1,6 @@
 import {
   GUEST_WORKSPACES_CLIENT_CONTRACT,
+  INDIVIDUAL_SPACE_CLIENT_CONTRACT,
   MINIMUM_SERVED_CLIENT_CONTRACT,
   SESSION_IMPORT_CLIENT_CONTRACT,
   RALLY_HEADERS,
@@ -76,4 +77,26 @@ export function clientOpensGuestWorkspaces(header: ClientRequestHeaders): boolea
   const declared = readRallyHeader(header, RALLY_HEADERS.CLIENT_CONTRACT);
   return declared !== undefined && /^\d+$/u.test(declared)
     && Number(declared) >= GUEST_WORKSPACES_CLIENT_CONTRACT;
+}
+
+/**
+ * The contract this request declares, or zero for one that declares none or
+ * something unreadable: every build that sends nothing predates the header.
+ */
+export function declaredClientContract(header: ClientRequestHeaders): number {
+  const declared = readRallyHeader(header, RALLY_HEADERS.CLIENT_CONTRACT);
+  if (declared === undefined || !/^\d+$/u.test(declared)) return 0;
+  const version = Number(declared);
+  return Number.isSafeInteger(version) ? version : 0;
+}
+
+/**
+ * Whether this client reads a Space scoped `individual`. A native client that
+ * declares nothing decodes Space payloads loosely or not at all, so only a
+ * browser-context build (one with an `Origin`) is held to its contract, as in
+ * {@link requireCurrentClientContract}.
+ */
+export function clientReadsIndividualSpaces(header: ClientRequestHeaders): boolean {
+  if (readRallyHeader(header, RALLY_HEADERS.CLIENT_CONTRACT) === undefined && header("origin") === undefined) return true;
+  return declaredClientContract(header) >= INDIVIDUAL_SPACE_CLIENT_CONTRACT;
 }
