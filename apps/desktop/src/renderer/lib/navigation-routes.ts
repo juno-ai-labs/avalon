@@ -1,4 +1,5 @@
-import { createContext, useContext } from 'react';
+import { createContext, useCallback, useContext, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 
 import type { TitlePillLevel } from '@rally/ui/components/title-pill';
 
@@ -51,6 +52,32 @@ export function expandRequest(location: { key: string; state: unknown }): string
   return typeof state === 'object' && state !== null && 'openExpanded' in state && state.openExpanded === true
     ? location.key
     : null;
+}
+
+/**
+ * Whether the pane open on one level of the stack (a thread over its Channel,
+ * a breakout over its thread) is expanded. Held for the pane it was asked on,
+ * so it drops when that pane closes or another opens, which then opens beside,
+ * unless the navigation that opened it asked for it expanded. A request counts
+ * once per navigation, so one onto the pane already open expands it again
+ * after a Collapse. `request` is that navigation's key, null when it did not
+ * ask, for a pane that has to react to each one.
+ */
+export function usePaneExpansion(paneId: string | null): {
+  expanded: boolean;
+  setExpanded: (expanded: boolean) => void;
+  request: string | null;
+} {
+  const request = expandRequest(useLocation());
+  const [expandedId, setExpandedId] = useState<string | null>(request === null ? null : paneId);
+  const [heldFor, setHeldFor] = useState({ paneId, request });
+  if (heldFor.paneId !== paneId || heldFor.request !== request) {
+    setHeldFor({ paneId, request });
+    if (request !== null) setExpandedId(paneId);
+    else if (heldFor.paneId !== paneId) setExpandedId(null);
+  }
+  const setExpanded = useCallback((expand: boolean): void => setExpandedId(expand ? paneId : null), [paneId]);
+  return { expanded: paneId !== null && expandedId === paneId, setExpanded, request };
 }
 
 /**

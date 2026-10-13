@@ -158,6 +158,12 @@ describe('a Channel', () => {
     fireEvent.click(screen.getByRole('link', { name: 'Sidebar thread' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/secret');
     expect(screen.getByText('composer')).not.toBeVisible();
+
+    // A sidebar open onto the thread already open expands it again.
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse' }));
+    expect(screen.getByText('composer')).toBeVisible();
+    fireEvent.click(screen.getByRole('link', { name: 'Sidebar thread' }));
+    expect(screen.getByText('composer')).not.toBeVisible();
   });
 
   it('opens a thread beside the Channel again after it was closed while expanded', async () => {
