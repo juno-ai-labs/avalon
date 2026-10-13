@@ -20,14 +20,19 @@ import {
   type OrderedContainer,
   type PersonalOrder,
   type SpaceColorKey,
+  type SpaceIconKey,
   type SpaceDefaultKind,
   type SpaceDirectory,
   type SpaceReach,
+  type ChannelMessage,
+  type ChannelMessageAuthor,
   type SpaceScope,
   type SpaceSummary,
 } from "@rally/contracts";
 
 import { boundParameterChunks } from "./bound-parameters";
+import { stableUuidSync } from "../lib/stable-uuid";
+import { uuidV7 } from "../lib/uuid-v7";
 import { CHANNEL_COLOR_SPACE_CHANGE_TRIGGER } from "./channel-color-sync";
 import { channelReadState, type ChannelReadRow, type ChannelReadState } from "./workspace-channel-read-storage";
 import {
@@ -119,10 +124,24 @@ function spaceMatchName(name: string): string {
 }
 
 /**
- * What a Personal Channel starts as. Its owner may rename and recolour it like
- * any Space they edit; only its audience is fixed.
+ * A message to post in a Channel. `key` makes posting it idempotent: the same
+ * key in the same Channel is the same message, so a retry writes nothing.
+ * Without one, every post is a new message.
  */
-const PERSONAL_CHANNEL = { name: "Your Personal Channel", iconKey: "user", colorKey: "violet" } as const;
+export interface ChannelMessageDraft {
+  author: ChannelMessageAuthor;
+  body: string;
+  key?: string;
+}
+
+/** One Channel message as the feed reads it. */
+interface ChannelMessageRow extends Record<string, SqlStorageValue> {
+  message_id: string;
+  author_kind: "rally" | "member";
+  author_user_id: string | null;
+  body: string;
+  posted_at: number;
+}
 
 const SPACE_ICON_FALLBACK = "briefcase";
 const SPACE_COLOR_FALLBACK = "blue";
@@ -537,6 +556,30 @@ export const SPACE_INDIVIDUAL_SCOPE_MIGRATION: readonly string[] = [
 ];
 
 /**
+ * WorkspaceDO migration 103: messages in a Channel itself, outside any
+ * thread (`docs/spaces.md#channel-messages`). A building block beside a
+ * Channel's placements: who said it (Rally, or a member), what, and when.
+ *
+ * `message_id` is derived from the Channel and `message_key` when the poster
+ * names a key, which makes that post idempotent, and is otherwise fresh. It is
+ * what the feed orders a message by beside the threads' ids. No foreign key to
+ * `spaces`, for the reason `SPACE_INVITEES_MIGRATION` gives.
+ */
+export const SPACE_MESSAGES_MIGRATION: readonly string[] = [
+  `CREATE TABLE space_messages (
+    message_id TEXT PRIMARY KEY,
+    space_id TEXT NOT NULL,
+    message_key TEXT,
+    author_kind TEXT NOT NULL CHECK (author_kind IN ('rally', 'member')),
+    author_user_id TEXT,
+    body TEXT NOT NULL CHECK (length(body) > 0),
+    posted_at INTEGER NOT NULL CHECK (posted_at >= 0),
+    CHECK ((author_kind = 'member') = (author_user_id IS NOT NULL))
+  ) STRICT`,
+  `CREATE INDEX space_messages_feed_idx ON space_messages(space_id, posted_at, message_id)`,
+];
+
+/**
  * The run states a conversation is live in on its own account.
  *
  * The `exact_state` vocabulary rather than the wire's, because this predicate
@@ -803,7 +846,8 @@ function mergedOrder(named: readonly string[], rest: readonly string[]): string[
  */
 interface SpaceConversationCursor {
   lastActivityAt: number;
-  kind: "channel" | "breakout";
+  /** `message` only in a Channel feed's cursor, which seeks on time and id. */
+  kind: "channel" | "breakout" | "message";
   conversationId: string;
 }
 
@@ -818,7 +862,7 @@ function decodeConversationCursor(cursor: string): SpaceConversationCursor | nul
   if (decoded === null) return null;
   const [activity, kind, conversationId] = decoded.split("\u0000");
   if (activity === undefined || conversationId === undefined) return null;
-  if (kind !== "channel" && kind !== "breakout") return null;
+  if (kind !== "channel" && kind !== "breakout" && kind !== "message") return null;
   const lastActivityAt = Number(activity);
   if (!Number.isSafeInteger(lastActivityAt) || lastActivityAt < 0) return null;
   return { lastActivityAt, kind, conversationId };
@@ -967,10 +1011,15 @@ export class WorkspaceSpaceStorage {
   reserve(
     request: WorkspaceSpaceReserveRequest,
     spaceId: string,
-    systemRole: "general" | null,
-    now = Date.now(),
-    scope: SpaceScope = request.space.scope,
+    options: {
+      systemRole?: "general" | null;
+      now?: number;
+      scope?: SpaceScope;
+      /** What the Channel opens with, posted as it is made; see {@link postStartingMessages}. */
+      messages?: readonly ChannelMessageDraft[];
+    } = {},
   ): SpaceSummary {
+    const { systemRole = null, now = Date.now(), scope = request.space.scope, messages = [] } = options;
     return this.storage.transactionSync(() => {
       const previousCreatedAt = this.storage.sql.exec<{ created_at: number | null } & Record<string, SqlStorageValue>>(
         "SELECT MAX(created_at) AS created_at FROM spaces",
@@ -1001,6 +1050,7 @@ export class WorkspaceSpaceStorage {
         request.userId,
       );
       this.appendOrder(request.workspaceId, request.userId, spaceId, createdAt);
+      this.postStartingMessages(spaceId, messages);
       this.advanceWaterline(createdAt);
       return this.writtenSpace(spaceId, request.userId);
     });
@@ -1015,7 +1065,7 @@ export class WorkspaceSpaceStorage {
         "SELECT space_id FROM spaces WHERE space_id = ?", spaceId,
       ).toArray().length > 0;
       if (exists) return { space: this.readable(member(request.userId), spaceId), created: false };
-      return { space: this.reserve(request, spaceId, null), created: true };
+      return { space: this.reserve(request, spaceId), created: true };
     });
   }
 
@@ -1037,10 +1087,11 @@ export class WorkspaceSpaceStorage {
   ensureGeneral(
     request: WorkspaceSpaceReserveRequest,
     spaceId: string,
+    messages: readonly ChannelMessageDraft[] = [],
     now = Date.now(),
   ): { space: SpaceSummary; created: boolean } {
     try {
-      return { space: this.reserve(request, spaceId, "general", now), created: true };
+      return { space: this.reserve(request, spaceId, { systemRole: "general", now, messages }), created: true };
     } catch (error) {
       const winner = this.generalSpaceId();
       if (winner === null) throw error;
@@ -1060,6 +1111,7 @@ export class WorkspaceSpaceStorage {
     workspaceId: string,
     userId: string,
     spaceId: string,
+    start: { name: string; iconKey: SpaceIconKey; colorKey: SpaceColorKey; messages: readonly ChannelMessageDraft[] },
     now = Date.now(),
   ): { space: SpaceSummary; created: boolean } {
     return this.storage.transactionSync(() => {
@@ -1071,10 +1123,50 @@ export class WorkspaceSpaceStorage {
       const space = this.reserve({
         workspaceId: asWorkspaceId(workspaceId),
         userId: asUserId(userId),
-        space: { ...PERSONAL_CHANNEL, scope: "workspace" },
-      }, spaceId, null, now, "individual");
+        space: { name: start.name, iconKey: start.iconKey, colorKey: start.colorKey, scope: "workspace" },
+      }, spaceId, { now, scope: "individual", messages: start.messages });
       return { space, created: true };
     });
+  }
+
+  /**
+   * Post messages in a Channel, at `postedAt`, in order. A keyed draft that
+   * is already there writes nothing. Returns the ids, posted or found.
+   */
+  postMessages(spaceId: string, drafts: readonly ChannelMessageDraft[], postedAt: number): string[] {
+    return drafts.map((draft) => {
+      const messageId = draft.key === undefined
+        ? uuidV7()
+        : stableUuidSync(["space_message", spaceId, draft.key]);
+      this.storage.sql.exec(
+        `INSERT INTO space_messages (message_id, space_id, message_key, author_kind, author_user_id, body, posted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (message_id) DO NOTHING`,
+        messageId,
+        spaceId,
+        draft.key ?? null,
+        draft.author.kind,
+        draft.author.kind === "member" ? draft.author.userId : null,
+        draft.body,
+        postedAt,
+      );
+      return messageId;
+    });
+  }
+
+  /**
+   * What a Channel opens with: posted at the moment it was made, so it is the
+   * first thing in its feed, and keyed by position, so posting the same list
+   * again (a retry, or a backfill for a Channel made before it had them)
+   * writes nothing twice.
+   */
+  postStartingMessages(spaceId: string, drafts: readonly ChannelMessageDraft[]): void {
+    if (drafts.length === 0) return;
+    const madeAt = this.storage.sql.exec<{ created_at: number } & Record<string, SqlStorageValue>>(
+      "SELECT created_at FROM spaces WHERE space_id = ?", spaceId,
+    ).toArray()[0]?.created_at;
+    if (madeAt === undefined) return;
+    this.postMessages(spaceId, drafts.map((draft, index) => ({ ...draft, key: draft.key ?? `start:${index}` })), madeAt);
   }
 
   /** Whether this Space is somebody's Personal Channel. */
@@ -1914,7 +2006,10 @@ export class WorkspaceSpaceStorage {
     spaceId: string,
     cursor: string | null,
   ): {
-    items: Array<{ workstreamId: string; placedAt: number; attentionOrdinal: number }>;
+    items: Array<
+      | { kind: "thread"; workstreamId: string; placedAt: number; attentionOrdinal: number }
+      | { kind: "message"; message: ChannelMessage; placedAt: number }
+    >;
     nextCursor: string | null;
     /** The Channel's latest placement ordinal as this first page was read; null on a later page. */
     latestAttentionOrdinal: number | null;
@@ -1951,9 +2046,32 @@ export class WorkspaceSpaceStorage {
       after?.conversationId ?? "",
       SPACE_CHANNEL_PAGE_SIZE + 1,
     ).toArray();
-    const hasMore = rows.length > SPACE_CHANNEL_PAGE_SIZE;
-    if (hasMore) rows.pop();
-    const last = rows.at(-1);
+    // The Channel's own messages, under the same seek, merged with the
+    // placements by time and then id: one order across both, so a cursor from
+    // either kind of row resumes the other correctly.
+    const messages = this.storage.sql.exec<ChannelMessageRow>(
+      `SELECT message_id, author_kind, author_user_id, body, posted_at FROM space_messages
+        WHERE space_id = ?1
+          AND (?2 IS NULL OR posted_at < ?2 OR (posted_at = ?2 AND message_id > ?3))
+        ORDER BY posted_at DESC, message_id
+        LIMIT ?4`,
+      spaceId,
+      after?.lastActivityAt ?? null,
+      after?.conversationId ?? "",
+      SPACE_CHANNEL_PAGE_SIZE + 1,
+    ).toArray();
+    const merged = [
+      ...rows.map((row) => ({
+        kind: "thread" as const, workstreamId: row.workstream_id, placedAt: row.joined_at,
+        attentionOrdinal: row.attention_ordinal, id: row.workstream_id,
+      })),
+      ...messages.map((row) => ({
+        kind: "message" as const, message: channelMessage(row), placedAt: row.posted_at, id: row.message_id,
+      })),
+    ].sort((a, b) => b.placedAt - a.placedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const hasMore = merged.length > SPACE_CHANNEL_PAGE_SIZE;
+    const page = merged.slice(0, SPACE_CHANNEL_PAGE_SIZE);
+    const last = page.at(-1);
     // Read with the page, in the same synchronous turn: every placement at or
     // below it is on this page, gone, or not this viewer's to open, so reading
     // the page reads the Channel through it, including a newest placement since
@@ -1965,13 +2083,13 @@ export class WorkspaceSpaceStorage {
       ).toArray()[0]?.latest_attention_ordinal ?? null;
     return {
       latestAttentionOrdinal,
-      items: rows.map((row) => ({
-        workstreamId: row.workstream_id,
-        placedAt: row.joined_at,
-        attentionOrdinal: row.attention_ordinal,
-      })),
+      items: page.map((item) => item.kind === "thread"
+        ? { kind: item.kind, workstreamId: item.workstreamId, placedAt: item.placedAt, attentionOrdinal: item.attentionOrdinal }
+        : { kind: item.kind, message: item.message, placedAt: item.placedAt }),
       nextCursor: hasMore && last
-        ? encodeConversationCursor({ lastActivityAt: last.joined_at, kind: "channel", conversationId: last.workstream_id })
+        ? encodeConversationCursor({
+          lastActivityAt: last.placedAt, kind: last.kind === "thread" ? "channel" : "message", conversationId: last.id,
+        })
         : null,
     };
   }
@@ -5104,6 +5222,14 @@ export class WorkspaceSpaceStorage {
       now,
     );
   }
+}
+
+function channelMessage(row: ChannelMessageRow): ChannelMessage {
+  return {
+    id: row.message_id,
+    author: row.author_kind === "member" ? { kind: "member", userId: asUserId(row.author_user_id!) } : { kind: "rally" },
+    body: row.body,
+  };
 }
 
 /** A refused archive, thrown so its transaction rolls back. */

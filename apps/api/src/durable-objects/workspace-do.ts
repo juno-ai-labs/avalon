@@ -237,6 +237,7 @@ import {
   readWorkstreamAuthorityControl,
 } from "../services/workstream-authority";
 import { claimParentAnchor } from "../services/workstream-runtime-database";
+import { GENERAL_CHANNEL, PERSONAL_CHANNEL } from "./system-channels";
 import { boundParameterChunks } from "./bound-parameters";
 import { isBreakoutActivityEvent } from "./breakout-activity";
 import { projectionSupersedes, type StoredProjection } from "./projection-fence";
@@ -788,6 +789,7 @@ import {
   WORKSPACE_PINNED_ORDER_MIGRATION,
   SPACE_PUBLIC_ONLY_MIGRATION,
   SPACE_INDIVIDUAL_SCOPE_MIGRATION,
+  SPACE_MESSAGES_MIGRATION,
   SPACE_INVITEES_MIGRATION,
   WorkspaceSpaceStorage,
   type WorkspaceSpaceIntentClaim,
@@ -4315,7 +4317,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // SPACE_INDIVIDUAL_SCOPE_MIGRATION and docs/spaces.md#the-personal-channel.
   statements: SPACE_INDIVIDUAL_SCOPE_MIGRATION,
 }, {
-  version: 102,
+  version: 103,
   description: "seat every existing member in General and give them a Personal Channel",
   // One alarm per Organization that has an identity; it walks the members and
   // takes the same steps a joining member's relationship change does. A fresh
@@ -4326,6 +4328,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
             unixepoch() * 1000, unixepoch() * 1000
       WHERE EXISTS (SELECT 1 FROM workspace_identity WHERE id = 1)
      ON CONFLICT(kind, alarm_key) DO NOTHING`],
+}, {
+  version: 104,
+  description: "messages in a Channel itself, outside any thread",
+  // Existing Generals get what General opens with from migration 103's pass; see
+  // SPACE_MESSAGES_MIGRATION and docs/spaces.md#channel-messages.
+  statements: SPACE_MESSAGES_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -8298,6 +8306,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const refusal = await this.reservePersonalSpace(workspaceId, userId, spaceId, generation);
       if (refusal !== null) throw new Error(refusal);
     }
+    // An Organization from before Channel messages: what General opens with,
+    // dated when General was made, so it is still the first thing there.
+    const generalSpaceId = storage.generalSpaceId();
+    if (generalSpaceId !== null) storage.postStartingMessages(generalSpaceId, GENERAL_CHANNEL.messages);
     if (seated) this.publishSpaceSnapshot();
   }
 
@@ -8320,7 +8332,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return parent.code;
     }
     const personal = await this.withMembersLearned(() => this.state.storage.transactionSync(() => {
-      const reserved = storage.reservePersonal(workspaceId, userId, spaceId);
+      const reserved = storage.reservePersonal(workspaceId, userId, spaceId, PERSONAL_CHANNEL);
       if (reserved.created) parent.reserve(userId, reserved.space);
       return reserved;
     }));
@@ -9243,7 +9255,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const parent = await this.spaceParentReservation(spaceId, authorityGeneration);
     if (!parent.ok) return { ok: false, code: parent.code };
     const general = await this.withMembersLearned(() => this.state.storage.transactionSync(() => {
-      const ensured = storage.ensureGeneral(WorkspaceDO.generalReservation(request), spaceId);
+      const ensured = storage.ensureGeneral(WorkspaceDO.generalReservation(request), spaceId, GENERAL_CHANNEL.messages);
       if (ensured.created) parent.reserve(request.userId, ensured.space);
       return ensured;
     }));
@@ -9262,7 +9274,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return {
       workspaceId: asWorkspaceId(request.workspaceId),
       userId: asUserId(request.userId),
-      space: { name: "General", iconKey: "building-2", colorKey: "blue", scope: "workspace" },
+      space: { name: GENERAL_CHANNEL.name, iconKey: GENERAL_CHANNEL.iconKey, colorKey: GENERAL_CHANNEL.colorKey, scope: "workspace" },
     };
   }
 
@@ -9532,18 +9544,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const threads = new Map(this.conversationRows(
       viewer,
       request.workspaceId,
-      page.items.map((item) => ({ kind: "channel" as const, workstreamId: item.workstreamId, substreamId: null })),
+      page.items.flatMap((item) => (item.kind === "thread"
+        ? [{ kind: "channel" as const, workstreamId: item.workstreamId, substreamId: null }]
+        : [])),
     ).map((thread) => [thread.id as string, thread]));
     return WorkspaceChannelFeedResultSchema.parse({
       ok: true,
       page: {
-        // A row the directory no longer resolves is dropped, as on every Space page.
-        items: page.items.flatMap((item) => {
+        // Checked by the result schema below.
+        items: page.items.flatMap((item): unknown[] => {
+          const placedAt = iso(item.placedAt);
+          if (item.kind === "message") return [{ kind: "message", placedAt, message: item.message }];
+          // A row the directory no longer resolves is dropped, as on every Space page.
           const thread = threads.get(item.workstreamId);
           if (!thread) return [];
           return [{
             kind: "thread",
-            placedAt: iso(item.placedAt),
+            placedAt,
             attentionSequenceNumber: item.attentionOrdinal,
             thread: WorkstreamSchema.parse(thread),
           }];

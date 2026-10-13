@@ -1,4 +1,5 @@
 import {
+  CHANNEL_MESSAGES_CLIENT_CONTRACT,
   GUEST_WORKSPACES_CLIENT_CONTRACT,
   INDIVIDUAL_SPACE_CLIENT_CONTRACT,
   MINIMUM_SERVED_CLIENT_CONTRACT,
@@ -97,6 +98,15 @@ export function declaredClientContract(header: ClientRequestHeaders): number {
  * {@link requireCurrentClientContract}.
  */
 export function clientReadsIndividualSpaces(header: ClientRequestHeaders): boolean {
+  return clientReads(header, INDIVIDUAL_SPACE_CLIENT_CONTRACT);
+}
+
+/** Whether this client reads a Channel feed item of kind `message`; the same rule. */
+export function clientReadsChannelMessages(header: ClientRequestHeaders): boolean {
+  return clientReads(header, CHANNEL_MESSAGES_CLIENT_CONTRACT);
+}
+
+function clientReads(header: ClientRequestHeaders, contract: number): boolean {
   if (readRallyHeader(header, RALLY_HEADERS.CLIENT_CONTRACT) === undefined && header("origin") === undefined) return true;
-  return declaredClientContract(header) >= INDIVIDUAL_SPACE_CLIENT_CONTRACT;
+  return declaredClientContract(header) >= contract;
 }

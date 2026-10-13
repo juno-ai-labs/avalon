@@ -608,3 +608,23 @@ export const SpaceErrorCodeSchema = z.enum([
   "space_cursor_invalid",
 ]);
 export type SpaceErrorCode = z.infer<typeof SpaceErrorCodeSchema>;
+
+/**
+ * Who said a Channel message: Rally, or a member of the Organization. A
+ * Channel message is a building block of a Channel, beside its threads; what
+ * one says and when it is posted is the caller's. See
+ * docs/spaces.md#channel-messages.
+ */
+export const ChannelMessageAuthorSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("rally") }),
+  z.strictObject({ kind: z.literal("member"), userId: UserIdSchema }),
+]);
+export type ChannelMessageAuthor = z.infer<typeof ChannelMessageAuthorSchema>;
+
+/** One message in a Channel itself, outside any thread. Its body is markdown. */
+export const ChannelMessageSchema = z.strictObject({
+  id: z.string().uuid(),
+  author: ChannelMessageAuthorSchema,
+  body: z.string().min(1),
+});
+export type ChannelMessage = z.infer<typeof ChannelMessageSchema>;

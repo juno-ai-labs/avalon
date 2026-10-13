@@ -16,13 +16,16 @@ import {
   asUserId,
   asWorkspaceId,
   WorkspaceSocketSyncEventSchema,
+  type SpaceId,
   type SpaceSummary,
+  type UserId,
   type WorkspaceSidebar,
 } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
+import { SPACE_CHANNEL_PAGE_SIZE } from "../src/durable-objects/workspace-space-storage";
 import { withSpaceStorage } from "./helpers/space-membership";
 
 /** Its own workspace id: object names are shared across files, storage is not. */
@@ -242,12 +245,96 @@ describe("a Personal Channel", () => {
   });
 });
 
+/** One Channel's feed as `userId` reads it. */
+async function feedItems(spaceId: SpaceId, userId: UserId) {
+  const result = await workspace().listChannelFeed({ workspaceId: WORKSPACE_ID, userId, spaceId, cursor: null });
+  if (!result.ok) throw new Error(`listChannelFeed refused: ${result.code}`);
+  return result.page.items;
+}
+
+describe("Channel messages", () => {
+  it("open General for every member and a Personal Channel for its owner, posted once", async () => {
+    const welcome = (items: Awaited<ReturnType<typeof feedItems>>) => items.flatMap((item) => (
+      item.kind === "message" ? [[item.message.author.kind, item.message.body]] : []
+    ));
+    expect(welcome(await feedItems(GENERAL, MEMBER))).toEqual([["rally",
+      "Welcome to Rally, we’ve created a channel for you to get started with. Channels are places to organize similar "
+      + "work. When you type a task or a project below we start a Thread to actually work with the Rally AI agent."]]);
+    expect(welcome(await feedItems(OWNER_PERSONAL, OWNER))).toEqual([["rally",
+      "Welcome to Rally! This is your personal Channel to try Rally out and do private work. Type a task or project "
+      + "below and we’ll start a thread where you’ll work with the Rally AI agent."]]);
+    // Seating again, and the backfill's pass, find it there.
+    await workspace().seatOrganizationMember({
+      workspaceId: WORKSPACE_ID, userId: OWNER, personalSpaceId: OWNER_PERSONAL, authorityGeneration: 1,
+    });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT space_id FROM space_messages").toArray().map((row) => row.space_id).sort())
+        .toEqual([GENERAL, OWNER_PERSONAL].sort());
+    });
+  });
+
+  it("are posted by a member or by Rally, once per key and every time without one", async () => {
+    await withSpaceStorage(workspace(), (storage) => {
+      const posted = storage.postMessages(GENERAL, [
+        { author: { kind: "member", userId: MEMBER }, body: "Morning **all**", key: "standup" },
+        { author: { kind: "rally" }, body: "Noted" },
+      ], Date.now());
+      // The same key is the same message; no key is a new one.
+      expect(storage.postMessages(GENERAL, [
+        { author: { kind: "member", userId: MEMBER }, body: "Morning **all**", key: "standup" },
+      ], Date.now())).toEqual([posted[0]]);
+      expect(storage.postMessages(GENERAL, [{ author: { kind: "rally" }, body: "Noted" }], Date.now())).not.toEqual([posted[1]]);
+    });
+    const messages = (await feedItems(GENERAL, OWNER)).flatMap((item) => (item.kind === "message" ? [item.message] : []));
+    expect(messages.map((message) => [message.author, message.body]).slice(0, 3)).toEqual(expect.arrayContaining([
+      [{ kind: "member", userId: MEMBER }, "Morning **all**"],
+      [{ kind: "rally" }, "Noted"],
+    ]));
+    expect(messages.filter((message) => message.body === "Noted")).toHaveLength(2);
+    expect(messages.filter((message) => message.body === "Morning **all**")).toHaveLength(1);
+  });
+
+  it("sit below the threads placed after them, and a page that ends on a thread resumes on a message", async () => {
+    // A full page of private threads placed after General was made: a member
+    // who is in none of them reads each as a locked row.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const madeAt = state.storage.sql.exec<{ created_at: number }>(
+        "SELECT created_at FROM spaces WHERE space_id = ?", GENERAL,
+      ).one().created_at;
+      for (let index = 1; index <= SPACE_CHANNEL_PAGE_SIZE; index += 1) {
+        const threadId = `00000000-0000-7000-8000-${index.toString(16).padStart(12, "0")}`;
+        state.storage.sql.exec(`INSERT INTO channels (
+          workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+          title, description, preview, scope, exact_state, origin_type, title_status,
+          latest_attention_ordinal, unread_tracking_start_ordinal, last_activity_at,
+          source_created_at, source_updated_at, projected_at
+        ) VALUES (?, 1, 1, ?, 'hash', 'Private', '', '', 'personal', 'idle', 'ad_hoc', 'settled', 0, 0, ?, ?, ?, ?)`,
+        threadId, `event-${index}`, madeAt + index, madeAt + index, madeAt + index, madeAt + index);
+        state.storage.sql.exec(`INSERT INTO space_channel_memberships (space_id, workstream_id, state, generation, joined_at, updated_at)
+          VALUES (?, ?, 'active', 1, ?, ?)`, GENERAL, threadId, madeAt + index, madeAt + index);
+      }
+    });
+    const first = await workspace().listChannelFeed({ workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: GENERAL, cursor: null });
+    if (!first.ok) throw new Error(first.code);
+    expect(first.page.items.map((item) => item.kind)).toEqual(Array(SPACE_CHANNEL_PAGE_SIZE).fill("locked"));
+    expect(first.page.nextCursor).not.toBeNull();
+    const second = await workspace().listChannelFeed({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: GENERAL, cursor: first.page.nextCursor,
+    });
+    if (!second.ok) throw new Error(second.code);
+    expect(second.page.items.map((item) => item.kind)).toEqual(["message"]);
+    expect(second.page.nextCursor).toBeNull();
+  });
+});
+
 describe("migration 102", () => {
   it("seats every existing member in General and gives each a Personal Channel, and no guest either", async () => {
     // An Organization from before Personal Channels: its creator's was made
     // above, and nobody else has one or sits in General.
     const backfill = WORKSPACE_DO_SCHEMA_MIGRATIONS.find((migration) => migration.version === 102);
     await runInDurableObject(workspace(), async (_instance, state) => {
+      // ...and whose General was made before Channel messages.
+      state.storage.sql.exec("DELETE FROM space_messages WHERE space_id = ?", GENERAL);
       for (const statement of backfill?.statements ?? []) state.storage.sql.exec(statement);
       await state.storage.setAlarm(Date.now());
     });
@@ -255,6 +342,9 @@ describe("migration 102", () => {
     await expect.poll(async () => withSpaceStorage(workspace(), (storage) => storage.personalSpaceId(MEMBER)), {
       timeout: 15_000,
     }).not.toBeNull();
+    // The pass ends with General's welcome, dated when General was made.
+    await expect.poll(async () => (await feedItems(GENERAL, MEMBER)).map((item) => item.kind), { timeout: 15_000 })
+      .toEqual(["message"]);
     const memberSpaces = await activeSpaces(MEMBER);
     expect(participants(memberSpaces.find((space) => space.id === GENERAL))).toEqual([OWNER, MEMBER].sort());
     expect(memberSpaces.filter((space) => space.scope === "individual").map(participants)).toEqual([[MEMBER]]);

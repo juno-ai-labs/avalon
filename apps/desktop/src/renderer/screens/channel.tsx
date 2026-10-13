@@ -1,5 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import type { ChannelStats, ChannelStatsList, SpaceSummary, WorkstreamAppearancePatch } from '@rally/contracts';
+import type { ChannelMessage, ChannelStats, ChannelStatsList, SpaceSummary, WorkstreamAppearancePatch } from '@rally/contracts';
 import { AppearancePicker, AppearanceSubmenu } from '@rally/ui/components/appearance-picker';
 import { breakoutNewsLabel, type BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { ChannelContainerMenu } from '@rally/ui/components/conversation-menus';
@@ -16,7 +16,7 @@ import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
 
 import { ChannelComposer } from '../components/channel-composer';
 import { MarkdownBody } from '../components/workstream-blocks';
-import { Avatar, Button, EmptyState, InlineError, LoadingState, Modal, TitleSkeleton } from '../components/primitives';
+import { Avatar, Button, EmptyState, InlineError, LoadingState, Modal, RallyAvatar, TitleSkeleton } from '../components/primitives';
 import { RelativeTime } from '../components/relative-time';
 import { reportActivityEvent } from '../lib/activity-events';
 import { useAppSession } from '../lib/app-session';
@@ -142,7 +142,13 @@ function useChannel(channelId: string): SpaceSummary | undefined {
   return active.data?.items.find((space) => space.id === channelId);
 }
 
-type FeedRow = { placedAt: string; thread: WorkstreamSummary };
+type FeedRow =
+  | { kind: 'thread'; placedAt: string; thread: WorkstreamSummary }
+  | { kind: 'message'; placedAt: string; message: ChannelMessage };
+
+function feedRowId(row: FeedRow): string {
+  return row.kind === 'thread' ? row.thread.id : row.message.id;
+}
 
 /**
  * What to acknowledge for a Channel the reader has open, or null when there is
@@ -188,7 +194,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
   const liveById = useMemo(() => new Map((live.data ?? []).map((row) => [row.id, row])), [live.data]);
   const rows = useMemo<FeedRow[]>(() => {
     const fetched = (feed.data?.pages ?? []).flatMap((page) => page.items);
-    const known = new Set(fetched.map((item) => item.thread.id));
+    const known = new Set(fetched.map(feedRowId));
     // A thread stays drawn from the socket from the moment it is started until
     // the feed lists it. Its pending mark clears when the create answers, which
     // can be before the feed is read again; dropping it in that gap made the
@@ -201,8 +207,10 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
     const started = (live.data ?? [])
       .filter((row) => !known.has(row.id) && row.spaceIds.includes(channelId)
         && (row.pending || (newestListed !== undefined && (row.createdAt ?? '') > newestListed)))
-      .map((thread): FeedRow => ({ placedAt: thread.createdAt ?? new Date().toISOString(), thread }));
-    return [...started, ...fetched.map((item): FeedRow => ({ ...item, thread: liveById.get(item.thread.id) ?? item.thread }))];
+      .map((thread): FeedRow => ({ kind: 'thread', placedAt: thread.createdAt ?? new Date().toISOString(), thread }));
+    return [...started, ...fetched.map((item): FeedRow => item.kind === 'thread'
+      ? { ...item, thread: liveById.get(item.thread.id) ?? item.thread }
+      : item)];
   }, [channelId, feed.data, feed.isSuccess, live.data, liveById]);
   const queryClient = useQueryClient();
   // The Channel is read while it is open in a focused, visible window: the
@@ -214,7 +222,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
   // it, and acknowledging only what is listed would leave the dot standing.
   const newestLoadedSequence = useMemo(() => Math.max(0, ...(feed.data?.pages ?? [])
     .flatMap((page) => [
-      ...page.items.map((item) => item.attentionSequenceNumber),
+      ...page.items.map((item) => item.kind === 'message' ? 0 : item.attentionSequenceNumber),
       page.latestAttentionSequenceNumber ?? 0,
     ])), [feed.data]);
   // Subscribed rather than read once, so stats arriving after the feed (or a
@@ -335,18 +343,26 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
           // Grouped by the local calendar date, year and all; the label is
           // only for display, and two years' "Oct 2" are different days.
           const day = new Date(row.placedAt).toDateString();
-          const card = <ThreadCard
-            author={row.thread.createdByUserId ? memberById.get(row.thread.createdByUserId) : undefined}
-            key={row.thread.id}
-            members={members.data ?? NO_MEMBERS}
-            onOpen={openThread}
-            open={row.thread.id === openThreadId}
-            placedAt={row.placedAt}
-            thread={row.thread}
-          />;
+          const card = row.kind === 'thread'
+            ? <ThreadCard
+              author={row.thread.createdByUserId ? memberById.get(row.thread.createdByUserId) : undefined}
+              key={row.thread.id}
+              members={members.data ?? NO_MEMBERS}
+              onOpen={openThread}
+              open={row.thread.id === openThreadId}
+              placedAt={row.placedAt}
+              thread={row.thread}
+            />
+            : <MessageCard
+              author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
+              key={row.message.id}
+              members={members.data ?? NO_MEMBERS}
+              message={row.message}
+              placedAt={row.placedAt}
+            />;
           const previous = ordered[index - 1];
           if (previous && new Date(previous.placedAt).toDateString() === day) return [card];
-          return [<DaySeparator key={`day:${row.thread.id}`} placedAt={row.placedAt} />, card];
+          return [<DaySeparator key={`day:${feedRowId(row)}`} placedAt={row.placedAt} />, card];
         })}
       </ol></EmailMentionContext.Provider>
       {feed.isSuccess && rows.length === 0 && <p className="channel-feed-empty">No threads yet. Describe the work below and Rally starts a thread for it.</p>}
@@ -438,6 +454,36 @@ function ThreadCard({ author, members, onOpen, open, placedAt, thread }: {
         <Icon size={19} strokeWidth={1.8} />
       </span>
     </button>
+  </li>;
+}
+
+/**
+ * A message in the Channel itself, outside any thread, by whoever said it:
+ * Rally, or a member. Not a button, because there is nothing to open.
+ */
+function MessageCard({ author, members, message, placedAt }: {
+  /** The member who said it, once the directory has them; unused for Rally. */
+  author: WorkspaceMember | undefined;
+  members: readonly WorkspaceMember[];
+  message: ChannelMessage;
+  placedAt: string;
+}): React.JSX.Element {
+  const rally = message.author.kind === 'rally';
+  const body = useMemo(() => typedMentionRendering(message.body, members), [members, message.body]);
+  return <li className="channel-feed-item is-message">
+    <div className="channel-feed-message">
+      {rally ? <RallyAvatar /> : author && <Avatar member={author} title={null} />}
+      <div className="channel-feed-message-body">
+        <div className="channel-feed-message-text">
+          <MarkdownBody mentions={body.mentions} preserveLineBreaks rallyMentions verbatim>{body.text}</MarkdownBody>
+        </div>
+        <span className="channel-feed-meta">
+          <span>{rally ? 'Rally' : author?.name ?? 'Someone'}</span>
+          <span aria-hidden="true">·</span>
+          <RelativeTime value={placedAt} />
+        </span>
+      </div>
+    </div>
   </li>;
 }
 
