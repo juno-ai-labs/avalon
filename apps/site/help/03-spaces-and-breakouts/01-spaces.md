@@ -57,13 +57,9 @@ Each entry shows:
 Every entry looks the same, whatever kind of work the Thread holds, so a feed
 reads quickly.
 
-Some entries say **Private thread** instead, with a lock, the time it started,
-and a **Request access** chip. Those are Threads in this Channel that you cannot
-open. Rally shows you that they exist so you can ask to join work you would
-otherwise never know about, and nothing more: no name, no summary and no
-people. Click **Request access** to ask whoever started it. See
-[Asking to join from a link](04-who-can-see-what.md#asking-to-join-from-a-link)
-for what happens next.
+A private Thread you are not in is not in the feed. If someone sends you a link
+to one, you can ask to join it; see
+[Asking to join from a link](04-who-can-see-what.md#asking-to-join-from-a-link).
 
 A Channel with no Threads yet says **No threads yet. Describe the work below and
 Rally starts a thread for it.**

@@ -249,6 +249,21 @@ describe('Rally API wire adapter', () => {
     expect(mapWorkstreamSummary(WorkstreamSchema.parse({ ...detail, lastAccessedAt: null })))
       .toHaveProperty('lastAccessedAt', null);
   });
+  it('reads a Channel feed from an API that still sends locked rows, keeping only its threads', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({
+      items: [
+        { kind: 'locked', placedAt: '2026-10-03T00:00:00.000Z', attentionSequenceNumber: 2, threadId: 'secret' },
+        { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: detail },
+      ],
+      nextCursor: null,
+      latestAttentionSequenceNumber: 2,
+    })));
+    const api = new RallyApi('https://api.rally.test', session);
+    const page = await api.getChannelFeed('outbound', null);
+    expect(page.items.map((item) => [item.thread.id, item.attentionSequenceNumber])).toEqual([[detail.id, 1]]);
+    expect(page.latestAttentionSequenceNumber).toBe(2);
+  });
+
   it('describes external triggers without exposing event identifiers', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({
       ...wireAutomationDetail,

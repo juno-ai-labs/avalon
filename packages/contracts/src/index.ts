@@ -1244,29 +1244,18 @@ export const SpaceChannelPageSchema = z.strictObject({
 export type SpaceChannelPage = z.infer<typeof SpaceChannelPageSchema>;
 
 /**
- * One row of a Channel's feed: a thread placed in it, newest placement first.
- *
- * `locked` is a thread the viewer may not open. The feed says it is there and
- * when it arrived, so a Channel's members see the whole shape of the work in
- * it, and says nothing else: no title, no summary, no participants. Its id is
- * what a request for access addresses. This is the one place a thread is named
- * to somebody it is not listed to; `docs/listing-rules.md` records why.
+ * One row of a Channel's feed: a thread placed in it that the viewer may open,
+ * newest placement first. A private thread the viewer is not in is not a row.
+ * `kind` stays because desktops shipped since 1.563 parse this row by it; it
+ * can go once those builds no longer reach the API.
  */
-export const ChannelFeedItemSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("thread"),
-    placedAt: TimestampSchema,
-    /** The placement's position in the Channel's unread order (`ChannelStats`). */
-    attentionSequenceNumber: z.number().int().nonnegative(),
-    thread: WorkstreamSchema,
-  }),
-  z.strictObject({
-    kind: z.literal("locked"),
-    placedAt: TimestampSchema,
-    attentionSequenceNumber: z.number().int().nonnegative(),
-    threadId: WorkstreamIdSchema,
-  }),
-]);
+export const ChannelFeedItemSchema = z.strictObject({
+  kind: z.literal("thread"),
+  placedAt: TimestampSchema,
+  /** The placement's position in the Channel's unread order (`ChannelStats`). */
+  attentionSequenceNumber: z.number().int().nonnegative(),
+  thread: WorkstreamSchema,
+});
 export type ChannelFeedItem = z.infer<typeof ChannelFeedItemSchema>;
 
 /** One page of a Channel's feed. Opaque cursor, as on every Space read. */
@@ -1276,8 +1265,9 @@ export const ChannelFeedPageSchema = z.strictObject({
   /**
    * The Channel's latest attention sequence number as the first page was read
    * (`ChannelStats.latestAttentionSequenceNumber`); null on a later page. Every
-   * placement at or below it is on that page or no longer listed, so a reader
-   * of the first page has read the Channel through it.
+   * placement at or below it is on that page, no longer listed, or not the
+   * viewer's to see, so a reader of the first page has read the Channel
+   * through it.
    */
   latestAttentionSequenceNumber: z.number().int().nonnegative().nullable(),
 });
