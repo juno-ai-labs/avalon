@@ -1,5 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { IconChevronDown, IconChevronRight, IconCornerDownRight, IconSearch, IconX } from '@tabler/icons-react';
+import { IconChevronDown, IconChevronRight, IconSearch, IconX } from '@tabler/icons-react';
 
 import { IconGroup, type IconGroupAction } from './icon-group';
 import { MarkBridge, type MarkBridgeItem } from './mark-bridge';
@@ -191,11 +191,6 @@ export interface TitlePillLevel {
    * Ancestors fuse into a bridge only when every one of them has this.
    */
   bridge?: Omit<MarkBridgeItem, 'key' | 'onSelect'>;
-  /**
-   * Which way the chevron points. Down by default; right for a Channel whose
-   * Breakout is open beside it, pointing at where the conversation went.
-   */
-  chevron?: 'down' | 'right';
 }
 
 export function TitlePill({ level, variant = 'current' }: {
@@ -218,8 +213,7 @@ export function TitlePill({ level, variant = 'current' }: {
   }), [back, direction, view]);
   // A menu reopens at its root, wherever it was left.
   const onOpenChange = (open: boolean): void => { if (!open) { setDirection('in'); setView(null); } };
-  const Chevron = level.chevron === 'right' ? IconChevronRight : IconChevronDown;
-  const chevron = <Chevron aria-hidden="true" className="title-pill-chevron" size={13} stroke={2} />;
+  const chevron = <IconChevronDown aria-hidden="true" className="title-pill-chevron" size={13} stroke={2} />;
   /**
    * The title, and the level open below it. While a level is open the title is
    * the breadcrumb's first step and takes the menu back to its root: on
@@ -488,9 +482,4 @@ export function TitlePillClose({ label, onClose }: { label: string; onClose: () 
   return <TitlePillAction label={label} onClick={onClose}>
     <IconX aria-hidden="true" size={16} stroke={1.9} />
   </TitlePillAction>;
-}
-
-/** A Breakout's mark in its title pill: the arrow its chips and rows wear. */
-export function BreakoutPillIcon(): React.JSX.Element {
-  return <IconCornerDownRight aria-hidden="true" className="title-pill-breakout-icon" size={15} stroke={1.9} />;
 }
