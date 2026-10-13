@@ -306,6 +306,7 @@ export const WorkspaceChannelReservationRequestSchema = SpaceActorSchema.extend(
   directory: ConversationParentReserveChildRequestSchema.shape.directory.unwrap().omit({
     scope: true,
     systemKind: true,
+    appearance: true,
   }),
   /**
    * The external thread this Channel is being born for. Claimed `pending` in
@@ -331,6 +332,13 @@ export const WorkspaceChannelReservationResultSchema = z.discriminatedUnion("sta
     authorityGeneration: z.number().int().positive(),
     /** Each Space the Channel is now in, as the transaction read it. */
     spaces: z.array(SpaceSummarySchema).min(1),
+    /**
+     * The colour the thread is born with: its canonical Channel's, read by
+     * `channelColor` in the same transaction. The caller writes it into Main
+     * so the thread never shows a colour derived from its id first. Optional
+     * for an answer from an object deployed before it.
+     */
+    color: SpaceColorKeySchema.nullable().optional(),
   }),
   /**
    * The request named no Space and this Organization has no General yet.

@@ -33,6 +33,7 @@ import {
   type WorkstreamWorkflowInput,
   type WorkstreamMessageAdmissionReceipt,
   type PendingTranscriptInput,
+  SpaceColorKeySchema,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
   WORKSTREAM_NAMING_GRACE_MS,
@@ -212,6 +213,13 @@ export const InitializeWorkstreamObjectInputSchema = z.strictObject({
    * replaced object into a validation failure for the length of the deploy.
    */
   scope: ScopeSchema.default("personal"),
+  /**
+   * The thread's Channel colour, written as its appearance at birth so no
+   * surface draws the id-derived colour while the sync lane catches up.
+   * `channel-color-sync.ts` stays the colour's writer after this; see
+   * `docs/workstream-appearance.md`.
+   */
+  color: SpaceColorKeySchema.optional(),
   /**
    * Whether the people in `participantUserIds` are told they were added.
    *
@@ -1559,13 +1567,15 @@ export class WorkstreamObjectProductService {
              created_by_user_id = ?, email_address = ?, email_route_status = 'active',
              created_from_opportunity_id = ?, opportunity_version = ?,
              opportunity_display_prompt_hash = ?, opportunity_execution_prompt_hash = ?,
-             description_source = ?, system_kind = ?, title_status = ?, model_override = ?, updated_at = ?
+             description_source = ?, system_kind = ?, title_status = ?, model_override = ?,
+             appearance_json = COALESCE(appearance_json, ?), updated_at = ?
          WHERE id = 1 AND authority_mode = 'preparing'`,
         input.generation, input.title, input.objective, input.scope, history ? "idle" : "scheduled",
         input.reason, initialMessages.length + 1, initialMessages.length + 1, now, now, now,
         input.creatorUserId, input.emailAddress, input.createdFromOpportunityId, input.opportunityVersion,
         input.opportunityDisplayPromptHash, input.opportunityExecutionPromptHash,
-        input.descriptionSource, input.systemKind, input.titleStatus, input.modelOverride, now,
+        input.descriptionSource, input.systemKind, input.titleStatus, input.modelOverride,
+        input.color ? JSON.stringify({ icon: null, color: input.color }) : null, now,
       );
       for (const userId of memberIds) {
         const creator = userId === input.creatorUserId;

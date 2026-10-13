@@ -1481,6 +1481,7 @@ export class HostedParent {
         const directory = request.directory;
         this.enqueueProjection("common", {
           kind: "directory_common",
+          ...(directory.appearance ? { appearance: directory.appearance } : {}),
           title: directory.title,
           description: directory.description,
           preview: "",

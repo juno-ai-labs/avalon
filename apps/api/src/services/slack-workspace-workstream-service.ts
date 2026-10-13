@@ -387,6 +387,7 @@ export class SlackWorkspaceWorkstreamService {
         emailRouteStatus: "reserved",
         systemKind: null,
         modelOverride: null,
+        color: reserved.color ?? null,
         now: at,
       });
       return this.openProvisioned(input, {
