@@ -84,7 +84,7 @@ function threadRows(list: ReturnType<typeof within>): Array<[string | null | und
 
 function Location(): React.JSX.Element {
   const location = useLocation();
-  return <div data-state={JSON.stringify(location.state)} data-testid="location">{location.pathname}{location.search}</div>;
+  return <div data-key={location.key} data-state={JSON.stringify(location.state)} data-testid="location">{location.pathname}{location.search}</div>;
 }
 
 function renderSidebar(seed: (client: QueryClient) => void, waiting = 0, { route = '/', person = workspace }: { route?: string; person?: Workspace } = {}) {
@@ -709,6 +709,19 @@ describe('the navigation sidebar', () => {
 
       fireEvent.click(screen.getByRole('link', { name: /Q4 plan/u }));
       expect(telemetry.markWorkstreamFeedOpenStarted).toHaveBeenCalledTimes(1);
+    });
+
+    it('asks for the thread expanded on every open, the open row clicked again included', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan] });
+      renderSidebar(seedThreads);
+      fireEvent.click(await screen.findByRole('link', { name: /Q4 plan/u }));
+      const location = screen.getByTestId('location');
+      expect(location).toHaveAttribute('data-state', '{"openExpanded":true}');
+      const first = location.getAttribute('data-key');
+
+      fireEvent.click(screen.getByRole('link', { name: /Q4 plan/u }));
+      expect(screen.getByTestId('location')).toHaveAttribute('data-state', '{"openExpanded":true}');
+      expect(screen.getByTestId('location').getAttribute('data-key')).not.toBe(first);
     });
 
     it('warms a thread’s socket while the pointer rests on its row', async () => {

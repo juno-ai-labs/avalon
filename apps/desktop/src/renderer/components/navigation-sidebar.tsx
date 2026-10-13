@@ -35,7 +35,7 @@ import { consumeDeepLinkWorkstreamNavigation, useDeepLinkWorkstreamNavigation } 
 import { desktopBridge } from '../lib/platform';
 import { formatDateTime, formatSidebarActivityTime, formatTime, readerMarkerStatus } from '../lib/format';
 import { layoutInsertIndex, layoutRowAt } from '../lib/list-motion';
-import { channelRoute, homeChannelId, threadRoute } from '../lib/navigation-routes';
+import { OPEN_EXPANDED, channelRoute, homeChannelId, threadRoute } from '../lib/navigation-routes';
 import { moveWithin } from '../lib/personal-order';
 import { compareChannels } from '../lib/sidebar-channel-order';
 import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, MY_THREADS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
@@ -915,12 +915,10 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
   const naming = useNamingSkeleton(row);
   const live = !ghost && !row.pending;
   const open = (event: React.MouseEvent): void => {
-    if (opensElsewhere(event)) return;
-    // The open row clicked again is not a new open.
-    if (route === href) {
-      event.preventDefault();
-      return;
-    }
+    // The open row clicked again is not a new open, but it still asks for the
+    // pane expanded, in place of its own history entry, in case the reader
+    // collapsed it.
+    if (opensElsewhere(event) || route === href) return;
     const socket = socketOpenContext();
     markWorkstreamFeedOpenStarted(threadId, pinned ? 'pinned' : 'recent', socket.state, performance.now(), socket.socketLeaseId);
     markWorkstreamNavigation(threadId, openWorkstreamId(pathname) !== null);
@@ -943,6 +941,8 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
         onPointerCancel={live ? warmup.onPointerCancel : undefined}
         onPointerEnter={live ? warmup.onPointerEnter : undefined}
         onPointerLeave={live ? warmup.onPointerLeave : undefined}
+        replace={route === href}
+        state={OPEN_EXPANDED}
         to={href}
         {...drag}
       >
@@ -1334,6 +1334,7 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
           className={clsx('activity-row', item.unread && 'is-unread')}
           data-motion-key={`activity:${item.id}`}
           key={item.id}
+          state={OPEN_EXPANDED}
           to={href(item)}
         >
           {channel

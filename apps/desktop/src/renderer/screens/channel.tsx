@@ -22,7 +22,7 @@ import { reportActivityEvent } from '../lib/activity-events';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { copySpaceLink } from '../lib/copy-workstream-link';
-import { ChannelPaneContextValue, channelRoute, threadRoute, type ChannelPaneContext } from '../lib/navigation-routes';
+import { ChannelPaneContextValue, channelRoute, threadRoute, usePaneExpansion, type ChannelPaneContext } from '../lib/navigation-routes';
 import { PaneVisibility } from '../lib/pane-visibility';
 import { useNow } from '../lib/clock';
 import { formatDayLabel } from '../lib/format';
@@ -71,22 +71,13 @@ function ChannelStack({ channelId, threadId, workspace }: {
   const { session } = useAppSession();
   const space = useChannel(channelId);
   const [threadUsesTwoPanes, setThreadUsesTwoPanes] = useState(false);
-  // Held per thread, and dropped whenever the open thread changes, so a
-  // thread, the next one or the same one reopened, opens beside the Channel.
-  const [expandedThreadId, setExpandedThreadId] = useState<string | null>(null);
-  const [expansionFor, setExpansionFor] = useState(threadId);
-  if (expansionFor !== threadId) {
-    setExpansionFor(threadId);
-    setExpandedThreadId(null);
-  }
-  const expanded = threadId !== null && expandedThreadId === threadId;
-  const setExpanded = useCallback((expand: boolean): void => setExpandedThreadId(expand ? threadId : null), [threadId]);
+  const { expanded, setExpanded } = usePaneExpansion(threadId);
   // A breakout or a panel ends the expansion: the thread and what it opened
   // split the window as they would have, and closing it returns to the pair.
   const reportThreadUsesTwoPanes = useCallback((twoPanes: boolean): void => {
     setThreadUsesTwoPanes(twoPanes);
-    if (twoPanes) setExpandedThreadId(null);
-  }, []);
+    if (twoPanes) setExpanded(false);
+  }, [setExpanded]);
   const [shown, setShown] = useState<SplitConversationMode>('split');
   const widthKey = layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', 'thread-width');
   const [threadWidth, setThreadWidth] = useState<number | null>(() => {
