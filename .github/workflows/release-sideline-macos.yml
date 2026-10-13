@@ -81,14 +81,10 @@ jobs:
 
       - name: Lint
         if: steps.stamp.outputs.should_release == 'true'
-        env:
-          NODE_OPTIONS: --max-old-space-size=8192
         run: pnpm lint
 
       - name: Typecheck
         if: steps.stamp.outputs.should_release == 'true'
-        env:
-          NODE_OPTIONS: --max-old-space-size=8192
         run: pnpm typecheck
 
       - name: Test Sideline
