@@ -245,16 +245,35 @@ Nothing here changes what a digest reads.
   moves it back. Reading message 29 of a thread settles a mention at 29 or
   earlier and leaves one at 30 standing.
 
-Each item names its **targets** (`activityTargets` in
-`workspace-activity-feed.ts`): a subject and an ordinal. It is done once any
-target is at or below its subject's waterline.
+**What clears an item is a rule in a small language**
+(`apps/api/src/durable-objects/activity-clear-rules.ts`), not code per kind. A
+rule is plain data:
 
-| Item | Target |
+```
+rule    := { read: role, through: ordinal | ordinal[] }
+         | { any: rule[] } | { all: rule[] }
+role    := "conversation" | "placement"
+ordinal := "opened" | "message" | "latest" | "placement"
+```
+
+`read` holds when some subject bound to the role has a waterline at or above
+the ordinal; a list of ordinals is a fallback chain, the first one the subject
+binds being the one compared. The feed binds each row's roles: `conversation`
+is the breakout the row names, else its thread, knowing `opened` (0),
+`latest`, and `message` when the event recorded one; `placement` is each
+Channel the thread sits in, at the placement's ordinal. A role is bound, and
+its read made, only for rows whose rule reads it. The table:
+
+| Item | Rule |
 | --- | --- |
-| `mentioned` | its conversation (the breakout when it names one) at the message's ordinal, which message events carry as `metadata.attentionOrdinal`; an older event without one is settled by an open |
-| `added`, `breakout_started` | its conversation, opened |
-| `thread_started` | the thread, opened; or any Channel it is placed in, read past that placement's ordinal |
-| `run_finished` | its conversation at its newest message |
+| `mentioned` | `{ read: "conversation", through: ["message", "opened"] }`: through its message; an event from before messages carried their ordinal falls back to an open |
+| `added`, `breakout_started` | `{ read: "conversation", through: "opened" }` |
+| `thread_started` | `{ any: [{ read: "conversation", through: "opened" }, { read: "placement", through: "placement" }] }` |
+| `run_finished` | `{ read: "conversation", through: "latest" }` |
+
+A new item kind is one row in `ACTIVITY_CLEAR_RULES`. A new way to clear one is
+a new role or ordinal bound in `activityBindings`, then named in a rule; the
+evaluator (`cleared`) does not change.
 
 The desktop sends an open when a conversation's detail loads, and a `read`
 beside each read acknowledgement of a conversation or a Channel
@@ -825,7 +844,9 @@ or Channel through an ordinal, 0 for an open) to `POST
 /navigation/activity/events`; WorkspaceDO keeps one waterline per person and
 subject (migration 101), and an Activity item is done once one of its targets
 is at or below its subject's waterline, as well as when Mark all read covers
-it. Message events now carry their attention ordinal in `metadata`.
+it. What clears each kind is a rule in a small data language
+(`activity-clear-rules.ts`) evaluated over those waterlines. Message events now
+carry their attention ordinal in `metadata`.
 
 **Why:** The PRD says each item keeps its dot until the person opens it, and
 the tab cleared dots only through Mark all read, so reading the mention you
@@ -848,7 +869,10 @@ read. Projecting a completion ordinal would fix that. An event names any
 subject without a listing check: the waterline is the reader's alone and the
 feed lists only what they may see. A new event kind goes in
 `ActivityEventSchema` and `WorkspaceActivityFeed.record`; a new item kind
-needs its targets in `activityTargets`.
+needs a rule in `ACTIVITY_CLEAR_RULES`, and a new way to clear one a role or
+ordinal bound in `activityBindings`; the evaluator stays as it is. A per-kind
+`switch` was rejected because each new kind or condition grew another branch
+that only its author could read as a rule.
 
 ### 2026-10-10 — The activity log feeds the Activity tab too
 
