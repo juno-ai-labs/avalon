@@ -420,6 +420,11 @@ link, as an embed, and as a source. Two cells are worth knowing about:
   would collide with the model legitimately embedding an image. The glance is
   a four-line hint inside a button, and loading the URL would tell the host
   the card painted.
+- **A glance keeps mention chips and drops every other link to its text.** A
+  `person:` or connector href still goes through `renderIdentity`, because a
+  chip is a span with no destination and is valid inside the card's button.
+  The Channel feed's thread summary is a glance, and its names are the point
+  of it.
 - **`link` × unknown keeps react-markdown's default.** That cell is where
   `mailto:`, `tel:` and relative targets live; rendering it as text would be a
   regression dressed as a degradation.
@@ -931,6 +936,25 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-10-13 — A glance draws mentions as chips
+
+**Changed:** In `glance` mode the `a` override routes `person:` and connector
+hrefs through `renderIdentity` instead of flattening them to text. The Channel
+feed's thread card now renders its summary with `MarkdownBody` in that mode,
+after `typedMentionRendering` rewrites the summary's typed `@Name`s into
+`person://` links the way the send path resolves them.
+
+**Why:** A thread's summary in the feed printed `@Casey Lane` as plain text
+and raw Markdown, unlike the message it came from. The summary is stored
+without its mention rows, so the names have to be found again before the shared
+renderer can chip them.
+
+**Considered and rejected:** A feed-only splitter that matched member names and
+drew its own chip. It worked, but was a second renderer for message text that
+would drift from this one, and drew no Markdown. Storing the opening message's
+mentions on the thread summary would be exact, but needs a server and contract
+change for a line the client can already resolve with the roster it holds.
 
 ### 2026-10-08 — A person's typed `@address` draws as a chip
 
