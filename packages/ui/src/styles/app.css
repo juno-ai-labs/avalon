@@ -3826,7 +3826,7 @@ pre {
 .citation-card { color: var(--av-sys-color-text-default); cursor: pointer; font: inherit; margin: var(--av-sys-space-prose-gap) 0; max-width: 100%; overflow: hidden; text-align: left; }
 .citation-card.is-file { align-items: center; background: var(--av-cmp-composer-background); border: .5px solid var(--av-cmp-composer-border-color); border-radius: 12px; display: grid; gap: var(--space-2); grid-template-columns: 36px minmax(0, 1fr); min-height: var(--attachment-file-card-height); min-width: min(220px, 100%); padding: var(--space-2); width: min(340px, 100%); }
 .citation-card.is-file:hover { background-image: var(--hover-layer); }
-.citation-card-badge { align-items: center; background: color-mix(in srgb, var(--av-sys-color-accent-base) 18%, var(--av-sys-color-surface-raised)); border-radius: 9px; color: var(--av-sys-color-accent-base); display: inline-flex; height: 36px; justify-content: center; width: 36px; }
+.citation-card-badge { align-items: center; background: var(--av-sys-color-surface-elevated-hover); border-radius: 9px; color: var(--av-ref-color-neutral-11); display: inline-flex; height: 36px; justify-content: center; width: 36px; }
 .citation-card.is-image { background: var(--av-ref-color-neutral-4); border: 0; border-radius: 12px; box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--av-sys-color-text-default) 15%, transparent); display: block; max-height: 200px; min-height: 64px; padding: 0; position: relative; transition: filter 140ms ease; }
 .citation-card.is-image:hover { filter: brightness(1.04); }
 .markdown-body .citation-card-image-preview { display: block; height: 100%; margin: 0; max-width: none; object-fit: cover; width: 100%; }
