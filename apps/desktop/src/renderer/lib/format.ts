@@ -148,9 +148,9 @@ export function formatDuration(milliseconds?: number): string | undefined {
 
 export { statusLabel, statusDescription, harnessMarkerStatus, type WorkstreamMarkerStatus } from '@rally/ui/lib/format';
 import { harnessMarkerStatus, type WorkstreamMarkerStatus } from '@rally/ui/lib/format';
-import { MARKER_PRECEDENCE } from '../../common/attention-items';
+import { MARKER_PRECEDENCE } from './attention-ranking';
 
-export { markerRank, readerMarkerStatus, type ReaderMarkerStatus } from '../../common/attention-items';
+export { markerRank, readerMarkerStatus, type ReaderMarkerStatus } from './attention-ranking';
 
 /**
  * The marker a work stream shows this viewer.
