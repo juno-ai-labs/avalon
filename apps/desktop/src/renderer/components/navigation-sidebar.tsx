@@ -10,6 +10,7 @@ import {
   IconCancel,
   IconCheck,
   IconChecks,
+  IconChevronRight,
   IconClock,
   IconCloudDownload,
   IconCornerDownRight,
@@ -903,7 +904,13 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
     : channels.map(channelBadge);
   const names = channels.map((space) => space.name).join(' · ');
   const detail = row.kind === 'breakout' && row.breakoutOf
-    ? `${row.breakoutOf.title}${names ? ` · ${names}` : ''}`
+    ? <>
+      {row.breakoutOf.title}
+      {names && <>
+        <IconChevronRight aria-label="in" className="navigation-row-detail-chevron" role="img" size={12} stroke={2} />
+        {names}
+      </>}
+    </>
     : names;
   const threadId = row.breakoutOf?.workstreamId ?? row.id;
   const warmup = useWorkstreamSocketHoverWarmup(threadId);

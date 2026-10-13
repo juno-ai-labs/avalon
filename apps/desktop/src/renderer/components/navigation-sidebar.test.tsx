@@ -239,12 +239,14 @@ describe('the navigation sidebar', () => {
 
     const list = within(await screen.findByRole('region', { name: 'All threads' }));
     await waitFor(() => expect(threadRows(list)).toEqual([
-      ['Make a website', 'Q4 plan · Outbound'],
+      ['Make a website', 'Q4 planOutbound'],
       ['Q4 plan', 'Outbound'],
     ]));
     // A breakout's tile carries its thread, with the Channel nested on that;
     // a thread's carries the Channel itself.
     const breakoutRow = list.getByRole('link', { name: /Make a website/u });
+    // A chevron, not a dot, separates the thread from its Channels.
+    expect(within(breakoutRow).getByRole('img', { name: 'in' })).toHaveClass('navigation-row-detail-chevron');
     expect(breakoutRow.querySelectorAll('.identity-tile > .identity-tile-badge.is-circle > .identity-tile-badge.is-nested.is-squircle')).toHaveLength(1);
     const threadRow = list.getByRole('link', { name: /^Q4 plan/u });
     expect(threadRow.querySelectorAll('.identity-tile > .identity-tile-badge.is-squircle')).toHaveLength(1);
