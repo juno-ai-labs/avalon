@@ -318,13 +318,15 @@ export function TitlePillHeader({ ancestors = [], className, current, trailing }
   for (const level of ancestors) {
     if (level.bridge) bridge.push({ key: level.key, ...level.bridge, onSelect: level.onSelect });
   }
-  const bridged = ancestors.length > 1 && bridge.length === ancestors.length;
+  const bridged = ancestors.length > 0 && bridge.length === ancestors.length;
   return <header className={clsx('title-pill-header window-drag', className)}>
     <div className={clsx('title-pill-ancestors', bridged && 'is-bridged')}>
       {ancestors.map((level) => <span className="title-pill-ancestor window-no-drag" key={level.key}>
         <TitlePill level={level} variant="ancestor" />
       </span>)}
-      {bridged ? <MarkBridge className="title-pill-bridge window-no-drag" items={bridge} /> : null}
+      {/* A lone crumb keeps its name: there is room for one, and a bare mark
+          does not say which Channel it is. */}
+      {bridged ? <MarkBridge className="title-pill-bridge window-no-drag" items={bridge} labelLast={bridge.length === 1} /> : null}
     </div>
     <div className="title-pill-current window-no-drag"><TitlePill level={current} /></div>
     <div className="title-pill-trailing">{trailing ? <span className="window-no-drag">{trailing}</span> : null}</div>
