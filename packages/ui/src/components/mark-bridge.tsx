@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useId } from 'react';
+import { useId, useLayoutEffect, useRef, useState } from 'react';
 
 import { ShapeOutline, type IdentityMark } from './identity-tile';
 import { Tip } from './primitives';
@@ -30,14 +30,20 @@ const ANGLE = Math.PI / 4;
 const HOLD = 9;
 /** Stops in each blend; enough that straight runs between them read as one curve. */
 const BLEND_STEPS = 8;
+/** Room after a labelled mark's name, before the shape's rounded end. */
+const LABEL_END = 12;
 
 /** The width of `count` marks on a bridge. */
 function markBridgeWidth(count: number): number {
   return (count - 1) * SPAN + 2 * RADIUS;
 }
 
-/** The outline of `count` circles in a row, each joined to the next by a neck. */
-function bridgePath(count: number): string {
+/**
+ * The outline of `count` circles in a row, each joined to the next by a neck.
+ * `extra` stretches the last circle into a pill that much longer, its ends
+ * still RADIUS round.
+ */
+function bridgePath(count: number, extra: number): string {
   const r = RADIUS;
   const centre = (index: number): number => r + index * SPAN;
   const dx = r * Math.cos(ANGLE);
@@ -51,7 +57,8 @@ function bridgePath(count: number): string {
   const bottom = r + dy;
   const n = (value: number): string => value.toFixed(2);
   const last = count - 1;
-  if (last === 0) return `M0 ${r} A${r} ${r} 0 1 1 ${2 * r} ${r} A${r} ${r} 0 1 1 0 ${r} Z`;
+  const end = centre(last) + extra;
+  if (last === 0) return `M${r} 0 L${n(end)} 0 A${r} ${r} 0 0 1 ${n(end)} ${2 * r} L${r} ${2 * r} A${r} ${r} 0 0 1 ${r} 0 Z`;
   // Clockwise from the first neck's top: along the top, round the last
   // circle, back along the bottom, round the first. Each inner circle shows
   // a short arc between its two necks.
@@ -62,7 +69,14 @@ function bridgePath(count: number): string {
     path.push(`C${n(from + rx)} ${n(top + ry)} ${n(to - rx)} ${n(top + ry)} ${n(to)} ${n(top)}`);
     if (index + 1 < last) path.push(`A${r} ${r} 0 0 1 ${n(centre(index + 1) + dx)} ${n(top)}`);
   }
-  path.push(`A${r} ${r} 0 1 1 ${n(centre(last) - dx)} ${n(bottom)}`);
+  // Round the last mark: up to its top, along any stretch, round its end, back.
+  path.push(
+    `A${r} ${r} 0 0 1 ${n(centre(last))} 0`,
+    `L${n(end)} 0`,
+    `A${r} ${r} 0 0 1 ${n(end)} ${2 * r}`,
+    `L${n(centre(last))} ${2 * r}`,
+    `A${r} ${r} 0 0 1 ${n(centre(last) - dx)} ${n(bottom)}`,
+  );
   for (let index = last; index > 0; index -= 1) {
     const from = centre(index) - dx;
     const to = centre(index - 1) + dx;
@@ -105,18 +119,38 @@ function bridgeStops(tints: readonly string[]): { offset: number; color: string 
  *
  * It says nothing about what the objects are or where they go: a caller hands
  * it marks, names, and what selecting each does.
+ *
+ * `labelLast` writes the last object's name beside its mark, stretching that
+ * mark into a pill the name's width; the shape is measured from the name as
+ * laid out, so it fits whatever font and size it renders in.
  */
-export function MarkBridge({ className, items }: {
+export function MarkBridge({ className, items, labelLast = false }: {
   className?: string | undefined;
   items: readonly MarkBridgeItem[];
+  labelLast?: boolean | undefined;
 }): React.JSX.Element | null {
   const id = useId();
+  const label = useRef<HTMLSpanElement>(null);
+  const [labelWidth, setLabelWidth] = useState(0);
+  const labelled = labelLast && items.length > 0;
+  useLayoutEffect(() => {
+    const element = label.current;
+    if (!labelled || !element) { setLabelWidth(0); return undefined; }
+    const measure = (): void => setLabelWidth(element.offsetWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [labelled]);
   const count = items.length;
   // Nothing to join: the geometry below assumes at least one mark.
   if (count === 0) return null;
-  const path = bridgePath(count);
+  const extra = labelled && labelWidth > 0 ? labelWidth + LABEL_END : 0;
+  const path = bridgePath(count, extra);
   const stops = bridgeStops(items.map((item) => item.mark.tint));
-  const width = markBridgeWidth(count);
+  // The gradient spans the circles; past the last it holds the last tint.
+  const tintWidth = markBridgeWidth(count);
+  const width = tintWidth + extra;
   const height = 2 * RADIUS;
   return <span className={clsx('mark-bridge', className)} style={{ height, width }}>
     <svg
@@ -127,7 +161,7 @@ export function MarkBridge({ className, items }: {
       width={width + 2}
     >
       <defs>
-        <linearGradient gradientUnits="userSpaceOnUse" id={`${id}-tint`} x1="0" x2={width} y1="0" y2="0">
+        <linearGradient gradientUnits="userSpaceOnUse" id={`${id}-tint`} x1="0" x2={tintWidth} y1="0" y2="0">
           {stops.map((stop, index) => <stop key={index} offset={stop.offset} style={{ stopColor: stop.color }} />)}
         </linearGradient>
         {/* Ends above the symbols, so each one sits on its raw tint: the pair's
@@ -149,15 +183,21 @@ export function MarkBridge({ className, items }: {
     </svg>
     {items.map((item, index) => {
       const Icon = item.mark.icon;
-      const content = <>
+      const named = labelled && index === count - 1;
+      const symbol = <>
         <ShapeOutline className="mark-bridge-outline" shape={item.mark.shape} size={2 * RADIUS} strokeWidth={1.1} />
         <Icon aria-hidden="true" className="mark-bridge-icon" size={14} strokeWidth={2} />
       </>;
-      const style = { color: item.mark.ink, left: index * SPAN };
-      const label = item.action ? `${item.action}: ${item.name}` : item.name;
+      const content = named ? <>
+        <span className="mark-bridge-cell">{symbol}</span>
+        <span className="mark-bridge-label" ref={label}>{item.name}</span>
+      </> : symbol;
+      const style = { color: item.mark.ink, left: index * SPAN, ...(named ? { width: 2 * RADIUS + extra } : {}) };
+      const markClass = clsx('mark-bridge-mark', named && 'is-labelled');
+      const accessibleName = item.action ? `${item.action}: ${item.name}` : item.name;
       const mark = item.onSelect
-        ? <button aria-label={label} className="mark-bridge-mark" onClick={item.onSelect} style={style} type="button">{content}</button>
-        : <span aria-label={label} className="mark-bridge-mark" role="img" style={style}>{content}</span>;
+        ? <button aria-label={accessibleName} className={markClass} onClick={item.onSelect} style={style} type="button">{content}</button>
+        : <span aria-label={accessibleName} className={markClass} role="img" style={style}>{content}</span>;
       // Not hoverable: the next mark sits 6px away, and the pointer's path
       // into an open tip would keep it up over the mark being aimed at.
       return <Tip

@@ -86,6 +86,9 @@ compressed or partial hierarchy.
 control with its own tooltip. It knows nothing about routes; the caller hands
 it names, actions and handlers. `TitlePillHeader` uses it for ancestor crumbs
 too narrow to show their names, when every level carries a `bridge` entry.
+`labelLast` writes the last object's name beside its mark and stretches that
+mark into a pill fitted to the measured name; the header sets it for a lone
+crumb, a thread's Channel on a phone, so the crumb still says which Channel.
 
 Theme application stamps the same `data-theme` attribute before rendering. Desktop
 installs the native theme reporter/broadcast adapter; browser and Sideline install system
@@ -133,6 +136,16 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-10-13 — `MarkBridge` can name its last mark; a lone crumb bridges
+
+**What changed:** `labelLast` stretches the last mark into a pill holding its name, its ends still the circles' radius and its neck to the mark before unchanged. `TitlePillHeader` now bridges one crumb as well as two: below 460px a thread's Channel crumb is the glass shape with the Channel's name, where it was a bare round pill.
+
+**Why:** The phone thread header showed its Channel as a plain circle beside the glass shapes a breakout's crumbs got, and a bare mark does not say which Channel it is. The bridge's two-crumb rule dated from the shape it replaced, which only ever joined two.
+
+**Considered and rejected:** A fixed label width, which breaks on any other name or font; measuring with a hidden copy of the text, where measuring the laid-out label needs no second element.
+
+**Consequences:** The shape is measured after layout (`ResizeObserver` on the label), so a caller sees one layout pass with the label before the glass fits it. The tint gradient spans the circles and holds the last tint across the stretch.
 
 ### 2026-10-13 — `MarkBridge` fuses a row of marks into one tinted glass shape
 
