@@ -4432,7 +4432,7 @@ pre {
 .attachment-progress svg { height: 42px; position: absolute; transform: rotate(-90deg); width: 42px; }
 .attachment-progress circle { fill: none; stroke-width: 3; }
 .attachment-progress-track { stroke: var(--av-ref-color-neutral-7); }
-.attachment-progress-value { stroke: var(--av-sys-color-brand-base); stroke-linecap: round; transition: stroke-dashoffset 100ms linear; }
+.attachment-progress-value { stroke: var(--av-sys-color-text-default); stroke-linecap: round; transition: stroke-dashoffset 100ms linear; }
 .attachment-progress small { color: var(--av-ref-color-neutral-14); font-size: 9px; font-variant-numeric: tabular-nums; position: relative; }
 .human-message .message-attachments { align-items: flex-end; margin-left: auto; }
 
