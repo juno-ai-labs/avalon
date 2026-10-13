@@ -1,10 +1,11 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { Link, MemoryRouter, parsePath, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ChannelStats } from '@rally/contracts';
+import { OPEN_EXPANDED } from '../lib/navigation-routes';
 import { CHANNEL_STATS_QUERY_KEY } from '../lib/sidebar-list-store';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { ChannelScreen } from './channel';
@@ -29,13 +30,14 @@ vi.mock('../components/channel-composer', () => ({
 // The thread pane, with the Channel crumb it would draw once it is off screen
 // and the button that expands it over the Channel.
 vi.mock('./workstream', async () => {
-  const { useChannelPane } = await import('../lib/navigation-routes');
+  const { OPEN_EXPANDED, useChannelPane } = await import('../lib/navigation-routes');
   const { Link: RouterLink } = await import('react-router-dom');
   return {
     WorkstreamScreen: () => {
       const pane = useChannelPane();
       return <div>thread pane{pane && <>
         <RouterLink to="/channels/outbound/threads/secret">Next thread</RouterLink>
+        <RouterLink state={OPEN_EXPANDED} to="/channels/outbound/threads/secret">Sidebar thread</RouterLink>
         <button onClick={pane.crumb.onSelect} type="button">Channel crumb</button>
         <button onClick={() => pane.setExpanded(!pane.expanded)} type="button">{pane.expanded ? 'Collapse' : 'Expand'}</button>
         <button onClick={() => pane.setThreadUsesTwoPanes(true)} type="button">Open breakout</button>
@@ -79,11 +81,11 @@ function Location(): React.JSX.Element {
   return <div data-testid="location">{location.pathname}</div>;
 }
 
-function renderChannel(path = '/channels/outbound', seed: (client: QueryClient) => void = () => undefined) {
+function renderChannel(path = '/channels/outbound', seed: (client: QueryClient) => void = () => undefined, state: unknown = null) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   seed(client);
   const view = render(<QueryClientProvider client={client}><Tooltip.Provider>
-    <MemoryRouter initialEntries={[path]}>
+    <MemoryRouter initialEntries={[{ ...parsePath(path), state }]}>
       <Routes><Route element={<ChannelScreen workspace={workspace} />} path="/channels/:channelId/*" /></Routes>
       <Routes><Route element={<Location />} path="*" /></Routes>
     </MemoryRouter>
@@ -143,6 +145,25 @@ describe('a Channel', () => {
     fireEvent.click(screen.getByRole('link', { name: 'Next thread' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/secret');
     expect(screen.getByText('composer')).toBeVisible();
+  });
+
+  it('opens a thread expanded over the Channel when the sidebar opened it, and the next one too', async () => {
+    renderChannel('/channels/outbound/threads/plan', undefined, OPEN_EXPANDED);
+    expect(await screen.findByText('thread pane')).toBeVisible();
+    expect(screen.getByText('composer')).not.toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse' }));
+    expect(screen.getByText('composer')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('link', { name: 'Sidebar thread' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/secret');
+    expect(screen.getByText('composer')).not.toBeVisible();
+
+    // A sidebar open onto the thread already open expands it again.
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse' }));
+    expect(screen.getByText('composer')).toBeVisible();
+    fireEvent.click(screen.getByRole('link', { name: 'Sidebar thread' }));
+    expect(screen.getByText('composer')).not.toBeVisible();
   });
 
   it('opens a thread beside the Channel again after it was closed while expanded', async () => {
