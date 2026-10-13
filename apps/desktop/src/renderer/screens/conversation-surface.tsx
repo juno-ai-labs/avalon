@@ -2942,7 +2942,7 @@ export function ConversationSurface({
         focusTranscript: () => transcriptRef.current?.focus({ preventScroll: true }),
       })}
     <div className={clsx(
-      'workstream-screen',
+      'workstream-screen has-message-capsule',
       parentKind === 'automation' && 'automation-screen',
       // The launch geometry, taken whole from the work-stream launcher: an
       // `auto` header row that can grow into place, the launcher's own dock
