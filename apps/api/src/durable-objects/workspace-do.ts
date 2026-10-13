@@ -8249,23 +8249,42 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     if (storage.completeBootstrap() !== "complete") return false;
     this.publishSpaceSnapshot();
-    // A new Organization seated its creator above and has nobody else yet;
-    // an existing one may have had members join while it was not open.
-    if (general === undefined) await this.seatEveryoneOnceSpacesOpen();
     return true;
   }
 
   /**
    * Queue the one seating pass migration 103 runs (`backfillPersonalChannels`)
-   * now that this Organization's Spaces are open. A member who joined while
-   * they were not (the cutover reopened, or the Organization still opening)
-   * was answered `spaces_not_open` and is seated here, so no relationship
-   * delivery waits on a cutover that may never close. Idempotent: the pass
-   * seats nobody twice.
+   * when the cutover closes. A member who joined while it was open was
+   * answered `spaces_not_open` and is seated here, as is anybody a backfill
+   * pass skipped for the same reason, so no relationship delivery or alarm
+   * waits on a cutover that may never close. Idempotent: the pass seats nobody
+   * twice. Not called when a new Organization opens: its creator is seated in
+   * that same call, and it has nobody else yet.
    */
   private async seatEveryoneOnceSpacesOpen(): Promise<void> {
+    if (!this.hasUnseatedMember()) return;
     this.scheduledAlarms.schedule({ kind: PERSONAL_CHANNEL_BACKFILL_ALARM_KIND, key: "workspace", dueAt: Date.now() });
     await this.armNextAlarm();
+  }
+
+  /**
+   * Whether this object knows an active non-guest member who is not in
+   * General or has no Personal Channel: one read of its own tables, so a
+   * cutover with nobody to seat queues nothing.
+   */
+  private hasUnseatedMember(): boolean {
+    const generalSpaceId = this.spaceStorage().generalSpaceId();
+    return this.state.storage.sql.exec(
+      `SELECT 1 FROM workspace_member_status status
+        WHERE status.active = 1
+          AND json_extract(status.relationship_json, '$.accessClass') = 'member'
+          AND (NOT EXISTS (SELECT 1 FROM space_viewers viewer
+                            WHERE viewer.space_id = ? AND viewer.user_id = status.user_id AND viewer.is_participant = 1)
+               OR NOT EXISTS (SELECT 1 FROM spaces space
+                               WHERE space.scope = 'individual' AND space.created_by_user_id = status.user_id))
+        LIMIT 1`,
+      generalSpaceId,
+    ).toArray().length > 0;
   }
 
   /**
@@ -8298,18 +8317,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Migration 102's one pass: every active non-guest member of an Organization
+   * Migration 103's one pass: every active non-guest member of an Organization
    * that existed before Personal Channels is seated in General and given one,
    * anchoring each in D1 here as `seatOrganizationMember`'s caller does. Each
    * member's steps are idempotent, so a pass that throws part way is retried
    * by the alarm from the top and redoes nothing.
    *
-   * Throws while the Organization's Spaces are not open, so the alarm retries
-   * rather than settling with nobody seated.
+   * Settles without seating anybody while the Organization's Spaces are not
+   * open: closing the cutover queues this pass again
+   * (`seatEveryoneOnceSpacesOpen`), and a cutover blocked for good would
+   * otherwise retry this alarm for ever.
    */
   private async backfillPersonalChannels(workspaceId: string): Promise<void> {
     const storage = this.spaceStorage();
-    if (!storage.ready() || !storage.bootstrapStatus().ready) throw new Error("personal_channel_backfill_spaces_not_open");
+    if (!storage.ready() || !storage.bootstrapStatus().ready) return;
     const members = await this.env.DB.prepare(
       `SELECT user_id FROM workspace_members
         WHERE workspace_id = ? AND status = 'active' AND access_class = 'member'
@@ -15185,7 +15206,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * The title of whatever a shared link names, or null when nothing here has
    * that id. Holding the link is the permission: a link's title is shown to
-   * anyone who has it, so this reads no viewer and checks no scope. A deleted
+   * anyone who has it, so this reads no viewer and checks no scope, except
+   * that a Personal Channel is never named. A deleted
    * Sidekick is gone; an archived Channel, Breakout or Space keeps its name.
    */
   async linkTitle(input: unknown): Promise<{ title: string | null }> {
@@ -15204,7 +15226,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           target.workstreamId, target.substreamId,
         ).toArray()[0]
         : target.kind === "space"
-          ? sql.exec<{ title: string }>(`SELECT title FROM spaces WHERE space_id = ?`, target.spaceId).toArray()[0]
+          // A Personal Channel is its owner's alone, so a link to it names
+          // nothing: its owner may have renamed it.
+          ? sql.exec<{ title: string }>(
+            `SELECT title FROM spaces WHERE space_id = ? AND scope <> 'individual'`,
+            target.spaceId,
+          ).toArray()[0]
           : sql.exec<{ title: string }>(
             `SELECT title FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
             target.sidekickId,
