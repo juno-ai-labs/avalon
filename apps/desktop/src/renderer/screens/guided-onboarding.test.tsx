@@ -261,8 +261,9 @@ describe('new-account learning paths', () => {
   it('keeps initials drawn from the sign-in name when a newer revision saves no initials', async () => {
     const client = show();
     await screen.findByRole('heading', { name: 'This is you in Rally' });
+    fireEvent.change(screen.getByLabelText('Avatar initials'), { target: { value: 'X' } });
     act(() => client.setQueryData(['account-onboarding', 'person@example.com'], { ...state.account, revision: 2, presentation: null }));
-    expect(screen.getByLabelText('Avatar initials')).toHaveValue('P');
+    await waitFor(() => expect(screen.getByLabelText('Avatar initials')).toHaveValue('P'));
   });
   it('reconciles invitations after a lost response and retries only undelivered addresses', async () => {
     state.journey.mockResolvedValue({ path: 'creator', stage: 'people', revision: 2, connectorIds: [] });
