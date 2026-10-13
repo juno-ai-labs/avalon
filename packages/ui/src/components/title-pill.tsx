@@ -424,9 +424,9 @@ export function TitleMenuHeader({ action, eyebrow, icon, title }: {
   </div>;
 }
 
-/** A plain-text action at the right of a title menu row, e.g. Open space. */
-export function TitleMenuLink({ children, onSelect }: { children: ReactNode; onSelect: () => void }): React.JSX.Element {
-  return <DropdownMenu.Item className="button title-menu-link" onSelect={onSelect}>{children}</DropdownMenu.Item>;
+/** A standard button at the right of a title menu header, e.g. Show in thread. */
+export function TitleMenuButton({ children, onSelect }: { children: ReactNode; onSelect: () => void }): React.JSX.Element {
+  return <DropdownMenu.Item className="button title-menu-button" onSelect={onSelect}>{children}</DropdownMenu.Item>;
 }
 
 export function TitleMenuItem({ children, danger = false, disabled, icon, onSelect }: {

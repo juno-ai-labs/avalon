@@ -32,7 +32,7 @@ import { breakoutHasActivity, type BreakoutMark } from './breakout-marks';
 import { Avatar, Tip } from './primitives';
 import { ResourceIcon } from './resource-icon';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
-import { ActionTile, ActionTiles, keepSearchFocus, LevelRow, openLevel, TitleMenuHeader, TitleMenuItem, TitleMenuLink, TitleMenuSearch, TitleMenuSeparator, useTitleMenuNav, type TitleMenuView } from './title-pill';
+import { ActionTile, ActionTiles, keepSearchFocus, LevelRow, openLevel, TitleMenuHeader, TitleMenuItem, TitleMenuButton, TitleMenuSearch, TitleMenuSeparator, useTitleMenuNav, type TitleMenuView } from './title-pill';
 import { WorkstreamMark } from './workstream-glyph';
 
 /** The id a Breakout being written is selected under before it exists. */
@@ -656,7 +656,7 @@ export function BreakoutMenu({
   }
   return <>
     <TitleMenuHeader
-      action={onShowInChannel && <TitleMenuLink onSelect={onShowInChannel}>Show in thread</TitleMenuLink>}
+      action={onShowInChannel && <TitleMenuButton onSelect={onShowInChannel}>Show in thread</TitleMenuButton>}
       eyebrow="Breakout of"
       icon={<WorkstreamMark appearance={channel.appearance} id={channel.id} size={20} />}
       title={channel.title}
