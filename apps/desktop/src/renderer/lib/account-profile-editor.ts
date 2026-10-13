@@ -1,5 +1,10 @@
 import { PersonalPresentationSchema, type AccountOnboarding, type PersonalPresentation, type UpdateAccountOnboarding } from '@rally/contracts';
 
+/** Avatar initials for a name, used until the account saves its own. */
+export function nameInitials(name: string): string {
+  return name.split(/\s+/u).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
+}
+
 type Profile = Omit<PersonalPresentation, 'revision'>;
 type EditableProfile = Pick<Profile, 'displayName' | 'initials' | 'color'>;
 
@@ -33,7 +38,7 @@ export class AccountProfileEditor {
     return {
       avatar: 'circle', color: this.account?.presentation?.color ?? 'blue',
       displayName: this.account?.presentation?.displayName ?? this.name,
-      initials: this.account?.presentation?.initials ?? this.name.split(/\s+/u).map((part) => part[0]).join('').slice(0, 2).toUpperCase(),
+      initials: this.account?.presentation?.initials ?? nameInitials(this.name),
       ...this.spelling,
       ...this.draft,
     };

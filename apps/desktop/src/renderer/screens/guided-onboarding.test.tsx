@@ -258,6 +258,12 @@ describe('new-account learning paths', () => {
       presentation: { color: 'rose', avatar: 'circle', displayName: 'Harper', initials: 'H' } }));
   });
 
+  it('keeps initials drawn from the sign-in name when a newer revision saves no initials', async () => {
+    const client = show();
+    await screen.findByRole('heading', { name: 'This is you in Rally' });
+    act(() => client.setQueryData(['account-onboarding', 'person@example.com'], { ...state.account, revision: 2, presentation: null }));
+    expect(screen.getByLabelText('Avatar initials')).toHaveValue('P');
+  });
   it('reconciles invitations after a lost response and retries only undelivered addresses', async () => {
     state.journey.mockResolvedValue({ path: 'creator', stage: 'people', revision: 2, connectorIds: [] });
     state.invite.mockRejectedValueOnce(new Error('Response lost'));
