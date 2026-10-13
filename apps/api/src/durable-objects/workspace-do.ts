@@ -668,9 +668,11 @@ import {
   WorkspaceActivityRequestSchema,
   WorkspaceActivityResultSchema,
   WorkspaceActivitySeenRequestSchema,
+  WorkspaceActivityEventsRequestSchema,
   type WorkspaceActivityRequest,
   type WorkspaceActivityResult,
   type WorkspaceActivitySeenRequest,
+  type WorkspaceActivityEventsRequest,
   WorkspaceMyThreadsRequestSchema,
   WorkspaceMyThreadsResultSchema,
   WorkspacePinChangeRequestSchema,
@@ -809,7 +811,7 @@ import {
   type ThreadBackfillWork,
 } from "./thread-backfill";
 import { unreadState } from "./unread-state";
-import { WorkspaceActivityFeed } from "./workspace-activity-feed";
+import { WorkspaceActivityFeed, WORKSPACE_ACTIVITY_READS_MIGRATION } from "./workspace-activity-feed";
 import {
   PersonalSystemPromptReadRequestSchema,
   PersonalSystemPromptWriteRequestSchema,
@@ -4285,6 +4287,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "a work list of one-off jobs over every thread, and every thread listed to have its description summarized",
   // The lane is channel colour sync's without triggers; see thread-backfill.ts.
   statements: THREAD_BACKFILL_MIGRATION,
+}, {
+  version: 101,
+  description: "how far each person has read each thread, breakout and Channel, as the app reports it for Activity",
+  // One waterline per person and subject, moved by app events; see workspace-activity-feed.ts.
+  statements: WORKSPACE_ACTIVITY_READS_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -9455,6 +9462,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const feed = new WorkspaceActivityFeed(this.state.storage, this.spaceStorage());
     if (!feed.ready()) return;
     feed.markSeen(request.userId, request.seenThrough, Date.now());
+  }
+
+  /** Settle the Activity rows these events cover; see `workspace-activity-feed.ts`. */
+  async recordActivityEvents(input: WorkspaceActivityEventsRequest): Promise<void> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceActivityEventsRequestSchema, input, "record_activity_events");
+    this.assertWorkspace(request.workspaceId);
+    const feed = new WorkspaceActivityFeed(this.state.storage, this.spaceStorage());
+    if (!feed.readsReady()) return;
+    feed.record(request.userId, request.events, Date.now());
   }
 
   /** This person's pins, every kind. */

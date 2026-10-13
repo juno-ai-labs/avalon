@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
+  recordActivityEvents: vi.fn(async () => undefined),
   clientFeatureFlags: vi.fn(),
   getConnections: vi.fn(),
   getWorkspaceMembers: vi.fn(),

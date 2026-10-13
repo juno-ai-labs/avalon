@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-rou
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
+  recordActivityEvents: vi.fn(async () => undefined),
   renameSubstream: vi.fn(),
   setSubstreamArchived: vi.fn(),
   renameWorkstream: vi.fn(),
@@ -402,6 +403,20 @@ describe('socket-first channel open', () => {
     await waitFor(() => expect(scrollTranscriptToEnd).toHaveBeenCalled());
     await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
     expect(loadTranscriptRange).not.toHaveBeenCalled();
+  });
+
+  it('tells Activity the thread was opened, once, when it has loaded', async () => {
+    const boot = historyBoot();
+    renderScreen(cache => {
+      cache.setQueryData(['workstream', workstreamId], boot);
+      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+    });
+    await waitFor(() => expect(api.recordActivityEvents).toHaveBeenCalledWith([
+      { kind: 'read', subject: { kind: 'thread', threadId: workstreamId }, through: 0 },
+    ]));
+    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
+    const reported = api.recordActivityEvents.mock.calls as unknown as Array<[Array<{ through: number }>]>;
+    expect(reported.filter(([events]) => events[0]?.through === 0)).toHaveLength(1);
   });
 
   it('shares pending requests across A to B to A and discards departed-visit restoration', async () => {
