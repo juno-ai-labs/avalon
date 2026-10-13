@@ -77,6 +77,11 @@ describe('menu bar content', () => {
     expect(menuBarContent(quietDirectory, { items: [], complete: false }).attentionComplete).toBe(false);
   });
 
+  it('says Most recent is whole only once every Space has been walked', () => {
+    expect(menuBarContent({ ...quietDirectory, complete: false }, noActivity).recentsComplete).toBe(false);
+    expect(menuBarContent(quietDirectory, noActivity).recentsComplete).toBe(true);
+  });
+
   it('orders Most recent by last activity, ties A to Z, with no Space filter and no archived or system rows', () => {
     const content = menuBarContent({
       complete: true, accessRequests: [],

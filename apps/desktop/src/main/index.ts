@@ -1344,7 +1344,10 @@ const channelDirectoryWatch = new ChannelDirectoryWatch({
   onChange: () => menuBarController.refresh(),
   // Activity is not a list the socket carries; the socket only says when it
   // may have moved, which is when the sidebar's Activity tab reads it again.
-  onSync: (topics) => { if (topics.includes('activity')) activityFeedWatch.refresh(); },
+  // After a failed read, any sync is reason enough to try again.
+  onSync: (topics) => {
+    if (topics.includes('activity') || activityFeedWatch.missedLastRead()) activityFeedWatch.refresh();
+  },
   requestId: uuidV7,
   logWarning: (message, error) => logWarn('rally', message, error),
 });
@@ -1453,8 +1456,11 @@ const menuBarController = new MenuBarController({
   createTray: createMenuBarTray,
   content: () => {
     // A guest has no socket, so nothing will load: say "nothing" rather than "loading".
+    const directory = channelDirectoryWatch.snapshot();
     const activity = activityFeedWatch.snapshot();
-    return menuBarContent(channelDirectoryWatch.snapshot(), menuBarDirectoryUnavailable ? { ...activity, complete: true } : activity);
+    return menuBarDirectoryUnavailable
+      ? menuBarContent({ ...directory, complete: true }, { ...activity, complete: true })
+      : menuBarContent(directory, activity);
   },
   // The in-memory credential rather than a live session: this is read while the
   // menu is being built, and it only decides which empty state to show.
@@ -4546,8 +4552,9 @@ function createMenuBarTray(): MenuBarTray {
   const tray = new Tray(icon);
   tray.setToolTip(app.name);
   tray.setIgnoreDoubleClickEvents(true);
-  // The drop-down opens from what the main process's workspace socket already
-  // holds, so a click costs no request: freshness arrives as socket pushes.
+  // The drop-down opens from what the main process already holds (the socket's
+  // Channel rows and the last Activity page), so a click costs no request:
+  // freshness arrives as socket pushes and the reads they trigger.
   const openObserver = new MenuBarOpenObserver(() => {
     const content = menuBarContent(channelDirectoryWatch.snapshot(), activityFeedWatch.snapshot());
     void telemetryReporter?.menuBarOpened({

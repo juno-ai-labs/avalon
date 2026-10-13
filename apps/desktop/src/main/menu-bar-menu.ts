@@ -36,9 +36,13 @@ export interface MenuBarContent {
   readonly attentionComplete: boolean;
   /** Channels in the sidebar's Recent order under All. */
   readonly recents: readonly MenuBarWorkstream[];
+  /** False until the first walk of every Space has finished, so an empty list is not yet "none". */
+  readonly recentsComplete: boolean;
 }
 
-export const emptyMenuBarContent: MenuBarContent = { accessRequests: [], attention: [], attentionComplete: false, recents: [] };
+export const emptyMenuBarContent: MenuBarContent = {
+  accessRequests: [], attention: [], attentionComplete: false, recents: [], recentsComplete: false,
+};
 
 export type MenuBarAction =
   | 'attention_conversation'
@@ -220,7 +224,10 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
       label: menuBarLabel(workstream.title),
       click: tracked('recent_workstream', () => actions.openConversation(workstream.id, workstream.substreamId)),
     }));
-    pushSection(RECENT_HEADER, recents, recents.length === 0 ? 'No recent threads' : null);
+    // An empty list is "none" only once every Space has been walked.
+    const recentsTrailing = recents.length > 0 ? null
+      : content.recentsComplete ? 'No recent threads' : 'Still loading threads';
+    pushSection(RECENT_HEADER, recents, recentsTrailing);
   }
 
   pushSeparator();

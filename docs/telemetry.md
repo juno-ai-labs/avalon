@@ -141,7 +141,8 @@ output, arbitrary network traffic, URLs, request bodies, prompts, messages,
 documents, or session replay.
 
 The macOS status surface emits `menu_bar_opened` once per visible open (with
-`attentionCount`, the number beside the icon) and
+`attentionCount`, the unread Activity rows it lists; waiting threads before
+2026-10-13, see [`menu-bar.md`](menu-bar.md)) and
 `menu_bar_action_selected` for enabled rows using closed structural properties
 only. `command_shortcuts_revealed` and `command_shortcut_used` are historical
 schemas retained for older clients; the current sidebar emits neither. Suggested-work
