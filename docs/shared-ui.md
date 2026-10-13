@@ -95,7 +95,8 @@ the mark closes back to a circle.
 
 A title pill's menu always opens below the pill. Its bottom edge never counts
 as a Radix collision, so the menu never flips above; its sides still do, so it
-shifts to fit a phone's width.
+shifts to fit a phone's width. Opening it blurs any focused input, textarea or
+editable region first, so a phone's keyboard drops.
 
 Theme application stamps the same `data-theme` attribute before rendering. Desktop
 installs the native theme reporter/broadcast adapter; browser and Sideline install system
