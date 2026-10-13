@@ -2,6 +2,7 @@ import { BreakoutMenu, ChannelMenu, type ConversationRowTarget } from '@rally/ui
 import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { BreakoutPillIcon, TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import type { IconGroupAction } from '@rally/ui/components/icon-group';
 import { WorkstreamGlyph, workstreamMark } from '@rally/ui/components/workstream-glyph';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -22,7 +23,7 @@ import { holdCreationTraceUntilSendReady, startPerfTrace } from '../lib/perf-tra
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
 import { AppearancePicker, AppearanceSubmenu } from '../components/appearance-picker';
-import { IconPalette } from '@tabler/icons-react';
+import { IconArrowsDiagonal, IconArrowsDiagonalMinimize2, IconPalette } from '@tabler/icons-react';
 import { RelativeTime } from '../components/relative-time';
 
 import type { WorkstreamChildDirectory } from '../lib/channel-viewer-state';
@@ -676,8 +677,18 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const breakoutScope = openBreakoutId === null ? null : `${id}:${openBreakoutId}`;
   const breakoutOwnsRail = storeRailOpen && breakoutScope !== null && railScope === breakoutScope;
   const mainOwnsRail = storeRailOpen && railScope === id;
+  // A breakout the reader expanded over its thread, dropped whenever the open
+  // breakout changes so a breakout opens beside its thread. A panel the
+  // breakout opens ends it too.
+  const [expandedBreakoutId, setExpandedBreakoutId] = useState<string | null>(null);
+  const [breakoutExpansionFor, setBreakoutExpansionFor] = useState(openBreakoutId);
+  if (breakoutExpansionFor !== openBreakoutId || (breakoutOwnsRail && expandedBreakoutId !== null)) {
+    setBreakoutExpansionFor(openBreakoutId);
+    setExpandedBreakoutId(null);
+  }
+  const breakoutExpanded = openBreakoutId !== null && expandedBreakoutId === openBreakoutId;
   const splitMode: SplitConversationMode = !breakoutPaneOpen ? 'main'
-    : !mainVisible || breakoutOwnsRail ? 'breakout'
+    : !mainVisible || breakoutOwnsRail || breakoutExpanded ? 'breakout'
       : mainOwnsRail ? 'main' : 'split';
   // What the layout shows, which is the breakout alone in a window too narrow
   // for the split: the thread then rides as the breakout's breadcrumb.
@@ -855,6 +866,13 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     };
   };
 
+  // Beside its Channel, the thread can take the whole window, and give it
+  // back. Opening a breakout or a panel ends the expansion.
+  const threadExpandAction = !channelPane ? undefined
+    : expandToggle(channelPane.expanded, !channelPane.shifted, channelPane.setExpanded);
+  // A breakout beside its thread can do the same, one level down.
+  const breakoutExpandAction = expandToggle(breakoutExpanded, shownMode === 'split', (expand) => setExpandedBreakoutId(expand ? openBreakoutId : null));
+
   const mainPane = !mainVisible ? null : <ConversationSurface
     breakouts={breakoutMarks}
     honorsSearchTarget={openBreakoutId === null}
@@ -866,6 +884,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     renderHeader={(context) => <TitlePillHeader
       ancestors={channelCrumbs}
       current={channelLevel(context)}
+      actions={threadExpandAction}
       trailing={channelPane && !channelPane.shifted
         ? <TitlePillClose label="Close thread" onClose={() => void navigate(channelRoute(channelPane.channelId))} />
         : undefined}
@@ -899,6 +918,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     renderHeader={(context) => <TitlePillHeader
       ancestors={shownMode === 'breakout' && mainVisible ? [...channelCrumbs, channelLevel(null, openThreadAlone)] : []}
       current={breakoutLevel(context)}
+      actions={breakoutExpandAction}
       trailing={mainVisible ? closeBreakout : undefined}
     />}
     sidebarScope={conversationScoped ? 'conversation' : 'workstream'}
@@ -965,4 +985,27 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     </Modal>
     </>
   );
+}
+
+/**
+ * The header action that expands a pane over the one beside it, or puts it
+ * back: Expand while both are on screen, Collapse while it is expanded.
+ */
+function expandToggle(expanded: boolean, beside: boolean, setExpanded: (expanded: boolean) => void): IconGroupAction[] | undefined {
+  if (expanded) {
+    // One key for both states, so the button a keyboard pressed keeps focus.
+    return [{
+      key: 'expand',
+      label: 'Collapse',
+      icon: <IconArrowsDiagonalMinimize2 aria-hidden="true" size={16} stroke={1.9} />,
+      onSelect: () => setExpanded(false),
+    }];
+  }
+  if (!beside) return undefined;
+  return [{
+    key: 'expand',
+    label: 'Expand',
+    icon: <IconArrowsDiagonal aria-hidden="true" size={16} stroke={1.9} />,
+    onSelect: () => setExpanded(true),
+  }];
 }

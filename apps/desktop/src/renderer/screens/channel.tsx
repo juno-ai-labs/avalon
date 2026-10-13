@@ -70,6 +70,22 @@ function ChannelStack({ channelId, threadId, workspace }: {
   const { session } = useAppSession();
   const space = useChannel(channelId);
   const [threadUsesTwoPanes, setThreadUsesTwoPanes] = useState(false);
+  // Held per thread, and dropped whenever the open thread changes, so a
+  // thread, the next one or the same one reopened, opens beside the Channel.
+  const [expandedThreadId, setExpandedThreadId] = useState<string | null>(null);
+  const [expansionFor, setExpansionFor] = useState(threadId);
+  if (expansionFor !== threadId) {
+    setExpansionFor(threadId);
+    setExpandedThreadId(null);
+  }
+  const expanded = threadId !== null && expandedThreadId === threadId;
+  const setExpanded = useCallback((expand: boolean): void => setExpandedThreadId(expand ? threadId : null), [threadId]);
+  // A breakout or a panel ends the expansion: the thread and what it opened
+  // split the window as they would have, and closing it returns to the pair.
+  const reportThreadUsesTwoPanes = useCallback((twoPanes: boolean): void => {
+    setThreadUsesTwoPanes(twoPanes);
+    if (twoPanes) setExpandedThreadId(null);
+  }, []);
   const [shown, setShown] = useState<SplitConversationMode>('split');
   const widthKey = layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', 'thread-width');
   const [threadWidth, setThreadWidth] = useState<number | null>(() => {
@@ -80,7 +96,7 @@ function ChannelStack({ channelId, threadId, workspace }: {
     setThreadWidth(width);
     writeLayout(widthKey, String(width));
   }, [widthKey]);
-  const shifted = threadId !== null && (threadUsesTwoPanes || shown === 'breakout');
+  const shifted = threadId !== null && (threadUsesTwoPanes || expanded || shown === 'breakout');
   const pane = useMemo<ChannelPaneContext | null>(() => threadId === null ? null : ({
     channelId,
     crumb: {
@@ -94,8 +110,10 @@ function ChannelStack({ channelId, threadId, workspace }: {
       onSelect: () => void navigate(channelRoute(channelId)),
     },
     shifted,
-    setThreadUsesTwoPanes,
-  }), [channelId, navigate, shifted, space, threadId]);
+    setThreadUsesTwoPanes: reportThreadUsesTwoPanes,
+    expanded,
+    setExpanded,
+  }), [channelId, expanded, navigate, reportThreadUsesTwoPanes, setExpanded, shifted, space, threadId]);
   return <ChannelPaneContextValue.Provider value={pane}>
     <SplitConversationLayout
       breakout={threadId === null ? null : <WorkstreamRoute key={threadId} />}
@@ -103,7 +121,7 @@ function ChannelStack({ channelId, threadId, workspace }: {
       main={<PaneVisibility visible={shown !== 'breakout'}>
         <ChannelPane channelId={channelId} openThreadId={threadId} workspace={workspace} />
       </PaneVisibility>}
-      mode={threadId === null ? 'main' : threadUsesTwoPanes ? 'breakout' : 'split'}
+      mode={threadId === null ? 'main' : threadUsesTwoPanes || expanded ? 'breakout' : 'split'}
       onBreakoutWidthChange={changeThreadWidth}
       onShownChange={setShown}
     />
