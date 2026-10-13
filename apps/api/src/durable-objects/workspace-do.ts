@@ -16991,6 +16991,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.spaceStorage().channelStats(viewer, onlySpaceId).map((stats) => ({
       channelId: stats.spaceId,
       threadCount: stats.threadCount,
+      newThreadCount: stats.newThreadCount,
       lastActivityAt: iso(stats.lastActivityAt),
       ...stats.read,
     }));

@@ -61,4 +61,12 @@ describe('RelativeTime', () => {
     expect(tooltip).toHaveTextContent(/2026/u);
     expect(tooltip).toHaveTextContent(/3:42/u);
   });
+
+  it('puts the surface’s words before the exact time', async () => {
+    render(<RelativeTime tipPrefix="Last update at" value={new Date(2026, 8, 10, 15, 42).toISOString()} />);
+
+    fireEvent.pointerMove(screen.getByRole('time'), { pointerType: 'mouse' });
+
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(/^Last update at .*2026.*3:42/u);
+  });
 });
