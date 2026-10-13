@@ -915,12 +915,10 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
   const naming = useNamingSkeleton(row);
   const live = !ghost && !row.pending;
   const open = (event: React.MouseEvent): void => {
-    if (opensElsewhere(event)) return;
-    // The open row clicked again is not a new open.
-    if (route === href) {
-      event.preventDefault();
-      return;
-    }
+    // The open row clicked again is not a new open, but it still asks for the
+    // pane expanded, in place of its own history entry, in case the reader
+    // collapsed it.
+    if (opensElsewhere(event) || route === href) return;
     const socket = socketOpenContext();
     markWorkstreamFeedOpenStarted(threadId, pinned ? 'pinned' : 'recent', socket.state, performance.now(), socket.socketLeaseId);
     markWorkstreamNavigation(threadId, openWorkstreamId(pathname) !== null);
@@ -943,6 +941,7 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
         onPointerCancel={live ? warmup.onPointerCancel : undefined}
         onPointerEnter={live ? warmup.onPointerEnter : undefined}
         onPointerLeave={live ? warmup.onPointerLeave : undefined}
+        replace={route === href}
         state={OPEN_EXPANDED}
         to={href}
         {...drag}
