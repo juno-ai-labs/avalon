@@ -8245,7 +8245,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     if (storage.completeBootstrap() !== "complete") return false;
     this.publishSpaceSnapshot();
+    // A new Organization seated its creator above and has nobody else yet;
+    // an existing one may have had members join while it was not open.
+    if (general === undefined) await this.seatEveryoneOnceSpacesOpen();
     return true;
+  }
+
+  /**
+   * Queue the one seating pass migration 103 runs (`backfillPersonalChannels`)
+   * now that this Organization's Spaces are open. A member who joined while
+   * they were not (the cutover reopened, or the Organization still opening)
+   * was answered `spaces_not_open` and is seated here, so no relationship
+   * delivery waits on a cutover that may never close. Idempotent: the pass
+   * seats nobody twice.
+   */
+  private async seatEveryoneOnceSpacesOpen(): Promise<void> {
+    this.scheduledAlarms.schedule({ kind: PERSONAL_CHANNEL_BACKFILL_ALARM_KIND, key: "workspace", dueAt: Date.now() });
+    await this.armNextAlarm();
   }
 
   /**
@@ -8264,8 +8280,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceSeatMemberRequestSchema, input, "seat_organization_member");
     this.assertWorkspace(request.workspaceId);
     const storage = this.spaceStorage();
-    if (!storage.ready() || !storage.bootstrapStatus().ready) return { seated: false };
-    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) return { seated: false };
+    if (!storage.ready() || !storage.bootstrapStatus().ready) return { seated: false, reason: "spaces_not_open" };
+    if (!await this.activeSpaceMember(request.workspaceId, request.userId)) return { seated: false, reason: "not_member" };
     if (storage.seatMember(request.userId)) this.publishSpaceSnapshot();
     if (storage.personalSpaceId(request.userId) !== null) return { seated: true, personalSpace: "present" };
     if (request.authorityGeneration === undefined) return { seated: true, personalSpace: "absent" };
@@ -10692,7 +10708,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     );
     this.assertWorkspace(request.workspaceId);
     const outcome = this.spaceStorage().completeBootstrap();
-    if (outcome === "complete") this.publishSpaceSnapshot();
+    if (outcome === "complete") {
+      this.publishSpaceSnapshot();
+      await this.seatEveryoneOnceSpacesOpen();
+    }
     return WorkspaceSpaceBootstrapFinalizeResultSchema.parse({ outcome });
   }
 
