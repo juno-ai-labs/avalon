@@ -226,9 +226,14 @@ it('correlates browser Google proof and account creation without claiming comple
   await drainWaitUntil();
   const events = db.prepare('SELECT envelope_json FROM telemetry_accepted_events ORDER BY rowid').all()
     .map(row => JSON.parse(String(row.envelope_json)) as { name:string;properties:{ flowId:string;clientPlatform:string;entryPlatform:string };identityScope:string });
-  expect(events.map(event => event.name)).toEqual(['signup_started','signup_verification_requested','signup_verification_completed','authentication_completed','signup_account_created']);
+  // One request per stage, so these come in order, except the two one sign-in
+  // emits together: each is written by its own deferred, awaiting accept, so
+  // either may land first.
+  const names = events.map(event => event.name);
+  expect(names.slice(0, 3)).toEqual(['signup_started','signup_verification_requested','signup_verification_completed']);
+  expect(names.slice(3).sort()).toEqual(['authentication_completed','signup_account_created']);
   expect(new Set(events.map(event => event.properties.flowId)).size).toBe(1);
-  expect(events.at(-1)).toMatchObject({ identityScope:'anonymous-epoch',properties:{ clientPlatform:'browser',entryPlatform:'browser',accountStatus:'new' } });
+  expect(events.find(event => event.name === 'signup_account_created')).toMatchObject({ identityScope:'anonymous-epoch',properties:{ clientPlatform:'browser',entryPlatform:'browser',accountStatus:'new' } });
 });
 
 it('tracks desktop signup through verified ticket exchange, excluding OAuth-only handoffs from authenticated counts', async () => {
