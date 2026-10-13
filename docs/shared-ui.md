@@ -160,7 +160,10 @@ the same crumb, which the product did not want.
 mark (a Channel whose appearance has not loaded); the narrow-pane rules that
 hide its name remain for that case alone. The bridge names the nearest crumb
 on desktop and ellipsizes it to its column, and shows marks alone at phone
-width, as before.
+width, as before. A mark only opens its level: an ancestor's menu (a thread's
+rename, Sidekicks and breakouts beside an expanded breakout) is reached by
+opening that level, which the product chose over giving marks a menu. Narrow
+panes already worked this way.
 
 Shipped in #1218.
 
