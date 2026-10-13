@@ -1,6 +1,6 @@
 import { ResourceIcon } from '@rally/ui/components/resource-icon';
-import { ActionTile, ActionTiles, TitleMenuHeader, TitlePillClose, TitlePillHeader } from '@rally/ui/components/title-pill';
-import { IconDownload, IconHistory, IconInfoCircle } from '@tabler/icons-react';
+import { ActionTile, ActionTiles, TitleMenuHeader, TitlePillAction, TitlePillClose, TitlePillHeader } from '@rally/ui/components/title-pill';
+import { IconArrowsDiagonal, IconDownload, IconHistory, IconInfoCircle } from '@tabler/icons-react';
 import { ChevronLeft, ChevronRight, History } from 'lucide-react';
 import type { AttachmentPreview } from './attachments';
 import { AttachmentGalleryThumbnails, AttachmentViewBody, useAttachmentView } from './attachment-lightbox';
@@ -16,10 +16,12 @@ import { RailSurface } from './rail-surface';
  * stays for the surfaces that have no panel of their own: search and the
  * Channel composer.
  */
-export function AttachmentPanel({ preview, leaving = false, onClose, onResize, width }: {
+export function AttachmentPanel({ preview, leaving = false, onClose, onExpand, onResize, width }: {
   preview: AttachmentPreview;
   leaving?: boolean;
   onClose: () => void;
+  /** Shows the item the panel is on in the full-window lightbox. */
+  onExpand?: (preview: AttachmentPreview) => void;
   onResize: (width: number) => void;
   width: number;
 }): React.JSX.Element | null {
@@ -63,7 +65,12 @@ export function AttachmentPanel({ preview, leaving = false, onClose, onResize, w
             </ActionTiles>
           </>,
         }}
-        trailing={<TitlePillClose label="Close panel" onClose={onClose} />}
+        trailing={<>
+          {onExpand && <TitlePillAction label="Expand" onClick={() => onExpand(many ? { ...preview, galleryIndex: view.activeIndex } : preview)}>
+            <IconArrowsDiagonal aria-hidden="true" size={16} stroke={1.9} />
+          </TitlePillAction>}
+          <TitlePillClose label="Close panel" onClose={onClose} />
+        </>}
       />
       <div
         aria-busy={view.loading || undefined}
