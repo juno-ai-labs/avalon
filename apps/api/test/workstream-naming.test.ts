@@ -990,6 +990,15 @@ describe("backfilling an existing thread's summary", () => {
     expect(description(database)).toBe(objective);
   });
 
+  it("keeps the summary when the name beside it is unusable", async () => {
+    const database = seededDatabase();
+    seedMessages(database, 1);
+    stubOpenRouter([], ".", undefined, "megaphone", summary);
+
+    expect(await summarizeExistingDescription(environment(database, []), target)).toBe("summarized");
+    expect(description(database)).toBe(summary);
+  });
+
   it("asks nothing where a person wrote the description", async () => {
     const database = seededDatabase();
     seedMessages(database, 1);

@@ -22,6 +22,7 @@ import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { copySpaceLink } from '../lib/copy-workstream-link';
 import { ChannelPaneContextValue, channelRoute, threadRoute, type ChannelPaneContext } from '../lib/navigation-routes';
 import { PaneVisibility } from '../lib/pane-visibility';
+import { useNow } from '../lib/clock';
 import { formatDayLabel } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import { CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY, channelFeedQueryKey } from '../lib/sidebar-list-store';
@@ -291,7 +292,9 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
           <Button disabled={feed.isFetchingNextPage} onClick={() => void feed.fetchNextPage()}>Show earlier threads</Button>
         </li>}
         {[...rows].reverse().flatMap((row, index, ordered) => {
-          const day = formatDayLabel(row.placedAt);
+          // Grouped by the local calendar date, year and all; the label is
+          // only for display, and two years' "Oct 2" are different days.
+          const day = new Date(row.placedAt).toDateString();
           const card = row.kind === 'thread'
             ? <ThreadCard
               author={row.thread.createdByUserId ? memberById.get(row.thread.createdByUserId) : undefined}
@@ -303,8 +306,8 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
             />
             : <LockedCard key={row.threadId} onOpen={openThread} placedAt={row.placedAt} threadId={row.threadId} />;
           const previous = ordered[index - 1];
-          if (previous && formatDayLabel(previous.placedAt) === day) return [card];
-          return [<DaySeparator key={`day:${row.kind === 'thread' ? row.thread.id : row.threadId}`} label={day} />, card];
+          if (previous && new Date(previous.placedAt).toDateString() === day) return [card];
+          return [<DaySeparator key={`day:${row.kind === 'thread' ? row.thread.id : row.threadId}`} placedAt={row.placedAt} />, card];
         })}
       </ol>
       {feed.isSuccess && rows.length === 0 && <p className="channel-feed-empty">No threads yet. Describe the work below and Rally starts a thread for it.</p>}
@@ -314,8 +317,13 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
   </div>;
 }
 
-/** Where the feed crosses into another day: "Today", "Yesterday", a weekday, a date. */
-function DaySeparator({ label }: { label: string }): React.JSX.Element {
+/**
+ * Where the feed crosses into another day: "Today", "Yesterday", a weekday, a
+ * date. It reads the shared clock itself, so "Today" turns into "Yesterday" at
+ * midnight without the feed re-rendering.
+ */
+function DaySeparator({ placedAt }: { placedAt: string }): React.JSX.Element {
+  const label = formatDayLabel(placedAt, new Date(useNow()));
   return <li aria-label={label} className="channel-feed-day" role="separator">
     <span aria-hidden="true">{label}</span>
   </li>;

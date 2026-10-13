@@ -10304,7 +10304,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(ThreadBackfillMessageSchema, input, "release_thread_backfill");
     this.assertWorkspace(request.workspaceId);
-    const released = releaseThreadBackfill(this.state.storage.sql, request.job, request.workstreamId);
+    const released = releaseThreadBackfill(this.state.storage.sql, request.job, request.workstreamId, request.attempt);
     await this.armNextAlarm();
     return released;
   }

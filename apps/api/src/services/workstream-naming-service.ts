@@ -572,12 +572,11 @@ async function generateName(env: Env, input: {
     // failed. The icon pass is the exception: it writes no name, so a name
     // that normalized away says nothing about the icon beside it.
     if (input.iconOnly) return { title: null, icon: result.icon ?? null, summary: null };
-    if (title === null) return NOTHING_GENERATED;
-    return {
-      title,
-      icon: result.icon ?? null,
-      summary: input.summarize ? normalizeGeneratedSummary(result.summary ?? "") : null,
-    };
+    // The summary stands on its own: it describes the request, not the name,
+    // and the backfill writes no name at all.
+    const summary = input.summarize ? normalizeGeneratedSummary(result.summary ?? "") : null;
+    if (title === null) return { ...NOTHING_GENERATED, summary };
+    return { title, icon: result.icon ?? null, summary };
   } catch (error) {
     logStructuredEvent(env, "warn", "workstream_naming_failed", {
       workspace_id: input.workspaceId,
