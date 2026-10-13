@@ -9,6 +9,8 @@ import {
   WorkspaceSpaceBootstrapFinalizeResultSchema,
   WorkspaceSpaceBootstrapPageSchema,
   WorkspaceSpaceChannelChangeResultSchema,
+  WorkspaceSeatMemberResultSchema,
+  personalSpaceIdFor,
   type SpaceBootstrapChannel,
   type WorkspaceSpaceBootstrapSettleRequest,
 } from "../durable-objects/workspace-space-protocol";
@@ -17,6 +19,7 @@ import { boundParameterChunks } from "../durable-objects/bound-parameters";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { SpaceService } from "./space-service";
+import { claimParentAnchor } from "./workstream-runtime-database";
 
 /**
  * The one-time cutover that gives an existing Organization its hierarchy.
@@ -443,4 +446,30 @@ export async function placeConnectorChannelInGeneral(
       });
     });
   }
+}
+
+/**
+ * Put a member who just became active in General and give them their Personal
+ * Channel; see docs/spaces.md#the-personal-channel.
+ *
+ * One object call when the Personal Channel exists, which is every call after
+ * the person's first. Otherwise its D1 anchor is written (as `ensureGeneral`
+ * writes General's) and the object asked again to create it. Throws so the
+ * relationship delivery that called it retries; every step is idempotent.
+ * Spaces that are not open settle the call: the object seats everyone when
+ * they open (`seatEveryoneOnceSpacesOpen`), and a delivery retried until then
+ * would wait on a cutover that may never close.
+ */
+export async function seatOrganizationMember(env: Env, workspaceId: string, userId: string): Promise<void> {
+  const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)));
+  const request = {
+    workspaceId: asWorkspaceId(workspaceId),
+    userId: asUserId(userId),
+    personalSpaceId: await personalSpaceIdFor(workspaceId, userId),
+  };
+  const seated = WorkspaceSeatMemberResultSchema.parse(await workspace.seatOrganizationMember(request));
+  if (!seated.seated || seated.personalSpace === "present") return;
+  const { generation } = await claimParentAnchor(env, workspaceId, request.personalSpaceId, "space");
+  WorkspaceSeatMemberResultSchema.parse(await workspace.seatOrganizationMember({ ...request, authorityGeneration: generation }));
 }

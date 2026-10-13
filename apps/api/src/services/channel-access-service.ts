@@ -173,7 +173,7 @@ export function spaceAccessError(code: SpaceErrorCode, channelTitle: string): Ap
     case "space_membership_final":
       return new ApiError(409, code, `“${channelTitle}” must belong to at least one channel`);
     case "space_protected":
-      return new ApiError(409, code, "General cannot be archived or made private");
+      return new ApiError(409, code, "This channel cannot be archived and its audience cannot be changed");
     case "space_default_audience_mismatch":
       return new ApiError(409, code,
         `Everyone who can read “${channelTitle}” must be able to use this resource`);

@@ -37,7 +37,7 @@ export const spaceFailureCopy: Record<SpaceFailure, string> = {
   // the first the wrong thing.
   space_access_denied: 'Your access to that channel doesn’t allow this.',
   space_not_found: 'That channel no longer exists.',
-  space_protected: 'General’s audience can’t be changed.',
+  space_protected: 'This channel can’t be archived, and its audience can’t be changed.',
   space_membership_final: 'Every thread needs a channel, and this would leave one with none. Add it to another channel first.',
   space_audience_incompatible: 'Some people who can read the thread would be left with no channel to find it in. Add it to a channel they can see first.',
   channel_scope_locked_by_space: 'An organization-wide channel still makes this thread public. Remove it from that channel first.',

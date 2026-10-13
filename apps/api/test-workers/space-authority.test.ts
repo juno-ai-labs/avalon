@@ -631,17 +631,18 @@ describe("WorkspaceDO space authority", () => {
   });
 
   it("given a reservation, when the Space's own directory effect lands, then it supersedes it", async () => {
-    const spaceId = await reserve("Hiring", "personal");
+    const spaceId = await reserve("Hiring");
 
     await workspace().applyWorkstreamDirectoryEffects({
       workspaceId: WORKSPACE_ID,
-      envelopes: [spaceEnvelope(spaceId, spaceDirectoryEffect("Hiring team", "workspace"), 2)],
+      envelopes: [spaceEnvelope(spaceId, spaceDirectoryEffect("Hiring team", "personal"), 2)],
     });
 
     // The reservation commits its hosted parent's provisional projection at
     // version one, so the Space's next projection applies over it under the
     // ordinary fence instead of colliding with it at the same version under a
-    // different hash.
+    // different hash. It takes the title and never the scope, which is
+    // WorkspaceDO's own: a stale `personal` does not make the Space private.
     await expect(workspace().spaceSummary({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId }))
       .resolves.toMatchObject({ ok: true, space: { name: "Hiring team", scope: "workspace" } });
   });

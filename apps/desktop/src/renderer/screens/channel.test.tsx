@@ -98,13 +98,13 @@ describe('a Channel', () => {
     // Placement 2 is a private thread this reader is not in: not a row, but
     // the page's latest number still carries it.
     api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 2, items: [
-      { placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: plan },
+      { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: plan },
     ] });
   });
 
   it('lists its threads down to now, beside the composer', async () => {
     renderChannel();
-    const feed = within(await screen.findByRole('list', { name: 'Threads in Outbound' }));
+    const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
     const rows = await feed.findAllByRole('listitem');
     expect(rows[0]).toHaveTextContent('A four-week outbound setup plan.');
     expect(within(rows[0]!).getByRole('button', { name: 'Q4 plan' })).toBeInTheDocument();
@@ -174,33 +174,57 @@ describe('a Channel', () => {
 
   it('marks each day the feed crosses once, above its first thread', async () => {
     api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [
-      { placedAt: '2026-10-02T15:00:00.000Z', attentionSequenceNumber: 3, thread: { ...plan, id: 'later' } },
-      { placedAt: '2026-10-02T14:00:00.000Z', attentionSequenceNumber: 2, thread: plan },
-      { placedAt: '2026-09-20T12:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, id: 'earlier' } },
+      { kind: 'thread', placedAt: '2026-10-02T15:00:00.000Z', attentionSequenceNumber: 3, thread: { ...plan, id: 'later' } },
+      { kind: 'thread', placedAt: '2026-10-02T14:00:00.000Z', attentionSequenceNumber: 2, thread: plan },
+      { kind: 'thread', placedAt: '2026-09-20T12:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, id: 'earlier' } },
     ] });
     renderChannel();
-    const feed = within(await screen.findByRole('list', { name: 'Threads in Outbound' }));
+    const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
     await feed.findAllByRole('listitem');
     expect(feed.getAllByRole('separator')).toHaveLength(2);
   });
 
   it('keeps the same date in different years apart', async () => {
     api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [
-      { placedAt: '2025-10-02T12:00:00.000Z', attentionSequenceNumber: 2, thread: plan },
-      { placedAt: '2024-10-02T12:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, id: 'earlier' } },
+      { kind: 'thread', placedAt: '2025-10-02T12:00:00.000Z', attentionSequenceNumber: 2, thread: plan },
+      { kind: 'thread', placedAt: '2024-10-02T12:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, id: 'earlier' } },
     ] });
     renderChannel();
-    const feed = within(await screen.findByRole('list', { name: 'Threads in Outbound' }));
+    const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
     await feed.findAllByRole('listitem');
     expect(feed.getAllByRole('separator')).toHaveLength(2);
   });
 
-  it('names somebody it cannot look up as someone, not Rally', async () => {
+  it('draws a Channel message as its author speaking, Rally or a member, in time order among the threads', async () => {
+    const alex = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b';
+    api.getWorkspaceMembers.mockResolvedValueOnce([
+      { id: alex, name: 'Casey Lane', email: 'alex@rally.test', role: 'member' },
+    ] as never);
     api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [
-      { placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, createdByUserId: 'gone' } },
+      { kind: 'message', placedAt: '2026-10-02T02:00:00.000Z', message: { id: '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a60', author: { kind: 'member', userId: alex }, body: 'Kicking off **Q4**' } },
+      { kind: 'thread', placedAt: '2026-10-02T01:00:00.000Z', attentionSequenceNumber: 1, thread: plan },
+      { kind: 'message', placedAt: '2026-10-02T00:00:00.000Z', message: { id: '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a61', author: { kind: 'rally' }, body: 'Welcome to the Channel' } },
     ] });
     renderChannel();
-    const feed = within(await screen.findByRole('list', { name: 'Threads in Outbound' }));
+    const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
+    const rows = await feed.findAllByRole('listitem');
+    // Oldest first, reading down to now.
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining('Welcome to the Channel'),
+      expect.stringContaining('Q4 plan'),
+      expect.stringContaining('Kicking off Q4'),
+    ]);
+    expect(rows[0]).toHaveTextContent('Rally');
+    await waitFor(() => expect(rows[2]).toHaveTextContent('Casey Lane'));
+    expect(within(rows[2]!).getByText('Q4', { selector: 'strong' })).toBeInTheDocument();
+  });
+
+  it('names somebody it cannot look up as someone, not Rally', async () => {
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [
+      { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, createdByUserId: 'gone' } },
+    ] });
+    renderChannel();
+    const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
     expect((await feed.findAllByRole('listitem'))[0]).toHaveTextContent('Someone');
   });
 
@@ -210,7 +234,7 @@ describe('a Channel', () => {
       { id: alex, name: 'Casey Lane', email: 'alex@rally.test', role: 'member' },
     ] as never);
     api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [
-      { placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, objective: '@Casey Lane @Nobody here are the **mockups**' } },
+      { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, objective: '@Casey Lane @Nobody here are the **mockups**' } },
     ] });
     const { container } = renderChannel();
     await waitFor(() => expect(container.querySelector('.channel-feed-summary .mention-chip')).not.toBeNull());
@@ -227,7 +251,7 @@ describe('a Channel', () => {
       { id: 'alex', name: 'Casey Lane', email: 'alex@rally.test', role: 'member' },
     ] as never);
     api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [
-      { placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, objective: 'Ask @alex@rally.test\n\n- [ ] Follow up' } },
+      { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, objective: 'Ask @alex@rally.test\n\n- [ ] Follow up' } },
     ] });
     const { container } = renderChannel();
     await waitFor(() => expect(container.querySelector('.channel-feed-summary .mention-chip')).not.toBeNull());
@@ -240,7 +264,7 @@ describe('a Channel', () => {
   it('offers no composer to somebody who reaches the Channel only through a thread in it', async () => {
     spaces.data = outbound('through_channel');
     renderChannel();
-    await screen.findByRole('list', { name: 'Threads in Outbound' });
+    await screen.findByRole('list', { name: 'Outbound feed' });
     expect(screen.queryByText('composer')).not.toBeInTheDocument();
   });
 
@@ -258,7 +282,7 @@ describe('a Channel', () => {
     it('offers no import to somebody who cannot start a thread in the Channel', async () => {
       spaces.data = outbound('through_channel');
       renderChannel();
-      await screen.findByRole('list', { name: 'Threads in Outbound' });
+      await screen.findByRole('list', { name: 'Outbound feed' });
       expect(screen.queryByRole('button', { name: 'Import from Claude or ChatGPT' })).toBeNull();
     });
   });
@@ -351,6 +375,18 @@ describe('a Channel', () => {
     await waitFor(() => expect(api.updateSpacePresentation).toHaveBeenCalledWith('outbound', { name: 'Everyone', iconKey: 'briefcase', colorKey: 'blue' }));
     fireEvent.pointerDown(screen.getByRole('button', { name: /^Channel menu:/u }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
+    await screen.findByRole('menuitem', { name: 'Icon' });
+    expect([...screen.getByRole('menu').querySelectorAll('[role^="menuitem"]')].map((item) => item.textContent?.trim()))
+      .toEqual(['Icon', 'Pinned in my sidebar']);
+  });
+
+  it('offers a Personal Channel no people, no audience switch and no archive', async () => {
+    spaces.data = { waterline: 1, items: [{ ...outbound('participant').items[0]!, scope: 'individual' }] };
+    renderChannel();
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Outbound' }), { button: 0, ctrlKey: false });
+
+    expect(await screen.findByRole('menuitem', { name: 'Add people' })).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'More' }));
     await screen.findByRole('menuitem', { name: 'Icon' });
     expect([...screen.getByRole('menu').querySelectorAll('[role^="menuitem"]')].map((item) => item.textContent?.trim()))
       .toEqual(['Icon', 'Pinned in my sidebar']);

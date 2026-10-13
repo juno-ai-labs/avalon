@@ -20,6 +20,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { asUserId, asWorkstreamId } from "@rally/contracts";
 import { DemoPackSchema, PLACEHOLDER_DEMO_PACK } from "../src/services/demo-pack";
+import { seatOrganizationMember } from "../src/services/space-bootstrap-service";
 import { SpaceService } from "../src/services/space-service";
 
 import { demoReadinessManifest, checkDemoReadiness } from "../src/services/demo-readiness";
@@ -40,6 +41,7 @@ import {
   demoRoomStub,
   demoRunStub,
   demoSeedEnv,
+  demoWorkspaceStub,
   openDemoTestSession,
   playDemoAction,
   seedDemoWorkspaceControlPlane,
@@ -180,6 +182,18 @@ describe("the readiness barrier", () => {
     const after = await checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest });
     expect(after.gaps).toEqual([]);
     expect(after.ready).toBe(true);
+
+    // Ready also means seated: the presenter out of General and their Personal
+    // Channel, as a member who left would be, is named, and seating them
+    // again (what preparation does) clears it.
+    await runInDurableObject(demoWorkspaceStub(), (_instance, state) => {
+      state.storage.sql.exec("DELETE FROM space_viewers WHERE user_id = ?", DEMO_PRESENTER_ID);
+    });
+    const unseated = await checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest });
+    expect(unseated.gaps.map((gap) => gap.code)).toEqual(["general_not_seated", "personal_channel_missing"]);
+    await seatOrganizationMember(demoSeedEnv(), DEMO_WORKSPACE_ID, DEMO_PRESENTER_ID);
+    expect((await checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest })).gaps)
+      .toEqual([]);
   }, 60_000);
 
   it("waits for a seeded Sidekick to reach the presenter's library and its briefing to reach its history", async () => {

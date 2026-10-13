@@ -22,7 +22,7 @@ const defaultResourceId = "00000000-0000-7000-8000-000000000207";
 
 function space(overrides: Partial<{
   id: string;
-  scope: "personal" | "workspace";
+  scope: "personal" | "workspace" | "individual";
   participantUserIds: string[];
   defaultResourceIds: string[];
   systemRole: "general" | null;
@@ -87,6 +87,15 @@ describe("starting a Channel inside a Space", () => {
       requestedParticipantUserIds: [participantId],
       narrowInPrivateSpaces: true,
     })).toMatchObject({ scope: "personal", participantUserIds: [participantId] });
+  });
+
+  it("given a thread started in a Personal Channel, when creation resolves its start, then it is private", () => {
+    expect(resolveSpaceWorkstreamStart({
+      spaces: [space({ scope: "individual", participantUserIds: [creatorId] })],
+      scope: "workspace",
+      requestedParticipantUserIds: [],
+      narrowInPrivateSpaces: true,
+    }).scope).toBe("personal");
   });
 
   it("given a connector's Organization-wide thread in a private Space, when creation resolves its start, then the audience it resolved stands", () => {

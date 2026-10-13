@@ -47,6 +47,10 @@ Finishing saves `complete` and then leaves for the first work stream through
 creator's is. No workstream or
 agent run is created by onboarding. The unshipped starter columns and removed first-task stages are not part of the schema.
 
+Joining an organization, as its creator or an invited member, makes the person
+a participant of General and gives them their own Personal Channel; see
+[the Personal Channel](spaces.md#the-personal-channel).
+
 Creating an organization prefills its name. `GET /onboarding/organization-suggestion`
 takes the domain of the signed-in person's email and fetches `https://<domain>/`,
 following redirects by hand so every hop passes `assertSafePublicUrl`. It reads

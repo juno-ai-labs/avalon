@@ -8831,6 +8831,15 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   place-items: center;
   width: 36px;
 }
+/* A message in the Channel itself: on the leading side, as speech is in a
+   thread, and not a button, because there is nothing to open. */
+.channel-feed-item.is-message { justify-content: flex-start; }
+.channel-feed-message { align-items: flex-start; display: flex; gap: 12px; max-width: min(560px, 100%); }
+.channel-feed-message-body { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.channel-feed-message-text { color: var(--av-sys-color-text-default); font-size: 14.5px; line-height: 1.55; overflow-wrap: anywhere; text-wrap: pretty; }
+.channel-feed-message-text .markdown-body { color: inherit; font-size: inherit; line-height: inherit; }
+.channel-feed-message-text .markdown-body > :first-child { margin-top: 0; }
+.channel-feed-message-text .markdown-body > :last-child { margin-bottom: 0; }
 .channel-feed-empty { color: var(--av-sys-color-text-muted); margin: auto; max-width: 420px; padding: 24px; text-align: center; }
 .channel-composer-dock { position: relative; }
 .channel-composer-dock .composer-stack { margin: 0 auto; max-width: 760px; }

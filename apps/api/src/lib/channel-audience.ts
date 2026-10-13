@@ -28,7 +28,9 @@ export function resolveSpaceWorkstreamStart(input: {
   narrowInPrivateSpaces?: boolean;
 }): { scope: Scope; participantUserIds: string[]; originResourceIds: string[] } {
   return {
-    scope: input.narrowInPrivateSpaces === true && input.spaces.some((space) => space.scope === "personal")
+    // Private is any Channel that is not Organization-wide: a private Channel
+    // or a Personal Channel (`individual`).
+    scope: input.narrowInPrivateSpaces === true && input.spaces.some((space) => space.scope !== "workspace")
       ? "personal"
       : input.scope,
     participantUserIds: [...new Set(input.requestedParticipantUserIds)],
