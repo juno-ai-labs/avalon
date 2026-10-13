@@ -299,7 +299,8 @@ The right panel and the Breakout pane share one place. The panel holds the
 desktop's embedded browser, or whatever the conversation opened: a resource
 with its actions, an attachment, a citation's file, or a prior version. None of
 these opens as a modal. The panel's header is a pane header: the item's title
-pill, its actions in the pill's menu, and the round close button. `ConversationSurface` scopes the panel to the
+pill, its actions in the pill's menu, and the round close button.
+`ConversationSurface` scopes the panel to the
 conversation that opened it: `railScope` is the parent id for Main and
 `parentId:substreamId` for a Breakout, with `#launch` for the launch surface. A
 surface only closes, fades or restores a panel it owns.
@@ -316,12 +317,22 @@ surface only closes, fades or restores a panel it owns.
 A hidden pane stays mounted, so returning to the split neither reconnects nor
 loses scroll. When the Breakout has the thread's place, the thread's pill
 stacks at the left of the Breakout's header, and pressing its title closes the
-panel to return to the split. Opening a Breakout while the thread holds a
-panel closes that panel first. The split's width is device-local under
+panel to return to the split. Opening a Breakout, or starting one from a message, while the thread
+holds a panel closes that panel first. The split's width is device-local under
 `layoutKey(…, 'breakout-width')` and clamps both panes to the conversation
 minimum. A split too narrow for two minimums (under 848px of content) shows
 the Breakout alone instead, measured by `SplitConversationLayout` itself; its
 close button returns to the thread.
+
+A pane header's trailing buttons are one `IconGroup`
+(`packages/ui/src/components/icon-group.tsx`), which spaces them. Its `actions`
+fold into a "⋯" dropdown at phone width (640px and under), and whenever
+`TitlePillHeader` measures the unfolded row coming closer to the centred pill
+than the gap between the buttons. Folded, the pill moves left just far enough
+to keep that same gap from "⋯", and no further. The measure is taken from the
+unfolded, centred layout rather than from where things sit, so folding or
+moving the pill never undoes the decision; read live, the distance would grow
+as soon as the row folded and the header would flip back.
 
 ### Web links
 
