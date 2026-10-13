@@ -444,7 +444,9 @@ describe("Channel read state", () => {
       item.thread.id, item.attentionSequenceNumber,
     ]);
     expect(ordinals).toEqual(expect.arrayContaining([[OPEN_THREAD, 3], [PRIVATE_THREAD, 2]]));
-    expect(readState(await stats(MEMBER, channelId))).toEqual({ latest: 3, readThrough: 0, firstUnread: 1, hasUnread: true });
+    // The first unread row is the one this member sees: the re-placed thread at 3,
+    // not its removed placement at 1 or the private thread at 2.
+    expect(readState(await stats(MEMBER, channelId))).toEqual({ latest: 3, readThrough: 0, firstUnread: 3, hasUnread: true });
   });
 
   it("given the newest placement since removed, when the member reads the feed and acknowledges what it says, then the Channel is read", async () => {
@@ -490,10 +492,17 @@ describe("Channel read state", () => {
     await publish(LATE_THREAD, [threadEffect("Late addition", { scope: "personal" }), viewerEffect(OWNER)]);
     await place(channelId, LATE_THREAD);
 
-    expect(await stats(MEMBER, channelId)).toMatchObject({ latestAttentionSequenceNumber: 3, newThreadCount: 0, hasUnread: false });
-    // Added to it, the same member is told about the same placement.
+    expect(await stats(MEMBER, channelId)).toMatchObject({
+      latestAttentionSequenceNumber: 3, newThreadCount: 0, hasUnread: false, firstUnreadSequenceNumber: null,
+    });
+    // An open thread placed after it is the first unread row, not the hidden one.
+    await openThreadObject(MEMBER_THREAD);
+    await publish(MEMBER_THREAD, [threadEffect("Open follow-up"), viewerEffect(OWNER)]);
+    await place(channelId, MEMBER_THREAD);
+    expect(await stats(MEMBER, channelId)).toMatchObject({ newThreadCount: 1, hasUnread: true, firstUnreadSequenceNumber: 4 });
+    // Added to the private one, the same member is told about it too.
     await publish(LATE_THREAD, [viewerEffect(MEMBER)]);
-    expect(await stats(MEMBER, channelId)).toMatchObject({ newThreadCount: 1, hasUnread: true });
+    expect(await stats(MEMBER, channelId)).toMatchObject({ newThreadCount: 2, hasUnread: true, firstUnreadSequenceNumber: 3 });
   });
 
   it("given a guest who reaches a Channel through a thread in it, when they read the stats, then the Channel is never unread for them", async () => {
