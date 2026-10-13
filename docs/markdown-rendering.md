@@ -956,8 +956,8 @@ would drift from this one, and drew no Markdown. Storing the opening message's
 mentions on the thread summary would be exact, but needs a server and contract
 change for a line the client can already resolve with the roster it holds.
 
-**Consequences:** Every glance, the resource embed card's included, now draws
-mention chips; anything added to the identity cells must stay a span with no
+**Consequences:** The feed card is the one glance today, and any later glance
+draws mention chips too; anything added to the identity cells must stay a span with no
 destination, or it puts a link inside a card's button. A summary's names are
 only as good as the member roster: a guest, who has none, sees plain text, and
 two members with one name resolve to neither, as they do on send.
