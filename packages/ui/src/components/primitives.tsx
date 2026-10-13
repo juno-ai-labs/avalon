@@ -420,6 +420,11 @@ export function Avatar({
   );
 }
 
+/** Rally's own avatar: the brand "R", wherever Rally sits beside people. */
+export function RallyAvatar({ size = 'medium' }: { size?: 'small' | 'medium' | 'large' }): React.JSX.Element {
+  return <span className={clsx('avatar', `avatar-${size}`, 'avatar-rally')}><span className="avatar-fallback">R</span></span>;
+}
+
 export function AvatarStack({
   members,
   limit = 4,
