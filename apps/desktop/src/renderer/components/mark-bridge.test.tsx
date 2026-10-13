@@ -48,6 +48,13 @@ describe('MarkBridge', () => {
     expect(tooltip).toHaveTextContent('Open channel');
   });
 
+  it('names only the last mark when asked to', () => {
+    render(<MarkBridge items={items(vi.fn(), vi.fn())} labelLast />);
+
+    expect(screen.getByRole('button', { name: /^Open channel/ }).textContent).toBe('');
+    expect(screen.getByRole('button', { name: /^Open thread/ })).toHaveTextContent('Prepare');
+  });
+
   it('draws nothing for no marks', () => {
     const { container } = render(<MarkBridge items={[]} />);
 
@@ -76,6 +83,20 @@ describe('TitlePillHeader', () => {
     />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Open channel: General' }));
+
+    expect(openChannel).toHaveBeenCalledOnce();
+  });
+
+  it('gives the lone Channel crumb over a thread a bridge that names it', () => {
+    const openChannel = vi.fn();
+    render(<TitlePillHeader
+      ancestors={[level('channel', 'General', { mark: channel, name: 'General', action: 'Open channel' }, openChannel)]}
+      current={level('thread', 'Prepare')}
+    />);
+
+    const crumb = screen.getByRole('button', { name: 'Open channel: General' });
+    expect(crumb).toHaveTextContent('General');
+    fireEvent.click(crumb);
 
     expect(openChannel).toHaveBeenCalledOnce();
   });
