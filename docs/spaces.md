@@ -170,8 +170,10 @@ a participant may place a Channel into it (`canEdit`). Guests are shown only
 Organization-wide Spaces through `sharedNavigationSpaces`.
 
 A participant leaves a private Space by sending its audience without
-themselves; any participant may take themselves out, and only an owner or admin
-may take out somebody else. The Space then no longer exists for them, so
+themselves; any participant but the last may take themselves out, and only an
+owner or admin may take out somebody else. The last participant stays: the
+people menu disables removal at one person, as it does for a thread, and
+`UpdateSpaceAudienceRequestSchema` requires at least one participant. The Space then no longer exists for them, so
 WorkspaceDO answers `{ ok: true, left: true }` and `PATCH /spaces/:id/audience`
 answers `204` rather than a summary. The desktop adds the actor to the list only
 when they turn **Public to organization** off, so that the person making a
@@ -1834,7 +1836,10 @@ the remaining participants to somebody who just lost the right to see them.
 
 **Consequences:** A released desktop never sends a leave, so it never meets the
 `204`. Any new client that sends an audience without its own user must accept
-a `204`.
+a `204`. The last participant still cannot leave; that would need an answer for
+a private Space nobody can open.
+
+Shipped in [#1207](https://github.com/juno-ai-labs/avalon/pull/1207).
 
 ### 2026-10-10: A Space is the product's Channel, and may be private again
 
