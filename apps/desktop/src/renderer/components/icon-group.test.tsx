@@ -43,8 +43,20 @@ describe('IconGroup', () => {
     fireEvent.pointerDown(screen.getByRole('button', { name: 'More actions' }), { button: 0, ctrlKey: false });
     const row = await screen.findByRole('menuitemcheckbox', { name: 'Stored data' });
     expect(row).toHaveAttribute('aria-checked', 'true');
+    // Radix draws the indicator only while checked, so this is the visible check.
+    expect(row.querySelector('.icon-group-menu-check svg')).not.toBeNull();
     fireEvent.click(row);
     expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws no check on a toggle that is off', async () => {
+    render(<Tooltip.Provider>
+      <IconGroup actions={[{ key: 'data', label: 'Stored data', icon: null, pressed: false, onSelect: () => undefined }]} />
+    </Tooltip.Provider>);
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More actions' }), { button: 0, ctrlKey: false });
+    const row = await screen.findByRole('menuitemcheckbox', { name: 'Stored data' });
+    expect(row.querySelector('.icon-group-menu-check')).toBeNull();
   });
 
   it('draws no "More" button when it has no actions to fold', () => {
