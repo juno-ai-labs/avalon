@@ -1,5 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { IconChevronDown, IconChevronRight, IconCornerDownRight, IconSearch, IconX } from '@tabler/icons-react';
+import { IconChevronDown, IconChevronRight, IconSearch, IconX } from '@tabler/icons-react';
 
 import { IconGroup, type IconGroupAction } from './icon-group';
 import { MarkBridge, type MarkBridgeItem } from './mark-bridge';
@@ -488,9 +488,4 @@ export function TitlePillClose({ label, onClose }: { label: string; onClose: () 
   return <TitlePillAction label={label} onClick={onClose}>
     <IconX aria-hidden="true" size={16} stroke={1.9} />
   </TitlePillAction>;
-}
-
-/** A Breakout's mark in its title pill: the arrow its chips and rows wear. */
-export function BreakoutPillIcon(): React.JSX.Element {
-  return <IconCornerDownRight aria-hidden="true" className="title-pill-breakout-icon" size={15} stroke={1.9} />;
 }

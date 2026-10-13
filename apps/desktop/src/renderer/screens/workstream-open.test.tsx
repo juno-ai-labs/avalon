@@ -854,8 +854,8 @@ describe('socket-first channel open', () => {
     }, childId);
 
     expect(await screen.findByRole('button', { name: 'Breakout menu: Private child' })).toBeInTheDocument();
-    // The Breakout's pill wears the breakout arrow; its own icon is chosen from its menu.
-    expect(screen.queryByRole('button', { name: 'Change Private child icon' })).not.toBeInTheDocument();
+    // Like a thread's pill, the Breakout's pill icon is its appearance picker.
+    expect(screen.getByRole('button', { name: 'Change Private child icon' })).toBeInTheDocument();
     act(() => client.setQueryData(['workstream', workstreamId], { ...parent, appearance: { icon: 'heart', color: 'blue' } }));
 
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Thread menu: Recovered channel' }), { button: 0, ctrlKey: false });
