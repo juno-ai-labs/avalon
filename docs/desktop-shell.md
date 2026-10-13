@@ -73,8 +73,8 @@ left so it shows clear of the nested one, and the deepest badge's corner lands
 where a lone badge's would. A badge with a `label` names itself in a tooltip
 on hover; the tip sits on the badge's fill rather than its ring, so hovering a
 nested badge opens only its own. A badge either draws a symbol in its own
-ink and fill, or holds `content` the caller draws, such as an avatar, which the
-badge sizes to itself.
+ink and fill, or holds `content` the caller draws, such as an avatar; an
+`.avatar` is sized to the badge.
 
 **Channels**: what the person pinned, in their order (drag to reorder), then
 every other Channel they may see, ordered **A–Z** (default), **Recent** (newest
@@ -418,9 +418,7 @@ is new in the shared primitives, and the composer's mention list uses it too.
 **Why:** The badge drew Rally as a sparkle and every person as initials on one
 accent wash, so it matched neither the mention list nor the person's own look.
 The product owner asked for the sidebar to show the avatar people see
-everywhere else. Copying the colours into the badge first fixed the colour but
-dropped the person's chosen shape and photo, and left a second copy of Rally's
-mark to drift.
+everywhere else.
 
 **Considered and rejected:** Keeping `text` and passing the person's colour and
 initials through it. It cannot draw a shape or a photo, and every later change
@@ -430,6 +428,8 @@ to the avatar would need repeating in the badge.
 avatar, never a copy of its colours. The badge's CSS strips the avatar's
 border and lets its initials take the badge's size; an avatar that needs more
 than that to fit a badge has to change here too.
+
+Shipped in [#1217](https://github.com/juno-ai-labs/avalon/pull/1217).
 
 ### 2026-10-13 — A Breakout pill wears its glyph, like a thread pill
 
