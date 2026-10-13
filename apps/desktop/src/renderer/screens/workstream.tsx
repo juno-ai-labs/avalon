@@ -67,7 +67,6 @@ export {
 
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { channelRoute, useChannelPane } from '../lib/navigation-routes';
-import { useThreadChannels } from '../lib/thread-channels';
 import { usePinAction, usePinnedIds } from '../lib/pins';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { normalizeHarnessStatus } from '../lib/api';
@@ -690,7 +689,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   // (`docs/pane-stack.md`).
   const channelPane = useChannelPane();
   const navigate = useNavigate();
-  const threadChannels = useThreadChannels(id, row?.spaceIds ?? parent.data?.spaceIds ?? [], channelWritable);
   const threadUsesTwoPanes = breakoutPaneOpen || mainOwnsRail;
   const setThreadUsesTwoPanes = channelPane?.setThreadUsesTwoPanes;
   useEffect(() => {
@@ -777,7 +775,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         /> : undefined}
         addSidekick={(context || channelRail) && <SidekickPicker substreamId="0" workstreamId={id} />}
         breakouts={breakoutMarks}
-        channels={conversationScoped ? undefined : threadChannels}
         // The update re-runs the import in the embedded browser, which only the Mac app has.
         onImportUpdates={api && desktopServicesAvailable() && importedSourceUpdatable(importedSource.data) ? () => setImportUpdateOpen(true) : undefined}
         onOpenArtifact={context?.openArtifact}
