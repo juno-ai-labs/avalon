@@ -48,25 +48,22 @@ creator's is. No workstream or
 agent run is created by onboarding. The unshipped starter columns and removed first-task stages are not part of the schema.
 
 Creating an organization prefills its name. `GET /onboarding/organization-suggestion`
-takes the domain of the signed-in person's email, fetches `https://<domain>/`,
-reads only up to the end of `<head>`, and answers `og:site_name`, or else the
-`<title>` segment that matches the domain ("Acme | Tools for builders" gives
-"Acme"), skipping labels such as "Home". Personal mail domains (gmail.com and
-the like) and RFC 2606 test names are never fetched. Every failure answers
-`{ name: null }`.
+takes the domain of the signed-in person's email and fetches `https://<domain>/`,
+following redirects by hand so every hop passes `assertSafePublicUrl`. It reads
+only up to the end of `<head>` (at most `MAX_HOMEPAGE_HEAD_BYTES`) and answers
+`og:site_name`, or else the `<title>` segment that matches the domain ("Acme |
+Tools for builders" gives "Acme"), after dropping labels such as "Home".
+Personal mail domains and RFC 2606 test names are never fetched. Every failure
+answers `{ name: null }`.
 
-The answer is cached per domain in Global D1 (`organization_name_suggestions`,
-migration 0123) for 30 days, and creating an account (Google or email sign-in)
-reads it into the cache in the background, so the create step normally answers
-from one D1 read. Each read ends in one `OrganizationNameOutcome`: `named`,
-`unnamed` (HTML that names nothing), `missing` (a 4xx or no body), `not_html`,
-or `unreachable` (a network error or a 5xx). The row stores the outcome, and
-the table's checks hold `name` set exactly when it is `named` and refuse
-`unreachable`, so one bad minute never hides a name for a month. An expired row
-is replaced on the next read. The card
-opens without waiting for it and fills the field only while it is empty and
-untouched, so the suggestion never replaces what the person typed or a
-remembered name.
+Answers are cached per domain in Global D1 (`organization_name_suggestions`) for
+30 days, and creating an account (Google or email sign-in) fills the cache in
+the background, so the create step normally answers from one D1 read. Each read
+ends in one `OrganizationNameOutcome`; every outcome but `unreachable` (a
+network error, a 5xx, or a redirect loop) is cached, and the row stores which
+one it was. The card opens without waiting and fills the field only while it is
+empty and untouched, so the suggestion never replaces what the person typed or
+a remembered name.
 
 The invite page uses manual email chips separated by spaces, commas or semicolons.
 Before sending, it reconciles pending invitations and active members so retrying a
@@ -151,36 +148,28 @@ Onboarding no longer starts an agent run or a connector authorization.
 
 **What changed:** The create-organization card on the Mac app and in the
 browser fills its name from the homepage of the person's email domain, through
-a new identity route. Account creation reads the name ahead into a per-domain
-D1 cache that holds each answer for 30 days. The `<title>` and `<meta>` readers moved out of site social
-previews into `lib/html-metadata.ts` so both use one copy.
+a new identity route backed by a per-domain D1 cache that account creation
+fills. The `<title>` and `<meta>` readers moved out of site social previews into
+`lib/html-metadata.ts` so both use one copy.
 
 **Why:** Product asked that signup suggest the organization name rather than
-start empty. Most work addresses sit on a domain whose homepage already names
-the company.
+start empty, read at account creation and kept for 30 days. Most work addresses
+sit on a domain whose homepage already names the company.
 
-**Considered and rejected:** Returning the suggestion with `GET /onboarding`.
-That read gates the screen, and a slow third-party homepage would have held the
-whole signup step. A separate read lets the card open at once. Falling back to
-the capitalized domain label when the page offers nothing was left out; it is a
-one-line addition if wanted.
+**Considered and rejected:** Returning the suggestion with `GET /onboarding`,
+which gates the screen: a slow third-party homepage would have held the whole
+step. Caching per user, when the answer depends only on the domain. Falling back
+to the capitalized domain label when the page names nothing; it is a one-line
+addition if wanted.
 
-Fetching only when the create step opens was the first version; the name then
-appeared about half a second after the card. Product asked for the read at
-account creation with a 30-day cache instead, which also means colleagues from
-one domain share a single read. The cache is keyed by domain, not by user,
-because the answer depends only on the domain.
-
-**Consequences:** The route makes an outbound request to a host the person's
-email names, so it must keep refusing anything that is not a public hostname
-(`assertSafePublicUrl`) and must never return more than a validated workspace
-name. It has no timeout of its own: nothing waits on it, and a hung homepage
-holds only that one request. The 30-day TTL is the product's number
-(`ORGANIZATION_NAME_SUGGESTION_TTL_MS`). Anything that starts caching
-unreachable homepages turns a transient outage into a month without a name; the
-outcome enum, not a null-versus-undefined convention, is what keeps the two
-apart, and a new outcome has to be placed on one side of it in both the enum
-and the table's check.
+**Consequences:** The fetched host is chosen by whoever signs up, so every hop
+must keep passing `assertSafePublicUrl`, the head read must stay bounded by
+`MAX_HOMEPAGE_HEAD_BYTES` (1 MB, chosen by the product owner from the isolate
+memory arithmetic in its comment), and only a validated
+workspace name may leave the route. There is no timeout: nothing waits on the
+read. An `unreachable` read must never be cached, or a short outage hides a name
+for a month; a new outcome has to be placed on one side of that line in both the
+enum and the table's check.
 
 ### 2026-10-12 — Remove the introduction screens
 

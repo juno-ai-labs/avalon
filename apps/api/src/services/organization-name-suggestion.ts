@@ -47,6 +47,31 @@ export function organizationEmailDomain(email: string): string | null {
 export const ORGANIZATION_NAME_SUGGESTION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
+ * Bounds: bytes of one homepage held in memory while looking for the end of
+ *   its `<head>`.
+ * Without it: the email domain is chosen by whoever signs up, so its homepage
+ *   can stream forever without `</head>` and grow the buffer until the isolate
+ *   runs out of memory, taking every request sharing it down too.
+ * Direction: upper bound.
+ * Trips: the read stops and ends `too_large`, which is cached like any other
+ *   answer; the person gets no suggestion.
+ * Derived: half of the 128 MB Workers isolate memory limit kept for everything
+ *   else, at up to 2 bytes of JS string per byte read, across ~32 of these
+ *   reads at once in one isolate: 64 MB / (2 x 32) = 1 MB. Most homepage heads
+ *   are well under 100 KB; heavy ones with inlined CSS/JS reach a few hundred.
+ *   Chosen by the product owner on PR #1223.
+ */
+export const MAX_HOMEPAGE_HEAD_BYTES = 1024 * 1024;
+
+/**
+ * Redirects followed before giving up, transcribed from the Fetch Standard's
+ * HTTP-redirect fetch ("If request's redirect count is 20, then return a
+ * network error"), https://fetch.spec.whatwg.org/#http-redirect-fetch, read
+ * 2026-10-13. Followed by hand so each hop passes `assertSafePublicUrl`.
+ */
+const MAX_REDIRECTS = 20;
+
+/**
  * What reading a domain's homepage found. Every outcome but `unreachable` is
  * the domain's answer and is cached; `unreachable` says nothing about the
  * domain, and caching it would hide its name for thirty days because of one
@@ -61,6 +86,10 @@ export const OrganizationNameOutcomeSchema = z.enum([
   "missing",
   /** The homepage answered with something other than HTML. */
   "not_html",
+  /** The homepage's head ran past `MAX_HOMEPAGE_HEAD_BYTES` before it ended. */
+  "too_large",
+  /** The homepage redirected to an address that is not a public host. */
+  "refused",
   /** A network error or a 5xx: no answer from the domain. Never cached. */
   "unreachable",
 ]);
@@ -72,7 +101,7 @@ export type OrganizationNameReading =
 
 const CachedReadingSchema = z.discriminatedUnion("outcome", [
   z.object({ outcome: z.literal("named"), name: z.string(), fetched_at: z.string() }),
-  z.object({ outcome: z.enum(["unnamed", "missing", "not_html"]), name: z.null(), fetched_at: z.string() }),
+  z.object({ outcome: z.enum(["unnamed", "missing", "not_html", "too_large", "refused"]), name: z.null(), fetched_at: z.string() }),
 ]);
 
 /**
@@ -99,27 +128,44 @@ export async function suggestOrganizationName(
   return reading.name;
 }
 
-async function readOrganizationName(domain: string, fetcher: typeof fetch): Promise<OrganizationNameReading> {
-  const url = `https://${domain}/`;
+async function readOrganizationName(
+  domain: string,
+  fetcher: typeof fetch,
+  maxHeadBytes = MAX_HOMEPAGE_HEAD_BYTES,
+): Promise<OrganizationNameReading> {
+  let url = `https://${domain}/`;
   let response: Response;
-  try {
-    assertSafePublicUrl(url);
-    response = await fetcher(url, {
-      headers: { Accept: "text/html" },
-      redirect: "follow",
-    });
-  } catch {
-    return { outcome: "unreachable", name: null };
+  for (let redirects = 0; ; redirects += 1) {
+    try {
+      assertSafePublicUrl(url);
+    } catch {
+      return { outcome: "refused", name: null };
+    }
+    try {
+      response = await fetcher(url, { headers: { Accept: "text/html" }, redirect: "manual" });
+    } catch {
+      return { outcome: "unreachable", name: null };
+    }
+    const location = response.status >= 300 && response.status < 400 ? response.headers.get("location") : null;
+    if (!location) break;
+    void response.body?.cancel().catch(() => undefined);
+    if (redirects === MAX_REDIRECTS) return { outcome: "unreachable", name: null };
+    try {
+      url = new URL(location, url).toString();
+    } catch {
+      return { outcome: "missing", name: null };
+    }
   }
   if (response.status >= 500) return { outcome: "unreachable", name: null };
   if (!response.ok || !response.body) return { outcome: "missing", name: null };
   if (!isHtml(response.headers.get("content-type"))) return { outcome: "not_html", name: null };
-  let head: string;
+  let head: string | null;
   try {
-    head = await readHead(response.body);
+    head = await readHead(response.body, maxHeadBytes);
   } catch {
     return { outcome: "unreachable", name: null };
   }
+  if (head === null) return { outcome: "too_large", name: null };
   const name = organizationNameFromHtml(head, domain);
   return name ? { outcome: "named", name } : { outcome: "unnamed", name: null };
 }
@@ -130,20 +176,29 @@ function isHtml(contentType: string | null): boolean {
   return mediaType === "text/html" || mediaType === "application/xhtml+xml";
 }
 
+/** Longest marker `readHead` looks for (`</head` plus whitespace and `>`), as the rescan overlap. */
+const HEAD_END_OVERLAP = 16;
+
 /**
- * The page up to the end of its `<head>`. Everything a name is read from lives
- * there, so the body is never downloaded.
+ * The page up to the end of its `<head>`, or null when more than `maxBytes`
+ * arrive first. Everything a name is read from lives there, so the body is
+ * never downloaded. Only the newest chunk, plus enough of the last one to catch
+ * a marker split across them, is searched, so the read stays linear.
  */
-async function readHead(body: ReadableStream<Uint8Array>): Promise<string> {
+export async function readHead(body: ReadableStream<Uint8Array>, maxBytes: number): Promise<string | null> {
   const reader = body.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: false });
   let source = "";
+  let bytes = 0;
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) return source + decoder.decode();
+      bytes += value.byteLength;
+      if (bytes > maxBytes) return null;
+      const searchFrom = Math.max(0, source.length - HEAD_END_OVERLAP);
       source += decoder.decode(value, { stream: true });
-      if (/<\/head\s*>|<body\b/iu.test(source)) return source;
+      if (/<\/head\s*>|<body\b/iu.test(source.slice(searchFrom))) return source;
     }
   } finally {
     void reader.cancel().catch(() => undefined);
@@ -153,21 +208,23 @@ async function readHead(body: ReadableStream<Uint8Array>): Promise<string> {
 /**
  * `og:site_name` names the site rather than the page, so it wins. A `<title>`
  * usually joins the name to a tagline ("Acme | Tools for builders",
- * "Acme: Tools for builders"); the
- * segment that matches the domain is the name, otherwise the first one that
- * is not a generic page label.
+ * "Acme: Tools for builders"). Generic page labels such as "Home" are dropped
+ * first; of the rest, the segment that matches the domain is the name,
+ * otherwise the first.
  */
 export function organizationNameFromHtml(source: string, domain: string): string | null {
   const siteName = validName(normalizeHtmlText(htmlMetaContent(source, "property", "og:site_name") ?? ""));
   if (siteName) return siteName;
   const title = normalizeHtmlText(htmlElementText(source, "title") ?? "");
-  const segments = title.split(/\s+[|·•–—-]\s+|:\s+/u).map((segment) => segment.trim()).filter(Boolean);
+  const segments = title.split(/\s+[|·•–—-]\s+|:\s+/u)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment && !GENERIC_TITLE_SEGMENTS.has(segment.toLowerCase()));
   const label = comparable(domain.split(".")[0]!);
   const matching = segments.find((segment) => {
     const candidate = comparable(segment);
     return candidate.length > 0 && (candidate.includes(label) || label.includes(candidate));
   });
-  const chosen = matching ?? segments.find((segment) => !GENERIC_TITLE_SEGMENTS.has(segment.toLowerCase()));
+  const chosen = matching ?? segments[0];
   return chosen ? validName(chosen) : null;
 }
 
