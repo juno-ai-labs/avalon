@@ -4528,53 +4528,21 @@ pre {
 .attachment-lightbox-header { display: flex; }
 .attachment-lightbox-header h2 { flex: 1; }
 .attachment-media-details { position: absolute; right: 110px; top: 23px; z-index: 3; }
-.resource-lightbox .rail-header { -webkit-app-region: no-drag; padding: 0 14px 0 24px; }
-.resource-lightbox .rail-title h2 { color: var(--av-sys-color-text-default); font-size: 14px; font-weight: 560; }
-.resource-lightbox .rail-scroll { padding: 16px; }
-/* The lightbox body is a fixed height, and a site detail is given all of it,
-   gutter included: the pane is the thing a person came to look at, and it ends
-   flush with the dialog's own edge. Conditioned on the detail so an ordinary
-   document keeps its padding and flows from the top. */
-.resource-lightbox .rail-scroll:has(> .site-detail) { display: flex; flex-direction: column; padding: 0; }
-.resource-lightbox .rail-scroll > .site-detail { flex: 1 1 auto; }
-/* The page follows the dialog's own curve where it reaches it, and nowhere
-   else: square against the header, round against the outside edge. The
-   composited view is given this same corner, read back off the pane at present
-   time, on all four corners rather than these two, because Electron takes one
-   radius for the whole view. A pane in the plain rail draws no corner here and
-   the view over it is square, which is why the number is read rather than
-   stated in the main process. */
-.resource-lightbox .site-detail-pane {
-  min-height: 280px;
-  border-bottom-left-radius: 16px;
-  border-bottom-right-radius: 16px;
-}
-/* At tablet and phone width (the 920px breakpoint where the sidebar
-   collapses) the inset is space the document cannot spare, so the viewer fills
-   the window. The site
-   pane loses its curve with it, which also squares the composited view, since
-   that reads its corner off the pane when it presents.
-   On macOS the window reaches this width too (its minimum is 720), so the
-   header now sits under the traffic lights and over the drag strip. The
-   lightbox is portaled to `body`, outside the shell that sets
-   `--window-controls-inset`, so the clearance keys on the shell's class
-   instead of reading the variable. */
+/* A resource in the conversation's right panel. A site detail takes the whole
+   body, gutter included: the page is the thing a person came to look at. */
+.resource-panel .rail-scroll { padding: 16px; }
+.resource-panel .rail-scroll:has(> .site-detail) { display: flex; flex-direction: column; padding: 0; }
+.resource-panel .rail-scroll > .site-detail { flex: 1 1 auto; }
 @media (max-width: 920px) {
   .attachment-lightbox.is-document-viewer { -webkit-app-region: no-drag; border: 0; border-radius: 0; box-shadow: none; inset: 0; }
-  .resource-lightbox .site-detail-pane { border-radius: 0; }
-  body:has(.has-overlay-window-controls) .attachment-lightbox.is-document-viewer .attachment-lightbox-header,
-  body:has(.has-overlay-window-controls) .resource-lightbox .rail-header { padding-left: 82px; }
+  body:has(.has-overlay-window-controls) .attachment-lightbox.is-document-viewer .attachment-lightbox-header { padding-left: 82px; }
 }
-/* Menus and confirmation dialogs opened by the resource lightbox sit above it. */
-body:has(.resource-lightbox) .dialog-overlay { z-index: 1002; }
-body:has(.resource-lightbox) .dialog-content { z-index: 1003; }
-body:has(.resource-lightbox) .menu-content { z-index: 1004; }
 /* And so do tooltips, which are the only label an icon-only action has. At the
    stylesheet's own `z-index: 1000` every one of them opened *behind* the
    lightbox: present in the DOM, findable by a test, and invisible to the
    person who hovered it. Above the menus too, since a menu item can have one.
-   Keyed on `.attachment-lightbox`, which the resource lightbox also carries,
-   so the media and document viewers are covered by the same rule. */
+   Keyed on `.attachment-lightbox`, so the media and document viewers are
+   covered by the same rule. */
 body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .attachment-lightbox-content { min-height: 0; overflow: auto; }
 .attachment-lightbox-content.is-image,
@@ -4876,6 +4844,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    where they always have. */
 .rail-header-detail-actions { align-items: center; display: flex; gap: 2px; }
 .rail-header-detail-actions:not(:empty) { margin-right: 6px; }
+.icon-group > .rail-header-detail-actions { margin-right: 0; }
 .rail-title { flex: 1; min-width: 0; }
 .rail-title h2 { color: var(--av-sys-color-text-subtle); font-size: 12px; margin: 0 0 0 2px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-header-actions { flex-shrink: 0; }
@@ -6167,32 +6136,24 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 @keyframes rail-content-open { from { opacity: 0; } to { opacity: 1; } }
 @keyframes rail-content-close { from { opacity: 1; } to { opacity: 0; } }
 .rail-header { border-bottom: 0; gap: 8px; padding: 0 12px; }
-.artifact-sidebar-header {
-  align-items: center;
-  border-bottom: var(--av-sys-size-border-hairline) solid var(--av-sys-color-border-subtle);
-  display: flex;
-  gap: 8px;
-  padding: 0 8px 0 16px;
-}
-.artifact-sidebar-header h2 {
-  color: var(--av-sys-color-text-default);
-  flex: 1;
-  font-size: 13px;
-  font-weight: 560;
-  margin: 0;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.artifact-sidebar-body { min-height: 0; min-width: 0; overflow: auto; }
-.artifact-sidebar-body > .inspector-detail-document:has(> .markdown-body) { min-height: 100%; padding: 24px 22px 72px; }
-.artifact-sidebar-body > .inspector-detail-document:has(> .inspector-detail-image) { min-height: 100%; }
-.artifact-sidebar-body .inspector-detail-image { width: 100%; }
-.artifact-sidebar-body .inspector-detail-audio { margin: 32px 22px; width: calc(100% - 44px); }
-.artifact-sidebar-body > .inspector-detail-preview-status { padding: 24px 22px; }
-.artifact-sidebar-body:has(> .site-detail) { display: flex; overflow: hidden; }
-.artifact-sidebar-body > .site-detail { flex: 1 1 auto; }
+/* A panel's header is a conversation pane's: its title pill centred and
+   Close at the right, the same height as the pane beside it. */
+.rail-surface-content:has(> .panel-title-header) { grid-template-rows: 64px minmax(0, 1fr); }
+.attachment-panel-body { display: flex; flex-direction: column; min-height: 0; min-width: 0; outline: 0; }
+.attachment-panel-superseded { align-self: flex-start; margin: 12px 16px 0; }
+.attachment-panel-content { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.attachment-panel-body.is-image .attachment-panel-content,
+.attachment-panel-body.is-video .attachment-panel-content { align-items: center; display: flex; justify-content: center; padding: 16px; }
+.attachment-panel-content > img,
+.attachment-panel-content > video { border-radius: var(--av-sys-size-radius-md); max-height: 100%; max-width: 100%; object-fit: contain; user-select: none; }
+.attachment-panel-body.is-audio .attachment-panel-content { padding: 32px 22px; }
+.attachment-panel-content > audio { width: 100%; }
+.attachment-panel-body.is-html .attachment-panel-content { background: var(--av-sys-color-surface-default); overflow: hidden; }
+.attachment-panel-content > iframe { background: var(--av-sys-color-surface-default); border: 0; display: block; height: 100%; width: 100%; }
+.attachment-panel-content > .attachment-lightbox-document,
+.attachment-panel-content > .attachment-lightbox-text { max-width: none; padding: 24px 22px 72px; }
+.attachment-panel-gallery { align-items: center; border-top: var(--av-sys-size-border-hairline) solid var(--av-sys-color-border-subtle); display: flex; flex-direction: column; gap: 6px; padding: 6px 12px 10px; }
+.attachment-panel-gallery-nav { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 12px; gap: 8px; }
 
 .embedded-browser-rail .rail-surface-content { grid-template-rows: 44px 44px minmax(0, 1fr); }
 .embedded-browser-controls { display: contents; }
@@ -7830,6 +7791,12 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   /* The right panel and its scrim are fixed to the window too, and start under the bar. */
   .app-shell .rail-surface,
   .app-shell .rail-scrim { top: var(--phone-top-bar-height); }
+  /* A phone has no room for a panel beside the conversation, so the panel
+     takes the whole width rather than leaving a sliver of what is under it,
+     and there is no edge left to resize from. */
+  .workspace-shell { --rail-slot: 100vw; }
+  .app-shell .rail-surface { min-width: 0; }
+  .app-shell .rail-resizer { display: none; }
 }
 /* A window surface (Settings, Sidekicks) shown as a route in a browser tab
    takes the whole tab, as its window would: no sidebar, and no room or phone
@@ -7880,6 +7847,23 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .title-pill.is-ancestor .title-pill-select { min-width: 0; }
 .title-pill-current { justify-self: center; min-width: 0; }
 .title-pill-trailing { align-items: center; display: flex; gap: 8px; justify-self: end; }
+/* Crowded: the trailing buttons would come within a gap of the centred pill.
+   They fold, and the pill moves left just far enough to keep that gap. */
+.title-pill-header.is-crowded .title-pill-current { transform: translateX(calc(-1 * var(--title-pill-shift, 0px))); }
+/* Icon buttons in a row, spaced by the group rather than by each caller. An
+   empty slot (a detail's actions host with nothing in it) takes no room. */
+.icon-group { align-items: center; display: inline-flex; gap: 8px; }
+.icon-group > :empty { display: none; }
+/* The actions' wrapper adds no box, so its buttons share the group's gap. */
+.icon-group-actions { display: contents; }
+.icon-group-more { display: none; }
+/* Folded by its host, or at phone width: the actions fold into one "More" button. */
+.icon-group.is-folded .icon-group-actions { display: none; }
+.icon-group.is-folded .icon-group-more { display: inline-flex; }
+@media (max-width: 640px) {
+  .icon-group-actions { display: none; }
+  .icon-group-more { display: inline-flex; }
+}
 /*
  * A breakout's Channel and thread crumbs need about twice the room of one, so
  * a pane short of desktop width shows both as marks while the pill stays

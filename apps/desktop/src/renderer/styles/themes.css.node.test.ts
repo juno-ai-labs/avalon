@@ -220,6 +220,9 @@ describe('token references', () => {
     '--origin-step',
     // A picker swatch's ink dot, set per swatch from markColors().
     '--swatch-ink',
+    // How far a crowded pane header moves its pill left, set by
+    // TitlePillHeader from the gap it measured.
+    '--title-pill-shift',
     '--radix-dropdown-menu-content-available-height', '--radix-dropdown-menu-content-available-width',
     '--radix-select-content-available-height', '--radix-select-content-transform-origin', '--radix-select-trigger-width'];
 

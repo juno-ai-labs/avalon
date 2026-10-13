@@ -2,14 +2,15 @@ import { openLink } from '../lib/browser-rail-links';
 import { desktopBridge } from '../lib/platform';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import * as Dialog from '@radix-ui/react-dialog';
-import { IconLayoutSidebarRightInactive, IconWindowMaximize } from '@tabler/icons-react';
+import { IconArchive, IconArrowsDiagonal, IconExternalLink, IconHistory, IconRefresh, IconWindowMaximize } from '@tabler/icons-react';
+import { ActionTile, ActionTiles, LevelRow, TitleMenuHeader, TitleMenuItem, TitleMenuSeparator, TitlePillClose, TitlePillHeader, useTitleMenuNav } from '@rally/ui/components/title-pill';
 import {
   Archive,
   ArrowLeft,
   ChevronRight,
   ChevronsRight,
   ExternalLink,
+  FileText,
   Eye,
   History,
   LoaderCircle,
@@ -20,7 +21,7 @@ import {
 } from 'lucide-react';
 import { classifyAttachmentKind } from '@rally/contracts';
 import { DetailHeaderActionsHost } from './detail-header-actions';
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { formatDateTime, formatSparseRelativeDate } from '../lib/format';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreview, readResourcePreviewText } from '../lib/resource-preview';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
@@ -40,18 +41,21 @@ import { RailSurface } from './rail-surface';
 import { RelativeTime } from './relative-time';
 
 interface InspectorRailProps {
-  /** Explicit modal host; never reads or opens the parked shell rail. */
-  lightbox?: {
+  /**
+   * One resource in the conversation's right panel. Its caller owns the panel's
+   * open state; this never reads or opens the parked shell rail.
+   */
+  panel?: {
     resourceId: string;
-    returnFocus: HTMLElement;
     onClose: () => void;
-    onOpenSidebar: (resourceId: string) => void;
+    /** Shows the resource's readable preview in the full-window lightbox. */
+    onExpand?: (resource: WorkstreamResource) => void;
   };
   failure?: 'watch' | 'detach' | 'refresh' | 'attach';
   /**
    * Reads a resource's readable preview, so the detail can show what the thing
    * actually says. This is the authorized preview route — the same one the
-   * attachment lightbox uses — not the raw object: it is what turns a Word
+   * attachment preview uses — not the raw object: it is what turns a Word
    * file or a PDF into prose. Absent on a surface that has no API session,
    * where the detail stays the metadata card it has always been.
    */
@@ -91,16 +95,8 @@ interface InspectorRailProps {
   resourceVersions?: ResourceVersion[];
   /** Set when the history could not be loaded, so absence is not read as none. */
   resourceVersionsFailed?: boolean | undefined;
-  /**
-   * Opens a prior version read-only. Carries the control that opened it so the
-   * preview can hand focus back, the way every other opener on this surface
-   * does — closing to `<body>` loses a keyboard reader's place in the rail.
-   */
-  onOpenResourceVersion?: (
-    resource: WorkstreamResource,
-    version: ResourceVersion,
-    returnFocus: HTMLElement,
-  ) => void;
+  /** Opens a prior version read-only, in the same right panel. */
+  onOpenResourceVersion?: (resource: WorkstreamResource, version: ResourceVersion) => void;
   onRefreshResource?: (resource: WorkstreamResource) => void;
   refreshingResourceId?: string | null;
   /** True while the inspector is fading out. */
@@ -332,7 +328,7 @@ function ContextContent({
  * What stays local is the one thing the rail decides for itself: an image is
  * not prose. It still belongs in this host — as an `img` sized to the rail —
  * because the detail *is* the document now, and leaving it on last-updated
- * alone is an empty panel. The lightbox remains the full-size reader.
+ * alone is an empty panel.
  */
 function readableAsText(resource: WorkstreamResource): boolean {
   if (!resource.contentAvailable) return false;
@@ -500,21 +496,22 @@ function groupVersionsBySparseDate(
   return groups;
 }
 
-function ResourceVersionsMenu({
-  resource,
-  versions,
-  failed,
-  onOpenResourceVersion,
-  participants,
-  returnFocus,
-}: {
+type ResourceVersionsProps = {
   resource: WorkstreamResource;
   versions: ResourceVersion[] | undefined;
   failed?: boolean | undefined;
   onOpenResourceVersion?: InspectorRailProps['onOpenResourceVersion'];
   participants: WorkstreamDetail['participants'];
-  returnFocus: RefObject<HTMLButtonElement | null>;
-}): React.JSX.Element {
+};
+
+/** A resource's versions as menu rows, newest first, grouped by date. */
+function ResourceVersionItems({
+  resource,
+  versions,
+  failed,
+  onOpenResourceVersion,
+  participants,
+}: ResourceVersionsProps): React.JSX.Element {
   const currentVersion = versions?.[0]?.version;
 
   let body: React.ReactNode;
@@ -541,10 +538,7 @@ function ResourceVersionsMenu({
               className="menu-item inspector-version-item"
               disabled={isCurrent || !versionIsOpenable(version)}
               key={version.version}
-              onSelect={() => {
-                const trigger = returnFocus.current;
-                if (trigger) onOpenResourceVersion?.(resource, version, trigger);
-              }}
+              onSelect={() => onOpenResourceVersion?.(resource, version)}
             >
               <span className="inspector-version-label">V{version.version}</span>
               <span className="inspector-version-author">{versionAuthorLabel(version, resource, participants)}</span>
@@ -560,6 +554,10 @@ function ResourceVersionsMenu({
     ));
   }
 
+  return <>{body}</>;
+}
+
+function ResourceVersionsMenu(props: ResourceVersionsProps): React.JSX.Element {
   return (
     <DropdownMenu.Content
       align="end"
@@ -567,9 +565,46 @@ function ResourceVersionsMenu({
       className="menu-content inspector-versions-menu"
       sideOffset={8}
     >
-      {body}
+      <ResourceVersionItems {...props} />
     </DropdownMenu.Content>
   );
+}
+
+const VERSIONS_VIEW = { key: 'versions', label: 'Versions' };
+
+/**
+ * The resource panel's title-pill menu: what the resource is, then what can be
+ * done to it, in the same tiles and levels a thread's menu uses.
+ */
+function ResourcePanelMenu({ onArchive, onOpenSource, onPopOut, onRefresh, popOutDisabled, refreshing, resource, versions }: {
+  onArchive?: (() => void) | undefined;
+  onOpenSource?: (() => void) | undefined;
+  onPopOut?: (() => void) | undefined;
+  onRefresh?: (() => void) | undefined;
+  popOutDisabled: boolean;
+  refreshing: boolean;
+  resource: WorkstreamResource;
+  versions: ResourceVersionsProps;
+}): React.JSX.Element {
+  const nav = useTitleMenuNav();
+  if (nav.view?.key === VERSIONS_VIEW.key) return <ResourceVersionItems {...versions} />;
+  return <>
+    <TitleMenuHeader
+      eyebrow={resource.direction === 'artifact' ? 'Artifact' : 'Resource'}
+      icon={<ResourceIcon resource={resource} />}
+      title={resource.title}
+    />
+    <ActionTiles>
+      {onPopOut && <ActionTile disabled={popOutDisabled} icon={<IconWindowMaximize aria-hidden="true" size={20} stroke={1.6} />} label="New window" onSelect={onPopOut} />}
+      {onOpenSource && <ActionTile icon={<IconExternalLink aria-hidden="true" size={20} stroke={1.6} />} label="Open source" onSelect={onOpenSource} />}
+      {onRefresh && <ActionTile disabled={refreshing} icon={<IconRefresh aria-hidden="true" size={20} stroke={1.6} />} label="Refresh" onSelect={onRefresh} />}
+    </ActionTiles>
+    <LevelRow icon={<IconHistory aria-hidden="true" size={17} stroke={1.7} />} label="Versions" view={VERSIONS_VIEW} />
+    {onArchive && <>
+      <TitleMenuSeparator />
+      <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={onArchive}>Archive</TitleMenuItem>
+    </>}
+  </>;
 }
 
 function InspectorDetail({
@@ -651,69 +686,6 @@ function inspectedResource(
   return workstream.resources.find((item) => item.id === inspector.id);
 }
 
-/**
- * The document-only occupant of the shell's right rail.
- *
- * Resource metadata and actions belong to the lightbox. This surface is the
- * reading mode that lightbox can hand off to, so its only chrome is identity
- * and dismissal; the shared rail frame supplies resizing and feed layout.
- */
-export function ArtifactSidebar({
-  leaving = false,
-  loadResourceContent,
-  onClose,
-  onResize,
-  resource,
-  siteArtifacts,
-  width,
-}: {
-  leaving?: boolean;
-  loadResourceContent?: InspectorRailProps['loadResourceContent'];
-  onClose: () => void;
-  onResize: (width: number) => void;
-  resource: WorkstreamResource;
-  siteArtifacts?: InspectorRailProps['siteArtifacts'];
-  width: number;
-}): React.JSX.Element {
-  const site = isSiteResource(resource);
-  return (
-    <RailSurface
-      className="artifact-sidebar"
-      label={`Artifact: ${resource.title}`}
-      leaving={leaving}
-      onClose={onClose}
-      onResize={onResize}
-      resizeLabel="Resize artifact sidebar"
-      scrimLabel="Close artifact sidebar"
-      width={width}
-    >
-      <header className="artifact-sidebar-header window-drag">
-        <h2 title={resource.title}>{resource.title}</h2>
-        <IconButton className="window-no-drag" label="Close sidebar" onClick={onClose}>
-          <X size={18} />
-        </IconButton>
-      </header>
-      <div className="artifact-sidebar-body">
-        {site && siteArtifacts ? (
-          <SiteResourceDetail
-            describeData={siteArtifacts.describeData}
-            loadTable={siteArtifacts.loadTable}
-            openArtifact={siteArtifacts.openArtifact}
-            resourceId={resource.id}
-            version={resource.currentVersion}
-            surface={siteArtifacts.surface}
-            title={resource.title}
-          />
-        ) : loadResourceContent && !site ? (
-          <ResourceContentPreview loadResourceContent={loadResourceContent} resource={resource} />
-        ) : (
-          <EmptyState description="This artifact has no preview available." title="Preview unavailable" />
-        )}
-      </div>
-    </RailSurface>
-  );
-}
-
 const railTitle: Record<RailVariant, string> = {
   context: 'Thread',
   browser: 'Browser',
@@ -727,12 +699,12 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const storeCloseRail = useUiStore((state) => state.closeRail);
   const setRailWidth = useUiStore((state) => state.setRailWidth);
   const storeInspect = useUiStore((state) => state.inspect);
-  const inspector: RailInspector | null = props.lightbox
-    ? (props.lightbox.resourceId ? { type: 'resource', id: props.lightbox.resourceId } : null)
+  const inspector: RailInspector | null = props.panel
+    ? { type: 'resource', id: props.panel.resourceId }
     : storeInspector;
-  const closeRail = props.lightbox?.onClose ?? storeCloseRail;
+  const closeRail = props.panel?.onClose ?? storeCloseRail;
   const inspect = (selection: RailInspector | null): void => {
-    if (props.lightbox) props.lightbox.onClose();
+    if (props.panel) props.panel.onClose();
     else storeInspect(selection);
   };
   const resource = inspectedResource(inspector, props.workstream);
@@ -741,7 +713,6 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const [archiveFailed, setArchiveFailed] = useState(false);
   const [popOutFailed, setPopOutFailed] = useState(false);
   const [poppingOut, setPoppingOut] = useState(false);
-  const versionsTriggerRef = useRef<HTMLButtonElement>(null);
   const closeInspectorRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -809,99 +780,131 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   //
   // Declared above the early return with the other unconditional hooks: a rail
   // that closes renders fewer hooks than the render before it, and React throws
-  // rather than closing. Only the lightbox reaches this component today, so the
+  // rather than closing. Only the resource panel reaches this component today, so the
   // return is never taken, which is exactly how a hook-order defect waits.
   const [detailActionsTarget, setDetailActionsTarget] = useState<HTMLDivElement | null>(null);
 
   // Keep a closed rail on screen for exactly as long as its fade lasts.
-  if (!props.lightbox && !railOpen && !props.leaving) return null;
+  if (!props.panel && !railOpen && !props.leaving) return null;
 
-  const headerTitle = resource?.title ?? (inspector ? 'Details' : props.lightbox ? 'Resources' : railTitle[railVariant]);
+  const headerTitle = resource?.title ?? (inspector ? 'Details' : railTitle[railVariant]);
+
+  const refreshable = Boolean(resource && resource.direction === 'source' && resource.refreshSupported && props.onRefreshResource);
+  const panelHeader = props.panel && (
+    <TitlePillHeader
+      className="panel-title-header"
+      current={{
+        key: props.panel.resourceId,
+        icon: resource ? <ResourceIcon resource={resource} /> : <FileText aria-hidden="true" size={15} />,
+        title: headerTitle,
+        label: `${resource?.direction === 'artifact' ? 'Artifact' : 'Resource'} menu: ${headerTitle}`,
+        ...(resource ? { menu: <ResourcePanelMenu
+          {...(props.onDetachResource ? { onArchive: () => { setArchiveFailed(false); setArchiveTarget(resource); } } : {})}
+          {...(resource.canonicalUrl ? { onOpenSource: () => void openLink(resource.canonicalUrl!) } : {})}
+          {...(resource.direction === 'artifact' && !isSiteResource(resource) ? { onPopOut: () => void popOutGeneratedArtifact() } : {})}
+          {...(refreshable ? { onRefresh: () => props.onRefreshResource?.(resource) } : {})}
+          popOutDisabled={!hasGeneratedArtifactPreview(resource) || !props.loadResourceContent || poppingOut}
+          refreshing={props.refreshingResourceId === resource.id}
+          resource={resource}
+          versions={{
+            failed: props.resourceVersionsFailed,
+            onOpenResourceVersion: props.onOpenResourceVersion,
+            participants: props.workstream?.participants ?? [],
+            resource,
+            versions: props.resourceVersions,
+          }}
+        /> } : {}),
+      }}
+      // A live site has no single file to show full-window; its menu has New window.
+      {...(resource && props.panel.onExpand && !isSiteResource(resource) && resource.contentAvailable ? { actions: [{
+        key: 'expand',
+        label: 'Expand',
+        icon: <IconArrowsDiagonal aria-hidden="true" size={16} stroke={1.9} />,
+        onSelect: () => props.panel?.onExpand?.(resource),
+      }] } : {})}
+      trailing={<>
+        {/* A detail's own actions, such as a live artifact's, ahead of Close.
+            Their tooltips open upward: a live artifact composites a native
+            view under this strip that paints above all renderer DOM. */}
+        <div className="rail-header-detail-actions" ref={setDetailActionsTarget} />
+        <TitlePillClose label="Close panel" onClose={closeRail} />
+      </>}
+    />
+  );
 
   const content = (
     <>
+      {panelHeader || <>
       <header className="rail-header window-drag">
-        <div className="rail-title window-no-drag">
-          {inspector && !props.lightbox && (
-            <IconButton
-              label="Back to context"
-              onClick={() => inspect(null)}
-            >
-              <ArrowLeft size={15} />
-            </IconButton>
-          )}
-          <h2 title={headerTitle}>{headerTitle}</h2>
-        </div>
-        <div className="rail-header-actions window-no-drag">
-          {/*
-            The detail's own actions, ahead of the rail's: what this resource
-            can do belongs beside the resource, and Close stays at the edge.
-
-            Every control in this header opens its tooltip upward. A live
-            artifact composites a native view directly under this strip, and
-            that view paints above all renderer DOM, so a label hanging
-            downward is behind the page with no `z-index` able to reach it.
-          */}
-          <div className="rail-header-detail-actions" ref={setDetailActionsTarget} />
-          {resource && (
-            <>
-              {props.lightbox && resource.direction === 'artifact' && (
-                <IconButton
-                  disabled={isSiteResource(resource)
-                    ? !props.siteArtifacts
-                    : !hasGeneratedArtifactPreview(resource) || !props.loadResourceContent}
-                  label="Open in a righthand sidebar"
-                  onClick={() => props.lightbox?.onOpenSidebar(resource.id)}
-                  tooltipSide="top"
-                >
-                  <IconLayoutSidebarRightInactive size={15} />
-                </IconButton>
-              )}
-              {resource.direction === 'artifact' && !isSiteResource(resource) && (
-                <IconButton
-                  disabled={!hasGeneratedArtifactPreview(resource) || !props.loadResourceContent || poppingOut}
-                  label="Open in a new window"
-                  onClick={() => void popOutGeneratedArtifact()}
-                  tooltipSide="top"
-                >
-                  <IconWindowMaximize size={15} />
-                </IconButton>
-              )}
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger asChild>
-                  <IconButton label="Versions" ref={versionsTriggerRef} tooltipSide="top">
-                    <History size={15} />
+          <div className="rail-title window-no-drag">
+            {inspector && !props.panel && (
+              <IconButton
+                label="Back to context"
+                onClick={() => inspect(null)}
+              >
+                <ArrowLeft size={15} />
+              </IconButton>
+            )}
+            <h2 title={headerTitle}>{headerTitle}</h2>
+          </div>
+          <div className="rail-header-actions window-no-drag">
+            {/*
+              The detail's own actions, ahead of the rail's: what this resource
+              can do belongs beside the resource, and Close stays at the edge.
+  
+              Every control in this header opens its tooltip upward. A live
+              artifact composites a native view directly under this strip, and
+              that view paints above all renderer DOM, so a label hanging
+              downward is behind the page with no `z-index` able to reach it.
+            */}
+            <div className="rail-header-detail-actions" ref={setDetailActionsTarget} />
+            {resource && (
+              <>
+                {resource.direction === 'artifact' && !isSiteResource(resource) && (
+                  <IconButton
+                    disabled={!hasGeneratedArtifactPreview(resource) || !props.loadResourceContent || poppingOut}
+                    label="Open in a new window"
+                    onClick={() => void popOutGeneratedArtifact()}
+                    tooltipSide="top"
+                  >
+                    <IconWindowMaximize size={15} />
                   </IconButton>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <ResourceVersionsMenu
-                    failed={props.resourceVersionsFailed}
-                    onOpenResourceVersion={props.onOpenResourceVersion}
-                    participants={props.workstream?.participants ?? []}
-                    resource={resource}
-                    returnFocus={versionsTriggerRef}
-                    versions={props.resourceVersions}
-                  />
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
-              {props.onDetachResource && (
-                <IconButton
-                  className="icon-button-danger"
-                  label="Archive"
-                  tooltipSide="top"
-                  onClick={() => {
-                    setArchiveFailed(false);
-                    setArchiveTarget(resource);
-                  }}
-                >
-                  <Archive size={15} />
-                </IconButton>
-              )}
-            </>
-          )}
-          <IconButton label={props.lightbox ? 'Close resource preview' : 'Close inspector'} onClick={closeRail} ref={closeInspectorRef} tooltipSide="top">{props.lightbox ? <X size={20} /> : <ChevronsRight size={16} />}</IconButton>
-        </div>
-      </header>
+                )}
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <IconButton label="Versions" tooltipSide="top">
+                      <History size={15} />
+                    </IconButton>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <ResourceVersionsMenu
+                      failed={props.resourceVersionsFailed}
+                      onOpenResourceVersion={props.onOpenResourceVersion}
+                      participants={props.workstream?.participants ?? []}
+                      resource={resource}
+                      versions={props.resourceVersions}
+                    />
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+                {props.onDetachResource && (
+                  <IconButton
+                    className="icon-button-danger"
+                    label="Archive"
+                    tooltipSide="top"
+                    onClick={() => {
+                      setArchiveFailed(false);
+                      setArchiveTarget(resource);
+                    }}
+                  >
+                    <Archive size={15} />
+                  </IconButton>
+                )}
+              </>
+            )}
+            <IconButton label={props.panel ? 'Close panel' : 'Close inspector'} onClick={closeRail} ref={closeInspectorRef} tooltipSide="top">{props.panel ? <X size={18} /> : <ChevronsRight size={16} />}</IconButton>
+          </div>
+        </header>
+      </>}
       <DetailHeaderActionsHost target={detailActionsTarget}>
       <div className="rail-scroll">
         {popOutFailed && <div className="rail-inline-error"><InlineError>
@@ -948,40 +951,5 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       </Modal>
     </>
   );
-  if (props.lightbox) {
-    const lightbox = props.lightbox;
-    return (
-      <Dialog.Root open onOpenChange={(open) => { if (!open) lightbox.onClose(); }}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="attachment-lightbox-overlay" />
-          <Dialog.Content
-            aria-describedby={undefined}
-            className="attachment-lightbox is-document-viewer resource-lightbox"
-            onCloseAutoFocus={(event) => {
-              event.preventDefault();
-              if (lightbox.returnFocus.isConnected) lightbox.returnFocus.focus();
-            }}
-            /*
-              Keep the dialog's own focus rather than handing it to the first
-              control. Every control in this chrome is an icon with a tooltip,
-              and Radix opens a tooltip on focus: the preview would open with a
-              tooltip nobody asked for, and that tooltip is then the topmost
-              dismissable layer, so it, not the preview, is what the first
-              Escape closes. `preventDefault` leaves focus on this element, which
-              Radix gives `tabindex="-1"`, so the focus trap still has its entry
-              point.
-            */
-            onOpenAutoFocus={(event) => {
-              event.preventDefault();
-              (event.currentTarget as HTMLElement | null)?.focus();
-            }}
-          >
-            <Dialog.Title className="attachment-lightbox-a11y-title">{headerTitle}</Dialog.Title>
-            {content}
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
-    );
-  }
-  return <RailSurface className="inspector-rail" dropTarget={props.dropTarget} label={inspector ? 'Inspector detail' : railTitle[railVariant]} leaving={props.leaving} onClose={closeRail} onResize={setRailWidth} resizeLabel="Resize inspector" scrimLabel="Close inspector" width={railWidth}>{content}</RailSurface>;
+  return <RailSurface className={props.panel ? 'inspector-rail resource-panel' : 'inspector-rail'} dropTarget={props.dropTarget} label={props.panel ? `Resource: ${headerTitle}` : inspector ? 'Inspector detail' : railTitle[railVariant]} leaving={props.leaving} onClose={closeRail} onResize={setRailWidth} resizeLabel="Resize inspector" scrimLabel="Close inspector" width={railWidth}>{content}</RailSurface>;
 }
