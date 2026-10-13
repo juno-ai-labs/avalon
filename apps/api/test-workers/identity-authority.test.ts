@@ -152,6 +152,28 @@ describe("identity authority on real workerd", () => {
     });
   });
 
+  it("stores a thread's Channel colour at provision, and keeps an appearance already stored", async () => {
+    const born = agent();
+    await boot(born);
+    await runInDurableObject(born, (_instance, state) => seedBootstrappedRoot(state));
+    const kept = agent();
+    await boot(kept);
+    await runInDurableObject(kept, (_instance, state) => {
+      seedBootstrappedRoot(state);
+      state.storage.sql.exec(
+        `UPDATE workstream SET appearance_json = '{"icon":"database","color":"blue"}' WHERE id = 1`,
+      );
+    });
+
+    await identity(born, "provision", provisionInput({ color: "purple" }));
+    await identity(kept, "provision", provisionInput({ color: "purple" }));
+
+    const appearance = (stub: DurableObjectStub) => runInDurableObject(stub, (_instance, state) =>
+      JSON.parse(String(state.storage.sql.exec(`SELECT appearance_json FROM workstream WHERE id = 1`).one().appearance_json)));
+    expect(await appearance(born)).toEqual({ icon: null, color: "purple" });
+    expect(await appearance(kept)).toEqual({ icon: "database", color: "blue" });
+  });
+
   it("leaves no projection behind for a read", async () => {
     const stub = agent();
     await boot(stub);
