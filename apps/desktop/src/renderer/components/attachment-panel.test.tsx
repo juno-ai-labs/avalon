@@ -43,6 +43,17 @@ describe('AttachmentPanel', () => {
     expect(screen.getByText('2 / 2')).toBeVisible();
   });
 
+  it('expands the item it is showing, gallery position included, to the full window', async () => {
+    const onExpand = vi.fn();
+    const first = { name: 'first.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['first'])) };
+    const second = { name: 'second.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['second'])) };
+    render(<Tooltip.Provider><AttachmentPanel onClose={vi.fn()} onExpand={onExpand} onResize={vi.fn()} preview={{ ...first, gallery: [first, second], galleryIndex: 0 }} width={360} /></Tooltip.Provider>);
+    fireEvent.keyDown(await screen.findByRole('img', { name: 'first.png' }), { key: 'ArrowRight' });
+    await screen.findByRole('img', { name: 'second.png' });
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+    expect(onExpand).toHaveBeenCalledWith(expect.objectContaining({ galleryIndex: 1, gallery: [first, second] }));
+  });
+
   it('labels a prior version and offers the way back to the current one', () => {
     const onReturnToCurrent = vi.fn();
     renderPanel({
