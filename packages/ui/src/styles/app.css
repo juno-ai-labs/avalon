@@ -8636,12 +8636,10 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 /* Marks fused into one glass shape; see `mark-bridge.tsx`. Its geometry is
    the component's: 36px circles, 42px apart. */
 .mark-bridge {
-  --mark-bridge-shine: rgb(255 255 255 / .75);
   display: inline-block;
   flex: none;
   position: relative;
 }
-[data-theme='dark'] .mark-bridge { --mark-bridge-shine: rgb(255 255 255 / .16); }
 .mark-bridge-glass {
   filter: drop-shadow(0 1px 2px rgb(0 0 0 / .08)) drop-shadow(0 4px 10px rgb(0 0 0 / .06));
   left: -1px;
@@ -8650,10 +8648,10 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   position: absolute;
   top: -1px;
 }
-.mark-bridge-sheen-from { stop-color: var(--mark-bridge-shine); stop-opacity: .35; }
-.mark-bridge-sheen-to { stop-color: var(--mark-bridge-shine); stop-opacity: 0; }
-.mark-bridge-rim-from { stop-color: var(--mark-bridge-shine); }
-.mark-bridge-rim-to { stop-color: var(--mark-bridge-shine); stop-opacity: 0; }
+.mark-bridge-sheen-from { stop-color: var(--av-sys-color-glass-shine); stop-opacity: .35; }
+.mark-bridge-sheen-to { stop-color: var(--av-sys-color-glass-shine); stop-opacity: 0; }
+.mark-bridge-rim-from { stop-color: var(--av-sys-color-glass-shine); }
+.mark-bridge-rim-to { stop-color: var(--av-sys-color-glass-shine); stop-opacity: 0; }
 .mark-bridge-edge { fill: none; stroke: var(--av-sys-color-border-strong); stroke-width: var(--av-sys-size-border-hairline); }
 /* Each mark's outline and symbol, stacked in one cell over its own tint. */
 .mark-bridge-mark {
