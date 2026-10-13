@@ -335,9 +335,9 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
       ref={feedScroll}
     >
       {/* Newest nearest the composer: the list reads down to now. */}
-      <EmailMentionContext.Provider value={emailMentions}><ol aria-label={`Threads in ${space.name}`} className="channel-feed-list">
+      <EmailMentionContext.Provider value={emailMentions}><ol aria-label={`${space.name} feed`} className="channel-feed-list">
         {feed.hasNextPage && <li className="channel-feed-more">
-          <Button disabled={feed.isFetchingNextPage} onClick={() => void feed.fetchNextPage()}>Show earlier threads</Button>
+          <Button disabled={feed.isFetchingNextPage} onClick={() => void feed.fetchNextPage()}>Show earlier</Button>
         </li>}
         {[...rows].reverse().flatMap((row, index, ordered) => {
           // Grouped by the local calendar date, year and all; the label is

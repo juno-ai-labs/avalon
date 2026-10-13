@@ -1935,7 +1935,7 @@ seats every existing member the same way. A Personal Channel is listed to its
 owner alone, never to a guest. A Space's own
 `directory_common` projection no longer writes `spaces.scope`. Client contract
 5 marks a build that reads `individual`; older desktops are served `personal`.
-Migration 103 adds Channel messages (`space_messages`), a building block any
+Migration 104 adds Channel messages (`space_messages`), a building block any
 Channel can carry; General and every Personal Channel open with one from
 Rally, defined as data in `system-channels.ts`. The feed carries them as
 `message` items, and client contract 6 marks a build that reads one.
