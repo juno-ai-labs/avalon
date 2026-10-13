@@ -385,8 +385,15 @@ placements from it. `lib/thread-channels.tsx` and the `channels` prop of
 client methods, stay.
 
 **Why:** The product owner asked for the row to go. The reasoning beyond that
-was not recorded. A change that brings placement editing back should decide
-where it lives rather than restore this row by default.
+was not recorded.
+
+**Consequences:** The desktop has no way to add a thread to another Channel or
+take it out of one. The server routes and the client's `addChannelToSpace` and
+`removeChannelFromSpace` stay, unused by the desktop, so bringing placement
+editing back is UI work only. Such a change should decide where it lives rather
+than restore this row by default.
+
+Shipped in [#1204](https://github.com/juno-ai-labs/avalon/pull/1204).
 
 ### 2026-10-12 — The Channel menu gains Copy link and More; its icon picks its look
 
