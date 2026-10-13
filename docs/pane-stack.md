@@ -51,6 +51,14 @@ An expansion is held for the pane it was asked on and dropped when that pane
 closes or another opens, or when it opens a breakout or a panel of its own,
 which then split the window as they would have.
 
+The navigation sidebar asks for it too. Its Threads and Activity rows link with
+`OPEN_EXPANDED` as the location state, and `expandRequest` reads it back: the
+Channel stack expands the thread, and the thread screen expands the breakout, a
+breakout row doing both. Each request is keyed by the navigation, so a sidebar
+open counts once, even onto the pane already open, and Collapse holds until the
+next one. Links inside a pane pass no state, so what they open comes up beside
+it. A Channel row needs nothing: a Channel alone already fills the window.
+
 Each step is drawn as movement, by `SplitConversationLayout` itself so both
 levels share it. A pane that opens beside another slides in from the right; a
 pane that takes the whole width slides over from where it was (the distance is
@@ -113,9 +121,11 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
 
 - `apps/desktop/src/renderer/screens/channel.test.tsx` (a thread opens beside
   the Channel, expands over it and collapses back, and a breakout ends the
-  expansion, and a thread closed while expanded reopens beside the Channel);
+  expansion, a thread closed while expanded reopens beside the Channel, and a
+  sidebar link opens one expanded);
   `workstream-sidebar-switch.test.tsx` (the real header's Expand and Collapse,
-  and a breakout expanding, collapsing and reopening beside its thread) and `lib/navigation-routes.test.ts`.
+  a breakout expanding, collapsing and reopening beside its thread, and one
+  the sidebar opened starting expanded) and `lib/navigation-routes.test.ts`.
 - `apps/desktop/src/renderer/lib/pane-visibility.test.tsx`: no read is
   acknowledged in a pane the layout is not drawing, and one is once it is.
 - `apps/desktop/src/renderer/components/split-conversation.test.tsx`: the two
@@ -125,6 +135,23 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
   window under Xvfb, per [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-13 — The sidebar opens a thread or breakout expanded
+
+**What changed:** A thread or breakout opened from the navigation sidebar
+(Threads or Activity) opens expanded, with what it covers as crumbs. Links
+inside a pane still open beside it.
+
+**Why:** The product asked that a room reached from the sidebar take the whole
+window: the reader came for that room, not for the pair.
+
+**Considered and rejected:** Storing the choice in the UI store. The ask is
+about how one navigation opens, so it rides on that navigation's location
+state, and Back to that entry opens it the same way.
+
+**Consequences:** Expansion is still not stored. A pane that reads the
+request has to key it by the location, not just by the pane id, or a sidebar
+open of the pane already open is lost.
 
 ### 2026-10-13 — A thread can expand over its Channel, a breakout over its thread
 

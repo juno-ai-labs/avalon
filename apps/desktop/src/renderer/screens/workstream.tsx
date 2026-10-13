@@ -67,7 +67,7 @@ export {
 } from './conversation-surface';
 
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
-import { channelRoute, useChannelPane } from '../lib/navigation-routes';
+import { channelRoute, expandRequest, useChannelPane } from '../lib/navigation-routes';
 import { usePinAction, usePinnedIds } from '../lib/pins';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { normalizeHarnessStatus } from '../lib/api';
@@ -678,14 +678,18 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const breakoutOwnsRail = storeRailOpen && breakoutScope !== null && railScope === breakoutScope;
   const mainOwnsRail = storeRailOpen && railScope === id;
   // A breakout the reader expanded over its thread, dropped whenever the open
-  // breakout changes so a breakout opens beside its thread. A panel the
+  // breakout changes so a breakout opens beside its thread, unless the link
+  // that opened it asked for it expanded, as the sidebar does. A panel the
   // breakout opens ends it too.
-  const [expandedBreakoutId, setExpandedBreakoutId] = useState<string | null>(null);
-  const [breakoutExpansionFor, setBreakoutExpansionFor] = useState(openBreakoutId);
-  if (breakoutExpansionFor !== openBreakoutId || (breakoutOwnsRail && expandedBreakoutId !== null)) {
-    setBreakoutExpansionFor(openBreakoutId);
-    setExpandedBreakoutId(null);
+  const expandRequested = expandRequest(location);
+  const [expandedBreakoutId, setExpandedBreakoutId] = useState<string | null>(expandRequested === null ? null : openBreakoutId);
+  const [breakoutExpansionFor, setBreakoutExpansionFor] = useState({ breakoutId: openBreakoutId, request: expandRequested });
+  if (breakoutExpansionFor.breakoutId !== openBreakoutId || breakoutExpansionFor.request !== expandRequested) {
+    setBreakoutExpansionFor({ breakoutId: openBreakoutId, request: expandRequested });
+    if (expandRequested !== null) setExpandedBreakoutId(openBreakoutId);
+    else if (breakoutExpansionFor.breakoutId !== openBreakoutId) setExpandedBreakoutId(null);
   }
+  if (breakoutOwnsRail && expandedBreakoutId !== null) setExpandedBreakoutId(null);
   const breakoutExpanded = openBreakoutId !== null && expandedBreakoutId === openBreakoutId;
   const splitMode: SplitConversationMode = !breakoutPaneOpen ? 'main'
     : !mainVisible || breakoutOwnsRail || breakoutExpanded ? 'breakout'

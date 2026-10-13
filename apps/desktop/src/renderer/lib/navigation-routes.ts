@@ -34,6 +34,26 @@ export function homeChannelId(spaceIds: readonly string[], preferred?: string | 
 }
 
 /**
+ * The `location.state` a link passes to open its thread, or its breakout,
+ * expanded: taking the whole window, with what it covers as its crumbs. The
+ * sidebar opens everything this way; a link inside a pane does not, so what it
+ * opens comes up beside it.
+ */
+export const OPEN_EXPANDED = { openExpanded: true } as const;
+
+/**
+ * The navigation that asked to open expanded, named by its location key so
+ * each such open counts once, even one to the pane already open; null when it
+ * did not ask.
+ */
+export function expandRequest(location: { key: string; state: unknown }): string | null {
+  const { state } = location;
+  return typeof state === 'object' && state !== null && 'openExpanded' in state && state.openExpanded === true
+    ? location.key
+    : null;
+}
+
+/**
  * What a thread pane needs from the Channel beside it: the Channel's pill, to
  * draw as the first breadcrumb once the thread has shifted into the Channel's
  * place, and a way to say when it has. Null outside a Channel route.

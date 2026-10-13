@@ -72,7 +72,7 @@ import type { ClientSession } from '@rally/contracts/client-session';
 import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
 import type { SubstreamId } from '@rally/contracts';
 import { conversationDirectoryQueryKey } from '../lib/conversation-directory';
-import { ChannelPaneContextValue, type ChannelPaneContext } from '../lib/navigation-routes';
+import { ChannelPaneContextValue, OPEN_EXPANDED, type ChannelPaneContext } from '../lib/navigation-routes';
 
 const firstWorkstreamId = '00000000-0000-7000-8000-000000000801';
 const secondWorkstreamId = '00000000-0000-7000-8000-000000000802';
@@ -140,7 +140,7 @@ function WorkstreamRouteControls(): React.JSX.Element {
   );
 }
 
-function renderScreen(child = false, directory?: SharedNavigationDirectory, channelPane: ChannelPaneContext | null = null): QueryClient {
+function renderScreen(child = false, directory?: SharedNavigationDirectory, channelPane: ChannelPaneContext | null = null, state: unknown = null): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
@@ -155,7 +155,7 @@ function renderScreen(child = false, directory?: SharedNavigationDirectory, chan
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[`/workstreams/${firstWorkstreamId}${child ? "?substream=child" : ""}`]}>
+        <MemoryRouter initialEntries={[{ pathname: `/workstreams/${firstWorkstreamId}`, search: child ? '?substream=child' : '', state }]}>
           <WorkstreamRouteControls />
           <ChannelPaneContextValue.Provider value={channelPane}>
             <Routes>
@@ -220,6 +220,15 @@ describe('the right sidebar does not follow a channel switch', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
     expect(screen.getAllByRole('textbox')).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Breakout menu: Shared child' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse' }));
+    expect(screen.getAllByRole('textbox')).toHaveLength(2);
+  });
+
+  it('opens a breakout expanded over its thread when the sidebar opened it', async () => {
+    renderScreen(true, undefined, null, OPEN_EXPANDED);
+    await screen.findByRole('button', { name: 'Breakout menu: Shared child' });
+    expect(screen.getAllByRole('textbox')).toHaveLength(1);
 
     fireEvent.click(screen.getByRole('button', { name: 'Collapse' }));
     expect(screen.getAllByRole('textbox')).toHaveLength(2);
