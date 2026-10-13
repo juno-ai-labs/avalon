@@ -54,7 +54,7 @@ waiting work in two places.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/common/attention-items.ts` | `attentionItems`: which conversations are waiting, why, and in what order; `readerMarkerStatus` and `markerRank` over `MARKER_PRECEDENCE`. In `common/` because the macOS menu bar counted the same list in the main process until it moved to Activity ([`menu-bar.md`](menu-bar.md)); nothing in `main/` reads it now. |
+| `apps/desktop/src/renderer/lib/attention-ranking.ts` | `attentionItems`: which conversations are waiting, why, and in what order; `readerMarkerStatus` and `markerRank` over `MARKER_PRECEDENCE`. It sat in `common/` while the macOS menu bar counted the same list in the main process; the menu now lists Activity ([`menu-bar.md`](menu-bar.md)). |
 | `apps/desktop/src/renderer/lib/attention-items.ts` | `useAttentionItems` and `attentionItemPath`. |
 
 Rules that still hold:

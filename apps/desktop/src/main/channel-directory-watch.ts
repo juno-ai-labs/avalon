@@ -15,18 +15,27 @@ import {
 } from '@rally/contracts';
 import type { WorkspaceSocketConnection, WorkspaceSocketWatchDependencies } from '@rally/contracts/workspace-reach-watch';
 import { describeZodIssues } from '@rally/contracts/zod-diagnostics';
-import type { AttentionChannel, Breakout, BreakoutLists } from '../common/attention-items';
 
 /**
  * One Channel row as the main process keeps it: the fields the menu bar reads,
  * and nothing it does not, so the process holds no transcript previews or
  * participant lists for a menu that never draws them.
  */
-export interface DirectoryChannel extends AttentionChannel {
+export interface DirectoryChannel {
+  readonly id: string;
   readonly title: string;
   readonly titleStatus: Workstream['titleStatus'];
-  readonly breakoutAttentionCount?: number;
+  readonly lastActivityAt: string;
+  readonly archivedAt?: string | null;
+  readonly systemKind?: string | null;
+  /** Listed to this reader only through a Breakout: Main is not theirs to open. */
+  readonly mainWithheld?: true;
 }
+
+export type Breakout = NonNullable<Workstream['privateChildren']>[number];
+
+/** Breakout lists by Channel id, as the Organization socket last wrote them. */
+export type BreakoutLists = Readonly<Record<string, readonly Breakout[] | undefined>>;
 
 /** What the watch hands its host: the Channels, their Breakouts, and whether the list is whole. */
 export interface ChannelDirectorySnapshot {
@@ -35,9 +44,8 @@ export interface ChannelDirectorySnapshot {
   readonly breakouts: BreakoutLists;
   /**
    * False until the first walk of every Space has finished on this
-   * connection's account. A partial list is real data, but an empty or short
-   * attention count drawn from it would say "nothing waiting" when the truth
-   * is "not read yet".
+   * connection's account. A partial list is real data, but not yet the whole
+   * of it.
    */
   readonly complete: boolean;
   /** Access requests waiting on this person, newest first, as the socket last sent them. */
@@ -75,13 +83,9 @@ interface Ledger {
 }
 
 /** The common half of a row: the Organization's facts about the Channel. */
-type CommonFields = Pick<DirectoryChannel, 'title' | 'titleStatus' | 'lastActivityAt' | 'appearance' | 'archivedAt'
-  | 'systemKind' | 'breakoutAttentionCount'> & { latestAttentionSequenceNumber: number };
-/** The viewer half: this reader's own marks. */
-type ViewerFields = Pick<DirectoryChannel, 'unseen' | 'youAreMentioned' | 'mainWithheld'> & {
-  readThroughSequenceNumber: number;
-  manualUnreadFromSequenceNumber: number | null;
-};
+type CommonFields = Pick<DirectoryChannel, 'title' | 'titleStatus' | 'lastActivityAt' | 'archivedAt' | 'systemKind'>;
+/** The viewer half: what this reader may open. */
+type ViewerFields = Pick<DirectoryChannel, 'mainWithheld'>;
 
 interface StoredRow {
   id: string;
@@ -94,33 +98,13 @@ function commonFields(row: Workstream): CommonFields {
     title: row.title,
     titleStatus: row.titleStatus,
     lastActivityAt: row.lastActivityAt,
-    ...(row.appearance ? { appearance: row.appearance } : {}),
     archivedAt: row.archivedAt,
     systemKind: row.systemKind,
-    ...(row.breakoutAttentionCount === undefined ? {} : { breakoutAttentionCount: row.breakoutAttentionCount }),
-    latestAttentionSequenceNumber: row.latestAttentionSequenceNumber,
   };
 }
 
 function viewerFields(row: Workstream): ViewerFields {
-  return {
-    unseen: row.unseen,
-    youAreMentioned: row.youAreMentioned,
-    ...(row.mainWithheld ? { mainWithheld: row.mainWithheld } : {}),
-    readThroughSequenceNumber: row.readThroughSequenceNumber,
-    manualUnreadFromSequenceNumber: row.manualUnreadFromSequenceNumber,
-  };
-}
-
-/**
- * Unread is derived from both halves, the way the renderer's
- * `withDerivedUnread` derives it, rather than stored: the two halves are
- * versioned apart, and a stored flag taken with one half would disagree with
- * the other.
- */
-function hasUnread(row: StoredRow): boolean {
-  if (row.viewer.manualUnreadFromSequenceNumber !== null) return true;
-  return row.common.latestAttentionSequenceNumber > row.viewer.readThroughSequenceNumber;
+  return row.mainWithheld ? { mainWithheld: row.mainWithheld } : {};
 }
 
 /**
@@ -202,12 +186,7 @@ export class ChannelDirectoryWatch {
     const breakouts: Record<string, readonly Breakout[]> = {};
     for (const [id, list] of this.breakoutLists) breakouts[id] = list;
     this.cached = {
-      channels: [...this.rows.values()].map((row) => ({
-        id: row.id,
-        ...row.common,
-        ...row.viewer,
-        hasUnread: hasUnread(row),
-      })),
+      channels: [...this.rows.values()].map((row) => ({ id: row.id, ...row.common, ...row.viewer })),
       breakouts,
       complete: this.complete && this.spaceWalksPending === 0,
       accessRequests: this.accessRequests,
