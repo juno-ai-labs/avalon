@@ -314,7 +314,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
   // Only a member may start a thread in a private Channel; a thread placed
   // there is the Channel's to accept (`canEdit` on the server).
   const canStart = workspace.currentUser.accessClass !== 'guest' && space.reach !== 'through_channel';
-  return <div className="channel-screen">
+  return <div className="channel-screen has-message-capsule">
     {/* Keyed so a confirmation still open when the route changes (a leave,
         a removal, an archive) cannot be continued against the next Channel. */}
     <ChannelHeader key={space.id} members={members.data ?? []} space={space} workspace={workspace} />
