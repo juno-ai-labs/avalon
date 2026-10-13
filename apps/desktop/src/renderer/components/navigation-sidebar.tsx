@@ -10,6 +10,7 @@ import {
   IconCancel,
   IconCheck,
   IconChecks,
+  IconChevronRight,
   IconClock,
   IconCornerDownRight,
   IconDeviceDesktopDown,
@@ -644,13 +645,13 @@ function ChannelTile({ badges, size, space }: { badges?: readonly TileBadge[]; s
  */
 function channelBadge(space: SpaceSummary): TileBadge {
   const { Icon, ink, tint } = channelLook(space);
-  return { key: space.id, shape: 'squircle', fill: ink, ink: tint, icon: Icon };
+  return { key: space.id, shape: 'squircle', fill: ink, ink: tint, icon: Icon, label: space.name };
 }
 
 /** A thread as a badge, inverted the same way, with its Channel on its corner. */
-function threadBadge(threadId: string, saved: WorkstreamAppearance | undefined, channel: SpaceSummary | undefined): TileBadge {
+function threadBadge(threadId: string, title: string, saved: WorkstreamAppearance | undefined, channel: SpaceSummary | undefined): TileBadge {
   const { Icon, ink, tint } = resolveWorkstreamAppearance(threadId, saved);
-  return { key: threadId, shape: 'circle', fill: ink, ink: tint, icon: Icon, badge: channel && channelBadge(channel) };
+  return { key: threadId, shape: 'circle', fill: ink, ink: tint, icon: Icon, label: title, badge: channel && channelBadge(channel) };
 }
 
 /**
@@ -893,11 +894,17 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
   });
   const appearance = resolveWorkstreamAppearance(row.id, row.appearance);
   const badges = row.breakoutOf
-    ? [threadBadge(row.breakoutOf.workstreamId, row.breakoutOf.appearance, channels[0])]
+    ? [threadBadge(row.breakoutOf.workstreamId, row.breakoutOf.title, row.breakoutOf.appearance, channels[0])]
     : channels.map(channelBadge);
   const names = channels.map((space) => space.name).join(' · ');
   const detail = row.kind === 'breakout' && row.breakoutOf
-    ? `↳ ${row.breakoutOf.title}${names ? ` · ${names}` : ''}`
+    ? <>
+      {row.breakoutOf.title}
+      {names && <>
+        <IconChevronRight aria-label="in" className="navigation-row-detail-chevron" role="img" size={12} stroke={2} />
+        {names}
+      </>}
+    </>
     : names;
   const threadId = row.breakoutOf?.workstreamId ?? row.id;
   const warmup = useWorkstreamSocketHoverWarmup(threadId);
