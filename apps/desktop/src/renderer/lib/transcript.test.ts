@@ -10,6 +10,7 @@ import {
   adjacentTranscriptRange,
   createTextMessage,
   optimisticMentionRendering,
+  typedMentionRendering,
   createToolEventMessage,
   orderedTranscriptMessages,
   composeTranscript,
@@ -378,6 +379,29 @@ describe('transcript messages', () => {
         type: 'connector', connectorType: 'linear', startOffset: 35, endOffset: 42,
       },
     ]);
+  });
+
+  it('finds the members a kept text names, typed or already linked, and leaves anyone else as written', () => {
+    const sam = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b';
+    const members = [{ id: sam, name: 'Sam Lee', email: 'sam@example.com', timezone: 'UTC' }];
+    expect(typedMentionRendering('@sam lee and @Nobody, see', members)).toEqual({
+      text: `[@Sam Lee](person://${sam}) and @Nobody, see`,
+      mentions: [{ type: 'person', personId: sam, displayName: 'Sam Lee', startOffset: 0, endOffset: 57 }],
+    });
+    const linked = `Ask [@Sam Lee](person://${sam}) and [@Gone](person://0190a1b2-c3d4-7e5f-8a9b-000000000000)`;
+    expect(typedMentionRendering(linked, members)).toEqual({
+      text: linked,
+      mentions: [{ type: 'person', personId: sam, displayName: 'Sam Lee', startOffset: 4, endOffset: 61 }],
+    });
+    const alex = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c';
+    const both = [...members, { id: alex, name: 'Alex', email: 'alex@example.com', timezone: 'UTC' }];
+    expect(typedMentionRendering(`[@Sam Lee](person://${sam}) and @Alex`, both)).toEqual({
+      text: `[@Sam Lee](person://${sam}) and [@Alex](person://${alex})`,
+      mentions: [
+        { type: 'person', personId: sam, displayName: 'Sam Lee', startOffset: 0, endOffset: 57 },
+        { type: 'person', personId: alex, displayName: 'Alex', startOffset: 62, endOffset: 116 },
+      ],
+    });
   });
 
   it('leaves a draft alone when the selection carries no offsets to rewrite', () => {
