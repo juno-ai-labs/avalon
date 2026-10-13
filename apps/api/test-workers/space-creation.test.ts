@@ -296,6 +296,26 @@ describe("a Channel created inside a Space", () => {
     expect(created.workstream.scope).toBe("personal");
   });
 
+  it("starts a thread in its Channel's colour, on the thread and on its directory row", async () => {
+    const reserved = await workspace().reserveSpace({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      space: { name: "Hiring", iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
+    });
+    if (!reserved.ok) throw new Error(`reserveSpace refused: ${reserved.code}`);
+
+    const created = await createChannel("born-in-colour", [asSpaceId(reserved.space.id)]);
+
+    // Before the colour lane has run: nothing here drains its Queue, so a
+    // colour on either record was written at birth.
+    expect(created.workstream.appearance).toEqual({ icon: null, color: "blue" });
+    const page = await workspace().listWorkstreams({
+      workspaceId: WORKSPACE_ID, userId: USER_ID, limit: 50, includeSystem: false,
+    });
+    expect(page.items.find((item) => item.id === created.workstream.id)?.appearance)
+      .toEqual({ icon: null, color: "blue" });
+  });
+
   it("inherits the Space's defaults in the same call that places it", async () => {
     const reserved = await workspace().reserveSpace({
       workspaceId: WORKSPACE_ID,

@@ -31,6 +31,17 @@ with the identity operation `recolor`, and settles the row with
 `completeChannelColorSync` only if nothing marked the thread again meanwhile.
 The projection each `recolor` commits carries the colour to every client.
 
+**A new thread is born in its colour.** The lane takes seconds (an alarm, a
+Queue hop and a write per conversation), and until it ran a new thread was
+drawn in its id-derived colour and then switched. So `reserveChannelInSpaces`
+reads `channelColor` in the transaction that places the thread, writes it onto
+the provisional directory row, and returns it; the creation service passes it
+to Main's `initialize` (the Slack path to `provision`), which stores
+`{ icon: null, color }`. The client lists the pending row in the colour of the
+Channel it was started in. The lane still marks the thread and runs, and
+writes nothing when the colour matches, so a Channel recoloured during the
+create still converges.
+
 Every mark takes the next value of one counter (`channel_color_sync_state`),
 so a thread's `revision` never repeats, even after its row is settled and
 deleted, and a late completion cannot take a newer mark. Each conversation
@@ -199,8 +210,10 @@ until someone picks a hue.
   default. Older work streams retain their original appearance until edited.
 - A colour job carries its mark's revision to every conversation it writes,
   and a conversation never applies a revision at or below the one it holds.
-- A thread's or a Breakout's colour has one writer, `recolor`. A new path that
-  sets one some other way is overwritten the next time the thread is marked;
+- After birth, a thread's or a Breakout's colour has one writer, `recolor`.
+  The birth write is `channelColor`, the same read the lane makes, and never
+  overwrites a stored appearance. A new path that sets one some other way is
+  overwritten the next time the thread is marked;
   a new table whose change can move a thread's colour needs its own trigger in
   `channel-color-sync.ts`.
 - Every common projection carries the appearance. Dropping it makes identity
@@ -251,8 +264,33 @@ icon, commits the projection, writes nothing on a repeat, and refuses an older
 revision); the
 `message-to-output-pipeline.test.ts` appearance case proves a client's colour
 is dropped. `workspace-channel-color-migration.test.ts` proves the backfill.
+`space-creation.test.ts` proves a thread is born in its Channel's colour on
+Main and on its directory row before the lane runs; `identity-authority.test.ts`
+proves `provision` stores it and keeps an appearance already stored; and the
+cache suite proves the pending row carries it through the naming pass's icon.
 Inspect the actual Electron popup in light and dark,
 including scrolling, and check another connected window and reopening.
+
+### 2026-10-13 — A new thread is born in its Channel's colour
+
+**What changed:** Creation writes the thread's Channel colour at birth: on
+the provisional directory row, on Main through `initialize` (or `provision`
+for Slack), and on the client's pending row. The sync lane is unchanged.
+
+**Why:** A new thread showed its id-derived colour for the seconds the lane
+took, then switched, and its glyph changed colour under the reader.
+
+**Considered and rejected:** Only drawing a thread with no stored colour in
+the Channel's colour on the client. It needs the Channel at every surface
+that draws a thread, and leaves server-built marks wrong. A Breakout is not
+born in its colour here; it still waits on the lane, and was left out of
+this change's scope.
+
+**Consequences:** `recolor` is no longer the only writer of a colour, only
+the only one after birth. The birth write must stay the `channelColor` read,
+or a thread is born in a colour the lane then changes.
+
+Shipped in [#1233](https://github.com/juno-ai-labs/avalon/pull/1233).
 
 ### 2026-10-13 — A breakout row in the Threads list follows its thread's live colour
 
