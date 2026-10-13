@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
 import { sha256 } from "../src/lib/crypto";
 import { RegionalOnboardingService } from "../src/services/platform-onboarding-service";
-import { personalSpaceIdFor } from "../src/services/space-bootstrap-service";
+import { personalSpaceIdFor } from "../src/durable-objects/workspace-space-protocol";
 import {
   createCloudflareTestBinding,
   createTestDurableObjectId,
