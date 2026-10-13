@@ -979,7 +979,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     >
       <p className="modal-copy">
         <strong>{archiveTarget?.title}</strong> leaves the sidebar for everyone in it, and stops
-        accepting messages. The conversation can be restored later.
+        accepting messages.
       </p>
       {substreamMenuFailure && <InlineError>{failureCopyOf(substreamMenuFailure).copy}</InlineError>}
     </Modal>
