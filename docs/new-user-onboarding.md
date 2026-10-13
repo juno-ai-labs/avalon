@@ -171,6 +171,8 @@ read. An `unreachable` read must never be cached, or a short outage hides a name
 for a month; a new outcome has to be placed on one side of that line in both the
 enum and the table's check.
 
+Shipped in juno-ai-labs/avalon#1223.
+
 ### 2026-10-12 — Remove the introduction screens
 
 **What changed:** The three animated introduction screens are gone. A
