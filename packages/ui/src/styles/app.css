@@ -7790,6 +7790,12 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   /* The right panel and its scrim are fixed to the window too, and start under the bar. */
   .app-shell .rail-surface,
   .app-shell .rail-scrim { top: var(--phone-top-bar-height); }
+  /* A phone has no room for a panel beside the conversation, so the panel
+     takes the whole width rather than leaving a sliver of what is under it,
+     and there is no edge left to resize from. */
+  .workspace-shell { --rail-slot: 100vw; }
+  .app-shell .rail-surface { min-width: 0; }
+  .app-shell .rail-resizer { display: none; }
 }
 /* A window surface (Settings, Sidekicks) shown as a route in a browser tab
    takes the whole tab, as its window would: no sidebar, and no room or phone

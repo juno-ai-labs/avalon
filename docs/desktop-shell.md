@@ -299,7 +299,8 @@ The right panel and the Breakout pane share one place. The panel holds the
 desktop's embedded browser, or whatever the conversation opened: a resource
 with its actions, an attachment, a citation's file, or a prior version. None of
 these opens as a modal. The panel's header is a pane header: the item's title
-pill, its actions in the pill's menu, and the round close button.
+pill, its actions in the pill's menu, and the round close button. At phone
+width (640px and under) the panel takes the whole width, with no resize edge.
 `ConversationSurface` scopes the panel to the
 conversation that opened it: `railScope` is the parent id for Main and
 `parentId:substreamId` for a Breakout, with `#launch` for the launch surface. A
