@@ -65,6 +65,7 @@ const bridge = vi.hoisted(() => ({
   getOnboardingState: vi.fn(),
   getAccountOnboarding: vi.fn(),
   updateAccountOnboarding: vi.fn(),
+  getOrganizationNameSuggestion: vi.fn(),
   getRuntimeConfig: vi.fn(),
   getSession: vi.fn(),
   hasStoredCredential: vi.fn(),

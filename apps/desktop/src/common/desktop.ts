@@ -6,6 +6,7 @@ import type {
   WorkspaceDeparture,
   WorkspaceDepartureOutcome,
   AccountOnboarding,
+  OrganizationNameSuggestion,
   UpdateAccountOnboarding,
   SupportPerson,
   SupportWorkspace,
@@ -448,6 +449,8 @@ export interface RallyDesktopBridge {
   createDevelopmentSession: (apiBaseUrl: string, workspaceName: string) => Promise<DesktopSession>;
   getAccountOnboarding: () => Promise<AccountOnboarding>;
   updateAccountOnboarding: (input: UpdateAccountOnboarding) => Promise<AccountOnboarding>;
+  /** A name to prefill on the create-organization step, read from the email domain's homepage. */
+  getOrganizationNameSuggestion: () => Promise<OrganizationNameSuggestion>;
   getOnboardingState: () => Promise<DesktopWorkspaceOnboardingState>;
   getWorkspaceAttention: (input: { region: RallyRegion; workspaceId: string }) => Promise<WorkspaceAttention>;
   leaveWorkspace: (input: {
