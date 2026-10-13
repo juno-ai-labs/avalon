@@ -316,8 +316,8 @@ describe("a conversation import run", () => {
     const opened = await new WorkstreamObjectClient(creationEnv(), AUTH, run.workstreamId, "0").get();
     expect(opened.title).toBe("Garden irrigation");
     // The importer's name stands, and the icon pass read the history for an
-    // icon; the colour is left to the id.
-    expect(opened.appearance).toEqual({ icon: "megaphone", color: null });
+    // icon; the colour is the Channel's, given at birth.
+    expect(opened.appearance).toEqual({ icon: "megaphone", color: "blue" });
     const checkpoint = await new WorkstreamObjectClient(creationEnv(), AUTH, run.workstreamId, "0").importedSessionCheckpoint();
     expect(checkpoint.map((entry) => entry.sourceMessageId)).toEqual(["m1", "m2"]);
 
