@@ -471,7 +471,7 @@ describe('a Channel', () => {
         .toMatchObject({ readThroughSequenceNumber: 2, hasUnread: false }));
     });
 
-    it('sends nothing for a Channel already read through its newest placement', async () => {
+    it('acknowledges nothing for a Channel already read through its newest placement, and still tells Activity once', async () => {
       renderChannel('/channels/outbound', (seeded) => seeded.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
         readThroughSequenceNumber: 2, firstUnreadSequenceNumber: null, hasUnread: false,
       })]));
@@ -480,6 +480,11 @@ describe('a Channel', () => {
       // Past the acknowledgement's debounce, so a send would have happened.
       await new Promise((resolve) => setTimeout(resolve, 400));
       expect(api.acknowledgeChannelRead).not.toHaveBeenCalled();
+      // Read elsewhere, or before Activity kept waterlines: Activity still owes the read.
+      expect(api.recordActivityEvents).toHaveBeenCalledTimes(1);
+      expect(api.recordActivityEvents).toHaveBeenCalledWith([
+        { kind: 'read', subject: { kind: 'channel', channelId: 'outbound' }, through: 2 },
+      ]);
     });
 
     it('puts the dot back when the read was not recorded, and does not try again', async () => {

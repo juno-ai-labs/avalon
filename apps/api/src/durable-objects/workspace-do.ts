@@ -9470,7 +9470,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceActivityEventsRequestSchema, input, "record_activity_events");
     this.assertWorkspace(request.workspaceId);
     const feed = new WorkspaceActivityFeed(this.state.storage, this.spaceStorage());
-    if (!feed.readsReady()) return;
+    if (!feed.activityReadsReady()) return;
     feed.record(request.userId, request.events, Date.now());
   }
 
