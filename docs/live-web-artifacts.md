@@ -580,10 +580,12 @@ on where the slot sits. It fixed the look but not the fold, because
 `IconGroup` can only fold actions it was given as data.
 
 **Consequences:** A detail's actions are limited to what `IconGroupAction`
-carries: a label, an icon, a click, disabled and pressed. Copy feedback is the
-label and glyph changing, with the live region rendered by the detail. A
-detail must memoise the array it declares, since each new one re-renders the
-host.
+carries: a label, an icon, a click, disabled, pressed and a tooltip side. Copy
+feedback is the label and glyph changing, with the live region rendered by the
+detail. A detail must memoise the array it declares, since each new one
+re-renders the host.
+
+Shipped in #1219.
 
 ### 2026-10-03 — The browser client may frame an artifact
 
