@@ -884,18 +884,64 @@ describe("Activity settled by the app's events", () => {
     expect(await unread()).toMatchObject({ "added-event": false });
   });
 
-  it("given a finished run, when the member reads the thread to its newest message, then the finish is done", async () => {
+  /** Move the member's last read of a subject to before `at`, as a read made earlier would have left it. */
+  async function readBefore(subjectKey: string, at: number): Promise<void> {
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        "UPDATE workspace_activity_reads SET updated_at = ? WHERE user_id = ? AND subject_key = ?",
+        at - 1, MEMBER, subjectKey,
+      );
+    });
+  }
+
+  it("given the member opened a thread before being added to it, when the add arrives, then it stays unread until they open it again", async () => {
+    await openThreadObject(OPEN_THREAD);
+    await publish(OPEN_THREAD, [threadEffect("Cold outreach", { latestAttentionOrdinal: 2 }), viewerEffect(MEMBER)]);
+    await read({ kind: "thread", threadId: OPEN_THREAD }, 2);
+    await nameMember("added-event", "added", { substreamId: "0" });
+    const addedAt = (await activity(MEMBER)).items.find((item) => item.id === "added-event")!.occurredAt;
+    await readBefore(`thread:${OPEN_THREAD}`, Date.parse(addedAt));
+    expect(await unread()).toMatchObject({ "added-event": true });
+
+    await read({ kind: "thread", threadId: OPEN_THREAD }, 0);
+    expect(await unread()).toMatchObject({ "added-event": false });
+  });
+
+  it("given a finished run, when the member opens the thread after it, then the finish is done, and a later message leaves it done", async () => {
     await openThreadObject(MEMBER_THREAD);
+    const completedAt = "2026-10-06T00:00:00.000Z";
     await publish(MEMBER_THREAD, [
-      threadEffect("Funnel report", { state: "completed", completedAt: "2026-10-06T00:00:00.000Z", latestAttentionOrdinal: 4 }),
+      threadEffect("Funnel report", { state: "completed", completedAt, latestAttentionOrdinal: 4 }),
       viewerEffect(MEMBER),
     ]);
     const finished = async () => (await activity(MEMBER)).items.filter((item) => item.kind === "run_finished").map((item) => item.unread);
 
-    await read({ kind: "thread", threadId: MEMBER_THREAD }, 3);
+    // Read all of it, but before the run finished.
+    await read({ kind: "thread", threadId: MEMBER_THREAD }, 4);
+    await readBefore(`thread:${MEMBER_THREAD}`, Date.parse(completedAt));
     expect(await finished()).toEqual([true]);
 
-    await read({ kind: "thread", threadId: MEMBER_THREAD }, 4);
+    await read({ kind: "thread", threadId: MEMBER_THREAD }, 0);
     expect(await finished()).toEqual([false]);
+
+    await publish(MEMBER_THREAD, [
+      threadEffect("Funnel report", { state: "completed", completedAt, latestAttentionOrdinal: 9 }),
+    ], undefined, 2);
+    expect(await finished()).toEqual([false]);
+  });
+
+  it("given a start cleared by reading its Channel, when the thread moves out of that Channel, then it stays cleared", async () => {
+    const channelId = await channelWithThreads();
+    const elsewhere = await reserveChannel("Elsewhere");
+    await place(elsewhere, OPEN_THREAD);
+    const started = async () => (await activity(MEMBER)).items
+      .filter((item) => item.kind === "thread_started" && item.threadId === OPEN_THREAD).map((item) => item.unread);
+    expect(await started()).toEqual([true]);
+
+    await read({ kind: "channel", channelId }, 1);
+    expect(await started()).toEqual([false]);
+
+    await removeMembership(workspace(), { workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId, workstreamId: OPEN_THREAD });
+    expect(await started()).toEqual([false]);
   });
 });
