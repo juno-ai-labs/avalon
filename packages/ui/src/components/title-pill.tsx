@@ -1,7 +1,7 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { IconChevronDown, IconChevronRight, IconCornerDownRight, IconSearch, IconX } from '@tabler/icons-react';
 
-import { IconGroup, type IconGroupAction } from './icon-group';
+import { IconGroup, type IconGroupAction, type TooltipSide } from './icon-group';
 import { MarkBridge, type MarkBridgeItem } from './mark-bridge';
 import { IconButton } from './primitives';
 import clsx from 'clsx';
@@ -307,12 +307,14 @@ export function TitlePill({ level, variant = 'current' }: {
  * at the left in nesting order, and the pane's trailing controls at the right.
  * The centre column stays centred however many ancestors there are.
  */
-export function TitlePillHeader({ actions, ancestors = [], className, current, trailing }: {
+export function TitlePillHeader({ actions, ancestors = [], className, current, tooltipSide, trailing }: {
   /** Round buttons ahead of `trailing`, folded into a "More" dropdown at phone width. */
   actions?: readonly IconGroupAction[];
   ancestors?: readonly TitlePillLevel[];
   className?: string;
   current: TitlePillLevel;
+  /** Where the group's labels open; pass the same to a `TitlePillClose` in `trailing`. */
+  tooltipSide?: TooltipSide | undefined;
   trailing?: ReactNode;
 }): React.JSX.Element {
   // Where the pane is too narrow for the ancestors' names, the stylesheet
@@ -342,7 +344,7 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
     </div>
     <div className="title-pill-current window-no-drag" ref={currentRef}><TitlePill level={current} /></div>
     <div className="title-pill-trailing" ref={trailingRef}>{trailing || actions?.length
-      ? <IconGroup actions={actions} buttonClassName="title-pill-action" className="window-no-drag" folded={crowded}>{trailing}</IconGroup>
+      ? <IconGroup actions={actions} buttonClassName="title-pill-action" className="window-no-drag" folded={crowded} tooltipSide={tooltipSide}>{trailing}</IconGroup>
       : null}</div>
   </header>;
 }
@@ -446,10 +448,10 @@ export function TitleMenuSeparator(): React.JSX.Element {
  * wears the same raised circle as the pills beside it, so one header never
  * mixes bare glyphs with round ones.
  */
-export function TitlePillAction({ children, label, onClick }: {
-  children: ReactNode; label: string; onClick: () => void;
+export function TitlePillAction({ children, label, onClick, tooltipSide }: {
+  children: ReactNode; label: string; onClick: () => void; tooltipSide?: TooltipSide | undefined;
 }): React.JSX.Element {
-  return <IconButton className="title-pill-action" label={label} onClick={onClick}>{children}</IconButton>;
+  return <IconButton className="title-pill-action" label={label} onClick={onClick} tooltipSide={tooltipSide}>{children}</IconButton>;
 }
 
 /** A row of square actions under the menu's header, the most used things done to it. */
@@ -484,8 +486,10 @@ export function openLevel(nav: ReturnType<typeof useTitleMenuNav>, view: TitleMe
 }
 
 /** The round control that closes a pane, at the right of its header. */
-export function TitlePillClose({ label, onClose }: { label: string; onClose: () => void }): React.JSX.Element {
-  return <TitlePillAction label={label} onClick={onClose}>
+export function TitlePillClose({ label, onClose, tooltipSide }: {
+  label: string; onClose: () => void; tooltipSide?: TooltipSide | undefined;
+}): React.JSX.Element {
+  return <TitlePillAction label={label} onClick={onClose} tooltipSide={tooltipSide}>
     <IconX aria-hidden="true" size={16} stroke={1.9} />
   </TitlePillAction>;
 }

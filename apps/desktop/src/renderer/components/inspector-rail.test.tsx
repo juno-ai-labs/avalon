@@ -933,6 +933,34 @@ describe('resource detail content preview', () => {
     expect(button.querySelector('.tabler-icon-window-maximize')).not.toBeNull();
   });
 
+  it('opens a live site panel\'s labels beside its buttons, clear of the page below', async () => {
+    // The page is a native view composited under the header that paints above
+    // all renderer DOM, so a label hanging down is behind it. Upward does not
+    // fit at the top of the window, and Radix would flip it back down.
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+    try {
+      const artifacts = siteArtifacts();
+      render(
+        <Tooltip.Provider>
+          <InspectorRail panel={{ resourceId: site.id, onClose: vi.fn() }} siteArtifacts={artifacts} workstream={{ ...workstream, resources: [site] }} />
+        </Tooltip.Provider>,
+      );
+      await waitFor(() => expect(artifacts.surface.present).toHaveBeenCalled());
+      for (const name of ['More actions', 'Open in a new window', 'Close panel']) {
+        fireEvent.focus(screen.getByRole('button', { name }));
+        expect(await screen.findByRole('tooltip')).toHaveAttribute('data-side', 'left');
+        fireEvent.blur(screen.getByRole('button', { name }));
+        await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('falls back to the ordinary resource card when live artifacts are off', () => {
     // Presentation only: with the flag off a site is still an ordinary resource
     // in the rail — it just is not rendered as a page.
