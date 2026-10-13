@@ -43,6 +43,7 @@ import {
   type DemoPackRoomFacts,
 } from "./demo-pack";
 import { demoMemberAuth, demoSeedSpaceId, type DemoSeedReceipt } from "./demo-seeder";
+import { personalSpaceIdFor } from "../durable-objects/workspace-space-protocol";
 import { SpaceService } from "./space-service";
 import { workspaceAttention } from "./workspace-attention-service";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
@@ -313,6 +314,34 @@ async function compareSidekicks(
 }
 
 /**
+ * Every member of a demo, like every member anywhere, sits in General and owns
+ * a Personal Channel (docs/spaces.md#the-personal-channel). Preparation seats
+ * them; this is what holds Ready until that has landed for each viewer. Reads
+ * only: a missing General is a gap, not something to make here.
+ */
+async function compareSeating(
+  env: Env,
+  auth: AuthContext,
+  gap: (room: string | null, code: string, detail: string) => void,
+): Promise<void> {
+  const spaces = new SpaceService(env, auth);
+  const general = await spaces.general();
+  if (!general) gap(null, "general_missing", "the Organization has no General");
+  else if (!general.participants.some((participant) => participant.userId === auth.userId)) {
+    gap(null, "general_not_seated", "not a participant of General");
+  }
+  try {
+    const personal = await spaces.summary(await personalSpaceIdFor(auth.workspaceId, auth.userId));
+    if (personal.scope !== "individual" || personal.status !== "active") {
+      gap(null, "personal_channel_state", `Personal Channel is ${personal.status} and ${personal.scope}`);
+    }
+  } catch (error) {
+    if (!(error instanceof ApiError && error.code === "space_not_found")) throw error;
+    gap(null, "personal_channel_missing", "has no Personal Channel");
+  }
+}
+
+/**
  * Compare every verified viewer's projection with the manifest, once.
  *
  * Reads the whole directory and the attention summary as each viewer, and the
@@ -377,6 +406,7 @@ export async function checkDemoReadiness(
       gap(null, "order", `listed ${listedOrder.map((id) => byWorkstream.get(id)).join(", ")}; expected ${view.rooms.map((room) => room.room).join(", ")}`);
     }
     await compareSidekicks(env, auth, view, gap);
+    await compareSeating(env, auth, gap);
     if (attention.waitingForYou !== view.attention.waitingForYou
       || attention.waitingReason !== view.attention.waitingReason) {
       gap(null, "attention", `${attention.waitingForYou} waiting (${attention.waitingReason ?? "none"}); expected ${view.attention.waitingForYou} (${view.attention.waitingReason ?? "none"})`);

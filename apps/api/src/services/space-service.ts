@@ -498,14 +498,25 @@ export class SpaceService {
    * inside either.
    */
   async ensureGeneral(): Promise<SpaceSummary> {
+    return (await this.general()) ?? this.openGeneral();
+  }
+
+  /** The Organization's General as this caller sees it, or `null` while it has none. Writes nothing. */
+  async general(): Promise<SpaceSummary | null> {
+    const existing = WorkspaceSpaceGeneralOpenResultSchema.parse(await (await this.workspace()).openGeneralSpace({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+    }));
+    if (!existing.ok) throw spaceRefusal(existing.code, "General");
+    return "absent" in existing ? null : existing.space;
+  }
+
+  private async openGeneral(): Promise<SpaceSummary> {
     const workspace = await this.workspace();
     const actor = {
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
     };
-    const existing = WorkspaceSpaceGeneralOpenResultSchema.parse(await workspace.openGeneralSpace(actor));
-    if (!existing.ok) throw spaceRefusal(existing.code, "General");
-    if (!("absent" in existing)) return existing.space;
     const id = asSpaceId(uuidV7());
     await this.throughSpaceAuthority(id, "General", "provision", () =>
       claimParentAnchor(this.env, this.auth.workspaceId, id, "space"));
