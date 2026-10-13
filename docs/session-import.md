@@ -40,8 +40,8 @@ never sees it. The person opens a conversation in the window — their own,
 signed in, or a shared link — and clicks Import. A sheet asks for a thread
 name, prefilled with the tab's title, and shows the Channel without letting it
 change. Names stop at the server's 180-character limit. The entered name is
-the settled Channel title. Once the Channel opens, a background pass picks its
-icon from the imported history; its colour comes from its id, as for any Channel
+the settled thread title. Once the thread opens, a background pass picks its
+icon from the imported history; its colour comes from its id, as for any thread
 ([naming](workstream-naming.md#prepared-history)).
 The main window lists the Channel as a pending row the moment the import
 starts and opens it on an "Importing conversation…" screen. That screen opens
@@ -425,11 +425,15 @@ these variations are still required to establish it.
 
 ### 2026-10-13 — Import moves from the sidebar to the Channel header
 
+**What changed:** The import button left the sidebar header for the right of a Channel's header, renamed **Import from Claude or ChatGPT**, and opens the import window locked to that Channel.
+
 **Why:** The sidebar's import button sat beside search and new Channel, so it read as creating something at the organization level. An import creates a thread in one Channel; the button now sits on that Channel's header and opens the window with the Channel locked (`spaceLocked`), so where the thread lands is never a choice made in a second window.
 
 **Considered and rejected:** Keeping the sidebar button with the Channel picker. It made the destination a separate step and hid that the result is a thread.
 
 **Consequences:** Importing needs a Channel open first. The import window still accepts a list of Channels, so a future entry point with a picker needs no change there.
+
+Shipped in #1209.
 
 ### 2026-10-03 — Parallel file preparation and explicit verification outcomes
 

@@ -384,14 +384,6 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 
 ## Changelog
 
-### 2026-10-13 — Every header control wears the same circle
-
-**Why:** The Channel header's import button was a bare glyph while the close button beside it in the thread header was a raised circle, and on a phone the menu button was round while search and new Channel were not. The Channel's header row was also 55px against the thread's 64px, so the two pills sat at different heights side by side.
-
-**Changed:** `TitlePillAction` is the one round header control; `TitlePillClose` is built on it. The Channel row is 64px. The phone top bar's actions take the round fill the menu button's comment already said they had.
-
-**Consequences:** A new header control uses `TitlePillAction` rather than a bare `IconButton`. The desktop sidebar's own header icons stay bare: they sit on the sidebar, not in a pane header.
-
 ### 2026-10-13 — The Channel feed reads thread-first
 
 **What changed:** Each thread in a Channel's feed is a trailing-side entry:
