@@ -979,7 +979,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     >
       <p className="modal-copy">
         <strong>{archiveTarget?.title}</strong> leaves the sidebar for everyone in it, and stops
-        accepting messages. The conversation is kept, but restoring it currently requires the API; there is no restore control in the app.
+        accepting messages.
       </p>
       {substreamMenuFailure && <InlineError>{failureCopyOf(substreamMenuFailure).copy}</InlineError>}
     </Modal>
