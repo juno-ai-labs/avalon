@@ -163,6 +163,15 @@ export const keepSearchFocus = {
 };
 
 /**
+ * The menu always opens below its pill, which sits at the top of its pane, so
+ * above is never better. The bottom edge never counts as a collision, so Radix
+ * never flips it up; the sides still shift it to fit a phone's width. Without
+ * this, a phone with its keyboard up shrinks the visual viewport, the menu
+ * flips above the pill, and nothing moves it back once the keyboard drops.
+ */
+const TITLE_MENU_COLLISION_PADDING = { top: 12, right: 12, bottom: -Infinity, left: 12 };
+
+/**
  * One level of a conversation's title: a Channel, or a Breakout inside it.
  *
  * `menu` is the popover the pill opens. `onSelect`, when given, makes the
@@ -233,7 +242,7 @@ export function TitlePill({ level, variant = 'current' }: {
     <DropdownMenu.Content
       align={variant === 'ancestor' ? 'start' : 'center'}
       className="menu-content title-pill-menu"
-      collisionPadding={12}
+      collisionPadding={TITLE_MENU_COLLISION_PADDING}
       // Escape and the left arrow step back a level before they close anything.
       onEscapeKeyDown={(event) => { if (view) { event.preventDefault(); back(); } }}
       onKeyDown={(event) => {
