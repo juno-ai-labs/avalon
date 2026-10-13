@@ -22,7 +22,7 @@ import {
   IconSearch,
   IconX,
 } from '@tabler/icons-react';
-import { notifyManager, useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { Sparkle } from 'lucide-react';
 import clsx from 'clsx';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
@@ -38,7 +38,7 @@ import { layoutInsertIndex, layoutRowAt } from '../lib/list-motion';
 import { channelRoute, homeChannelId, threadRoute } from '../lib/navigation-routes';
 import { moveWithin } from '../lib/personal-order';
 import { compareChannels } from '../lib/sidebar-channel-order';
-import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, MY_THREADS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
+import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, MY_THREADS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { latestPinWrite, reportThreadPin, usePinAction, usePinFailure, usePins, usePinWrite, type PinnedThread } from '../lib/pins';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation } from '../lib/telemetry';
@@ -625,12 +625,12 @@ function SectionHeading({ children, motionKey, trailing }: {
   </div>;
 }
 
-/** The Pinned heading's pin; how to arrange the list is its tooltip once there is something to arrange. */
+/** The Pinned heading's pin; its tooltip says how to pin, then how to arrange once there is something to arrange. */
 function PinnedMark({ reorderable }: { reorderable: boolean }): React.JSX.Element {
   const mark = <span aria-hidden="true" className="navigation-section-mark">
     <IconPin size={14} stroke={1.8} />
   </span>;
-  return reorderable ? <Tip label="Drag to reorder">{mark}</Tip> : mark;
+  return <Tip label={reorderable ? 'Drag to reorder' : 'Drag a row here or right-click it to pin'}>{mark}</Tip>;
 }
 
 /** A Channel's identity as a tile: its glyph on its hue's pastel pair. */
@@ -989,12 +989,12 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
 /**
  * The Channels tab: what this person pinned, then every Channel they may see,
  * in the order the sort control names (A–Z until changed). A Channel's second
- * line is how many threads in it they may see; a dot and a bold name mean a
- * thread was placed in it since this person last had it open.
+ * line appears only when threads were placed in it since this person last had
+ * it open, and says how many, in red beside a bold name.
  */
 /** Members only: a guest has no Channels section. */
 function ChannelsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
-  const { active, inactive } = useSpaceDirectories();
+  const { active } = useSpaceDirectories();
   const { api } = useAppSession();
   // The socket's Space snapshot seeds this; a placement nudge marks it stale
   // and only then is it read on its own.
@@ -1009,7 +1009,6 @@ function ChannelsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }):
   const openChannelId = useOpenChannelId();
   const sort = useUiStore((state) => state.channelSort);
   const setSort = useUiStore((state) => state.setChannelSort);
-  const archived = useArchivedChannels();
   const statsById = useMemo(() => new Map((stats.data ?? []).map((item) => [item.channelId, item])), [stats.data]);
   const channels = active.data?.items ?? [];
   const byId = new Map(channels.map((space) => [space.id as string, space]));
@@ -1021,8 +1020,6 @@ function ChannelsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }):
   const rest = channels.filter((space) => !pinned.has(space.id) && !(drop?.landed && drop.id === space.id))
     .sort(compareChannelRows(sort, statsById, openChannelId));
   const revealPin = usePinReveal(scroll, (id) => `channel:${id}`, pinned);
-  // An archived Channel shares its motion key with its row in the list, so a
-  // restore is the row moving up into place.
   useListMotion(scroll);
   const row = (
     space: SpaceSummary,
@@ -1061,63 +1058,18 @@ function ChannelsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }):
       {rest.map((space) => row(space, pinDrop.sourceProps('channel', space.id)))}
       {active.data !== undefined && channels.length === 0 && <p className="navigation-empty">No channels yet.</p>}
     </section>
-    {(inactive.data?.items.length ?? 0) > 0 && <ArchivedChannels archived={archived} channels={inactive.data!.items} />}
   </>;
 }
 
 /**
- * The Archived section's state, held by the Channels tab so that changes to
- * its rows render the component that runs the list motion.
+ * How many threads were placed in a Channel since this person last read it:
+ * each placement takes the next sequence number, so it is the gap between the
+ * newest and the read position. A thread moved out again still holds its
+ * number, so the gap never claims more threads than the Channel has.
  */
-function useArchivedChannels(): {
-  failed: string | null;
-  open: boolean;
-  restore: (space: SpaceSummary) => void;
-  toggle: () => void;
-} {
-  const { api } = useAppSession();
-  const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [failed, setFailed] = useState<string | null>(null);
-  const restore = (space: SpaceSummary): void => {
-    if (!api) return;
-    setFailed(null);
-    // One render for both lists, so the list motion sees the row move rather
-    // than leave one render and arrive as a stranger the next.
-    void api.restoreSpace(space.id).then((restored) => notifyManager.batch(() => {
-      queryClient.setQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY, (current) => current ? {
-        ...current, items: current.items.filter((item) => item.id !== space.id),
-      } : current);
-      queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current ? {
-        ...current, items: [...current.items.filter((item) => item.id !== space.id), restored],
-      } : current);
-    }), () => setFailed(space.name));
-  };
-  return { failed, open, restore, toggle: () => setOpen(!open) };
-}
-
-/**
- * Archived Channels, folded away under their own heading, each with
- * **Restore**. A restore brings back the threads the archive took out; any it
- * moved to General stay there too.
- */
-function ArchivedChannels({ archived, channels }: {
-  archived: ReturnType<typeof useArchivedChannels>;
-  channels: readonly SpaceSummary[];
-}): React.JSX.Element {
-  const { failed, open, restore, toggle } = archived;
-  return <section aria-label="Archived channels" className="navigation-section">
-    <SectionHeading motionKey="archived" trailing={<button aria-expanded={open} className="navigation-sort" onClick={toggle} type="button">
-      {open ? 'Hide' : `Show ${channels.length}`}
-    </button>}>Archived</SectionHeading>
-    {failed && <InlineError>{failed} couldn’t be restored. Try again.</InlineError>}
-    {open && [...channels].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }))
-      .map((space) => <div className="navigation-archived-row" data-motion-key={`channel:${space.id}`} key={space.id}>
-        <ChannelTile size={30} space={space} />
-        <span className="navigation-archived-name">{space.name}</span>
-        <Button onClick={() => restore(space)}>Restore</Button>
-      </div>)}
-  </section>;
+function newThreadCount(stats: ChannelStats | undefined): number {
+  if (!stats?.hasUnread) return 0;
+  return Math.max(1, Math.min(stats.latestAttentionSequenceNumber - stats.readThroughSequenceNumber, stats.threadCount));
 }
 
 /** A Channel row: a link, so a modified click opens it elsewhere. */
@@ -1132,8 +1084,8 @@ function ChannelRow({ active, drag, ghost, moves, onPin, pinned, position, space
   space: SpaceSummary;
   stats: ChannelStats | undefined;
 }): React.JSX.Element {
-  const count = stats?.threadCount ?? 0;
-  const unread = stats?.hasUnread === true;
+  const fresh = newThreadCount(stats);
+  const unread = fresh > 0;
   const route = useCurrentRoute();
   const href = channelRoute(space.id);
   return <ContextMenu.Root>
@@ -1151,12 +1103,12 @@ function ChannelRow({ active, drag, ghost, moves, onPin, pinned, position, space
         {...drag}
       >
         <RowLayout
-          detail={count === 1 ? '1 thread' : `${count} threads`}
+          detail={unread && <span className="navigation-row-news">{fresh === 1 ? '1 new thread' : `${fresh} new threads`}</span>}
           tile={<ChannelTile space={space} />}
-          time={stats?.lastActivityAt && <RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={stats.lastActivityAt} />}
+          time={stats?.lastActivityAt && <RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} tipPrefix="Last update at" value={stats.lastActivityAt} />}
           title={space.name}
           titleExtra={space.scope === 'personal' && <IconLock aria-label="Private" className="navigation-row-lock" size={13} stroke={1.8} />}
-          unread={unread}
+          unread={false}
         />
         {position && <span className="sr-only">{position}</span>}
       </Link>

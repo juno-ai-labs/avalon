@@ -79,9 +79,8 @@ there is no button anywhere that deletes a Thread.
 
 Archiving a Channel is gentler. Its Threads keep going: any that also sit in
 another Channel stay there, and any that sit only in this one move to General.
-The Channel moves to **Archived** at the bottom of the Channels list. Click
-**Show** there, then **Restore** beside it to bring it back with its Threads.
-Threads that moved to General stay in General too.
+The Channel leaves the Channels list, and there is no way in the app to bring
+it back.
 
 ## Making room
 
