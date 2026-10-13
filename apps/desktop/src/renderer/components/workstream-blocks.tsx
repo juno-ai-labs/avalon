@@ -1361,6 +1361,12 @@ export function MarkdownBody({
         }
         return <CitationImage alt={alt} image={{ ...props, alt, src }} src={src} />;
       },
+      // A task list's checkbox is a form control, which a glance's button
+      // may not hold.
+      input: ({ node, ...props }) => {
+        void node;
+        return glance ? null : <input {...props} />;
+      },
       span: ({ children: spanChildren, node, ...props }) => {
         const email = node?.properties?.dataEmailMention;
         if (typeof email === 'string') return <EmailMentionChip email={email}>{spanChildren}</EmailMentionChip>;
