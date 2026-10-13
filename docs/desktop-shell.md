@@ -77,17 +77,23 @@ activity first, a Channel with none last) or **Needs attention** (unread first,
 then a Channel holding a thread that needs this person, each group by Recent),
 cycled from the same heading control the Threads tab uses and kept per device
 (`rally.sidebar-channel-sort`). Each row is the Channel's squircle tile, its
-name, a lock when it is private, the time of its newest listable thread, and
-"N threads" — both from `channelStats`, seeded by the socket's snapshot and
-read again (`GET /navigation/channel-stats`) when a placement nudge names a
-Channel. A Channel with a thread placed in it since this person last had it
-open (`hasUnread` on its stats row) draws its name bold and a dot in the
-unread colour (`--av-sys-color-workstream-news`, the Activity tab's dot).
+name, a lock when it is private, and the time of its newest listable thread,
+from `channelStats`, seeded by the socket's snapshot and read again
+(`GET /navigation/channel-stats`) when a placement nudge names a Channel. The
+second line is empty unless a thread was placed in the Channel since this
+person last had it open (`hasUnread` on its stats row); then the name goes
+bold (the time stays muted) and the second line reads "N new threads" in the unread colour
+(`--av-sys-color-workstream-news`), with the same dot at its end a thread
+row has. N is the stats row's `newThreadCount`: the feed's rows above the
+read position, locked rows included, so a moved-out thread is not counted and
+a private one is. A Channel whose new threads all moved out again draws as
+read.
+Hovering the time shows "Last update at" and the exact local time.
 Opening the Channel in a focused, visible window acknowledges the newest
 loaded placement's `attentionSequenceNumber` (`PATCH /spaces/:id/read-state`),
 under the same gate and debounce a conversation's read acknowledgement uses,
 and writes the answered stats row back over the cached one. A failed
-acknowledgement puts the dot back and is not retried until the Channel is
+acknowledgement puts the count and dot back and is not retried until the Channel is
 opened again. **New channel** names one; every Channel starts
 Organization-wide.
 
@@ -167,10 +173,6 @@ its threads, and a composer at the foot.
   which threads move to General
   ([`spaces.md`](spaces.md#invariants)); then the window leaves for the
   landing.
-- **Archived list.** Under the Channels list, a folded **Archived** heading
-  (**Show N**) lists archived Channels A–Z, each with **Restore**. A restore
-  brings back the threads the archive took out; any it moved to General stay
-  there too. A guest has no archived list.
 
 ### At phone width
 
@@ -378,6 +380,34 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-13 — Channel rows count new threads only; no Archived list
+
+**What changed:** A Channel row's second line no longer reads "N threads". It
+is empty until a thread is placed in the Channel since the person last opened
+it, and then reads "N new threads" in red, beside the unread dot. The
+folded **Archived** section and its **Restore** under the Channels list are
+gone. The time's tooltip reads "Last update at <time>", and the Pinned
+heading's pin always has a tooltip: how to pin until two rows can be
+reordered, then "Drag to reorder".
+
+**Why:** The product owner asked for all of these. A total thread count said nothing
+the person could act on, while the count of new ones is the reason to open
+the Channel. The Archived section was clutter at the foot of a list people
+scan often.
+
+**Considered and rejected:** Deriving the count on the client from the
+waterline and read position, capped at `threadCount`. A placement moved out
+keeps its number, and `threadCount` leaves out private threads a member sees
+as locked rows, so the derivation both overcounted and could draw a Channel
+with new private threads as read. The server counts `newThreadCount` instead
+([`spaces.md`](spaces.md#changelog)).
+
+**Consequences:** There is no way left in the app to restore an archived
+Channel; `restoreSpace` and the inactive Space directory stay in the API and
+the socket for whatever brings that back.
+
+Shipped in [#1205](https://github.com/juno-ai-labs/avalon/pull/1205).
 
 ### 2026-10-13 — The Channel feed reads thread-first
 
