@@ -10,6 +10,7 @@ import { browserOrigin, browserReturnUrl } from "../lib/browser-origin";
 import { decryptString, encryptString, hmacSha256, randomToken, timingSafeEqualText } from "../lib/crypto";
 import { uuidV7 } from "../lib/uuid-v7";
 import { resolveVerifiedEmailIdentity } from "./login-identity-service";
+import { prefetchOrganizationNameSuggestion } from "./organization-name-suggestion";
 import { sendResendEmail } from "./resend";
 
 export const EmailLoginPolicySchema = z.strictObject({
@@ -126,7 +127,8 @@ export async function redeemEmailLogin(env: Env, input: z.infer<typeof EmailLogi
     return { challengeId:row.id,redemptionId:request.redemptionId };
   }
   if (row.expires_at <= Date.now() || (row.max_failed_attempts !== null && row.failed_attempts >= row.max_failed_attempts)) throw refused();
-  const userId = await resolveVerifiedEmailIdentity(env.DB,row.email, flow);
+  const { id: userId, created } = await resolveVerifiedEmailIdentity(env.DB,row.email, flow);
+  if (created) prefetchOrganizationNameSuggestion(env.DB,row.email);
   observeSignup(env, flow, 'signup_verification_completed', request.method, { userId, clientPlatform });
   const sessionId = uuidV7();
   const encrypted = await seal(env,row.id,{ refreshToken:randomToken(48) });

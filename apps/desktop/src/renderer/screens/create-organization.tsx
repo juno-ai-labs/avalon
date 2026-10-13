@@ -1,5 +1,5 @@
 import { Building2, LoaderCircle } from 'lucide-react';
-import { useRef, useState, type MutableRefObject, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { Button, InlineError, RallyMark } from '../components/primitives';
 import { isComposingKeyEvent } from '../lib/ime';
 import { reportTelemetryProductIntent, uuidV7 } from '../lib/telemetry';
@@ -12,8 +12,14 @@ import { reportTelemetryProductIntent, uuidV7 } from '../lib/telemetry';
  */
 export type CreateOrganizationOperation = { fingerprint: string; id: string } | null;
 
-export function CreateOrganizationCard({ initialName = '', onCreate, operation, children }: {
+export function CreateOrganizationCard({ initialName = '', suggestedName = null, onCreate, operation, children }: {
   initialName?: string;
+  /**
+   * A name read from the email domain's homepage. It arrives after the card
+   * opens, so it fills the field only while the field is still empty and
+   * untouched: it never replaces what the person typed or a remembered name.
+   */
+  suggestedName?: string | null;
   /**
    * Where the pending operation id lives. A host that can unmount the card
    * mid-create passes its own, so a retry after coming back reuses the id and
@@ -28,8 +34,13 @@ export function CreateOrganizationCard({ initialName = '', onCreate, operation, 
   const [name, setName] = useState(initialName);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const edited = useRef(false);
   const ownOperation = useRef<CreateOrganizationOperation>(null);
   const createOperation = operation ?? ownOperation;
+
+  useEffect(() => {
+    if (suggestedName && !edited.current && !initialName.trim()) setName(suggestedName);
+  }, [initialName, suggestedName]);
 
   const continueSetup = async (): Promise<void> => {
     // Holding Enter repeats it, and the button stays reachable while the first
@@ -79,7 +90,10 @@ export function CreateOrganizationCard({ initialName = '', onCreate, operation, 
             autoComplete="organization"
             autoFocus
             maxLength={120}
-            onChange={(event) => setName(event.target.value)}
+            onChange={(event) => {
+              edited.current = true;
+              setName(event.target.value);
+            }}
             onKeyDown={(event) => {
               // A plain input rather than a ComposerInput, so this field
               // keeps its own copy of the guard. See `../lib/ime.ts`.

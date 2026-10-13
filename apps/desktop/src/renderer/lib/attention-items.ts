@@ -1,11 +1,11 @@
 import { useQueries } from '@tanstack/react-query';
 import { useMemo } from 'react';
 
-import { attentionItems, type AttentionItem, type Breakout } from '../../common/attention-items';
+import { attentionItems, type AttentionItem, type Breakout } from './attention-ranking';
 import { workstreamChildrenQueryKey, type WorkstreamChildDirectory } from './channel-viewer-state';
 import type { WorkstreamSummary } from './types';
 
-export { attentionItems, type AttentionItem, type BreakoutLists } from '../../common/attention-items';
+export { attentionItems, type AttentionItem, type BreakoutLists } from './attention-ranking';
 
 /** The route that opens an item: its Channel, with the Breakout selected. */
 export function attentionItemPath(item: Pick<AttentionItem, 'workstreamId' | 'substreamId'>): string {

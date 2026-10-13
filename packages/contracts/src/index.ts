@@ -392,6 +392,9 @@ export const WorkspaceOnboardingStateSchema = z.object({
 }));
 /** An Organization's display name, as chosen at creation and on every rename. */
 export const WorkspaceNameSchema = z.string().trim().min(2).max(120);
+/** A name to prefill when creating an organization; null when there is none to offer. */
+export const OrganizationNameSuggestionSchema = z.object({ name: WorkspaceNameSchema.nullable() });
+export type OrganizationNameSuggestion = z.infer<typeof OrganizationNameSuggestionSchema>;
 export const CreateWorkspaceRequestSchema = z.object({
   name: WorkspaceNameSchema,
   region: ConfiguredRegionSchema

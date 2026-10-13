@@ -1,7 +1,8 @@
-import { WorkstreamPrivateChildSchema } from '@rally/contracts';
+import { WorkstreamPrivateChildSchema, type ActivityItem } from '@rally/contracts';
 import { describe, expect, it } from 'vitest';
-import type { DirectoryChannel } from './channel-directory-watch';
-import { menuBarContentFromDirectory } from './menu-bar-content';
+import type { ActivityFeedSnapshot } from './activity-feed-watch';
+import type { ChannelDirectorySnapshot, DirectoryChannel } from './channel-directory-watch';
+import { menuBarContent } from './menu-bar-content';
 
 function channel(id: string, title: string, extra: Partial<DirectoryChannel> = {}): DirectoryChannel {
   return {
@@ -11,12 +12,31 @@ function channel(id: string, title: string, extra: Partial<DirectoryChannel> = {
     lastActivityAt: '2026-10-06T10:00:00.000Z',
     archivedAt: null,
     systemKind: null,
-    hasUnread: false,
-    unseen: false,
-    youAreMentioned: false,
     ...extra,
   };
 }
+
+const THREAD = '00000000-0000-7000-8000-0000000000a1' as ActivityItem['threadId'];
+
+function activityItem(id: string, extra: Partial<ActivityItem> = {}): ActivityItem {
+  return {
+    id,
+    kind: 'run_finished',
+    occurredAt: '2026-10-06T10:00:00.000Z',
+    actorUserId: null,
+    actorLabel: 'Rally',
+    threadId: THREAD,
+    threadTitle: 'GTM review',
+    breakout: null,
+    channelIds: [],
+    unread: true,
+    ...extra,
+  };
+}
+
+const quietDirectory: ChannelDirectorySnapshot = { complete: true, accessRequests: [], channels: [], breakouts: {} };
+const activity = (items: ActivityItem[]): ActivityFeedSnapshot => ({ items, complete: true });
+const noActivity = activity([]);
 
 const breakout = WorkstreamPrivateChildSchema.parse({
   substreamId: '00000000-0000-7000-8000-0000000000b1',
@@ -28,49 +48,42 @@ const breakout = WorkstreamPrivateChildSchema.parse({
 });
 
 describe('menu bar content', () => {
-  it('lists the sidebar\'s attention rows, most urgent first', () => {
-    const content = menuBarContentFromDirectory({
-      complete: true, accessRequests: [],
-      channels: [
-        channel('a', 'Unread', { hasUnread: true, lastActivityAt: '2026-10-06T12:00:00.000Z' }),
-        channel('b', 'New to you', { unseen: true, lastActivityAt: '2026-10-06T09:00:00.000Z' }),
-        channel('c', 'Caught up'),
-      ],
-      breakouts: {},
-    });
+  it('lists the Activity tab\'s unread rows in its order, and none it has marked read', () => {
+    const content = menuBarContent(quietDirectory, activity([
+      activityItem('finished', { occurredAt: '2026-10-06T12:00:00.000Z' }),
+      activityItem('mentioned', { kind: 'mentioned', actorUserId: THREAD, actorLabel: 'Katherine Baird', threadTitle: 'Merge mockups' }),
+      activityItem('older', { unread: false, threadTitle: 'Read already' }),
+    ]));
 
-    expect(content.attention.map((row) => [row.title, row.reason])).toEqual([
-      ['New to you', 'unseen'],
-      ['Unread', 'unread'],
+    expect(content.attention).toEqual([
+      { key: 'finished', workstreamId: THREAD, substreamId: null, title: 'GTM review', detail: 'Rally finished' },
+      { key: 'mentioned', workstreamId: THREAD, substreamId: null, title: 'Merge mockups', detail: 'Katherine Baird mentioned you' },
     ]);
     expect(content.attentionComplete).toBe(true);
   });
 
-  it('reads a Channel\'s Breakouts only when its row counts one, as the sidebar does', () => {
-    const counted = menuBarContentFromDirectory({
-      complete: true, accessRequests: [],
-      channels: [channel('a', 'Pricing', { breakoutAttentionCount: 1 })],
-      breakouts: { a: [breakout] },
-    });
-    expect(counted.attention).toEqual([{
-      key: `a:${breakout.substreamId}`,
-      workstreamId: 'a',
-      substreamId: breakout.substreamId,
-      title: 'Discount call',
-      channelTitle: 'Pricing',
-      reason: 'unread',
-    }]);
+  it('opens a Breakout\'s row on the Breakout, under its title, naming the thread it sits in', () => {
+    const content = menuBarContent(quietDirectory, activity([activityItem('b', {
+      kind: 'breakout_started', actorUserId: THREAD, actorLabel: '', threadTitle: 'Pricing',
+      breakout: { substreamId: breakout.substreamId, title: 'Discount call' },
+    })]));
 
-    const uncounted = menuBarContentFromDirectory({
-      complete: true, accessRequests: [],
-      channels: [channel('a', 'Pricing')],
-      breakouts: { a: [breakout] },
-    });
-    expect(uncounted.attention).toEqual([]);
+    expect(content.attention).toEqual([{
+      key: 'b', workstreamId: THREAD, substreamId: breakout.substreamId, title: 'Discount call', detail: 'New breakout in Pricing',
+    }]);
+  });
+
+  it('is not whole until Activity has been read once', () => {
+    expect(menuBarContent(quietDirectory, { items: [], complete: false }).attentionComplete).toBe(false);
+  });
+
+  it('says Most recent is whole only once every Space has been walked', () => {
+    expect(menuBarContent({ ...quietDirectory, complete: false }, noActivity).recentsComplete).toBe(false);
+    expect(menuBarContent(quietDirectory, noActivity).recentsComplete).toBe(true);
   });
 
   it('orders Most recent by last activity, ties A to Z, with no Space filter and no archived or system rows', () => {
-    const content = menuBarContentFromDirectory({
+    const content = menuBarContent({
       complete: true, accessRequests: [],
       channels: [
         channel('a', 'Beta', { lastActivityAt: '2026-10-06T10:00:00.000Z' }),
@@ -80,7 +93,7 @@ describe('menu bar content', () => {
         channel('e', 'Digest', { systemKind: 'digest', lastActivityAt: '2026-10-06T13:00:00.000Z' }),
       ],
       breakouts: {},
-    });
+    }, noActivity);
 
     expect(content.recents).toEqual([
       { id: 'c', title: 'Newest', substreamId: null },
@@ -90,11 +103,11 @@ describe('menu bar content', () => {
   });
 
   it('names a Channel Rally is still naming rather than showing its placeholder', () => {
-    const content = menuBarContentFromDirectory({
+    const content = menuBarContent({
       complete: true, accessRequests: [],
-      channels: [channel('a', 'placeholder', { titleStatus: 'naming', hasUnread: true })],
+      channels: [channel('a', 'placeholder', { titleStatus: 'naming' })],
       breakouts: {},
-    });
+    }, activity([activityItem('a', { threadTitle: '' })]));
 
     expect(content.recents[0]?.title).toBe('Untitled thread');
     expect(content.attention[0]?.title).toBe('Untitled thread');
@@ -102,9 +115,9 @@ describe('menu bar content', () => {
 
   it('opens the Breakout for a Channel listed only through one, and leaves it out until its list arrives', () => {
     const withheld = channel('a', 'Pricing', { mainWithheld: true });
-    expect(menuBarContentFromDirectory({ complete: true, accessRequests: [], channels: [withheld], breakouts: { a: [breakout] } }).recents)
+    expect(menuBarContent({ complete: true, accessRequests: [], channels: [withheld], breakouts: { a: [breakout] } }, noActivity).recents)
       .toEqual([{ id: 'a', title: 'Pricing', substreamId: breakout.substreamId }]);
     // Main is not this reader's, so a row with no Breakout to open would lead nowhere.
-    expect(menuBarContentFromDirectory({ complete: true, accessRequests: [], channels: [withheld], breakouts: {} }).recents).toEqual([]);
+    expect(menuBarContent({ complete: true, accessRequests: [], channels: [withheld], breakouts: {} }, noActivity).recents).toEqual([]);
   });
 });

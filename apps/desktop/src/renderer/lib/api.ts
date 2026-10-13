@@ -19,7 +19,7 @@ import {
   type PinList,
 } from "@rally/contracts";
 import { WebPushConfigurationSchema, type RegisterPushDeviceRequest } from "@rally/contracts/push-notifications";
-import { AccountOnboardingSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type UpdateAccountOnboarding } from "@rally/contracts";
+import { AccountOnboardingSchema, OrganizationNameSuggestionSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type OrganizationNameSuggestion, type UpdateAccountOnboarding } from "@rally/contracts";
 import { ConversationAccessDecisionResultSchema, ConversationAccessPreviewSchema, ConversationAccessRequestResultSchema, type ConversationAccessDecisionResult, type ConversationAccessPreview } from "@rally/contracts";
 import { SupportAccessSchema, type SupportAccess } from "@rally/contracts";
 
@@ -1084,6 +1084,11 @@ export class RallyApi {
   /** The signed-in person's account onboarding. Identity-scoped: call it on an identity API. */
   async getAccountOnboarding(signal?: AbortSignal): Promise<AccountOnboarding> {
     return this.request('/onboarding/account', { schema: AccountOnboardingSchema, signal });
+  }
+
+  /** A name to prefill when creating an organization. Identity-scoped: call it on an identity API. */
+  async getOrganizationNameSuggestion(signal?: AbortSignal): Promise<OrganizationNameSuggestion> {
+    return this.request('/onboarding/organization-suggestion', { schema: OrganizationNameSuggestionSchema, signal });
   }
 
   async updateAccountOnboarding(input: UpdateAccountOnboarding): Promise<AccountOnboarding> {

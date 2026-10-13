@@ -239,7 +239,7 @@ transcripts in the local cache, so the entry wipes it alongside drafts on
 sign-out and account change.
 
 The cookie adapter forwards the member route families (`spaces`, `projects`,
-`onboarding/account`, `work-opportunities`, `digest`, `push-devices`,
+`onboarding/account`, `onboarding/organization-suggestion`, `work-opportunities`, `digest`, `push-devices`,
 `workspaces`) in addition to the ones guests use, which include `navigation`
 (the Threads tab, Channel stats, pins and Activity). The list is
 `BROWSER_ROUTE_FAMILIES` in `apps/api/src/routes/browser.ts`: a new route family

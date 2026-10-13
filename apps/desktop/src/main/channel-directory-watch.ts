@@ -3,28 +3,39 @@ import {
   WorkspaceAccessRequestsEventSchema,
   WorkspaceSocketSyncEventSchema,
   type ConversationAccessRequestItem,
+  WORKSPACE_SYNC_TOPICS,
   WorkspaceSpaceChannelsEventSchema,
   WorkspaceSpaceSnapshotEventSchema,
   WorkspaceWorkstreamPageEventSchema,
   WorkspaceWorkstreamRecencyEventSchema,
   WorkspaceWorkstreamStateEventSchema,
   type Workstream,
+  type WorkspaceSyncTopic,
   type WorkstreamStateVersion,
 } from '@rally/contracts';
 import type { WorkspaceSocketConnection, WorkspaceSocketWatchDependencies } from '@rally/contracts/workspace-reach-watch';
 import { describeZodIssues } from '@rally/contracts/zod-diagnostics';
-import type { AttentionChannel, Breakout, BreakoutLists } from '../common/attention-items';
 
 /**
  * One Channel row as the main process keeps it: the fields the menu bar reads,
  * and nothing it does not, so the process holds no transcript previews or
  * participant lists for a menu that never draws them.
  */
-export interface DirectoryChannel extends AttentionChannel {
+export interface DirectoryChannel {
+  readonly id: string;
   readonly title: string;
   readonly titleStatus: Workstream['titleStatus'];
-  readonly breakoutAttentionCount?: number;
+  readonly lastActivityAt: string;
+  readonly archivedAt?: string | null;
+  readonly systemKind?: string | null;
+  /** Listed to this reader only through a Breakout: Main is not theirs to open. */
+  readonly mainWithheld?: true;
 }
+
+export type Breakout = NonNullable<Workstream['privateChildren']>[number];
+
+/** Breakout lists by Channel id, as the Organization socket last wrote them. */
+export type BreakoutLists = Readonly<Record<string, readonly Breakout[] | undefined>>;
 
 /** What the watch hands its host: the Channels, their Breakouts, and whether the list is whole. */
 export interface ChannelDirectorySnapshot {
@@ -33,9 +44,8 @@ export interface ChannelDirectorySnapshot {
   readonly breakouts: BreakoutLists;
   /**
    * False until the first walk of every Space has finished on this
-   * connection's account. A partial list is real data, but an empty or short
-   * attention count drawn from it would say "nothing waiting" when the truth
-   * is "not read yet".
+   * connection's account. A partial list is real data, but not yet the whole
+   * of it.
    */
   readonly complete: boolean;
   /** Access requests waiting on this person, newest first, as the socket last sent them. */
@@ -53,6 +63,12 @@ export interface ChannelDirectoryWatchDependencies {
   readonly socket: ChannelDirectorySocket;
   /** Called after any change to the snapshot, coalesced to one call per frame. */
   readonly onChange: () => void;
+  /**
+   * The topics a `workspace_sync` frame says moved, for the lists this watch
+   * does not hold itself. A subscribe names every topic: nothing is replayed
+   * across a reconnect, so anything may have moved while the socket was down.
+   */
+  readonly onSync?: (topics: readonly WorkspaceSyncTopic[]) => void;
   readonly requestId: () => string;
   readonly logWarning: (message: string, error: unknown) => void;
 }
@@ -67,13 +83,9 @@ interface Ledger {
 }
 
 /** The common half of a row: the Organization's facts about the Channel. */
-type CommonFields = Pick<DirectoryChannel, 'title' | 'titleStatus' | 'lastActivityAt' | 'appearance' | 'archivedAt'
-  | 'systemKind' | 'breakoutAttentionCount'> & { latestAttentionSequenceNumber: number };
-/** The viewer half: this reader's own marks. */
-type ViewerFields = Pick<DirectoryChannel, 'unseen' | 'youAreMentioned' | 'mainWithheld'> & {
-  readThroughSequenceNumber: number;
-  manualUnreadFromSequenceNumber: number | null;
-};
+type CommonFields = Pick<DirectoryChannel, 'title' | 'titleStatus' | 'lastActivityAt' | 'archivedAt' | 'systemKind'>;
+/** The viewer half: what this reader may open. */
+type ViewerFields = Pick<DirectoryChannel, 'mainWithheld'>;
 
 interface StoredRow {
   id: string;
@@ -86,50 +98,32 @@ function commonFields(row: Workstream): CommonFields {
     title: row.title,
     titleStatus: row.titleStatus,
     lastActivityAt: row.lastActivityAt,
-    ...(row.appearance ? { appearance: row.appearance } : {}),
     archivedAt: row.archivedAt,
     systemKind: row.systemKind,
-    ...(row.breakoutAttentionCount === undefined ? {} : { breakoutAttentionCount: row.breakoutAttentionCount }),
-    latestAttentionSequenceNumber: row.latestAttentionSequenceNumber,
   };
 }
 
 function viewerFields(row: Workstream): ViewerFields {
-  return {
-    unseen: row.unseen,
-    youAreMentioned: row.youAreMentioned,
-    ...(row.mainWithheld ? { mainWithheld: row.mainWithheld } : {}),
-    readThroughSequenceNumber: row.readThroughSequenceNumber,
-    manualUnreadFromSequenceNumber: row.manualUnreadFromSequenceNumber,
-  };
-}
-
-/**
- * Unread is derived from both halves, the way the renderer's
- * `withDerivedUnread` derives it, rather than stored: the two halves are
- * versioned apart, and a stored flag taken with one half would disagree with
- * the other.
- */
-function hasUnread(row: StoredRow): boolean {
-  if (row.viewer.manualUnreadFromSequenceNumber !== null) return true;
-  return row.common.latestAttentionSequenceNumber > row.viewer.readThroughSequenceNumber;
+  return row.mainWithheld ? { mainWithheld: row.mainWithheld } : {};
 }
 
 /**
  * The Organization's Channel list, held by the main process over a workspace
  * socket of its own.
  *
- * The menu bar is the one surface that outlives every window, and its count has
- * to be the sidebar's count. That count is drawn from data only the workspace
- * socket carries — each row's reader marks and each Channel's Breakout list —
- * so a REST read cannot reproduce it, and a renderer is not always there to
- * ask. This holds the same rows the sidebar holds, from the same frames:
+ * The menu bar is the one surface that outlives every window, and its Most
+ * recent section is the sidebar's Channel list, which only the workspace socket
+ * carries; a renderer is not always there to ask. This holds the same rows the
+ * sidebar holds, from the same frames:
  *
  * - the subscribe answer, then a walk of every Space with `space_channels`
  *   (or, for an Organization still opening, the paged directory);
  * - `workspace_workstream_state` and `workspace_workstream_recency` pushes,
  *   ordered by their state version exactly as the renderer orders them;
  * - `workspace_space_snapshot`, which names a Space the walk has not read.
+ *
+ * It also hands on the topics each `workspace_sync` frame names (`onSync`),
+ * which is how the menu bar learns its Activity page is stale.
  *
  * Each subscribe starts the walk again, because nothing is replayed across a
  * reconnect: a push missed while the socket was down is only recovered by
@@ -192,12 +186,7 @@ export class ChannelDirectoryWatch {
     const breakouts: Record<string, readonly Breakout[]> = {};
     for (const [id, list] of this.breakoutLists) breakouts[id] = list;
     this.cached = {
-      channels: [...this.rows.values()].map((row) => ({
-        id: row.id,
-        ...row.common,
-        ...row.viewer,
-        hasUnread: hasUnread(row),
-      })),
+      channels: [...this.rows.values()].map((row) => ({ id: row.id, ...row.common, ...row.viewer })),
       breakouts,
       complete: this.complete && this.spaceWalksPending === 0,
       accessRequests: this.accessRequests,
@@ -219,6 +208,7 @@ export class ChannelDirectoryWatch {
 
   private subscribed(answer: unknown, connection: WorkspaceSocketConnection): void {
     this.connection = connection;
+    this.dependencies.onSync?.(WORKSPACE_SYNC_TOPICS);
     const parsed = safeParseSocketEvent(WorkspaceSocketSyncEventSchema, answer);
     const sidebar = parsed.success ? parsed.data.sidebar : undefined;
     if (!sidebar) {
@@ -351,6 +341,12 @@ export class ChannelDirectoryWatch {
       const entry = this.pending.get(requestId)!;
       this.pending.delete(requestId);
       entry.resolve(message);
+      return;
+    }
+    if (type === 'workspace_sync') {
+      const event = safeParseSocketEvent(WorkspaceSocketSyncEventSchema, message);
+      if (!event.success) return this.unreadable(type, event.error);
+      if (event.data.topics.length > 0) this.dependencies.onSync?.(event.data.topics);
       return;
     }
     if (type === 'workspace_access_requests') {
