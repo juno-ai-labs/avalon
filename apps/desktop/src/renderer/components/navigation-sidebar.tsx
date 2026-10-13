@@ -25,7 +25,7 @@ import {
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
-import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, matchPath, useLocation, useNavigate } from 'react-router-dom';
 
@@ -36,7 +36,6 @@ import { desktopBridge } from '../lib/platform';
 import { formatDateTime, formatSidebarActivityTime, formatTime, readerMarkerStatus } from '../lib/format';
 import { layoutInsertIndex, layoutRowAt } from '../lib/list-motion';
 import { channelRoute, homeChannelId, threadRoute } from '../lib/navigation-routes';
-import { MemberPresentationContext } from '../lib/member-presentation';
 import { moveWithin } from '../lib/personal-order';
 import { compareChannels } from '../lib/sidebar-channel-order';
 import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, MY_THREADS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
@@ -50,8 +49,7 @@ import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { openWorkstreamId } from '../lib/workstream-landing';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
-import { personalColor, personalColorInk } from './personal-avatar';
-import { Button, IconButton, InlineError, Modal, TitleSkeleton, Tip } from './primitives';
+import { Avatar, Button, IconButton, InlineError, Modal, RallyAvatar, TitleSkeleton, Tip } from './primitives';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import { RelativeTime } from './relative-time';
 import { ResizableSidebar, SidebarFooterItems, SidebarScroll } from '@rally/ui/components/resizable-sidebar';
@@ -1208,10 +1206,6 @@ function useMarkActivityRead(): () => void {
   }, [api, queryClient]);
 }
 
-function initials(name: string): string {
-  return name.split(/\s+/u).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
-}
-
 function dayLabel(value: string, now = new Date()): string {
   const date = new Date(value);
   const start = (offset: number): number => new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset).getTime();
@@ -1251,16 +1245,20 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
   const actorName = (item: ActivityItem): string => item.actorLabel
     || members.data?.find((member) => member.id === item.actorUserId)?.name
     || 'Someone';
-  // A person's badge wears the accent they chose, as their avatar does
-  // everywhere else; the wash is for someone without one.
-  const presentations = useContext(MemberPresentationContext);
-  const actorBadge = (item: ActivityItem): TileBadge => {
-    const presentation = item.actorUserId === null ? undefined : presentations.get(item.actorUserId)
-      ?? members.data?.find((member) => member.id === item.actorUserId)?.presentation;
-    return presentation
-      ? { key: 'actor', shape: 'circle', fill: personalColor(presentation.color), ink: personalColorInk(presentation.color), text: presentation.initials ?? initials(actorName(item)) }
-      : { key: 'actor', shape: 'circle', fill: 'var(--av-sys-color-accent-wash)', ink: 'var(--av-sys-color-accent-strong)', text: initials(actorName(item)) };
-  };
+  // Who acted, drawn as they are everywhere else: Rally's mark, or the
+  // person's own avatar. A guest has no directory, so a person it cannot find
+  // is drawn from the name the row carries.
+  const actorBadge = (item: ActivityItem): TileBadge => ({
+    key: 'actor',
+    shape: 'circle',
+    content: item.actorUserId === null
+      ? <RallyAvatar />
+      : <Avatar
+          member={members.data?.find((member) => member.id === item.actorUserId)
+            ?? { id: item.actorUserId, name: actorName(item), email: '', timezone: '' }}
+          title={null}
+        />,
+  });
   const feed = useInfiniteQuery({
     queryKey: activityQueryKey(only),
     queryFn: ({ pageParam, signal }) => api!.getActivity(pageParam, only, signal),
@@ -1327,9 +1325,7 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
       <SectionHeading motionKey={`day:${group.label}`}>{group.label}</SectionHeading>
       {group.items.map((item) => {
         const channel = item.channelIds.map((id) => spaces.get(id)).find(Boolean);
-        const actor: TileBadge = item.actorUserId === null
-          ? { key: 'actor', shape: 'circle', fill: 'var(--av-sys-color-brand-on)', ink: 'var(--av-sys-color-brand-base)', text: 'R' }
-          : actorBadge(item);
+        const actor = actorBadge(item);
         const thread = resolveWorkstreamAppearance(item.threadId, live.data?.find((candidate) => candidate.id === item.threadId)?.appearance);
         return <Link
           className={clsx('activity-row', item.unread && 'is-unread')}

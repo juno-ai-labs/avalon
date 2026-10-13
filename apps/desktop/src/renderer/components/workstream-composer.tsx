@@ -20,7 +20,7 @@ import { BackgroundAgentActivity } from './background-agent-activity';
 import { STOPPING_LABEL } from './agent-work-timing';
 import type { AttachmentPreview } from './attachments';
 import { ComposerInput, type ComposerModelControl } from './composer-input';
-import { Avatar, Button, IconButton, Modal } from './primitives';
+import { Avatar, Button, IconButton, Modal, RallyAvatar } from './primitives';
 
 /**
  * Someone an `@` can name here. Only people for now: the work stream's
@@ -486,7 +486,7 @@ export function WorkstreamComposer({
                   ? <Avatar member={candidate.member} size="small" />
                   : candidate.kind === 'invitee'
                   ? <Avatar member={inviteeAsMember(candidate.label)} size="small" />
-                  : <span className="avatar avatar-small avatar-rally"><span className="avatar-fallback">R</span></span>}
+                  : <RallyAvatar size="small" />}
               </span>
               <span className="mention-popover-copy">
                 <strong>{candidate.label}</strong>
