@@ -36,6 +36,7 @@ describe('a title pill menu with levels', () => {
     expect(await screen.findByRole('menuitem', { name: /^People\s*1 · Private/u })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /^Sidekicks\s*None yet/u })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /^Breakouts\s*1/u })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /^Channels/u })).not.toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Add people' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'More' })).toBeInTheDocument();
   });
