@@ -15,7 +15,7 @@ import { logStructuredEvent } from "../observability/logger";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { publishWorkstreamEvent } from "./integrations";
 import { runStructuredInference } from "./structured-inference";
-import { MAXIMUM_DESCRIPTION_CHARACTERS } from "./workstream-description-service";
+import { MAXIMUM_DESCRIPTION_CHARACTERS, provisionalWorkstreamDescription } from "./workstream-description-service";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 
 /**
@@ -177,6 +177,70 @@ export async function nameWorkstream(env: Env, input: WorkstreamNamingInput): Pr
   });
 }
 
+/** What summarizing one existing conversation's description came to. */
+export type DescriptionSummaryOutcome =
+  | "summarized"
+  | "unchanged"
+  | "superseded"
+  | "not_found"
+  | "archived"
+  | "authored"
+  | "not_a_thread"
+  | "no_opening_message"
+  | "not_the_opening_line";
+
+/**
+ * Summarize the description of a thread or Breakout created before the first
+ * naming pass asked for one: the backfill's whole step for one conversation.
+ *
+ * Only a description that is still the opening message's first line, exactly
+ * as creation derived it, is sent to the model. That one comparison is what
+ * makes the backfill safe to run twice and cheap to run over everything: a
+ * description a person wrote, one the description loop already rewrote, and
+ * one this step already summarized all fail it before any model call. The
+ * write is the same compare-and-swap the first pass uses.
+ */
+export async function summarizeExistingDescription(env: Env, input: {
+  workspaceId: string;
+  workstreamId: string;
+  substreamId?: string | undefined;
+}): Promise<DescriptionSummaryOutcome> {
+  const identity = await createIdentityObjectPort(
+    env, input.workspaceId, input.workstreamId, undefined, input.substreamId,
+  ).identity();
+  if (!identity) return "not_found";
+  if (identity.archived_at != null) return "archived";
+  if (identity.description_source === "authored") return "authored";
+  // The same conversations the description loop leaves alone: a Sidekick's is
+  // described by its definition, and a Space's hidden one has no reader.
+  if (identity.parent_kind === "automation" || identity.parent_kind === "space") return "not_a_thread";
+  const [opening] = await createMessageObjectPort(
+    env, input.workspaceId, input.workstreamId, undefined, input.substreamId,
+  ).saidMessages({ messageTypes: { include: ["text"] }, order: "oldest", limit: 1 });
+  if (!opening) return "no_opening_message";
+  if (identity.description !== provisionalWorkstreamDescription(opening.text_content, "")) return "not_the_opening_line";
+
+  const generated = await generateName(env, {
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
+    objective: identity.description,
+    openingMessage: opening.text_content,
+    summarize: true,
+  });
+  // Thrown rather than reported as unchanged, so the backfill retries this
+  // conversation instead of settling it with the model down.
+  if (generated.failed) throw new Error("description_summary_model_failed");
+  if (generated.summary === null || generated.summary === identity.description) return "unchanged";
+  const applied = await summarizeDescription(env, {
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
+    substreamId: input.substreamId,
+    summary: generated.summary,
+    provisionalDescription: identity.description,
+  });
+  return applied === "applied" ? "summarized" : "superseded";
+}
+
 /**
  * Put the first pass's summary in place of the description creation derived,
  * if that description still stands.
@@ -192,8 +256,8 @@ async function summarizeDescription(env: Env, input: {
   substreamId?: string | undefined;
   summary: string;
   provisionalDescription: string;
-}): Promise<void> {
-  if (input.summary === input.provisionalDescription) return;
+}): Promise<"applied" | "superseded" | "unchanged"> {
+  if (input.summary === input.provisionalDescription) return "unchanged";
   const result = await createIdentityObjectPort(
     env, input.workspaceId, input.workstreamId, undefined, input.substreamId,
   ).redescribe({
@@ -208,6 +272,7 @@ async function summarizeDescription(env: Env, input: {
     summary_length: input.summary.length,
     provisional_length: input.provisionalDescription.length,
   });
+  return result.outcome;
 }
 
 /**
@@ -423,6 +488,8 @@ interface GeneratedName {
   icon: WorkstreamIconKey | null;
   /** Only when the pass asked for one; see `nameWithSummaryJsonSchema`. */
   summary: string | null;
+  /** The model call itself failed, as opposed to answering with nothing usable. */
+  failed?: true;
 }
 
 const NOTHING_GENERATED: GeneratedName = { title: null, icon: null, summary: null };
@@ -506,7 +573,7 @@ async function generateName(env: Env, input: {
       error_name: error instanceof Error ? error.name : "UnknownError",
       error_message: error instanceof Error ? error.message : "Work-stream naming failed",
     });
-    return NOTHING_GENERATED;
+    return { ...NOTHING_GENERATED, failed: true };
   }
 }
 

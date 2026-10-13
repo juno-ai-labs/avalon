@@ -1,0 +1,146 @@
+# Thread backfill
+
+A one-off job over every thread of an Organization and each of its open
+Breakouts: a work list in `WorkspaceDO`, an alarm lane that sends it to the
+activity Queue one batch at a time, and a consumer that runs the job over each
+conversation through its own object. Its first job summarizes the description
+of every thread and Breakout created before the first naming pass asked for a
+summary ([`workstream-descriptions.md`](workstream-descriptions.md#the-first-summary)).
+
+It is [Channel colour sync](workstream-appearance.md)'s lane with the triggers
+and revisions taken out. Colour sync is a standing job that writes keep
+re-marking; a backfill is filled once by a migration and done when the
+consumer says so.
+
+## Where the code lives
+
+| Path | Responsibility |
+| --- | --- |
+| `apps/api/src/durable-objects/thread-backfill.ts` | The `thread_backfill` table and its migration, the job list, the alarm lane (`nextThreadBackfillAt`, `publishThreadBackfill`), and the settle, release and work halves. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Migration 100, the `thread_backfill` alarm lane, and the `threadBackfillWork`, `completeThreadBackfill` and `releaseThreadBackfill` RPCs. |
+| `apps/api/src/queues/activity-consumer.ts` | `THREAD_BACKFILL_HANDLERS`, the one place a job's per-conversation work is named, and the branch that runs it over Main and each open Breakout. |
+| `apps/api/src/services/workstream-naming-service.ts` | `summarizeExistingDescription`, the `description_summary` job. |
+
+## How it works
+
+1. **A migration fills the list.** Migration 100 creates `thread_backfill`
+   (`job`, `workstream_id`, `attempts`, `not_before`, `in_flight`) and inserts
+   one `description_summary` row for every thread that is not archived.
+2. **The alarm sends one batch.** The `thread_backfill` lane sends up to 100
+   due rows to `ACTIVITY_QUEUE`, marking each `in_flight` with a retry gate
+   first. While any in-flight row's gate is ahead it sends nothing, so the next
+   batch waits on the consumer rather than on a chosen interval.
+3. **The consumer runs the job.** It asks `threadBackfillWork` for the thread's
+   conversations: Main (`"0"`) and each open Breakout from WorkspaceDO's own
+   `breakouts` table. It runs the job's handler over each in turn, logs
+   `thread_backfill_conversation` with the handler's outcome, and settles the
+   row with `completeThreadBackfill`.
+4. **A failure releases the row.** The consumer logs `thread_backfill_failed`,
+   releases the row so it holds no successor back, and acks the message. The
+   row's own gate sends it again.
+
+A thread that is archived, or that WorkspaceDO has no projection of, is
+settled by `threadBackfillWork` without running anything.
+
+### Adding a job
+
+Add the name to `THREAD_BACKFILL_JOBS`, a handler to
+`THREAD_BACKFILL_HANDLERS`, and a WorkspaceDO migration that inserts its rows.
+Ship the code before or with the migration, never after: the lane parses each
+row's job, and one it does not know fails the batch's publication.
+
+### Reaching every Organization
+
+A migration runs when its object next wakes, and an Organization nobody opens
+does not wake on its own. After the release that carries the migration, force
+`WorkspaceDO` from the migration tracker
+([`durable-object-migration-tracking.md`](durable-object-migration-tracking.md)),
+which wakes every Organization in every region. Each then fills its list and
+arms its own alarm.
+
+## Invariants
+
+- **One batch in flight per Organization.** Sending batches back to back
+  repeats the resource-search backfill's overload (`docs/text-search.md`,
+  2026-09-26), and each conversation here costs a model call. Guard: the
+  pacing case in `test-workers/thread-backfill.test.ts`.
+- **A job is safe to run twice over the same conversation.** A row whose
+  consumer failed part way is sent again whole, including the conversations
+  it already did. `description_summary` holds this by comparing the
+  description with the opening message's first line before any model call.
+  Guard: `workstream-naming.test.ts`, "backfilling an existing thread's
+  summary".
+- **A row is settled only after every conversation ran.** Settling first
+  would lose the rest of the thread on a failure. Guard: the Queue case in
+  `test-workers/thread-backfill.test.ts`.
+- **A model failure is a failure, not an outcome.** `summarizeExistingDescription`
+  throws `description_summary_model_failed` so the row is retried; reporting
+  it as `unchanged` would settle the row with the model down. Guard:
+  `workstream-naming.test.ts`.
+
+## Boundary
+
+This module owns the work list, its pacing, and the dispatch to a job's
+handler. It does not own what a job writes: `description_summary` writes
+through the identity port's `redescribe`, whose compare-and-swap is
+[`workstream-descriptions.md`](workstream-descriptions.md)'s. It does not wake
+Organizations; the migration tracker does. It is not for standing work that
+writes keep re-marking: that is colour sync's shape, with triggers and
+revisions.
+
+## Failure modes and limits
+
+- **Model down.** Each failing conversation throws, the row is released, and it
+  retries at its gate (`scheduledAlarmRetryDelay`). Nothing is settled while the
+  model is down.
+- **No model key** (`OPENROUTER_API_KEY` unset, as locally). Naming returns
+  nothing without failing, so rows settle as `unchanged`. A backfill run where
+  the key is missing does nothing and finishes.
+- **A retired Organization** refuses the write; the consumer acks without
+  releasing the row or logging a failure.
+- **Batch size** is 100, Cloudflare Queues' `sendBatch` ceiling.
+
+## Testing
+
+- `apps/api/test-workers/thread-backfill.test.ts` (real workerd): the work
+  RPC's answer and settling, pacing, and a Queue delivery against a real Main
+  conversation. Run with `pnpm --filter @rally/api test:workers`.
+- `apps/api/test/workspace-thread-backfill-migration.test.ts`: migration 100
+  lists open threads and skips archived ones.
+- `apps/api/test/workstream-naming.test.ts`: the `description_summary` step.
+
+## Operations
+
+| Event | Means |
+| --- | --- |
+| `thread_backfill_conversation` | One conversation ran. `outcome` is the handler's: for `description_summary`, `summarized`, `unchanged`, `superseded`, or the reason it was skipped (`authored`, `not_the_opening_line`, `no_opening_message`, `archived`, `not_a_thread`, `not_found`). |
+| `thread_backfill_failed` | A thread's job threw; its row retries at its gate. |
+| `thread_backfill_publication_failed` | The alarm could not send a batch; its rows retry at their gates. |
+
+The list drains to empty when the job is done. A row that keeps coming back
+shows as repeated `thread_backfill_failed` for one `workstream_id`.
+
+## Changelog
+
+### 2026-10-13 — A work list for one-off jobs over every thread
+
+**What changed:** WorkspaceDO migration 100 adds `thread_backfill` and lists
+every open thread to have its description, and each Breakout's, summarized.
+
+**Why:** The first naming pass now summarizes a new thread's request, and the
+product owner asked for existing threads and Breakouts to match. Colour sync
+already solved pacing a per-thread job across an Organization; this lane is
+that solution, kept generic so the next backfill is a migration and a
+handler rather than another copy.
+
+**Considered and rejected:** An operator route that walks every thread from
+one consumer, as connector maintenance does. One invocation looping over
+every thread with a model call each is the long loop
+[`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md) rules out. Reusing
+`channel_color_sync` itself was rejected because its rows carry revisions
+that its triggers advance; a second meaning in the same table would need
+both to agree on every row.
+
+**Consequences:** Every job must be safe to run twice over a conversation. A
+job's name may not be inserted by a migration before the code that runs it
+ships.

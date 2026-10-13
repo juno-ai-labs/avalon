@@ -64,8 +64,14 @@ already that short comes back as written, and nothing is stored.
   it is dropped and the derived line stands; the name and icon do not depend
   on it. Over the limit is dropped rather than cut, because a summary cut
   mid-sentence reads worse than the request.
-- **Only the composer's creation path asks today.** Slack-opened threads and
-  private Breakouts are named without a summary.
+- **The composer's threads and every new Breakout ask.** A Slack-opened thread
+  is named without a summary.
+- **Existing threads and Breakouts were backfilled** by the
+  `description_summary` job ([`thread-backfill.md`](thread-backfill.md)),
+  through `summarizeExistingDescription`. It sends a description to the model
+  only while it is still exactly the opening message's first line, so a
+  description a person wrote, one this loop rewrote, and one already
+  summarized are all left alone, and running it twice costs nothing.
 
 Then the work stream is used, and two things drift apart:
 
