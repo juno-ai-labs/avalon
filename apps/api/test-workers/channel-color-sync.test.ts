@@ -289,6 +289,44 @@ describe("a thread carries its Channel's colour", () => {
     expect(await marked()).toBeNull();
   }, 60_000);
 
+  it("recolours Main and every open Breakout when the Channel's colour changes, keeping each icon", async () => {
+    const launch = await reserve("Launch", "red");
+    await project(1);
+    await project(1, BREAKOUT);
+    await placeMembership(workspace(), { workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: launch, workstreamId: THREAD });
+    await settle();
+    const conversation = (substreamId: string) => env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, THREAD, asSubstreamId(substreamId)),
+    ));
+    const seeded = [{ substreamId: "0", icon: "rocket" }, { substreamId: BREAKOUT, icon: "flag" }];
+    for (const { substreamId, icon } of seeded) {
+      const stub = conversation(substreamId);
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: THREAD });
+        state.storage.sql.exec("UPDATE workstream SET appearance_json = ? WHERE id = 1", JSON.stringify({ icon, color: "red" }));
+        // The fixture seeds a main conversation; a Breakout's object names its own substream.
+        state.storage.sql.exec("UPDATE substream_agent_identity SET external_substream_id = ? WHERE id = 1", substreamId);
+      });
+    }
+
+    await recolorChannel(launch, "Launch", "purple");
+    const batch = createMessageBatch("avalon-global-activity", [{
+      id: crypto.randomUUID(), timestamp: new Date(), attempts: 1, body: message((await marked())!),
+    }]);
+    await consumeActivityQueue(batch, env);
+    await getQueueResult(batch, createExecutionContext());
+
+    for (const { substreamId, icon } of seeded) {
+      await runInDurableObject(conversation(substreamId), (_instance, state) => {
+        expect(JSON.parse(state.storage.sql.exec<{ appearance_json: string }>(
+          "SELECT appearance_json FROM workstream WHERE id = 1",
+        ).one().appearance_json)).toEqual({ icon, color: "purple" });
+      });
+    }
+    expect(await marked()).toBeNull();
+  }, 60_000);
+
   it("keeps one batch in flight: later threads wait until the batch settles or is released", async () => {
     const [first, second, later] = ["e711", "e712", "e713"].map((suffix) => `00000000-0000-7000-8000-00000000${suffix}`);
     // Staged straight into the table: what is under test is the lane's pacing,

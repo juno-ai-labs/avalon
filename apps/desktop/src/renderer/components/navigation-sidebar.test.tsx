@@ -278,6 +278,25 @@ describe('the navigation sidebar', () => {
     expect(fill?.style.background).toBe('var(--av-sys-color-project-ink-red)');
   });
 
+  it('draws a breakout in its thread’s live colour, keeping its own icon, after its Channel is recoloured', async () => {
+    useUiStore.getState().setSidebarSection('threads');
+    live.rows = [thread('plan', 'Q4 plan', { appearance: { icon: null, color: 'purple' } })];
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [
+      thread('site', 'Make a website', {
+        kind: 'breakout',
+        appearance: { icon: 'rocket', color: 'orange' },
+        breakoutOf: { workstreamId: 'plan', substreamId: 'site', title: 'Q4 plan', appearance: { icon: null, color: 'orange' } },
+      }),
+    ] });
+    renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
+
+    const list = within(await screen.findByRole('region', { name: 'Recent threads' }));
+    const row = await waitFor(() => list.getByRole('link', { name: /Make a website/u }));
+    const tile = row.querySelector<HTMLElement>('.identity-tile > .identity-tile-shape');
+    expect(tile?.style.color).toBe('var(--av-sys-color-project-ink-purple)');
+    expect(tile?.querySelector('svg')).toHaveClass('lucide-rocket');
+  });
+
   it('names who started a thread from the member directory when the row carries only their id', async () => {
     useUiStore.getState().setSidebarSection('activity');
     api.getActivity.mockResolvedValue({ nextCursor: null, items: [{

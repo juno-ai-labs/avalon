@@ -245,13 +245,34 @@ listings. The Channel colour is proved on real workerd in
 `channel-color-sync.test.ts` (which writes mark a thread and which do not, the
 revision fence, the rows settled with nothing to write, and the Queue consumer
 recolouring a real Main, and a later batch held until the one in flight
-settles or is released) and `identity-authority.test.ts` (`recolor` keeps the
+settles or is released, and a Channel recolour reaching Main and a Breakout
+through the consumer, each keeping its icon) and `identity-authority.test.ts` (`recolor` keeps the
 icon, commits the projection, writes nothing on a repeat, and refuses an older
 revision); the
 `message-to-output-pipeline.test.ts` appearance case proves a client's colour
 is dropped. `workspace-channel-color-migration.test.ts` proves the backfill.
 Inspect the actual Electron popup in light and dark,
 including scrolling, and check another connected window and reopening.
+
+### 2026-10-13 — A breakout row in the Threads list follows its thread's live colour
+
+**What changed:** In the Threads list, a breakout row's own tile takes its
+colour from its thread's live row, keeping its own icon
+(`withLiveThread` in `navigation-sidebar.tsx`).
+
+**Why:** Checking a Channel recolour end to end showed every stored colour
+right, and every thread row updated live, but a breakout row kept the old
+colour until the list was read again. That list is one fetch, and the socket
+carries thread rows only, so nothing live held the breakout's colour. The
+server writes a breakout's colour and its thread's from the same Channel in
+one job, so the live thread row already has the right answer.
+
+**Rejected:** Re-reading the list when a thread's colour moves. The consumer
+recolours Main and then each Breakout, and each reaches the directory through
+its own Queue hop, so a re-read can land between them and keep the old colour.
+
+**Respect:** This leans on a breakout's colour equalling its thread's. If
+conversations choose their own colours again (see the entry below), drop it.
 
 ### 2026-10-12 — Threads and Breakouts store their Channel's colour
 
