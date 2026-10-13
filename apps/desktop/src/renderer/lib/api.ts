@@ -1545,21 +1545,6 @@ export class RallyApi {
     return this.requestVoid('/navigation/activity/seen', { method: 'PUT', body: { seenThrough } });
   }
 
-  addChannelToSpace(spaceId: string, workstreamId: string): Promise<SpaceSummary> {
-    return this.request(`/spaces/${encodeURIComponent(spaceId)}/channels`, {
-      method: 'POST',
-      body: { workstreamId },
-      schema: WireSpaceSummarySchema,
-    });
-  }
-
-  removeChannelFromSpace(spaceId: string, workstreamId: string): Promise<SpaceSummary> {
-    return this.request(
-      `/spaces/${encodeURIComponent(spaceId)}/channels/${encodeURIComponent(workstreamId)}`,
-      { method: 'DELETE', schema: WireSpaceSummarySchema },
-    );
-  }
-
   moveChannelBetweenSpaces(sourceSpaceId: string, targetSpaceId: string, workstreamId: string) {
     return this.request(
       `/spaces/${encodeURIComponent(targetSpaceId)}/channels/${encodeURIComponent(workstreamId)}/move`,
