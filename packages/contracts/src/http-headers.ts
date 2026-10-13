@@ -54,8 +54,9 @@ export const LEGACY_RALLY_HEADER_PREFIXES: readonly string[] = Object.freeze([
  * `3` adds explicit import verification checks and parallel file downloads, required by import admission.
  * `4` opens a guest relationship: platform discovery lists one and activation admits it.
  * `5` reads a Space whose scope is `individual` (a Personal Channel).
+ * `6` reads a Channel feed item of kind `message`.
  */
-export const CLIENT_CONTRACT_VERSION = 5;
+export const CLIENT_CONTRACT_VERSION = 6;
 /** Import verification includes explicit check outcomes and parallel file downloads. */
 export const SESSION_IMPORT_CLIENT_CONTRACT = 3;
 /**
@@ -69,6 +70,12 @@ export const GUEST_WORKSPACES_CLIENT_CONTRACT = 4;
  * `personal` (`spaceScopeForClient`) rather than dropping every snapshot.
  */
 export const INDIVIDUAL_SPACE_CLIENT_CONTRACT = 5;
+/**
+ * First client contract that reads a Channel feed item of kind `message`. An
+ * older desktop parses the feed strictly, so it is served the feed without
+ * them.
+ */
+export const CHANNEL_MESSAGES_CLIENT_CONTRACT = 6;
 
 /**
  * The oldest client contract a Worker still answers.

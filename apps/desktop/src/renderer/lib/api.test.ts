@@ -260,7 +260,8 @@ describe('Rally API wire adapter', () => {
     })));
     const api = new RallyApi('https://api.rally.test', session);
     const page = await api.getChannelFeed('outbound', null);
-    expect(page.items.map((item) => [item.thread.id, item.attentionSequenceNumber])).toEqual([[detail.id, 1]]);
+    expect(page.items.map((item) => item.kind === 'thread' ? [item.thread.id, item.attentionSequenceNumber] : [item.kind]))
+      .toEqual([[detail.id, 1]]);
     expect(page.latestAttentionSequenceNumber).toBe(2);
   });
 

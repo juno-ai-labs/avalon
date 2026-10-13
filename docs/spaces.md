@@ -44,6 +44,7 @@ them; the product design is in
 | `apps/api/src/durable-objects/workspace-space-default-publication.ts` | The Space's two arguments to it: default targets, and the cutover's next page of work. |
 | `apps/api/src/services/space-service.ts` | Creation, presentation, audience, membership, archive, restore, defaults, and the resume of an interrupted operation. |
 | `apps/api/src/services/channel-access-service.ts` | A Channel's own scope and readers: the Manage access read, removing a direct reader, and the narrowing announcement a Channel's scope change publishes. |
+| `apps/api/src/durable-objects/system-channels.ts` | The Channels Rally makes on its own (General, the Personal Channel) as data: name, icon, colour and the messages each opens with. |
 | `apps/api/src/services/space-bootstrap-service.ts` | `seatOrganizationMember`, which puts a member who joins in General and gives them their Personal Channel (see [The Personal Channel](#the-personal-channel)); the one-time cutover, the fallback that opens a new Organization's General when `initializeWorkspace` could not, and the placement the two creation paths outside the coordinator take for themselves. A new Organization's General is normally made by `initializeWorkspace` itself (see [General](#general)). |
 | `apps/api/src/services/workstream-object-creation-service.ts` | Where a Channel is born into its Spaces. [`workstream-creation.md`](workstream-creation.md) owns it. |
 | `apps/api/src/routes/spaces.ts` | `/spaces` mutations and the two paginated reads. |
@@ -495,6 +496,41 @@ client that declares no contract is served `individual`, as
 nobody opens is backfilled when somebody does. To backfill the whole fleet at
 once, force a WorkspaceDO migration from `/migrations`
 ([`durable-object-migration-tracking.md`](durable-object-migration-tracking.md)).
+
+### Channel messages
+
+A Channel holds messages of its own, outside any thread: a building block
+beside its placements, for anything that has something to say in a Channel.
+A message is an author (`rally`, or a `member` by user id), a markdown body
+and a time, in `space_messages` (WorkspaceDO migration 103). Nothing in the
+mechanism knows what a message is for.
+
+- **Posting.** `postMessages(spaceId, drafts, postedAt)` writes them in order.
+  A draft may carry a `key`; the message id is then derived from the Channel
+  and the key, so the same key posts once and a retry writes nothing. Without
+  a key every post is new.
+- **Opening a Channel with messages.** `reserve` takes `messages` and posts
+  them in the transaction that makes the Channel, through
+  `postStartingMessages`: dated at the Channel's `created_at` so they come
+  first, and keyed by position so posting the same list again writes nothing.
+  The same call lets a Channel made before it had them catch up, which is how
+  migration 102's pass gives an existing General what General opens with.
+- **What the Channels Rally makes open with** is data in
+  `system-channels.ts`: General and the Personal Channel each have a name, an
+  icon, a colour and a list of messages, today one from Rally apiece. Changing
+  what one says, or adding a second message, is an edit there.
+- **In the feed.** `feedPage` reads a Channel's messages under the same seek
+  as its placements and merges the two by time, then id, so one order runs
+  across both and a cursor ending on either kind resumes correctly. A message
+  is not unread-tracked: it has no sequence number and moves no read state.
+  Whoever may read the feed sees its messages. A desktop before client
+  contract 6 (`CHANNEL_MESSAGES_CLIENT_CONTRACT`) parses the feed union
+  strictly, so `GET /spaces/:id/feed` leaves message items out for it. The
+  desktop draws a message as its author speaking, on the leading side, with
+  the renderer a thread's messages use.
+
+Nothing outside WorkspaceDO posts a message yet: there is no route or RPC for
+it. The first feature that needs one adds it over `postMessages`.
 
 ### The cutover
 
@@ -1893,12 +1929,22 @@ seats every existing member the same way. A Personal Channel is listed to its
 owner alone, never to a guest. A Space's own
 `directory_common` projection no longer writes `spaces.scope`. Client contract
 5 marks a build that reads `individual`; older desktops are served `personal`.
+Migration 103 adds Channel messages (`space_messages`), a building block any
+Channel can carry; General and every Personal Channel open with one from
+Rally, defined as data in `system-channels.ts`. The feed carries them as
+`message` items, and client contract 6 marks a build that reads one.
 
 **Why:** Product asked for a public General every member is in, and a private
 channel per member that is theirs alone. A new scope rather than a
 `personal` Space with one participant, because what makes it different is
 that its audience can never change, and that has to be readable from the row
 rather than inferred from a participant count.
+
+The opening messages are ordinary Channel messages, not a welcome feature: a
+generic author, body and time, posted through the same call anything else
+will use, with the copy kept as data beside each Channel's name and icon.
+Copy the desktop drew for an empty General was rejected for the same reason:
+it would be a one-off, not something a Channel is made of.
 
 **Considered and rejected:** A second `system_role`. The unique index on
 `system_role` allows one row per role, so General's index would have needed a
