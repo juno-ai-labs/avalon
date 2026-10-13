@@ -1,6 +1,8 @@
 import { ImportedMessageProvenanceSchema } from "@rally/contracts";
+import { personMentionMarkdownRanges } from '@rally/contracts/citations';
 import { prepareMentionMarkdown } from '@rally/contracts/message-mentions';
 import type { MentionIdentity } from './api';
+import { resolveMentionPayload } from './mention-draft';
 import type { ElicitationData, Message, MessageMention, PluginActivityData, ThoughtEventData, ToolEventData, WorkSpan, WorkTotal, WorkspaceMember } from './types';
 import {
   AGENT_MESSAGES_INBOUND_GROUP,
@@ -140,6 +142,9 @@ export function createTextMessage({ text, ...message }: TextMessageInput): Messa
   return { ...message, messageType: 'text', text };
 }
 
+/** What the rewrite reads of a selection: the identity and the span it replaces. */
+type MentionSpan = Pick<MentionIdentity, 'type' | 'userId' | 'connectorType' | 'startOffset' | 'endOffset'> & Partial<Pick<MentionIdentity, 'label'>>;
+
 /**
  * The text and mentions an optimistic turn has to carry to render as the turn
  * the room is about to store.
@@ -167,7 +172,7 @@ export function createTextMessage({ text, ...message }: TextMessageInput): Messa
  */
 export function optimisticMentionRendering(
   text: string,
-  selected: readonly MentionIdentity[],
+  selected: readonly MentionSpan[],
   members: readonly WorkspaceMember[],
 ): { text: string; mentions: MessageMention[] } {
   const prepared = prepareDraftMentions(text, selected, members);
@@ -192,7 +197,7 @@ export function optimisticMentionRendering(
  */
 export function prepareDraftMentions(
   text: string,
-  selected: readonly MentionIdentity[],
+  selected: readonly MentionSpan[],
   members: readonly WorkspaceMember[],
 ): ReturnType<typeof prepareMentionMarkdown> {
   const offsetSelections = selected.flatMap((mention) =>
@@ -210,6 +215,42 @@ export function prepareDraftMentions(
     avatarUrl: member.avatarUrl ?? null,
   }]));
   return prepareMentionMarkdown(text, offsetSelections, people);
+}
+
+/**
+ * Text the app kept without its mentions, such as a thread's opening line,
+ * rendered the way a message is. A name in durable `[@Name](person://<id>)`
+ * form, as Rally's rewrites write it, keeps that identity; failing any, each
+ * typed `@Name` the send path would resolve becomes one. A person who is not a
+ * member here stays as written.
+ */
+export function typedMentionRendering(
+  text: string,
+  members: readonly WorkspaceMember[],
+): { text: string; mentions: MessageMention[] } {
+  if (!text.includes('@') || members.length === 0) return { text, mentions: [] };
+  const linked = personMentionMarkdownRanges(text);
+  if (linked.length === 0) {
+    const discovered = members
+      .filter((member) => (member.status ?? 'active') === 'active')
+      .map((member) => ({ type: 'person' as const, label: member.name, userId: member.id, connectorType: null }));
+    return optimisticMentionRendering(text, resolveMentionPayload(text, [], discovered), members);
+  }
+  const byId = new Map(members.map((member) => [member.id.toLowerCase(), member]));
+  return {
+    text,
+    mentions: linked.flatMap((range) => {
+      const member = byId.get(range.personId);
+      return member ? [{
+        type: 'person' as const,
+        personId: range.personId,
+        displayName: member.name,
+        ...(member.avatarUrl ? { avatarUrl: member.avatarUrl } : {}),
+        startOffset: range.startOffset,
+        endOffset: range.endOffset,
+      }] : [];
+    }),
+  };
 }
 
 export function createToolEventMessage({ toolEvent, ...message }: ToolEventMessageInput): Message {
