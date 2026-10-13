@@ -27,17 +27,19 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 | `apps/desktop/src/renderer/screens/browser-import.tsx` | The import window: Import, the name-and-Space sheet, the run's progress modal and Cancel. |
 | `apps/desktop/src/renderer/lib/browser-import-progress.tsx` | The main window's half: lists the Channel as pending, shows "Importing conversation…", and settles or discards it. |
 | `packages/agent-harness/src/evaluation.ts` | Scenario/checkpoint evaluation using the production Rally runtime. |
-| `apps/desktop/src/renderer/components/navigation-sidebar.tsx`, `session-import-update-dialog.tsx` | The sidebar's **Import a conversation** button that opens the import window, and the explicit update control. |
+| `apps/desktop/src/renderer/screens/channel.tsx`, `components/session-import-update-dialog.tsx` | The Channel header's **Import from Claude or ChatGPT** button that opens the import window, and the explicit update control. |
 
 ## How it works
 
-Every import goes through Rally's own browser, read by an agent. The sidebar's
-**Import a conversation** button, beside **Search organization**, opens the
-[import window](embedded-browser.md); only the desktop host, which has that
-browser, offers it, and a guest never does. The person opens a conversation in the window — their own, signed in,
-or a shared link — and clicks Import. A sheet asks for the Space and a Channel
-name, prefilled with the tab's title; only Spaces the person may edit are
-offered, and names stop at the server's 180-character limit. The entered name is
+Every import goes through Rally's own browser, read by an agent. The
+**Import from Claude or ChatGPT** button on the right of a Channel's header
+opens the [import window](embedded-browser.md) locked to that Channel, since an
+import starts a new thread there. Only the desktop host, which has that browser,
+offers it, and only to someone who may start a thread in that Channel; a guest
+never sees it. The person opens a conversation in the window — their own,
+signed in, or a shared link — and clicks Import. A sheet asks for a thread
+name, prefilled with the tab's title, and shows the Channel without letting it
+change. Names stop at the server's 180-character limit. The entered name is
 the settled Channel title. Once the Channel opens, a background pass picks its
 icon from the imported history; its colour comes from its id, as for any Channel
 ([naming](workstream-naming.md#prepared-history)).
@@ -420,6 +422,14 @@ These deterministic checks do not measure model compliance: live runs across
 these variations are still required to establish it.
 
 ## Changelog
+
+### 2026-10-13 — Import moves from the sidebar to the Channel header
+
+**Why:** The sidebar's import button sat beside search and new Channel, so it read as creating something at the organization level. An import creates a thread in one Channel; the button now sits on that Channel's header and opens the window with the Channel locked (`spaceLocked`), so where the thread lands is never a choice made in a second window.
+
+**Considered and rejected:** Keeping the sidebar button with the Channel picker. It made the destination a separate step and hid that the result is a thread.
+
+**Consequences:** Importing needs a Channel open first. The import window still accepts a list of Channels, so a future entry point with a picker needs no change there.
 
 ### 2026-10-03 — Parallel file preparation and explicit verification outcomes
 
