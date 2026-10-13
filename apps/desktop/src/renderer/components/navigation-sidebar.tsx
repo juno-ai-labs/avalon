@@ -1061,18 +1061,6 @@ function ChannelsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }):
   </>;
 }
 
-/**
- * How many threads were placed in a Channel since this person last read it:
- * each placement takes the next sequence number, so it is the gap between the
- * newest and the read position. A thread moved out again still holds its
- * number, so the gap never claims more threads than the Channel has, and a
- * Channel whose new threads all left again reads as read.
- */
-function newThreadCount(stats: ChannelStats | undefined): number {
-  if (!stats?.hasUnread) return 0;
-  return Math.max(0, Math.min(stats.latestAttentionSequenceNumber - stats.readThroughSequenceNumber, stats.threadCount));
-}
-
 /** A Channel row: a link, so a modified click opens it elsewhere. */
 function ChannelRow({ active, drag, ghost, moves, onPin, pinned, position, space, stats }: {
   active: boolean;
@@ -1085,7 +1073,9 @@ function ChannelRow({ active, drag, ghost, moves, onPin, pinned, position, space
   space: SpaceSummary;
   stats: ChannelStats | undefined;
 }): React.JSX.Element {
-  const fresh = newThreadCount(stats);
+  // The server counts the feed's rows above the read position; the optimistic
+  // read acknowledgement clears `hasUnread` before that count comes back.
+  const fresh = stats?.hasUnread ? stats.newThreadCount : 0;
   const unread = fresh > 0;
   const route = useCurrentRoute();
   const href = channelRoute(space.id);

@@ -58,7 +58,7 @@ const plan: WorkstreamSummary = {
 
 function outboundStats(overrides: Partial<ChannelStats> = {}): ChannelStats {
   return {
-    channelId: 'outbound', threadCount: 2, lastActivityAt: '2026-10-03T00:00:00.000Z',
+    channelId: 'outbound', threadCount: 2, newThreadCount: 1, lastActivityAt: '2026-10-03T00:00:00.000Z',
     latestAttentionSequenceNumber: 2, readThroughSequenceNumber: 1, firstUnreadSequenceNumber: 2, hasUnread: true,
     ...overrides,
   };

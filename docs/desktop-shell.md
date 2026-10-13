@@ -84,10 +84,10 @@ second line is empty unless a thread was placed in the Channel since this
 person last had it open (`hasUnread` on its stats row); then the name goes
 bold (the time stays muted) and the second line reads "N new threads" in the unread colour
 (`--av-sys-color-workstream-news`), with the same dot at its end a thread
-row has. N is
-`latestAttentionSequenceNumber − readThroughSequenceNumber`, capped at
-`threadCount` because a placement moved out again keeps its number; a
-Channel whose new threads all moved out again draws as read.
+row has. N is the stats row's `newThreadCount`: the feed's rows above the
+read position, locked rows included, so a moved-out thread is not counted and
+a private one is. A Channel whose new threads all moved out again draws as
+read.
 Hovering the time shows "Last update at" and the exact local time.
 Opening the Channel in a focused, visible window acknowledges the newest
 loaded placement's `attentionSequenceNumber` (`PATCH /spaces/:id/read-state`),
@@ -396,15 +396,16 @@ the person could act on, while the count of new ones is the reason to open
 the Channel. The Archived section was clutter at the foot of a list people
 scan often.
 
-**Considered and rejected:** A new server field for the count. The stats row
-already carries the waterline and read position, so the client derives it.
+**Considered and rejected:** Deriving the count on the client from the
+waterline and read position, capped at `threadCount`. A placement moved out
+keeps its number, and `threadCount` leaves out private threads a member sees
+as locked rows, so the derivation both overcounted and could draw a Channel
+with new private threads as read. The server counts `newThreadCount` instead
+([`spaces.md`](spaces.md#changelog)).
 
 **Consequences:** There is no way left in the app to restore an archived
 Channel; `restoreSpace` and the inactive Space directory stay in the API and
-the socket for whatever brings that back. The count is an upper bound: a
-new thread moved out again still counts until the Channel holds fewer threads
-than the gap, and an exact count would need the server to count memberships
-above the read position.
+the socket for whatever brings that back.
 
 Shipped in [#1205](https://github.com/juno-ai-labs/avalon/pull/1205).
 

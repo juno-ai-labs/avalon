@@ -466,6 +466,24 @@ describe("Channel read state", () => {
     expect(readState(await stats(MEMBER, channelId))).toEqual({ latest: 2, readThrough: 2, firstUnread: null, hasUnread: false });
   });
 
+  it("given threads placed since a person last read a Channel, when they read the stats, then the new-thread count matches the feed's rows above their position, locked rows included", async () => {
+    const channelId = await channelWithThreads();
+    await publish(OPEN_THREAD, [viewerEffect(GUEST)]);
+
+    // The member may list one of the two, but the feed shows both, the private one locked.
+    expect(await stats(MEMBER, channelId)).toMatchObject({ threadCount: 1, newThreadCount: 2 });
+    expect((await stats(OWNER, channelId)).newThreadCount).toBe(0);
+    expect((await stats(GUEST, channelId)).newThreadCount).toBe(0);
+
+    await workspace().acknowledgeSpaceRead({ workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId, readThroughSequenceNumber: 2 });
+    expect((await stats(MEMBER, channelId)).newThreadCount).toBe(0);
+
+    await openThreadObject(LATE_THREAD);
+    await publish(LATE_THREAD, [threadEffect("Late addition"), viewerEffect(OWNER)]);
+    await place(channelId, LATE_THREAD);
+    expect((await stats(MEMBER, channelId)).newThreadCount).toBe(1);
+  });
+
   it("given a guest who reaches a Channel through a thread in it, when they read the stats, then the Channel is never unread for them", async () => {
     const channelId = await channelWithThreads();
     await publish(OPEN_THREAD, [viewerEffect(GUEST)]);

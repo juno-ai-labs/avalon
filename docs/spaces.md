@@ -1117,8 +1117,10 @@ read over the listing rules:
   first — the conversation page's two-arm shape started from the person, through
   migration 97's `(user_id, is_participant)` indexes on both viewer tables.
 - **`channelStats`**: per listed Space, how many Channels in it the viewer may
-  list, when the newest of those last moved, and the viewer's
-  [read state](#the-channels-read-state) in it. It rides the connect payload
+  list, when the newest of those last moved, the viewer's
+  [read state](#the-channels-read-state) in it, and `newThreadCount`: how many
+  of the feed's rows sit above their read position, locked rows included for
+  a member, zero for a guest. It rides the connect payload
   as `channelStats`, beside the Spaces rather than on `SpaceSummary`, which
   shipped desktops parse strictly. It does not ride the broadcast Space
   snapshot: that goes to every member, and the stats are one person's. After
@@ -1813,6 +1815,29 @@ whoever reads it afterwards; `space_default_delivery_failed` does the same for a
 default target.
 
 ## Changelog
+
+### 2026-10-13: Channel stats count the new rows
+
+**What changed:** `ChannelStats` gains `newThreadCount`, counted in
+`channelStats` with the feed's member predicate above the read position
+`unreadState` derives (the reader's own, else the tracking start).
+
+**Why:** The Channels tab now shows "N new threads" rather than a total. The
+client could not derive it: a placement moved out keeps its ordinal, and
+`threadCount` leaves out the private threads a member sees as locked rows, so
+a Channel with only new private threads drew as read.
+
+**Considered and rejected:** Deriving it on the client from the waterline,
+for the reason above. Making the field optional, which would not help: the
+risk is the other way round, an older desktop parsing the HTTP stats strictly.
+
+**Consequences:** `ChannelStatsSchema` is strict, so a desktop build older
+than this change rejects `GET /navigation/channel-stats` and the read
+acknowledgement's answer until it updates; the socket's receive-only parser
+takes the new field. A change to which rows the feed shows has to change this
+count with it.
+
+Shipped in [#1205](https://github.com/juno-ai-labs/avalon/pull/1205).
 
 ### 2026-10-13: A participant can leave a private Space
 
