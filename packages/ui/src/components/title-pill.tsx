@@ -171,6 +171,13 @@ export const keepSearchFocus = {
  */
 const TITLE_MENU_COLLISION_PADDING = { top: 12, right: 12, bottom: -Infinity, left: 12 };
 
+/** Takes focus out of the input, textarea or editable region that holds it, if any. */
+function blurTextEntry(): void {
+  const active = document.activeElement;
+  if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement
+    || (active instanceof HTMLElement && active.isContentEditable)) active.blur();
+}
+
 /**
  * One level of a conversation's title: a Channel, or a Breakout inside it.
  *
@@ -220,8 +227,16 @@ export function TitlePill({ level, variant = 'current' }: {
     open: (next) => { setDirection('in'); setView(next); },
     back,
   }), [back, direction, view]);
-  // A menu reopens at its root, wherever it was left.
-  const onOpenChange = (open: boolean): void => { if (!open) { setDirection('in'); setView(null); } };
+  // A menu reopens at its root, wherever it was left. Opening it lets go of any
+  // text entry, so a phone's keyboard drops rather than covering the menu.
+  const onOpenChange = (open: boolean): void => {
+    if (open) {
+      blurTextEntry();
+      return;
+    }
+    setDirection('in');
+    setView(null);
+  };
   const chevron = <IconChevronDown aria-hidden="true" className="title-pill-chevron" size={13} stroke={2} />;
   /**
    * The title, and the level open below it. While a level is open the title is
