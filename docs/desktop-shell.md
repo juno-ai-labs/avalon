@@ -380,18 +380,17 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 
 **What changed:** A thread's title-pill menu no longer has a **Channels** row
 or level, so the desktop no longer lists, adds or removes a thread's Channel
-placements from it. `lib/thread-channels.tsx` and the `channels` prop of
-`ChannelMenu` went with it. The server's add and remove routes, and their
-client methods, stay.
+placements from it. `lib/thread-channels.tsx`, the `channels` prop of
+`ChannelMenu`, and the client's `addChannelToSpace` and
+`removeChannelFromSpace` went with it.
 
 **Why:** The product owner asked for the row to go. The reasoning beyond that
 was not recorded.
 
 **Consequences:** The desktop has no way to add a thread to another Channel or
-take it out of one. The server routes and the client's `addChannelToSpace` and
-`removeChannelFromSpace` stay, unused by the desktop, so bringing placement
-editing back is UI work only. Such a change should decide where it lives rather
-than restore this row by default.
+take it out of one. The server routes stay for older desktops, so bringing
+placement editing back needs only client methods and a UI. Such a change
+should decide where that UI lives rather than restore this row by default.
 
 Shipped in [#1204](https://github.com/juno-ai-labs/avalon/pull/1204).
 
