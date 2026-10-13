@@ -6,7 +6,7 @@ import { asUserId } from "@rally/contracts";
 import type { HonoAppEnv } from "../src/env";
 import { onboardingRoutes } from "../src/routes/onboarding";
 import { openEmailLoginSecret, redeemEmailLogin, startEmailLogin } from "../src/services/email-login-service";
-import { organizationNameFromHtml, suggestOrganizationName } from "../src/services/organization-name-suggestion";
+import { MAX_HOMEPAGE_HEAD_BYTES, organizationNameFromHtml, readHead, suggestOrganizationName } from "../src/services/organization-name-suggestion";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { drainWaitUntil } from "./helpers/cloudflare-workers";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -129,6 +129,35 @@ describe("suggestOrganizationName", () => {
     expect(cachedRow("vandelay.com")).toMatchObject({ outcome: "not_html" });
   });
 
+  it("follows redirects, checking every hop", async () => {
+    const d1 = sqliteD1(db);
+    const calls: string[] = [];
+    const redirecting = (target: string) => async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      return String(input) === "https://acme.com/"
+        ? new Response(null, { status: 301, headers: { location: target } })
+        : htmlResponse("<title>Acme</title>");
+    };
+    expect(await suggestOrganizationName(d1, "pat@acme.com", redirecting("https://www.acme.com/"), start)).toBe("Acme");
+    expect(calls).toEqual(["https://acme.com/", "https://www.acme.com/"]);
+    calls.length = 0;
+    db.prepare("DELETE FROM organization_name_suggestions").run();
+    expect(await suggestOrganizationName(d1, "pat@acme.com", redirecting("http://169.254.169.254/latest/meta-data"), start)).toBeNull();
+    expect(calls).toEqual(["https://acme.com/"]);
+    expect(cachedRow("acme.com")).toMatchObject({ outcome: "refused", name: null });
+  });
+
+  it("gives up on a redirect loop without caching it", async () => {
+    let calls = 0;
+    const looping = async () => {
+      calls += 1;
+      return new Response(null, { status: 302, headers: { location: "/again" } });
+    };
+    expect(await suggestOrganizationName(sqliteD1(db), "pat@loop.com", looping, start)).toBeNull();
+    expect(calls).toBe(21);
+    expect(cachedRow("loop.com")).toBeUndefined();
+  });
+
   it("stops reading once the head has arrived", async () => {
     // The body never ends: reading past the head would never resolve.
     const body = new ReadableStream<Uint8Array>({
@@ -138,6 +167,51 @@ describe("suggestOrganizationName", () => {
     });
     const fetcher = async () => new Response(body, { headers: { "content-type": "text/html" } });
     expect(await suggestOrganizationName(sqliteD1(db), "pat@acme.com", fetcher)).toBe("Acme");
+  });
+});
+
+describe("readHead", () => {
+  function chunked(...parts: string[]): ReadableStream<Uint8Array> {
+    return new ReadableStream({
+      start(controller) {
+        for (const part of parts) controller.enqueue(new TextEncoder().encode(part));
+        controller.close();
+      },
+    });
+  }
+
+  it("gives up once more than the limit arrives before the head ends", async () => {
+    expect(await readHead(chunked("<head><title>Acme</title>", "<script>".padEnd(64, "x")), 32)).toBeNull();
+    expect(await readHead(chunked("<head><title>Acme</title></head>"), 64)).toBe("<head><title>Acme</title></head>");
+  });
+
+  it("finds the end of the head when its marker is split across chunks", async () => {
+    // Never closed: the read ends only by finding `</head>`.
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const part of ["<head><title>Acme</title></he", "ad>"]) controller.enqueue(new TextEncoder().encode(part));
+      },
+    });
+    expect(await readHead(body, MAX_HOMEPAGE_HEAD_BYTES)).toBe("<head><title>Acme</title></head>");
+  }, 2_000);
+
+  it("reads a heavy but legitimate head whole at the shipped limit", async () => {
+    // A head with a few hundred KB of inlined CSS and JS, as heavy real homepages have.
+    const script = `<script>${"x".repeat(400_000)}</script>`;
+    const head = await readHead(chunked("<head>", script, "<title>Acme</title></head><body>"), MAX_HOMEPAGE_HEAD_BYTES);
+    expect(head).toBe(`<head>${script}<title>Acme</title></head><body>`);
+  });
+
+  it("stops a head that never ends at the shipped limit", async () => {
+    let enqueued = 0;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        enqueued += 64 * 1024;
+        controller.enqueue(new Uint8Array(64 * 1024).fill(120));
+      },
+    });
+    expect(await readHead(endless, MAX_HOMEPAGE_HEAD_BYTES)).toBeNull();
+    expect(enqueued).toBeLessThan(4 * 1024 * 1024);
   });
 });
 
@@ -166,6 +240,10 @@ describe("organizationNameFromHtml", () => {
 
   it("splits a title written as name, colon, tagline", () => {
     expect(organizationNameFromHtml("<title>Cloudflare: Build for the agent era</title>", "cloudflare.com")).toBe("Cloudflare");
+  });
+
+  it("never picks a generic page label, even one inside the domain", () => {
+    expect(organizationNameFromHtml("<title>Home | The Home Depot</title>", "homedepot.com")).toBe("The Home Depot");
   });
 
   it("skips a generic page label when no segment matches the domain", () => {
