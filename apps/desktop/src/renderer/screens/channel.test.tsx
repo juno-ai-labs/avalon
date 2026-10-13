@@ -166,6 +166,25 @@ describe('a Channel', () => {
     expect(screen.queryByText('composer')).not.toBeInTheDocument();
   });
 
+  describe('importing', () => {
+    const openBrowserImport = vi.fn(async () => undefined);
+    beforeEach(() => vi.stubGlobal('rally', { openBrowserImport }));
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('imports from Claude or ChatGPT into this Channel alone, from its header', async () => {
+      renderChannel();
+      fireEvent.click(await screen.findByRole('button', { name: 'Import from Claude or ChatGPT' }));
+      expect(openBrowserImport).toHaveBeenCalledWith({ spaces: [{ id: 'outbound', name: 'Outbound' }], spaceLocked: true });
+    });
+
+    it('offers no import to somebody who cannot start a thread in the Channel', async () => {
+      spaces.data = outbound('through_channel');
+      renderChannel();
+      await screen.findByRole('list', { name: 'Threads in Outbound' });
+      expect(screen.queryByRole('button', { name: 'Import from Claude or ChatGPT' })).toBeNull();
+    });
+  });
+
   it('archives from its title menu after asking, and leaves for the landing', async () => {
     api.archiveSpace.mockResolvedValue({ ...outbound('organization').items[0], status: 'archived' });
     renderChannel();

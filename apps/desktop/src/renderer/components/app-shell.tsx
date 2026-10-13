@@ -228,12 +228,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // dock would then lower the badge APNs set from the full count.
   // The attention button's number: waiting conversations and access requests.
   useDockBadge(attentionItems.length + accessRequests.length, attentionComplete && breakoutListsLoaded);
-  const visibleSpaces = spaces.data?.items ?? [];
   const downloadedUpdate = useDownloadedUpdate();
-  // An import lands in a Channel this person may place threads in; only the
-  // Mac app has the embedded browser it runs in.
-  const openBrowserImport = typeof window === 'undefined' ? undefined : window.rally?.openBrowserImport;
-  const importChannels = visibleSpaces.filter((space) => space.reach !== 'through_channel' && !guestSession);
   // While search is open, a Breakout list the socket writes re-reads the
   // places, so a Breakout created or renamed meanwhile shows at once.
   const [breakoutListsVersion, setBreakoutListsVersion] = useState(0);
@@ -523,9 +518,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           />
         )}
         downloadedUpdate={downloadedUpdate}
-        onOpenImport={openBrowserImport && importChannels.length > 0 ? () => void openBrowserImport({
-          spaces: importChannels.map((space) => ({ id: space.id, name: space.name })),
-        }) : undefined}
         workspace={workspace}
         attentionItems={attentionItems}
         attentionComplete={attentionComplete}
