@@ -145,14 +145,11 @@ its threads, and a composer at the foot.
   scrolled up, and **Show earlier threads** loads the next page without moving
   what they were reading. A hairline with the day's name ("Today",
   "Yesterday", a weekday, then a date; `formatDayLabel`) sits above the first
-  thread of each day. Each thread is set to the trailing side with its mark
-  (the thread's icon and colour) beside it: the title with a caret, its
-  description in up to three lines, and the starter's avatar, name and when.
-  The whole entry is one button that opens the thread beside the Channel;
-  "Needs input" or "1 new" leads the title, and the open thread's entry is
-  shaded. A row the socket holds is drawn from the socket, so its dot and
-  title move live, and a thread started here a moment ago shows at once. The
-  feed fades out under the Channel's pill as it scrolls.
+  thread of each day. Each thread is one button that opens it beside the
+  Channel: its title, its description, and who started it and when, with the
+  thread's own mark beside them. A row the socket holds is drawn from the
+  socket, so its dot and title move live, and a thread started here a moment
+  ago shows at once.
 - **Locked rows.** A thread a member may not open shows in the same shape,
   with a lock for its mark: **Private thread**, **Request access** and when it
   was placed. The entry opens the thread's

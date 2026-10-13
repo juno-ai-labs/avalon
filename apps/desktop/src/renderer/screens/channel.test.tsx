@@ -107,7 +107,7 @@ describe('a Channel', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Q4 plan' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/plan');
     expect(await screen.findByText('thread pane')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Request access' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Private thread, request access' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/secret');
   });
 

@@ -978,6 +978,18 @@ describe("backfilling an existing thread's summary", () => {
     expect(description(database)).toBe(summary);
   });
 
+  it("asks nothing at run settlement once there is a description, even the opening line", async () => {
+    const database = seededDatabase();
+    seedMessages(database, 1);
+    const requests: Array<Record<string, unknown>> = [];
+    stubOpenRouter(requests, "Danny download link", undefined, "megaphone", summary);
+
+    expect(await summarizeExistingDescription(environment(database, []), { ...target, onlyWhenEmpty: true }))
+      .toBe("has_description");
+    expect(requests).toHaveLength(0);
+    expect(description(database)).toBe(objective);
+  });
+
   it("asks nothing where a person wrote the description", async () => {
     const database = seededDatabase();
     seedMessages(database, 1);

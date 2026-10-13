@@ -62,10 +62,7 @@ export type ThreadBackfillMessage = z.infer<typeof ThreadBackfillMessageSchema>;
  * `null` when there is nothing to do — the row is gone, or the thread is
  * archived or has no projection — and the row is settled by `threadBackfillWork`.
  */
-export const ThreadBackfillWorkSchema = z.strictObject({
-  substreamIds: z.array(z.string().min(1)).min(1),
-}).nullable();
-export type ThreadBackfillWork = z.infer<typeof ThreadBackfillWorkSchema>;
+export type ThreadBackfillWork = { substreamIds: string[] } | null;
 
 /** `null` too for an Organization held below migration 100, which has no table yet. */
 export function nextThreadBackfillAt(sql: SqlStorage): number | null {

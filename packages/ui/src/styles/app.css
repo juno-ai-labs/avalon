@@ -8736,10 +8736,9 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 
 /* ── A Channel: its feed of threads and the composer that starts one ─────── */
 .channel-screen { display: grid; grid-template-rows: 55px minmax(0, 1fr) auto; height: 100%; min-width: 0; position: relative; }
-.channel-header { align-items: center; display: flex; padding: 0 12px; }
+.channel-header { align-items: center; display: flex; padding: 0 12px; position: relative; z-index: 1; }
 .channel-header .title-pill-header { flex: 1; }
 /* The header's pill floats over the feed, which fades out beneath it. */
-.channel-header { position: relative; z-index: 1; }
 .channel-header::after {
   background: linear-gradient(var(--av-sys-color-surface-default) 15%, transparent);
   content: "";

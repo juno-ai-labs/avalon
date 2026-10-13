@@ -180,6 +180,7 @@ export async function nameWorkstream(env: Env, input: WorkstreamNamingInput): Pr
 /** What summarizing one existing conversation's description came to. */
 export type DescriptionSummaryOutcome =
   | "summarized"
+  | "has_description"
   | "unchanged"
   | "superseded"
   | "not_found"
@@ -206,11 +207,19 @@ export async function summarizeExistingDescription(env: Env, input: {
   workspaceId: string;
   workstreamId: string;
   substreamId?: string | undefined;
+  /**
+   * Only write a description where there is none. Run settlement passes it:
+   * a summary the model hands back as the opening line, or does not give,
+   * leaves the opening line in place, and without this every later run
+   * would ask again.
+   */
+  onlyWhenEmpty?: boolean;
 }): Promise<DescriptionSummaryOutcome> {
   const identity = await createIdentityObjectPort(
     env, input.workspaceId, input.workstreamId, undefined, input.substreamId,
   ).identity();
   if (!identity) return "not_found";
+  if (input.onlyWhenEmpty && identity.description !== "") return "has_description";
   if (identity.archived_at != null) return "archived";
   if (identity.description_source === "authored") return "authored";
   // The same conversations the description loop leaves alone: a Sidekick's is
@@ -235,7 +244,7 @@ export async function summarizeExistingDescription(env: Env, input: {
   // Thrown rather than reported as unchanged, so the backfill retries this
   // conversation instead of settling it with the model down.
   if (generated.failed) throw new Error("description_summary_model_failed");
-  if (generated.summary === null || generated.summary === identity.description) return "unchanged";
+  if (generated.summary === null) return "unchanged";
   const applied = await summarizeDescription(env, {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
@@ -243,7 +252,7 @@ export async function summarizeExistingDescription(env: Env, input: {
     summary: generated.summary,
     provisionalDescription: identity.description,
   });
-  return applied === "applied" ? "summarized" : "superseded";
+  return applied === "applied" ? "summarized" : applied;
 }
 
 /**
