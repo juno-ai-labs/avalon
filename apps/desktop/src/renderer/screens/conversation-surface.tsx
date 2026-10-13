@@ -732,14 +732,15 @@ export function AddParticipantDialog({
 export function RemoveParticipantDialog({ failure, member, noun, onCancel, onContinue, pending, self }: {
   failure?: string | undefined;
   member: WorkspaceMember | undefined;
-  noun: 'thread' | 'breakout';
+  noun: 'channel' | 'thread' | 'breakout';
   onCancel: () => void;
   onContinue: () => void;
   pending: boolean;
   self: boolean;
 }): React.JSX.Element {
   // A Channel grants no reader (`docs/spaces.md`), so being in a Channel that
-  // holds this thread keeps nobody in it: only a public thread does.
+  // holds this thread keeps nobody in it: only a public thread does. A
+  // Channel itself is listed to everybody only while it is public.
   const who = self ? 'You' : member?.name ?? 'They';
   const keeps = self ? 'You keep' : 'They keep';
   return (
