@@ -49,13 +49,8 @@ In product words a Space is a **Channel** and a stored Channel is a **thread**
 ([the navigation PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)).
 The rules keep the storage words.
 
-**The Channel feed has no exception.** A Channel's feed (`feedPage` in
-`workspace-space-storage.ts`) lists the threads placed in it that the viewer
-may open, by `mainOpenableSql`, for a member exactly as for a guest. A private
-thread the viewer is not in is not on the feed and is not counted in the
-Channel's new-thread count or unread dot. A person reaches it only through a
-link, which leads to the request-access screen
-([`channel-access-requests.md`](channel-access-requests.md)).
+A Channel's feed (`feedPage` in `workspace-space-storage.ts`) lists only the
+threads its viewer may open, by `mainOpenableSql`.
 
 A call site passes a `Viewer` (`userId` and `accessClass`) and never branches
 on the access class itself. The socket pins the access class on its attachment
@@ -188,7 +183,8 @@ exception to the listing ladder.
 **Considered and rejected:** No alternative was recorded with the request.
 
 **Consequences:** The feed contract has one row kind; `kind: "thread"` stays
-on the wire so a row can grow another kind without a breaking change. The
+on the wire because desktops shipped since 1.563 parse the row by it, and can
+go once those builds no longer reach the API. The
 unread dot is gated on the visible count rather than the Channel's own
 waterline, because the waterline still moves for every placement.
 

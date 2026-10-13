@@ -1249,8 +1249,9 @@ active keep `NULL`, which the feed reports as zero.
   can list; any other stranded thread (private, or one the archiver cannot
   list) keeps the archive refused `space_membership_final`. The moves and the
   archive are one WorkspaceDO transaction, so a refused archive rolls back
-  whole and moves nothing. Moving a private thread would place it somewhere its
-  participants did not choose, and moving one the archiver
+  whole and moves nothing. Moving a private thread was refused because it would
+  have shown as a locked row to every General reader; locked rows are gone, and
+  the refusal is kept for now with no other reason recorded. Moving one the archiver
   cannot list would let them act on work they cannot see. An archived thread
   keeps its membership so restoring the Space returns it, but no list renders
   it, so it is not a stranded home that has to move first. A thread the
