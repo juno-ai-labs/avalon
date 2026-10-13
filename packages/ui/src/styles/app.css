@@ -8686,6 +8686,10 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 /* A badge on a badge's corner: the same ring, scaled down. */
 .identity-tile-badge.is-nested { height: 15px; width: 15px; }
 .identity-tile-badge.is-nested > .identity-tile-badge-fill { font-size: 5.5px; height: 12px; width: 12px; }
+/* An avatar in a badge fills it: the ring already separates it from the tile,
+   so its own border goes, and its initials take the badge's size. */
+.identity-tile-badge-fill > .avatar { border: 0; height: 100%; width: 100%; }
+.identity-tile-badge-fill > .avatar .avatar-fallback { font-size: inherit; }
 
 /* Activity: one row per thing that happened to this person. */
 .activity-row { align-items: flex-start; padding: 9px 10px; }
