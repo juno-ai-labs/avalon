@@ -163,6 +163,22 @@ export const keepSearchFocus = {
 };
 
 /**
+ * The menu always opens below its pill, which sits at the top of its pane, so
+ * above is never better. The bottom edge never counts as a collision, so Radix
+ * never flips it up; the sides still shift it to fit a phone's width. Without
+ * this, a phone with its keyboard up shrinks the visual viewport, the menu
+ * flips above the pill, and nothing moves it back once the keyboard drops.
+ */
+const TITLE_MENU_COLLISION_PADDING = { top: 12, right: 12, bottom: -Infinity, left: 12 };
+
+/** Takes focus out of the input, textarea or editable region that holds it, if any. */
+function blurTextEntry(): void {
+  const active = document.activeElement;
+  if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement
+    || (active instanceof HTMLElement && active.isContentEditable)) active.blur();
+}
+
+/**
  * One level of a conversation's title: a Channel, or a Breakout inside it.
  *
  * `menu` is the popover the pill opens. `onSelect`, when given, makes the
@@ -211,8 +227,16 @@ export function TitlePill({ level, variant = 'current' }: {
     open: (next) => { setDirection('in'); setView(next); },
     back,
   }), [back, direction, view]);
-  // A menu reopens at its root, wherever it was left.
-  const onOpenChange = (open: boolean): void => { if (!open) { setDirection('in'); setView(null); } };
+  // A menu reopens at its root, wherever it was left. Opening it lets go of any
+  // text entry, so a phone's keyboard drops rather than covering the menu.
+  const onOpenChange = (open: boolean): void => {
+    if (open) {
+      blurTextEntry();
+      return;
+    }
+    setDirection('in');
+    setView(null);
+  };
   const chevron = <IconChevronDown aria-hidden="true" className="title-pill-chevron" size={13} stroke={2} />;
   /**
    * The title, and the level open below it. While a level is open the title is
@@ -233,7 +257,7 @@ export function TitlePill({ level, variant = 'current' }: {
     <DropdownMenu.Content
       align={variant === 'ancestor' ? 'start' : 'center'}
       className="menu-content title-pill-menu"
-      collisionPadding={12}
+      collisionPadding={TITLE_MENU_COLLISION_PADDING}
       // Escape and the left arrow step back a level before they close anything.
       onEscapeKeyDown={(event) => { if (view) { event.preventDefault(); back(); } }}
       onKeyDown={(event) => {
