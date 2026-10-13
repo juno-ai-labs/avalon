@@ -26,8 +26,10 @@ changing the Slack unfurl card or the sweep that keeps it current.
 | Make the dynamic path resolve | `apps/site/public/_redirects` |
 | The signed-out name lookup the page's heading shows | `apps/api/src/routes/links.ts`, `WorkspaceDO.linkTitle` |
 | Style every desktop-handoff page like the desktop sign-in screen | `apps/site/src/desktop-handoff.css` |
-| Slack unfurl | `unfurlRallyLinks` in `apps/api/src/services/slack-agent-service.ts` |
-| The card's blocks and its one status table | `slack-workstream-card.ts` |
+| Slack unfurl | `unfurlAvalonLinks` in `apps/api/src/services/slack-agent-service.ts` |
+| The card's blocks, its one status table, and which object a link names | `slack-workstream-card.ts` |
+| A link's name, colour and icon, and its Channel's | `WorkspaceDO.linkPreviews` |
+| The mark images the card shows | [`marks.md`](marks.md) |
 | The refresh sweep | `refreshSlackWorkstreamUnfurls`, wired into `scheduled` in `apps/api/src/index.ts` |
 | Authoritative title/status/recency lookup | `WorkspaceDO.lookupWorkstreamDirectory`, batched per workspace by the posting and refresh paths |
 | Slack blocks, DMs, and person-notification email (a mention, and being added) | `slack-agent-service.ts`, `slack-notification-service.ts`, `mention-email-service.ts`, `participant-email-service.ts` |
@@ -85,13 +87,10 @@ title: a Channel, Breakout, Space, or a Sidekick that is not deleted. It reads
 no viewer, no contents and no other field. An unknown Organization is refused
 from D1 before any object opens.
 
-This is looser than the Slack unfurl's audience table above, on purpose: the
-product call (2026-10-07) is that whoever holds a link may see the name, color
-and icon of what it points at, archived or private included. The unfurl differs
-because Rally itself posts the card into a Slack channel, where people who never
-opened the link read it; the handoff page shows the name only to the person who
-opened the link. Aligning the unfurl with the looser rule would be a separate
-decision. Until the answer lands, or when it misses,
+The product call (2026-10-07) is that whoever holds a link may see the name,
+color and icon of what it points at, archived or private included. The Slack
+unfurl follows the same rule since 2026-10-13 (below): the people reading a card
+are holding the link too. Until the answer lands, or when it misses,
 the heading is plain `Opening in Rally`, and the buttons work the same either
 way. A link minted in a second region needs the page to ask that region's API.
 
@@ -142,10 +141,23 @@ serves every id under the prefix from one page through a 200 rewrite in
 
 ### What the Slack unfurl shows
 
-The card carries the work stream's **title, last activity, and automation
-origin**, plus a **status badge only while it is `running`, `needs_input`, or
-`failed`** — enough to know whether the link is worth opening and whether the agent
-is blocked.
+Every Rally link gets a card: a thread, a Breakout, a Channel or a Sidekick, in
+any Organization in this region. The card has two layers.
+
+**The preview, for whoever holds the link.** The link's name and mark (its
+colour and icon, as an image from [`marks.md`](marks.md)), and for a thread or
+Breakout, the Channel it sits in with that Channel's mark above it. A word says
+what kind of thing it is: Thread, Breakout, Channel or Sidekick. This is the
+handoff page's rule, and it applies everywhere: archived, private, another
+Organization, or a Slack Connect channel. `WorkspaceDO.linkPreviews` reads it
+with no viewer and no scope, one call per Organization per message. The Channel
+is the one named in the link when it still exists, else the thread's current
+placement.
+
+**The status, for the Organization's own Slack audience.** Last activity and a
+**status badge only while the thread is `running`, `needs_input`, or `failed`**
+— enough to know whether the link is worth opening and whether the agent is
+blocked. This layer keeps the audience rule below.
 
 After the work-stream authority cutover these fields come from the owning
 WorkspaceDO directory, not a D1 work-stream projection. The Slack installation,
@@ -170,13 +182,17 @@ read the channel — `user_auth_required` gates the *sharer*, not the audience, 
 there is no per-viewer rendering to hide behind. The audience rule is therefore
 deliberately permissive, because the alternative blocks nearly every real link:
 
-| Condition | Card |
+| Condition | Status layer |
 | --- | --- |
-| Work stream is not in the workspace bound to this Slack team | Anonymous |
-| Work stream is archived | Anonymous |
-| Slack Connect: externally shared channel or external DM | Anonymous |
-| Audience lookup (`conversations.info`) failed | Anonymous when posting; **no rewrite at all** when refreshing |
-| Anything else — public, private, DM, group DM | Summary |
+| Work stream is not in the workspace bound to this Slack team | Withheld |
+| Work stream is archived | Withheld |
+| Slack Connect: externally shared channel or external DM | Withheld |
+| Audience lookup (`conversations.info`) failed | Withheld when posting; **no rewrite at all** when refreshing |
+| Anything else — public, private, DM, group DM | Shown |
+
+The preview shows in every row. Only when nothing answers for the link (another
+region, an id nobody holds, a failed lookup) is the card the plain **Open in
+Rally** one.
 
 The two paths treat an unconfirmed audience differently on purpose. Posting a new
 card fails closed, because nothing is lost by withholding detail. Rewriting an
@@ -184,8 +200,9 @@ existing one must not, because a five-second timeout would otherwise redact a
 correct card and persist that as the truth — so a failed lookup leaves the row
 completely untouched and the next sweep retries.
 
-The workspace check is the one that is not a matter of taste: naming another Rally
-workspace's work stream inside this Slack team is a cross-tenant leak. The Slack
+The workspace check is the one that is not a matter of taste: another Rally
+workspace's run state inside this Slack team is a cross-tenant leak. Its name,
+colour and icon are not, because the link itself already grants them. The Slack
 Connect check is about people from other companies. Everything else inside the
 workspace sees the summary, on the same reasoning that lets any internal tool
 unfurl a title into an internal channel.
@@ -280,9 +297,12 @@ with no version constant for a future change to remember to bump.
 - **A `slack_unfurled_links` row is written as the card is posted, or never.** Slack
   reports a shared link exactly once and offers no way to re-enumerate past events,
   so a missed write is permanent.
-- **Only summary cards are recorded.** Recording an anonymous card, or one that
-  resolved outside the connection's workspace, hands the sweep a row it must not act
-  on.
+- **Only summary cards are recorded.** Recording a card with no status layer, or
+  one that resolved outside the connection's workspace, hands the sweep a row it
+  must not act on.
+- **The preview never carries more than name, colour and icon.** It reaches
+  other tenants and Slack Connect channels, so status, recency, people and
+  contents stay in the status layer or behind sign-in.
 - **A failed check degrades the card; it never drops the unfurl.**
 - **A failed audience lookup never redacts an existing card.** Posting fails closed;
   refreshing fails untouched, or a five-second timeout persists a redaction as the
@@ -400,6 +420,27 @@ new path. Push clicks
 use the same adapter with notification attribution. See [push](push-notifications.md).
 
 ## Changelog
+
+### 2026-10-13 — Every Rally link unfurls with its name, colour and icon
+
+**What changed:** The Slack card now shows the link's Channel and the link's own
+name with their marks, for threads, Breakouts, Channels and Sidekicks, in any
+Organization in this region. Status and last activity keep the old audience
+rule. The refresh sweep draws the same card.
+
+**Why:** A link into an Organization other than the one a Slack team is bound to
+got no card at all, and a Channel or Sidekick link was never unfurled. The
+product call is that name, colour and icon are public to whoever holds the link,
+which the handoff page already followed.
+
+**Considered and rejected:** Withholding the name in Slack Connect channels: the
+outside party holds the same link and would see the name on the handoff page.
+Opening each Organization's object per link rather than per message: Slack sends
+up to ten links in one message.
+
+**Consequences:** Cards posted before this change pick up the new layout when
+the sweep next selects them, at most a day later. Anything added to a preview
+reaches every holder of the link, other tenants included.
 
 ### 2026-10-10 — Links keep their shape; the app's routes say Channel and thread
 

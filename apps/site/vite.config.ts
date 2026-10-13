@@ -2,6 +2,7 @@ import { renderAccessCopy } from './src/access-copy';
 import { helpCenter } from './build/help/plugin';
 import { renderBlogIndex, renderBlogPost } from './src/blog-pages';
 import { renderComparisonPage } from './src/comparison-pages';
+import { markGlyphFiles } from './src/mark-glyphs';
 import { renderBlogCard, renderComparisonCard } from './src/social-cards';
 import { blogPosts, comparisons, renderBlogSitemap, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from './src/site-chrome';
 import { defineConfig, type Plugin } from 'vite';
@@ -40,6 +41,8 @@ const generatedFiles = new Map<string, { type: string; render: () => string | Pr
   ['compare/sitemap.xml', { type: 'application/xml', render: renderComparisonSitemap }],
   ['blog/sitemap.xml', { type: 'application/xml', render: renderBlogSitemap }],
   ['llms.txt', { type: 'text/plain; charset=utf-8', render: renderLlmsTxt }],
+  // The glyphs the Worker draws `/marks/<shape>/<color>/<icon>.png` from.
+  ...markGlyphFiles().map(([path, svg]) => [path, { type: 'image/svg+xml', render: () => svg }] as const),
 ]);
 /**
  * A plugin that rewrites `attribute="/src/<file>"` in built HTML to the hashed

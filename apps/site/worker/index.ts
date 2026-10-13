@@ -1,8 +1,15 @@
-// The public site is static assets. This Worker runs only for /help/ (see
-// `run_worker_first` in wrangler.jsonc) so an agent that asks for Markdown gets
-// the page's Markdown copy at the same URL, and every help response tells an
-// agent where the manual's index is. Everything else is served by the asset
-// layer without this script running.
+// The public site is static assets. This Worker runs only for /help/ and
+// /marks/ (see `run_worker_first` in wrangler.jsonc): an agent that asks for
+// Markdown gets the help page's Markdown copy at the same URL, every help
+// response tells an agent where the manual's index is, and `/marks/` draws a
+// mark as a PNG (`marks.ts`). Everything else is served by the asset layer
+// without this script running.
+
+import { initWasm } from '@resvg/resvg-wasm';
+import resvgWasm from '@resvg/resvg-wasm/index_bg.wasm';
+
+import { markdownPathFor, prefersMarkdown } from './help';
+import { serveMark } from './marks';
 
 interface Env {
   ASSETS: { fetch: (request: Request) => Promise<Response> };
@@ -10,54 +17,44 @@ interface Env {
 
 const INDEX_LINKS = '</help/llms.txt>; rel="llms-txt", </help/llms-full.txt>; rel="llms-full-txt"';
 
-interface MediaRange {
-  type: string;
-  q: number;
-  position: number;
-}
-
-function mediaRanges(accept: string): MediaRange[] {
-  return accept.split(',').map((part, position) => {
-    const [type = '', ...parameters] = part.trim().toLowerCase().split(';');
-    const q = parameters.map((parameter) => /^\s*q=([\d.]+)\s*$/u.exec(parameter)?.[1]).find((value) => value !== undefined);
-    return { type: type.trim(), q: q === undefined ? 1 : Number(q), position };
-  }).filter((range) => range.type);
-}
-
-/**
- * True when the client ranks Markdown above HTML. Equal weights are broken by
- * the order the client listed them in, which is how Claude Code states its
- * preference; a browser's `text/html,...,*\/*` never names Markdown and so
- * always gets HTML.
- */
-export function prefersMarkdown(accept: string | null): boolean {
-  if (!accept) return false;
-  const ranges = mediaRanges(accept);
-  const markdown = ranges.find((range) => range.type === 'text/markdown' || range.type === 'text/x-markdown');
-  if (!markdown || markdown.q <= 0) return false;
-  const html = ranges.find((range) => range.type === 'text/html')
-    ?? ranges.find((range) => range.type === 'text/*')
-    ?? ranges.find((range) => range.type === '*/*');
-  if (!html || html.q < markdown.q) return true;
-  return html.q === markdown.q && markdown.position < html.position;
-}
-
-/** `/help/sidekicks/schedules/` -> `/help/sidekicks/schedules.md`; files map to nothing. */
-export function markdownPathFor(pathname: string): string | null {
-  if (pathname === '/help' || pathname === '/help/') return '/help/index.md';
-  if (!pathname.startsWith('/help/') || /\.[a-z0-9]+$/iu.test(pathname)) return null;
-  return `${pathname.replace(/\/+$/u, '')}.md`;
-}
-
 function withHeaders(response: Response, headers: Record<string, string>): Response {
   const result = new Response(response.body, response);
   for (const [name, value] of Object.entries(headers)) result.headers.set(name, value);
   return result;
 }
 
+/** The one part of the Workers context this script uses. */
+interface ExecutionContext {
+  waitUntil(promise: Promise<unknown>): void;
+}
+
+let resvgReady: Promise<void> | null = null;
+/** Once per isolate; a failed start is retried by the next request rather than kept. */
+function ensureResvg(): Promise<void> {
+  resvgReady ??= initWasm(resvgWasm).catch((error: unknown) => {
+    resvgReady = null;
+    throw error;
+  });
+  return resvgReady;
+}
+
+async function cachedMark(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
+  // A Worker's response is not cached by the CDN on its own; the Cache API is
+  // what makes each mark drawn about once per location.
+  const cache = (caches as unknown as { default: Cache }).default;
+  const hit = request.method === 'GET' ? await cache.match(request) : undefined;
+  if (hit) return hit;
+  const response = await serveMark(request, env, ensureResvg);
+  if (request.method === 'GET' && response.ok && response.headers.get('Content-Type') === 'image/png') {
+    context.waitUntil(cache.put(request, response.clone()));
+  }
+  return response;
+}
+
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname.startsWith('/marks/')) return cachedMark(request, env, context);
     const markdownPath = markdownPathFor(url.pathname);
     const negotiable = markdownPath !== null && (request.method === 'GET' || request.method === 'HEAD');
 

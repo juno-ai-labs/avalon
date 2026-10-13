@@ -509,6 +509,40 @@ describe("what the workspace object answers about its work streams", () => {
     });
   });
 
+  describe("linkPreviews — what a Slack unfurl shows of a shared link", () => {
+    it("gives a thread its own mark and the Channel it sits in, private or not", async () => {
+      const thread = await seedWorkstream({ title: "Pilot org", lastActivityAt: "2026-08-10T12:00:00.000Z", scope: "personal" });
+      await seedSpacePlacements([[SPACE_ID, [thread]]]);
+      await runInDurableObject(workspace(), (_instance, state) => {
+        state.storage.sql.exec(`UPDATE channels SET appearance_json = ? WHERE workstream_id = ?`,
+          JSON.stringify({ icon: "database", color: "violet" }), thread);
+        state.storage.sql.exec(`UPDATE spaces SET appearance_json = ? WHERE space_id = ?`,
+          JSON.stringify({ icon: "rocket", color: "blue" }), SPACE_ID);
+      });
+
+      await expect(workspace().linkPreviews({
+        workspaceId: WORKSPACE_ID,
+        targets: [{ kind: "channel", workstreamId: thread }, { kind: "channel", workstreamId: nextWorkstreamId() }],
+      })).resolves.toEqual({ previews: [
+        {
+          title: "Pilot org",
+          mark: { shape: "circle", icon: "database", color: "violet" },
+          channel: { title: "Batch test", mark: { shape: "squircle", icon: "rocket", color: "blue" } },
+        },
+        null,
+      ] });
+    });
+
+    it("draws a Channel with no chosen appearance the way the sidebar does", async () => {
+      await seedSpacePlacements([[SPACE_ID, []]]);
+
+      await expect(workspace().linkPreviews({ workspaceId: WORKSPACE_ID, targets: [{ kind: "space", spaceId: SPACE_ID }] }))
+        .resolves.toEqual({ previews: [
+          { title: "Batch test", mark: { shape: "squircle", icon: "briefcase", color: "blue" }, channel: null },
+        ] });
+    });
+  });
+
   describe("recentWorkstreamDirectory — Slack's App Home task list", () => {
     it("withholds a system work stream from a caller that did not ask for one", async () => {
       const ordinary = await seedWorkstream({

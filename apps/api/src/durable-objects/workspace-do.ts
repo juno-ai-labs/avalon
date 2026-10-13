@@ -58,7 +58,7 @@ import {
 } from './connector-installation-protocol';
 import { createInstallation, readInstallation, readInstallations, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation, cancelInstallationMaintenance, prepareInstallationMaintenance, prepareInstallationRotation, replaceInstallationCredentials } from './connector-installation-storage';
 import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, purgeRetiredMeetingObjects, applyMeetingRetirementMigrations } from "./meeting-notes-retirement";
-import { AgentIdSchema, type AgentId } from "@rally/contracts";
+import { AgentIdSchema, generatedAppearance, type AgentId } from "@rally/contracts";
 import { AGENT_TEAM_SCHEMA, AgentTeamStorage, agentTeamResult, type AgentMessageRoute, type AgentTeamResult } from "./agent-team-storage";
 import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
 import {
@@ -415,7 +415,12 @@ import {
   WorkspaceDirectoryDueRequestSchema,
   WorkspaceDirectoryListRequestSchema,
   WorkspaceDirectoryLookupRequestSchema,
+  WorkspaceLinkPreviewsRequestSchema,
+  WorkspaceLinkPreviewsResultSchema,
   WorkspaceLinkTitleRequestSchema,
+  type WorkspaceLinkPreview,
+  type WorkspaceLinkPreviewsResult,
+  type WorkspaceLinkTarget,
   WorkspaceDirectoryLookupResultSchema,
   WorkspaceDirectoryRecentRequestSchema,
   WorkspaceDirectoryReadableIdsRequestSchema,
@@ -15001,21 +15006,67 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // falls back outside production: it holds nothing to name.
     if (this.workspaceId() === null) return { title: null };
     this.assertWorkspace(workspaceId);
+    return { title: this.linkPreview(target)?.title ?? null };
+  }
+
+  /**
+   * Name, colour and icon of what each shared link names, and of the Channel
+   * it sits in, for a Slack unfurl. The same permission as {@link linkTitle} —
+   * holding the link — and so the same reads: no viewer, no scope, archived
+   * included, and nothing inside the target.
+   */
+  async linkPreviews(input: unknown): Promise<WorkspaceLinkPreviewsResult> {
+    await this.initialized;
+    const { workspaceId, targets } = parseRpcInput(WorkspaceLinkPreviewsRequestSchema, input, "link_previews");
+    if (this.workspaceId() === null) return { previews: targets.map(() => null) };
+    this.assertWorkspace(workspaceId);
+    return WorkspaceLinkPreviewsResultSchema.parse({ previews: targets.map((target) => this.linkPreview(target)) });
+  }
+
+  private linkPreview(target: WorkspaceLinkTarget): WorkspaceLinkPreview | null {
     const sql = this.state.storage.sql;
-    const row = target.kind === "channel"
-      ? sql.exec<{ title: string }>(`SELECT title FROM channels WHERE workstream_id = ?`, target.workstreamId).toArray()[0]
-      : target.kind === "breakout"
-        ? sql.exec<{ title: string }>(
-          `SELECT title FROM breakouts WHERE workstream_id = ? AND substream_id = ?`,
-          target.workstreamId, target.substreamId,
-        ).toArray()[0]
-        : target.kind === "space"
-          ? sql.exec<{ title: string }>(`SELECT title FROM spaces WHERE space_id = ?`, target.spaceId).toArray()[0]
-          : sql.exec<{ title: string }>(
-            `SELECT title FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
-            target.sidekickId,
-          ).toArray()[0];
-    return { title: row?.title.trim() || null };
+    const spaceMark = (spaceId: string | null | undefined) => {
+      const space = spaceId ? this.spaceStorage().linkMark(spaceId) : null;
+      return space ? { title: space.title, mark: { shape: "squircle" as const, icon: space.icon, color: space.color } } : null;
+    };
+    if (target.kind === "space") {
+      const space = spaceMark(target.spaceId);
+      return space ? { ...space, channel: null } : null;
+    }
+    if (target.kind === "sidekick") {
+      const row = sql.exec<{ title: string }>(
+        `SELECT title FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
+        target.sidekickId,
+      ).toArray()[0];
+      return row?.title.trim() ? { title: row.title.trim(), mark: null, channel: null } : null;
+    }
+    const breakout = target.kind === "breakout";
+    const row = sql.exec<{ title: string; appearance_json: string | null; parent_appearance_json: string | null }>(
+      breakout
+        ? `SELECT breakout.title, breakout.appearance_json, parent.appearance_json AS parent_appearance_json
+             FROM breakouts breakout LEFT JOIN channels parent ON parent.workstream_id = breakout.workstream_id
+            WHERE breakout.workstream_id = ? AND breakout.substream_id = ?`
+        : `SELECT title, appearance_json, NULL AS parent_appearance_json FROM channels WHERE workstream_id = ?`,
+      ...(breakout ? [target.workstreamId, target.substreamId] : [target.workstreamId]),
+    ).toArray()[0];
+    if (!row?.title.trim()) return null;
+    // The mark the app draws: a stored choice where there is one, a Breakout
+    // borrowing its thread's, and the id-derived mark for whatever is unset.
+    const { appearance, markId } = conversationMark({
+      parentId: target.workstreamId,
+      substreamId: breakout ? target.substreamId : "0",
+      appearanceJson: row.appearance_json,
+      parentAppearanceJson: row.parent_appearance_json,
+    });
+    const generated = generatedAppearance(markId);
+    // The link's own Space when it still holds one by that id, else the
+    // thread's current placement, as server-minted links choose it.
+    const channel = spaceMark(target.spaceId) ?? spaceMark(this.spaceStorage().canonicalChannelSpaceId(target.workstreamId));
+    return {
+      title: row.title.trim(),
+      mark: { shape: "circle", icon: appearance?.icon ?? generated.icon, color: appearance?.color ?? generated.color },
+      channel,
+    };
   }
 
   /**

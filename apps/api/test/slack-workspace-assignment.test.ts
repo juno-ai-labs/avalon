@@ -2654,6 +2654,81 @@ async function seedSlackInstallation(
   `);
 }
 
+describe("link_shared unfurl", () => {
+  const url = "https://rallywith.ai/app/workspaces/global/019fc068-22e8-739a-8394-a760fdc7c376/workstreams/01a1373c-1e2d-78bb-a591-86eafea80e7f";
+
+  it("given a link into another Organization, when Slack reports it, then the card names it with its marks and no status", async () => {
+    // Holding a link is the permission to see the name, colour and icon of
+    // what it points at. Before, a link into any Organization but the one the
+    // Slack team is bound to was dropped and got no card at all.
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    insertSlackEventJob(objectDatabase, "event:link", {
+      type: "event_callback",
+      team_id: "T123",
+      api_app_id: "A1",
+      event_id: "EvLink",
+      authorizations: [{ team_id: "T123", user_id: "UBOT", is_bot: true }],
+      event: { type: "link_shared", channel: "C123", message_ts: "1.5", user: "U456", links: [{ url, domain: "rallywith.ai" }] },
+    });
+    const asked: unknown[] = [];
+    const posted: Record<string, unknown>[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = new URL(String(input instanceof Request ? input.url : input)).pathname.split("/").at(-1);
+      if (method === "conversations.info") {
+        return Response.json({ ok: true, channel: { id: "C123", is_ext_shared: false, is_pending_ext_shared: false } });
+      }
+      if (method === "chat.unfurl") posted.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return Response.json({ ok: true });
+    }));
+    const env = slackMembershipEnvironment(database, instance, credentialsKey, vi.fn(async () => {}), undefined, {
+      PUBLIC_WEB_BASE_URL: "https://rallywith.ai",
+      workspaceRpcs: {
+        linkPreviews: async (input: unknown) => {
+          asked.push(input);
+          return { previews: [{
+            title: "Pilot org",
+            mark: { shape: "circle", icon: "database", color: "violet" },
+            channel: { title: "Customers", mark: { shape: "squircle", icon: "rocket", color: "blue" } },
+          }] };
+        },
+      },
+    });
+
+    await new SlackAgentService(env).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:link");
+
+    expect(asked).toEqual([{
+      workspaceId: "019fc068-22e8-739a-8394-a760fdc7c376",
+      targets: [{ kind: "channel", workstreamId: "01a1373c-1e2d-78bb-a591-86eafea80e7f" }],
+    }]);
+    expect(posted).toEqual([{
+      channel: "C123",
+      ts: "1.5",
+      unfurls: { [url]: { blocks: [
+        {
+          type: "context",
+          elements: [
+            { type: "image", image_url: "https://rallywith.ai/marks/squircle/blue/rocket.png", alt_text: "Customers" },
+            { type: "mrkdwn", text: "*Customers*" },
+          ],
+        },
+        {
+          type: "section",
+          text: { type: "mrkdwn", text: `*<${url}|Pilot org>*\nThread` },
+          accessory: { type: "image", image_url: "https://rallywith.ai/marks/circle/violet/database.png", alt_text: "Pilot org" },
+        },
+        {
+          type: "actions",
+          elements: [{ type: "button", text: { type: "plain_text", text: "Open in Rally" }, url, action_id: "rally_open_unfurl" }],
+        },
+      ] } },
+    }]);
+    // Another tenant's card has no status to keep current, so the sweep is never handed it.
+    expect(database.prepare("SELECT COUNT(*) AS count FROM slack_unfurled_links").get()).toEqual({ count: 0 });
+  });
+});
+
 describe("Slack ingress re-drive after reauthorization", () => {
   interface StrandedJobFixture {
     database: DatabaseSync;

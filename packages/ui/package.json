@@ -9,6 +9,7 @@
     "./themes": "./src/themes.ts",
     "./styles/*": "./src/styles/*",
     "./components/space-icons": "./src/components/space-icons.ts",
+    "./components/appearance-icons": "./src/components/appearance-icons.ts",
     "./assets/*": "./src/assets/*"
   },
   "scripts": {

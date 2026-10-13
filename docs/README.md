@@ -168,6 +168,7 @@ update it in the same change.
 | [`slack-permissions.md`](slack-permissions.md) | Every configured Slack OAuth scope and the behavior that depends on it. Read before adding a scope. |
 | [`workstream-email-addresses.md`](workstream-email-addresses.md) | The permanent per-work-stream and per-automation address format at `automation.rallywith.ai` and its derivation, the inbound path that starts a run from a mail through one `admitInboundEmail` call, its sender screen, and the notification sender. A run posts its own result into the room that owns its automation; [`automation-lifecycle.md`](automation-lifecycle.md) owns that. Read before changing how mail reaches an automation. |
 | [`workstream-links.md`](workstream-links.md) | Canonical Organization/Space/Channel/Breakout links with Base58 UUIDs, legacy readers, and the public-site handoff rewrite. Read before emitting or parsing a resource link anywhere. |
+| [`marks.md`](marks.md) | A Channel's, thread's or Breakout's mark as a public PNG at `rallywith.ai/marks/<shape>/<color>/<icon>.png`, drawn by the site Worker, and the id-derived mark for an unset appearance. Read before drawing a mark outside the app or changing the icon catalog's keys. |
 
 ## Development, verification, and operations
 

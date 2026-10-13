@@ -19,8 +19,10 @@ import {
   type ContainerOrder,
   type OrderedContainer,
   type PersonalOrder,
+  isStorableIconKey,
   type SpaceColorKey,
   type SpaceDefaultKind,
+  type StorableAppearanceIconKey,
   type SpaceDirectory,
   type SpaceReach,
   type SpaceSummary,
@@ -116,7 +118,7 @@ function spaceMatchName(name: string): string {
   return name.toLowerCase().replace(/[\s_-]+/gu, "");
 }
 
-const SPACE_ICON_FALLBACK = "briefcase";
+const SPACE_ICON_FALLBACK: StorableAppearanceIconKey = "briefcase";
 const SPACE_COLOR_FALLBACK = "blue";
 
 const SPACE_ICON_KEY_SET: ReadonlySet<string> = new Set(STORABLE_APPEARANCE_ICON_KEYS);
@@ -2445,6 +2447,22 @@ export class WorkspaceSpaceStorage {
       "SELECT appearance_json FROM spaces WHERE space_id = ?", spaceId,
     ).toArray()[0];
     return row ? spaceColorKey(row.appearance_json) : null;
+  }
+
+  /**
+   * A Space's name and mark, for a shared link's preview. Archived or not:
+   * holding the link is the permission to see these three
+   * (`docs/workstream-links.md#what-the-slack-unfurl-shows`).
+   */
+  linkMark(spaceId: string): { title: string; icon: StorableAppearanceIconKey; color: SpaceColorKey } | null {
+    if (!this.ready()) return null;
+    const row = this.storage.sql.exec<{ title: string; appearance_json: string | null } & Record<string, SqlStorageValue>>(
+      "SELECT title, appearance_json FROM spaces WHERE space_id = ?", spaceId,
+    ).toArray()[0];
+    if (!row || !row.title.trim()) return null;
+    const appearance = row.appearance_json ? JSON.parse(row.appearance_json) as { icon?: unknown } : null;
+    const icon = isStorableIconKey(appearance?.icon) ? appearance.icon : SPACE_ICON_FALLBACK;
+    return { title: row.title.trim(), icon, color: spaceColorKey(row.appearance_json) };
   }
 
   /** Stable placement used by links minted without a currently selected Space. */

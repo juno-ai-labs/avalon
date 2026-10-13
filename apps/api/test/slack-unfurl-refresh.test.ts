@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { encryptString } from "../src/lib/crypto";
 import { refreshSlackWorkstreamUnfurls } from "../src/services/slack-unfurl-refresh";
-import { workstreamUnfurlBlocks, workstreamUnfurlCardHash } from "../src/services/slack-workstream-card";
+import { linkUnfurlBlocks, workstreamUnfurlCardHash } from "../src/services/slack-workstream-card";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestD1Results, createTestEnv } from "./helpers/cloudflare-test";
 import { openWorkstreamAuthorityForTest, testSubstreamAgentsBinding } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
@@ -511,16 +511,19 @@ async function currentCardHash(input: {
   harnessStatus: string;
   anonymous?: boolean;
 }): Promise<string> {
-  return workstreamUnfurlCardHash(workstreamUnfurlBlocks(
-    input.anonymous
+  return workstreamUnfurlCardHash(linkUnfurlBlocks({
+    url,
+    kind: "channel",
+    preview: null,
+    summary: input.anonymous
       ? null
       : {
           title: "Quarterly planning",
           harnessStatus: input.harnessStatus,
           lastActivityAt: "2026-08-10T12:00:00.000Z",
         },
-    url,
-  ));
+    markOrigin: "https://with-avalon.com",
+  }));
 }
 
 async function seed(input: {
@@ -607,6 +610,10 @@ function migratedDatabase(): DatabaseSync {
 function directoryNamespace(database: DatabaseSync): DurableObjectNamespace {
   return testSubstreamAgentsBinding(database, {
     extra: {
+      // The card's name and marks are the object's own SQL, proved in
+      // `test-workers/workspace-directory-reads.test.ts`; here they resolve to
+      // nothing, which is the status card alone.
+      linkPreviews: async (input: { targets: unknown[] }) => ({ previews: input.targets.map(() => null) }),
       lookupWorkstreamDirectory: async (input: { workstreamIds: string[] }) => ({
         items: database.prepare(
           `SELECT id, title, harness_status, last_activity_at, origin_type,

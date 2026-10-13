@@ -1,6 +1,8 @@
 import {
   IdSchema,
   MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER,
+  PALETTE_KEYS,
+  STORABLE_APPEARANCE_ICON_KEYS,
   SpaceIdSchema,
   WorkspaceAttentionSchema,
   WorkspaceWorkstreamCursorSchema,
@@ -236,19 +238,55 @@ export const WorkspaceDirectoryLookupResultSchema = deferredZodSchema(() => z.st
 }));
 
 /**
- * The one resource a shared link names, for the public handoff page's heading.
- * A Breakout names its Channel too, because breakouts are keyed by both.
+ * The one resource a shared link names. A Breakout names its thread too,
+ * because breakouts are keyed by both; a thread or Breakout may name the
+ * Space its link was minted in, which the preview prefers as its Channel.
  */
+const WorkspaceLinkTargetSchema = deferredZodSchema(() => z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("channel"), workstreamId: IdSchema, spaceId: IdSchema.optional() }),
+  z.strictObject({ kind: z.literal("breakout"), workstreamId: IdSchema, substreamId: IdSchema, spaceId: IdSchema.optional() }),
+  z.strictObject({ kind: z.literal("space"), spaceId: IdSchema }),
+  z.strictObject({ kind: z.literal("sidekick"), sidekickId: IdSchema }),
+]));
+export type WorkspaceLinkTarget = z.infer<typeof WorkspaceLinkTargetSchema>;
+
+/** For the public handoff page's heading. */
 export const WorkspaceLinkTitleRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
-  target: z.discriminatedUnion("kind", [
-    z.strictObject({ kind: z.literal("channel"), workstreamId: IdSchema }),
-    z.strictObject({ kind: z.literal("breakout"), workstreamId: IdSchema, substreamId: IdSchema }),
-    z.strictObject({ kind: z.literal("space"), spaceId: IdSchema }),
-    z.strictObject({ kind: z.literal("sidekick"), sidekickId: IdSchema }),
-  ]),
+  target: WorkspaceLinkTargetSchema,
 }));
 export type WorkspaceLinkTitleRequest = z.infer<typeof WorkspaceLinkTitleRequestSchema>;
+
+/** For a Slack unfurl: every link in one message, or every card one sweep rewrites, in one call. */
+export const WorkspaceLinkPreviewsRequestSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: IdSchema,
+  targets: z.array(WorkspaceLinkTargetSchema).min(1),
+}));
+
+const LinkMarkSchema = deferredZodSchema(() => z.strictObject({
+  shape: z.enum(["circle", "squircle"]),
+  icon: z.enum(STORABLE_APPEARANCE_ICON_KEYS),
+  color: z.enum(PALETTE_KEYS),
+}));
+
+/**
+ * What holding a link shows about its target: name, colour and icon, and the
+ * same three for the Channel it sits in. The product's call (2026-10-13) is
+ * that these are public to whoever has the link, archived or private
+ * included; nothing else about the target is. A Sidekick carries no mark here.
+ */
+export const WorkspaceLinkPreviewSchema = deferredZodSchema(() => z.strictObject({
+  title: z.string().min(1),
+  mark: LinkMarkSchema.nullable(),
+  channel: z.strictObject({ title: z.string().min(1), mark: LinkMarkSchema }).nullable(),
+}));
+export type WorkspaceLinkPreview = z.infer<typeof WorkspaceLinkPreviewSchema>;
+
+/** One per target, in order; null where nothing here has that id. */
+export const WorkspaceLinkPreviewsResultSchema = deferredZodSchema(() => z.strictObject({
+  previews: z.array(WorkspaceLinkPreviewSchema.nullable()),
+}));
+export type WorkspaceLinkPreviewsResult = z.infer<typeof WorkspaceLinkPreviewsResultSchema>;
 
 export const WorkspaceDirectoryAudienceSchema = deferredZodSchema(() => z.discriminatedUnion("scope", [
   z.strictObject({ scope: z.literal("workspace") }),

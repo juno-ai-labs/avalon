@@ -417,7 +417,7 @@ or delays that product summary rather than reading a frozen D1 work-stream row.
   to everyone; submission is accepted from any linked member of the installation, not only whoever
   started the thread.
 - Rally person mention: notify the matched member in the Rally Agent DM, falling back to email.
-- Rally links: unfurls that summarize the work stream — title, last activity, automation origin, and a status badge only while it is running, needs input, or failed — and require the viewer's normal Rally authorization for its contents.
+- Rally links: unfurls that show the link's Channel and its own name, colour and icon to anyone holding the link, add last activity and a status badge (running, needs input, or failed) for the bound Organization's own threads, and require the viewer's normal Rally authorization for its contents. [`workstream-links.md`](workstream-links.md#what-the-slack-unfurl-shows) owns the card.
 
 Every work-stream link Rally posts is the canonical workspace-addressed
 `https://rallywith.ai/app/workspaces/<region>/<workspace-uuid>/workstreams/<workstream-uuid>` — see

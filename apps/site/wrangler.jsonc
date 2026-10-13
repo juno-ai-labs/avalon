@@ -10,8 +10,9 @@
     "directory": "./dist",
     "binding": "ASSETS",
     // The help center answers `Accept: text/markdown` with each page's Markdown
-    // copy. Every other path is plain static assets and never starts the Worker.
-    "run_worker_first": ["/help", "/help/*"],
+    // copy, and `/marks/` draws a mark as a PNG. Every other path is plain
+    // static assets and never starts the Worker.
+    "run_worker_first": ["/help", "/help/*", "/marks/*"],
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page"
   },

@@ -8,7 +8,7 @@ import { renderMarkdown } from '../build/help/markdown';
 import { ogImagePath, renderOgImage } from '../build/help/og';
 import { buildHelp } from '../build/help/site';
 import { searchEntries, type SearchEntry } from '../src/help-search';
-import { markdownPathFor, prefersMarkdown } from '../worker/index';
+import { markdownPathFor, prefersMarkdown } from '../worker/help';
 
 const roots: string[] = [];
 

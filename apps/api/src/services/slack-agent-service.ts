@@ -37,7 +37,6 @@ import {
   asWorkstreamId,
   addWorkspaceTarget,
   isWorkstreamId,
-  parseWorkstreamLinkTarget,
   type ExternalActor,
   type SlackOriginAttachment,
   type SlackOriginContext,
@@ -52,7 +51,10 @@ import {
   TERMINAL_UNFURL_REASONS,
   workstreamUnfurlCardHash,
   slackChannelIsExternallyShared,
-  workstreamUnfurlBlocks,
+  linkUnfurlBlocks,
+  slackLinkPreviews,
+  slackLinkTarget,
+  type SlackLinkTarget,
   workstreamUnfurlSummary,
   type WorkstreamUnfurlSummary,
 } from "./slack-workstream-card";
@@ -3522,9 +3524,9 @@ export class SlackAgentService {
     const links = Array.isArray(event.links) ? event.links.filter((link): link is Record<string, unknown> => Boolean(link) && typeof link === "object") : [];
     if (!channel || !ts || links.length === 0) return;
     const connection = await this.connectionForTeam(teamId);
-    const linkedWorkstreams = new Map<string, string>();
+    const targets = new Map<string, SlackLinkTarget>();
     for (const link of links) {
-      if (typeof link.url !== "string" || linkedWorkstreams.size >= SLACK_UNFURL_MAX_LINKS) continue;
+      if (typeof link.url !== "string" || targets.size >= SLACK_UNFURL_MAX_LINKS) continue;
       // Slack only delivers link_shared for the app's registered unfurl
       // domains, so only the HTTPS shapes below can ever arrive here. It
       // registers *both* site domains, and it does not know which one a link
@@ -3532,40 +3534,55 @@ export class SlackAgentService {
       // every already-shared Avalon link would be delivered here and silently
       // dropped. The shared parser still accepts the raw deep link, and it
       // never throws on a malformed URL.
-      const target = parseWorkstreamLinkTarget(link.url, {
-        webBaseUrl: [this.env.PUBLIC_WEB_BASE_URL, ...LEGACY_WORKSTREAM_LINK_ORIGINS],
+      //
+      // A link into another Organization in this region is previewed too:
+      // its name, colour and icon are public to whoever holds the link.
+      const target = slackLinkTarget(link.url, {
+        origins: [this.env.PUBLIC_WEB_BASE_URL, ...LEGACY_WORKSTREAM_LINK_ORIGINS],
+        region: this.env.AVALON_REGION,
+        connectionWorkspaceId: connection.workspace_id,
       });
-      const belongsToConnection = target && (
-        target.region === null
-        || (target.region === this.env.AVALON_REGION && target.workspaceId === connection.workspace_id)
-      );
-      if (belongsToConnection) linkedWorkstreams.set(link.url, target.workstreamId);
+      if (target) targets.set(link.url, target);
     }
-    if (linkedWorkstreams.size === 0) return;
+    if (targets.size === 0) return;
     const token = await this.botToken(connection);
-    // Summary detail is withheld only where Slack itself has put another
+    // Status and recency are withheld only where Slack itself has put another
     // company in the room. Every conversation inside the workspace — public,
-    // private, DM, group DM — sees it, and an audience lookup that fails falls
-    // back to the anonymous card rather than dropping the unfurl.
+    // private, DM, group DM — sees them, and an audience lookup that fails
+    // falls back to the preview alone rather than dropping the unfurl.
     // Posting a new card fails closed: an audience we could not confirm is
     // treated as external. The refresh sweep deliberately does the opposite.
     const externallyShared = await slackChannelIsExternallyShared(this.env, token, channel);
-    const summaries = externallyShared !== false
-      ? new Map<string, WorkstreamUnfurlSummary>()
-      : await this.workstreamUnfurlSummaries(connection.workspace_id, [...new Set(linkedWorkstreams.values())]);
+    // Only the connection's own Organization's threads carry status: naming
+    // another tenant's run state in this Slack team is not something holding a
+    // link grants.
+    const linkedWorkstreams = new Map<string, string>();
+    for (const [url, target] of targets) {
+      if (target.workstreamId && target.workspaceId === connection.workspace_id) linkedWorkstreams.set(url, target.workstreamId);
+    }
+    const [summaries, previews] = await Promise.all([
+      externallyShared !== false
+        ? new Map<string, WorkstreamUnfurlSummary>()
+        : this.workstreamUnfurlSummaries(connection.workspace_id, [...new Set(linkedWorkstreams.values())]),
+      slackLinkPreviews(this.env, [...targets.values()]),
+    ]);
     // Keep the rendered blocks: recording hashes exactly what was posted, so
     // the sweep compares against the real attachment rather than a re-derivation
     // that could quietly diverge from it.
     const rendered = new Map<string, Record<string, unknown>[]>();
     const unfurls: Record<string, unknown> = {};
-    for (const [url, workstreamId] of linkedWorkstreams) {
-      const blocks = workstreamUnfurlBlocks(
-        summaries.get(workstreamId) ?? null,
+    [...targets].forEach(([url, target], index) => {
+      const workstreamId = linkedWorkstreams.get(url);
+      const blocks = linkUnfurlBlocks({
         url,
-      );
+        kind: target.target.kind,
+        preview: previews[index] ?? null,
+        summary: workstreamId ? summaries.get(workstreamId) ?? null : null,
+        markOrigin: this.env.PUBLIC_WEB_BASE_URL,
+      });
       rendered.set(url, blocks);
       unfurls[url] = { blocks };
-    }
+    });
     try {
       await slackApi(token, "chat.unfurl", { channel, ts, unfurls }, AbortSignal.timeout(5_000));
     } catch (error) {

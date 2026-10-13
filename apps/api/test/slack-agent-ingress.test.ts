@@ -5,7 +5,13 @@ import { ConnectorError } from "@rally/connectors";
 import type { Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
-import { slackChannelIsExternallyShared, workstreamUnfurlBlocks } from "../src/services/slack-workstream-card";
+import { uuidToBase58 } from "@rally/contracts/uuid-base58";
+import {
+  linkUnfurlBlocks,
+  slackChannelIsExternallyShared,
+  slackLinkTarget,
+  type WorkstreamUnfurlSummary,
+} from "../src/services/slack-workstream-card";
 import {
   createCloudflareTestBinding,
   createTestDurableObjectId,
@@ -637,6 +643,10 @@ function environment(database: IngressDatabase, send: (body: unknown) => Promise
 
 describe("work-stream link unfurl card", () => {
   const url = "https://with-avalon.com/app/workstreams/019fec70-fba0-7b0e-9f7a-3dd1ef56520f";
+  /** A thread link whose name and marks did not resolve: the status card alone. */
+  const workstreamUnfurlBlocks = (summary: WorkstreamUnfurlSummary | null, link: string) => linkUnfurlBlocks({
+    url: link, kind: "channel", preview: null, summary, markOrigin: "https://rallywith.ai",
+  });
 
   function cardText(blocks: Record<string, unknown>[]): string {
     const section = blocks[0] as { text?: { text?: string } };
@@ -654,7 +664,7 @@ describe("work-stream link unfurl card", () => {
     // The emoji leads the title so the state reads before the text does; the
     // word follows in the detail line so the emoji is never the only carrier.
     expect(text).toContain(`:warning: *<${url}|Daily product brief>*`);
-    expect(text.split("\n")[1]).toMatch(/^Needs input · /u);
+    expect(text.split("\n")[1]).toMatch(/^Thread · Needs input · /u);
     // Rendered in each reader's own timezone, and it cannot rot into a lie the
     // way a baked "24m ago" would on a card that is never re-rendered.
     expect(text).toContain(`<!date^${Math.floor(Date.parse("2026-08-10T12:00:00.000Z") / 1000)}^`);
@@ -669,7 +679,7 @@ describe("work-stream link unfurl card", () => {
     }, url));
 
     expect(text).toContain(":large_green_circle: *<");
-    expect(text.split("\n")[1]).toMatch(/^Running · /u);
+    expect(text.split("\n")[1]).toMatch(/^Thread · Running · /u);
     expect(text).not.toContain("via ");
   });
 
@@ -681,7 +691,7 @@ describe("work-stream link unfurl card", () => {
     }, url));
 
     expect(text).toContain(":red_circle: *<");
-    expect(text.split("\n")[1]).toMatch(/^Failed · /u);
+    expect(text.split("\n")[1]).toMatch(/^Thread · Failed · /u);
   });
 
   it("shows no status badge for a settled work stream", () => {
@@ -697,7 +707,7 @@ describe("work-stream link unfurl card", () => {
 
       expect(text.startsWith("*<"), harnessStatus).toBe(true);
       expect(text, harnessStatus).not.toMatch(/Completed|Scheduled|Idle/u);
-      expect(text.split("\n")[1], harnessStatus).toMatch(/^Updated /u);
+      expect(text.split("\n")[1], harnessStatus).toMatch(/^Thread · Updated /u);
     }
   });
 
@@ -719,7 +729,7 @@ describe("work-stream link unfurl card", () => {
       lastActivityAt: "not-a-date",
     }, url));
 
-    expect(text).toBe(`*<${url}|Untitled work stream>*`);
+    expect(text).toBe(`*<${url}|Untitled>*\nThread`);
   });
 
   it("falls back to an anonymous card when no summary is available", () => {
@@ -750,6 +760,93 @@ describe("work-stream link unfurl card", () => {
         }],
       });
     }
+  });
+});
+
+describe("link unfurl preview", () => {
+  const url = "https://rallywith.ai/app/workspaces/global/019fc068-22e8-739a-8394-a760fdc7c376/workstreams/01a1373c-1e2d-78bb-a591-86eafea80e7f";
+  const preview = {
+    title: "Pilot org",
+    mark: { shape: "circle" as const, icon: "database" as const, color: "violet" as const },
+    channel: { title: "Customers", mark: { shape: "squircle" as const, icon: "rocket" as const, color: "blue" as const } },
+  };
+
+  it("given a thread's preview and status, when the card is drawn, then the Channel sits above the thread's name and mark", () => {
+    const blocks = linkUnfurlBlocks({
+      url, kind: "channel", preview, markOrigin: "https://rallywith.ai",
+      summary: { title: "Pilot org", harnessStatus: "running", lastActivityAt: null },
+    });
+    expect(blocks.slice(0, 2)).toEqual([
+      {
+        type: "context",
+        elements: [
+          { type: "image", image_url: "https://rallywith.ai/marks/squircle/blue/rocket.png", alt_text: "Customers" },
+          { type: "mrkdwn", text: "*Customers*" },
+        ],
+      },
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: `:large_green_circle: *<${url}|Pilot org>*\nThread · Running` },
+        accessory: { type: "image", image_url: "https://rallywith.ai/marks/circle/violet/database.png", alt_text: "Pilot org" },
+      },
+    ]);
+  });
+
+  it("given a preview with no status, when the card is drawn, then it names the thread and says nothing about its run", () => {
+    // An externally shared channel, another Organization's link, or an
+    // archived thread: name, colour and icon are the link-holder's to see.
+    const text = (linkUnfurlBlocks({ url, kind: "channel", preview, summary: null, markOrigin: "https://rallywith.ai" })[1] as {
+      text: { text: string };
+    }).text.text;
+    expect(text).toBe(`*<${url}|Pilot org>*\nThread`);
+  });
+
+  it("given a Sidekick, which has no mark here, when the card is drawn, then it carries no image", () => {
+    const blocks = linkUnfurlBlocks({
+      url, kind: "sidekick", preview: { title: "Morning brief", mark: null, channel: null }, summary: null, markOrigin: "https://rallywith.ai",
+    });
+    expect(blocks[0]).toEqual({ type: "section", text: { type: "mrkdwn", text: `*<${url}|Morning brief>*\nSidekick` } });
+  });
+});
+
+describe("slackLinkTarget", () => {
+  const options = { origins: ["https://rallywith.ai", "https://with-avalon.com"], region: "global", connectionWorkspaceId: "00000000-0000-7000-8000-000000000009" };
+
+  it("given an addressed legacy thread link into another Organization, when parsed, then that Organization answers for it", () => {
+    expect(slackLinkTarget(
+      "https://rallywith.ai/app/workspaces/global/019fc068-22e8-739a-8394-a760fdc7c376/workstreams/01a1373c-1e2d-78bb-a591-86eafea80e7f",
+      options,
+    )).toEqual({
+      workspaceId: "019fc068-22e8-739a-8394-a760fdc7c376",
+      workstreamId: "01a1373c-1e2d-78bb-a591-86eafea80e7f",
+      target: { kind: "channel", workstreamId: "01a1373c-1e2d-78bb-a591-86eafea80e7f" },
+    });
+  });
+
+  it("given current Channel, thread and Sidekick links, when parsed, then each names its kind and a thread keeps its Channel", () => {
+    const org = "019fc068-22e8-739a-8394-a760fdc7c376";
+    const space = "019fc068-22e8-739a-8394-a760fdc7c377";
+    const thread = "01a1373c-1e2d-78bb-a591-86eafea80e7f";
+    const base = `https://rallywith.ai/app/global/${uuidToBase58(org)}`;
+    expect(slackLinkTarget(`${base}/s/${uuidToBase58(space)}/c/${uuidToBase58(thread)}`, options)?.target)
+      .toEqual({ kind: "channel", workstreamId: thread, spaceId: space });
+    expect(slackLinkTarget(`${base}/s/${uuidToBase58(space)}/`, options))
+      .toEqual({ workspaceId: org, workstreamId: null, target: { kind: "space", spaceId: space } });
+    expect(slackLinkTarget(`${base}/sk/${uuidToBase58(thread)}/`, options))
+      .toEqual({ workspaceId: org, workstreamId: null, target: { kind: "sidekick", sidekickId: thread } });
+  });
+
+  it("given an ID-only link, when parsed, then it is read as the connection's own Organization", () => {
+    expect(slackLinkTarget("https://with-avalon.com/app/workstreams/019fec70-fba0-7b0e-9f7a-3dd1ef56520f", options)?.workspaceId)
+      .toBe("00000000-0000-7000-8000-000000000009");
+  });
+
+  it("given a link from another region or another site, when parsed, then nothing here answers for it", () => {
+    expect(slackLinkTarget(
+      "https://rallywith.ai/app/workspaces/eu/019fc068-22e8-739a-8394-a760fdc7c376/workstreams/01a1373c-1e2d-78bb-a591-86eafea80e7f",
+      options,
+    )).toBeNull();
+    expect(slackLinkTarget("https://example.com/app/workstreams/019fec70-fba0-7b0e-9f7a-3dd1ef56520f", options)).toBeNull();
   });
 });
 

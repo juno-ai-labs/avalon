@@ -1,5 +1,5 @@
 import { slackApi } from "@rally/connectors";
-import { asWorkspaceId } from "@rally/contracts";
+import { asWorkspaceId, LEGACY_WORKSTREAM_LINK_ORIGINS } from "@rally/contracts";
 import { nowIso } from "@rally/db";
 import { z } from "zod";
 
@@ -14,7 +14,10 @@ import {
   TERMINAL_UNFURL_REASONS,
   slackChannelIsExternallyShared,
   slackUnfurlErrorReason,
-  workstreamUnfurlBlocks,
+  linkUnfurlBlocks,
+  slackLinkPreviews,
+  slackLinkTarget,
+  type SlackLinkTarget,
   workstreamUnfurlCardHash,
   workstreamUnfurlSummary,
 } from "./slack-workstream-card";
@@ -253,6 +256,22 @@ async function refreshConnectionUnfurls(
   // was posted is rewritten back to the anonymous form.
   const externalByChannel = new Map<string, boolean | null>();
   const at = nowIso();
+  // The card's name and marks, read once for the whole connection. A row is a
+  // thread or Breakout link in this connection's own Organization, which is
+  // the only kind ever recorded.
+  const targets = new Map<string, SlackLinkTarget>();
+  for (const raw of rows) {
+    const target = typeof raw.url === "string"
+      ? slackLinkTarget(raw.url, {
+        origins: [env.PUBLIC_WEB_BASE_URL, ...LEGACY_WORKSTREAM_LINK_ORIGINS],
+        region: env.AVALON_REGION,
+        connectionWorkspaceId: connection.workspace_id,
+      })
+      : null;
+    if (target) targets.set(raw.url as string, target);
+  }
+  const previewList = await slackLinkPreviews(env, [...targets.values()]);
+  const previews = new Map([...targets.keys()].map((url, index) => [url, previewList[index] ?? null]));
 
   for (const raw of rows) {
     const parsed = StaleUnfurlRowSchema.safeParse(raw);
@@ -276,10 +295,13 @@ async function refreshConnectionUnfurls(
       continue;
     }
 
-    const blocks = workstreamUnfurlBlocks(
-      external ? null : workstreamUnfurlSummary(raw),
-      row.url,
-    );
+    const blocks = linkUnfurlBlocks({
+      url: row.url,
+      kind: targets.get(row.url)?.target.kind ?? "channel",
+      preview: previews.get(row.url) ?? null,
+      summary: external ? null : workstreamUnfurlSummary(raw),
+      markOrigin: env.PUBLIC_WEB_BASE_URL,
+    });
     const hash = await workstreamUnfurlCardHash(blocks);
 
     // Ask the only question that matters — would this card render differently?

@@ -42,7 +42,9 @@
     "./client-session": "./src/client-session.ts",
     "./desktop-actions": "./src/desktop-actions.ts",
     "./browser-runtime": "./src/browser-runtime.ts",
-    "./usage": "./src/usage.ts"
+    "./usage": "./src/usage.ts",
+    "./marks": "./src/marks.ts",
+    "./palette": "./src/palette.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

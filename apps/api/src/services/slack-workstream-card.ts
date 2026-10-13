@@ -2,7 +2,20 @@ import { codeShaped, describeZodIssues, isCodeShaped } from "@rally/contracts/zo
 import { ConnectorError, slackApi } from "@rally/connectors";
 import { z } from "zod";
 
+import { markImagePath, type Mark } from "@rally/contracts/marks";
+import {
+  parseSidekickLinkPathTarget,
+  parseSpaceLinkPathTarget,
+  parseWorkstreamLinkTarget,
+} from "@rally/contracts/workstream-links";
+
+import { asWorkspaceId } from "@rally/contracts";
+
+import { workspaceDOName } from "../durable-objects/names";
+import type { WorkspaceLinkPreview, WorkspaceLinkTarget } from "../durable-objects/workspace-directory-protocol";
+import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logWarn, type LogEnv } from "../observability/logger";
 
 /**
@@ -35,7 +48,7 @@ export const SLACK_UNFURL_MAX_LINKS = 10;
  * future change has to remember to bump.
  *
  * `JSON.stringify` is stable here because these blocks are built by
- * `workstreamUnfurlBlocks` with a fixed key order rather than assembled from
+ * `linkUnfurlBlocks` with a fixed key order rather than assembled from
  * user data.
  */
 export async function workstreamUnfurlCardHash(
@@ -161,10 +174,125 @@ function slackUnfurlUpdatedAt(value: string | null): string | null {
   return `Updated <!date^${Math.floor(parsed / 1000)}^{date_short_pretty} at {time}|${new Date(parsed).toISOString()}>`;
 }
 
-export function workstreamUnfurlBlocks(
-  summary: WorkstreamUnfurlSummary | null,
-  url: string,
-): Record<string, unknown>[] {
+/** What a link resolved to, and which Organization's object answers for it. */
+export interface SlackLinkTarget {
+  workspaceId: string;
+  target: WorkspaceLinkTarget;
+  /** The thread a Channel or Breakout link names, for its status; null for a Space or Sidekick. */
+  workstreamId: string | null;
+}
+
+/**
+ * The Rally object a link in a Slack message names, or null for anything this
+ * region cannot answer.
+ *
+ * Every link shape a member can paste: a thread or Breakout in its current,
+ * addressed-legacy or ID-only form, a Channel (a stored Space), and a
+ * Sidekick. An ID-only link names no Organization and so is read as the
+ * connection's own. A link minted in another region is that region's to
+ * preview, and gets no card here.
+ */
+export function slackLinkTarget(
+  raw: string,
+  options: { origins: readonly string[]; region: string; connectionWorkspaceId: string },
+): SlackLinkTarget | null {
+  const thread = parseWorkstreamLinkTarget(raw, { webBaseUrl: options.origins });
+  if (thread) {
+    if (thread.region !== null && thread.region !== options.region) return null;
+    const space = "spaceId" in thread && thread.spaceId ? { spaceId: thread.spaceId } : {};
+    return {
+      workspaceId: thread.workspaceId ?? options.connectionWorkspaceId,
+      workstreamId: thread.workstreamId,
+      target: thread.substreamId
+        ? { kind: "breakout", workstreamId: thread.workstreamId, substreamId: thread.substreamId, ...space }
+        : { kind: "channel", workstreamId: thread.workstreamId, ...space },
+    };
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.search || url.hash || !options.origins.some((origin) => URL.canParse(origin) && new URL(origin).origin === url.origin)) return null;
+  const space = parseSpaceLinkPathTarget(url.pathname);
+  if (space) {
+    return space.region === options.region
+      ? { workspaceId: space.workspaceId, workstreamId: null, target: { kind: "space", spaceId: space.spaceId } }
+      : null;
+  }
+  const sidekick = parseSidekickLinkPathTarget(url.pathname);
+  return sidekick?.region === options.region
+    ? { workspaceId: sidekick.workspaceId, workstreamId: null, target: { kind: "sidekick", sidekickId: sidekick.sidekickId } }
+    : null;
+}
+
+/**
+ * One preview per link, in order, asking each Organization's object once.
+ *
+ * A failed or refused lookup degrades those links to the plain card rather
+ * than dropping the unfurl: an Organization this region has never placed is
+ * refused before any object opens, exactly as the handoff page's title is.
+ */
+export async function slackLinkPreviews(
+  env: Env,
+  links: readonly SlackLinkTarget[],
+): Promise<(WorkspaceLinkPreview | null)[]> {
+  const byWorkspace = new Map<string, number[]>();
+  links.forEach((link, index) => byWorkspace.set(link.workspaceId, [...(byWorkspace.get(link.workspaceId) ?? []), index]));
+  const previews: (WorkspaceLinkPreview | null)[] = links.map(() => null);
+  await Promise.all([...byWorkspace].map(async ([workspaceId, indexes]) => {
+    try {
+      const workspace = await durableObjectStubForWorkspace(
+        env, env.WORKSPACE_DOS, workspaceId, workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
+      );
+      const result = await workspace.linkPreviews({ workspaceId, targets: indexes.map((index) => links[index]!.target) });
+      indexes.forEach((index, position) => { previews[index] = result.previews[position] ?? null; });
+    } catch (error) {
+      logWarn(env, "slack_unfurl_preview_failed", { workspace_id: workspaceId, reason: linkPreviewErrorReason(error) });
+    }
+  }));
+  return previews;
+}
+
+function linkPreviewErrorReason(error: unknown): string {
+  if (error instanceof z.ZodError) return codeShaped(`invalid_link_preview:${describeZodIssues(error)}`);
+  // The object's own refusal (`workspace_placement_affinity_unavailable`) or
+  // the runtime's; neither carries the caller's data.
+  return error instanceof Error ? codeShaped(error.message || error.name) : "non_error_thrown";
+}
+
+/** The word each kind of link reads as in the product since the navigation redesign. */
+const LINK_KIND_LABELS: Record<WorkspaceLinkTarget["kind"], string> = {
+  channel: "Thread",
+  breakout: "Breakout",
+  space: "Channel",
+  sidekick: "Sidekick",
+};
+
+export interface LinkUnfurlInput {
+  url: string;
+  kind: WorkspaceLinkTarget["kind"];
+  /** Name, colour and icon — public to whoever holds the link. Null when nothing answered. */
+  preview: WorkspaceLinkPreview | null;
+  /** Status and recency — only where the audience rule allows it. */
+  summary: WorkstreamUnfurlSummary | null;
+  /** The site origin `/marks/...` images are served from. */
+  markOrigin: string;
+}
+
+function markImage(origin: string, mark: Mark, altText: string): Record<string, unknown> {
+  return { type: "image", image_url: new URL(markImagePath(mark), origin).href, alt_text: altText };
+}
+
+/**
+ * The card for one Rally link: the Channel it sits in above, then its own name
+ * beside its mark, a status line where the audience rule allows one, and the
+ * button. Name, colour and icon are shown to anyone the link reaches; status,
+ * recency and contents are not (`docs/workstream-links.md`).
+ */
+export function linkUnfurlBlocks(input: LinkUnfurlInput): Record<string, unknown>[] {
+  const { preview, summary, url, kind } = input;
   const openButton = {
     type: "actions",
     elements: [{
@@ -174,27 +302,36 @@ export function workstreamUnfurlBlocks(
       action_id: "rally_open_unfurl",
     }],
   };
-  if (!summary) {
+  if (!preview && !summary) {
     return [
       { type: "section", text: { type: "mrkdwn", text: "*Rally*\nOpen this item in Rally to view it with your existing workspace permissions." } },
       openButton,
     ];
   }
   // Truncate before escaping, or a cut can land inside an `&amp;` entity.
-  const title = escapeMrkdwn(summary.title.trim().slice(0, 200) || "Untitled work stream");
-  const badge = unfurlStatusBadge(summary.harnessStatus);
+  const title = escapeMrkdwn((preview?.title ?? summary?.title ?? "").trim().slice(0, 200) || "Untitled");
+  const badge = summary ? unfurlStatusBadge(summary.harnessStatus) : null;
   const detail = [
+    LINK_KIND_LABELS[kind],
     badge?.label ?? null,
-    slackUnfurlUpdatedAt(summary.lastActivityAt),
+    summary ? slackUnfurlUpdatedAt(summary.lastActivityAt) : null,
   ].filter((part): part is string => part !== null).join(" · ");
-  return [
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `${badge ? `${badge.emoji} ` : ""}*<${url}|${title}>*${detail ? `\n${detail}` : ""}`,
-      },
-    },
-    openButton,
-  ];
+  const blocks: Record<string, unknown>[] = [];
+  if (preview?.channel) {
+    const channelTitle = escapeMrkdwn(preview.channel.title.trim().slice(0, 200));
+    blocks.push({
+      type: "context",
+      elements: [
+        markImage(input.markOrigin, preview.channel.mark, preview.channel.title),
+        { type: "mrkdwn", text: `*${channelTitle}*` },
+      ],
+    });
+  }
+  blocks.push({
+    type: "section",
+    text: { type: "mrkdwn", text: `${badge ? `${badge.emoji} ` : ""}*<${url}|${title}>*\n${detail}` },
+    ...(preview?.mark ? { accessory: markImage(input.markOrigin, preview.mark, preview.title) } : {}),
+  });
+  blocks.push(openButton);
+  return blocks;
 }
