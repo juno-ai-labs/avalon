@@ -1,7 +1,7 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { IconButton } from './primitives';
 
 /** One action an `IconGroup` shows as an icon button, or as a row of its menu at phone width. */
@@ -35,6 +35,7 @@ export function IconGroup({ actions = [], buttonClassName, children, className, 
   className?: string;
   moreLabel?: string;
 }): React.JSX.Element {
+  const moreRef = useRef<HTMLButtonElement>(null);
   return <div className={clsx('icon-group', folded && 'is-folded', className)}>
     {actions.length > 0 && <>
       <span className="icon-group-actions">
@@ -44,13 +45,19 @@ export function IconGroup({ actions = [], buttonClassName, children, className, 
       </span>
       <DropdownMenu.Root modal={false}>
         <DropdownMenu.Trigger asChild>
-          <IconButton className={clsx('icon-group-more', buttonClassName)} label={moreLabel}>
+          <IconButton className={clsx('icon-group-more', buttonClassName)} label={moreLabel} ref={moreRef}>
             <IconDots aria-hidden="true" size={16} stroke={1.9} />
           </IconButton>
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
           <DropdownMenu.Content align="end" className="menu-content icon-group-menu" collisionPadding={12} sideOffset={8}>
-            {actions.map((action) => <DropdownMenu.Item className="menu-item" disabled={action.disabled} key={action.key} onSelect={action.onSelect}>
+            {actions.map((action) => <DropdownMenu.Item className="menu-item" disabled={action.disabled} key={action.key} onSelect={() => {
+              // The item is about to unmount with its menu. An action that
+              // remembers where focus was (Expand, to return to it) should
+              // find the "More" button, which stays.
+              moreRef.current?.focus();
+              action.onSelect();
+            }}>
               {action.icon}{action.label}
             </DropdownMenu.Item>)}
           </DropdownMenu.Content>

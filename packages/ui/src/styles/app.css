@@ -4534,6 +4534,7 @@ pre {
 .resource-panel .rail-scroll:has(> .site-detail) { display: flex; flex-direction: column; padding: 0; }
 .resource-panel .rail-scroll > .site-detail { flex: 1 1 auto; }
 @media (max-width: 920px) {
+  .attachment-lightbox.is-document-viewer { -webkit-app-region: no-drag; border: 0; border-radius: 0; box-shadow: none; inset: 0; }
   body:has(.has-overlay-window-controls) .attachment-lightbox.is-document-viewer .attachment-lightbox-header { padding-left: 82px; }
 }
 /* And so do tooltips, which are the only label an icon-only action has. At the

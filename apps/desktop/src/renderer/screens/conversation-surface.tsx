@@ -1295,6 +1295,9 @@ export function ConversationSurface({
     setExpanded(returnFocus ? { ...preview, returnFocus } : preview);
   }, []);
   const openPanel = useCallback((next: ConversationPanel): void => {
+    // Opened from the lightbox (Resource details, Return to current), the new
+    // item is the point: the expanded view of the old one gives way to it.
+    setExpanded(null);
     setPanel(next);
     openOwnRail('context');
   }, [openOwnRail]);
