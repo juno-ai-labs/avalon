@@ -72,7 +72,9 @@ badge on its own corner, for a chain of containers; the parent moves up and
 left so it shows clear of the nested one, and the deepest badge's corner lands
 where a lone badge's would. A badge with a `label` names itself in a tooltip
 on hover; the tip sits on the badge's fill rather than its ring, so hovering a
-nested badge opens only its own.
+nested badge opens only its own. A badge either draws a symbol in its own
+ink and fill, or holds `content` the caller draws, such as an avatar; an
+`.avatar` is sized to the badge.
 
 **Channels**: what the person pinned, in their order (drag to reorder), then
 every other Channel they may see, ordered **A–Z** (default), **Recent** (newest
@@ -127,8 +129,8 @@ further pages until its row is listed.
 **Activity**: requests to join waiting on this person (approve or decline in
 place), then what happened to them, grouped Today, Yesterday and by day
 (`GET /navigation/activity`; [`digests.md`](digests.md#the-activity-tab)).
-A row is the Channel's tile badged with who acted (Rally's sparkle, or a
-person's initials), the sentence, and the Channel with the time. Chips filter
+A row is the Channel's tile badged with who acted, drawn with the same
+`RallyAvatar` and `Avatar` a conversation uses, the sentence, and the Channel with the time. Chips filter
 it: **All**, **Unread** and **Mentions**
 ([`digests.md`](digests.md#the-activity-tab) says which side filters each).
 Showing it reads nothing: a row stays unread until **Mark all read**, which
@@ -405,6 +407,29 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-13 — Activity badges draw the real avatar
+
+**What changed:** A `TileBadge` is either a symbol in its own fill and ink, or
+`content` the caller draws; the `text` option is gone. An Activity row's actor
+badge holds `RallyAvatar` for Rally and `Avatar` for a person. `RallyAvatar`
+is new in the shared primitives, and the composer's mention list uses it too.
+
+**Why:** The badge drew Rally as a sparkle and every person as initials on one
+accent wash, so it matched neither the mention list nor the person's own look.
+The product owner asked for the sidebar to show the avatar people see
+everywhere else.
+
+**Considered and rejected:** Keeping `text` and passing the person's colour and
+initials through it. It cannot draw a shape or a photo, and every later change
+to the avatar would need repeating in the badge.
+
+**Consequences:** A badge that stands for a person or Rally holds the shared
+avatar, never a copy of its colours. The badge's CSS strips the avatar's
+border and lets its initials take the badge's size; an avatar that needs more
+than that to fit a badge has to change here too.
+
+Shipped in [#1217](https://github.com/juno-ai-labs/avalon/pull/1217).
 
 ### 2026-10-13 — A Breakout pill wears its glyph, like a thread pill
 

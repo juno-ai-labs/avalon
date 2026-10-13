@@ -23,7 +23,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
-import { Sparkle } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
@@ -42,14 +42,14 @@ import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, MY_THREADS_QUERY_KEY, SPAC
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { latestPinWrite, reportThreadPin, usePinAction, usePinFailure, usePins, usePinWrite, type PinnedThread } from '../lib/pins';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation } from '../lib/telemetry';
-import type { SpaceConversationSummary, Workspace, WorkstreamSummary } from '../lib/types';
+import type { SpaceConversationSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { useUiStore, type SidebarChannelSort, type SidebarSection } from '../lib/ui-store';
 import { useListMotion } from '../lib/use-list-motion';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { openWorkstreamId } from '../lib/workstream-landing';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
-import { Button, IconButton, InlineError, Modal, TitleSkeleton, Tip } from './primitives';
+import { Avatar, Button, IconButton, InlineError, Modal, RallyAvatar, TitleSkeleton, Tip } from './primitives';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import { RelativeTime } from './relative-time';
 import { ResizableSidebar, SidebarFooterItems, SidebarScroll } from '@rally/ui/components/resizable-sidebar';
@@ -629,7 +629,7 @@ function PinnedMark({ reorderable }: { reorderable: boolean }): React.JSX.Elemen
 }
 
 /** A Channel's identity as a tile: its glyph on its hue's pastel pair. */
-function channelLook(space: SpaceSummary): { Icon: typeof Sparkle; tint: string; ink: string } {
+function channelLook(space: SpaceSummary): { Icon: LucideIcon; tint: string; ink: string } {
   return { Icon: WORKSTREAM_ICON_COMPONENTS[space.iconKey], ...markColors(space.colorKey) };
 }
 
@@ -1206,10 +1206,6 @@ function useMarkActivityRead(): () => void {
   }, [api, queryClient]);
 }
 
-function initials(name: string): string {
-  return name.split(/\s+/u).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
-}
-
 function dayLabel(value: string, now = new Date()): string {
   const date = new Date(value);
   const start = (offset: number): number => new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset).getTime();
@@ -1246,9 +1242,21 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
     enabled: Boolean(api) && !guest,
     staleTime: 60_000,
   });
-  const actorName = (item: ActivityItem): string => item.actorLabel
-    || members.data?.find((member) => member.id === item.actorUserId)?.name
+  const actorMember = (item: ActivityItem): WorkspaceMember | undefined =>
+    members.data?.find((member) => member.id === item.actorUserId);
+  const actorName = (item: ActivityItem, member: WorkspaceMember | undefined): string => item.actorLabel
+    || member?.name
     || 'Someone';
+  // Who acted, drawn as they are everywhere else: Rally's mark, or the
+  // person's own avatar. A guest has no directory, so a person it cannot find
+  // is drawn from the name the row carries.
+  const actorBadge = (item: ActivityItem, member: WorkspaceMember | undefined, name: string): TileBadge => ({
+    key: 'actor',
+    shape: 'circle',
+    content: item.actorUserId === null
+      ? <RallyAvatar />
+      : <Avatar member={member ?? { id: item.actorUserId, name, email: '', timezone: '' }} title={null} />,
+  });
   const feed = useInfiniteQuery({
     queryKey: activityQueryKey(only),
     queryFn: ({ pageParam, signal }) => api!.getActivity(pageParam, only, signal),
@@ -1315,9 +1323,9 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
       <SectionHeading motionKey={`day:${group.label}`}>{group.label}</SectionHeading>
       {group.items.map((item) => {
         const channel = item.channelIds.map((id) => spaces.get(id)).find(Boolean);
-        const actor: TileBadge = item.actorUserId === null
-          ? { key: 'actor', shape: 'circle', fill: 'var(--av-sys-color-text-default)', ink: 'var(--av-sys-color-surface-default)', icon: Sparkle }
-          : { key: 'actor', shape: 'circle', fill: 'var(--av-sys-color-accent-wash)', ink: 'var(--av-sys-color-accent-strong)', text: initials(actorName(item)) };
+        const member = actorMember(item);
+        const name = actorName(item, member);
+        const actor = actorBadge(item, member, name);
         const thread = resolveWorkstreamAppearance(item.threadId, live.data?.find((candidate) => candidate.id === item.threadId)?.appearance);
         return <Link
           className={clsx('activity-row', item.unread && 'is-unread')}
@@ -1330,7 +1338,7 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
             : <IdentityTile badges={[actor]} icon={thread.Icon} ink={thread.ink} shape="circle" tint={thread.tint} />}
           <span className="activity-row-body">
             <span className="activity-row-text">
-              <strong>{actorName(item)}</strong> {ACTIVITY_VERBS[item.kind]}{' '}
+              <strong>{name}</strong> {ACTIVITY_VERBS[item.kind]}{' '}
               <strong>{item.breakout && item.kind !== 'breakout_started' ? item.breakout.title : item.threadTitle}</strong>
             </span>
             {item.kind === 'breakout_started' && item.breakout && <span className="breakout-chip activity-chip">
