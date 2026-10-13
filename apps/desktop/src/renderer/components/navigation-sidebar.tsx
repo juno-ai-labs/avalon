@@ -990,7 +990,7 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
  * The Channels tab: what this person pinned, then every Channel they may see,
  * in the order the sort control names (A–Z until changed). A Channel's second
  * line appears only when threads were placed in it since this person last had
- * it open, and says how many, in red beside a bold name.
+ * it open, and says how many, in red beside a bold name, with a dot.
  */
 /** Members only: a guest has no Channels section. */
 function ChannelsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
@@ -1108,7 +1108,7 @@ function ChannelRow({ active, drag, ghost, moves, onPin, pinned, position, space
           time={stats?.lastActivityAt && <RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} tipPrefix="Last update at" value={stats.lastActivityAt} />}
           title={space.name}
           titleExtra={space.scope === 'personal' && <IconLock aria-label="Private" className="navigation-row-lock" size={13} stroke={1.8} />}
-          unread={false}
+          unread={unread}
         />
         {position && <span className="sr-only">{position}</span>}
       </Link>
