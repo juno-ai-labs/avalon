@@ -499,7 +499,7 @@ export const SPACE_PUBLIC_ONLY_MIGRATION: readonly string[] = [
 ];
 
 /**
- * WorkspaceDO migration 101: `spaces.scope` admits `individual`, the Personal
+ * WorkspaceDO migration 102: `spaces.scope` admits `individual`, the Personal
  * Channel each member is given (`docs/spaces.md#the-personal-channel`).
  *
  * SQLite cannot change a `CHECK`, so the table is rebuilt: held, dropped,
@@ -556,7 +556,7 @@ export const SPACE_INDIVIDUAL_SCOPE_MIGRATION: readonly string[] = [
 ];
 
 /**
- * WorkspaceDO migration 103: messages in a Channel itself, outside any
+ * WorkspaceDO migration 104: messages in a Channel itself, outside any
  * thread (`docs/spaces.md#channel-messages`). A building block beside a
  * Channel's placements: who said it (Rally, or a member), what, and when.
  *

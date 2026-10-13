@@ -56,7 +56,7 @@ const MARK = (workstreamId: string) => `${NEXT_REVISION}
  * A Channel recoloured, archived, restored, or made private, which moves it
  * in `canonicalChannelSpaceId`'s order. Every thread placed in it is marked;
  * the consumer works out whether this Channel is the one that decides.
- * Exported because a rebuild of `spaces` (migration 101) drops it and has to
+ * Exported because a rebuild of `spaces` (migration 102) drops it and has to
  * put the same text back.
  */
 export const CHANNEL_COLOR_SPACE_CHANGE_TRIGGER =

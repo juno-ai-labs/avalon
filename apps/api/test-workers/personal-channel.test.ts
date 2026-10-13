@@ -295,8 +295,7 @@ describe("Channel messages", () => {
   });
 
   it("sit below the threads placed after them, and a page that ends on a thread resumes on a message", async () => {
-    // A full page of private threads placed after General was made: a member
-    // who is in none of them reads each as a locked row.
+    // A full page of Organization-wide threads placed after General was made.
     await runInDurableObject(workspace(), (_instance, state) => {
       const madeAt = state.storage.sql.exec<{ created_at: number }>(
         "SELECT created_at FROM spaces WHERE space_id = ?", GENERAL,
@@ -308,30 +307,33 @@ describe("Channel messages", () => {
           title, description, preview, scope, exact_state, origin_type, title_status,
           latest_attention_ordinal, unread_tracking_start_ordinal, last_activity_at,
           source_created_at, source_updated_at, projected_at
-        ) VALUES (?, 1, 1, ?, 'hash', 'Private', '', '', 'personal', 'idle', 'ad_hoc', 'settled', 0, 0, ?, ?, ?, ?)`,
+        ) VALUES (?, 1, 1, ?, 'hash', 'Shared', '', '', 'workspace', 'idle', 'ad_hoc', 'settled', 0, 0, ?, ?, ?, ?)`,
         threadId, `event-${index}`, madeAt + index, madeAt + index, madeAt + index, madeAt + index);
         state.storage.sql.exec(`INSERT INTO space_channel_memberships (space_id, workstream_id, state, generation, joined_at, updated_at)
           VALUES (?, ?, 'active', 1, ?, ?)`, GENERAL, threadId, madeAt + index, madeAt + index);
       }
     });
-    const first = await workspace().listChannelFeed({ workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: GENERAL, cursor: null });
-    if (!first.ok) throw new Error(first.code);
-    expect(first.page.items.map((item) => item.kind)).toEqual(Array(SPACE_CHANNEL_PAGE_SIZE).fill("locked"));
-    expect(first.page.nextCursor).not.toBeNull();
-    const second = await workspace().listChannelFeed({
-      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: GENERAL, cursor: first.page.nextCursor,
+    // The storage page: what the feed orders and pages, before any thread is
+    // resolved into a row.
+    const page = (cursor: string | null) => withSpaceStorage(workspace(), (storage) => {
+      const read = storage.feedPage({ userId: MEMBER, accessClass: "member" }, GENERAL, cursor);
+      if (read === false || read === "invalid_cursor") throw new Error(String(read));
+      return read;
     });
-    if (!second.ok) throw new Error(second.code);
-    expect(second.page.items.map((item) => item.kind)).toEqual(["message"]);
-    expect(second.page.nextCursor).toBeNull();
+    const first = await page(null);
+    expect(first.items.map((item) => item.kind)).toEqual(Array(SPACE_CHANNEL_PAGE_SIZE).fill("thread"));
+    expect(first.nextCursor).not.toBeNull();
+    const second = await page(first.nextCursor);
+    expect(second.items.map((item) => item.kind)).toEqual(["message"]);
+    expect(second.nextCursor).toBeNull();
   });
 });
 
-describe("migration 102", () => {
+describe("migration 103", () => {
   it("seats every existing member in General and gives each a Personal Channel, and no guest either", async () => {
     // An Organization from before Personal Channels: its creator's was made
     // above, and nobody else has one or sits in General.
-    const backfill = WORKSPACE_DO_SCHEMA_MIGRATIONS.find((migration) => migration.version === 102);
+    const backfill = WORKSPACE_DO_SCHEMA_MIGRATIONS.find((migration) => migration.version === 103);
     await runInDurableObject(workspace(), async (_instance, state) => {
       // ...and whose General was made before Channel messages.
       state.storage.sql.exec("DELETE FROM space_messages WHERE space_id = ?", GENERAL);
@@ -358,15 +360,15 @@ describe("migration 102", () => {
   });
 });
 
-describe("migration 101", () => {
-  it("rebuilds a populated Organization's Spaces at 100, keeping every row and the colour trigger", async () => {
-    const stub = env.MIGRATION_PROBE_DO!.getByName("personal-channel-v100");
+describe("migration 102", () => {
+  it("rebuilds a populated Organization's Spaces at 101, keeping every row and the colour trigger", async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName("personal-channel-v101");
     await stub.ping();
     const space = "00000000-0000-7000-8000-0000000fe120";
     const thread = "00000000-0000-7000-8000-0000000fe121";
     await runInDurableObject(stub, (_instance, state) => {
-      const before = WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 100);
-      expect(before.at(-1)?.version).toBe(100);
+      const before = WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 101);
+      expect(before.at(-1)?.version).toBe(101);
       applyDurableObjectSqliteMigrations({
         storage: state.storage, migrations: before, component: "workspace_do", workerVersionId: "before-personal", now: 1,
       });

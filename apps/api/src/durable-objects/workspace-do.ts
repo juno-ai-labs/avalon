@@ -1481,7 +1481,7 @@ const PRODUCT_ALARM_KIND = "product";
 const PRODUCT_ALARM_KEY = "workspace";
 /** The one-shot entry a migrating object uses to reconcile itself once. */
 const SCHEDULE_BOOTSTRAP_ALARM_KIND = "schedule_bootstrap";
-/** One-shot, written by migration 102: seat every existing member. See docs/spaces.md#the-personal-channel. */
+/** One-shot, written by migration 103: seat every existing member. See docs/spaces.md#the-personal-channel. */
 const PERSONAL_CHANNEL_BACKFILL_ALARM_KIND = "personal_channel_backfill";
 /** The kinds `refreshSchedule` reconciles, each dispatched to the schedule runner. */
 
