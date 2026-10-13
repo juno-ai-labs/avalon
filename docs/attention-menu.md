@@ -10,7 +10,9 @@ conversations, and access requests are answered at the top of the **Activity**
 tab ([`desktop-shell.md`](desktop-shell.md#the-sidebar)).
 
 This document keeps what the menu decided, because `attentionItems` still
-decides it for the badge, the dock and the macOS menu bar.
+decides it for the badge and the dock. The macOS menu bar no longer reads it:
+its Needs attention is the Activity tab's unread rows
+([`menu-bar.md`](menu-bar.md)).
 
 ## What it was
 
@@ -52,12 +54,12 @@ waiting work in two places.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/common/attention-items.ts` | `attentionItems`: which conversations are waiting, why, and in what order; `readerMarkerStatus` and `markerRank` over `MARKER_PRECEDENCE`. In `common/` because the macOS menu bar counts the same list in the main process ([`menu-bar.md`](menu-bar.md)). |
+| `apps/desktop/src/common/attention-items.ts` | `attentionItems`: which conversations are waiting, why, and in what order; `readerMarkerStatus` and `markerRank` over `MARKER_PRECEDENCE`. In `common/` because the macOS menu bar counted the same list in the main process until it moved to Activity ([`menu-bar.md`](menu-bar.md)); nothing in `main/` reads it now. |
 | `apps/desktop/src/renderer/lib/attention-items.ts` | `useAttentionItems` and `attentionItemPath`. |
 
 Rules that still hold:
 
-- **The Threads badge, the dock and the menu bar show one number.** All read
+- **The Threads badge and the dock show one number.** Both read
   `attentionItems`; `readerAttentionCount` in `workspace-space-storage.ts`
   counts the APNs badge with the same three states. A new reader-owned state
   goes in `readerMarkerStatus` and `MARKER_PRECEDENCE`, and in the server

@@ -53,9 +53,9 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   a triangle.
   The choice is a device preference (`rally.sidebar-section`). **Threads**
   carries a red count: every conversation waiting on this person and every
-  access request waiting on them, the same `attentionItems` the dock badge and
-  the macOS menu bar count ([`menu-bar.md`](menu-bar.md)). Channels and
-  Activity carry no badge.
+  access request waiting on them, the same `attentionItems` the dock badge
+  counts. The macOS menu bar counts Activity's unread rows instead
+  ([`menu-bar.md`](menu-bar.md)). Channels and Activity carry no badge.
 - **One list**, titled with the section's name, with **Search organization**,
   **Import** (Mac app only, into any Channel the person may place threads in),
   **Restart to update** when one is downloaded, and **New channel** on
