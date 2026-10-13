@@ -267,12 +267,15 @@ carries thread rows only, so nothing live held the breakout's colour. The
 server writes a breakout's colour and its thread's from the same Channel in
 one job, so the live thread row already has the right answer.
 
-**Rejected:** Re-reading the list when a thread's colour moves. The consumer
-recolours Main and then each Breakout, and each reaches the directory through
-its own Queue hop, so a re-read can land between them and keep the old colour.
+**Considered and rejected:** Re-reading the list when a thread's colour
+moves. The consumer recolours Main and then each Breakout, and each reaches
+the directory through its own Queue hop, so a re-read can land between them
+and keep the old colour.
 
-**Respect:** This leans on a breakout's colour equalling its thread's. If
+**Consequences:** This leans on a breakout's colour equalling its thread's. If
 conversations choose their own colours again (see the entry below), drop it.
+
+Shipped in [#1202](https://github.com/juno-ai-labs/avalon/pull/1202).
 
 ### 2026-10-12 — Threads and Breakouts store their Channel's colour
 

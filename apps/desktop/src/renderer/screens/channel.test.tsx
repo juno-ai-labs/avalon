@@ -211,6 +211,11 @@ describe('a Channel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
 
     await waitFor(() => expect(api.updateSpacePresentation).toHaveBeenCalledWith('outbound', { name: 'Everyone', iconKey: 'briefcase', colorKey: 'blue' }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Channel menu:/u }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
+    await screen.findByRole('menuitem', { name: 'Icon' });
+    expect([...screen.getByRole('menu').querySelectorAll('[role^="menuitem"]')].map((item) => item.textContent?.trim()))
+      .toEqual(['Icon', 'Pinned in my sidebar']);
   });
 
   it('offers its icon and colour in More, beside its settings', async () => {
