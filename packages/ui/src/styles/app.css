@@ -3829,7 +3829,7 @@ pre {
 .citation-card { color: var(--av-sys-color-text-default); cursor: pointer; font: inherit; margin: var(--av-sys-space-prose-gap) 0; max-width: 100%; overflow: hidden; text-align: left; }
 .citation-card.is-file { align-items: center; background: var(--av-cmp-composer-background); border: .5px solid var(--av-cmp-composer-border-color); border-radius: 12px; display: grid; gap: var(--space-2); grid-template-columns: 36px minmax(0, 1fr); min-height: var(--attachment-file-card-height); min-width: min(220px, 100%); padding: var(--space-2); width: min(340px, 100%); }
 .citation-card.is-file:hover { background-image: var(--hover-layer); }
-.citation-card-badge { align-items: center; background: color-mix(in srgb, var(--av-sys-color-accent-base) 18%, var(--av-sys-color-surface-raised)); border-radius: 9px; color: var(--av-sys-color-accent-base); display: inline-flex; height: 36px; justify-content: center; width: 36px; }
+.citation-card-badge { align-items: center; background: var(--av-sys-color-surface-elevated-hover); border-radius: 9px; color: var(--av-ref-color-neutral-11); display: inline-flex; height: 36px; justify-content: center; width: 36px; }
 .citation-card.is-image { background: var(--av-ref-color-neutral-4); border: 0; border-radius: 12px; box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--av-sys-color-text-default) 15%, transparent); display: block; max-height: 200px; min-height: 64px; padding: 0; position: relative; transition: filter 140ms ease; }
 .citation-card.is-image:hover { filter: brightness(1.04); }
 .markdown-body .citation-card-image-preview { display: block; height: 100%; margin: 0; max-width: none; object-fit: cover; width: 100%; }
@@ -4435,7 +4435,7 @@ pre {
 .attachment-progress svg { height: 42px; position: absolute; transform: rotate(-90deg); width: 42px; }
 .attachment-progress circle { fill: none; stroke-width: 3; }
 .attachment-progress-track { stroke: var(--av-ref-color-neutral-7); }
-.attachment-progress-value { stroke: var(--av-sys-color-brand-base); stroke-linecap: round; transition: stroke-dashoffset 100ms linear; }
+.attachment-progress-value { stroke: var(--av-sys-color-text-default); stroke-linecap: round; transition: stroke-dashoffset 100ms linear; }
 .attachment-progress small { color: var(--av-ref-color-neutral-14); font-size: 9px; font-variant-numeric: tabular-nums; position: relative; }
 .human-message .message-attachments { align-items: flex-end; margin-left: auto; }
 
@@ -4478,11 +4478,10 @@ pre {
   padding: var(--space-2);
   position: relative;
 }
-.attachment-file-card.is-pending { margin-block: 0; width: 220px; }
 .attachment-file-card.is-failed { border-color: var(--av-sys-color-danger-base); }
 .attachment-file-open { align-items: center; background: transparent; display: grid; flex: 1 1 auto; gap: var(--space-2); grid-template-columns: 36px minmax(0, 1fr); min-width: 0; padding: 0; text-align: left; }
 .attachment-file-open:hover:not(:disabled) .attachment-file-name { text-decoration: underline; text-underline-offset: 2px; }
-.attachment-file-icon { align-items: center; background: color-mix(in srgb, var(--av-sys-color-accent-base) 18%, var(--av-sys-color-surface-raised)); border-radius: 9px; color: var(--av-sys-color-accent-base); display: flex; flex: 0 0 auto; height: 36px; justify-content: center; width: 36px; }
+.attachment-file-icon { align-items: center; background: var(--av-sys-color-surface-elevated-hover); border-radius: 9px; color: var(--av-ref-color-neutral-11); display: flex; flex: 0 0 auto; height: 36px; justify-content: center; width: 36px; }
 .attachment-file-details { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
 .attachment-file-name { font-size: 14px; font-weight: 540; line-height: 18px; min-width: 0; overflow-wrap: anywhere; }
 /* A name past 200 characters would otherwise grow the chip without bound;
@@ -4495,8 +4494,6 @@ pre {
   overflow: hidden;
 }
 .attachment-file-meta { color: var(--av-sys-color-text-muted); font-size: 12px; line-height: 16px; }
-.attachment-file-card.is-pending .attachment-file-icon { background: var(--av-sys-color-accent-wash); color: var(--av-sys-color-accent-base); }
-.attachment-file-icon.is-spreadsheet { background: var(--av-sys-color-success-wash); color: var(--av-sys-color-success-base); }
 .attachment-markdown-glyph { font-size: 11px; font-weight: 720; letter-spacing: -.04em; }
 .attachment-file-download,
 .attachment-lightbox-action { align-items: center; background: transparent; border-radius: 8px; color: var(--av-sys-color-text-muted); display: flex; flex: 0 0 auto; height: 34px; justify-content: center; padding: 0; width: 34px; }
@@ -4508,8 +4505,6 @@ pre {
 .attachment-inline-audio audio { display: block; height: 36px; max-width: 100%; width: 100%; }
 .attachment-inline-audio > button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 12px; gap: var(--space-2); padding: var(--space-1) var(--space-2); }
 .attachment-inline-audio [role="alert"] { color: var(--av-sys-color-danger-base); display: block; font-size: 12px; }
-.attachment-file-icon.is-audio,
-.attachment-file-icon.is-pdf { background: var(--av-sys-color-accent-wash); color: var(--av-sys-color-accent-base); }
 
 /* The lightbox covers the window without hiding it: a half-strength wash with
    the backdrop blurred behind it. The two are one decision — `scrim.solid`,
@@ -6536,16 +6531,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   width: var(--attachment-media-size);
 }
 
-:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-attachments .attachment-file-card.is-pending {
-  background: transparent;
-  border-color: var(--av-ref-color-line-4);
-  flex: 0 0 220px;
-  height: var(--attachment-file-card-height);
-  min-height: var(--attachment-file-card-height);
-  min-width: 0;
-  width: 100%;
-}
-
 :is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-input-shell {
   align-self: end;
   grid-column: 2;
@@ -6705,8 +6690,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 
 [data-theme='dark'] :is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule { border-color: var(--av-cmp-composer-border-color); }
 [data-theme='dark'] :is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule:focus-within { border-color: var(--av-cmp-composer-border-color-focus); }
-[data-theme='dark'] .attachment-file-card.is-pending .attachment-file-icon { background: var(--av-sys-color-accent-wash); color: var(--av-sys-color-accent-base); }
-[data-theme='dark'] .attachment-file-icon.is-spreadsheet { background: var(--av-sys-color-success-wash); color: var(--av-sys-color-success-base); }
 [data-theme='dark'] .composer-action-menu {
   background: var(--av-sys-color-surface-elevated);
   border-color: var(--av-cmp-composer-border-color);
