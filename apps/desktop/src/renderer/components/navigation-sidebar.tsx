@@ -35,7 +35,7 @@ import { consumeDeepLinkWorkstreamNavigation, useDeepLinkWorkstreamNavigation } 
 import { desktopBridge } from '../lib/platform';
 import { formatDateTime, formatSidebarActivityTime, formatTime, readerMarkerStatus } from '../lib/format';
 import { layoutInsertIndex, layoutRowAt } from '../lib/list-motion';
-import { channelRoute, homeChannelId, threadRoute } from '../lib/navigation-routes';
+import { OPEN_EXPANDED, channelRoute, homeChannelId, threadRoute } from '../lib/navigation-routes';
 import { moveWithin } from '../lib/personal-order';
 import { compareChannels } from '../lib/sidebar-channel-order';
 import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, MY_THREADS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
@@ -943,6 +943,7 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
         onPointerCancel={live ? warmup.onPointerCancel : undefined}
         onPointerEnter={live ? warmup.onPointerEnter : undefined}
         onPointerLeave={live ? warmup.onPointerLeave : undefined}
+        state={OPEN_EXPANDED}
         to={href}
         {...drag}
       >
@@ -1334,6 +1335,7 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
           className={clsx('activity-row', item.unread && 'is-unread')}
           data-motion-key={`activity:${item.id}`}
           key={item.id}
+          state={OPEN_EXPANDED}
           to={href(item)}
         >
           {channel
