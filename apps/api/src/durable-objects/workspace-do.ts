@@ -8239,9 +8239,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         logWarn(this.env, "space_general_open_refused", { workspace_id: workspaceId, reason: opened.code });
         return false;
       }
-      if (opening.personalSpaceId !== undefined) {
-        await this.reservePersonalSpace(workspaceId, opening.creatorUserId, opening.personalSpaceId, opening.authorityGeneration);
-      }
+    }
+    // The creator's Personal Channel, outside General's branch so a replayed
+    // creation whose General committed but whose Personal Channel did not
+    // tries it again. A refusal is logged by the reservation; the creator's
+    // own relationship delivery seats them as well.
+    if (general?.personalSpaceId !== undefined && storage.personalSpaceId(general.creatorUserId) === null) {
+      await this.reservePersonalSpace(workspaceId, general.creatorUserId, general.personalSpaceId, general.authorityGeneration);
     }
     if (storage.completeBootstrap() !== "complete") return false;
     this.publishSpaceSnapshot();
@@ -9236,6 +9240,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * made is the answer (`created: false`) and the unique partial index is
    * still what decided it.
    */
+  /**
+   * General as this caller may read it, or `null` while there is none.
+   * Writes nothing, unlike `openGeneralSpace`, which records General on the
+   * cutover's row: for a reader that polls, such as demo readiness.
+   */
+  async readGeneralSpace(input: WorkspaceSpaceGeneralRequest): Promise<{ ok: true; space: SpaceSummary | null } | { ok: false; code: SpaceErrorCode }> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceGeneralRequestSchema, input, "read_general_space");
+    this.assertWorkspace(request.workspaceId);
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "read");
+    if (refusal) return { ok: false, code: refusal };
+    const storage = this.spaceStorage();
+    const generalSpaceId = storage.generalSpaceId();
+    if (generalSpaceId === null) return { ok: true, space: null };
+    const space = storage.readable(member(request.userId), generalSpaceId);
+    return space === false ? { ok: false, code: "space_not_found" } : { ok: true, space };
+  }
+
   async openGeneralSpace(input: WorkspaceSpaceGeneralRequest): Promise<WorkspaceSpaceGeneralOpenResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceGeneralRequestSchema, input, "open_general_space");

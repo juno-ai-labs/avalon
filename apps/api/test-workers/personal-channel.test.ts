@@ -224,6 +224,19 @@ describe("seatOrganizationMember", () => {
   });
 });
 
+describe("reading General", () => {
+  it("answers General and writes nothing", async () => {
+    const bootstrap = () => runInDurableObject(workspace(), (_instance, state) => (
+      state.storage.sql.exec("SELECT * FROM space_bootstrap").toArray()
+    ));
+    const before = await bootstrap();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await expect(workspace().readGeneralSpace({ workspaceId: WORKSPACE_ID, userId: MEMBER }))
+      .resolves.toMatchObject({ ok: true, space: { id: GENERAL, systemRole: "general" } });
+    expect(await bootstrap()).toEqual(before);
+  });
+});
+
 describe("a Personal Channel", () => {
   it("refuses a change of audience and an archive", async () => {
     await expect(workspace().noteSpaceAudience({
