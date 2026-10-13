@@ -108,7 +108,9 @@ A row is the thread's circle tile with a squircle badge for each Channel it
 sits in (two at most, the room a tile has), its title, its last activity time, and the Channels' names. A
 breakout's tile carries its thread's circle badge instead, with the thread's
 first Channel nested on that badge's corner, and its second line starts with
-its thread's name, with no arrow: the nested tile already says it is a breakout. The thread
+its thread's name, with no arrow: the nested tile already says it is a breakout.
+A Tabler right chevron, not a dot, separates the thread's name from its
+Channels', read as the thread inside them. The thread
 and Channel badges carry their names as tooltips. A row is unread
 (bold title, the time and a dot in the unread colour) when it has new
 messages, mentions the person, or was never opened, the three the Threads
@@ -390,8 +392,8 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 **What changed:** A `TileBadge` takes an optional `label`, drawn as a tooltip
 on the badge's fill; Channel and thread badges set it to their names. A nested
 badge's parent moves in 5px instead of 2px, so it shows above and left of the
-nested badge. A breakout row's second line drops its `↳` and starts with the
-thread's name.
+nested badge. A breakout row's second line drops its `↳`, starts with the
+thread's name, and puts a right chevron between it and the Channels' names.
 
 **Why:** The product owner asked for both badges of a breakout's tile to say
 what they are, and for the middle badge to show more of itself; at 2px the
