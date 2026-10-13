@@ -44,22 +44,12 @@ its headers is leftmost. The same happens when the window is too narrow for
 two panes: `onShownChange` reports the thread standing alone, and the thread
 carries the crumb.
 
-The reader can also ask for it. Beside its Channel, the thread's header has an
-**Expand** action in its `IconGroup`; it calls `setExpanded(true)`, the stack
-shows only its right slot, and the thread carries the crumb as above. While
-expanded, the same place offers **Collapse**, which puts the thread back
-beside the Channel. Opening a breakout or a panel ends the expansion
-(`setThreadUsesTwoPanes(true)` clears it), so the thread and what it opened
-split the window as they would have, and closing that returns to the Channel
-and the thread. Expansion belongs to one thread: `ChannelStack` holds the id
-it was asked for, so the next thread opens beside the Channel.
-
-A breakout does the same one level down. Beside its thread, its header offers
-**Expand**; the thread screen holds the expanded breakout's id and draws its
-own layout in `breakout` mode, so the breakout stands alone with the Channel
-and the thread as crumbs, and **Collapse** puts it back. A panel the breakout
-opens ends its expansion. Both levels build the action with `expandToggle` in
-`workstream.tsx`.
+The reader can also ask for it. A thread beside its Channel, and a breakout
+beside its thread, has **Expand** and **Collapse** in its header; expanded,
+its level draws in `breakout` mode and the pane carries the crumbs as above.
+An expansion is held for the pane it was asked on and dropped when that pane
+closes or another opens, or when it opens a breakout or a panel of its own,
+which then split the window as they would have.
 
 Each step is drawn as movement, by `SplitConversationLayout` itself so both
 levels share it. A pane that opens beside another slides in from the right; a
@@ -115,6 +105,8 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
   the pane's own pill keeps its room and truncates last. Where every crumb
   has a mark, the marks fuse into one `MarkBridge`
   ([`shared-ui.md`](shared-ui.md)), each linking where its pill does.
+- **Collapse in a narrow window** clears the expansion, but the pane still
+  stands alone, as it would unexpanded; Collapse then simply goes away.
 - **A thread with no visible Channel** opens on `/workstreams/:id`, alone; it
   has nothing to step back to.
 
@@ -122,8 +114,9 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
 
 - `apps/desktop/src/renderer/screens/channel.test.tsx` (a thread opens beside
   the Channel, expands over it and collapses back, and a breakout ends the
-  expansion); `workstream-sidebar-switch.test.tsx` (a breakout expands over
-  its thread and collapses back) and `lib/navigation-routes.test.ts`.
+  expansion, and a thread closed while expanded reopens beside the Channel);
+  `workstream-sidebar-switch.test.tsx` (the real header's Expand and Collapse,
+  and a breakout expanding, collapsing and reopening beside its thread) and `lib/navigation-routes.test.ts`.
 - `apps/desktop/src/renderer/lib/pane-visibility.test.tsx`: no read is
   acknowledged in a pane the layout is not drawing, and one is once it is.
 - `apps/desktop/src/renderer/components/split-conversation.test.tsx`: the two
@@ -147,11 +140,13 @@ without closing the Channel.
 Expanded is the same picture as a thread using both its slots, so it reuses
 that mode and the crumb that comes with it.
 
-**Consequences:** Expansion is not stored and lasts only for the pane it was
-asked on, and only until that pane opens a breakout or a panel: the product
+**Consequences:** Expansion is not stored and lasts only while the pane it
+was asked on stays open, and only until that pane opens a breakout or a panel: the product
 chose the ordinary thread-and-breakout split there over keeping the breakout
 full width. The Channel crumb still opens the Channel alone, closing the thread;
 Collapse is the way back to the pair.
+
+Shipped in #1213.
 
 ### 2026-10-13 — A crumb opens its level and closes what is nested under it
 
