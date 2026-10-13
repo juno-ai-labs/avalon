@@ -68,8 +68,11 @@ second line with the unread dot at its end. A tile is a shape in the object's
 pastel pair with its glyph, and can carry small badges on its corner, each in
 a ring painted the row's own background (`--tile-ring`) so it reads as cut out
 of the tile on a plain, hovered or selected row. A badge can carry one smaller
-badge on its own corner, for a chain of containers; the parent moves in so the
-deepest badge's corner lands where a lone badge's would.
+badge on its own corner, for a chain of containers; the parent moves up and
+left so it shows clear of the nested one, and the deepest badge's corner lands
+where a lone badge's would. A badge with a `label` names itself in a tooltip
+on hover; the tip sits on the badge's fill rather than its ring, so hovering a
+nested badge opens only its own.
 
 **Channels**: what the person pinned, in their order (drag to reorder), then
 every other Channel they may see, ordered **A–Z** (default), **Recent** (newest
@@ -104,8 +107,11 @@ thread and breakout they take part in under **All threads**
 A row is the thread's circle tile with a squircle badge for each Channel it
 sits in (two at most, the room a tile has), its title, its last activity time, and the Channels' names. A
 breakout's tile carries its thread's circle badge instead, with the thread's
-first Channel nested on that badge's corner, and its second line starts `↳`
-and its thread's name. A row is unread
+first Channel nested on that badge's corner, and its second line starts with
+its thread's name, with no arrow: the nested tile already says it is a breakout.
+A Tabler right chevron, not a dot, separates the thread's name from its
+Channels', read as the thread inside them. The thread
+and Channel badges carry their names as tooltips. A row is unread
 (bold title, the time and a dot in the unread colour) when it has new
 messages, mentions the person, or was never opened, the three the Threads
 count is made of; what the run is doing is the thread's own header's to show.
@@ -385,6 +391,30 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-13 — Tile badges name themselves on hover
+
+**What changed:** A `TileBadge` takes an optional `label`, drawn as a tooltip
+on the badge's fill; Channel and thread badges set it to their names. A nested
+badge's parent moves in 5px instead of 2px, so it shows above and left of the
+nested badge. A breakout row's second line drops its `↳`, starts with the
+thread's name, and puts a right chevron between it and the Channels' names.
+
+**Why:** The product owner asked for both badges of a breakout's tile to say
+what they are, and for the middle badge to show more of itself; at 2px the
+nested badge hid most of it. The product owner also asked for the arrow on
+the second line to go; the nested tile already marks the row as a breakout.
+
+**Considered and rejected:** The tip on the badge's ring, the outer element.
+The nested badge sits inside its parent's ring, so hovering it would open both
+tips at once.
+
+**Consequences:** A badge's tip must stay on its fill. A badge drawn without a
+`label` shows no tip, so a new caller of `TileBadge` has to name it to get one.
+The 5px inset covers more of the tile under the parent badge; a deeper nest
+would need the geometry worked out again.
+
+Shipped in [#1208](https://github.com/juno-ai-labs/avalon/pull/1208).
 
 ### 2026-10-13 — Channel rows count new threads only; no Archived list
 
