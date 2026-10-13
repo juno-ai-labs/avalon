@@ -679,6 +679,41 @@ activation event without losing the warning; later clears replace that retained 
 
 ## Changelog
 
+### 2026-10-13 — Every artifact and attachment opens in the right panel
+
+**What changed:** A conversation's right panel now holds whatever it opens:
+a message or composer attachment, a citation's file, a prior version of a
+resource, or a resource with its own actions (versions, pop-out, archive,
+refresh). `ConversationSurface` keeps one `ConversationPanel` state, either
+`{ kind: 'resource' }` or `{ kind: 'attachment' }`, in place of the attachment
+lightbox, the resource lightbox and the document-only `ArtifactSidebar`.
+`InspectorRail` takes a `panel` prop and draws in `RailSurface` instead of a
+dialog, so the **Open in a righthand sidebar** hand-off is gone. The new
+`AttachmentPanel` renders through `useAttachmentView` and `AttachmentViewBody`,
+which the lightbox now shares. Both panels head themselves the way a thread or
+Breakout pane does: `TitlePillHeader` with the item's own `TitlePill`, whose
+menu holds its actions (a resource's New window, Open source, Refresh, a
+Versions level and Archive; an attachment's Download and Details), and
+`TitlePillClose`. `ActionTiles`, `ActionTile`, `LevelRow` and `openLevel` moved
+from `conversation-menus.tsx` into `title-pill.tsx` so a panel builds its menu
+from the same parts. A prior version's **Return to current** goes back to the
+resource panel it was opened from. Only a resource is restored after
+relaunch; an attachment is a loader closure with nothing to save.
+
+**Why:** The navigation redesign puts anything opened from a conversation in
+the pane beside it (the pane stack), so a person reads it next to the thread
+rather than over it. Two modals and a third reading mode were three ways to
+show one thing.
+
+**Considered and rejected:** Opening a resource as a plain file preview and
+dropping its actions, which would lose versions and archive with no other
+route to them. Keeping the gallery's window-wide arrow keys: in a panel the
+composer sits beside it, so the arrows act only while focus is in the panel.
+
+**Consequences:** The lightbox remains for surfaces with no conversation panel:
+search results and the Channel composer. A new way to open something from a
+conversation goes through `openPanel`, not a dialog.
+
 ### 2026-10-06 — A tip opens on focus only after a key
 
 **What changed:** `lib/window-activation.ts` records whether the last deliberate
