@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { classifyAttachmentKind } from '@rally/contracts';
 import { DetailHeaderActionsHost } from './detail-header-actions';
+import type { IconGroupAction } from '@rally/ui/components/icon-group';
 import { useEffect, useRef, useState } from 'react';
 import { formatDateTime, formatSparseRelativeDate } from '../lib/format';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreview, readResourcePreviewText } from '../lib/resource-preview';
@@ -773,16 +774,13 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
     }
   };
 
-  // State rather than a ref, because a detail's actions are portalled into this
-  // element and a ref's assignment does not re-render the detail that is
-  // waiting for it: with a ref the slot stays empty until something else
-  // happens to re-render.
+  // The actions the open detail declares for this header (a live artifact's).
   //
   // Declared above the early return with the other unconditional hooks: a rail
   // that closes renders fewer hooks than the render before it, and React throws
   // rather than closing. Only the resource panel reaches this component today, so the
   // return is never taken, which is exactly how a hook-order defect waits.
-  const [detailActionsTarget, setDetailActionsTarget] = useState<HTMLDivElement | null>(null);
+  const [detailActions, setDetailActions] = useState<readonly IconGroupAction[]>([]);
 
   // Keep a closed rail on screen for exactly as long as its fade lasts.
   if (!props.panel && !railOpen && !props.leaving) return null;
@@ -816,19 +814,18 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         /> } : {}),
       }}
       // A live site has no single file to show full-window; its menu has New window.
-      {...(resource && props.panel.onExpand && !isSiteResource(resource) && resource.contentAvailable ? { actions: [{
-        key: 'expand',
-        label: 'Expand',
-        icon: <IconArrowsDiagonal aria-hidden="true" size={16} stroke={1.9} />,
-        onSelect: () => props.panel?.onExpand?.(resource),
-      }] } : {})}
-      trailing={<>
-        {/* A detail's own actions, such as a live artifact's, ahead of Close.
-            Their tooltips open upward: a live artifact composites a native
-            view under this strip that paints above all renderer DOM. */}
-        <div className="rail-header-detail-actions" ref={setDetailActionsTarget} />
-        <TitlePillClose label="Close panel" onClose={closeRail} />
-      </>}
+      // The detail's own actions, such as a live artifact's, join Expand in
+      // the header's group, so they fold into "⋯" with it.
+      actions={[
+        ...detailActions,
+        ...(resource && props.panel.onExpand && !isSiteResource(resource) && resource.contentAvailable ? [{
+          key: 'expand',
+          label: 'Expand',
+          icon: <IconArrowsDiagonal aria-hidden="true" size={16} stroke={1.9} />,
+          onSelect: () => props.panel?.onExpand?.(resource),
+        }] : []),
+      ]}
+      trailing={<TitlePillClose label="Close panel" onClose={closeRail} />}
     />
   );
 
@@ -857,7 +854,19 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
               that view paints above all renderer DOM, so a label hanging
               downward is behind the page with no `z-index` able to reach it.
             */}
-            <div className="rail-header-detail-actions" ref={setDetailActionsTarget} />
+            {detailActions.map((action) => (
+              <IconButton
+                aria-pressed={action.pressed}
+                className={action.pressed === undefined ? undefined : 'icon-button-toggle'}
+                disabled={action.disabled}
+                key={action.key}
+                label={action.label}
+                onClick={action.onSelect}
+                tooltipSide="top"
+              >
+                {action.icon}
+              </IconButton>
+            ))}
             {resource && (
               <>
                 {resource.direction === 'artifact' && !isSiteResource(resource) && (
@@ -905,7 +914,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
           </div>
         </header>
       </>}
-      <DetailHeaderActionsHost target={detailActionsTarget}>
+      <DetailHeaderActionsHost onActions={setDetailActions}>
       <div className="rail-scroll">
         {popOutFailed && <div className="rail-inline-error"><InlineError>
           The artifact couldn’t be opened in a new window.

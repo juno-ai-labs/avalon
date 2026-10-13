@@ -38,7 +38,7 @@ exists.
 | `packages/agent-harness/src/building-live-sites-skill.ts` | The loadable skill that carries the build craft, scoped to the Terminal plugin. |
 | `apps/api/src/services/artifact-open-service.ts` | The identity-bearing door into an artifact origin: the open-time visibility check and the fragment-carrying URL it mints. Public reads bypass it and remain anonymous. |
 | `apps/desktop/src/renderer/components/site-resource-detail.tsx` | The site detail: the pane it measures and hands over, the actions it puts in its host's header, and the Data view. |
-| `apps/desktop/src/renderer/components/detail-header-actions.tsx` | The slot a rail or lightbox offers in its header, and the portal any detail fills it through. Not artifact-specific: it is what keeps this detail's controls out of the page it is showing. |
+| `apps/desktop/src/renderer/components/detail-header-actions.tsx` | How a detail hands its actions to the header of the rail or panel showing it, as data the host draws as its own. Not artifact-specific: it is what keeps this detail's controls out of the page it is showing. |
 | `apps/desktop/src/main/artifact-viewers.ts` | What the desktop will load into an artifact surface, the preview rectangle's clamp and corner, the shared isolation contract, the activation gate on leaving the origin, and the overlay rule. |
 
 ### Publishing
@@ -561,6 +561,29 @@ mint one; that is inside that console's stated authority rather than a boundary
 this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 
 ## Changelog
+
+### 2026-10-13 — A detail's header actions are data the header draws
+
+**What changed:** A live site's Stored data, Open in a new window, Copy public
+link and Open in browser are now `IconGroupAction`s the detail declares with
+`useDetailHeaderActions`, and the panel header puts them in its `IconGroup`
+beside Expand. They are round like Close and fold into "⋯" when the header is
+crowded or at phone width. `IconGroupAction` gained `pressed`, for the Stored
+data toggle, and `tooltipSide`.
+
+**Why:** The product owner flagged the four buttons as not following the
+standard icon group. They were portaled into the header as finished buttons,
+so they kept the old rail's square look and spacing and could not fold.
+
+**Considered and rejected:** Restyling the portaled buttons with CSS that keys
+on where the slot sits. It fixed the look but not the fold, because
+`IconGroup` can only fold actions it was given as data.
+
+**Consequences:** A detail's actions are limited to what `IconGroupAction`
+carries: a label, an icon, a click, disabled and pressed. Copy feedback is the
+label and glyph changing, with the live region rendered by the detail. A
+detail must memoise the array it declares, since each new one re-renders the
+host.
 
 ### 2026-10-03 — The browser client may frame an artifact
 

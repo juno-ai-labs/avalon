@@ -4,6 +4,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { DetailHeaderActionsHost } from './detail-header-actions';
+import { IconGroup, type IconGroupAction } from '@rally/ui/components/icon-group';
 import {
   formatCell,
   SiteResourceDetail,
@@ -77,10 +78,8 @@ function setup(overrides: Partial<SiteResourceDetailProps> = {}, options: { stri
 }
 
 /**
- * The detail as its host mounts it: a header slot for the actions it portals
- * out, and the tooltip provider the application keeps at its root. The target
- * is state rather than a ref for the reason the rail's is, and rendering it
- * that way here is what would catch the actions never arriving.
+ * The detail as its host mounts it: a header `IconGroup` drawing the actions it
+ * declares, and the tooltip provider the application keeps at its root.
  */
 /** The one control whose pressed state, not its name, says which way it is. */
 function storedDataToggle(): HTMLElement {
@@ -88,11 +87,11 @@ function storedDataToggle(): HTMLElement {
 }
 
 function Harness({ props }: { props: SiteResourceDetailProps }): React.JSX.Element {
-  const [target, setTarget] = React.useState<HTMLDivElement | null>(null);
+  const [actions, setActions] = React.useState<readonly IconGroupAction[]>([]);
   return (
     <Tooltip.Provider>
-      <div data-testid="host-header" ref={setTarget} />
-      <DetailHeaderActionsHost target={target}>
+      <div data-testid="host-header"><IconGroup actions={actions} /></div>
+      <DetailHeaderActionsHost onActions={setActions}>
         <SiteResourceDetail {...props} />
       </DetailHeaderActionsHost>
     </Tooltip.Provider>
