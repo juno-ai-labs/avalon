@@ -23,6 +23,13 @@ export interface WorkstreamNamePromptInput {
    * about may differ from what was asked for.
    */
   recentMessages?: WorkstreamNameContextMessage[];
+  /**
+   * Ask for a summary of the request as well. Set on the first pass over a
+   * thread whose description is the opening message's first line, so the line
+   * a Channel shows under its name says what the work is rather than repeating
+   * how it was asked.
+   */
+  summarize?: boolean;
 }
 
 const MAX_OBJECTIVE_CHARACTERS = 2_000;
@@ -48,6 +55,8 @@ ${ICON_CATALOG}
 
 Return only the required schema.`;
 
+const SUMMARY_RULES = `Write a summary as well: what the request asks for, so a colleague scanning the Channel knows what this thread is for without opening it. One or two plain declarative sentences, at most 280 characters, in the language of the request, with no first person, no Markdown, and no dates or status words. Keep the specifics that tell this thread apart — the people, documents, systems and constraints the request names — and drop greetings, pleasantries and asides. Never add a specific the request does not contain. When the request is already a sentence or two that says this, return it as written.`;
+
 export function renderWorkstreamNameMessages(input: WorkstreamNamePromptInput): PromptMessage[] {
   const openingMessage = input.openingMessage?.trim() ?? "";
   const objective = input.objective.trim();
@@ -58,7 +67,7 @@ export function renderWorkstreamNameMessages(input: WorkstreamNamePromptInput): 
       text: truncateCharacters(message.text.trim(), MAX_CONTEXT_MESSAGE_CHARACTERS),
     }));
   return [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: input.summarize ? `${SYSTEM_PROMPT}\n\n${SUMMARY_RULES}` : SYSTEM_PROMPT },
     {
       role: "user",
       content: JSON.stringify({

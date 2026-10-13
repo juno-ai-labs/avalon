@@ -105,6 +105,13 @@ describe("prompt renderers", () => {
         }),
         hash: "273649a17663e365e01dc5a2e53f673b2e2cfff2410a2d0315ee5847fb5e34e7",
       },
+      workstreamNameWithSummary: {
+        actual: renderWorkstreamNameMessages({
+          objective: "Draft an email to Danny sharing the Rally download link, and ask him to add Alex to the Tuesday call.",
+          summarize: true,
+        }),
+        hash: "55a09aacaa1310a6e953ad12bf12f9ec444c300ac0f64c77e43a9436f2f65d8d",
+      },
       workstreamNameFromConversation: {
         actual: renderWorkstreamNameMessages({
           objective: "Draft an email to Danny sharing the Rally download link.",

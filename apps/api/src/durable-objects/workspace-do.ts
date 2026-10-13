@@ -797,6 +797,17 @@ import {
   type ChannelColorSyncMessage,
   type ChannelColorWork,
 } from "./channel-color-sync";
+import {
+  THREAD_BACKFILL_MIGRATION,
+  ThreadBackfillMessageSchema,
+  completeThreadBackfill,
+  nextThreadBackfillAt,
+  publishThreadBackfill,
+  releaseThreadBackfill,
+  threadBackfillWork,
+  type ThreadBackfillMessage,
+  type ThreadBackfillWork,
+} from "./thread-backfill";
 import { unreadState } from "./unread-state";
 import { WorkspaceActivityFeed } from "./workspace-activity-feed";
 import {
@@ -1154,6 +1165,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "workstream_notification_intents",
   "workspace_socket_unheard", // The first-frame watch's ledger.
   "channel_color_sync", "channel_color_sync_state", // Its triggers, the alarm lane and the channel-colour RPCs.
+  "thread_backfill", // The alarm lane and the thread-backfill RPCs.
   // Converted to typed methods, so a generic statement naming one is a
   // mistake rather than a legacy caller. Refusing it here is what makes the
   // routing entries in `WORKSPACE_LOCAL_TABLES` more than a courtesy: the
@@ -4268,6 +4280,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "threads and Breakouts store their Channel's colour, and every existing thread is marked to take it",
   // Triggers mark a thread whenever its colour can move; see channel-color-sync.ts.
   statements: CHANNEL_COLOR_SYNC_MIGRATION,
+}, {
+  version: 100,
+  description: "a work list of one-off jobs over every thread, and every thread listed to have its description summarized",
+  // The lane is channel colour sync's without triggers; see thread-backfill.ts.
+  statements: THREAD_BACKFILL_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -7145,6 +7162,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       space_default_publish: () => this.spaceStorage().nextDefaultPublicationDueAt(),
       space_bootstrap: () => this.spaceStorage().nextBootstrapDueAt(),
       channel_color_sync: () => nextChannelColorSyncAt(sql),
+      thread_backfill: () => nextThreadBackfillAt(sql),
       activity_reap: () => {
         const oldest = sql.exec<{ created_at: number | null }>(
           "SELECT MIN(created_at) AS created_at FROM workspace_activity_events",
@@ -7354,6 +7372,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           logWarn(this.env, "channel_color_sync_publication_failed", {
             workspace_id: workspaceId,
             reason: diagnosticErrorCode(error, "channel_color_sync_publication_failed"),
+          });
+        }
+      });
+      // One-off jobs over every thread; see thread-backfill.ts.
+      if (due("thread_backfill")) await this.instrumentWorkspaceAlarmPhase("thread_backfill", undefined, async () => {
+        try {
+          await publishThreadBackfill({
+            sql: this.state.storage.sql,
+            queue: this.env.ACTIVITY_QUEUE,
+            workspaceId,
+            region: this.env.AVALON_REGION,
+            now,
+            retryAt: (attempt) => now + scheduledAlarmRetryDelay(attempt),
+          });
+        } catch (error) {
+          logWarn(this.env, "thread_backfill_publication_failed", {
+            workspace_id: workspaceId,
+            reason: diagnosticErrorCode(error, "thread_backfill_publication_failed"),
           });
         }
       });
@@ -10235,6 +10271,43 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(ChannelColorSyncMessageSchema, input, "release_channel_color_sync");
     this.assertWorkspace(request.workspaceId);
     const released = releaseChannelColorSync(this.state.storage.sql, request.workstreamId, request.revision);
+    await this.armNextAlarm();
+    return released;
+  }
+
+  /**
+   * The conversations one listed thread's job runs over, or `null` (settling
+   * the row) when there is nothing to do. Server-to-server, like the
+   * channel-colour RPCs above.
+   */
+  async threadBackfillWork(input: ThreadBackfillMessage): Promise<ThreadBackfillWork> {
+    await this.initialized;
+    const request = parseRpcInput(ThreadBackfillMessageSchema, input, "thread_backfill_work");
+    this.assertWorkspace(request.workspaceId);
+    const work = this.state.storage.transactionSync(() => threadBackfillWork(
+      this.state.storage.sql, { job: request.job, workstreamId: request.workstreamId },
+    ));
+    // A settled row may be the last of its batch, which lets the next one go.
+    if (work === null) await this.armNextAlarm();
+    return work;
+  }
+
+  /** Settle a thread whose job has run over every conversation. */
+  async completeThreadBackfill(input: ThreadBackfillMessage): Promise<boolean> {
+    await this.initialized;
+    const request = parseRpcInput(ThreadBackfillMessageSchema, input, "complete_thread_backfill");
+    this.assertWorkspace(request.workspaceId);
+    const completed = completeThreadBackfill(this.state.storage.sql, request.job, request.workstreamId);
+    await this.armNextAlarm();
+    return completed;
+  }
+
+  /** A thread the consumer could not finish: it retries at its own gate and holds back nothing. */
+  async releaseThreadBackfill(input: ThreadBackfillMessage): Promise<boolean> {
+    await this.initialized;
+    const request = parseRpcInput(ThreadBackfillMessageSchema, input, "release_thread_backfill");
+    this.assertWorkspace(request.workspaceId);
+    const released = releaseThreadBackfill(this.state.storage.sql, request.job, request.workstreamId, request.attempt);
     await this.armNextAlarm();
     return released;
   }

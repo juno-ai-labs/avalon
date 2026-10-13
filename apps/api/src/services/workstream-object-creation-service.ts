@@ -622,6 +622,7 @@ export class WorkstreamObjectCreationService {
           openingMessage: body.openingMessage,
           provisionalTitle: title,
           useConversationContext: options.initialization?.kind === "history",
+          ...((input.descriptionSource ?? "derived") === "derived" ? { provisionalDescription: objective } : {}),
         },
       )
       : options.chooseIcon

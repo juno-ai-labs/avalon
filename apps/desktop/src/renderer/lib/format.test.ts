@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  formatDayLabel,
   formatDuration,
   workstreamRecencyAt,
   formatSparseRelativeDate,
@@ -226,4 +227,18 @@ it('distinguishes legacy servers, unvisited rows, and recorded visits', () => {
   expect(workstreamRecencyAt({ ...row, lastAccessedAt: null })).toBe(row.createdAt);
   expect(workstreamRecencyAt({ ...row, lastAccessedAt: '2026-09-08T00:00:00.000Z' }))
     .toBe('2026-09-08T00:00:00.000Z');
+});
+
+describe('formatDayLabel', () => {
+  const now = new Date(2026, 9, 12, 9, 30);
+
+  it('names today and yesterday by local calendar day, not by 24 hours', () => {
+    expect(formatDayLabel(new Date(2026, 9, 12, 0, 5).toISOString(), now)).toBe('Today');
+    expect(formatDayLabel(new Date(2026, 9, 11, 23, 55).toISOString(), now)).toBe('Yesterday');
+    expect(formatDayLabel(new Date(2026, 9, 11, 0, 0).toISOString(), now)).toBe('Yesterday');
+  });
+
+  it('says an unreadable time is unknown rather than inventing a day', () => {
+    expect(formatDayLabel('not a date', now)).toBe('Unknown time');
+  });
 });

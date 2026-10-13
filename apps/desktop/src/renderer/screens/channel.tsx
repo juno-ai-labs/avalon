@@ -1,25 +1,29 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import type { ChannelStats, ChannelStatsList, SpaceSummary, WorkstreamAppearancePatch } from '@rally/contracts';
 import { AppearancePicker, AppearanceSubmenu } from '@rally/ui/components/appearance-picker';
-import { BreakoutChipRow, type BreakoutMark } from '@rally/ui/components/breakout-marks';
+import { breakoutNewsLabel, type BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { ChannelContainerMenu } from '@rally/ui/components/conversation-menus';
 import type { SidekickRow } from '@rally/ui/components/sidekick-section';
 import { ChannelGlyph, spaceMark } from '@rally/ui/components/space-icon';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { TitleMenuItem, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { IconLock, IconPalette, IconPlus } from '@tabler/icons-react';
+import { resolveWorkstreamAppearance } from '@rally/ui/components/workstream-glyph';
+import { IconChevronRight, IconLock, IconPalette, IconPlus } from '@tabler/icons-react';
+import clsx from 'clsx';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
 
 import { ChannelComposer } from '../components/channel-composer';
-import { Button, EmptyState, InlineError, LoadingState, Modal } from '../components/primitives';
+import { Avatar, Button, EmptyState, InlineError, LoadingState, Modal, TitleSkeleton } from '../components/primitives';
 import { RelativeTime } from '../components/relative-time';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { copySpaceLink } from '../lib/copy-workstream-link';
 import { ChannelPaneContextValue, channelRoute, threadRoute, type ChannelPaneContext } from '../lib/navigation-routes';
 import { PaneVisibility } from '../lib/pane-visibility';
+import { useNow } from '../lib/clock';
+import { formatDayLabel } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import { CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY, channelFeedQueryKey } from '../lib/sidebar-list-store';
 import { usePinAction, usePinnedIds } from '../lib/pins';
@@ -36,8 +40,8 @@ import type { SpaceDirectory } from '@rally/contracts';
 /**
  * A Channel: a list of threads, and a composer that starts one. There is no
  * conversation here — nothing is said in a Channel and nothing runs in it — so
- * the screen is a feed of what has been started, each thread as its summary
- * and the one chip every nested piece of AI work wears, and the composer below.
+ * the screen is a feed of what has been started, each thread as its title,
+ * summary and who started it, split by day, and the composer below.
  * See `docs/PRDs/2026-10-10_channels-threads-navigation/prd.md`.
  */
 export function ChannelScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
@@ -290,16 +294,24 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
         {feed.hasNextPage && <li className="channel-feed-more">
           <Button disabled={feed.isFetchingNextPage} onClick={() => void feed.fetchNextPage()}>Show earlier threads</Button>
         </li>}
-        {[...rows].reverse().map((row) => row.kind === 'thread'
-          ? <ThreadCard
-            author={row.thread.createdByUserId ? memberById.get(row.thread.createdByUserId) : undefined}
-            key={row.thread.id}
-            onOpen={openThread}
-            open={row.thread.id === openThreadId}
-            placedAt={row.placedAt}
-            thread={row.thread}
-          />
-          : <LockedCard key={row.threadId} onOpen={openThread} placedAt={row.placedAt} threadId={row.threadId} />)}
+        {[...rows].reverse().flatMap((row, index, ordered) => {
+          // Grouped by the local calendar date, year and all; the label is
+          // only for display, and two years' "Oct 2" are different days.
+          const day = new Date(row.placedAt).toDateString();
+          const card = row.kind === 'thread'
+            ? <ThreadCard
+              author={row.thread.createdByUserId ? memberById.get(row.thread.createdByUserId) : undefined}
+              key={row.thread.id}
+              onOpen={openThread}
+              open={row.thread.id === openThreadId}
+              placedAt={row.placedAt}
+              thread={row.thread}
+            />
+            : <LockedCard key={row.threadId} onOpen={openThread} placedAt={row.placedAt} threadId={row.threadId} />;
+          const previous = ordered[index - 1];
+          if (previous && new Date(previous.placedAt).toDateString() === day) return [card];
+          return [<DaySeparator key={`day:${row.kind === 'thread' ? row.thread.id : row.threadId}`} placedAt={row.placedAt} />, card];
+        })}
       </ol>
       {feed.isSuccess && rows.length === 0 && <p className="channel-feed-empty">No threads yet. Describe the work below and Rally starts a thread for it.</p>}
       {feed.isError && <InlineError>The threads in this channel couldn’t be loaded.</InlineError>}
@@ -309,9 +321,22 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
 }
 
 /**
- * One thread in the feed: who started it and when, the thread's summary in a
- * line or two, and the chip that opens it — the same chip a breakout wears
- * under the message it came from, so nested AI work always looks the same.
+ * Where the feed crosses into another day: "Today", "Yesterday", a weekday, a
+ * date. It reads the shared clock itself, so "Today" turns into "Yesterday" at
+ * midnight without the feed re-rendering.
+ */
+function DaySeparator({ placedAt }: { placedAt: string }): React.JSX.Element {
+  const label = formatDayLabel(placedAt, new Date(useNow()));
+  return <li aria-label={label} className="channel-feed-day" role="separator">
+    <span aria-hidden="true">{label}</span>
+  </li>;
+}
+
+/**
+ * One thread in the feed: its title, its summary in a line or two, who started
+ * it and when, and its mark beside them. The whole entry opens the thread.
+ * Threads sit to the trailing side, as what people started; nothing else is
+ * said in a Channel.
  */
 function ThreadCard({ author, onOpen, open, placedAt, thread }: {
   author: WorkspaceMember | undefined;
@@ -320,10 +345,10 @@ function ThreadCard({ author, onOpen, open, placedAt, thread }: {
   placedAt: string;
   thread: WorkstreamSummary;
 }): React.JSX.Element {
-  // The chip and the thread's own title pill say the same thing at every
-  // moment: a skeleton while Rally names it, never the request's first line,
-  // and no "new" on the thread the reader has open beside it, which they are
-  // reading as it arrives.
+  // The title says what the thread's own title pill says at every moment: a
+  // skeleton while Rally names it, never the request's first line, and no
+  // "new" on the thread the reader has open beside it, which they are reading
+  // as it arrives.
   const mark: BreakoutMark = {
     substreamId: thread.id,
     title: thread.title,
@@ -333,17 +358,40 @@ function ThreadCard({ author, onOpen, open, placedAt, thread }: {
     unseen: !open && thread.unseen,
     needsInput: thread.harnessStatus === 'needs_input',
   };
+  const news = breakoutNewsLabel(mark);
+  const { Icon, tint, ink } = resolveWorkstreamAppearance(thread.id, thread.appearance);
+  // Rally starts a thread only when nobody did; a person this reader cannot
+  // look up (a guest has no member list, and a member's loads after the feed)
+  // is somebody, not Rally.
+  const byline = author?.name ?? (thread.createdByUserId ? 'Someone' : 'Rally');
   return <li className="channel-feed-item">
-    <div className="channel-feed-meta">
-      {/* Rally starts a thread only when nobody did; a person this reader
-          cannot look up (a guest has no member list, and a member's loads
-          after the feed) is somebody, not Rally. */}
-      <strong>{author?.name ?? (thread.createdByUserId ? 'Someone' : 'Rally')}</strong>
-      <span aria-hidden="true">·</span>
-      <RelativeTime value={placedAt} />
-    </div>
-    {thread.objective && <p className="channel-feed-summary">{thread.objective}</p>}
-    <BreakoutChipRow breakouts={[mark]} onOpen={onOpen} openSubstreamId={open ? thread.id : null} />
+    <button
+      aria-label={[mark.naming ? 'Rally is choosing a name' : thread.title, news, open && 'Open'].filter(Boolean).join(', ')}
+      aria-pressed={open}
+      className={clsx('channel-feed-thread', open && 'is-open')}
+      onClick={() => onOpen(thread.id)}
+      type="button"
+    >
+      <span className="channel-feed-body">
+        <span className="channel-feed-title">
+          {news && (mark.needsInput
+            ? <span className="breakout-chip-badge">{news}</span>
+            : <span className="channel-feed-news">{news}</span>)}
+          <span className="channel-feed-title-text">{mark.naming ? <TitleSkeleton className="breakout-chip-skeleton" /> : thread.title}</span>
+          <IconChevronRight aria-hidden="true" className="channel-feed-caret" size={13} stroke={2} />
+        </span>
+        {thread.objective && <span className="channel-feed-summary">{thread.objective}</span>}
+        <span className="channel-feed-meta">
+          {author && <Avatar member={author} size="small" title={null} />}
+          <span>{byline}</span>
+          <span aria-hidden="true">·</span>
+          <RelativeTime value={placedAt} />
+        </span>
+      </span>
+      <span aria-hidden="true" className="channel-feed-mark" style={{ background: tint, color: ink }}>
+        <Icon size={19} strokeWidth={1.8} />
+      </span>
+    </button>
   </li>;
 }
 
@@ -357,18 +405,21 @@ function LockedCard({ onOpen, placedAt, threadId }: {
   threadId: string;
 }): React.JSX.Element {
   return <li className="channel-feed-item is-locked">
-    <div className="channel-feed-meta">
-      <IconLock aria-hidden="true" size={13} stroke={1.8} />
-      <span>Private thread</span>
-      <span aria-hidden="true">·</span>
-      <RelativeTime value={placedAt} />
-    </div>
-    <div className="breakout-chip-row">
-      <button className="breakout-chip" onClick={() => onOpen(threadId)} type="button">
-        <IconLock aria-hidden="true" className="breakout-chip-icon" size={13} stroke={1.9} />
-        <span className="breakout-chip-title">Request access</span>
-      </button>
-    </div>
+    <button aria-label="Private thread, request access" className="channel-feed-thread" onClick={() => onOpen(threadId)} type="button">
+      <span className="channel-feed-body">
+        <span className="channel-feed-title">
+          <span className="channel-feed-title-text">Private thread</span>
+        </span>
+        <span className="channel-feed-meta">
+          <span className="channel-feed-request">Request access</span>
+          <span aria-hidden="true">·</span>
+          <RelativeTime value={placedAt} />
+        </span>
+      </span>
+      <span aria-hidden="true" className="channel-feed-mark">
+        <IconLock size={18} stroke={1.8} />
+      </span>
+    </button>
   </li>;
 }
 

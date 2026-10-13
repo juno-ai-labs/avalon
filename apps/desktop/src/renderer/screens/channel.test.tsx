@@ -107,7 +107,7 @@ describe('a Channel', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Q4 plan' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/plan');
     expect(await screen.findByText('thread pane')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Request access' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Private thread, request access' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/secret');
   });
 
@@ -125,6 +125,29 @@ describe('a Channel', () => {
     expect(await screen.findByText('composer')).toHaveAttribute('data-thread-open', 'false');
     fireEvent.click(await screen.findByRole('button', { name: 'Q4 plan' }));
     expect(await screen.findByText('composer')).toHaveAttribute('data-thread-open', 'true');
+  });
+
+  it('marks each day the feed crosses once, above its first thread', async () => {
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [
+      { kind: 'thread', placedAt: '2026-10-02T15:00:00.000Z', attentionSequenceNumber: 3, thread: { ...plan, id: 'later' } },
+      { kind: 'thread', placedAt: '2026-10-02T14:00:00.000Z', attentionSequenceNumber: 2, thread: plan },
+      { kind: 'locked', placedAt: '2026-09-20T12:00:00.000Z', attentionSequenceNumber: 1, threadId: 'secret' },
+    ] });
+    renderChannel();
+    const feed = within(await screen.findByRole('list', { name: 'Threads in Outbound' }));
+    await feed.findAllByRole('listitem');
+    expect(feed.getAllByRole('separator')).toHaveLength(2);
+  });
+
+  it('keeps the same date in different years apart', async () => {
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [
+      { kind: 'thread', placedAt: '2025-10-02T12:00:00.000Z', attentionSequenceNumber: 2, thread: plan },
+      { kind: 'locked', placedAt: '2024-10-02T12:00:00.000Z', attentionSequenceNumber: 1, threadId: 'secret' },
+    ] });
+    renderChannel();
+    const feed = within(await screen.findByRole('list', { name: 'Threads in Outbound' }));
+    await feed.findAllByRole('listitem');
+    expect(feed.getAllByRole('separator')).toHaveLength(2);
   });
 
   it('names somebody it cannot look up as someone, not Rally', async () => {
