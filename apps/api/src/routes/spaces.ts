@@ -21,7 +21,7 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 
 import type { HonoAppEnv } from "../env";
-import { clientReadsIndividualSpaces } from "../lib/client-contract";
+import { clientReadsChannelMessages, clientReadsIndividualSpaces } from "../lib/client-contract";
 import { requestDeferral } from "../lib/defer";
 import { getAuth, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
@@ -89,18 +89,26 @@ spaceReadRoutes.get(
   )),
 );
 
-/** A Channel's feed: the threads placed in it, newest first; see `ChannelFeedItemSchema`. */
+/**
+ * A Channel's feed: the threads placed in it and Rally's messages, newest
+ * first; see `ChannelFeedItemSchema`. A desktop that predates messages is
+ * served the feed without them, since it parses the union strictly.
+ */
 spaceReadRoutes.get(
   "/:id/feed",
   requireWorkspaceAuth,
   zValidator("param", idParam),
   zValidator("query", channelPageQuery),
-  async (c) => c.json(ChannelFeedPageSchema.parse(
-    await new SpaceService(c.env, getWorkspaceAuth(c)).listFeed(
+  async (c) => {
+    const page = await new SpaceService(c.env, getWorkspaceAuth(c)).listFeed(
       c.req.valid("param").id,
       c.req.valid("query").cursor ?? null,
-    ),
-  )),
+    );
+    const messages = clientReadsChannelMessages((name) => c.req.header(name));
+    return c.json(ChannelFeedPageSchema.parse(messages ? page : {
+      ...page, items: page.items.filter((item) => item.kind !== "message"),
+    }));
+  },
 );
 
 /**

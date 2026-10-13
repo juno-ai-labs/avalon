@@ -25,7 +25,7 @@ import {
 } from "./identifiers";
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { PersonalPresentationSchema } from './onboarding';
-import { PersonalOrderSchema, PinnedOrderSchema, SpaceIdSchema, SpaceSnapshotSchema } from "./spaces";
+import { ChannelMessageSchema, PersonalOrderSchema, PinnedOrderSchema, SpaceIdSchema, SpaceSnapshotSchema } from "./spaces";
 import { ChannelStatsSchema, PinListSchema } from "./navigation";
 import {
   ResourceDirectionSchema,
@@ -1249,13 +1249,26 @@ export type SpaceChannelPage = z.infer<typeof SpaceChannelPageSchema>;
  * `kind` stays because desktops shipped since 1.563 parse this row by it; it
  * can go once those builds no longer reach the API.
  */
-export const ChannelFeedItemSchema = z.strictObject({
-  kind: z.literal("thread"),
-  placedAt: TimestampSchema,
-  /** The placement's position in the Channel's unread order (`ChannelStats`). */
-  attentionSequenceNumber: z.number().int().nonnegative(),
-  thread: WorkstreamSchema,
-});
+export const ChannelFeedItemSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("thread"),
+    placedAt: TimestampSchema,
+    /** The placement's position in the Channel's unread order (`ChannelStats`). */
+    attentionSequenceNumber: z.number().int().nonnegative(),
+    thread: WorkstreamSchema,
+  }),
+  /**
+   * A message in the Channel itself, outside any thread. Not unread-tracked,
+   * so it has no sequence number. Served only to a build at
+   * `CHANNEL_MESSAGES_CLIENT_CONTRACT` or later: a build before it parses a
+   * feed row as a thread. See docs/spaces.md#channel-messages.
+   */
+  z.strictObject({
+    kind: z.literal("message"),
+    placedAt: TimestampSchema,
+    message: ChannelMessageSchema,
+  }),
+]);
 export type ChannelFeedItem = z.infer<typeof ChannelFeedItemSchema>;
 
 /** One page of a Channel's feed. Opaque cursor, as on every Space read. */

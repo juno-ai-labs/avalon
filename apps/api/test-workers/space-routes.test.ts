@@ -1066,6 +1066,19 @@ describe("the navigation routes", () => {
     })).status).toBe(400);
   });
 
+  it("serves a Channel's messages to a build that reads them, and withholds them from one that does not", async () => {
+    const opened = await workspace().openGeneralSpace({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId("00000000-0000-7000-8000-00000000d2a4"),
+    });
+    if (!opened.ok || "absent" in opened) throw new Error("openGeneralSpace refused");
+    const path = `/spaces/${opened.space.id}/feed`;
+    expect(await request(path, MEMBER_AUTH, undefined, "GET", "6")).toMatchObject({
+      status: 200,
+      body: { items: [{ kind: "message", message: { author: { kind: "rally" }, body: expect.stringMatching(/^Welcome to Rally, we’ve created a channel/u) } }] },
+    });
+    expect(await request(path, MEMBER_AUTH, undefined, "GET", "5")).toMatchObject({ status: 200, body: { items: [] } });
+  });
+
   it("answers nobody who is not signed in", async () => {
     const response = await app.request("/navigation/threads", {}, routeEnv(), createExecutionContext());
     expect(response.status).toBe(401);
