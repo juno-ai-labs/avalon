@@ -4,7 +4,7 @@ import { AppearancePicker, AppearanceSubmenu } from '@rally/ui/components/appear
 import { BreakoutChipRow, type BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { ChannelContainerMenu } from '@rally/ui/components/conversation-menus';
 import type { SidekickRow } from '@rally/ui/components/sidekick-section';
-import { SpaceIcon } from '@rally/ui/components/space-icon';
+import { ChannelGlyph } from '@rally/ui/components/space-icon';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { TitleMenuItem, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { IconLock, IconPalette, IconPlus } from '@tabler/icons-react';
@@ -79,7 +79,7 @@ function ChannelStack({ channelId, threadId, workspace }: {
     channelId,
     crumb: {
       key: `channel-container:${channelId}`,
-      icon: space ? <SpaceIcon size={18} space={space} /> : null,
+      icon: space ? <ChannelGlyph space={space} /> : null,
       title: space?.name ?? 'Channel',
       label: `Back to ${space?.name ?? 'the channel'}`,
       // Back one step: the Channel and this thread, whatever the thread had
@@ -478,7 +478,7 @@ function ChannelHeader({ members, space, workspace }: {
   const addable = (library.data ?? []).filter((sidekick) => !recommended.has(sidekick.id));
   const level: TitlePillLevel = {
     key: `channel-container:${space.id}`,
-    icon: <SpaceIcon size={18} space={space} />,
+    icon: <ChannelGlyph space={space} />,
     ...(editable && api ? {
       iconAction: <AppearancePicker
         appearance={{ icon: space.iconKey, color: space.colorKey }}
@@ -486,8 +486,7 @@ function ChannelHeader({ members, space, workspace }: {
         key={space.id}
         label={`Change ${space.name} icon and color`}
         onChange={changeAppearance}
-        renderGlyph={(appearance) => <SpaceIcon
-          size={18}
+        renderGlyph={(appearance) => <ChannelGlyph
           space={{ iconKey: appearance.icon ?? space.iconKey, colorKey: appearance.color ?? space.colorKey }}
         />}
       />,
