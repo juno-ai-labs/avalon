@@ -29,6 +29,7 @@ import type { AutomationSummary, Workspace, WorkspaceMember, WorkstreamSummary }
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
+import { RemoveParticipantDialog } from './conversation-surface';
 import { WorkstreamScreen } from './workstream';
 import type { SpaceDirectory } from '@rally/contracts';
 
@@ -380,6 +381,9 @@ function ChannelHeader({ members, space, workspace }: {
   const [failure, setFailure] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  // Taking somebody out, the reader included, asks first: a private Channel
+  // is not theirs to come back to without somebody adding them again.
+  const [removing, setRemoving] = useState<{ member: WorkspaceMember; pending: boolean; failure?: string } | null>(null);
   const [archiving, setArchiving] = useState<'confirm' | 'saving' | null>(null);
   const navigate = useNavigate();
   const pinnedChannels = usePinnedIds('channel');
@@ -416,6 +420,19 @@ function ChannelHeader({ members, space, workspace }: {
     () => api!.updateSpaceAudience(space.id, { scope, participantUserIds: [...ids] }),
     scope === 'personal' ? 'This channel couldn’t be made private.' : 'This channel’s people couldn’t be updated.',
   );
+  const remove = async (person: WorkspaceMember): Promise<void> => {
+    setRemoving({ member: person, pending: true });
+    try {
+      const next = await api!.updateSpaceAudience(space.id, {
+        scope: space.scope,
+        participantUserIds: participantIds.filter((id) => id !== person.id),
+      });
+      setRemoving(null);
+      stored(next);
+    } catch (cause) {
+      setRemoving({ member: person, pending: false, failure: spaceFailureSentence(cause, 'This channel’s people couldn’t be updated.') });
+    }
+  };
   const archive = async (): Promise<void> => {
     setArchiving('saving');
     setFailure(null);
@@ -537,7 +554,7 @@ function ChannelHeader({ members, space, workspace }: {
           setAdding(true);
           try { await setAudience(space.scope, [...participantIds, person.id]); } finally { setAdding(false); }
         },
-        onRemove: (person) => void setAudience(space.scope, participantIds.filter((id) => id !== person.id)),
+        onRemove: (person) => setRemoving({ member: person, pending: false }),
       } : undefined}
       pinned={api ? {
         on: pinned,
@@ -598,6 +615,15 @@ function ChannelHeader({ members, space, workspace }: {
         the Channels list.
       </p>
     </Modal>
+    <RemoveParticipantDialog
+      failure={removing?.failure}
+      member={removing?.member}
+      noun="channel"
+      onCancel={() => setRemoving(null)}
+      onContinue={() => { if (removing) void remove(removing.member); }}
+      pending={removing?.pending ?? false}
+      self={removing?.member.id === workspace.currentUser.id}
+    />
   </>;
 }
 
