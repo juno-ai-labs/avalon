@@ -822,11 +822,7 @@ describe('socket-first channel open', () => {
       cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
     }, childId);
 
-    const crumb = await waitFor(() => {
-      const found = document.querySelector<HTMLButtonElement>('.title-pill-ancestor .title-pill-select');
-      expect(found).toHaveTextContent('Investigate ENG-142');
-      return found!;
-    });
+    const crumb = await screen.findByRole('button', { name: 'Open thread: Investigate ENG-142' });
     expect(useUiStore.getState()).toMatchObject({ railOpen: true, railScope: `${workstreamId}:${childId}` });
     fireEvent.click(crumb);
 
