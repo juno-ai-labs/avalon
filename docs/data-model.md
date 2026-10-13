@@ -75,8 +75,9 @@ unchanged; dual-principal correlation belongs to `audit_events`. See
 [impersonation](impersonation.md).
 
 D1 migration 0123 adds `organization_name_suggestions`, one row per email
-domain holding the organization name read from its homepage (NULL when the
-page named nothing) and when it was read. Only Global writes it; a row older
+domain holding what reading its homepage found (`outcome`: `named`, `unnamed`,
+`missing` or `not_html`), the organization name exactly when `named`, and when
+it was read. Only Global writes it; a row older
 than 30 days is read again. [New-user onboarding](new-user-onboarding.md) owns it.
 
 D1 migration 0122 adds Rally access. `support_access_grants` holds at most one
