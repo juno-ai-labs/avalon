@@ -52,9 +52,9 @@ on the curve the side panel uses, and nothing under `prefers-reduced-motion`.
 
 Selecting a crumb opens that level and closes everything nested under it.
 The Channel crumb opens the Channel alone: the thread, its breakout, and a
-panel either holds all close. The thread crumb closes the breakout and any
-panel the thread or breakout holds, which on a wide window puts the thread
-back beside its Channel. The thread's close button, beside the Channel,
+panel either holds all close. The thread crumb closes the breakout and
+the panel it held, which on a wide window puts the thread back beside its
+Channel. The thread's close button, beside the Channel,
 returns to the Channel alone. A breakout's close button returns to its thread.
 
 Widths are stored per pair: the thread beside its Channel under
@@ -134,8 +134,12 @@ depending on the window's width.
 
 **Consequences:** No crumb returns to the Channel-and-thread pair with
 something closed; the breakout's close button and the thread's are the
-one-step-back controls. `SplitConversationLayout`'s `onNarrowChange` has no
-production caller now.
+one-step-back controls. Neither crumb closes a panel itself: each conversation
+surface closes its own panel as it unmounts, and a crumb unmounts every surface
+nested under its level. `SplitConversationLayout`'s `onNarrowChange`, which
+only the old step back read, is removed.
+
+Shipped in #1203.
 
 ### 2026-10-10 — A Channel and its thread are the stack's first two panes
 

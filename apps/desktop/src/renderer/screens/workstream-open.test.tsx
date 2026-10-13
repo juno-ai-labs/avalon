@@ -91,6 +91,7 @@ import { STOPPED_LABEL, STOPPING_LABEL } from '../components/agent-work-timing';
 import { ConversationOpeningSkeleton, ConversationSurface } from './conversation-surface';
 import { workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
+import { useUiStore } from '../lib/ui-store';
 import { WorkstreamScreen } from './workstream';
 import type { HarnessRunMetadata, HarnessStatus, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import type * as CollaborationSessionModule from '../lib/collaboration-session';
@@ -806,6 +807,31 @@ describe('socket-first channel open', () => {
     act(() => client.setQueryData(['substream-workstream', workstreamId, childId], { ...child, title: 'Renamed while open' }));
     await waitFor(() => expect(breakoutRows()).toContain('Renamed while open'));
     expect(screen.getByRole('button', { name: 'Breakout menu: Renamed while open' })).toBeInTheDocument();
+  });
+
+  it('opens the thread alone from its crumb, closing the breakout and the panel the breakout held', async () => {
+    const childId = '00000000-0000-7000-8000-00000000066c';
+    const parent = recoveryBoot({ title: 'Investigate ENG-142' });
+    const child = recoveryBoot({ title: 'Rollout date' });
+    // The breakout's panel takes the thread's slot, so the thread rides as its crumb.
+    useUiStore.setState({ railOpen: true, railScope: `${workstreamId}:${childId}` });
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['ordered-transcript', workstreamId], parent.transcript);
+      cache.setQueryData(['substream-workstream', workstreamId, childId], child);
+      cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
+    }, childId);
+
+    const crumb = await waitFor(() => {
+      const found = document.querySelector<HTMLButtonElement>('.title-pill-ancestor .title-pill-select');
+      expect(found).toHaveTextContent('Investigate ENG-142');
+      return found!;
+    });
+    expect(useUiStore.getState()).toMatchObject({ railOpen: true, railScope: `${workstreamId}:${childId}` });
+    fireEvent.click(crumb);
+
+    await waitFor(() => expect(locationInTest.search).toBe(''));
+    expect(useUiStore.getState().railOpen).toBe(false);
   });
 
   it('keeps parent inventory in the Channel menu while the Breakout pill uses its own appearance', async () => {

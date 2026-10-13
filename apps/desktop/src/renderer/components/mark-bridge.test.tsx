@@ -47,6 +47,12 @@ describe('MarkBridge', () => {
     expect(tooltip).toHaveTextContent('General');
     expect(tooltip).toHaveTextContent('Open channel');
   });
+
+  it('draws nothing for no marks', () => {
+    const { container } = render(<MarkBridge items={[]} />);
+
+    expect(container).toBeEmptyDOMElement();
+  });
 });
 
 describe('TitlePillHeader', () => {
