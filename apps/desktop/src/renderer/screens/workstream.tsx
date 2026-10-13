@@ -707,7 +707,12 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     if (breakoutOwnsRail) closeRail();
     if (turnId) setScrollToTurn((current) => ({ turnId, nonce: (current?.nonce ?? 0) + 1 }));
   };
-  const openBreakout = (substreamId: string): void => {
+  /** The thread on its own: its breakout and a panel either of them holds close. */
+  const openThreadAlone = (): void => {
+    if (breakoutOwnsRail || mainOwnsRail) closeRail();
+    selectSubstream('0');
+  };
+    const openBreakout = (substreamId: string): void => {
     // A panel the Channel has open would hide the Breakout being asked for.
     if (mainOwnsRail) closeRail();
     selectSubstream(substreamId);
@@ -742,7 +747,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     return {
       key: `channel:${id}`,
       icon: glyph,
-      mark: workstreamMark(id, channelAppearance ?? undefined),
+      bridge: { mark: workstreamMark(id, channelAppearance ?? undefined), name: title, action: 'Open thread' },
       ...(!onSelect && appearanceChange ? {
         iconAction: <AppearancePicker
           appearance={channelAppearance}
@@ -813,7 +818,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       // The design's Breakout mark: the arrow every Breakout chip and row
       // wears. Its own icon and colour are chosen from the menu instead.
       icon: <BreakoutPillIcon />,
-      mark: workstreamMark(breakoutId, selectedAppearance ?? undefined),
+      bridge: { mark: workstreamMark(breakoutId, selectedAppearance ?? undefined), name: title, action: 'Open breakout' },
       title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
       label: `Breakout menu: ${title}`,
       ...(context.replyCount ? { meta: `${context.replyCount} ${context.replyCount === 1 ? 'reply' : 'replies'}` } : {}),
@@ -891,7 +896,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     parentId={id}
     parentKind="workstream"
     renderHeader={(context) => <TitlePillHeader
-      ancestors={shownMode === 'breakout' && mainVisible ? [...channelCrumbs, channelLevel(null, splitMode === 'breakout' ? closeRail : () => selectSubstream('0'))] : []}
+      ancestors={shownMode === 'breakout' && mainVisible ? [...channelCrumbs, channelLevel(null, openThreadAlone)] : []}
       current={breakoutLevel(context)}
       trailing={mainVisible ? closeBreakout : undefined}
     />}

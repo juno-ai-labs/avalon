@@ -50,8 +50,11 @@ pane that takes the whole width slides over from where it was (the distance is
 measured at the step, `--split-motion-from`); stepping back reverses that. 240ms
 on the curve the side panel uses, and nothing under `prefers-reduced-motion`.
 
-Selecting the Channel crumb goes back one step: to the Channel and the thread,
-whatever the thread had open. The thread's close button, beside the Channel,
+Selecting a crumb opens that level and closes everything nested under it.
+The Channel crumb opens the Channel alone: the thread, its breakout, and a
+panel either holds all close. The thread crumb closes the breakout and any
+panel the thread or breakout holds, which on a wide window puts the thread
+back beside its Channel. The thread's close button, beside the Channel,
 returns to the Channel alone. A breakout's close button returns to its thread.
 
 Widths are stored per pair: the thread beside its Channel under
@@ -88,13 +91,13 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
 
 - **Narrow windows:** below two conversation minimums the right pane stands
   alone, with the crumbs: a breakout alone carries its Channel and its thread,
-  each of which `onShownChange` reports at its own level. There the Channel
-  crumb opens the Channel alone (`onNarrowChange`): the Channel-and-thread
-  route it opens on a wide window would draw the thread again. A header
+  each of which `onShownChange` reports at its own level. A header
   (`@container conversation-pane`) shows the crumbs as marks only below 460px,
   or below 760px when a breakout carries both its Channel and its thread;
   above that each crumb ends in an ellipsis rather than run under the pill, so
-  the pane's own pill keeps its room and truncates last.
+  the pane's own pill keeps its room and truncates last. Where every crumb
+  has a mark, the marks fuse into one `MarkBridge`
+  ([`shared-ui.md`](shared-ui.md)), each linking where its pill does.
 - **A thread with no visible Channel** opens on `/workstreams/:id`, alone; it
   has nothing to step back to.
 
@@ -111,6 +114,28 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
   window under Xvfb, per [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-13 — A crumb opens its level and closes what is nested under it
+
+**What changed:** The Channel crumb opens the Channel alone, closing the
+thread, its breakout and any panel either holds. It used to step back one
+level, to the Channel and the thread. The thread crumb closes the breakout and
+any panel, where before it closed only a panel the breakout held.
+
+**Why:** Collapsed crumbs became one bridge of marks, each a link to its
+object, and the product asked that selecting one open that object outright.
+One rule for every crumb, full or collapsed, is easier to predict than a step
+back that depends on what is open. It also drops the narrow-window special
+case: the Channel route is the Channel alone at every width.
+
+**Considered and rejected:** Giving the bridge's marks their own destinations
+while full pills kept the step back. The same crumb would go to two places
+depending on the window's width.
+
+**Consequences:** No crumb returns to the Channel-and-thread pair with
+something closed; the breakout's close button and the thread's are the
+one-step-back controls. `SplitConversationLayout`'s `onNarrowChange` has no
+production caller now.
 
 ### 2026-10-10 — A Channel and its thread are the stack's first two panes
 

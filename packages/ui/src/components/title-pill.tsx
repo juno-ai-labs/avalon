@@ -1,11 +1,11 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { IconChevronDown, IconChevronRight, IconCornerDownRight, IconSearch, IconX } from '@tabler/icons-react';
 
-import { ShapeOutline, type IdentityMark } from './identity-tile';
+import { MarkBridge, type MarkBridgeItem } from './mark-bridge';
 import { IconButton } from './primitives';
 import clsx from 'clsx';
 import { isComposingKeyEvent } from '../lib/ime';
-import { createContext, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 /**
  * One level inside a title pill's menu, e.g. People. The pill names it as a
@@ -185,11 +185,11 @@ export interface TitlePillLevel {
    */
   iconAction?: ReactNode;
   /**
-   * The level as a mark, for when its crumb shrinks to one on the bridge: its
-   * outline and symbol in ink, over its tint. Without one the crumb keeps
-   * `icon` on a neutral fill.
+   * The level as a mark, its name, and what selecting it does, for when its
+   * crumb collapses onto a `MarkBridge`; selecting the mark is `onSelect`.
+   * Ancestors fuse into a bridge only when every one of them has this.
    */
-  mark?: IdentityMark;
+  bridge?: Omit<MarkBridgeItem, 'key' | 'onSelect'>;
   /**
    * Which way the chevron points. Down by default; right for a Channel whose
    * Breakout is open beside it, pointing at where the conversation went.
@@ -203,7 +203,6 @@ export function TitlePill({ level, variant = 'current' }: {
 }): React.JSX.Element {
   const body = <>
     <span className="title-pill-icon">{level.icon}</span>
-    {level.mark ? <CrumbMark mark={level.mark} /> : null}
     <span className="title-pill-title">{level.title}</span>
     {level.meta ? <span className="title-pill-meta">{level.meta}</span> : null}
   </>;
@@ -313,150 +312,23 @@ export function TitlePillHeader({ ancestors = [], className, current, trailing }
   current: TitlePillLevel;
   trailing?: ReactNode;
 }): React.JSX.Element {
+  // Where the pane is too narrow for the ancestors' names, the stylesheet
+  // swaps their pills for one bridge of their marks.
+  const bridge: MarkBridgeItem[] = [];
+  for (const level of ancestors) {
+    if (level.bridge) bridge.push({ key: level.key, ...level.bridge, onSelect: level.onSelect });
+  }
+  const bridged = ancestors.length > 1 && bridge.length === ancestors.length;
   return <header className={clsx('title-pill-header window-drag', className)}>
-    <div className="title-pill-ancestors">
+    <div className={clsx('title-pill-ancestors', bridged && 'is-bridged')}>
       {ancestors.map((level) => <span className="title-pill-ancestor window-no-drag" key={level.key}>
         <TitlePill level={level} variant="ancestor" />
       </span>)}
-      {ancestors.length > 1 ? <AncestorBridge tints={ancestors.map((level) => level.mark?.tint)} /> : null}
+      {bridged ? <MarkBridge className="title-pill-bridge window-no-drag" items={bridge} /> : null}
     </div>
     <div className="title-pill-current window-no-drag"><TitlePill level={current} /></div>
     <div className="title-pill-trailing">{trailing ? <span className="window-no-drag">{trailing}</span> : null}</div>
   </header>;
-}
-
-/*
- * Marks joined in a row by narrow necks, as drops of water touch. The
- * stylesheet sizes each collapsed crumb to a BRIDGE_RADIUS circle and spaces
- * them BRIDGE_SPAN apart, so the outline depends only on how many there are.
- */
-const BRIDGE_RADIUS = 18;
-const BRIDGE_SPAN = 42;
-const BRIDGE_NECK = 7;
-/** Where a neck leaves its circle, measured from the line between centres. */
-const BRIDGE_ANGLE = Math.PI / 4;
-
-/** The outline of `count` circles in a row, each joined to the next by a neck. */
-function bridgePath(count: number): string {
-  const r = BRIDGE_RADIUS;
-  const centre = (index: number): number => r + index * BRIDGE_SPAN;
-  const dx = r * Math.cos(BRIDGE_ANGLE);
-  const dy = r * Math.sin(BRIDGE_ANGLE);
-  // A cubic's midpoint sits at (p0 + 3c0 + 3c1 + p1) / 8; solving for the
-  // control length that lands it on the neck's half height.
-  const reach = (dy - BRIDGE_NECK) / (0.75 * Math.cos(BRIDGE_ANGLE));
-  const rx = reach * Math.sin(BRIDGE_ANGLE);
-  const ry = reach * Math.cos(BRIDGE_ANGLE);
-  const top = r - dy;
-  const bottom = r + dy;
-  const n = (value: number): string => value.toFixed(2);
-  const last = count - 1;
-  // Clockwise from the first neck's top: along the top, round the last
-  // circle, back along the bottom, round the first. Each inner circle shows
-  // a short arc between its two necks.
-  const path = [`M${n(centre(0) + dx)} ${n(top)}`];
-  for (let index = 0; index < last; index += 1) {
-    const from = centre(index) + dx;
-    const to = centre(index + 1) - dx;
-    path.push(`C${n(from + rx)} ${n(top + ry)} ${n(to - rx)} ${n(top + ry)} ${n(to)} ${n(top)}`);
-    if (index + 1 < last) path.push(`A${r} ${r} 0 0 1 ${n(centre(index + 1) + dx)} ${n(top)}`);
-  }
-  path.push(`A${r} ${r} 0 1 1 ${n(centre(last) - dx)} ${n(bottom)}`);
-  for (let index = last; index > 0; index -= 1) {
-    const from = centre(index) - dx;
-    const to = centre(index - 1) + dx;
-    path.push(`C${n(from - rx)} ${n(bottom - ry)} ${n(to + rx)} ${n(bottom - ry)} ${n(to)} ${n(bottom)}`);
-    if (index - 1 > 0) path.push(`A${r} ${r} 0 0 1 ${n(centre(index - 1) - dx)} ${n(bottom)}`);
-  }
-  path.push(`A${r} ${r} 0 1 1 ${n(centre(0) + dx)} ${n(top)}`, 'Z');
-  return path.join(' ');
-}
-
-/** How far either side of a mark's centre its own tint holds before blending. */
-const BRIDGE_HOLD = 9;
-/** Stops in each blend; enough that straight runs between them read as one curve. */
-const BRIDGE_BLEND_STEPS = 8;
-/** A crumb with no mark sits on the surface a pill does. */
-const BRIDGE_NEUTRAL = 'var(--av-sys-color-surface-raised)';
-
-/**
- * The bridge's fill: each mark's tint flat across its circle, blending into
- * the next across the neck. An SVG gradient interpolates in sRGB, which runs
- * two hues through a grey middle, so each blend is cut into stops that are
- * themselves mixed in OKLCH: lightness, chroma and hue each move evenly.
- */
-function bridgeStops(tints: readonly (string | undefined)[]): { offset: number; color: string }[] {
-  const width = (tints.length - 1) * BRIDGE_SPAN + 2 * BRIDGE_RADIUS;
-  const fills = tints.map((tint) => tint ?? BRIDGE_NEUTRAL);
-  const stops: { offset: number; color: string }[] = [];
-  fills.forEach((fill, index) => {
-    const centre = BRIDGE_RADIUS + index * BRIDGE_SPAN;
-    stops.push({ offset: (centre - BRIDGE_HOLD) / width, color: fill }, { offset: (centre + BRIDGE_HOLD) / width, color: fill });
-    const next = fills[index + 1];
-    if (next === undefined || next === fill) return;
-    const from = centre + BRIDGE_HOLD;
-    const run = BRIDGE_SPAN - 2 * BRIDGE_HOLD;
-    for (let step = 1; step < BRIDGE_BLEND_STEPS; step += 1) {
-      const share = step / BRIDGE_BLEND_STEPS;
-      stops.push({ offset: (from + run * share) / width, color: `color-mix(in oklch, ${fill}, ${next} ${(share * 100).toFixed(1)}%)` });
-    }
-  });
-  return stops;
-}
-
-/**
- * A level drawn as its mark, shown in place of its icon once the crumb has
- * collapsed onto the bridge: the outline that says Channel or thread, and the
- * object's own symbol inside it, both in its ink.
- */
-function CrumbMark({ mark }: { mark: IdentityMark }): React.JSX.Element {
-  const Icon = mark.icon;
-  return <span aria-hidden="true" className="title-pill-mark" style={{ color: mark.ink }}>
-    <ShapeOutline className="title-pill-mark-outline" shape={mark.shape} size={36} strokeWidth={1.1} />
-    <Icon className="title-pill-mark-icon" size={14} strokeWidth={2} />
-  </span>;
-}
-
-/**
- * The glass a pane's collapsed crumbs sit on, however many there are, each
- * circle in its crumb's tint. Hidden until the pane is narrow enough that the
- * crumbs show only their marks.
- */
-function AncestorBridge({ tints }: { tints: readonly (string | undefined)[] }): React.JSX.Element {
-  const id = useId();
-  const count = tints.length;
-  const path = useMemo(() => bridgePath(count), [count]);
-  const stops = bridgeStops(tints);
-  const width = (count - 1) * BRIDGE_SPAN + 2 * BRIDGE_RADIUS;
-  const height = 2 * BRIDGE_RADIUS;
-  return <svg
-    aria-hidden="true"
-    className="title-pill-bridge"
-    height={height + 2}
-    viewBox={`-1 -1 ${width + 2} ${height + 2}`}
-    width={width + 2}
-  >
-    <defs>
-      <linearGradient gradientUnits="userSpaceOnUse" id={`${id}-tint`} x1="0" x2={width} y1="0" y2="0">
-        {stops.map((stop, index) => <stop key={index} offset={stop.offset} style={{ stopColor: stop.color }} />)}
-      </linearGradient>
-      {/* Ends above the symbols, so each one sits on its raw tint: the pair's
-          contrast is measured against that colour alone. */}
-      <linearGradient id={`${id}-sheen`} x1="0" x2="0" y1="0" y2="1">
-        <stop className="title-pill-bridge-sheen-from" offset="0" />
-        <stop className="title-pill-bridge-sheen-to" offset="0.32" />
-      </linearGradient>
-      <linearGradient id={`${id}-rim`} x1="0" x2="0" y1="0" y2="1">
-        <stop className="title-pill-bridge-rim-from" offset="0" />
-        <stop className="title-pill-bridge-rim-to" offset="0.45" />
-      </linearGradient>
-      <clipPath id={`${id}-inside`}><path d={path} /></clipPath>
-    </defs>
-    <path className="title-pill-bridge-body" d={path} fill={`url(#${id}-tint)`} />
-    <path d={path} fill={`url(#${id}-sheen)`} />
-    <path clipPath={`url(#${id}-inside)`} d={path} fill="none" stroke={`url(#${id}-rim)`} strokeWidth="3" />
-    <path className="title-pill-bridge-edge" d={path} />
-  </svg>;
 }
 
 /** The identity row at the top of a title menu: what this is and where it lives. */
