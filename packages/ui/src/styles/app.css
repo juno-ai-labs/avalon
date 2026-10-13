@@ -8729,6 +8729,26 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   }
   .app-shell .navigation-sidebar .navigation-rail-top,
   .app-shell .navigation-sidebar .navigation-rail-spacer { display: none; }
+  /* The account menu reads as a fourth tab: as wide as the others, its avatar
+     the size of their 22px shapes in the same 34px box, a label under it. */
+  .app-shell .navigation-sidebar .navigation-rail-account { flex: 0 1 auto; width: 100%; }
+  .app-shell .navigation-sidebar .navigation-rail-account .account-trigger {
+    background-image: none;
+    border-radius: 0;
+    flex-direction: column;
+    font: inherit;
+    font-size: 10.5px;
+    font-weight: 400;
+    gap: 3px;
+    margin: 4px 0 0;
+    min-height: 0;
+    /* Over the rail's `width: auto !important`, so the whole share takes a tap. */
+    width: 100% !important;
+  }
+  .app-shell .navigation-sidebar .navigation-rail-account .account-trigger::after { content: "Settings"; }
+  .app-shell .navigation-sidebar .navigation-rail-account .avatar { height: 22px; margin: 6px; width: 22px; }
+  /* Its own hover layer is off above; tint the avatar's box as the tabs tint theirs. */
+  .app-shell .navigation-sidebar .navigation-rail-account .account-trigger:hover .avatar { box-shadow: 0 0 0 6px var(--av-sys-color-state-hover); }
 }
 
 /* ── A Channel: its feed of threads and the composer that starts one ─────── */
