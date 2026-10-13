@@ -242,8 +242,9 @@ from; reduced motion turns both off.
   renamed and recoloured like any Channel; only archiving it or making it
   private is refused (`space_protected`). The pill's
   icon is its own control for whoever may edit the Channel: it opens the
-  shared icon-and-colour picker, and each pick saves the whole presentation
-  through `PATCH /spaces/:id`, one after another, each starting from the last.
+  shared icon-and-colour picker. Each pick and each rename saves the whole
+  presentation through `PATCH /spaces/:id`, one after another, each starting
+  from the last one sent for the same Channel.
 - **Breakout menu:** root header is the thread it belongs to (with **Show in
   thread**) and the message it started from. People (inviting to the
   Breakout alone) and Sidekicks as above;
