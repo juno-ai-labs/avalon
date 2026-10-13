@@ -186,7 +186,7 @@ its threads, and a composer at the foot.
 
 The sidebar becomes a sheet behind the list's own header, which is the top
 bar with the menu button; the section switcher is a row of tabs under it, with
-the account menu as a fourth tab labelled Settings. The
+the account menu as a last tab labelled Settings. The
 sheet is clipped rather than moved, for the reasons the 2026-10-06 entry gives.
 Opening anything from it closes it, as do Escape and widening past 640px;
 switching sections does not navigate, so the sheet stays open on the list just
