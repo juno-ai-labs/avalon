@@ -84,8 +84,9 @@ compressed or partial hierarchy.
 `MarkBridge` draws a row of `IdentityMark`s (`spaceMark` for a Channel,
 `workstreamMark` for a thread or Breakout) as one glass shape, each mark a
 control with its own tooltip. It knows nothing about routes; the caller hands
-it names, actions and handlers. `TitlePillHeader` uses it for ancestor crumbs
-too narrow to show their names, when every level carries a `bridge` entry.
+it names, actions and handlers. `TitlePillHeader` draws its ancestor crumbs as one,
+at every width, whenever every level carries a `bridge` entry; pills are the
+fallback only while a level has none.
 `labelLast` writes the last object's name beside its mark and stretches that
 mark into a pill fitted to the measured name. The header sets it on every
 bridge so the nearest crumb is named on desktop; at phone width (640px and
@@ -138,6 +139,28 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-10-13 — Crumbs are always a `MarkBridge`
+
+**What changed:** `TitlePillHeader` draws its ancestors as a bridge at every
+width when each has a mark. It used to draw them as pills and switch to the
+bridge only below a pane width (460px for one crumb, 760px for two).
+
+**Why:** Between those widths and the room the names needed, the pills shrank
+instead: a lone Channel crumb beside a thread with a panel open closed to a
+bare round pill with no tooltip, its icon 2px off centre because the pill's
+padding was cut for an icon and a name. The product asked for the bridge at
+all times, so one crumb looks the same in every window.
+
+**Considered and rejected:** Measuring whether the pills' names fit and
+bridging only when they do. It removed the squeezed pill but kept two looks for
+the same crumb, which the product did not want.
+
+**Consequences:** The pill path for ancestors runs only while a level lacks a
+mark (a Channel whose appearance has not loaded); the narrow-pane rules that
+hide its name remain for that case alone. The bridge names the nearest crumb
+on desktop and ellipsizes it to its column, and shows marks alone at phone
+width, as before.
 
 ### 2026-10-13 — `MarkBridge` can name its last mark; a lone crumb bridges
 

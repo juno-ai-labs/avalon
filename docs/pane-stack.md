@@ -98,13 +98,11 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
 
 - **Narrow windows:** below two conversation minimums the right pane stands
   alone, with the crumbs: a breakout alone carries its Channel and its thread,
-  each of which `onShownChange` reports at its own level. A header
-  (`@container conversation-pane`) shows the crumbs as marks only below 460px,
-  or below 760px when a breakout carries both its Channel and its thread;
-  above that each crumb ends in an ellipsis rather than run under the pill, so
-  the pane's own pill keeps its room and truncates last. Where every crumb
-  has a mark, the marks fuse into one `MarkBridge`
-  ([`shared-ui.md`](shared-ui.md)), each linking where its pill does.
+  each of which `onShownChange` reports at its own level. The crumbs are one
+  `MarkBridge` ([`shared-ui.md`](shared-ui.md)) at every width, each mark
+  linking where its pill would; the nearest crumb's name ends in an ellipsis
+  rather than run under the pill, so the pane's own pill keeps its room and
+  truncates last.
 - **Collapse in a narrow window** clears the expansion, but the pane still
   stands alone, as it would unexpanded; Collapse then simply goes away.
 - **A thread with no visible Channel** opens on `/workstreams/:id`, alone; it
