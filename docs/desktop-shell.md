@@ -235,8 +235,10 @@ from; reduced motion turns both off.
   (the Channel's members, with **Remove from channel** or **Leave the
   channel**) and Sidekicks (the Channel's Sidekick defaults, each with
   **Remove from this channel**). More is **Icon** (icon and colour, the same
-  picker as the pill's icon), **Private to its members**, **Pinned in my
-  sidebar**, and **Archive channel** last, which asks first. General can be
+  picker as the pill's icon), **Pinned in my sidebar**, **Public to
+  organization** (the thread's switch, on while the Channel is open to the
+  Organization; off makes it private, keeping whoever turned it off), and
+  **Archive channel** last, which asks first. General can be
   renamed and recoloured like any Channel; only archiving it or making it
   private is refused (`space_protected`). The pill's
   icon is its own control for whoever may edit the Channel: it opens the
@@ -383,7 +385,9 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 
 **What changed:** The Channel menu's tiles are now Add people, Rename, Copy
 link and More, the same four a thread's menu has. Its two switches and
-**Archive channel** moved from the root into More, under an **Icon** row. The
+**Archive channel** moved from the root into More, under an **Icon** row,
+and **Private to its members** became **Public to organization**, the same
+switch, the same way round, as a thread's. The
 Channel pill's icon opens the same icon-and-colour picker in place, as a
 thread's icon already did. General gained Rename: the client had hidden it,
 though the server refuses only archiving General or making it private.
