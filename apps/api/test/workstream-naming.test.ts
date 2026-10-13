@@ -968,6 +968,16 @@ describe("backfilling an existing thread's summary", () => {
     expect(requests).toHaveLength(1);
   });
 
+  it("writes a description where there is none, as a Breakout opened without a message has", async () => {
+    const database = seededDatabase();
+    seedMessages(database, 1);
+    objectStoreOf(database).prepare("UPDATE workstream SET description = '' WHERE id = 1").run();
+    stubOpenRouter([], "Danny download link", undefined, "megaphone", summary);
+
+    expect(await summarizeExistingDescription(environment(database, []), target)).toBe("summarized");
+    expect(description(database)).toBe(summary);
+  });
+
   it("asks nothing where a person wrote the description", async () => {
     const database = seededDatabase();
     seedMessages(database, 1);

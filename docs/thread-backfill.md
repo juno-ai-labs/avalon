@@ -66,8 +66,9 @@ arms its own alarm.
   pacing case in `test-workers/thread-backfill.test.ts`.
 - **A job is safe to run twice over the same conversation.** A row whose
   consumer failed part way is sent again whole, including the conversations
-  it already did. `description_summary` holds this by comparing the
-  description with the opening message's first line before any model call.
+  it already did. `description_summary` holds this by sending only a
+  description that is empty or still the opening message's first line to the
+  model.
   Guard: `workstream-naming.test.ts`, "backfilling an existing thread's
   summary".
 - **A row is settled only after every conversation ran.** Settling first
