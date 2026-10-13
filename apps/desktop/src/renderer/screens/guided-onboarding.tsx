@@ -1,5 +1,5 @@
 import { ConversationAdmissionProvider } from '../lib/conversation-admission';
-import { AccountProfileEditor } from '../lib/account-profile-editor';
+import { AccountProfileEditor, nameInitials } from '../lib/account-profile-editor';
 import { settings } from '../settings/registry';
 import { SettingLabel } from '../settings/setting-label';
 import { MemberPresentationContext } from '../lib/member-presentation';
@@ -121,13 +121,13 @@ function OnboardingPersonalSetup({ onSaved }: { onSaved?: () => Promise<void> })
   // An account with no saved look starts on a random color.
   const [color, setColor] = useState<PersonalPresentation['color']>(() => account?.presentation?.color ?? PERSONAL_COLOR_KEYS[Math.floor(Math.random() * PERSONAL_COLOR_KEYS.length)]!);
   const [name, setName] = useState(account?.presentation?.displayName ?? session?.user.name ?? '');
-  const [initials, setInitials] = useState(account?.presentation?.initials ?? (session?.user.name ?? '').split(/\s+/u).map((part) => part[0]).join('').slice(0, 2).toUpperCase());
+  const [initials, setInitials] = useState(account?.presentation?.initials ?? nameInitials(session?.user.name ?? ''));
   const [draftRevision, setDraftRevision] = useState(account?.revision);
   useEffect(() => {
     if (!account || account.revision === draftRevision) return;
     setColor((current) => account.presentation?.color ?? current);
     setName(account.presentation?.displayName ?? session?.user.name ?? '');
-    setInitials(account.presentation?.initials ?? '');
+    setInitials(account.presentation?.initials ?? nameInitials(session?.user.name ?? ''));
     setDraftRevision(account.revision);
   }, [account, draftRevision, session?.user.name]);
   const [busy, setBusy] = useState(false);
@@ -148,7 +148,7 @@ function OnboardingPersonalSetup({ onSaved }: { onSaved?: () => Promise<void> })
     <PersonalAvatar color={color} initials={initials} className="personal-setup-preview" />
     {colorPicker}
     <label className="guided-email-field">Name<input data-saved-value={account?.presentation?.displayName ?? session?.user.name ?? ''} value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" /></label>
-    <label className="guided-email-field">Avatar initials<input data-saved-value={account?.presentation?.initials ?? (session?.user.name ?? '').split(/\s+/u).map((part) => part[0]).join('').slice(0, 2).toUpperCase()} value={initials} onChange={(event) => setInitials(event.target.value)} /></label>
+    <label className="guided-email-field">Avatar initials<input data-saved-value={account?.presentation?.initials ?? nameInitials(session?.user.name ?? '')} value={initials} onChange={(event) => setInitials(event.target.value)} /></label>
     {error && <InlineError>{error}</InlineError>}
     <Button className="button-primary" disabled={busy || !name.trim() || !initials.trim()} onClick={() => void save()}>{busy ? 'Saving…' : onSaved ? 'Continue with this look' : 'Save appearance'}</Button>
   </div>;
@@ -177,7 +177,7 @@ function AccountProfileFields({ editor, profileDetails }: { editor: AccountProfi
         {profileDetails?.(profile.displayName ?? '')}
       </div>
       <label className="settings-preference-row"><SettingLabel setting={settings.profileName} /><input autoComplete="name" value={profile.displayName ?? ''} data-saved-value={account?.presentation?.displayName ?? session?.user.name ?? ''} onChange={(event) => editor.update({ displayName: event.target.value })} /></label>
-      <label className="settings-preference-row"><SettingLabel setting={settings.profileInitials} /><input value={profile.initials ?? ''} data-saved-value={account?.presentation?.initials ?? (session?.user.name ?? '').split(/\s+/u).map((part) => part[0]).join('').slice(0, 2).toUpperCase()} onChange={(event) => editor.update({ initials: event.target.value })} /></label>
+      <label className="settings-preference-row"><SettingLabel setting={settings.profileInitials} /><input value={profile.initials ?? ''} data-saved-value={account?.presentation?.initials ?? nameInitials(session?.user.name ?? '')} onChange={(event) => editor.update({ initials: event.target.value })} /></label>
       <div className="settings-preference-row"><SettingLabel setting={settings.profileColor} />
         <div className="personal-colors" role="group" aria-label={settings.profileColor.label}>{PERSONAL_COLOR_KEYS.map((value) => <button type="button" key={value} aria-label={value} aria-pressed={personalColorKey(profile.color) === value} style={{ background: personalColor(value), color: personalColorInk(value) }} onClick={() => editor.update({ color: value })}>{personalColorKey(profile.color) === value && <Check size={14} />}</button>)}</div>
       </div>
