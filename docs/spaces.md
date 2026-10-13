@@ -469,7 +469,7 @@ participants". `spaces_individual_owner_idx` holds one per member.
   anchor and asks again with the generation, as `ensureGeneral` does. A failure
   throws, so the relationship delivery retries; every step is fenced against
   applying twice.
-- **Every Organization that existed before this** (WorkspaceDO migration 102).
+- **Every Organization that existed before this** (WorkspaceDO migration 103).
   The migration queues one `personal_channel_backfill` alarm in each object
   with an identity. The alarm reads the active non-guest members from D1, and
   for each one the object's own relationship copy still calls a member, seats
@@ -502,7 +502,7 @@ once, force a WorkspaceDO migration from `/migrations`
 A Channel holds messages of its own, outside any thread: a building block
 beside its placements, for anything that has something to say in a Channel.
 A message is an author (`rally`, or a `member` by user id), a markdown body
-and a time, in `space_messages` (WorkspaceDO migration 103). Nothing in the
+and a time, in `space_messages` (WorkspaceDO migration 104). Nothing in the
 mechanism knows what a message is for.
 
 - **Posting.** `postMessages(spaceId, drafts, postedAt)` writes them in order.
@@ -514,7 +514,7 @@ mechanism knows what a message is for.
   `postStartingMessages`: dated at the Channel's `created_at` so they come
   first, and keyed by position so posting the same list again writes nothing.
   The same call lets a Channel made before it had them catch up, which is how
-  migration 102's pass gives an existing General what General opens with.
+  migration 103's pass gives an existing General what General opens with.
 - **What the Channels Rally makes open with** is data in
   `system-channels.ts`: General and the Personal Channel each have a name, an
   icon, a colour and a list of messages, today one from Rally apiece. Changing
@@ -1923,8 +1923,8 @@ default target.
 reserves its creator's Personal Channel beside General in `initializeWorkspace`,
 and every relationship change that leaves somebody an active member runs
 `seatOrganizationMember`, which seats them in General and creates their
-Personal Channel. WorkspaceDO migration 101 rebuilds `spaces` to widen its
-scope check and adds `spaces_individual_owner_idx`; migration 102 queues a one-time alarm that
+Personal Channel. WorkspaceDO migration 102 rebuilds `spaces` to widen its
+scope check and adds `spaces_individual_owner_idx`; migration 103 queues a one-time alarm that
 seats every existing member the same way. A Personal Channel is listed to its
 owner alone, never to a guest. A Space's own
 `directory_common` projection no longer writes `spaces.scope`. Client contract
