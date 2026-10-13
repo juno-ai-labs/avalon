@@ -1,12 +1,13 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import type { ChannelStats, ChannelStatsList, SpaceSummary } from '@rally/contracts';
+import type { ChannelStats, ChannelStatsList, SpaceSummary, WorkstreamAppearancePatch } from '@rally/contracts';
+import { AppearancePicker, AppearanceSubmenu } from '@rally/ui/components/appearance-picker';
 import { BreakoutChipRow, type BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { ChannelContainerMenu } from '@rally/ui/components/conversation-menus';
 import type { SidekickRow } from '@rally/ui/components/sidekick-section';
-import { SpaceIcon } from '@rally/ui/components/space-icon';
+import { ChannelGlyph } from '@rally/ui/components/space-icon';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { TitleMenuItem, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { IconLock, IconPlus } from '@tabler/icons-react';
+import { IconLock, IconPalette, IconPlus } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
@@ -17,6 +18,7 @@ import { Button, EmptyState, InlineError, LoadingState, Modal } from '../compone
 import { RelativeTime } from '../components/relative-time';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
+import { copySpaceLink } from '../lib/copy-workstream-link';
 import { ChannelPaneContextValue, channelRoute, threadRoute, type ChannelPaneContext } from '../lib/navigation-routes';
 import { PaneVisibility } from '../lib/pane-visibility';
 import { desktopBridge } from '../lib/platform';
@@ -77,7 +79,7 @@ function ChannelStack({ channelId, threadId, workspace }: {
     channelId,
     crumb: {
       key: `channel-container:${channelId}`,
-      icon: space ? <SpaceIcon size={18} space={space} /> : null,
+      icon: space ? <ChannelGlyph space={space} /> : null,
       title: space?.name ?? 'Channel',
       label: `Back to ${space?.name ?? 'the channel'}`,
       // Back one step: the Channel and this thread, whatever the thread had
@@ -375,13 +377,13 @@ function LockedCard({ onOpen, placedAt, threadId }: {
   </li>;
 }
 
-/** The Channel's pill and its menu: people, privacy, pin and Sidekicks. */
+/** The Channel's pill and its menu: people, audience, pin and Sidekicks. */
 function ChannelHeader({ members, space, workspace }: {
   members: readonly WorkspaceMember[];
   space: SpaceSummary;
   workspace: Workspace;
 }): React.JSX.Element {
-  const { api } = useAppSession();
+  const { api, session } = useAppSession();
   const queryClient = useQueryClient();
   const [failure, setFailure] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -442,6 +444,40 @@ function ChannelHeader({ members, space, workspace }: {
       setFailure(spaceFailureSentence(cause, 'This channel couldn’t be archived.'));
     }
   };
+  // Every write saves the whole presentation (name, icon and colour), so a
+  // rename and each pick run one after another and each starts from the one
+  // before it: an icon chosen before a rename answers must not be sent back
+  // as the old one. The header stays mounted from one Channel to the next, so
+  // what is pending belongs to the Channel it was written for.
+  type Presentation = Pick<SpaceSummary, 'id' | 'name' | 'iconKey' | 'colorKey'>;
+  const openSpaceId = useRef(space.id);
+  openSpaceId.current = space.id;
+  const presentationWrites = useRef<{ queue: Promise<void>; latest: Presentation | null }>({ queue: Promise.resolve(), latest: null });
+  const writePresentation = (patch: Partial<Omit<Presentation, 'id'>>): Promise<void> => {
+    const writes = presentationWrites.current;
+    const base = writes.latest?.id === space.id
+      ? writes.latest
+      : { id: space.id, name: space.name, iconKey: space.iconKey, colorKey: space.colorKey };
+    const next = { ...base, ...patch };
+    writes.latest = next;
+    const { id, ...presentation } = next;
+    const write = writes.queue.then(async () => {
+      stored(await api!.updateSpacePresentation(id, presentation));
+    }).finally(() => { if (writes.latest === next) writes.latest = null; });
+    writes.queue = write.catch(() => undefined);
+    return write;
+  };
+  const changeAppearance = (patch: WorkstreamAppearancePatch): Promise<void> => writePresentation({
+    ...(patch.icon ? { iconKey: patch.icon } : {}),
+    ...(patch.color ? { colorKey: patch.color } : {}),
+  });
+  const copyLink = session?.workspace ? (): void => {
+    const target = session.workspace!;
+    const copied = space.id;
+    void copySpaceLink({ region: target.region, workspaceId: target.id }, copied)
+      // Not on the next Channel's screen, if the person moved on meanwhile.
+      .catch(() => { if (openSpaceId.current === copied) setFailure('This channel’s link couldn’t be copied.'); });
+  } : undefined;
   const pinned = pinnedChannels.has(space.id);
   const recommended = new Set(space.defaultSidekickIds);
   const sidekicks: SidekickRow[] = (library.data ?? [])
@@ -456,7 +492,19 @@ function ChannelHeader({ members, space, workspace }: {
   const addable = (library.data ?? []).filter((sidekick) => !recommended.has(sidekick.id));
   const level: TitlePillLevel = {
     key: `channel-container:${space.id}`,
-    icon: <SpaceIcon size={18} space={space} />,
+    icon: <ChannelGlyph space={space} />,
+    ...(editable && api ? {
+      iconAction: <AppearancePicker
+        appearance={{ icon: space.iconKey, color: space.colorKey }}
+        id={space.id}
+        key={space.id}
+        label={`Change ${space.name} icon and color`}
+        onChange={changeAppearance}
+        renderGlyph={(appearance) => <ChannelGlyph
+          space={{ iconKey: appearance.icon ?? space.iconKey, colorKey: appearance.color ?? space.colorKey }}
+        />}
+      />,
+    } : {}),
     title: space.name,
     label: `Channel menu: ${space.name}`,
     menu: <ChannelContainerMenu
@@ -474,11 +522,20 @@ function ChannelHeader({ members, space, workspace }: {
           </DropdownMenu.SubContent>
         </DropdownMenu.Portal>
       </DropdownMenu.Sub> : undefined}
+      appearance={editable && api ? <AppearanceSubmenu
+        appearance={{ icon: space.iconKey, color: space.colorKey }}
+        icon={<IconPalette aria-hidden="true" size={16} stroke={1.8} />}
+        id={space.id}
+        key={space.id}
+        label="Icon"
+        onChange={changeAppearance}
+      /> : undefined}
       channel={{ name: space.name, scope: space.scope }}
       members={roster}
       onArchive={editable && !general ? () => setArchiving('confirm') : undefined}
+      onCopyLink={copyLink}
       onOpenSidekick={(id) => void desktopBridge().openSidekicks(id)}
-      onRename={editable && !general ? () => setRenaming(space.name) : undefined}
+      onRename={editable ? () => setRenaming(space.name) : undefined}
       people={editable ? {
         candidates: members.filter((candidate) => !participantIds.includes(candidate.id) && (candidate.status ?? 'active') === 'active'),
         adding,
@@ -494,9 +551,9 @@ function ChannelHeader({ members, space, workspace }: {
         on: pinned,
         onChange: (next) => pin('channel', space.id, next),
       } : undefined}
-      privacy={editable && !general ? {
-        on: space.scope === 'personal',
-        onChange: (next) => void setAudience(next ? 'personal' : 'workspace', participantIds),
+      publicToOrganization={editable && !general ? {
+        on: space.scope === 'workspace',
+        onChange: (next) => void setAudience(next ? 'workspace' : 'personal', participantIds),
       } : undefined}
       sidekicks={sidekicks}
     />,
@@ -515,7 +572,8 @@ function ChannelHeader({ members, space, workspace }: {
           onClick={() => {
             const name = renaming?.trim() ?? '';
             setRenaming(null);
-            void run(() => api!.updateSpacePresentation(space.id, { name, iconKey: space.iconKey, colorKey: space.colorKey }), 'This channel couldn’t be renamed.');
+            setFailure(null);
+            void writePresentation({ name }).catch(() => setFailure('This channel couldn’t be renamed.'));
           }}
         >Rename</Button>
       </>}
