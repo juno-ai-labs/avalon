@@ -104,7 +104,7 @@ describe('a Channel', () => {
 
   it('lists its threads down to now, beside the composer', async () => {
     renderChannel();
-    const feed = within(await screen.findByRole('list', { name: 'Threads in Outbound' }));
+    const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
     const rows = await feed.findAllByRole('listitem');
     expect(rows[0]).toHaveTextContent('A four-week outbound setup plan.');
     expect(within(rows[0]!).getByRole('button', { name: 'Q4 plan' })).toBeInTheDocument();
@@ -179,7 +179,7 @@ describe('a Channel', () => {
       { kind: 'thread', placedAt: '2026-09-20T12:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, id: 'earlier' } },
     ] });
     renderChannel();
-    const feed = within(await screen.findByRole('list', { name: 'Threads in Outbound' }));
+    const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
     await feed.findAllByRole('listitem');
     expect(feed.getAllByRole('separator')).toHaveLength(2);
   });
@@ -190,7 +190,7 @@ describe('a Channel', () => {
       { kind: 'thread', placedAt: '2024-10-02T12:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, id: 'earlier' } },
     ] });
     renderChannel();
-    const feed = within(await screen.findByRole('list', { name: 'Threads in Outbound' }));
+    const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
     await feed.findAllByRole('listitem');
     expect(feed.getAllByRole('separator')).toHaveLength(2);
   });
@@ -206,7 +206,7 @@ describe('a Channel', () => {
       { kind: 'message', placedAt: '2026-10-02T00:00:00.000Z', message: { id: '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a61', author: { kind: 'rally' }, body: 'Welcome to the Channel' } },
     ] });
     renderChannel();
-    const feed = within(await screen.findByRole('list', { name: 'Threads in Outbound' }));
+    const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
     const rows = await feed.findAllByRole('listitem');
     // Oldest first, reading down to now.
     expect(rows.map((row) => row.textContent)).toEqual([
@@ -224,7 +224,7 @@ describe('a Channel', () => {
       { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, createdByUserId: 'gone' } },
     ] });
     renderChannel();
-    const feed = within(await screen.findByRole('list', { name: 'Threads in Outbound' }));
+    const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
     expect((await feed.findAllByRole('listitem'))[0]).toHaveTextContent('Someone');
   });
 
@@ -264,7 +264,7 @@ describe('a Channel', () => {
   it('offers no composer to somebody who reaches the Channel only through a thread in it', async () => {
     spaces.data = outbound('through_channel');
     renderChannel();
-    await screen.findByRole('list', { name: 'Threads in Outbound' });
+    await screen.findByRole('list', { name: 'Outbound feed' });
     expect(screen.queryByText('composer')).not.toBeInTheDocument();
   });
 
@@ -282,7 +282,7 @@ describe('a Channel', () => {
     it('offers no import to somebody who cannot start a thread in the Channel', async () => {
       spaces.data = outbound('through_channel');
       renderChannel();
-      await screen.findByRole('list', { name: 'Threads in Outbound' });
+      await screen.findByRole('list', { name: 'Outbound feed' });
       expect(screen.queryByRole('button', { name: 'Import from Claude or ChatGPT' })).toBeNull();
     });
   });

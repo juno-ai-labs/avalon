@@ -498,17 +498,22 @@ export class SpaceService {
    * inside either.
    */
   async ensureGeneral(): Promise<SpaceSummary> {
-    return (await this.general()) ?? this.openGeneral();
-  }
-
-  /** The Organization's General as this caller sees it, or `null` while it has none. Writes nothing. */
-  async general(): Promise<SpaceSummary | null> {
     const existing = WorkspaceSpaceGeneralOpenResultSchema.parse(await (await this.workspace()).openGeneralSpace({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
     }));
     if (!existing.ok) throw spaceRefusal(existing.code, "General");
-    return "absent" in existing ? null : existing.space;
+    return "absent" in existing ? this.openGeneral() : existing.space;
+  }
+
+  /** The Organization's General as this caller sees it, or `null` while it has none. Writes nothing. */
+  async general(): Promise<SpaceSummary | null> {
+    const result = await (await this.workspace()).readGeneralSpace({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+    });
+    if (!result.ok) throw spaceRefusal(result.code, "General");
+    return result.space === null ? null : SpaceSummarySchema.parse(result.space);
   }
 
   private async openGeneral(): Promise<SpaceSummary> {
