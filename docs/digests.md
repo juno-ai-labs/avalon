@@ -246,7 +246,9 @@ Nothing here changes what a digest reads.
   waterline per person (`workspace_activity_reads`, migration 101), moved to
   the higher of where it was and the event's ordinal, so a late event never
   moves it back. Reading message 29 of a thread settles a mention at 29 or
-  earlier and leaves one at 30 standing.
+  earlier and leaves one at 30 standing. An event that makes a waterline new
+  or higher publishes the same per-person `activity` topic Mark all read does;
+  one that moves nothing publishes nothing.
 
 **What clears an item is a rule** in a small data language: its grammar, the
 rule for each kind, and the evaluator live in

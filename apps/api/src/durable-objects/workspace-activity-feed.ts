@@ -419,12 +419,24 @@ export class WorkspaceActivityFeed {
    * Apply what the person did. Each `read` moves that subject's waterline to
    * the higher of where it was and `through`, and its read time to now; never
    * back, so events arriving out of order settle the same way. The read time
-   * is what a rule's `since` compares, whatever ordinal the read carried. Nothing checks the subject is one the
-   * person may list: the row is theirs alone, and the feed lists only what
-   * they may see.
+   * is what a rule's `since` compares, whatever ordinal the read carried.
+   * Nothing checks the subject is one the person may list: the row is theirs
+   * alone, and the feed lists only what they may see.
+   *
+   * Answers whether any waterline was new or rose, which is when the person's
+   * other surfaces are worth telling; a read that only refreshed the time is
+   * left to the window that sent it.
    */
-  record(userId: string, events: readonly ActivityEvent[], now: number): void {
+  record(userId: string, events: readonly ActivityEvent[], now: number): boolean {
+    let advanced = false;
     for (const event of events) {
+      const key = activitySubjectKey(event.subject);
+      const before = this.storage.sql.exec<{ read_through: number }>(
+        `SELECT read_through FROM workspace_activity_reads WHERE user_id = ? AND subject_key = ?`,
+        userId,
+        key,
+      ).toArray()[0];
+      if (before === undefined || event.through > Number(before.read_through)) advanced = true;
       this.storage.sql.exec(
         `INSERT INTO workspace_activity_reads (user_id, subject_key, read_through, updated_at)
          VALUES (?1, ?2, ?3, ?4)
@@ -432,11 +444,12 @@ export class WorkspaceActivityFeed {
            SET read_through = MAX(read_through, excluded.read_through),
                updated_at = MAX(updated_at, excluded.updated_at)`,
         userId,
-        activitySubjectKey(event.subject),
+        key,
         event.through,
         now,
       );
     }
+    return advanced;
   }
 
   private seenThrough(userId: string): number {
