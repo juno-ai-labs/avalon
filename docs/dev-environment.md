@@ -577,29 +577,24 @@ that forced it: Node sets its default ceiling at roughly half of physical memory
 about 3.5 GB each are the whole machine before the first program is even built.
 That arithmetic is why the fix is structural rather than a larger runner.
 
-**The ceiling lives in the scripts, not the workflows.** The root `lint` and
-`typecheck` scripts in `package.json` set `NODE_OPTIONS=--max-old-space-size=8192`
-themselves, and `pnpm -r` passes it on to every package's `typecheck`. Every
-caller, local or CI, gets the same ceiling, and it replaces any `NODE_OPTIONS`
-the caller had set. It used to sit in each workflow's `env:`, and that is what
-broke: `deploy-api.yml` copied `ci.yml`'s commands but not the env, so on a 7 GB
-runner, where Node's default ceiling is about 2 GB, the `apps/api` typecheck ran
-out of heap on deploy after passing on the pull request. A workflow step that
-calls `pnpm lint` or `pnpm typecheck` needs nothing more; do not add the ceiling
-back to a workflow.
+**The ceiling lives in the root scripts, not the workflows.** The root `lint`
+and `typecheck` scripts in `package.json` put `--max-old-space-size=8192` at the
+front of `NODE_OPTIONS`, and `pnpm -r` passes it on to every package's
+`typecheck`, so every caller, local or any workflow, gets it. Do not add it to a
+workflow's `env:`: a copy there is one the next workflow forgets.
 
-Lowering that ceiling is the remaining lever if a runner still runs out, and it
-cuts both ways: `--max-old-space-size=2048` brought the same run to 1.9 GB in
+Lowering that ceiling is the remaining lever if a runner still runs out. The
+caller's own `NODE_OPTIONS` comes after the script's and the last flag wins, so
+`NODE_OPTIONS=--max-old-space-size=2048 pnpm lint` pulls it. It cuts both ways: `--max-old-space-size=2048` brought the same run to 1.9 GB in
 53s, faster than the 4.0 GB it takes unbounded, because a smaller heap is less
 to mark and compact. Below about 1 GB the run dies; at 1024 MB it survives but
 takes 98s, thrashing the collector.
 
 **That number is not lint's alone.** The same 8192 is on `pnpm typecheck`,
-whose largest program, `apps/api`, dies below about 1 GB of old space here and
-ran out at about 2 GB on a deploy runner. It caps how large any of that may
-grow, so it is the team's to move rather than a measurement's to set, and a
-gate that starts failing on it wants its own measurement first. The Wrangler
-dry-run builds and test lanes carry no ceiling and get Node's default.
+whose largest program, `apps/api`, dies below about 1 GB of old space here. It
+caps how large any of that may grow, so it is the team's to move rather than a
+measurement's to set, and a gate that starts failing on it wants its own
+measurement first.
 
 ## How many test workers to run
 
