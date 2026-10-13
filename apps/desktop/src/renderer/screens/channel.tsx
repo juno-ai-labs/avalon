@@ -274,7 +274,9 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
   // there is the Channel's to accept (`canEdit` on the server).
   const canStart = workspace.currentUser.accessClass !== 'guest' && space.reach !== 'through_channel';
   return <div className="channel-screen">
-    <ChannelHeader members={members.data ?? []} space={space} workspace={workspace} />
+    {/* Keyed so a confirmation still open when the route changes (a leave,
+        a removal, an archive) cannot be continued against the next Channel. */}
+    <ChannelHeader key={space.id} members={members.data ?? []} space={space} workspace={workspace} />
     <div
       className="channel-feed transcript-scroll"
       onScroll={(event) => {
