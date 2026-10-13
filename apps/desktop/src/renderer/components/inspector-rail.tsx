@@ -2,25 +2,11 @@ import { openLink } from '../lib/browser-rail-links';
 import { desktopBridge } from '../lib/platform';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { IconArchive, IconArrowsDiagonal, IconExternalLink, IconHistory, IconRefresh, IconWindowMaximize } from '@tabler/icons-react';
+import { IconArchive, IconArrowLeft, IconArrowsDiagonal, IconChevronRight, IconChevronsRight, IconExternalLink, IconEye, IconFileText, IconHistory, IconLoader2, IconPlus, IconRefresh, IconUserPlus, IconWindowMaximize, IconX } from '@tabler/icons-react';
 import { ActionTile, ActionTiles, LevelRow, TitleMenuHeader, TitleMenuItem, TitleMenuSeparator, TitlePillClose, TitlePillHeader, useTitleMenuNav } from '@rally/ui/components/title-pill';
-import {
-  Archive,
-  ArrowLeft,
-  ChevronRight,
-  ChevronsRight,
-  ExternalLink,
-  FileText,
-  Eye,
-  History,
-  LoaderCircle,
-  Plus,
-  RefreshCcw,
-  UserPlus,
-  X,
-} from 'lucide-react';
 import { classifyAttachmentKind } from '@rally/contracts';
 import { DetailHeaderActionsHost } from './detail-header-actions';
+import type { IconGroupAction } from '@rally/ui/components/icon-group';
 import { useEffect, useRef, useState } from 'react';
 import { formatDateTime, formatSparseRelativeDate } from '../lib/format';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreview, readResourcePreviewText } from '../lib/resource-preview';
@@ -165,7 +151,7 @@ function ResourceCards({
                 <span aria-hidden="true" />
               </label>
             )}
-            <ChevronRight aria-hidden="true" className="resource-row-chevron" size={14} />
+            <IconChevronRight aria-hidden="true" className="resource-row-chevron" size={14} stroke={1.9} />
           </li>
         );
       })}
@@ -209,7 +195,7 @@ function ContextContent({
   return (
     <div className="rail-sections">
       <Section
-        action={<IconButton label="Add participant" onClick={onAddParticipant}><UserPlus size={14} /></IconButton>}
+        action={<IconButton label="Add participant" onClick={onAddParticipant}><IconUserPlus size={14} stroke={1.9} /></IconButton>}
         title="Participants"
       >
         {workstream.participants.length === 0 ? (
@@ -219,7 +205,7 @@ function ContextContent({
         )}
         {workstream.viewers.length > 0 && (
           <div className="viewing-group">
-            <div className="viewing-label"><Eye aria-hidden="true" size={12} /> Viewing now</div>
+            <div className="viewing-label"><IconEye aria-hidden="true" size={12} stroke={1.9} /> Viewing now</div>
             <ul className="rail-list" aria-label="Viewing now">
               {workstream.viewers.map((viewer) => (
                 <li className="person-row is-viewer" key={viewer.id}>
@@ -233,7 +219,7 @@ function ContextContent({
       </Section>
 
       <Section
-        action={<IconButton label="Add resource" onClick={onAddResource}><Plus size={14} /></IconButton>}
+        action={<IconButton label="Add resource" onClick={onAddResource}><IconPlus size={14} stroke={1.9} /></IconButton>}
         title="Resources"
       >
         {sources.length === 0 && artifacts.length === 0 ? (
@@ -431,7 +417,7 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
   if (state.text === undefined) {
     return (
       <p className="inspector-detail-preview-status" role="status">
-        <LoaderCircle aria-hidden="true" className="spin" size={14} /> Loading preview…
+        <IconLoader2 aria-hidden="true" className="spin" size={14} stroke={1.9} /> Loading preview…
       </p>
     );
   }
@@ -520,7 +506,7 @@ function ResourceVersionItems({
   } else if (versions === undefined) {
     body = (
       <DropdownMenu.Item className="menu-item" disabled>
-        <LoaderCircle aria-hidden="true" className="spin" size={14} /> Loading versions…
+        <IconLoader2 aria-hidden="true" className="spin" size={14} stroke={1.9} /> Loading versions…
       </DropdownMenu.Item>
     );
   } else if (versions.length === 0) {
@@ -657,13 +643,13 @@ function InspectorDetail({
         )}
         {sourceActions && (
           <div className="inspector-detail-actions">
-            {resource.canonicalUrl && <Button onClick={() => void openLink(resource.canonicalUrl!)}><ExternalLink size={14} /> Open source</Button>}
+            {resource.canonicalUrl && <Button onClick={() => void openLink(resource.canonicalUrl!)}><IconExternalLink size={14} stroke={1.9} /> Open source</Button>}
             {refreshable && onRefreshResource && (
               <Button
                 disabled={refreshingResourceId === resource.id}
                 onClick={() => onRefreshResource(resource)}
               >
-                <RefreshCcw size={14} /> Refresh from source
+                <IconRefresh size={14} stroke={1.9} /> Refresh from source
               </Button>
             )}
           </div>
@@ -773,16 +759,13 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
     }
   };
 
-  // State rather than a ref, because a detail's actions are portalled into this
-  // element and a ref's assignment does not re-render the detail that is
-  // waiting for it: with a ref the slot stays empty until something else
-  // happens to re-render.
+  // The actions the open detail declares for this header (a live artifact's).
   //
   // Declared above the early return with the other unconditional hooks: a rail
   // that closes renders fewer hooks than the render before it, and React throws
   // rather than closing. Only the resource panel reaches this component today, so the
   // return is never taken, which is exactly how a hook-order defect waits.
-  const [detailActionsTarget, setDetailActionsTarget] = useState<HTMLDivElement | null>(null);
+  const [detailActions, setDetailActions] = useState<readonly IconGroupAction[]>([]);
 
   // Keep a closed rail on screen for exactly as long as its fade lasts.
   if (!props.panel && !railOpen && !props.leaving) return null;
@@ -790,12 +773,13 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const headerTitle = resource?.title ?? (inspector ? 'Details' : railTitle[railVariant]);
 
   const refreshable = Boolean(resource && resource.direction === 'source' && resource.refreshSupported && props.onRefreshResource);
+  const liveSite = Boolean(resource && isSiteResource(resource) && props.siteArtifacts);
   const panelHeader = props.panel && (
     <TitlePillHeader
       className="panel-title-header"
       current={{
         key: props.panel.resourceId,
-        icon: resource ? <ResourceIcon resource={resource} /> : <FileText aria-hidden="true" size={15} />,
+        icon: resource ? <ResourceIcon resource={resource} /> : <IconFileText aria-hidden="true" size={15} stroke={1.9} />,
         title: headerTitle,
         label: `${resource?.direction === 'artifact' ? 'Artifact' : 'Resource'} menu: ${headerTitle}`,
         ...(resource ? { menu: <ResourcePanelMenu
@@ -816,19 +800,23 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         /> } : {}),
       }}
       // A live site has no single file to show full-window; its menu has New window.
-      {...(resource && props.panel.onExpand && !isSiteResource(resource) && resource.contentAvailable ? { actions: [{
-        key: 'expand',
-        label: 'Expand',
-        icon: <IconArrowsDiagonal aria-hidden="true" size={16} stroke={1.9} />,
-        onSelect: () => props.panel?.onExpand?.(resource),
-      }] } : {})}
-      trailing={<>
-        {/* A detail's own actions, such as a live artifact's, ahead of Close.
-            Their tooltips open upward: a live artifact composites a native
-            view under this strip that paints above all renderer DOM. */}
-        <div className="rail-header-detail-actions" ref={setDetailActionsTarget} />
-        <TitlePillClose label="Close panel" onClose={closeRail} />
-      </>}
+      // The detail's own actions, such as a live artifact's, join Expand in
+      // the header's group, so they fold into "⋯" with it.
+      actions={[
+        ...detailActions,
+        ...(resource && props.panel.onExpand && !isSiteResource(resource) && resource.contentAvailable ? [{
+          key: 'expand',
+          label: 'Expand',
+          icon: <IconArrowsDiagonal aria-hidden="true" size={16} stroke={1.9} />,
+          onSelect: () => props.panel?.onExpand?.(resource),
+        }] : []),
+      ]}
+      // A live site composites a native view under this header that paints
+      // above all renderer DOM, so a label hanging down lands behind the page.
+      // Upward does not fit: the header sits at the window's top and Radix
+      // flips it back down. Beside the button stays inside the header.
+      tooltipSide={liveSite ? 'left' : undefined}
+      trailing={<TitlePillClose label="Close panel" onClose={closeRail} tooltipSide={liveSite ? 'left' : undefined} />}
     />
   );
 
@@ -842,7 +830,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
                 label="Back to context"
                 onClick={() => inspect(null)}
               >
-                <ArrowLeft size={15} />
+                <IconArrowLeft size={15} stroke={1.9} />
               </IconButton>
             )}
             <h2 title={headerTitle}>{headerTitle}</h2>
@@ -857,7 +845,19 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
               that view paints above all renderer DOM, so a label hanging
               downward is behind the page with no `z-index` able to reach it.
             */}
-            <div className="rail-header-detail-actions" ref={setDetailActionsTarget} />
+            {detailActions.map((action) => (
+              <IconButton
+                aria-pressed={action.pressed}
+                className={action.pressed === undefined ? undefined : 'icon-button-toggle'}
+                disabled={action.disabled}
+                key={action.key}
+                label={action.label}
+                onClick={action.onSelect}
+                tooltipSide="top"
+              >
+                {action.icon}
+              </IconButton>
+            ))}
             {resource && (
               <>
                 {resource.direction === 'artifact' && !isSiteResource(resource) && (
@@ -873,7 +873,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger asChild>
                     <IconButton label="Versions" tooltipSide="top">
-                      <History size={15} />
+                      <IconHistory size={15} stroke={1.9} />
                     </IconButton>
                   </DropdownMenu.Trigger>
                   <DropdownMenu.Portal>
@@ -896,16 +896,16 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
                       setArchiveTarget(resource);
                     }}
                   >
-                    <Archive size={15} />
+                    <IconArchive size={15} stroke={1.9} />
                   </IconButton>
                 )}
               </>
             )}
-            <IconButton label={props.panel ? 'Close panel' : 'Close inspector'} onClick={closeRail} ref={closeInspectorRef} tooltipSide="top">{props.panel ? <X size={18} /> : <ChevronsRight size={16} />}</IconButton>
+            <IconButton label={props.panel ? 'Close panel' : 'Close inspector'} onClick={closeRail} ref={closeInspectorRef} tooltipSide="top">{props.panel ? <IconX size={18} stroke={1.9} /> : <IconChevronsRight size={16} stroke={1.9} />}</IconButton>
           </div>
         </header>
       </>}
-      <DetailHeaderActionsHost target={detailActionsTarget}>
+      <DetailHeaderActionsHost onActions={setDetailActions}>
       <div className="rail-scroll">
         {popOutFailed && <div className="rail-inline-error"><InlineError>
           The artifact couldn’t be opened in a new window.

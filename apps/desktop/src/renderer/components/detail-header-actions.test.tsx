@@ -1,35 +1,46 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
+import type { IconGroupAction } from '@rally/ui/components/icon-group';
 import React from 'react';
 import { describe, expect, it } from 'vitest';
 
-import { DetailHeaderActions, DetailHeaderActionsHost } from './detail-header-actions';
+import { DetailHeaderActionsHost, useDetailHeaderActions } from './detail-header-actions';
+
+function Detail({ label }: { label: string }): React.JSX.Element {
+  const actions = React.useMemo((): IconGroupAction[] => [{ key: 'pop', label, icon: null, onSelect: () => undefined }], [label]);
+  useDetailHeaderActions(actions);
+  return <p>body</p>;
+}
 
 function Host({ children }: { children: React.ReactNode }): React.JSX.Element {
-  const [target, setTarget] = React.useState<HTMLDivElement | null>(null);
+  const [actions, setActions] = React.useState<readonly IconGroupAction[]>([]);
   return (
     <>
-      <div data-testid="header" ref={setTarget} />
-      <div data-testid="body">
-        <DetailHeaderActionsHost target={target}>{children}</DetailHeaderActionsHost>
-      </div>
+      <output data-testid="header">{actions.map((action) => action.label).join(',')}</output>
+      <DetailHeaderActionsHost onActions={setActions}>{children}</DetailHeaderActionsHost>
     </>
   );
 }
 
 describe('a detail contributing actions to its host header', () => {
-  it('draws them in the header rather than where they were written', () => {
-    // Also the reason the host holds its target in state: the element does not
-    // exist on the render that declares it, so a detail that read a ref would
-    // find nothing and never be asked again.
-    render(<Host><DetailHeaderActions><button type="button">Pop out</button></DetailHeaderActions></Host>);
+  it('hands them to the host, and hands over new ones when they change', () => {
+    const { rerender } = render(<Host><Detail label="Pop out" /></Host>);
+    expect(screen.getByTestId('header')).toHaveTextContent('Pop out');
 
-    expect(within(screen.getByTestId('header')).getByRole('button', { name: 'Pop out' })).toBeInTheDocument();
-    expect(within(screen.getByTestId('body')).queryByRole('button', { name: 'Pop out' })).not.toBeInTheDocument();
+    rerender(<Host><Detail label="Copied" /></Host>);
+    expect(screen.getByTestId('header')).toHaveTextContent('Copied');
   });
 
-  it('draws nothing at all where no host offers a slot', () => {
-    render(<DetailHeaderActions><button type="button">Pop out</button></DetailHeaderActions>);
+  it('takes them back when the detail goes', () => {
+    // Otherwise the next resource opened in the panel shows the last one's buttons.
+    const { rerender } = render(<Host><Detail label="Pop out" /></Host>);
+    rerender(<Host>{null}</Host>);
 
-    expect(screen.queryByRole('button', { name: 'Pop out' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('header')).toBeEmptyDOMElement();
+  });
+
+  it('declares to nobody where no host listens', () => {
+    render(<Detail label="Pop out" />);
+
+    expect(screen.getByText('body')).toBeInTheDocument();
   });
 });
