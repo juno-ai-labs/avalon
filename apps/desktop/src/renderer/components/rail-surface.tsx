@@ -61,6 +61,8 @@ interface RailSurfaceProps {
   surfaceRef?: RefObject<HTMLElement | null>;
   /** True while this panel is fading out over the one that replaced it. */
   leaving?: boolean;
+  /** Keys pressed inside the panel, the surface itself included; not in its portalled menus. */
+  onKeyDown?: React.KeyboardEventHandler<HTMLElement>;
   dropTarget?: {
     dragging: boolean;
     onDragEnter: React.DragEventHandler<HTMLElement>;
@@ -84,6 +86,7 @@ export function RailSurface({
   onResize,
   onClose,
   leaving = false,
+  onKeyDown,
   dropTarget,
   surfaceRef: hostRef,
   children,
@@ -120,11 +123,12 @@ export function RailSurface({
         onDragOver={dropTarget?.onDragOver}
         onDrop={dropTarget?.onDrop}
         onKeyDown={(event) => {
-          // Portalled controls owned by the panel can still bubble through the
-          // React tree to here. Only Escapes raised inside the visible sidebar
-          // close it.
-          if (event.key !== 'Escape' || !event.currentTarget.contains(event.target as Node)) return;
-          onClose();
+          // Portalled controls owned by the panel, such as its menus, can
+          // still bubble through the React tree to here. Only keys raised
+          // inside the visible sidebar reach the panel or close it.
+          if (!event.currentTarget.contains(event.target as Node)) return;
+          onKeyDown?.(event);
+          if (event.key === 'Escape') onClose();
         }}
         ref={surfaceRef}
         tabIndex={-1}

@@ -679,6 +679,30 @@ activation event without losing the warning; later clears replace that retained 
 
 ## Changelog
 
+### 2026-10-13 — Every artifact and attachment opens in the right panel
+
+**What changed:** Every artifact and attachment a conversation opens (a
+message or composer attachment, a citation's file, a prior version, a resource
+with its actions) lands in its right panel, replacing both lightboxes and the
+document-only sidebar. The panel heads itself like a thread pane, its actions in
+the title pill's menu, with an Expand that shows the item full-window over it.
+Only a resource panel is restored after relaunch; an attachment is a loader
+closure with nothing to save.
+
+**Why:** The navigation redesign puts anything opened from a conversation in
+the pane beside it (the pane stack), so a person reads it next to the thread
+rather than over it. Two modals and a third reading mode were three ways to
+show one thing.
+
+**Considered and rejected:** Opening a resource as a plain file preview and
+dropping its actions, which would lose versions and archive with no other
+route to them. Keeping the gallery's window-wide arrow keys: in a panel the
+composer sits beside it, so the arrows act only while focus is in the panel.
+
+**Consequences:** The lightbox remains for surfaces with no conversation panel:
+search results and the Channel composer. A new way to open something from a
+conversation goes through `openPanel`, not a dialog.
+
 ### 2026-10-06 — A tip opens on focus only after a key
 
 **What changed:** `lib/window-activation.ts` records whether the last deliberate

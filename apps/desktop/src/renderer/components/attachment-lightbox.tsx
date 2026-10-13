@@ -68,10 +68,12 @@ function GalleryThumbnail({ preview, active, activeSrc, index, onSelect }: {
   </button>;
 }
 
-export function AttachmentLightbox({ preview, onClose }: {
-  preview: AttachmentPreview | null;
-  onClose: () => void;
-}): React.JSX.Element | null {
+/**
+ * What one preview shows, shared by the lightbox and the conversation's right
+ * panel: the gallery position, the loaded bytes for the active item, and how to
+ * render them. Each host keeps only its own chrome.
+ */
+export function useAttachmentView(preview: AttachmentPreview | null) {
   const gallery = useMemo(() => preview?.gallery?.length ? preview.gallery : preview ? [preview] : [], [preview]);
   const [selection, setSelection] = useState({ preview, index: preview?.galleryIndex ?? 0 });
   if (selection.preview !== preview) {
@@ -81,31 +83,18 @@ export function AttachmentLightbox({ preview, onClose }: {
   const setActiveIndex = useCallback((update: (index: number) => number): void => {
     setSelection((current) => ({ ...current, index: update(current.index) }));
   }, []);
+  const step = useCallback((delta: number): void => {
+    setActiveIndex((index) => (index + delta + gallery.length) % gallery.length);
+  }, [gallery.length, setActiveIndex]);
   const active = gallery[activeIndex] ?? preview;
   const [loaded, setLoaded] = useState<LoadedPreview | null>(null);
-  const [expanded, setExpanded] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const mode = active ? previewMode(active) : null;
 
   useEffect(() => {
     setLoaded(null);
-    setExpanded(false);
     setDownloadError(null);
   }, [active]);
-
-  useEffect(() => {
-    if (!preview) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLElement && event.target.closest('audio, video, input, textarea')) return;
-      if (gallery.length > 1 && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) event.preventDefault();
-      if (gallery.length > 1 && event.key === 'ArrowLeft') setActiveIndex((index) => (index - 1 + gallery.length) % gallery.length);
-      if (gallery.length > 1 && event.key === 'ArrowRight') setActiveIndex((index) => (index + 1) % gallery.length);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [gallery.length, preview, setActiveIndex]);
 
   useEffect(() => {
     if (!active || active.src || !active.loadContent || !mode) return;
@@ -133,12 +122,88 @@ export function AttachmentLightbox({ preview, onClose }: {
     };
   }, [active, mode]);
 
+  const current = active && loaded?.preview === active ? loaded : null;
+  const src = active?.src ?? current?.src;
+  const error = current?.error ?? (active && !src && !active.loadContent ? 'This resource has no preview available.' : undefined);
+  const download = useCallback((): void => {
+    if (!active) return;
+    setDownloadError(null);
+    void downloadPreview(active, src).catch(() => setDownloadError('Download failed. Please try again.'));
+  }, [active, src]);
+  return {
+    gallery,
+    activeIndex,
+    setActiveIndex,
+    step,
+    active,
+    mode,
+    src,
+    text: current?.text,
+    error,
+    downloadError,
+    download,
+    loading: !src && current?.text === undefined && !error,
+    isMedia: mode === 'image' || mode === 'video',
+  };
+}
+
+export type AttachmentView = ReturnType<typeof useAttachmentView>;
+
+/** The rendered content of the active preview, with its loading and error lines. */
+export function AttachmentViewBody({ view }: { view: AttachmentView }): React.JSX.Element | null {
+  const { active, mode, src, text, error, downloadError, loading } = view;
+  if (!active || !mode) return null;
+  return <>
+    {loading && <div className="attachment-lightbox-status" role="status"><LoaderCircle aria-hidden="true" className="spin" size={20} /> Preparing preview…</div>}
+    {(error || downloadError) && <div className="attachment-lightbox-status is-error" role="alert">{error ?? downloadError}</div>}
+    {mode === 'image' && src && <img alt={active.name} draggable={false} src={src} />}
+    {mode === 'video' && src && <video aria-label={`Video: ${active.name}`} controls src={src} />}
+    {mode === 'audio' && src && <audio aria-label={`Audio: ${active.name}`} controls src={src} />}
+    {mode === 'html' && text !== undefined && <iframe sandbox="" srcDoc={isolatedHtml(text)} title={`Preview of ${active.name}`} />}
+    {mode === 'markdown' && text !== undefined && (
+      <article className="attachment-lightbox-document"><MarkdownBody verbatim>{text}</MarkdownBody></article>
+    )}
+    {mode === 'text' && text !== undefined && <pre className="attachment-lightbox-text">{text}</pre>}
+  </>;
+}
+
+/** Thumbnails for a gallery of more than one item; nothing for a single one. */
+export function AttachmentGalleryThumbnails({ view }: { view: AttachmentView }): React.JSX.Element | null {
+  if (view.gallery.length < 2) return null;
+  return <div className="attachment-gallery-thumbnails" aria-label="Attachment gallery">
+    {view.gallery.map((item, index) => <GalleryThumbnail key={index} preview={item} index={index}
+      active={index === view.activeIndex} activeSrc={view.src} onSelect={() => view.setActiveIndex(() => index)} />)}
+  </div>;
+}
+
+export function AttachmentLightbox({ preview, onClose }: {
+  preview: AttachmentPreview | null;
+  onClose: () => void;
+}): React.JSX.Element | null {
+  const view = useAttachmentView(preview);
+  const { gallery, active, mode, src, error, step, isMedia } = view;
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [active]);
+
+  useEffect(() => {
+    if (!preview) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.target instanceof HTMLElement && event.target.closest('audio, video, input, textarea')) return;
+      if (gallery.length > 1 && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) event.preventDefault();
+      if (gallery.length > 1 && event.key === 'ArrowLeft') step(-1);
+      if (gallery.length > 1 && event.key === 'ArrowRight') step(1);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [gallery.length, preview, step]);
+
   if (!preview || !active || !mode) return null;
-  const current = loaded?.preview === active ? loaded : null;
-  const src = active.src ?? current?.src;
-  const error = current?.error ?? (!src && !active.loadContent ? 'This resource has no preview available.' : undefined);
-  const loading = !src && current?.text === undefined && !error;
-  const isMedia = mode === 'image' || mode === 'video';
+  const loading = view.loading;
 
   return (
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
@@ -186,10 +251,7 @@ export function AttachmentLightbox({ preview, onClose }: {
               )}
               {!error && (src || active.loadContent) && (
                 <Tip label={`Download ${active.name}`}>
-                  <button aria-label={`Download ${active.name}`} className="attachment-lightbox-action" onClick={() => {
-                    setDownloadError(null);
-                    void downloadPreview(active, src).catch(() => setDownloadError('Download failed. Please try again.'));
-                  }} type="button"><Download size={18} /></button>
+                  <button aria-label={`Download ${active.name}`} className="attachment-lightbox-action" onClick={view.download} type="button"><Download size={18} /></button>
                 </Tip>
               )}
               <Tip label="Close preview">
@@ -202,7 +264,7 @@ export function AttachmentLightbox({ preview, onClose }: {
           {isMedia && (
             <>
               <Tip label="Download attachment">
-                <button aria-label="Download attachment" className="attachment-media-download attachment-lightbox-action" onClick={() => { void downloadPreview(active, src).catch(() => setDownloadError('Download failed. Please try again.')); }} type="button"><Download size={18} /></button>
+                <button aria-label="Download attachment" className="attachment-media-download attachment-lightbox-action" onClick={view.download} type="button"><Download size={18} /></button>
               </Tip>
               <Tip label="Close preview">
                 <Dialog.Close asChild><button aria-label="Close preview" className="attachment-media-close attachment-lightbox-action" type="button"><X size={20} /></button></Dialog.Close>
@@ -225,10 +287,10 @@ export function AttachmentLightbox({ preview, onClose }: {
               {gallery.length > 1 && (
                 <>
                   <Tip label="Previous attachment">
-                    <button aria-label="Previous attachment" className="attachment-gallery-arrow is-previous" onClick={() => setActiveIndex((index) => (index - 1 + gallery.length) % gallery.length)} type="button"><ChevronLeft size={25} /></button>
+                    <button aria-label="Previous attachment" className="attachment-gallery-arrow is-previous" onClick={() => step(-1)} type="button"><ChevronLeft size={25} /></button>
                   </Tip>
                   <Tip label="Next attachment">
-                    <button aria-label="Next attachment" className="attachment-gallery-arrow is-next" onClick={() => setActiveIndex((index) => (index + 1) % gallery.length)} type="button"><ChevronRight size={25} /></button>
+                    <button aria-label="Next attachment" className="attachment-gallery-arrow is-next" onClick={() => step(1)} type="button"><ChevronRight size={25} /></button>
                   </Tip>
                 </>
               )}
@@ -238,23 +300,11 @@ export function AttachmentLightbox({ preview, onClose }: {
             className={`attachment-lightbox-content is-${mode}${expanded ? ' is-expanded' : ''}${gallery.length > 1 ? ' has-gallery' : ''}`}
             onMouseDown={(event) => event.target === event.currentTarget && onClose()}
           >
-            {loading && <div className="attachment-lightbox-status" role="status"><LoaderCircle aria-hidden="true" className="spin" size={20} /> Preparing preview…</div>}
-            {(error || downloadError) && <div className="attachment-lightbox-status is-error" role="alert">{error ?? downloadError}</div>}
-            {mode === 'image' && src && <img alt={active.name} draggable={false} src={src} />}
-            {mode === 'video' && src && <video aria-label={`Video: ${active.name}`} controls src={src} />}
-            {mode === 'audio' && src && <audio aria-label={`Audio: ${active.name}`} controls src={src} />}
-            {mode === 'html' && current?.text !== undefined && <iframe sandbox="" srcDoc={isolatedHtml(current.text)} title={`Preview of ${active.name}`} />}
-            {mode === 'markdown' && current?.text !== undefined && (
-              <article className="attachment-lightbox-document"><MarkdownBody verbatim>{current.text}</MarkdownBody></article>
-            )}
-            {mode === 'text' && current?.text !== undefined && <pre className="attachment-lightbox-text">{current.text}</pre>}
+            <AttachmentViewBody view={view} />
           </div>
           {isMedia && gallery.length > 1 && <footer className="attachment-gallery-footer">
-            <span className="attachment-gallery-caption" aria-live="polite">{active.name}{gallery.length > 1 ? ` · ${activeIndex + 1} / ${gallery.length}` : ''}</span>
-            {gallery.length > 1 && <div className="attachment-gallery-thumbnails" aria-label="Attachment gallery">
-              {gallery.map((item, index) => <GalleryThumbnail key={index} preview={item} index={index}
-                active={index === activeIndex} activeSrc={src} onSelect={() => setActiveIndex(() => index)} />)}
-            </div>}
+            <span className="attachment-gallery-caption" aria-live="polite">{active.name} · {view.activeIndex + 1} / {gallery.length}</span>
+            <AttachmentGalleryThumbnails view={view} />
           </footer>}
         </Dialog.Content>
       </Dialog.Portal>
