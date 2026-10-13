@@ -335,6 +335,13 @@ unfolded, centred layout rather than from where things sit, so folding or
 moving the pill never undoes the decision; read live, the distance would grow
 as soon as the row folded and the header would flip back.
 
+A detail's own actions (a live site's Stored data, New window, Copy link and
+Open in browser) reach the header through the `DetailHeaderActions` slot, which
+sits inside that `IconGroup`. The slot adds no box there, and its buttons take
+the same round look as `TitlePillAction`, so they line up with Expand and Close
+without the detail knowing which header holds it. They always stay as buttons:
+only the group's `actions` fold.
+
 ### Web links
 
 `useBrowserRailLinks` registers one host per surface, with that surface's
@@ -406,6 +413,23 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-13 — A detail's header actions join the pane header's group
+
+**What changed:** Buttons a detail portals into a pane header (a live site's
+four) are round and spaced like the header's own, instead of flat squares 2px
+apart.
+
+**Why:** The product owner flagged the live artifact's header icons as not
+matching the standard icon group.
+
+**Considered and rejected:** Passing `title-pill-action` from each detail; the
+detail cannot tell a pane header from the older rail header, so the look is
+keyed on where the slot sits instead.
+
+**Consequences:** Any detail that fills the slot gets the pane look for free.
+A button's own state classes (a pressed toggle, danger) still win, because the
+slot rule is no stronger than `.icon-button`.
 
 ### 2026-10-13 — The right slot holds every opened item, with a pane header
 
