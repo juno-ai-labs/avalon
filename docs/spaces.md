@@ -44,7 +44,7 @@ them; the product design is in
 | `apps/api/src/durable-objects/workspace-space-default-publication.ts` | The Space's two arguments to it: default targets, and the cutover's next page of work. |
 | `apps/api/src/services/space-service.ts` | Creation, presentation, audience, membership, archive, restore, defaults, and the resume of an interrupted operation. |
 | `apps/api/src/services/channel-access-service.ts` | A Channel's own scope and readers: the Manage access read, removing a direct reader, and the narrowing announcement a Channel's scope change publishes. |
-| `apps/api/src/services/space-bootstrap-service.ts` | The one-time cutover, the fallback that opens a new Organization's General when `initializeWorkspace` could not, and the placement the two creation paths outside the coordinator take for themselves. A new Organization's General is normally made by `initializeWorkspace` itself (see [General](#general)). |
+| `apps/api/src/services/space-bootstrap-service.ts` | `seatOrganizationMember`, which puts a member who joins in General and gives them their Personal Channel (see [The Personal Channel](#the-personal-channel)); the one-time cutover, the fallback that opens a new Organization's General when `initializeWorkspace` could not, and the placement the two creation paths outside the coordinator take for themselves. A new Organization's General is normally made by `initializeWorkspace` itself (see [General](#general)). |
 | `apps/api/src/services/workstream-object-creation-service.ts` | Where a Channel is born into its Spaces. [`workstream-creation.md`](workstream-creation.md) owns it. |
 | `apps/api/src/routes/spaces.ts` | `/spaces` mutations and the two paginated reads. |
 | `apps/api/src/routes/workspace.ts` | `PUT /workspace/pinned-order`, the old desktop's Pinned order, kept for older desktops; pins themselves are [`workstream-pinning.md`](workstream-pinning.md)'s. |
@@ -431,6 +431,60 @@ logged as `space_general_open_failed` (a refusal as
 fails an Organization whose rows are already committed. An
 Organization whose cutover is already complete answers `true` without any of
 this, so activating one costs the one call and no D1 read for Spaces.
+
+### The Personal Channel
+
+Every active member who is not a guest is a participant of General and owns
+one **Personal Channel**: a Space named "Your Personal Channel" whose scope is
+`individual`. Nobody chooses that scope. `CreateSpaceRequest` and
+`UpdateSpaceAudienceRequest` take `AudienceScopeSchema` (`personal` or
+`workspace`), and only the seating below writes `individual`.
+
+**What the scope means.** The listing rules treat any scope but `workspace` as
+participants-only, so a Personal Channel is listed to its owner alone, an
+Organization owner included; somebody who can read a thread placed in it
+reaches it `through_channel`, as for any private Space. Its audience never
+changes: `noteSpaceAudience` refuses it `space_protected`, so nobody is added,
+it is never made public, and its owner cannot leave it. `archive` refuses it
+the same way. Its owner may rename and recolour it. Its hosted parent's
+`parent_metadata.scope` is `personal`, the thread vocabulary for "its
+participants". `spaces_individual_owner_idx` holds one per member.
+
+**When it is made.** Two paths, both idempotent:
+
+- **Creating an Organization.** `createOwnedWorkspace` writes General's anchor
+  and the creator's Personal Channel's in the batch that creates the
+  Organization, and `initializeWorkspace` reserves both in the same object
+  call. The creator is General's creator, so already its participant.
+- **Anyone becoming an active member** (accepting an invitation, a guest
+  promoted, the creator's own first relationship event). The relationship
+  change handler (`applyWorkspaceRelationshipChange`) calls
+  `seatOrganizationMember` last. WorkspaceDO checks its own copy of the
+  relationship, seats the person in General and in their Personal Channel if it
+  exists, and answers `absent` when it does not; the service then writes the D1
+  anchor and asks again with the generation, as `ensureGeneral` does. A failure
+  throws, so the relationship delivery retries; every step is fenced against
+  applying twice.
+
+The Personal Channel's id is `stableUuid(["personal_channel", workspaceId,
+userId])`, so the creation path and the relationship event name the same
+Space. A member who leaves loses their viewer rows (`applyMemberStatus`); the
+Space stays, and seating them again on return makes them its participant
+again.
+
+**Older desktops.** A desktop before client contract 5
+(`INDIVIDUAL_SPACE_CLIENT_CONTRACT`) parses Space summaries strictly and would
+drop every snapshot holding `individual`. The workspace socket ticket records
+whether the build reads it (`ind`), the edge forwards that as
+`x-rally-socket-reads-individual-spaces`, and `spacesFor` and the `/spaces`
+routes serve such a build `personal` through `spaceScopeForClient`. A native
+client that declares no contract is served `individual`, as
+`requireCurrentClientContract` admits it.
+
+**Not done:** Members of Organizations that existed before this change are not
+backfilled. They get General and a Personal Channel at their next relationship
+change, or never. A backfill would be one `seatOrganizationMember` per active
+member, run once.
 
 ### The cutover
 
@@ -1816,6 +1870,38 @@ whoever reads it afterwards; `space_default_delivery_failed` does the same for a
 default target.
 
 ## Changelog
+
+### 2026-10-13: Every member gets General and a Personal Channel
+
+**What changed:** `SpaceScopeSchema` gains `individual`. A new Organization
+reserves its creator's Personal Channel beside General in `initializeWorkspace`,
+and every relationship change that leaves somebody an active member runs
+`seatOrganizationMember`, which seats them in General and creates their
+Personal Channel. WorkspaceDO migration 101 rebuilds `spaces` to widen its
+scope check and adds `spaces_individual_owner_idx`. A Space's own
+`directory_common` projection no longer writes `spaces.scope`. Client contract
+5 marks a build that reads `individual`; older desktops are served `personal`.
+
+**Why:** Product asked for a public General every member is in, and a private
+channel per member that is theirs alone. A new scope rather than a
+`personal` Space with one participant, because what makes it different is
+that its audience can never change, and that has to be readable from the row
+rather than inferred from a participant count.
+
+**Considered and rejected:** A second `system_role`. The unique index on
+`system_role` allows one row per role, so General's index would have needed a
+rebuild as well, and the role would not have said who may see it. Storing
+`personal` with an owner column, which leaves a scope the product treats as
+its own kind unnamed in the schema. Raising `MINIMUM_SERVED_CLIENT_CONTRACT`
+so old desktops never see the value, which would lock every not-yet-updated
+build out of every Organization.
+
+**Consequences:** The projection change also stops a private Space turning
+public when its parent next publishes; `applyAudience` and the reservation are
+the only writers of scope. Anything that compares `scope = 'personal'` to mean
+"private" must use `scope <> 'workspace'`. A change to General's or a Personal
+Channel's creation has to hold for both paths. Existing members are not
+backfilled (see [The Personal Channel](#the-personal-channel)).
 
 ### 2026-10-13: Channel stats count the new rows
 
