@@ -250,29 +250,41 @@ Nothing here changes what a digest reads.
 rule is plain data:
 
 ```
-rule    := { read: role, through: ordinal | ordinal[] }
+rule    := { read: role, through: ordinal | ordinal[], since?: time }
          | { any: rule[] } | { all: rule[] }
 role    := "conversation" | "placement"
-ordinal := "opened" | "message" | "latest" | "placement"
+ordinal := "opened" | "message" | "placement"
+time    := "occurred"
 ```
 
 `read` holds when some subject bound to the role has a waterline at or above
 the ordinal; a list of ordinals is a fallback chain, the first one the subject
-binds being the one compared. The feed binds each row's roles: `conversation`
-is the breakout the row names, else its thread, knowing `opened` (0),
-`latest`, and `message` when the event recorded one; `placement` is each
-Channel the thread sits in, at the placement's ordinal. A role is bound, and
-its read made, only for rows whose rule reads it. The table:
+binds being the one compared. `since` also asks that the subject was read at
+or after the row happened: a waterline keeps how far and when, so an open from
+before an add cannot clear it. The feed binds each row's roles
+(`activityRowFacts`): `conversation` is the breakout the row names, else its
+thread, knowing `opened` (0), and `message` when the event recorded one;
+`placement` is each Channel the thread has been placed in, removed placements
+included, at the placement's ordinal. A role is bound, and its read made, only
+for rows whose rule reads it.
+
+**A clause turns true and stays true.** A waterline and its read time only
+move forward, a bound ordinal does not move, and a subject once bound stays
+bound, so a cleared row stays cleared. A new role or ordinal has to keep that:
+the newest message, which moves, was rejected as a `run_finished` target for
+exactly this. The one exception is a thread placed in a Channel again, whose
+placement takes a fresh ordinal. The table:
 
 | Item | Rule |
 | --- | --- |
 | `mentioned` | `{ read: "conversation", through: ["message", "opened"] }`: through its message; an event from before messages carried their ordinal falls back to an open |
-| `added`, `breakout_started` | `{ read: "conversation", through: "opened" }` |
+| `added` | `{ read: "conversation", through: "opened", since: "occurred" }`: opened after being added |
+| `breakout_started` | `{ read: "conversation", through: "opened" }` |
 | `thread_started` | `{ any: [{ read: "conversation", through: "opened" }, { read: "placement", through: "placement" }] }` |
-| `run_finished` | `{ read: "conversation", through: "latest" }` |
+| `run_finished` | `{ read: "conversation", through: "opened", since: "occurred" }`: opened after the run finished |
 
 A new item kind is one row in `ACTIVITY_CLEAR_RULES`. A new way to clear one is
-a new role or ordinal bound in `activityBindings`, then named in a rule; the
+a new role, ordinal or time bound in `activityRowFacts`, then named in a rule; the
 evaluator (`cleared`) does not change.
 
 The desktop sends an open when a conversation's detail loads, and a `read`
@@ -862,15 +874,16 @@ from anything but a read acknowledgement. A per-item read table: it records
 the same fact once per item, and an item not yet on a page could not be
 settled.
 
-**Consequences:** A `run_finished` row's target is the conversation's newest
-message, not the finish's own ordinal, because the directory does not keep the
-latter; a message after the finish makes the row unread again until it is
-read. Projecting a completion ordinal would fix that. An event names any
+**Consequences:** A cleared row stays cleared: every clause compares against
+something that only moves forward. A `run_finished` row is cleared by an open
+after the finish rather than by reading to the newest message, which moved
+with every later message and made a cleared row unread again; the directory
+keeps no ordinal for the finish itself. An event names any
 subject without a listing check: the waterline is the reader's alone and the
 feed lists only what they may see. A new event kind goes in
 `ActivityEventSchema` and `WorkspaceActivityFeed.record`; a new item kind
-needs a rule in `ACTIVITY_CLEAR_RULES`, and a new way to clear one a role or
-ordinal bound in `activityBindings`; the evaluator stays as it is. A per-kind
+needs a rule in `ACTIVITY_CLEAR_RULES`, and a new way to clear one a role,
+ordinal or time bound in `activityRowFacts`; the evaluator stays as it is. A per-kind
 `switch` was rejected because each new kind or condition grew another branch
 that only its author could read as a rule.
 

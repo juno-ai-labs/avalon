@@ -2372,9 +2372,13 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
-   * Each of these threads' active placements in a Channel this viewer may
-   * list, with the ordinal the placement took (migration 98). The Activity
-   * tab settles a thread's start by a read of the Channel past it.
+   * Each placement these threads have had in a Channel this viewer may list,
+   * with the ordinal the placement took (migration 98), whether or not it is
+   * still active. The Activity tab clears a thread's start by a read of the
+   * Channel past it, and a cleared start has to stay cleared when the thread
+   * later moves out. A placement made again takes a fresh, higher ordinal on
+   * the same row, which is the one way a start cleared through that Channel
+   * reads unread again until the Channel is read past it.
    */
   placementOrdinals(
     viewer: Viewer,
@@ -2395,8 +2399,7 @@ export class WorkspaceSpaceStorage {
            LEFT JOIN space_viewers viewer
              ON viewer.space_id = space.space_id
             AND viewer.user_id = ? AND viewer.is_participant = 1
-          WHERE membership.state = 'active' AND space.archived_at IS NULL
-            AND membership.attention_ordinal IS NOT NULL
+          WHERE membership.attention_ordinal IS NOT NULL
             AND ${listed.sql}
             AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})`,
         viewer.userId,
