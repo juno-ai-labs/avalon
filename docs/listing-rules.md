@@ -49,14 +49,8 @@ In product words a Space is a **Channel** and a stored Channel is a **thread**
 ([the navigation PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)).
 The rules keep the storage words.
 
-**One exception: the Channel feed's locked rows.** A Channel's feed
-(`feedPage` in `workspace-space-storage.ts`) lists every thread placed in it to
-a member who may see the Channel, and a thread that member may not open comes
-back as a locked row: its id and when it was placed, and nothing else — no
-title, summary, participants or activity. It is the one place a thread is named
-to somebody it is not listed to, by product decision, so a Channel's members
-see the whole shape of its work and can ask for access to a piece of it. A
-guest gets no locked rows.
+A Channel's feed (`feedPage` in `workspace-space-storage.ts`) lists only the
+threads its viewer may open, by `mainOpenableSql`.
 
 A call site passes a `Viewer` (`userId` and `accessClass`) and never branches
 on the access class itself. The socket pins the access class on its attachment
@@ -119,17 +113,23 @@ everyone's, because each answers only for what the person may already reach.
   its name and none of Main".
 - **Reach never flows down.** Seeing a Space or a Channel is never a reason to
   list what is in it. Breaking this lists private Breakouts to everyone in
-  their Channel. Guard: `space-conversation-page.test.ts`. The feed's locked
-  rows are the one exception, and they carry an id and a time only.
+  their Channel. Guard: `space-conversation-page.test.ts`. The Channel feed
+  follows it too: it lists only threads its reader may open.
 - **A private Space reaches nobody through a thread.** If the Space rule
   admitted a private Space through a thread in it, every reader of one thread
   would learn a private Channel's name. Guard:
   `channels-threads-navigation.test.ts` "given a Channel made private, when a
   member who is not in it reads it, then it does not exist for them even
   through a thread in it".
-- **A locked row names nothing.** Guard: `channels-threads-navigation.test.ts`
-  "given a private thread in a Channel, when a member who cannot open it reads
-  the feed, then it is a locked row with nothing but its id".
+- **The feed names no thread its reader may not open.** Two layers hold it:
+  `feedPage`'s filter, and `conversationRows`, which drops a thread the viewer
+  may not open, so breaking one alone does not show it. Guard:
+  `channels-threads-navigation.test.ts` "given a private thread in a Channel,
+  when a member who cannot open it reads the feed, then it is not listed".
+- **A hidden placement is not news.** A private thread placed since a member
+  last read a Channel moves its latest number but leaves it read. Guard: the
+  same file, "given a private thread placed since a member last read a
+  Channel, when they read the stats, then the Channel is not unread for them".
 
 ## Boundary
 
@@ -167,6 +167,28 @@ Each rule has a test that fails when it is broken: Breakout reach
 (`channel-rails`). The client half is `app-shell.test.tsx`.
 
 ## Changelog
+
+### 2026-10-13 — The Channel feed no longer shows locked threads
+
+**What changed:** A private thread a member is not in is left out of the
+Channel feed, as it already was for a guest, instead of showing as a locked
+"Private thread" row with a **Request access** chip. It no longer counts
+toward the Channel's new-thread count, and a Channel whose only new
+placements are hidden from this member no longer reads as unread.
+
+**Why:** The product owner reversed the 2026-10-10 call: a Channel's members
+should not see that private work exists in it. That also ends the one
+exception to the listing ladder.
+
+**Considered and rejected:** No alternative was recorded with the request.
+
+**Consequences:** The feed contract has one row kind; `kind: "thread"` stays
+on the wire because desktops shipped since 1.563 parse the row by it, and can
+go once those builds no longer reach the API. The
+unread dot is gated on the visible count rather than the Channel's own
+waterline, because the waterline still moves for every placement.
+
+PR [#1226](https://github.com/juno-ai-labs/avalon/pull/1226).
 
 ### 2026-10-10 — A private Space is listed to its participants alone, and the feed names locked threads
 

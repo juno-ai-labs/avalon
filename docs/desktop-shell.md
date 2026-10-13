@@ -26,7 +26,7 @@ a thread or a breakout opens, or who owns the right panel.
 | `packages/ui/src/components/breakout-marks.tsx` | `BreakoutMark`, `breakoutsByOrigin`, `orderBreakoutsForTicks`, `breakoutHasActivity`, `BreakoutChipRow`, `BreakoutTickBar`. |
 | `packages/ui/src/components/split-conversation.tsx` | `SplitConversationLayout`, `SplitConversationMode`, `clampBreakoutWidth`. |
 | `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the section switcher (Channels, Threads, Activity), the account menu under it, and the three lists with their Pinned sections, sort, and drag to reorder. |
-| `apps/desktop/src/renderer/screens/channel.tsx` | The Channel screen: its pill and menu, the feed of threads with locked rows, the composer, and `ChannelStack`, the first two panes of the stack ([`pane-stack.md`](pane-stack.md)). |
+| `apps/desktop/src/renderer/screens/channel.tsx` | The Channel screen: its pill and menu, the feed of threads, the composer, and `ChannelStack`, the first two panes of the stack ([`pane-stack.md`](pane-stack.md)). |
 | `apps/desktop/src/renderer/components/channel-composer.tsx` | Starting a thread from a Channel. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | The thread screen: the thread and breakout panes, both pills, the one-slot rule, breakout creation in the right pane, and the Channel breadcrumb once the thread has shifted left. |
 | `apps/desktop/src/renderer/lib/navigation-routes.ts` | `channelRoute`, `threadRoute`, `homeChannelId`, and the context a thread pane reads its Channel from. |
@@ -90,9 +90,9 @@ person last had it open (`hasUnread` on its stats row); then the name goes
 bold (the time stays muted) and the second line reads "N new threads" in the unread colour
 (`--av-sys-color-workstream-news`), with the same dot at its end a thread
 row has. N is the stats row's `newThreadCount`: the feed's rows above the
-read position, locked rows included, so a moved-out thread is not counted and
-a private one is. A Channel whose new threads all moved out again draws as
-read.
+read position, so a moved-out thread is not counted and neither is a private
+one this person is not in. A Channel whose new threads all moved out again, or
+are all private to others, draws as read.
 Hovering the time shows "Last update at" and the exact local time.
 Opening the Channel in a focused, visible window acknowledges the newest
 loaded placement's `attentionSequenceNumber` (`PATCH /spaces/:id/read-state`),
@@ -164,12 +164,10 @@ its threads, and a composer at the foot.
   thread's own mark beside them. A row the socket holds is drawn from the
   socket, so its dot and title move live, and a thread started here a moment
   ago shows at once.
-- **Locked rows.** A thread a member may not open shows in the same shape,
-  with a lock for its mark: **Private thread**, **Request access** and when it
-  was placed. The entry opens the thread's
-  address, where the access request flow takes over
-  ([`channel-access-requests.md`](channel-access-requests.md)). The client holds
-  nothing else about it. A guest gets no locked rows.
+- **Private threads.** A thread this person may not open is not in the feed
+  at all, for a member as for a guest. The server leaves it out
+  ([`listing-rules.md`](listing-rules.md)); only a link to it reaches the
+  access request screen ([`channel-access-requests.md`](channel-access-requests.md)).
 - **Composer.** `ChannelComposer` starts a thread
   ([`workstream-creation.md`](workstream-creation.md)). A guest, and a reader
   who reaches the Channel only through a thread in it, get no composer.

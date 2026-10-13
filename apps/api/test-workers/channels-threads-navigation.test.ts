@@ -8,7 +8,7 @@
  * (`channels`), a **breakout** is a substream. See
  * `docs/PRDs/2026-10-10_channels-threads-navigation/prd.md`.
  *
- * Each case is about who may be told what: the feed's locked rows, a private
+ * Each case is about who may be told what: the feed's private threads, a private
  * Channel's absence, the Threads tab's participation filter, the pin gate, and
  * the Activity tab's per-viewer filter. All of it is SQL over storage the
  * listing rules render into, so a double could only describe it back to
@@ -254,29 +254,27 @@ beforeEach(async () => {
 });
 
 describe("Channel feed", () => {
-  it("given a private thread in a Channel, when a member who cannot open it reads the feed, then it is a locked row with nothing but its id", async () => {
+  it("given a private thread in a Channel, when a member who cannot open it reads the feed, then it is not listed", async () => {
     const channelId = await channelWithThreads();
 
     const page = await feed(channelId, MEMBER);
 
     expect(page.items).toEqual([
-      { kind: "locked", placedAt: expect.any(String), attentionSequenceNumber: 2, threadId: PRIVATE_THREAD },
       expect.objectContaining({ kind: "thread", thread: expect.objectContaining({ id: OPEN_THREAD, title: "Cold outreach" }) }),
     ]);
-    // The owner opens both, so neither is locked for them.
-    expect((await feed(channelId, OWNER)).items.map((item) => item.kind)).toEqual(["thread", "thread"]);
+    // The owner opens both, so both are listed for them.
+    expect((await feed(channelId, OWNER)).items.map((item) => item.thread.id)).toEqual([PRIVATE_THREAD, OPEN_THREAD]);
   });
 });
 
 describe("Channel feed for a guest", () => {
-  it("given a guest added to one thread in a Channel, when they read its feed, then they see that thread and no locked rows", async () => {
+  it("given a guest added to one thread in a Channel, when they read its feed, then they see that thread alone", async () => {
     const channelId = await channelWithThreads();
     await publish(OPEN_THREAD, [viewerEffect(GUEST)]);
 
     const page = await feed(channelId, GUEST);
 
-    expect(page.items.map((item) => item.kind === "thread" ? ["thread", item.thread.id] : ["locked", item.threadId]))
-      .toEqual([["thread", OPEN_THREAD]]);
+    expect(page.items.map((item) => item.thread.id)).toEqual([OPEN_THREAD]);
   });
 });
 
@@ -327,7 +325,7 @@ describe("archiving a Channel", () => {
     return asSpaceId(general.space.id);
   }
   const placedIn = async (channelId: SpaceId) => (await feed(channelId, OWNER)).items
-    .map((item) => item.kind === "thread" ? item.thread.id : item.threadId);
+    .map((item) => item.thread.id);
 
   it("given an Organization-wide thread that lives only in a Channel, when the Channel is archived, then the thread moves to General and a restore puts it back", async () => {
     const generalId = await openGeneral();
@@ -429,7 +427,7 @@ describe("Channel read state", () => {
 
     expect(readState(await stats(MEMBER, channelId))).toEqual({ latest: 2, readThrough: 2, firstUnread: null, hasUnread: false });
     expect((await feed(channelId, OWNER)).items.map((item) => [
-      item.kind === "thread" ? item.thread.id : item.threadId, item.attentionSequenceNumber,
+      item.thread.id, item.attentionSequenceNumber,
     ])).toEqual([[PRIVATE_THREAD, 2], [OPEN_THREAD, 1]]);
   });
 
@@ -445,10 +443,12 @@ describe("Channel read state", () => {
     await place(channelId, OPEN_THREAD);
 
     const ordinals = (await feed(channelId, OWNER)).items.map((item) => [
-      item.kind === "thread" ? item.thread.id : item.threadId, item.attentionSequenceNumber,
+      item.thread.id, item.attentionSequenceNumber,
     ]);
     expect(ordinals).toEqual(expect.arrayContaining([[OPEN_THREAD, 3], [PRIVATE_THREAD, 2]]));
-    expect(readState(await stats(MEMBER, channelId))).toEqual({ latest: 3, readThrough: 0, firstUnread: 1, hasUnread: true });
+    // The first unread row is the one this member sees: the re-placed thread at 3,
+    // not its removed placement at 1 or the private thread at 2.
+    expect(readState(await stats(MEMBER, channelId))).toEqual({ latest: 3, readThrough: 0, firstUnread: 3, hasUnread: true });
   });
 
   it("given the newest placement since removed, when the member reads the feed and acknowledges what it says, then the Channel is read", async () => {
@@ -468,12 +468,12 @@ describe("Channel read state", () => {
     expect(readState(await stats(MEMBER, channelId))).toEqual({ latest: 2, readThrough: 2, firstUnread: null, hasUnread: false });
   });
 
-  it("given threads placed since a person last read a Channel, when they read the stats, then the new-thread count matches the feed's rows above their position, locked rows included", async () => {
+  it("given threads placed since a person last read a Channel, when they read the stats, then the new-thread count matches the feed's rows above their position", async () => {
     const channelId = await channelWithThreads();
     await publish(OPEN_THREAD, [viewerEffect(GUEST)]);
 
-    // The member may list one of the two, but the feed shows both, the private one locked.
-    expect(await stats(MEMBER, channelId)).toMatchObject({ threadCount: 1, newThreadCount: 2 });
+    // The member may open one of the two, and the feed shows only that one.
+    expect(await stats(MEMBER, channelId)).toMatchObject({ threadCount: 1, newThreadCount: 1 });
     expect((await stats(OWNER, channelId)).newThreadCount).toBe(0);
     expect((await stats(GUEST, channelId)).newThreadCount).toBe(0);
 
@@ -484,6 +484,27 @@ describe("Channel read state", () => {
     await publish(LATE_THREAD, [threadEffect("Late addition"), viewerEffect(OWNER)]);
     await place(channelId, LATE_THREAD);
     expect((await stats(MEMBER, channelId)).newThreadCount).toBe(1);
+  });
+
+  it("given a private thread placed since a member last read a Channel, when they read the stats, then the Channel is not unread for them", async () => {
+    const channelId = await channelWithThreads();
+    await workspace().acknowledgeSpaceRead({ workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId, readThroughSequenceNumber: 2 });
+
+    await openThreadObject(LATE_THREAD);
+    await publish(LATE_THREAD, [threadEffect("Late addition", { scope: "personal" }), viewerEffect(OWNER)]);
+    await place(channelId, LATE_THREAD);
+
+    expect(await stats(MEMBER, channelId)).toMatchObject({
+      latestAttentionSequenceNumber: 3, newThreadCount: 0, hasUnread: false, firstUnreadSequenceNumber: null,
+    });
+    // An open thread placed after it is the first unread row, not the hidden one.
+    await openThreadObject(MEMBER_THREAD);
+    await publish(MEMBER_THREAD, [threadEffect("Open follow-up"), viewerEffect(OWNER)]);
+    await place(channelId, MEMBER_THREAD);
+    expect(await stats(MEMBER, channelId)).toMatchObject({ newThreadCount: 1, hasUnread: true, firstUnreadSequenceNumber: 4 });
+    // Added to the private one, the same member is told about it too.
+    await publish(LATE_THREAD, [viewerEffect(MEMBER)]);
+    expect(await stats(MEMBER, channelId)).toMatchObject({ newThreadCount: 2, hasUnread: true, firstUnreadSequenceNumber: 3 });
   });
 
   it("given a guest who reaches a Channel through a thread in it, when they read the stats, then the Channel is never unread for them", async () => {

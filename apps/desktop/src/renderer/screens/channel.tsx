@@ -8,7 +8,7 @@ import { ChannelGlyph, spaceMark } from '@rally/ui/components/space-icon';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { TitleMenuItem, TitlePillAction, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { resolveWorkstreamAppearance } from '@rally/ui/components/workstream-glyph';
-import { IconChevronRight, IconCloudDownload, IconLock, IconPalette, IconPlus } from '@tabler/icons-react';
+import { IconChevronRight, IconCloudDownload, IconPalette, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -142,9 +142,7 @@ function useChannel(channelId: string): SpaceSummary | undefined {
   return active.data?.items.find((space) => space.id === channelId);
 }
 
-type FeedRow =
-  | { kind: 'thread'; placedAt: string; thread: WorkstreamSummary }
-  | { kind: 'locked'; placedAt: string; threadId: string };
+type FeedRow = { placedAt: string; thread: WorkstreamSummary };
 
 /**
  * What to acknowledge for a Channel the reader has open, or null when there is
@@ -190,7 +188,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
   const liveById = useMemo(() => new Map((live.data ?? []).map((row) => [row.id, row])), [live.data]);
   const rows = useMemo<FeedRow[]>(() => {
     const fetched = (feed.data?.pages ?? []).flatMap((page) => page.items);
-    const known = new Set(fetched.map((item) => item.kind === 'thread' ? item.thread.id : item.threadId));
+    const known = new Set(fetched.map((item) => item.thread.id));
     // A thread stays drawn from the socket from the moment it is started until
     // the feed lists it. Its pending mark clears when the create answers, which
     // can be before the feed is read again; dropping it in that gap made the
@@ -203,10 +201,8 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
     const started = (live.data ?? [])
       .filter((row) => !known.has(row.id) && row.spaceIds.includes(channelId)
         && (row.pending || (newestListed !== undefined && (row.createdAt ?? '') > newestListed)))
-      .map((thread): FeedRow => ({ kind: 'thread', placedAt: thread.createdAt ?? new Date().toISOString(), thread }));
-    return [...started, ...fetched.map((item): FeedRow => item.kind === 'thread'
-      ? { ...item, thread: liveById.get(item.thread.id) ?? item.thread }
-      : item)];
+      .map((thread): FeedRow => ({ placedAt: thread.createdAt ?? new Date().toISOString(), thread }));
+    return [...started, ...fetched.map((item): FeedRow => ({ ...item, thread: liveById.get(item.thread.id) ?? item.thread }))];
   }, [channelId, feed.data, feed.isSuccess, live.data, liveById]);
   const queryClient = useQueryClient();
   // The Channel is read while it is open in a focused, visible window: the
@@ -339,20 +335,18 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
           // Grouped by the local calendar date, year and all; the label is
           // only for display, and two years' "Oct 2" are different days.
           const day = new Date(row.placedAt).toDateString();
-          const card = row.kind === 'thread'
-            ? <ThreadCard
-              author={row.thread.createdByUserId ? memberById.get(row.thread.createdByUserId) : undefined}
-              key={row.thread.id}
-              members={members.data ?? NO_MEMBERS}
-              onOpen={openThread}
-              open={row.thread.id === openThreadId}
-              placedAt={row.placedAt}
-              thread={row.thread}
-            />
-            : <LockedCard key={row.threadId} onOpen={openThread} placedAt={row.placedAt} threadId={row.threadId} />;
+          const card = <ThreadCard
+            author={row.thread.createdByUserId ? memberById.get(row.thread.createdByUserId) : undefined}
+            key={row.thread.id}
+            members={members.data ?? NO_MEMBERS}
+            onOpen={openThread}
+            open={row.thread.id === openThreadId}
+            placedAt={row.placedAt}
+            thread={row.thread}
+          />;
           const previous = ordered[index - 1];
           if (previous && new Date(previous.placedAt).toDateString() === day) return [card];
-          return [<DaySeparator key={`day:${row.kind === 'thread' ? row.thread.id : row.threadId}`} placedAt={row.placedAt} />, card];
+          return [<DaySeparator key={`day:${row.thread.id}`} placedAt={row.placedAt} />, card];
         })}
       </ol></EmailMentionContext.Provider>
       {feed.isSuccess && rows.length === 0 && <p className="channel-feed-empty">No threads yet. Describe the work below and Rally starts a thread for it.</p>}
@@ -442,34 +436,6 @@ function ThreadCard({ author, members, onOpen, open, placedAt, thread }: {
       </span>
       <span aria-hidden="true" className="channel-feed-mark" style={{ background: tint, color: ink }}>
         <Icon size={19} strokeWidth={1.8} />
-      </span>
-    </button>
-  </li>;
-}
-
-/**
- * A thread placed in this Channel that this person may not open: that it
- * exists and when, and a way to ask. Nothing else about it is on the client.
- */
-function LockedCard({ onOpen, placedAt, threadId }: {
-  onOpen: (threadId: string) => void;
-  placedAt: string;
-  threadId: string;
-}): React.JSX.Element {
-  return <li className="channel-feed-item is-locked">
-    <button aria-label="Private thread, request access" className="channel-feed-thread" onClick={() => onOpen(threadId)} type="button">
-      <span className="channel-feed-body">
-        <span className="channel-feed-title">
-          <span className="channel-feed-title-text">Private thread</span>
-        </span>
-        <span className="channel-feed-meta">
-          <span className="channel-feed-request">Request access</span>
-          <span aria-hidden="true">·</span>
-          <RelativeTime value={placedAt} />
-        </span>
-      </span>
-      <span aria-hidden="true" className="channel-feed-mark">
-        <IconLock size={18} stroke={1.8} />
       </span>
     </button>
   </li>;

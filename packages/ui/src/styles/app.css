@@ -8831,8 +8831,6 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   place-items: center;
   width: 36px;
 }
-.channel-feed-item.is-locked .channel-feed-title { color: var(--av-sys-color-text-muted); }
-.channel-feed-request { color: var(--av-sys-color-text-default); font-weight: 600; }
 .channel-feed-empty { color: var(--av-sys-color-text-muted); margin: auto; max-width: 420px; padding: 24px; text-align: center; }
 .channel-composer-dock { position: relative; }
 .channel-composer-dock .composer-stack { margin: 0 auto; max-width: 760px; }
