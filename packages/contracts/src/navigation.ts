@@ -55,6 +55,12 @@ export type PinOrderRequest = z.infer<typeof PinOrderRequestSchema>;
 export const ChannelStatsSchema = z.strictObject({
   channelId: IdSchema,
   threadCount: z.number().int().nonnegative(),
+  /**
+   * How many rows the Channel's feed holds above this viewer's read position:
+   * threads placed since they last read it and still in it, locked rows
+   * included for a member, so it can exceed `threadCount`. Zero for a guest.
+   */
+  newThreadCount: z.number().int().nonnegative(),
   lastActivityAt: z.string().datetime({ offset: true }).nullable(),
   /**
    * The Channel's unread state, in the same fields and with the same meaning
