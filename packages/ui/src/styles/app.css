@@ -8508,7 +8508,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .navigation-rail-account .avatar,
 .navigation-rail-account .account-avatar { font-size: 10px; height: 26px; width: 26px; }
 .navigation-panel { display: flex; flex: 1; flex-direction: column; min-width: 0; }
-.navigation-panel-header { align-items: center; display: flex; flex: none; gap: 8px; height: 66px; padding: 16px 10px 0 20px; }
+/* The title's cap line starts 14px down, level with the top of the title pills
+   across the conversation panes (`.title-pill-header`). */
+.navigation-panel-header { align-items: center; display: flex; flex: none; gap: 8px; height: 46px; padding: 0 10px 0 20px; }
 .navigation-panel-title { flex: 1; font-size: 22px; font-weight: 700; letter-spacing: -0.015em; margin: 0; min-width: 0; }
 .navigation-panel-actions { color: var(--av-sys-color-text-subtle); display: flex; gap: 2px; }
 /* Positioned so a row leaving through the list motion's stand-in is drawn over its own slot. */
