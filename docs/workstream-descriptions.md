@@ -64,8 +64,7 @@ already that short comes back as written, and nothing is stored.
   it is dropped and the derived line stands; the name and icon do not depend
   on it. Over the limit is dropped rather than cut, because a summary cut
   mid-sentence reads worse than the request.
-- **The composer's threads and every new Breakout ask.** A Slack-opened thread
-  is named without a summary.
+- **Composer threads, Slack-opened threads and every new Breakout ask.**
 - **Every Breakout keeps a description, even though no surface shows one
   yet.** One opened without a message is provisioned with an empty one, and
   the loop below only reads Main, so a Breakout's run settlement writes one
@@ -350,7 +349,7 @@ stored `rest_until` and `evaluated_through_sequence`, not on elapsed time.
 
 ## Operations
 
-Four log events are emitted:
+Five log events are emitted:
 
 | Event | Means |
 | --- | --- |

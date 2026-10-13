@@ -54,6 +54,8 @@ export const ThreadBackfillMessageSchema = z.strictObject({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   workstreamId: IdSchema,
+  /** The claim this delivery carries; a release from an older one is refused. */
+  attempt: z.number().int().positive(),
 });
 export type ThreadBackfillMessage = z.infer<typeof ThreadBackfillMessageSchema>;
 
@@ -123,6 +125,7 @@ export async function publishThreadBackfill(input: {
       region: input.region,
       workspaceId: input.workspaceId,
       workstreamId: row.workstream_id,
+      attempt: row.attempts + 1,
     }),
   })));
   return rows.length;
@@ -139,12 +142,19 @@ export function completeThreadBackfill(sql: SqlStorage, job: ThreadBackfillJob, 
 /**
  * Let a row the consumer could not finish stop holding the next batch back.
  * Its gate, set when it was claimed, still decides when it is sent again.
+ *
+ * Only the latest claim releases. A delivery can outlive its gate (each
+ * conversation is a model call), and the alarm then claims the row again; a
+ * late failure from the older delivery must not clear the newer claim, or the
+ * lane would send the next batch while this one is still running.
  */
-export function releaseThreadBackfill(sql: SqlStorage, job: ThreadBackfillJob, workstreamId: string): boolean {
+export function releaseThreadBackfill(
+  sql: SqlStorage, job: ThreadBackfillJob, workstreamId: string, attempt: number,
+): boolean {
   return sql.exec<{ workstream_id: string }>(
     `UPDATE thread_backfill SET in_flight = 0
-      WHERE job = ? AND workstream_id = ? RETURNING workstream_id`,
-    job, workstreamId,
+      WHERE job = ? AND workstream_id = ? AND attempts = ? RETURNING workstream_id`,
+    job, workstreamId, attempt,
   ).toArray().length === 1;
 }
 

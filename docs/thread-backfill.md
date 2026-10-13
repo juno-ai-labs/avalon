@@ -8,8 +8,8 @@ of every thread and Breakout created before the first naming pass asked for a
 summary ([`workstream-descriptions.md`](workstream-descriptions.md#the-first-summary)).
 
 It is [Channel colour sync](workstream-appearance.md)'s lane with the triggers
-and revisions taken out. Colour sync is a standing job that writes keep
-re-marking; a backfill is filled once by a migration and done when the
+and revisions taken out. Colour sync is a standing job whose rows keep being
+re-marked by writes; a backfill is filled once by a migration and done when the
 consumer says so.
 
 ## Where the code lives
@@ -71,6 +71,12 @@ arms its own alarm.
   run can repeat a model call but never a write.
   Guard: `workstream-naming.test.ts`, "backfilling an existing thread's
   summary".
+- **Only the latest claim releases a row.** Each message carries the
+  `attempt` it was claimed under, and a release from an older delivery is
+  refused. A delivery can outlive its gate, and the alarm then claims the row
+  again; letting the older one's late failure clear that claim would send the
+  next batch while this one still runs. Guard: the release case in
+  `test-workers/thread-backfill.test.ts`.
 - **A row is settled only after every conversation ran.** Settling first
   would lose the rest of the thread on a failure. Guard: the Queue case in
   `test-workers/thread-backfill.test.ts`.
@@ -85,8 +91,8 @@ This module owns the work list, its pacing, and the dispatch to a job's
 handler. It does not own what a job writes: `description_summary` writes
 through the identity port's `redescribe`, whose compare-and-swap is
 [`workstream-descriptions.md`](workstream-descriptions.md)'s. It does not wake
-Organizations; the migration tracker does. It is not for standing work that
-writes keep re-marking: that is colour sync's shape, with triggers and
+Organizations; the migration tracker does. It is not for standing work whose
+rows writes keep re-marking: that is colour sync's shape, with triggers and
 revisions.
 
 ## Failure modes and limits
