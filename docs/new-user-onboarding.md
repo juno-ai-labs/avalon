@@ -18,6 +18,9 @@ ships directly for newly created accounts, with no feature flag.
 | `apps/api/src/services/onboarding-journey-service.ts` | Membership, eligibility and completion checks. |
 | `apps/api/src/routes/onboarding.ts`, `workspace.ts` | Identity and workspace API boundaries. |
 | `apps/desktop/src/renderer/lib/account-profile-editor.ts` | Account-scoped immediate drafts and serial revision-checked autosave. |
+| `apps/api/src/services/organization-name-suggestion.ts` | The organization name prefilled at creation, read from the email domain's homepage. |
+| `apps/api/src/lib/html-metadata.ts` | Reading `<title>` and `<meta>` out of page source; shared with site social previews. |
+| `apps/desktop/src/renderer/screens/create-organization.tsx` | The create-organization card, shared by the Mac app and the browser. |
 | `apps/desktop/src/renderer/screens/guided-onboarding.tsx` | Recording the introduction, personal setup and invitations. |
 | `apps/desktop/src/renderer/components/personal-avatar.tsx`, `styles/onboarding.css` | Appearance and reference-derived motion. |
 
@@ -42,6 +45,16 @@ Finishing saves `complete` and then leaves for the first work stream through
 `useOpenFirstWorkstream` — the composer only when the workspace is empty, as a
 creator's is. No workstream or
 agent run is created by onboarding. The unshipped starter columns and removed first-task stages are not part of the schema.
+
+Creating an organization prefills its name. `GET /onboarding/organization-suggestion`
+takes the domain of the signed-in person's email, fetches `https://<domain>/`,
+reads only up to the end of `<head>`, and answers `og:site_name`, or else the
+`<title>` segment that matches the domain ("Acme | Tools for builders" gives
+"Acme"), skipping labels such as "Home". Personal mail domains (gmail.com and
+the like) are never fetched. Every failure answers `{ name: null }`. The card
+opens without waiting for it and fills the field only while it is empty and
+untouched, so the suggestion never replaces what the person typed or a
+remembered name.
 
 The invite page uses manual email chips separated by spaces, commas or semicolons.
 Before sending, it reconciles pending invitations and active members so retrying a
@@ -121,6 +134,29 @@ inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-r
 Onboarding no longer starts an agent run or a connector authorization.
 
 ## Changelog
+
+### 2026-10-13 — Prefill the organization name from the email domain
+
+**What changed:** The create-organization card on the Mac app and in the
+browser fills its name from the homepage of the person's email domain, through
+a new identity route. The `<title>` and `<meta>` readers moved out of site social
+previews into `lib/html-metadata.ts` so both use one copy.
+
+**Why:** Product asked that signup suggest the organization name rather than
+start empty. Most work addresses sit on a domain whose homepage already names
+the company.
+
+**Considered and rejected:** Returning the suggestion with `GET /onboarding`.
+That read gates the screen, and a slow third-party homepage would have held the
+whole signup step. A separate read lets the card open at once. Falling back to
+the capitalized domain label when the page offers nothing was left out; it is a
+one-line addition if wanted.
+
+**Consequences:** The route makes an outbound request to a host the person's
+email names, so it must keep refusing anything that is not a public hostname
+(`assertSafePublicUrl`) and must never return more than a validated workspace
+name. It has no timeout of its own: nothing waits on it, and a hung homepage
+holds only that one request.
 
 ### 2026-10-12 — Remove the introduction screens
 

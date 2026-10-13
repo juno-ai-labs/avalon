@@ -1,4 +1,5 @@
 import "../../../../../tests/isolated-region";
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopSession } from '../../common/desktop';
@@ -33,6 +34,7 @@ const sessionState = vi.hoisted(() => ({
   declineInvitation: vi.fn(),
   exchangingTicket: false,
   finishWorkspaceSetup: vi.fn(),
+  getOrganizationNameSuggestion: vi.fn(),
   region: 'global' as string,
   runtime: {
     appVersion: 'test',
@@ -63,6 +65,11 @@ vi.mock('../lib/telemetry', () => ({
   uuidV7: () => telemetry.operationId,
 }));
 
+function renderRegionOnboarding(): void {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={queryClient}><RegionOnboarding /></QueryClientProvider>);
+}
+
 const invitation: PendingWorkspaceInvitation = {
   id: '00000000-0000-7000-8000-000000000009',
   workspaceId: '00000000-0000-7000-8000-000000000010',
@@ -89,6 +96,7 @@ describe('identity-first onboarding screens', () => {
     bridge.openExternal.mockResolvedValue(undefined);
     sessionState.acceptInvitation.mockResolvedValue(undefined);
     sessionState.declineInvitation.mockResolvedValue(undefined);
+    sessionState.getOrganizationNameSuggestion.mockResolvedValue({ name: null });
   });
 
   it('uses one global identity entry and does not ask for a login region', async () => {
@@ -129,7 +137,7 @@ describe('identity-first onboarding screens', () => {
   });
 
   it('collects an organization name after authentication and defaults to Global', async () => {
-    render(<RegionOnboarding />);
+    renderRegionOnboarding();
     fireEvent.change(screen.getByRole('textbox', { name: 'Organization name' }), {
       target: { value: 'Acme Research' },
     });
@@ -141,7 +149,7 @@ describe('identity-first onboarding screens', () => {
   });
 
   it('does not create the organization when Enter only commits an IME composition', async () => {
-    render(<RegionOnboarding />);
+    renderRegionOnboarding();
     const nameField = screen.getByRole('textbox', { name: 'Organization name' });
     fireEvent.change(nameField, { target: { value: 'Acme Research' } });
 
@@ -169,7 +177,7 @@ describe('identity-first onboarding screens', () => {
     sessionState.finishWorkspaceSetup.mockImplementationOnce(() => new Promise<void>((resolve) => {
       finishSetup = resolve;
     }));
-    render(<RegionOnboarding />);
+    renderRegionOnboarding();
     const nameField = screen.getByRole('textbox', { name: 'Organization name' });
     fireEvent.change(nameField, { target: { value: 'Acme Research' } });
 
@@ -186,8 +194,31 @@ describe('identity-first onboarding screens', () => {
     finishSetup?.();
   });
 
+  it('prefills the organization name from the email domain when the field is untouched', async () => {
+    sessionState.getOrganizationNameSuggestion.mockResolvedValue({ name: 'Acme Robotics' });
+    renderRegionOnboarding();
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Organization name' })).toHaveValue('Acme Robotics'));
+    fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+    await waitFor(() => expect(sessionState.finishWorkspaceSetup).toHaveBeenCalledWith(
+      'Acme Robotics', 'global', telemetry.operationId,
+    ));
+  });
+
+  it('keeps a name the person typed when the suggestion arrives later', async () => {
+    let answer: ((value: { name: string }) => void) | undefined;
+    sessionState.getOrganizationNameSuggestion.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    renderRegionOnboarding();
+    const nameField = screen.getByRole('textbox', { name: 'Organization name' });
+    fireEvent.change(nameField, { target: { value: 'Skunkworks' } });
+    await waitFor(() => expect(answer).toBeDefined());
+    answer!({ name: 'Acme Robotics' });
+    await waitFor(() => expect(sessionState.getOrganizationNameSuggestion).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(nameField).toHaveValue('Skunkworks');
+  });
+
   it('does not offer a deployment picker during organization creation', () => {
-    render(<RegionOnboarding />);
+    renderRegionOnboarding();
     expect(screen.queryByRole('radio')).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Organization name' })).toBeVisible();
   });

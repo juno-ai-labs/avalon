@@ -12,6 +12,7 @@ import {
   CreateWorkspaceRequestSchema,
   IdSchema,
   OnboardingRegionRequestSchema,
+  OrganizationNameSuggestionSchema,
   SessionSchema,
   WorkspaceOnboardingStateSchema,
   asUserId,
@@ -23,6 +24,7 @@ import { z } from "zod";
 import type { HonoAppEnv, IdentityAuthContext } from "../env";
 import { getIdentityAuth } from "../middleware/auth";
 import { PlatformOnboardingService } from "../services/platform-onboarding-service";
+import { suggestOrganizationName } from "../services/organization-name-suggestion";
 import { requestDeferral } from '../lib/defer';
 import { ApiError } from '../lib/api-error';
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry, telemetryOperationId } from '../telemetry/api-emitter';
@@ -87,6 +89,16 @@ onboardingRoutes.get("/", async (c) =>
     await new PlatformOnboardingService(c.env, getIdentityAuth(c))
       .state({ guests: clientOpensGuestWorkspaces((name) => c.req.header(name)) }))),
 );
+
+// Read from the homepage of the person's email domain. The create screen does
+// not wait for it: it fills the name only if the person has not typed one.
+onboardingRoutes.get("/organization-suggestion", async (c) => {
+  const user = await c.env.DB.prepare("SELECT email FROM users WHERE id = ?")
+    .bind(getIdentityAuth(c).userId).first<{ email: string }>();
+  return c.json(OrganizationNameSuggestionSchema.parse({
+    name: user ? await suggestOrganizationName(user.email) : null,
+  }));
+});
 
 onboardingRoutes.post("/workspace", zValidator("json", CreateWorkspaceRequestSchema), async (c) => {
   const body = c.req.valid("json");

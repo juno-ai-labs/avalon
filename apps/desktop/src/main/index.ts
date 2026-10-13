@@ -31,6 +31,7 @@ import {
   type WorkspaceAttention,
   type WorkspaceDeparture,
   AccountOnboardingSchema,
+  OrganizationNameSuggestionSchema,
   UpdateAccountOnboardingSchema,
 } from '@rally/contracts';
 import {
@@ -4014,6 +4015,15 @@ function registerIpc(): void {
     ));
     if (!response.ok) throw await responseError(response);
     return AccountOnboardingSchema.parse(await response.json());
+  });
+  ipcMain.handle('onboarding:get-organization-suggestion', async (event) => {
+    assertTrustedIpcSender(event);
+    const { response } = await onboardingIdentityRequest((credential) => net.fetch(
+      `${configuredApiBase('global')}/onboarding/organization-suggestion`,
+      { headers: { Authorization: `Bearer ${credential.accessToken}` } },
+    ));
+    if (!response.ok) throw await responseError(response);
+    return OrganizationNameSuggestionSchema.parse(await response.json());
   });
   ipcMain.handle('onboarding:update-account', async (event, raw: unknown) => {
     assertTrustedIpcSender(event);

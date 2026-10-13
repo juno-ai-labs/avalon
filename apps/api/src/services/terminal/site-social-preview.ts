@@ -3,6 +3,7 @@ import UPNG from "upng-js";
 import type { ArtifactSocialPreview } from "@rally/contracts";
 
 import { sha256Hex } from "../../lib/crypto";
+import { decodeHtmlEntities, htmlElementText, htmlMetaContent, normalizeHtmlText } from "../../lib/html-metadata";
 import { assetContentType } from "./site-publish";
 
 const CARD_WIDTH = 1200;
@@ -31,18 +32,18 @@ export async function prepareSocialPreview(
   const index = files.find((file) => file.path === "index.html");
   const source = index ? new TextDecoder("utf-8", { fatal: false }).decode(index.bytes) : "";
   const title = limitUtf16WithoutSplitting(firstText(
-    metaContent(source, "property", "og:title"),
-    metaContent(source, "name", "twitter:title"),
-    elementText(source, "title"),
-    elementText(source, "h1"),
+    htmlMetaContent(source, "property", "og:title"),
+    htmlMetaContent(source, "name", "twitter:title"),
+    htmlElementText(source, "title"),
+    htmlElementText(source, "h1"),
     fallbackTitle,
     "Rally site",
   ), 300);
   const description = limitUtf16WithoutSplitting(firstText(
-    metaContent(source, "property", "og:description"),
-    metaContent(source, "name", "twitter:description"),
-    metaContent(source, "name", "description"),
-    elementText(source, "p"),
+    htmlMetaContent(source, "property", "og:description"),
+    htmlMetaContent(source, "name", "twitter:description"),
+    htmlMetaContent(source, "name", "description"),
+    htmlElementText(source, "p"),
     `A live site about ${title}.`,
   ), 500);
   const image = findAuthoredPreview(source, files);
@@ -83,7 +84,7 @@ export async function prepareSocialPreview(
 
 function firstText(...values: Array<string | null | undefined>): string {
   for (const value of values) {
-    const normalized = normalizeText(value ?? "");
+    const normalized = normalizeHtmlText(value ?? "");
     if (normalized) return normalized;
   }
   return "Rally site";
@@ -98,59 +99,13 @@ function limitUtf16WithoutSplitting(value: string, maximumCodeUnits: number): st
   return result;
 }
 
-function normalizeText(value: string): string {
-  return decodeHtmlEntities(value.replace(/<[^>]*>/gu, " "))
-    .replace(/\s+/gu, " ")
-    .trim();
-}
-
-function decodeHtmlEntities(value: string): string {
-  return value.replace(/&(?:#(\d+)|#x([\da-f]+)|amp|quot|apos|lt|gt);/giu, (entity, decimal, hex) => {
-    if (decimal || hex) {
-      const codePoint = decimal ? Number(decimal) : Number.parseInt(hex, 16);
-      return Number.isSafeInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
-        ? String.fromCodePoint(codePoint)
-        : entity;
-    }
-    return ({
-      "&amp;": "&",
-      "&quot;": "\"",
-      "&apos;": "'",
-      "&lt;": "<",
-      "&gt;": ">",
-    } as Record<string, string>)[entity.toLowerCase()] ?? entity;
-  });
-}
-
-function elementText(source: string, tag: string): string | null {
-  const match = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}\\s*>`, "iu").exec(source);
-  return match?.[1] ?? null;
-}
-
-function metaContent(source: string, key: "name" | "property", expected: string): string | null {
-  for (const match of source.matchAll(/<meta\b[^>]*>/giu)) {
-    const attributes = htmlAttributes(match[0]);
-    if (attributes.get(key)?.toLowerCase() === expected) return attributes.get("content") ?? null;
-  }
-  return null;
-}
-
-function htmlAttributes(tag: string): Map<string, string> {
-  const result = new Map<string, string>();
-  const pattern = /([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gu;
-  for (const match of tag.matchAll(pattern)) {
-    result.set(match[1]!.toLowerCase(), match[2] ?? match[3] ?? match[4] ?? "");
-  }
-  return result;
-}
-
 function findAuthoredPreview(
   source: string,
   files: readonly PreviewFile[],
 ): Omit<ArtifactSocialPreview["image"], "alt" | "generated"> | null {
   const declared = [
-    metaContent(source, "property", "og:image"),
-    metaContent(source, "name", "twitter:image"),
+    htmlMetaContent(source, "property", "og:image"),
+    htmlMetaContent(source, "name", "twitter:image"),
   ];
   const conventional = [
     "social-preview.png", "social-preview.jpg", "social-preview.jpeg", "social-preview.webp",
@@ -302,7 +257,7 @@ function wrapWords(words: string[], lineLength: number): string[] {
 }
 
 function fallbackCardText(title: string, seed: number): string {
-  const transliterated = normalizeText(title)
+  const transliterated = normalizeHtmlText(title)
     .normalize("NFKD")
     .replace(/\p{Mark}+/gu, "")
     .toUpperCase();

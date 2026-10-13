@@ -15,7 +15,7 @@ import { scheduleSessionDeadline } from "./session-timer";
 import { parseSidekickLinkPathTarget, parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget } from "@rally/contracts/workstream-links";
 
 import { UuidV7Schema } from "@rally/contracts/telemetry";
-import { WorkspaceIdSchema } from "@rally/contracts";
+import { OrganizationNameSuggestionSchema, WorkspaceIdSchema } from "@rally/contracts";
 
 const initialRegion = configuredRegions[0]!;
 
@@ -131,6 +131,19 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [googleNotice, setGoogleNotice] = useState<string | null>(null);
   // Whether the person asked to create an organization from the empty list.
   const [creating, setCreating] = useState(false);
+  // Read from the email domain's homepage. The card opens without waiting for
+  // it and fills the name only while the person has not typed one.
+  const [suggestedName, setSuggestedName] = useState<string | null>(null);
+  const suggestionUserId = session?.user.id ?? null;
+  useEffect(() => {
+    setSuggestedName(null);
+    if (!creating || !suggestionUserId) return;
+    let current = true;
+    browserRequest(IDENTITY_REGION, "/api/_/onboarding/organization-suggestion", OrganizationNameSuggestionSchema)
+      .then((suggestion) => { if (current) setSuggestedName(suggestion.name); })
+      .catch(() => undefined);
+    return () => { current = false; };
+  }, [creating, suggestionUserId]);
   // A create in flight keeps going if the card goes away, so Back waits for it,
   // and the operation id outlives the card so a retry returns the same one.
   const [createPending, setCreatePending] = useState(false);
@@ -441,7 +454,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
 
   if (creating && session && !proof) {
     return <main className="onboarding-shell workspace-setup-shell entry">
-      <CreateOrganizationCard onCreate={createOrganization} operation={createOperation}>
+      <CreateOrganizationCard onCreate={createOrganization} operation={createOperation} suggestedName={suggestedName}>
         <p className="signed-in-identity">Signed in as {session.user.email}</p>
         <button className="text-button onboarding-signout" type="button" disabled={createPending} onClick={() => setCreating(false)}>Back</button>
       </CreateOrganizationCard>
