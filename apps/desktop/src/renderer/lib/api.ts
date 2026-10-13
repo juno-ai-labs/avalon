@@ -7,6 +7,7 @@ import {
   ActivityPageSchema,
   ChannelFeedItemSchema,
   ChannelFeedPageSchema,
+  type ChannelMessage,
   MyThreadsPageSchema,
   ChannelStatsListSchema,
   ChannelStatsSchema,
@@ -1492,11 +1493,17 @@ export class RallyApi {
       ...(signal ? { signal } : {}),
     });
     return {
-      items: page.items.flatMap((item) => item.kind === 'thread' ? [item] : []).map((item) => ({
-        placedAt: item.placedAt,
-        attentionSequenceNumber: item.attentionSequenceNumber,
-        thread: mapWorkstreamSummary(item.thread),
-      })),
+      items: page.items.flatMap((item): ChannelFeedPageView['items'] => {
+        if (!('placedAt' in item)) return [];
+        if (item.kind === 'message') return [{ kind: 'message', placedAt: item.placedAt, message: item.message }];
+        if (item.kind !== 'thread') return [];
+        return [{
+          kind: 'thread',
+          placedAt: item.placedAt,
+          attentionSequenceNumber: item.attentionSequenceNumber,
+          thread: mapWorkstreamSummary(item.thread),
+        }];
+      }),
       nextCursor: page.nextCursor,
       latestAttentionSequenceNumber: page.latestAttentionSequenceNumber,
     };
@@ -2719,7 +2726,10 @@ export class RallyApi {
 
 /** A Channel feed page with its threads in the client's row shape. */
 export interface ChannelFeedPageView {
-  items: Array<{ placedAt: string; attentionSequenceNumber: number; thread: WorkstreamSummary }>;
+  items: Array<
+    | { kind: 'thread'; placedAt: string; attentionSequenceNumber: number; thread: WorkstreamSummary }
+    | { kind: 'message'; placedAt: string; message: ChannelMessage }
+  >;
   nextCursor: string | null;
   /** The Channel's latest attention sequence number as the first page was read; null on a later page. */
   latestAttentionSequenceNumber: number | null;

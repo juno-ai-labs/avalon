@@ -63,7 +63,10 @@ publishers remain; the cron retries the durable intent if a request failed to
 publish. A `workspace_relationship_changed` message first applies the
 relationship to `WorkspaceDO`'s `workspace_member_status` (sequence-fenced, so
 a redelivery changes nothing), then revokes removed/suspended relationships and
-publishes workspace profile, member and directory invalidation. The table goes
+publishes workspace profile, member and directory invalidation. Last, it seats
+an active member in General and their Personal Channel
+([`spaces.md`](spaces.md#the-personal-channel)), so a failure there retries a
+message whose earlier steps are fenced against applying twice. The table goes
 first so that a revocation hop that throws, retries or dead-letters has not left
 the Organization's own checks answering active for the person it removes.
 Promotion invalidates those views without closing otherwise valid conversations.

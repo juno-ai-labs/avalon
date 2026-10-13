@@ -232,7 +232,9 @@ async function channelWithThreads(): Promise<SpaceId> {
 async function feed(channelId: SpaceId, userId: UserId) {
   const result = await workspace().listChannelFeed({ workspaceId: WORKSPACE_ID, userId, spaceId: channelId, cursor: null });
   if (!result.ok) throw new Error(`listChannelFeed refused: ${result.code}`);
-  return result.page;
+  // The placements: what every case here is about. Rally's own messages in a
+  // Channel are `personal-channel.test.ts`'s.
+  return { ...result.page, items: result.page.items.flatMap((item) => (item.kind === "message" ? [] : [item])) };
 }
 
 async function myThreads(userId: UserId) {

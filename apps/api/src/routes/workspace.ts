@@ -29,7 +29,7 @@ import {
 } from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
-import { requireCurrentClientContract } from "../lib/client-contract";
+import { clientReadsIndividualSpaces, requireCurrentClientContract } from "../lib/client-contract";
 import { requestDeferral } from "../lib/defer";
 import { getAuth, getWorkspaceAuth } from "../middleware/auth";
 import { SpaceService } from "../services/space-service";
@@ -66,7 +66,9 @@ const InviteePageSchema = z.object({ items: z.array(WorkspaceInviteeSchema) });
 export async function workspaceSocketTicket(c: Context<HonoAppEnv>) {
   requireCurrentClientContract((name) => c.req.header(name));
   const auth = getWorkspaceAuth(c);
-  const ticket = await issueWorkspaceSocketTicket(c.env, auth);
+  const ticket = await issueWorkspaceSocketTicket(c.env, auth, {
+    readsIndividualSpaces: clientReadsIndividualSpaces((name) => c.req.header(name)),
+  });
   const url = new URL(c.env.PUBLIC_API_BASE_URL);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.pathname = `/socket/workspaces/${auth.workspaceId}`;
