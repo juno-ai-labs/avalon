@@ -405,18 +405,22 @@ describe('socket-first channel open', () => {
     expect(loadTranscriptRange).not.toHaveBeenCalled();
   });
 
-  it('tells Activity the thread was opened, once, when it has loaded', async () => {
+  it('tells Activity what is on screen once the thread is visible and focused, and only once while that holds', async () => {
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600);
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(2000);
     const boot = historyBoot();
     renderScreen(cache => {
       cache.setQueryData(['workstream', workstreamId], boot);
       cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
     });
     await waitFor(() => expect(api.recordActivityEvents).toHaveBeenCalledWith([
-      { kind: 'read', subject: { kind: 'thread', threadId: workstreamId }, through: 0 },
+      expect.objectContaining({ kind: 'read', subject: { kind: 'thread', threadId: workstreamId } }),
     ]));
-    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
-    const reported = api.recordActivityEvents.mock.calls as unknown as Array<[Array<{ through: number }>]>;
-    expect(reported.filter(([events]) => events[0]?.through === 0)).toHaveLength(1);
+    act(() => { window.dispatchEvent(new Event('focus')); });
+    await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 400)); });
+    expect(api.recordActivityEvents).toHaveBeenCalledTimes(1);
   });
 
   it('shares pending requests across A to B to A and discards departed-visit restoration', async () => {

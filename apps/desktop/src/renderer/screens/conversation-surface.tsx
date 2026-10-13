@@ -1456,17 +1456,6 @@ export function ConversationSurface({
     orderedTranscript.data,
   );
   const routedDetail = payloadBelongsToRoute ? workstream.data : undefined;
-  // Opening a conversation is an Activity event of its own: it settles the
-  // rows that ask only for an open (an add, a start), which a read
-  // acknowledgement never covers when nothing new is on screen. Once per
-  // opening, when the room has loaded.
-  const reportedOpenRef = useRef<string | null>(null);
-  const opened = routedDetail !== undefined;
-  useEffect(() => {
-    if (!api || !opened || reportedOpenRef.current === conversationAddress) return;
-    reportedOpenRef.current = conversationAddress;
-    reportActivityEvent(api, queryClient, { kind: 'read', subject: conversationActivitySubject(id, substreamId), through: 0 });
-  }, [api, conversationAddress, id, opened, queryClient, substreamId]);
   const feedSource = useQuery<WorkstreamFeedSource | null>({
     queryKey: workstreamFeedSourceQueryKey(id, substreamId),
     queryFn: async () => null,
@@ -2681,6 +2670,8 @@ export function ConversationSurface({
     });
   }, [id, routedDetail, transcript, transcriptVirtualizer]);
 
+  // The last Activity read this pane reported, so an unchanged view sends nothing.
+  const activityReportedRef = useRef<{ address: string; through: number } | null>(null);
   const acknowledgeVisibleMessages = useCallback((): void => {
     // A seed's waterlines are what the room said some launches ago; an
     // acknowledgement built on them could read past a mark made since.
@@ -2696,24 +2687,33 @@ export function ConversationSurface({
       .map((item) => item.index);
     // The addressed conversation's own detail entry, so its own waterlines and
     // its own ordinals decide this. A child's are not Main's.
+    const highestVisibleSequence = highestVisibleAttentionSequence(
+      transcript,
+      visibleIndexes,
+      detail.latestAttentionSequenceNumber,
+    );
+    // What Activity is told is what the person has seen, whether or not this
+    // room's own read position needs moving: a position another client already
+    // moved, or one from before Activity kept waterlines, still owes Activity
+    // the read. Once per opening, then again only when it rises; 0 is an open.
+    const reported = activityReportedRef.current;
+    if (reported?.address !== conversationAddress || highestVisibleSequence > reported.through) {
+      activityReportedRef.current = { address: conversationAddress, through: highestVisibleSequence };
+      reportActivityEvent(api, queryClient, {
+        kind: 'read',
+        subject: conversationActivitySubject(id, substreamId),
+        through: highestVisibleSequence,
+      });
+    }
     const pending = conversationReadAcknowledgement({
       parentId: id,
       substreamId,
-      highestVisibleSequence: highestVisibleAttentionSequence(
-        transcript,
-        visibleIndexes,
-        detail.latestAttentionSequenceNumber,
-      ),
+      highestVisibleSequence,
       viewer: detail,
     });
     if (!pending) return;
     if (readAckInFlightRef.current === pending.key) return;
     readAckInFlightRef.current = pending.key;
-    reportActivityEvent(api, queryClient, {
-      kind: 'read',
-      subject: conversationActivitySubject(pending.parentId, pending.substreamId),
-      through: pending.readThroughSequenceNumber,
-    });
     void api.acknowledgeConversationRead(
       pending.parentId,
       pending.substreamId,
