@@ -95,7 +95,9 @@ immediately. In order:
    with no pins ([`workstream-pinning.md`](workstream-pinning.md)). A Channel listed to the
    reader only through a Breakout (`mainWithheld`) opens its first Breakout,
    since Main is not theirs; until its Breakout list arrives it is left out
-   rather than opening Main. **No recent threads** when there are none.
+   rather than opening Main. With no rows, **Still loading threads** until the
+   first walk of every Space has finished, and **No recent threads** only
+   after it has.
 3. A separator, then **Open Rally** and **Quit Rally**.
 
 Signed out, both sections collapse to one **Needs attention** header over
@@ -188,8 +190,10 @@ holds the first page of `GET /navigation/activity` and reads it again on a
 subscribe and on every `workspace_sync` naming `activity`: the signals the
 sidebar's Activity tab re-reads on. A mention, an add and a message publish
 that topic to the Organization; **Mark all read** publishes it to the reader
-alone, so the menu clears when the window clears. One read is in flight at a
-time, and a signal that arrives meanwhile costs one more read after it, so a
+alone, so the menu clears when the window clears. After a failed read, the
+next sync of any topic reads again rather than waiting for one naming Activity,
+so a read lost at login does not leave the menu loading until the next mention.
+One read is in flight at a time, and a signal that arrives meanwhile costs one more read after it, so a
 burst of messages costs two reads, and the last read starts after the last
 signal.
 
@@ -213,7 +217,9 @@ window closes.
 
 Opening the drop-down emits the product event `menu_bar_opened` with whether
 the account is signed in, the bounded recent-row count, and `attentionCount`,
-the number beside the icon. The legacy pinned count is always zero.
+the unread Activity rows in Needs attention (access requests not included).
+Before 2026-10-13 it counted waiting threads (`attentionItems`), so a chart over
+it steps at that release. The legacy pinned count is always zero.
 Electron can notify one opening through both the Tray click and the
 Menu `menu-will-show`; `MenuBarOpenObserver` coalesces those until
 `menu-will-close`, so one visible menu is one event. Selecting an enabled row
@@ -369,7 +375,7 @@ needing attention is the Activity feed's
 | Situation | Behavior |
 | --- | --- |
 | The socket drops | `watchWorkspaceSocket` redials with the shared backoff and logs the close. The rows already held stay on screen; the next subscribe walks again and reconciles them, and reads Activity again. |
-| An Activity read fails | Logged; the rows already held stay. The next `activity` sync or subscribe reads again. Before any read has landed, the section says **Still loading activity**. |
+| An Activity read fails | Logged; the rows already held stay. The next sync of any topic, or the next subscribe, reads again. Before any read has landed, the section says **Still loading activity**. |
 | Mark all read in another window | The server publishes `activity` to the reader's sockets, the watch reads again, and the rows and count clear. |
 | The socket drops mid-walk | The walk's requests are rejected, the list stays marked incomplete (**Still loading threads**), and the next subscribe walks again. |
 | The server ends the session's access | The watch stops redialling (`stopped`), logs it, and forgets every row, so no title or count outlives the access. The next session change opens it again. |
@@ -497,13 +503,21 @@ Channel row push, which would cost a read per message across the
 Organization when the `activity` topic already says when the feed moved.
 
 **Consequences:** The number beside the icon can differ from the dock badge
-and the Threads button's badge, which still count `attentionItems`. A desktop
-makes one more REST read per `activity` sync (two per burst), the same reads
-an open Activity tab makes. Before this change "Mark all read" told no other
+and the Threads button's badge, which still count `attentionItems`. Every
+message in the Organization publishes `activity` to everyone, so every desktop
+with the menu bar on (the default, from login, with or without a window) reads
+the 250-row Activity page once per burst of messages anywhere in the
+Organization, two reads at most per burst. The renderer reads it only while
+the Activity tab is shown, so this is a standing cost the tab never had. If
+that read shows up in the Worker's load, the fix is a narrower topic, not a
+cache here. `menu_bar_opened.attentionCount` changed meaning with this
+release. Before this change "Mark all read" told no other
 socket at all; another window's Activity tab now clears too. Something that
 should appear in Needs attention belongs in the Activity feed
 ([`digests.md`](digests.md#the-activity-tab)), and must publish `activity`
 when it moves, or the menu will not see it until the next reconnect.
+
+Shipped in #1224.
 
 ### 2026-10-08 — The menu bar socket drops sends while closing
 

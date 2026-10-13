@@ -66,6 +66,7 @@ export function menuBarContent(directory: ChannelDirectorySnapshot, activity: Ac
     })),
     attention: activity.items.filter((item) => item.unread).map(attentionRow),
     attentionComplete: activity.complete,
+    recentsComplete: directory.complete,
     recents: named
       .filter((channel) => !channel.archivedAt && !channel.systemKind)
       .sort(compareRecentChannels)

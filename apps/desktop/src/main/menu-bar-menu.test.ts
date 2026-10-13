@@ -31,7 +31,7 @@ function template(
 ): MenuItemConstructorOptions[] {
   return menuBarMenuTemplate({
     appName: 'Rally',
-    content: { ...emptyMenuBarContent, attentionComplete: true, ...content },
+    content: { ...emptyMenuBarContent, attentionComplete: true, recentsComplete: true, ...content },
     signedIn: overrides.signedIn ?? true,
     sectionHeaders: overrides.sectionHeaders ?? true,
     actions: overrides.actions ?? actions(),
@@ -153,7 +153,7 @@ describe('menu bar menu', () => {
     expect(quiet.find((item) => item.label === 'Nothing needs your attention')?.enabled).toBe(false);
   });
 
-  it('never claims nothing is waiting before every Channel has been read', () => {
+  it('never claims nothing is waiting before Activity has been read', () => {
     const loading = labels(template({ attention: [], attentionComplete: false }));
     expect(loading).not.toContain('Nothing needs your attention');
     expect(loading).toContain('Still loading activity');
@@ -161,6 +161,18 @@ describe('menu bar menu', () => {
     // Rows read so far are real, and the line under them says they may not be all.
     const partial = labels(template({ attention: [main('a', 'Acme')], attentionComplete: false }));
     expect(partial.slice(0, 3)).toEqual(['Needs attention', 'Acme', 'Still loading activity']);
+  });
+
+  it('never claims there are no recent threads before every Space has been walked', () => {
+    const loading = labels(template({ recents: [], recentsComplete: false }));
+    expect(loading).not.toContain('No recent threads');
+    expect(loading.slice(loading.indexOf('Most recent'), loading.indexOf('Most recent') + 2))
+      .toEqual(['Most recent', 'Still loading threads']);
+
+    // Rows already walked are drawn as they are, with no line under them.
+    const partial = labels(template({ recents: [workstreams[0]!], recentsComplete: false }));
+    expect(partial).toContain('Channel 0');
+    expect(partial).not.toContain('Still loading threads');
   });
 
   it('shows the signed-out state once, with nothing to list', () => {
