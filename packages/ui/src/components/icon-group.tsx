@@ -13,9 +13,9 @@ export interface IconGroupAction {
   disabled?: boolean;
   /** Set for a toggle: the button carries `aria-pressed`, its menu row a check. */
   pressed?: boolean;
-  /** Where the button's tooltip opens; `bottom` unless the host's content would cover it. */
-  tooltipSide?: 'top' | 'right' | 'bottom' | 'left';
 }
+
+export type TooltipSide = 'top' | 'right' | 'bottom' | 'left';
 
 /**
  * A row of icon buttons with the spacing between them built in, so a header
@@ -29,8 +29,11 @@ export interface IconGroupAction {
  *
  * `folded` folds them at any width, for a host that has measured the row as
  * crowding its neighbour (`TitlePillHeader` does).
+ *
+ * `tooltipSide` applies to every button the group draws, "More" included, so a
+ * host whose content would cover a downward label moves all of them at once.
  */
-export function IconGroup({ actions = [], buttonClassName, children, className, folded = false, moreLabel = 'More actions' }: {
+export function IconGroup({ actions = [], buttonClassName, children, className, folded = false, moreLabel = 'More actions', tooltipSide }: {
   actions?: readonly IconGroupAction[];
   folded?: boolean;
   /** The look every button in the group shares, the "More" button included. */
@@ -38,6 +41,7 @@ export function IconGroup({ actions = [], buttonClassName, children, className, 
   children?: ReactNode;
   className?: string;
   moreLabel?: string;
+  tooltipSide?: TooltipSide | undefined;
 }): React.JSX.Element {
   const moreRef = useRef<HTMLButtonElement>(null);
   return <div className={clsx('icon-group', folded && 'is-folded', className)}>
@@ -50,14 +54,14 @@ export function IconGroup({ actions = [], buttonClassName, children, className, 
           key={action.key}
           label={action.label}
           onClick={action.onSelect}
-          tooltipSide={action.tooltipSide}
+          tooltipSide={tooltipSide}
         >
           {action.icon}
         </IconButton>)}
       </span>
       <DropdownMenu.Root modal={false}>
         <DropdownMenu.Trigger asChild>
-          <IconButton className={clsx('icon-group-more', buttonClassName)} label={moreLabel} ref={moreRef}>
+          <IconButton className={clsx('icon-group-more', buttonClassName)} label={moreLabel} ref={moreRef} tooltipSide={tooltipSide}>
             <IconDots aria-hidden="true" size={16} stroke={1.9} />
           </IconButton>
         </DropdownMenu.Trigger>

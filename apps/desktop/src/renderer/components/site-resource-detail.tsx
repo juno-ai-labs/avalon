@@ -291,13 +291,9 @@ export function SiteResourceDetail({
 
   /*
    * Into the host's header, beside its own controls, rather than into a row of
-   * this detail's own: chrome drawn over a page reads as the page's.
-   *
-   * Every label opens *upward*. The pane below the header is covered by a
-   * composited `WebContentsView` whenever a live artifact is showing, and that
-   * view paints above all renderer DOM: a tooltip hanging down from the header
-   * lands behind the page, and no `z-index` reaches it, because it is not a DOM
-   * sibling. Radix flips to the other side only when there is no room above.
+   * this detail's own: chrome drawn over a page reads as the page's. Which way
+   * their labels open is the host's call, since only it knows where its header
+   * sits against the composited page below.
    */
   const headerActions = React.useMemo((): IconGroupAction[] => [
     ...(access?.stateful ? [{
@@ -308,7 +304,6 @@ export function SiteResourceDetail({
       label: 'Stored data',
       icon: <IconDatabase aria-hidden="true" size={16} stroke={1.9} />,
       pressed: showingData,
-      tooltipSide: 'top' as const,
       onSelect: () => setShowingData((showing) => !showing),
     }] : []),
     {
@@ -316,7 +311,6 @@ export function SiteResourceDetail({
       label: 'Open in a new window',
       icon: <IconWindowMaximize aria-hidden="true" size={16} stroke={1.9} />,
       disabled: !access,
-      tooltipSide: 'top',
       onSelect: () => {
         if (!access) return;
         void mintAccess().then(
@@ -341,7 +335,6 @@ export function SiteResourceDetail({
           ? <IconAlertCircle aria-hidden="true" size={16} stroke={1.9} />
           : <IconCopy aria-hidden="true" size={16} stroke={1.9} />,
       disabled: !access,
-      tooltipSide: 'top',
       onSelect: () => void copy(),
     },
     {
@@ -349,7 +342,6 @@ export function SiteResourceDetail({
       label: 'Open in browser',
       icon: <IconExternalLink aria-hidden="true" size={16} stroke={1.9} />,
       disabled: !access,
-      tooltipSide: 'top',
       onSelect: () => void mintAccess().then(
         async (navigation) => await surface.openExternal(navigation.openUrl),
       ),
