@@ -36,7 +36,7 @@ afterEach(async () => {
 });
 
 function cachedRow(domain: string) {
-  return db.prepare("SELECT name, fetched_at FROM organization_name_suggestions WHERE domain = ?").get(domain);
+  return db.prepare("SELECT outcome, name, fetched_at FROM organization_name_suggestions WHERE domain = ?").get(domain);
 }
 
 describe("GET /onboarding/organization-suggestion", () => {
@@ -80,7 +80,7 @@ describe("account creation", () => {
     const credential = /code is (\d+)\./u.exec(payload.text)![1]!;
     await redeemEmailLogin(env, { challengeId, redemptionId: crypto.randomUUID(), credential, method: "otp" }, "browser");
     await drainWaitUntil();
-    expect(cachedRow("initech.com")).toMatchObject({ name: "Initech" });
+    expect(cachedRow("initech.com")).toMatchObject({ outcome: "named", name: "Initech" });
     expect(fetcher.calls.filter((url) => url === "https://initech.com/")).toHaveLength(1);
   });
 });
@@ -96,7 +96,7 @@ describe("suggestOrganizationName", () => {
     expect(unused.calls).toEqual([]);
     const later = new Date(start.getTime() + 30 * DAY_MS);
     expect(await suggestOrganizationName(d1, "c@globex.com", homepage("Globex Corporation"), later)).toBe("Globex Corporation");
-    expect(cachedRow("globex.com")).toEqual({ name: "Globex Corporation", fetched_at: later.toISOString() });
+    expect(cachedRow("globex.com")).toEqual({ outcome: "named", name: "Globex Corporation", fetched_at: later.toISOString() });
   });
 
   it("caches a homepage that names nothing, but not one that cannot be reached", async () => {
@@ -105,7 +105,7 @@ describe("suggestOrganizationName", () => {
     expect(await suggestOrganizationName(d1, "a@umbrella.com", async () => new Response("down", { status: 503 }), start)).toBeNull();
     expect(cachedRow("umbrella.com")).toBeUndefined();
     expect(await suggestOrganizationName(d1, "a@umbrella.com", homepage("Home"), start)).toBeNull();
-    expect(cachedRow("umbrella.com")).toEqual({ name: null, fetched_at: start.toISOString() });
+    expect(cachedRow("umbrella.com")).toEqual({ outcome: "unnamed", name: null, fetched_at: start.toISOString() });
   });
 
   it("does not fetch for a personal mail provider or a reserved test domain", async () => {
@@ -116,11 +116,17 @@ describe("suggestOrganizationName", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it("offers nothing when the homepage is missing or not HTML", async () => {
+  it("offers nothing when the homepage is missing or not HTML, and remembers why", async () => {
     const d1 = sqliteD1(db);
-    expect(await suggestOrganizationName(d1, "pat@hooli.com", async () => new Response("gone", { status: 404 }))).toBeNull();
+    expect(await suggestOrganizationName(d1, "pat@hooli.com", async () => new Response("gone", { status: 404 }), start)).toBeNull();
+    expect(cachedRow("hooli.com")).toEqual({ outcome: "missing", name: null, fetched_at: start.toISOString() });
     expect(await suggestOrganizationName(d1, "pat@soylent.com", async () =>
-      new Response("{}", { headers: { "content-type": "application/json" } }))).toBeNull();
+      new Response("{}", { headers: { "content-type": "application/json" } }), start)).toBeNull();
+    expect(cachedRow("soylent.com")).toEqual({ outcome: "not_html", name: null, fetched_at: start.toISOString() });
+    // A media type that merely contains "html" is not HTML.
+    expect(await suggestOrganizationName(d1, "pat@vandelay.com", async () =>
+      new Response("<title>Vandelay</title>", { headers: { "content-type": "application/x-html-fragment" } }), start)).toBeNull();
+    expect(cachedRow("vandelay.com")).toMatchObject({ outcome: "not_html" });
   });
 
   it("stops reading once the head has arrived", async () => {
@@ -132,6 +138,17 @@ describe("suggestOrganizationName", () => {
     });
     const fetcher = async () => new Response(body, { headers: { "content-type": "text/html" } });
     expect(await suggestOrganizationName(sqliteD1(db), "pat@acme.com", fetcher)).toBe("Acme");
+  });
+});
+
+describe("organization_name_suggestions", () => {
+  it("stores only cacheable outcomes, with a name exactly when the outcome is named", () => {
+    const insert = db.prepare("INSERT INTO organization_name_suggestions (domain, outcome, name, fetched_at) VALUES (?, ?, ?, ?)");
+    expect(() => insert.run("a.com", "named", null, "2026-10-01T00:00:00.000Z")).toThrow(/CHECK/u);
+    expect(() => insert.run("b.com", "unnamed", "Bee", "2026-10-01T00:00:00.000Z")).toThrow(/CHECK/u);
+    expect(() => insert.run("c.com", "unreachable", null, "2026-10-01T00:00:00.000Z")).toThrow(/CHECK/u);
+    insert.run("d.com", "named", "Dee", "2026-10-01T00:00:00.000Z");
+    insert.run("e.com", "missing", null, "2026-10-01T00:00:00.000Z");
   });
 });
 
