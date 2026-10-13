@@ -331,7 +331,7 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
     ref={headerRef}
     style={shift ? { '--title-pill-shift': `${shift}px` } as React.CSSProperties : undefined}
   >
-    <div className={clsx('title-pill-ancestors', bridged && 'is-bridged')}>
+    <div className="title-pill-ancestors">
       {/* Crumbs that all have marks are always one bridge of them; pills are
           the fallback for a crumb without one. */}
       {bridged ? null : ancestors.map((level) => <span className="title-pill-ancestor window-no-drag" key={level.key}>

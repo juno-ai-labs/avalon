@@ -162,6 +162,8 @@ hide its name remain for that case alone. The bridge names the nearest crumb
 on desktop and ellipsizes it to its column, and shows marks alone at phone
 width, as before.
 
+Shipped in #1218.
+
 ### 2026-10-13 — `MarkBridge` can name its last mark; a lone crumb bridges
 
 **What changed:** `labelLast` stretches the last mark into a pill holding its name, its ends still the circles' radius and its neck to the mark before unchanged. `TitlePillHeader` now bridges one crumb as well as two (below 460px for one), and names the nearest crumb on desktop. On a phone the name is hidden and the crumbs are glass marks alone, where a thread's Channel crumb was a bare round pill.
