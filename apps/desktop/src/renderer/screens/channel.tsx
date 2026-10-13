@@ -1,13 +1,13 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import type { ChannelStats, ChannelStatsList, SpaceSummary, WorkstreamAppearancePatch } from '@rally/contracts';
-import { AppearancePicker } from '@rally/ui/components/appearance-picker';
+import { AppearancePicker, AppearanceSubmenu } from '@rally/ui/components/appearance-picker';
 import { BreakoutChipRow, type BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { ChannelContainerMenu } from '@rally/ui/components/conversation-menus';
 import type { SidekickRow } from '@rally/ui/components/sidekick-section';
 import { SpaceIcon } from '@rally/ui/components/space-icon';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { TitleMenuItem, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { IconLock, IconPlus } from '@tabler/icons-react';
+import { IconLock, IconPalette, IconPlus } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
@@ -509,12 +509,20 @@ function ChannelHeader({ members, space, workspace }: {
           </DropdownMenu.SubContent>
         </DropdownMenu.Portal>
       </DropdownMenu.Sub> : undefined}
+      appearance={editable && api ? <AppearanceSubmenu
+        appearance={{ icon: space.iconKey, color: space.colorKey }}
+        icon={<IconPalette aria-hidden="true" size={16} stroke={1.8} />}
+        id={space.id}
+        key={space.id}
+        label="Icon"
+        onChange={changeAppearance}
+      /> : undefined}
       channel={{ name: space.name, scope: space.scope }}
       members={roster}
       onArchive={editable && !general ? () => setArchiving('confirm') : undefined}
       onCopyLink={copyLink}
       onOpenSidekick={(id) => void desktopBridge().openSidekicks(id)}
-      onRename={editable && !general ? () => setRenaming(space.name) : undefined}
+      onRename={editable ? () => setRenaming(space.name) : undefined}
       people={editable ? {
         candidates: members.filter((candidate) => !participantIds.includes(candidate.id) && (candidate.status ?? 'active') === 'active'),
         adding,
