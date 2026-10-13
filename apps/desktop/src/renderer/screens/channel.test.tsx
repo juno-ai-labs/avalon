@@ -269,10 +269,31 @@ describe('a Channel', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
     fireEvent.pointerDown(await screen.findByRole('button', { name: 'Me actions' }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Leave the channel' }));
+    expect(await screen.findByRole('heading', { name: 'Leave the channel?' })).toBeInTheDocument();
+    expect(api.updateSpaceAudience).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
     await waitFor(() => expect(api.updateSpaceAudience).toHaveBeenCalledWith('outbound', { scope: 'personal', participantUserIds: ['jordan'] }));
     await waitFor(() => expect(client.getQueryData<{ items: unknown[] }>(['spaces'])?.items).toEqual([]));
     expect(screen.getByTestId('location')).not.toHaveTextContent('/channels/outbound');
+  });
+
+  it('keeps a participant in the Channel when they cancel leaving it', async () => {
+    const colleague = { id: 'jordan', name: 'Jordan', email: 'jordan@rally.test', timezone: 'UTC' };
+    spaces.data = { ...outbound('participant'), items: [{
+      ...outbound('participant').items[0], scope: 'personal', participants: [{ userId: 'me' }, { userId: 'jordan' }],
+    }] };
+    api.getWorkspaceMembers.mockResolvedValue([workspace.currentUser, colleague] as never);
+    renderChannel();
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Outbound' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Me actions' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Leave the channel' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Leave the channel?' })).toBeNull());
+    expect(api.updateSpaceAudience).not.toHaveBeenCalled();
+    expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound');
   });
 
   describe('read in a focused window', () => {

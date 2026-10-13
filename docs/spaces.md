@@ -176,7 +176,8 @@ WorkspaceDO answers `{ ok: true, left: true }` and `PATCH /spaces/:id/audience`
 answers `204` rather than a summary. The desktop adds the actor to the list only
 when they turn **Public to organization** off, so that the person making a
 Channel private is not locked out of it; their **Leave the channel** sends the
-list as it stands.
+list as it stands. Leaving and removing somebody both ask first, in the same
+dialog a thread uses (`RemoveParticipantDialog`).
 
 ### A Space starts Organization-wide and grants no reader
 
