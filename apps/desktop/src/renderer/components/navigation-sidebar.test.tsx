@@ -310,6 +310,31 @@ describe('the navigation sidebar', () => {
     await waitFor(() => expect(today.getByRole('link')).toHaveTextContent('Maya K started Q4 plan'));
   });
 
+  it('badges Activity with Rally’s R and each person’s chosen accent', async () => {
+    useUiStore.getState().setSidebarSection('activity');
+    api.getWorkspaceMembers.mockResolvedValueOnce([{
+      id: 'maya', name: 'Maya K', email: 'maya@rally.test', timezone: 'UTC',
+      presentation: { color: 'orange', avatar: 'circle', initials: 'MK', revision: 1 },
+    } as never]);
+    const now = new Date().toISOString();
+    api.getActivity.mockResolvedValue({ nextCursor: null, items: [
+      { id: 'rally', kind: 'thread_started', occurredAt: now, actorUserId: null, actorLabel: 'Rally',
+        threadId: 'plan', threadTitle: 'Q4 plan', breakout: null, channelIds: ['outbound'], unread: false },
+      { id: 'maya', kind: 'thread_started', occurredAt: now, actorUserId: 'maya', actorLabel: 'Maya K',
+        threadId: 'brief', threadTitle: 'Launch brief', breakout: null, channelIds: ['outbound'], unread: false },
+    ] });
+    renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
+
+    const today = within(await screen.findByRole('region', { name: 'Today' }));
+    const badge = (name: RegExp) => today.getByRole('link', { name }).querySelector<HTMLElement>('.identity-tile > .identity-tile-badge.is-circle > .identity-tile-badge-fill');
+    await waitFor(() => expect(badge(/Maya K started/u)?.style.background).toBe('var(--av-sys-color-project-orange)'));
+    expect(badge(/Maya K started/u)).toHaveTextContent('MK');
+    expect(badge(/Maya K started/u)?.style.color).toBe('var(--personal-ink-light)');
+    expect(badge(/Rally started/u)).toHaveTextContent('R');
+    expect(badge(/Rally started/u)?.style.background).toBe('var(--av-sys-color-brand-on)');
+    expect(badge(/Rally started/u)?.querySelector('svg')).toBeNull();
+  });
+
   it('groups Activity by day and keeps what is new unread while it is shown, focused or not', async () => {
     const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
     useUiStore.getState().setSidebarSection('activity');

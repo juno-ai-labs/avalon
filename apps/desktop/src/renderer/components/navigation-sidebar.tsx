@@ -23,9 +23,9 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
-import { Sparkle } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, matchPath, useLocation, useNavigate } from 'react-router-dom';
 
@@ -36,6 +36,7 @@ import { desktopBridge } from '../lib/platform';
 import { formatDateTime, formatSidebarActivityTime, formatTime, readerMarkerStatus } from '../lib/format';
 import { layoutInsertIndex, layoutRowAt } from '../lib/list-motion';
 import { channelRoute, homeChannelId, threadRoute } from '../lib/navigation-routes';
+import { MemberPresentationContext } from '../lib/member-presentation';
 import { moveWithin } from '../lib/personal-order';
 import { compareChannels } from '../lib/sidebar-channel-order';
 import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, MY_THREADS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
@@ -49,6 +50,7 @@ import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { openWorkstreamId } from '../lib/workstream-landing';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
+import { personalColor, personalColorInk } from './personal-avatar';
 import { Button, IconButton, InlineError, Modal, TitleSkeleton, Tip } from './primitives';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import { RelativeTime } from './relative-time';
@@ -629,7 +631,7 @@ function PinnedMark({ reorderable }: { reorderable: boolean }): React.JSX.Elemen
 }
 
 /** A Channel's identity as a tile: its glyph on its hue's pastel pair. */
-function channelLook(space: SpaceSummary): { Icon: typeof Sparkle; tint: string; ink: string } {
+function channelLook(space: SpaceSummary): { Icon: LucideIcon; tint: string; ink: string } {
   return { Icon: WORKSTREAM_ICON_COMPONENTS[space.iconKey], ...markColors(space.colorKey) };
 }
 
@@ -1249,6 +1251,16 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
   const actorName = (item: ActivityItem): string => item.actorLabel
     || members.data?.find((member) => member.id === item.actorUserId)?.name
     || 'Someone';
+  // A person's badge wears the accent they chose, as their avatar does
+  // everywhere else; the wash is for someone without one.
+  const presentations = useContext(MemberPresentationContext);
+  const actorBadge = (item: ActivityItem): TileBadge => {
+    const presentation = item.actorUserId === null ? undefined : presentations.get(item.actorUserId)
+      ?? members.data?.find((member) => member.id === item.actorUserId)?.presentation;
+    return presentation
+      ? { key: 'actor', shape: 'circle', fill: personalColor(presentation.color), ink: personalColorInk(presentation.color), text: presentation.initials ?? initials(actorName(item)) }
+      : { key: 'actor', shape: 'circle', fill: 'var(--av-sys-color-accent-wash)', ink: 'var(--av-sys-color-accent-strong)', text: initials(actorName(item)) };
+  };
   const feed = useInfiniteQuery({
     queryKey: activityQueryKey(only),
     queryFn: ({ pageParam, signal }) => api!.getActivity(pageParam, only, signal),
@@ -1316,8 +1328,8 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
       {group.items.map((item) => {
         const channel = item.channelIds.map((id) => spaces.get(id)).find(Boolean);
         const actor: TileBadge = item.actorUserId === null
-          ? { key: 'actor', shape: 'circle', fill: 'var(--av-sys-color-text-default)', ink: 'var(--av-sys-color-surface-default)', icon: Sparkle }
-          : { key: 'actor', shape: 'circle', fill: 'var(--av-sys-color-accent-wash)', ink: 'var(--av-sys-color-accent-strong)', text: initials(actorName(item)) };
+          ? { key: 'actor', shape: 'circle', fill: 'var(--av-sys-color-brand-on)', ink: 'var(--av-sys-color-brand-base)', text: 'R' }
+          : actorBadge(item);
         const thread = resolveWorkstreamAppearance(item.threadId, live.data?.find((candidate) => candidate.id === item.threadId)?.appearance);
         return <Link
           className={clsx('activity-row', item.unread && 'is-unread')}
