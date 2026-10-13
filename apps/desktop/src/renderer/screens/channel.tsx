@@ -444,21 +444,31 @@ function ChannelHeader({ members, space, workspace }: {
       setFailure(spaceFailureSentence(cause, 'This channel couldn’t be archived.'));
     }
   };
-  // Each pick saves the whole presentation, so picks run one after another and
-  // each starts from the one before it: an icon then a colour chosen before the
-  // first save answers must not send the old icon back with the new colour.
-  const presentationWrites = useRef<{ queue: Promise<void>; latest: Pick<SpaceSummary, 'iconKey' | 'colorKey'> | null }>({ queue: Promise.resolve(), latest: null });
-  const changeAppearance = (patch: WorkstreamAppearancePatch): Promise<void> => {
+  // Every write saves the whole presentation (name, icon and colour), so a
+  // rename and each pick run one after another and each starts from the one
+  // before it: an icon chosen before a rename answers must not be sent back
+  // as the old one. The header stays mounted from one Channel to the next, so
+  // what is pending belongs to the Channel it was written for.
+  type Presentation = Pick<SpaceSummary, 'id' | 'name' | 'iconKey' | 'colorKey'>;
+  const presentationWrites = useRef<{ queue: Promise<void>; latest: Presentation | null }>({ queue: Promise.resolve(), latest: null });
+  const writePresentation = (patch: Partial<Omit<Presentation, 'id'>>): Promise<void> => {
     const writes = presentationWrites.current;
-    const base = writes.latest ?? { iconKey: space.iconKey, colorKey: space.colorKey };
-    const next = { iconKey: patch.icon ?? base.iconKey, colorKey: patch.color ?? base.colorKey };
+    const base = writes.latest?.id === space.id
+      ? writes.latest
+      : { id: space.id, name: space.name, iconKey: space.iconKey, colorKey: space.colorKey };
+    const next = { ...base, ...patch };
     writes.latest = next;
+    const { id, ...presentation } = next;
     const write = writes.queue.then(async () => {
-      stored(await api!.updateSpacePresentation(space.id, { name: space.name, ...next }));
+      stored(await api!.updateSpacePresentation(id, presentation));
     }).finally(() => { if (writes.latest === next) writes.latest = null; });
     writes.queue = write.catch(() => undefined);
     return write;
   };
+  const changeAppearance = (patch: WorkstreamAppearancePatch): Promise<void> => writePresentation({
+    ...(patch.icon ? { iconKey: patch.icon } : {}),
+    ...(patch.color ? { colorKey: patch.color } : {}),
+  });
   const copyLink = session?.workspace ? (): void => {
     const target = session.workspace!;
     void copySpaceLink({ region: target.region, workspaceId: target.id }, space.id)
@@ -558,7 +568,8 @@ function ChannelHeader({ members, space, workspace }: {
           onClick={() => {
             const name = renaming?.trim() ?? '';
             setRenaming(null);
-            void run(() => api!.updateSpacePresentation(space.id, { name, iconKey: space.iconKey, colorKey: space.colorKey }), 'This channel couldn’t be renamed.');
+            setFailure(null);
+            void writePresentation({ name }).catch(() => setFailure('This channel couldn’t be renamed.'));
           }}
         >Rename</Button>
       </>}
