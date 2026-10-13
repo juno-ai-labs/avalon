@@ -353,10 +353,8 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
  * left the pill moves to keep that gap from the folded row.
  *
  * Decided from the layout the header would have unfolded and centred, not
- * from where things sit now: folding narrows the row and crowding re-centres
+ * from where things sit now: folding narrows the row and crowding moves
  * the pill, and reading either back would undo the decision that caused it.
- * The pill's natural width is remembered from an uncrowded render, since a
- * crowded pill may be truncating.
  */
 function useTrailingCrowded(
   headerRef: RefObject<HTMLElement | null>,
@@ -365,7 +363,6 @@ function useTrailingCrowded(
   actionCount: number,
 ): { crowded: boolean; shift: number } {
   const [state, setState] = useState({ crowded: false, shift: 0 });
-  const naturalPill = useRef(0);
   useLayoutEffect(() => {
     const header = headerRef.current;
     const current = currentRef.current;
@@ -393,8 +390,9 @@ function useTrailingCrowded(
       const button = more && more.offsetWidth ? more.offsetWidth : 0;
       const step = (actionCount - 1) * (button + gap);
       const rowWidth = group.offsetWidth + (folded ? step : 0);
-      if (!header.classList.contains('is-crowded')) naturalPill.current = pill.offsetWidth;
-      const pillRight = (left + right) / 2 + Math.max(naturalPill.current, pill.offsetWidth) / 2;
+      // The pill only ever moves, never shrinks, so its width is its own even
+      // while crowded, and follows a title that gets shorter.
+      const pillRight = (left + right) / 2 + pill.offsetWidth / 2;
       const crowded = right - rowWidth - pillRight < gap;
       // Folded, the row is one "More" button narrower by `step`; the pill moves
       // only as far as it takes to sit a gap from it.

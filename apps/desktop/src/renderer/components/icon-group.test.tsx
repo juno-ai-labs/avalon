@@ -21,6 +21,18 @@ describe('IconGroup', () => {
     expect(screen.getByRole('button', { name: 'Close' })).toBeVisible();
   });
 
+  it('runs a folded action with focus on the "More" button, which outlives the menu', async () => {
+    let focused: Element | null = null;
+    render(<Tooltip.Provider>
+      <IconGroup actions={[{ key: 'expand', label: 'Expand', icon: null, onSelect: () => { focused = document.activeElement; } }]} />
+    </Tooltip.Provider>);
+
+    const more = screen.getByRole('button', { name: 'More actions' });
+    fireEvent.pointerDown(more, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Expand' }));
+    expect(focused).toBe(more);
+  });
+
   it('draws no "More" button when it has no actions to fold', () => {
     render(<Tooltip.Provider><IconGroup><button type="button">Close</button></IconGroup></Tooltip.Provider>);
     expect(screen.queryByRole('button', { name: 'More actions' })).toBeNull();
