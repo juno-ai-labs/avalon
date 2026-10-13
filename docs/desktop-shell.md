@@ -56,10 +56,10 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   access request waiting on them, the same `attentionItems` the dock badge
   counts. The macOS menu bar counts Activity's unread rows instead
   ([`menu-bar.md`](menu-bar.md)). Channels and Activity carry no badge.
-- **One list**, titled with the section's name, with **Search organization**,
-  **Import** (Mac app only, into any Channel the person may place threads in),
-  **Restart to update** when one is downloaded, and **New channel** on
-  Channels or **Mark all read** on Activity. Threads has no header action: a
+- **One list**, titled with the section's name, with **Restart to update**
+  when one is downloaded, **New channel** on Channels or **Mark all read** on
+  Activity, and **Search organization** last, so it holds its place as the
+  person moves between the three lists. Threads has no section action: a
   thread starts from a Channel's composer.
 
 Every row in the three lists is one layout (`RowLayout`): an `IdentityTile`
