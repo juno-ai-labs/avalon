@@ -1,7 +1,7 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ChannelStats } from '@rally/contracts';
@@ -13,6 +13,8 @@ const api = vi.hoisted(() => ({
   getChannelFeed: vi.fn(),
   getWorkspaceMembers: vi.fn(async () => []),
   archiveSpace: vi.fn(),
+  updateSpacePresentation: vi.fn(),
+  updateSpaceAudience: vi.fn(),
   acknowledgeChannelRead: vi.fn(),
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session: null }) }));
@@ -127,11 +129,115 @@ describe('a Channel', () => {
     api.archiveSpace.mockResolvedValue({ ...outbound('organization').items[0], status: 'archived' });
     renderChannel();
     fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Outbound' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive channel' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Archive' }));
 
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(/^\/$/u));
     expect(api.archiveSpace).toHaveBeenCalledWith('outbound');
+  });
+
+  it('saves an icon and a colour picked from its mark one after the other, the second keeping the first', async () => {
+    const first = Promise.withResolvers<unknown>();
+    api.updateSpacePresentation
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(async (_id: string, input: object) => ({ ...outbound('organization').items[0], ...input }));
+    renderChannel();
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Change Outbound icon and color' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Rocket' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Green' }));
+
+    await waitFor(() => expect(api.updateSpacePresentation).toHaveBeenCalledTimes(1));
+    expect(api.updateSpacePresentation).toHaveBeenLastCalledWith('outbound', { name: 'Outbound', iconKey: 'rocket', colorKey: 'blue' });
+    first.resolve({ ...outbound('organization').items[0], iconKey: 'rocket' });
+    await waitFor(() => expect(api.updateSpacePresentation).toHaveBeenCalledTimes(2));
+    expect(api.updateSpacePresentation).toHaveBeenLastCalledWith('outbound', { name: 'Outbound', iconKey: 'rocket', colorKey: 'green' });
+  });
+
+  it('renames after an icon pick still saving without sending the old icon back', async () => {
+    const first = Promise.withResolvers<unknown>();
+    api.updateSpacePresentation
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(async (_id: string, input: object) => ({ ...outbound('organization').items[0], ...input }));
+    renderChannel();
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Change Outbound icon and color' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Rocket' }));
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Outbound' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Name' }), { target: { value: 'Outreach' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+    first.resolve({ ...outbound('organization').items[0], iconKey: 'rocket' });
+    await waitFor(() => expect(api.updateSpacePresentation).toHaveBeenCalledTimes(2));
+    expect(api.updateSpacePresentation).toHaveBeenLastCalledWith('outbound', { name: 'Outreach', iconKey: 'rocket', colorKey: 'blue' });
+  });
+
+  it('starts a pick on another Channel from that Channel, not from one still saving on the last', async () => {
+    const outboundRow = outbound('organization').items[0]!;
+    const growth = { ...outboundRow, id: 'growth', name: 'Growth', iconKey: 'flag', colorKey: 'green' };
+    spaces.data = { waterline: 1, items: [outboundRow, growth] };
+    const first = Promise.withResolvers<unknown>();
+    api.updateSpacePresentation
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(async (_id: string, input: object) => ({ ...growth, ...input }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><Tooltip.Provider>
+      <MemoryRouter initialEntries={['/channels/outbound']}>
+        <Link to="/channels/growth">to growth</Link>
+        <Routes><Route element={<ChannelScreen workspace={workspace} />} path="/channels/:channelId/*" /></Routes>
+      </MemoryRouter>
+    </Tooltip.Provider></QueryClientProvider>);
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Change Outbound icon and color' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Rocket' }));
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    fireEvent.click(screen.getByRole('link', { name: 'to growth' }));
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Change Growth icon and color' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Purple' }));
+
+    first.resolve({ ...outboundRow, iconKey: 'rocket' });
+    await waitFor(() => expect(api.updateSpacePresentation).toHaveBeenCalledTimes(2));
+    expect(api.updateSpacePresentation).toHaveBeenLastCalledWith('growth', { name: 'Growth', iconKey: 'flag', colorKey: 'purple' });
+  });
+
+  it('renames General from its title menu, which only refuses archiving it or making it private', async () => {
+    const general = { ...outbound('organization').items[0]!, systemRole: 'general' };
+    spaces.data = { waterline: 1, items: [general] };
+    api.updateSpacePresentation.mockImplementation(async (_id: string, input: object) => ({ ...general, ...input }));
+    renderChannel();
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Outbound' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Name' }), { target: { value: 'Everyone' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+    await waitFor(() => expect(api.updateSpacePresentation).toHaveBeenCalledWith('outbound', { name: 'Everyone', iconKey: 'briefcase', colorKey: 'blue' }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Channel menu:/u }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
+    await screen.findByRole('menuitem', { name: 'Icon' });
+    expect([...screen.getByRole('menu').querySelectorAll('[role^="menuitem"]')].map((item) => item.textContent?.trim()))
+      .toEqual(['Icon', 'Pinned in my sidebar']);
+  });
+
+  it('offers its icon and colour in More, beside its settings', async () => {
+    renderChannel();
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Outbound' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
+
+    await screen.findByRole('menuitem', { name: 'Icon' });
+    expect([...screen.getByRole('menu').querySelectorAll('[role^="menuitem"]')].map((item) => item.textContent?.trim()))
+      .toEqual(['Icon', 'Pinned in my sidebar', 'Public to organization', 'Archive channel']);
+  });
+
+  it('makes the Channel private by turning off Public to organization, keeping the person who did it in it', async () => {
+    api.updateSpaceAudience.mockImplementation(async () => ({ ...outbound('organization').items[0], scope: 'personal' }));
+    renderChannel();
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Outbound' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
+    const toggle = await screen.findByRole('menuitemcheckbox', { name: 'Public to organization' });
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(api.updateSpaceAudience).toHaveBeenCalledWith('outbound', { scope: 'personal', participantUserIds: ['me'] }));
   });
 
   describe('read in a focused window', () => {

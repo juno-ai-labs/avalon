@@ -108,15 +108,20 @@ the Channel's menu:
   is plenty, even for a committee.
 - **Sidekicks** lists the Channel's Sidekicks. See
   [The Channel's Sidekicks](#the-channels-sidekicks).
-- **Private to its members** is the privacy switch. See
-  [Private channels](#private-channels).
-- **Pinned in my sidebar** pins the Channel to the top of your Channels list. You
-  can also right-click the Channel in the list and choose **Pin**.
-- **Archive channel** takes the Channel out of everyone's Channels list, after
-  asking. Its Threads keep going, and any that sit in no other Channel move to
-  General so nobody loses them. See [Archiving](02-arranging-channels.md#archiving).
+- **Copy link** copies a link that opens the Channel.
+- **More** holds the rest:
+  - **Icon** changes the Channel's icon and color. Clicking the icon in the pill
+    does the same. Threads whose home is this Channel, and their Breakouts,
+    take its color.
+  - **Pinned in my sidebar** pins the Channel to the top of your Channels list.
+    You can also right-click the Channel in the list and choose **Pin**.
+  - **Public to organization** is the privacy switch. See
+    [Private channels](#private-channels).
+  - **Archive channel** takes the Channel out of everyone's Channels list, after
+    asking. Its Threads keep going, and any that sit in no other Channel move to
+    General so nobody loses them. See [Archiving](02-arranging-channels.md#archiving).
 
-General's menu has no privacy switch, no **Rename** and no **Archive channel**. A Channel you can see but
+General's menu has no privacy switch and no **Archive channel**. A Channel you can see but
 not change (see below) shows its people but offers nothing to change.
 
 ## Who belongs in a Channel
@@ -133,8 +138,8 @@ the members are the only people who can see it at all.
 ### Private channels
 
 Every Channel starts open to the whole Organization. To make one private, open
-its menu and turn on **Private to its members**. Turn it off to open the Channel
-to the Organization again.
+its menu, choose **More** and turn off **Public to organization**. Turn it back
+on to open the Channel to the Organization again.
 
 A private Channel:
 
