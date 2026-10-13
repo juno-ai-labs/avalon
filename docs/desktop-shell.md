@@ -401,7 +401,12 @@ already carries the waterline and read position, so the client derives it.
 
 **Consequences:** There is no way left in the app to restore an archived
 Channel; `restoreSpace` and the inactive Space directory stay in the API and
-the socket for whatever brings that back.
+the socket for whatever brings that back. The count is an upper bound: a
+new thread moved out again still counts until the Channel holds fewer threads
+than the gap, and an exact count would need the server to count memberships
+above the read position.
+
+Shipped in [#1205](https://github.com/juno-ai-labs/avalon/pull/1205).
 
 ### 2026-10-13 — The Channel feed reads thread-first
 
