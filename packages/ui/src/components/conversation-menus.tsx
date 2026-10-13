@@ -627,6 +627,7 @@ export function ChannelMenu({
  */
 export function ChannelContainerMenu({
   addSidekick,
+  appearance,
   channel,
   members,
   onArchive,
@@ -640,6 +641,8 @@ export function ChannelContainerMenu({
   sidekicks,
 }: {
   addSidekick?: ReactNode;
+  /** The Channel's icon-and-colour choice, as a submenu, when the viewer may change it. */
+  appearance?: ReactNode;
   channel: { name: string; scope: 'personal' | 'workspace' };
   members: readonly WorkspaceMember[];
   /** Asks to archive the Channel; absent where the viewer may not (General, a guest). */
@@ -663,10 +666,11 @@ export function ChannelContainerMenu({
   }
   if (nav.view?.key === 'more') {
     return <>
+      {appearance}
       {privacy && <SwitchRow checked={privacy.on} disabled={privacy.disabled} icon={<IconLock aria-hidden="true" size={16} stroke={1.8} />} label="Private to its members" onChange={privacy.onChange} />}
       {pinned && <SwitchRow checked={pinned.on} icon={<IconPin aria-hidden="true" size={16} stroke={1.8} />} label="Pinned in my sidebar" onChange={pinned.onChange} />}
       {onArchive && <>
-        {(privacy || pinned) && <TitleMenuSeparator />}
+        {(appearance || privacy || pinned) && <TitleMenuSeparator />}
         <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={onArchive}>Archive channel</TitleMenuItem>
       </>}
     </>;
@@ -676,7 +680,7 @@ export function ChannelContainerMenu({
       <ActionTile disabled={!people} icon={<IconUserPlus aria-hidden="true" size={20} stroke={1.6} />} label="Add people" onSelect={openLevel(nav, PEOPLE_VIEW)} />
       {onRename && <ActionTile icon={<IconPencil aria-hidden="true" size={20} stroke={1.6} />} label="Rename" onSelect={onRename} />}
       {onCopyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={onCopyLink} />}
-      {(privacy || pinned || onArchive) && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
+      {(appearance || privacy || pinned || onArchive) && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
     </ActionTiles>
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(members.length, channel.scope, false)} view={PEOPLE_VIEW} />
     <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
