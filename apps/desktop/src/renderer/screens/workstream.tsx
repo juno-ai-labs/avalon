@@ -1,7 +1,7 @@
 import { BreakoutMenu, ChannelMenu, type ConversationRowTarget } from '@rally/ui/components/conversation-menus';
 import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
-import { BreakoutPillIcon, TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import type { IconGroupAction } from '@rally/ui/components/icon-group';
 import { WorkstreamGlyph, workstreamMark } from '@rally/ui/components/workstream-glyph';
 
@@ -775,8 +775,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
       label: `Thread menu: ${title}`,
       ...(onSelect ? { onSelect } : {}),
-      // Beside an open Breakout the Channel's pill points at it.
-      ...(!onSelect && breakoutPaneOpen ? { chevron: 'right' as const } : {}),
       menu: <ChannelMenu
         actions={mainActions}
         appearance={appearanceChange ? <AppearanceSubmenu
@@ -825,11 +823,21 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     const title = context.detail.title;
     const naming = context.detail.titleStatus === 'naming';
     const breakoutId = openBreakoutId ?? '';
+    // The thread pill's shape: its own glyph, which is its appearance picker.
     return {
       key: `breakout:${breakoutId}`,
-      // The design's Breakout mark: the arrow every Breakout chip and row
-      // wears. Its own icon and colour are chosen from the menu instead.
-      icon: <BreakoutPillIcon />,
+      icon: <WorkstreamGlyph appearance={selectedAppearance} id={breakoutId} size={24} />,
+      ...(channelWritable ? {
+        iconAction: <AppearancePicker
+          appearance={selectedAppearance}
+          colors={false}
+          id={breakoutId}
+          key={breakoutId}
+          label={`Change ${title} icon`}
+          onChange={context.setAppearance}
+          renderGlyph={(appearance) => <WorkstreamGlyph appearance={appearance} id={breakoutId} size={24} />}
+        />,
+      } : {}),
       bridge: { mark: workstreamMark(breakoutId, selectedAppearance ?? undefined), name: title, action: 'Open breakout' },
       title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
       label: `Breakout menu: ${title}`,

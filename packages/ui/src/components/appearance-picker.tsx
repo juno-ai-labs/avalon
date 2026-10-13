@@ -109,8 +109,8 @@ function AppearanceChoices({ selected, change, error, colors = true }: Pick<Retu
 }
 
 /**
- * The same palette as a submenu of a menu that is already open, for a mark the
- * surface does not draw as its own control, such as a Breakout's title pill.
+ * The same palette as a submenu of a menu that is already open, such as a title
+ * pill's menu, alongside or in place of the pill's own picker.
  */
 export function AppearanceSubmenu({ id, appearance, label: itemLabel, icon, onChange, colors }: {
   id: string;
