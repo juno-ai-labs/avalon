@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '../lib/api';
-import { CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
+import { CHANNEL_STATS_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import type { ChannelStats } from '@rally/contracts';
 import type { SpaceConversationSummary, Workspace } from '../lib/types';
 import { markDeepLinkWorkstreamNavigation } from '../lib/deep-link-navigation';
@@ -21,7 +21,6 @@ const api = vi.hoisted(() => ({
   reorderPins: vi.fn(),
   getChannelStats: vi.fn(async () => []),
   getWorkspaceMembers: vi.fn(async () => [{ id: 'maya', name: 'Maya K', email: 'maya@rally.test', timezone: 'UTC' }]),
-  restoreSpace: vi.fn(),
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
 /** The threads the workspace socket holds; empty unless a test puts some there. */
@@ -120,7 +119,7 @@ describe('the navigation sidebar', () => {
     useUiStore.getState().setSidebarOpen(false);
   });
 
-  it('lists pinned Channels in the person’s order, then every other Channel A–Z with its thread count', () => {
+  it('lists pinned Channels in the person’s order, then every other Channel A–Z, counting only new threads', () => {
     renderSidebar((client) => {
       client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [
         channel('zebra', 'Zebra'), channel('apple', 'Apple'), channel('outbound', 'Outbound'), channel('growth', 'Growth'),
@@ -129,14 +128,21 @@ describe('the navigation sidebar', () => {
         { kind: 'channel', id: 'outbound', parentId: null },
         { kind: 'channel', id: 'growth', parentId: null },
       ]);
-      client.setQueryData(CHANNEL_STATS_QUERY_KEY, [stats('apple', { threadCount: 1 })]);
+      client.setQueryData(CHANNEL_STATS_QUERY_KEY, [
+        stats('apple', { threadCount: 4, latestAttentionSequenceNumber: 5, readThroughSequenceNumber: 3, firstUnreadSequenceNumber: 4, hasUnread: true }),
+        // Six placed since the last read, but four of them moved out again.
+        stats('growth', { threadCount: 2, latestAttentionSequenceNumber: 6, readThroughSequenceNumber: 0, firstUnreadSequenceNumber: 1, hasUnread: true }),
+        stats('zebra', { threadCount: 7, latestAttentionSequenceNumber: 7, readThroughSequenceNumber: 7 }),
+        stats('outbound', { threadCount: 1, latestAttentionSequenceNumber: 1, firstUnreadSequenceNumber: 1, hasUnread: true }),
+      ]);
     });
 
     const pinned = within(screen.getByRole('region', { name: 'Pinned channels' }));
-    expect(pinned.getAllByRole('link').map((row) => row.textContent)).toEqual(['Outbound0 threadsPinned, 1 of 2.', 'Growth0 threadsPinned, 2 of 2.']);
+    expect(pinned.getAllByRole('link').map((row) => row.textContent))
+      .toEqual(['Outbound1 new threadPinned, 1 of 2.', 'Growth2 new threadsPinned, 2 of 2.']);
     const all = within(screen.getByRole('region', { name: 'All channels' }));
     expect(all.getAllByRole('link').filter((row) => row.classList.contains('navigation-channel-row')).map((row) => row.textContent))
-      .toEqual(['Apple1 thread', 'Zebra0 threads']);
+      .toEqual(['Apple2 new threads', 'Zebra']);
   });
 
   it('reorders a pinned Channel from the keyboard and from its menu, not only by dragging', async () => {
@@ -181,23 +187,6 @@ describe('the navigation sidebar', () => {
     fireEvent.contextMenu(screen.getByRole('link', { name: /Outbound/u }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
     expect(await screen.findByText('You’ve pinned as many items as Rally allows. Unpin one first.')).toBeInTheDocument();
-  });
-
-  it('keeps archived Channels folded at the bottom, and restores one into the list', async () => {
-    api.restoreSpace.mockResolvedValue(channel('hiring', 'Hiring'));
-    renderSidebar((client) => {
-      client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] });
-      client.setQueryData(INACTIVE_SPACES_QUERY_KEY, { waterline: 1, items: [channel('hiring', 'Hiring', { status: 'archived' })] });
-    });
-    const archived = within(screen.getByRole('region', { name: 'Archived channels' }));
-    expect(archived.queryByText('Hiring')).not.toBeInTheDocument();
-    fireEvent.click(archived.getByRole('button', { name: 'Show 1' }));
-    fireEvent.click(archived.getByRole('button', { name: 'Restore' }));
-
-    const all = within(screen.getByRole('region', { name: 'All channels' }));
-    expect(await all.findByRole('link', { name: /Hiring/u })).toBeInTheDocument();
-    expect(api.restoreSpace).toHaveBeenCalledWith('hiring');
-    expect(screen.queryByRole('region', { name: 'Archived channels' })).not.toBeInTheDocument();
   });
 
   it('opens a Channel on its own route', () => {
@@ -457,10 +446,11 @@ describe('the navigation sidebar', () => {
       .filter((row) => row.classList.contains('navigation-channel-row'))
       .map((row) => row.querySelector('.navigation-row-title')?.textContent);
 
-    it('marks only an unread Channel with a dot', () => {
+    it('marks only an unread Channel, with its count of new threads and no dot', () => {
       renderSidebar(seed);
-      expect(within(screen.getByRole('link', { name: /Mango/u })).getByRole('img', { name: 'Unread' })).toBeInTheDocument();
-      expect(screen.getAllByRole('img', { name: 'Unread' })).toHaveLength(1);
+      expect(within(screen.getByRole('link', { name: /Mango/u })).getByText('1 new thread')).toBeInTheDocument();
+      expect(screen.getAllByText(/new thread/u)).toHaveLength(1);
+      expect(screen.queryByRole('img', { name: 'Unread' })).not.toBeInTheDocument();
     });
 
     it('cycles A–Z, Recent and Needs attention from the heading', () => {
@@ -542,21 +532,6 @@ describe('the navigation sidebar', () => {
       expect(screen.getByRole('region', { name: 'Pinned channels' })).toContainElement(moved!.element);
       expect(moved!.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 144px)' }));
       expect(playedOn('channel:apple')?.keyframes).toEqual([{ transform: 'translate(0px, -48px)' }, { transform: 'translate(0px, 0px)' }]);
-    });
-
-    it('moves a restored Channel from Archived up into the list', async () => {
-      api.restoreSpace.mockResolvedValue(channel('hiring', 'Hiring'));
-      renderSidebar((client) => {
-        client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] });
-        client.setQueryData(INACTIVE_SPACES_QUERY_KEY, { waterline: 1, items: [channel('hiring', 'Hiring', { status: 'archived' })] });
-      });
-      const archived = within(screen.getByRole('region', { name: 'Archived channels' }));
-      fireEvent.click(archived.getByRole('button', { name: 'Show 1' }));
-      fireEvent.click(archived.getByRole('button', { name: 'Restore' }));
-      await within(screen.getByRole('region', { name: 'All channels' })).findByRole('link', { name: /Hiring/u });
-
-      // From the fourth slot (under Archived) to the second (above Outbound).
-      expect(playedOn('channel:hiring')?.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 96px)' }));
     });
 
     it('pins a row dragged into Pinned at the slot held open for it', async () => {

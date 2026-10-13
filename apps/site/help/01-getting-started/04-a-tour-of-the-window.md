@@ -41,8 +41,8 @@ A Channel is a team's list of Threads: one for a team, a client or a long-runnin
 
 - **Pinned** comes first, once you have pinned a Channel. Drag pinned Channels up and down to put them in your own order.
 - **All channels** follows, with every other Channel you can see. It starts A to Z. Click the sort button beside **All channels** to switch between **A–Z**, **Recent** (newest activity first) and **Needs attention** (Channels with something new for you first). Rally remembers your choice.
-- Each row shows the Channel's icon and name, a lock if the Channel is private, when it last had activity, and how many Threads are in it, such as **12 threads**.
-- A red dot and a bold name mean a Thread was added to that Channel since you last opened it. Opening the Channel clears it.
+- Each row shows the Channel's icon and name, a lock if the Channel is private, and when it last had activity.
+- A bold name and a red line such as **2 new threads** mean Threads were added to that Channel since you last opened it. Opening the Channel clears it.
 - Click a row to open the Channel. Right-click it for **Pin** or **Unpin**.
 - The **+** beside **All channels** opens **New channel**. Type a name and click **Create channel**.
 
