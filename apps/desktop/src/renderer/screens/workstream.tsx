@@ -677,13 +677,16 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const breakoutScope = openBreakoutId === null ? null : `${id}:${openBreakoutId}`;
   const breakoutOwnsRail = storeRailOpen && breakoutScope !== null && railScope === breakoutScope;
   const mainOwnsRail = storeRailOpen && railScope === id;
-  // A breakout the reader expanded over its thread, held by id so the next
-  // breakout opens beside the thread. A panel the breakout opens ends it.
+  // A breakout the reader expanded over its thread, dropped whenever the open
+  // breakout changes so a breakout opens beside its thread. A panel the
+  // breakout opens ends it too.
   const [expandedBreakoutId, setExpandedBreakoutId] = useState<string | null>(null);
+  const [breakoutExpansionFor, setBreakoutExpansionFor] = useState(openBreakoutId);
+  if (breakoutExpansionFor !== openBreakoutId || (breakoutOwnsRail && expandedBreakoutId !== null)) {
+    setBreakoutExpansionFor(openBreakoutId);
+    setExpandedBreakoutId(null);
+  }
   const breakoutExpanded = openBreakoutId !== null && expandedBreakoutId === openBreakoutId;
-  useEffect(() => {
-    if (breakoutOwnsRail) setExpandedBreakoutId(null);
-  }, [breakoutOwnsRail]);
   const splitMode: SplitConversationMode = !breakoutPaneOpen ? 'main'
     : !mainVisible || breakoutOwnsRail || breakoutExpanded ? 'breakout'
       : mainOwnsRail ? 'main' : 'split';
@@ -990,8 +993,9 @@ function OpenWorkstreamScreen(): React.JSX.Element {
  */
 function expandToggle(expanded: boolean, beside: boolean, setExpanded: (expanded: boolean) => void): IconGroupAction[] | undefined {
   if (expanded) {
+    // One key for both states, so the button a keyboard pressed keeps focus.
     return [{
-      key: 'collapse',
+      key: 'expand',
       label: 'Collapse',
       icon: <IconArrowsDiagonalMinimize2 aria-hidden="true" size={16} stroke={1.9} />,
       onSelect: () => setExpanded(false),

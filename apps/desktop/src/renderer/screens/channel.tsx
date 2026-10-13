@@ -70,8 +70,14 @@ function ChannelStack({ channelId, threadId, workspace }: {
   const { session } = useAppSession();
   const space = useChannel(channelId);
   const [threadUsesTwoPanes, setThreadUsesTwoPanes] = useState(false);
-  // Held per thread, so the next thread opens beside the Channel again.
+  // Held per thread, and dropped whenever the open thread changes, so a
+  // thread, the next one or the same one reopened, opens beside the Channel.
   const [expandedThreadId, setExpandedThreadId] = useState<string | null>(null);
+  const [expansionFor, setExpansionFor] = useState(threadId);
+  if (expansionFor !== threadId) {
+    setExpansionFor(threadId);
+    setExpandedThreadId(null);
+  }
   const expanded = threadId !== null && expandedThreadId === threadId;
   const setExpanded = useCallback((expand: boolean): void => setExpandedThreadId(expand ? threadId : null), [threadId]);
   // A breakout or a panel ends the expansion: the thread and what it opened

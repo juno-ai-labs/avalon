@@ -29,10 +29,12 @@ vi.mock('../components/channel-composer', () => ({
 // and the button that expands it over the Channel.
 vi.mock('./workstream', async () => {
   const { useChannelPane } = await import('../lib/navigation-routes');
+  const { Link: RouterLink } = await import('react-router-dom');
   return {
     WorkstreamScreen: () => {
       const pane = useChannelPane();
       return <div>thread pane{pane && <>
+        <RouterLink to="/channels/outbound/threads/secret">Next thread</RouterLink>
         <button onClick={pane.crumb.onSelect} type="button">Channel crumb</button>
         <button onClick={() => pane.setExpanded(!pane.expanded)} type="button">{pane.expanded ? 'Collapse' : 'Expand'}</button>
         <button onClick={() => pane.setThreadUsesTwoPanes(true)} type="button">Open breakout</button>
@@ -138,11 +140,20 @@ describe('a Channel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Collapse' }));
     expect(screen.getByText('composer')).toBeVisible();
 
-    // Another thread opens while this one is expanded, as a link from
-    // elsewhere would open it; the Channel is hidden, not gone.
+    // Another thread opened from the expanded one comes up beside the Channel.
     fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
-    fireEvent.click(screen.getByRole('button', { hidden: true, name: 'Private thread, request access' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Next thread' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/secret');
+    expect(screen.getByText('composer')).toBeVisible();
+  });
+
+  it('opens a thread beside the Channel again after it was closed while expanded', async () => {
+    renderChannel('/channels/outbound/threads/plan');
+    fireEvent.click(await screen.findByRole('button', { name: 'Expand' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Channel crumb' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Q4 plan' }));
+
+    expect(await screen.findByText('thread pane')).toBeVisible();
     expect(screen.getByText('composer')).toBeVisible();
   });
 
