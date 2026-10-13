@@ -34,6 +34,8 @@ export class ActivityFeedWatch {
   private current: ActivityFeedSnapshot = emptyActivityFeedSnapshot;
   private inFlight = false;
   private again = false;
+  /** The last read failed, so the rows held may be stale or, before any read landed, absent. */
+  private failed = false;
   /** Bumped by `stop`, so a read that lands after a sign-out is dropped. */
   private generation = 0;
 
@@ -41,6 +43,15 @@ export class ActivityFeedWatch {
 
   snapshot(): ActivityFeedSnapshot {
     return this.current;
+  }
+
+  /**
+   * Whether the last read failed. The host reads again on the next sync of
+   * any topic while this holds, rather than waiting for one naming Activity,
+   * which in a quiet Organization can be hours away.
+   */
+  missedLastRead(): boolean {
+    return this.failed;
   }
 
   /** Reads the first page again, or queues one more read behind the one in flight. */
@@ -53,11 +64,15 @@ export class ActivityFeedWatch {
     const generation = this.generation;
     void this.dependencies.fetchPage().then((page) => {
       if (generation !== this.generation) return;
+      this.failed = false;
       this.current = { items: page.items, complete: true };
       this.dependencies.onChange();
     }, (error: unknown) => {
-      // The rows already held stay; the next sync or reconnect reads again.
-      if (generation === this.generation) this.dependencies.logWarning('could not read activity for the menu bar', error);
+      // The rows already held stay; the next sync of any topic, or a
+      // reconnect, reads again.
+      if (generation !== this.generation) return;
+      this.failed = true;
+      this.dependencies.logWarning('could not read activity for the menu bar', error);
     }).finally(() => {
       if (generation !== this.generation) return;
       this.inFlight = false;
@@ -72,6 +87,7 @@ export class ActivityFeedWatch {
     this.generation += 1;
     this.inFlight = false;
     this.again = false;
+    this.failed = false;
     if (this.current === emptyActivityFeedSnapshot) return;
     this.current = emptyActivityFeedSnapshot;
     this.dependencies.onChange();

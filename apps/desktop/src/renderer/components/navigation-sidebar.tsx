@@ -202,8 +202,9 @@ export function NavigationSidebar({
   const sections = guest ? SECTIONS.filter((candidate) => candidate.id !== 'channels') : SECTIONS;
   const section = guest && chosenSection === 'channels' ? 'threads' : chosenSection;
   const pinFailure = usePinFailure();
-  // The same number as the dock badge (the menu bar counts Activity): every conversation
-  // waiting on this reader, and every access request waiting on them.
+  // The same number as the dock badge: every conversation waiting on this
+  // reader, and every access request waiting on them. The menu bar counts
+  // Activity's unread rows instead.
   const waiting = attentionItems.length + accessRequests.length;
   const title = SECTIONS.find((candidate) => candidate.id === section)?.label ?? 'Threads';
   const [creatingChannel, setCreatingChannel] = useState(false);
