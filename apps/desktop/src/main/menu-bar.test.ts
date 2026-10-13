@@ -200,27 +200,27 @@ describe('menu bar controller', () => {
       workstreamId: `c${index}`,
       substreamId: null,
       title: `Channel ${index}`,
-      channelTitle: null,
-      reason: 'unread' as const,
+      detail: 'Rally finished',
     }));
-    const subject = harness({ content: { accessRequests: [], attention, attentionComplete: true, recents: [] } });
+    const subject = harness({ content: { accessRequests: [], attention, attentionComplete: true, recents: [], recentsComplete: true } });
     await subject.controller.initialize();
 
     expect(subject.titles.at(-1)).toBe('7');
   });
 
   it('shows no number while nothing is waiting, or nobody is signed in', async () => {
-    const quiet = harness({ content: { accessRequests: [], attention: [], attentionComplete: true, recents: [] } });
+    const quiet = harness({ content: { accessRequests: [], attention: [], attentionComplete: true, recents: [], recentsComplete: true } });
     await quiet.controller.initialize();
     expect(quiet.titles.at(-1)).toBe('');
 
     const signedOut = harness({
       signedIn: false,
       content: {
-        attention: [{ key: 'a', workstreamId: 'a', substreamId: null, title: 'A', channelTitle: null, reason: 'unread' }],
+        attention: [{ key: 'a', workstreamId: 'a', substreamId: null, title: 'A', detail: 'Rally finished' }],
         accessRequests: [],
         attentionComplete: true,
         recents: [],
+        recentsComplete: true,
       },
     });
     await signedOut.controller.initialize();
@@ -229,7 +229,7 @@ describe('menu bar controller', () => {
 
   it('rebuilds the drop-down from whatever is currently held', async () => {
     const subject = harness({
-      content: { accessRequests: [], attention: [], attentionComplete: true, recents: [{ id: 'a', title: 'Acme renewal', substreamId: null }] },
+      content: { accessRequests: [], attention: [], attentionComplete: true, recents: [{ id: 'a', title: 'Acme renewal', substreamId: null }], recentsComplete: true },
     });
     await subject.controller.initialize();
     subject.controller.refresh();

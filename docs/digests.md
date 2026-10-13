@@ -235,7 +235,10 @@ Nothing here changes what a digest reads.
 
 - **Mark all read** moves one time per person (`workspace_activity_seen`,
   migration 97) through `PUT /navigation/activity/seen`; every item at or
-  before it is done. Showing the tab reads nothing.
+  before it is done. Showing the tab reads nothing. Moving the mark publishes
+  the `activity` sync topic to that person's sockets alone, so their other
+  windows and the macOS menu bar, which lists the unread rows
+  ([`menu-bar.md`](menu-bar.md)), read the feed again.
 - **Events.** The app reports what the person did through
   `POST /navigation/activity/events` (`ActivityEventSchema`). Today there is
   one kind, `read`: a subject (a thread, a breakout, or a Channel) and the

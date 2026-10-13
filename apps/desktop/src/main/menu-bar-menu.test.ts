@@ -31,7 +31,7 @@ function template(
 ): MenuItemConstructorOptions[] {
   return menuBarMenuTemplate({
     appName: 'Rally',
-    content: { ...emptyMenuBarContent, attentionComplete: true, ...content },
+    content: { ...emptyMenuBarContent, attentionComplete: true, recentsComplete: true, ...content },
     signedIn: overrides.signedIn ?? true,
     sectionHeaders: overrides.sectionHeaders ?? true,
     actions: overrides.actions ?? actions(),
@@ -54,8 +54,8 @@ const workstreams = Array.from({ length: 7 }, (_value, index) => ({
   substreamId: null,
 }));
 
-function main(id: string, title: string, reason: MenuBarAttentionRow['reason'] = 'unread'): MenuBarAttentionRow {
-  return { key: id, workstreamId: id, substreamId: null, title, channelTitle: null, reason };
+function main(id: string, title: string, detail = 'Rally finished'): MenuBarAttentionRow {
+  return { key: id, workstreamId: id, substreamId: null, title, detail };
 }
 
 const waiting = Array.from({ length: 7 }, (_value, index) => main(`waiting-${index}`, `Waiting ${index}`));
@@ -64,14 +64,13 @@ describe('menu bar menu', () => {
   it('draws Needs attention, then Most recent, then the app controls', () => {
     const items = template({
       attention: [
-        main('a', 'Acme renewal', 'mentioned'),
+        main('a', 'Acme renewal', 'Ana Ruiz mentioned you'),
         {
           key: 'b:s',
           workstreamId: 'b',
           substreamId: 's',
           title: 'Pricing breakout',
-          channelTitle: 'Pricing',
-          reason: 'unread',
+          detail: 'Rally finished in Pricing',
         },
       ],
       recents: [{ id: 'c', title: 'Hiring loop', substreamId: null }, { id: 'a', title: 'Acme renewal', substreamId: null }],
@@ -89,16 +88,16 @@ describe('menu bar menu', () => {
       'Open Rally',
       'Quit Rally',
     ]);
-    // The sidebar attention menu's detail line, with the Channel for a Breakout.
-    expect(items[1]?.sublabel).toBe('You were mentioned');
-    expect(items[2]?.sublabel).toBe('Unread in Pricing');
+    // What happened, as the Activity tab says it.
+    expect(items[1]?.sublabel).toBe('Ana Ruiz mentioned you');
+    expect(items[2]?.sublabel).toBe('Rally finished in Pricing');
   });
 
   it('lists access requests first, counts them, and opens one in the main window', () => {
     const subject = actions();
     const items = template({
       accessRequests: [{ id: 'r1', requesterName: 'Samantha Lee', title: 'Hiring plan' }],
-      attention: [main('a', 'Acme renewal', 'mentioned')],
+      attention: [main('a', 'Acme renewal')],
     }, { actions: subject });
 
     expect(labels(items).slice(0, 3)).toEqual(['Needs attention', 'Samantha Lee asked to join Hiring plan', 'Acme renewal']);
@@ -154,14 +153,26 @@ describe('menu bar menu', () => {
     expect(quiet.find((item) => item.label === 'Nothing needs your attention')?.enabled).toBe(false);
   });
 
-  it('never claims nothing is waiting before every Channel has been read', () => {
+  it('never claims nothing is waiting before Activity has been read', () => {
     const loading = labels(template({ attention: [], attentionComplete: false }));
     expect(loading).not.toContain('Nothing needs your attention');
-    expect(loading).toContain('Still loading threads');
+    expect(loading).toContain('Still loading activity');
 
     // Rows read so far are real, and the line under them says they may not be all.
     const partial = labels(template({ attention: [main('a', 'Acme')], attentionComplete: false }));
-    expect(partial.slice(0, 3)).toEqual(['Needs attention', 'Acme', 'Still loading threads']);
+    expect(partial.slice(0, 3)).toEqual(['Needs attention', 'Acme', 'Still loading activity']);
+  });
+
+  it('never claims there are no recent threads before every Space has been walked', () => {
+    const loading = labels(template({ recents: [], recentsComplete: false }));
+    expect(loading).not.toContain('No recent threads');
+    expect(loading.slice(loading.indexOf('Most recent'), loading.indexOf('Most recent') + 2))
+      .toEqual(['Most recent', 'Still loading threads']);
+
+    // Rows already walked are drawn as they are, with no line under them.
+    const partial = labels(template({ recents: [workstreams[0]!], recentsComplete: false }));
+    expect(partial).toContain('Channel 0');
+    expect(partial).not.toContain('Still loading threads');
   });
 
   it('shows the signed-out state once, with nothing to list', () => {
@@ -213,7 +224,7 @@ describe('menu bar menu', () => {
     const items = template(
       {
         attention: [{
-          key: 'b:s', workstreamId: 'b', substreamId: 's', title: 'Breakout', channelTitle: 'Pricing', reason: 'unseen',
+          key: 'b:s', workstreamId: 'b', substreamId: 's', title: 'Breakout', detail: 'New breakout in Pricing',
         }],
         recents: [{ id: 'workstream-0', title: 'Renewal thread', substreamId: null }],
       },

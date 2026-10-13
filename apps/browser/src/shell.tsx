@@ -122,6 +122,7 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
     finishWorkspaceSetup: macAppOnly,
     refreshSession: async () => { onRevalidate(); return session; },
     getAccountOnboarding,
+    getOrganizationNameSuggestion: () => identityApi.getOrganizationNameSuggestion(),
     updateAccountOnboarding,
     signOut,
     // The cookie session has no stored credential to inspect: the entry
@@ -159,7 +160,7 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
       location.assign('/');
     },
     clearDeepLinkError: () => undefined,
-  }), [api, getAccountOnboarding, onRevalidate, pendingConnectorOAuth, queryClient, region, revalidate, session, signOut, updateAccountOnboarding]);
+  }), [api, getAccountOnboarding, identityApi, onRevalidate, pendingConnectorOAuth, queryClient, region, revalidate, session, signOut, updateAccountOnboarding]);
   const createSidekick = useCallback(() => desktopBridge().openSidekicks(NEW_SIDEKICK_TARGET), []);
   return <AppSessionValueProvider value={value} connectorSetup={connectorSetup} createSidekick={createSidekick}>
     <FaviconApiProvider>

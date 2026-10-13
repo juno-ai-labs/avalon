@@ -10,9 +10,6 @@ import type { WorkstreamMarkerStatus } from '@rally/ui/lib/format';
  * anyone having to re-derive what the old nesting meant. The three personal
  * states are deliberately not grouped together: being mentioned outranks a run
  * that is working, while merely being unread does not.
- *
- * In `common/` because the menu bar, in the main process, ranks the same
- * attention list the sidebar does.
  */
 export const MARKER_PRECEDENCE: readonly WorkstreamMarkerStatus[] = [
   'unseen',
@@ -58,8 +55,8 @@ export type Breakout = NonNullable<Workstream['privateChildren']>[number];
 export type BreakoutLists = Readonly<Record<string, readonly Breakout[] | undefined>>;
 
 /**
- * The fields of a Channel row the attention list reads. Structural, so the
- * renderer's cached summaries and the main process's own rows both fit.
+ * The fields of a Channel row the attention list reads. Structural, so any
+ * cached summary of a Channel fits.
  */
 export interface AttentionChannel {
   readonly id: string;

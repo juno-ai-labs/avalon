@@ -819,6 +819,20 @@ describe("Activity tab", () => {
     });
     expect((await finished()).map((item) => item.unread)).toEqual([false]);
   });
+
+  it("given a person marks Activity read, then their sockets alone are told to read Activity again", async () => {
+    await workspace().markActivitySeen({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, seenThrough: Date.parse("2026-10-06T00:00:00.000Z"),
+    });
+
+    await runInDurableObject(workspace(), (_instance, state) => {
+      // The replayed log is what a socket that reconnects reads, and what the
+      // live send is cut from: the topic, and an audience of the reader.
+      expect(state.storage.sql.exec<{ topics_json: string; audience_json: string | null }>(
+        "SELECT topics_json, audience_json FROM workspace_sync_events ORDER BY waterline DESC LIMIT 1",
+      ).toArray()).toEqual([{ topics_json: JSON.stringify(["activity"]), audience_json: JSON.stringify([MEMBER]) }]);
+    });
+  });
 });
 
 describe("Activity settled by the app's events", () => {
