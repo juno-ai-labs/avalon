@@ -407,6 +407,27 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 
 ## Changelog
 
+### 2026-10-13 — The right slot holds every opened item, with a pane header
+
+**What changed:** The right panel now holds whatever a conversation opens, not
+only an artifact or the browser, and heads itself like a pane: a title pill and
+round buttons. A pane header's trailing buttons are an `IconGroup`, whose
+actions fold into "⋯" at phone width or when they would crowd the pill. Starting
+a Breakout from a message closes the thread's panel, as opening one did. At
+phone width the panel is full width. `conversation-surfaces.md` has the entry
+for the panel itself.
+
+**Why:** The navigation PRD opens anything from a conversation in the pane
+beside it, and the product owner asked for the panel's header to match the
+panes'. A Breakout started from a message opened behind the thread's panel.
+
+**Considered and rejected:** Re-centring a crowded pill in the room the buttons
+leave; the product owner asked for it to move only as far as one gap needs.
+
+**Consequences:** Anything new that opens beside a conversation goes in this
+slot. A pane header's trailing controls go through `IconGroup` rather than a
+wrapper of their own, so their spacing and folding stay in one place.
+
 ### 2026-10-13 — Tile badges name themselves on hover
 
 **What changed:** A `TileBadge` takes an optional `label`, drawn as a tooltip
