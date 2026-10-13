@@ -702,6 +702,8 @@ winning. Adding the screen keeps specificity where it was.
 `font-family` rule was left out on purpose: it would retype the whole Channel
 screen, not just its composer.
 
+Shipped in [#1232](https://github.com/juno-ai-labs/avalon/pull/1232); PRD: [channels and threads navigation](PRDs/2026-10-10_channels-threads-navigation/prd.md).
+
 ### 2026-10-13 — Every artifact and attachment opens in the right panel
 
 **What changed:** Every artifact and attachment a conversation opens (a
