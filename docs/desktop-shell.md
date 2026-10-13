@@ -231,11 +231,20 @@ from; reduced motion turns both off.
   names what holds it public), Import updates, host extras, the thread's artifacts, and
   **Archive thread** last.
 - **Channel menu** (`ChannelContainerMenu`, on the Channel screen): tiles for
-  Add people, Rename and Copy link; People (the Channel's members, with
-  **Remove from channel** or **Leave the channel**) and Sidekicks (the
-  Channel's Sidekick defaults, each with **Remove from this channel**); then
-  **Private to its members**, **Pinned in my sidebar**, and **Archive channel**
-  last, which asks first.
+  Add people, Rename, Copy link (the Channel's `/s/` address) and More; People
+  (the Channel's members, with **Remove from channel** or **Leave the
+  channel**) and Sidekicks (the Channel's Sidekick defaults, each with
+  **Remove from this channel**). More is **Icon** (icon and colour, the same
+  picker as the pill's icon), **Pinned in my sidebar**, **Public to
+  organization** (the thread's switch, on while the Channel is open to the
+  Organization; off makes it private, keeping whoever turned it off), and
+  **Archive channel** last, which asks first. General can be
+  renamed and recoloured like any Channel; only archiving it or making it
+  private is refused (`space_protected`). The pill's
+  icon is its own control for whoever may edit the Channel: it opens the
+  shared icon-and-colour picker. Each pick and each rename saves the whole
+  presentation through `PATCH /spaces/:id`, one after another, each starting
+  from the last one sent for the same Channel.
 - **Breakout menu:** root header is the thread it belongs to (with **Show in
   thread**) and the message it started from. People (inviting to the
   Breakout alone) and Sidekicks as above;
@@ -372,6 +381,39 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-12 — The Channel menu gains Copy link and More; its icon picks its look
+
+**What changed:** The Channel menu's tiles are now Add people, Rename, Copy
+link and More, the same four a thread's menu has. Its two switches and
+**Archive channel** moved from the root into More, under an **Icon** row,
+and **Private to its members** became **Public to organization**, the same
+switch, the same way round, as a thread's. The
+Channel pill's icon opens the same icon-and-colour picker in place, as a
+thread's icon already did, and the pill draws the Channel as the sidebar's
+squircle tile (`ChannelGlyph`), as a thread's pill draws its circle. General gained Rename: the client had hidden it,
+though the server refuses only archiving General or making it private.
+
+**Why:** The product owner asked for the Channel and thread menus to match,
+and for a Channel's look to be changed from its mark. A space's icon and colour
+are not a patch on the server: `PATCH /spaces/:id` takes name, icon and colour
+together. So the screen sends every presentation write, picks and renames
+alike, through one queue, each built from the last one sent for the same
+Channel. Without it, an icon picked and then a rename sent before the first
+save answered would send the old icon back.
+
+**Considered and rejected:** Making `PATCH /spaces/:id` accept any of the three
+fields and apply only those present, which would drop the queue. It is a
+contract and server change to a write path other clients use, larger than the
+menu change it would serve; the queue is a few lines in one component.
+
+**Consequences:** Any new write of a Channel's name, icon or colour from this
+screen must go through `writePresentation`, or it can undo a pick or rename
+still in flight. The pending presentation is keyed by Channel id because the
+header stays mounted from one Channel to the next. If the endpoint becomes a
+patch, the queue can go.
+
+Shipped in [#1202](https://github.com/juno-ai-labs/avalon/pull/1202).
 
 ### 2026-10-12 — Threads loses its New thread button
 

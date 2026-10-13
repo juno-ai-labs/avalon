@@ -710,8 +710,18 @@ function withLiveThread(
   liveById: ReadonlyMap<string, WorkstreamSummary>,
 ): SpaceConversationSummary {
   if (!row.breakoutOf) return { ...row, ...liveById.get(row.id), kind: row.kind, breakoutOf: row.breakoutOf };
-  const appearance = liveById.get(row.breakoutOf.workstreamId)?.appearance ?? row.breakoutOf.appearance;
-  return { ...row, breakoutOf: { ...row.breakoutOf, appearance } };
+  const thread = liveById.get(row.breakoutOf.workstreamId)?.appearance;
+  const appearance = thread ?? row.breakoutOf.appearance;
+  // A breakout's colour is its thread's: the server writes both from their
+  // Channel in one job (`channel-color-sync.ts`). Only the thread's row is
+  // live here, so without this a Channel recolour left the breakout's own
+  // tile in the old colour until the list was read again.
+  const color = thread?.color;
+  return {
+    ...row,
+    ...(color ? { appearance: { icon: row.appearance?.icon ?? null, color } } : {}),
+    breakoutOf: { ...row.breakoutOf, appearance },
+  };
 }
 
 /**
