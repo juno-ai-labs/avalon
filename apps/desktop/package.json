@@ -1,6 +1,6 @@
 {
   "name": "@rally/desktop",
-  "version": "1.565.0",
+  "version": "1.566.0",
   "private": true,
   "description": "Rally secure Electron desktop client",
   "author": "Rally",
