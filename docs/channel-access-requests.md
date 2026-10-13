@@ -2,8 +2,7 @@
 
 What an Organization member sees when they open a link to a thread (a stored
 Channel) or Breakout they are not in, and how they get in. They reach it from a
-link, or from the **Request access** chip on a locked row in a Channel's feed,
-which opens the thread's address. They see its name, color and icon, the line
+link; a Channel's feed does not list threads they cannot open. They see its name, color and icon, the line
 "You're not in this thread, ask for access below" ("breakout" for a Breakout),
 and a primary
 **Request access** button. The button records a request addressed to the
@@ -36,7 +35,6 @@ The person who asked gets an email when the request is approved or declined.
 | `apps/desktop/src/renderer/components/conversation-access-request.tsx` | The requester's screen, shown in place of "Channel could not be opened". |
 | `apps/desktop/src/renderer/lib/access-requests.ts` | The approver's list in the query cache (written only by the workspace socket) and the approve/decline mutation, which drops the row at once and restores it if refused. |
 | `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | Request rows at the top of the Activity tab, with the two icon buttons; the row opens the dialog. The Threads badge counts them. |
-| `apps/desktop/src/renderer/screens/channel.tsx` | The **Request access** chip on a locked row in a Channel's feed, which opens the thread's address and so this screen. |
 | `packages/ui/src/components/conversation-menus.tsx` | The People level's **Asked to join** section (`TitleMenuPeople.requests`); a requester is left out of **Suggested**. `conversation-surface.tsx` passes the requests for the conversation on screen. |
 | `packages/ui/src/styles/app.css` | `.decision-button`, the approve and decline buttons both surfaces share: green (`sys.color.success.tint`) and red (`sys.color.danger.tint`) on hover. |
 | `apps/desktop/src/renderer/components/access-request-dialog.tsx` | The dialog, opened from a row or from the menu bar's deep link. |
@@ -177,7 +175,6 @@ pnpm --filter @rally/api exec vitest run test/conversation-access-approval.test.
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/conversation-access-requests.test.ts
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/conversation-access-request.test.tsx \
   src/renderer/components/navigation-sidebar.test.tsx src/renderer/components/access-request-dialog.test.tsx \
-  src/renderer/screens/channel.test.tsx \
   src/main/menu-bar-menu.test.ts src/main/channel-directory-watch.test.ts
 pnpm --filter @rally/contracts exec vitest run src/desktop-deep-link-intent.test.ts
 ```

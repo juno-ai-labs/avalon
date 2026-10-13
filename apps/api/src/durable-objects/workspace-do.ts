@@ -9377,9 +9377,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /**
    * One page of a Channel's feed (the storage Space's threads, newest placement
-   * first). A thread this viewer may open comes back whole; one they may not is
-   * a locked row with its id and placement time and nothing else, which is the
-   * whole point of reading it from storage as a flag rather than projecting it.
+   * first): the threads this viewer may open, each whole. One they may not open
+   * is not on the page at all.
    */
   async listChannelFeed(input: WorkspaceSpaceChannelPageRequest): Promise<WorkspaceChannelFeedResult> {
     await this.initialized;
@@ -9393,19 +9392,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const threads = new Map(this.conversationRows(
       viewer,
       request.workspaceId,
-      page.items.flatMap((item) => (item.openable
-        ? [{ kind: "channel" as const, workstreamId: item.workstreamId, substreamId: null }]
-        : [])),
+      page.items.map((item) => ({ kind: "channel" as const, workstreamId: item.workstreamId, substreamId: null })),
     ).map((thread) => [thread.id as string, thread]));
     return WorkspaceChannelFeedResultSchema.parse({
       ok: true,
       page: {
-        items: page.items.map((item) => {
-          const thread = item.openable ? threads.get(item.workstreamId) : undefined;
-          const placedAt = iso(item.placedAt);
-          const attentionSequenceNumber = item.attentionOrdinal;
-          if (!thread) return { kind: "locked", placedAt, attentionSequenceNumber, threadId: item.workstreamId };
-          return { kind: "thread", placedAt, attentionSequenceNumber, thread: WorkstreamSchema.parse(thread) };
+        // A row the directory no longer resolves is dropped, as on every Space page.
+        items: page.items.flatMap((item) => {
+          const thread = threads.get(item.workstreamId);
+          if (!thread) return [];
+          return [{
+            kind: "thread",
+            placedAt: iso(item.placedAt),
+            attentionSequenceNumber: item.attentionOrdinal,
+            thread: WorkstreamSchema.parse(thread),
+          }];
         }),
         nextCursor: page.nextCursor,
         latestAttentionSequenceNumber: page.latestAttentionOrdinal,

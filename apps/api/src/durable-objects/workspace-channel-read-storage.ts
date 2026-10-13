@@ -83,8 +83,9 @@ export interface ChannelReadRow {
 
 /**
  * The derivation a thread and a breakout use, applied to a Channel. A guest
- * is never unread: they see a Channel only through the threads they may list
- * and get no locked rows, so a placement they cannot see is not news to them.
+ * is never unread: they see a Channel only through the threads they may list,
+ * so a placement they cannot see is not news to them. A member's hidden
+ * placements are taken out by `channelStats`, which knows what they may open.
  */
 export function channelReadState(row: ChannelReadRow, guest: boolean): ChannelReadState {
   const latest = Number(row.latest_attention_ordinal);

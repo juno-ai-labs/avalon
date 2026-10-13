@@ -57,8 +57,8 @@ export const ChannelStatsSchema = z.strictObject({
   threadCount: z.number().int().nonnegative(),
   /**
    * How many rows the Channel's feed holds above this viewer's read position:
-   * threads placed since they last read it and still in it, locked rows
-   * included for a member, so it can exceed `threadCount`. Zero for a guest.
+   * threads placed since they last read it, still in it, and theirs to open.
+   * Zero for a guest.
    */
   newThreadCount: z.number().int().nonnegative(),
   lastActivityAt: z.string().datetime({ offset: true }).nullable(),
@@ -67,7 +67,9 @@ export const ChannelStatsSchema = z.strictObject({
    * a thread or a breakout carries: each thread placed in the Channel takes
    * the next attention sequence number, and the viewer's read position is
    * acknowledged the way a conversation's is. Only a placement advances it.
-   * A guest is never unread (they see no locked rows).
+   * A guest is never unread, and a member is unread only while
+   * `newThreadCount` is above zero: a private thread they are not in moves
+   * the latest number without being news to them.
    */
   latestAttentionSequenceNumber: z.number().int().nonnegative(),
   readThroughSequenceNumber: z.number().int().nonnegative(),
