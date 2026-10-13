@@ -1,4 +1,5 @@
-import { createContext, useContext } from 'react';
+import { createContext, useCallback, useContext, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 
 import type { TitlePillLevel } from '@rally/ui/components/title-pill';
 
@@ -31,6 +32,52 @@ export function threadRoute(threadId: string, channelId: string | null, substrea
 export function homeChannelId(spaceIds: readonly string[], preferred?: string | null): string | null {
   if (preferred && spaceIds.includes(preferred)) return preferred;
   return spaceIds[0] ?? null;
+}
+
+/**
+ * The `location.state` a link passes to open its thread, or its breakout,
+ * expanded: taking the whole window, with what it covers as its crumbs. The
+ * sidebar opens everything this way; a link inside a pane does not, so what it
+ * opens comes up beside it.
+ */
+export const OPEN_EXPANDED = { openExpanded: true } as const;
+
+/**
+ * The navigation that asked to open expanded, named by its location key so
+ * each such open counts once, even one to the pane already open; null when it
+ * did not ask.
+ */
+export function expandRequest(location: { key: string; state: unknown }): string | null {
+  const { state } = location;
+  return typeof state === 'object' && state !== null && 'openExpanded' in state && state.openExpanded === true
+    ? location.key
+    : null;
+}
+
+/**
+ * Whether the pane open on one level of the stack (a thread over its Channel,
+ * a breakout over its thread) is expanded. Held for the pane it was asked on,
+ * so it drops when that pane closes or another opens, which then opens beside,
+ * unless the navigation that opened it asked for it expanded. A request counts
+ * once per navigation, so one onto the pane already open expands it again
+ * after a Collapse. `request` is that navigation's key, null when it did not
+ * ask, for a pane that has to react to each one.
+ */
+export function usePaneExpansion(paneId: string | null): {
+  expanded: boolean;
+  setExpanded: (expanded: boolean) => void;
+  request: string | null;
+} {
+  const request = expandRequest(useLocation());
+  const [expandedId, setExpandedId] = useState<string | null>(request === null ? null : paneId);
+  const [heldFor, setHeldFor] = useState({ paneId, request });
+  if (heldFor.paneId !== paneId || heldFor.request !== request) {
+    setHeldFor({ paneId, request });
+    if (request !== null) setExpandedId(paneId);
+    else if (heldFor.paneId !== paneId) setExpandedId(null);
+  }
+  const setExpanded = useCallback((expand: boolean): void => setExpandedId(expand ? paneId : null), [paneId]);
+  return { expanded: paneId !== null && expandedId === paneId, setExpanded, request };
 }
 
 /**
