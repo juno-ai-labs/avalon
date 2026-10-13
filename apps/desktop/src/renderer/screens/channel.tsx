@@ -450,6 +450,8 @@ function ChannelHeader({ members, space, workspace }: {
   // as the old one. The header stays mounted from one Channel to the next, so
   // what is pending belongs to the Channel it was written for.
   type Presentation = Pick<SpaceSummary, 'id' | 'name' | 'iconKey' | 'colorKey'>;
+  const openSpaceId = useRef(space.id);
+  openSpaceId.current = space.id;
   const presentationWrites = useRef<{ queue: Promise<void>; latest: Presentation | null }>({ queue: Promise.resolve(), latest: null });
   const writePresentation = (patch: Partial<Omit<Presentation, 'id'>>): Promise<void> => {
     const writes = presentationWrites.current;
@@ -471,8 +473,10 @@ function ChannelHeader({ members, space, workspace }: {
   });
   const copyLink = session?.workspace ? (): void => {
     const target = session.workspace!;
-    void copySpaceLink({ region: target.region, workspaceId: target.id }, space.id)
-      .catch(() => setFailure('This channel’s link couldn’t be copied.'));
+    const copied = space.id;
+    void copySpaceLink({ region: target.region, workspaceId: target.id }, copied)
+      // Not on the next Channel's screen, if the person moved on meanwhile.
+      .catch(() => { if (openSpaceId.current === copied) setFailure('This channel’s link couldn’t be copied.'); });
   } : undefined;
   const pinned = pinnedChannels.has(space.id);
   const recommended = new Set(space.defaultSidekickIds);

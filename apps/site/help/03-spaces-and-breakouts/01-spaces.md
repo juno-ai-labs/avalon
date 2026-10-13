@@ -111,7 +111,8 @@ the Channel's menu:
 - **Copy link** copies a link that opens the Channel.
 - **More** holds the rest:
   - **Icon** changes the Channel's icon and color. Clicking the icon in the pill
-    does the same. Every Thread and Breakout in the Channel takes its color.
+    does the same. Threads whose home is this Channel, and their Breakouts,
+    take its color.
   - **Pinned in my sidebar** pins the Channel to the top of your Channels list.
     You can also right-click the Channel in the list and choose **Pin**.
   - **Public to organization** is the privacy switch. See
