@@ -83,7 +83,8 @@ from `channelStats`, seeded by the socket's snapshot and read again
 second line is empty unless a thread was placed in the Channel since this
 person last had it open (`hasUnread` on its stats row); then the name goes
 bold, the time red, and the second line reads "N new threads" in the unread colour
-(`--av-sys-color-workstream-news`), with no dot. N is
+(`--av-sys-color-workstream-news`), with the same dot at its end a thread
+row has. N is
 `latestAttentionSequenceNumber − readThroughSequenceNumber`, capped at
 `threadCount` because a placement moved out again keeps its number.
 Hovering the time shows "Last update at" and the exact local time.
@@ -91,7 +92,7 @@ Opening the Channel in a focused, visible window acknowledges the newest
 loaded placement's `attentionSequenceNumber` (`PATCH /spaces/:id/read-state`),
 under the same gate and debounce a conversation's read acknowledgement uses,
 and writes the answered stats row back over the cached one. A failed
-acknowledgement puts the count back and is not retried until the Channel is
+acknowledgement puts the count and dot back and is not retried until the Channel is
 opened again. **New channel** names one; every Channel starts
 Organization-wide.
 
@@ -383,7 +384,7 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 
 **What changed:** A Channel row's second line no longer reads "N threads". It
 is empty until a thread is placed in the Channel since the person last opened
-it, and then reads "N new threads" in red, replacing the unread dot. The
+it, and then reads "N new threads" in red, beside the unread dot. The
 folded **Archived** section and its **Restore** under the Channels list are
 gone. The time's tooltip reads "Last update at <time>", and the Pinned
 heading's pin always has a tooltip: how to pin until two rows can be

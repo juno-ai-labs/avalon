@@ -446,11 +446,13 @@ describe('the navigation sidebar', () => {
       .filter((row) => row.classList.contains('navigation-channel-row'))
       .map((row) => row.querySelector('.navigation-row-title')?.textContent);
 
-    it('marks only an unread Channel, with its count of new threads and no dot', () => {
+    it('marks only an unread Channel, with its count of new threads and a dot', () => {
       renderSidebar(seed);
-      expect(within(screen.getByRole('link', { name: /Mango/u })).getByText('1 new thread')).toBeInTheDocument();
+      const mango = within(screen.getByRole('link', { name: /Mango/u }));
+      expect(mango.getByText('1 new thread')).toBeInTheDocument();
+      expect(mango.getByRole('img', { name: 'Unread' })).toBeInTheDocument();
       expect(screen.getAllByText(/new thread/u)).toHaveLength(1);
-      expect(screen.queryByRole('img', { name: 'Unread' })).not.toBeInTheDocument();
+      expect(screen.getAllByRole('img', { name: 'Unread' })).toHaveLength(1);
     });
 
     it('cycles A–Z, Recent and Needs attention from the heading', () => {
