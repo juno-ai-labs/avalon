@@ -8742,6 +8742,8 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
     gap: 3px;
     margin: 4px 0 0;
     min-height: 0;
+    /* Over the rail's `width: auto !important`, so the whole share takes a tap. */
+    width: 100% !important;
   }
   .app-shell .navigation-sidebar .navigation-rail-account .account-trigger::after { content: "Settings"; }
   .app-shell .navigation-sidebar .navigation-rail-account .avatar { height: 22px; margin: 6px; width: 22px; }
