@@ -100,9 +100,10 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
   alone, with the crumbs: a breakout alone carries its Channel and its thread,
   each of which `onShownChange` reports at its own level. The crumbs are one
   `MarkBridge` ([`shared-ui.md`](shared-ui.md)) at every width, each mark
-  linking where its pill would; the nearest crumb's name ends in an ellipsis
-  rather than run under the pill, so the pane's own pill keeps its room and
-  truncates last.
+  linking where its pill would. Above phone width the nearest crumb's name ends
+  in an ellipsis rather than run under the pill, so the pane's own pill keeps
+  its room and truncates last; at 640px and below the bridge shows marks
+  alone.
 - **Collapse in a narrow window** clears the expansion, but the pane still
   stands alone, as it would unexpanded; Collapse then simply goes away.
 - **A thread with no visible Channel** opens on `/workstreams/:id`, alone; it
