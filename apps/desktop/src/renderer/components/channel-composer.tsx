@@ -1,4 +1,4 @@
-import { asSubstreamId, asWorkspaceId, asWorkstreamId, MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
+import { asSubstreamId, asWorkspaceId, asWorkstreamId, MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, type SpaceColorKey } from '@rally/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useContext, useMemo, useRef, useState } from 'react';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
@@ -88,7 +88,9 @@ function launchedThreadDetail(
  * a private one it is visible only to the person who started it and whoever
  * they mention (`resolveSpaceWorkstreamStart` on the server decides).
  */
-export function ChannelComposer({ channelId, channelName, channelScope, threadOpen = false, workspace }: {
+export function ChannelComposer({ channelColor, channelId, channelName, channelScope, threadOpen = false, workspace }: {
+  /** The Channel's colour, which a thread started here is born with. */
+  channelColor: SpaceColorKey;
   channelId: string;
   channelName: string;
   /** A private Channel's threads start private; an Organization-wide one's, Organization-wide. */
@@ -248,6 +250,7 @@ export function ChannelComposer({ channelId, channelName, channelScope, threadOp
       createdAt,
       createdByUserId: workspace.currentUser.id,
       objective: openingMessage,
+      color: channelColor,
     });
     void navigate(threadRoute(threadId, channelId));
     await create.mutateAsync({
@@ -262,7 +265,7 @@ export function ChannelComposer({ channelId, channelName, channelScope, threadOp
       threadId,
       startedAt: createdAt,
     });
-  }, [attachmentDraft.ready, channelId, channelScope, create, modelOverride, navigate, queryClient, workspace.currentUser.id]);
+  }, [attachmentDraft.ready, channelColor, channelId, channelScope, create, modelOverride, navigate, queryClient, workspace.currentUser.id]);
 
   const pendingThread: ComposerConversation = {
     scope: channelScope,

@@ -7,6 +7,7 @@ import type {
   Scope,
   SlackOriginContext,
   SlackSearchAuthorization,
+  SpaceColorKey,
   SpaceId,
   SpaceSummary,
   Workstream,
@@ -465,7 +466,7 @@ export class WorkstreamObjectCreationService {
     if (!options.externalBinding) {
       return this.openReserved(span, body, options, input, {
         receipt, client, control, workstreamId, title, objective, email, scope,
-        participantUserIds, originResourceIds, requestHash, at,
+        participantUserIds, originResourceIds, requestHash, at, color: placement.color ?? null,
       });
     }
     // A failed creation must not leave a live binding to an absent
@@ -474,7 +475,7 @@ export class WorkstreamObjectCreationService {
       this.env, workspace, this.auth.workspaceId, options.externalBinding, workstreamId,
       () => this.openReserved(span, body, options, input, {
         receipt, client, control, workstreamId, title, objective, email, scope,
-        participantUserIds, originResourceIds, requestHash, at,
+        participantUserIds, originResourceIds, requestHash, at, color: placement.color ?? null,
       }),
     );
   }
@@ -501,11 +502,13 @@ export class WorkstreamObjectCreationService {
       originResourceIds: string[];
       requestHash: string;
       at: string;
+      /** The Channel colour the reservation read; see `reserveChannelInSpaces`. */
+      color: SpaceColorKey | null;
     },
   ): Promise<{ workstream: Workstream; turnId: string; harnessRunId: string | null }> {
     const {
       receipt, client, control, title, objective, email, scope, participantUserIds,
-      originResourceIds, requestHash, at,
+      originResourceIds, requestHash, at, color,
     } = reserved;
 
     // The claim that fences a discard: from here the receipt is `initialized`,
@@ -546,6 +549,7 @@ export class WorkstreamObjectCreationService {
       attachmentIds: body.attachmentIds,
       scope,
       originResourceIds,
+      ...(color ? { color } : {}),
       modelOverride: body.modelOverride ?? null,
       systemKind: null,
       ...(options.seed ? { seed: options.seed } : {}),
@@ -661,7 +665,7 @@ export class WorkstreamObjectCreationService {
   private async reserveInSpaces(
     workspace: WorkspaceStub,
     request: WorkspaceChannelReservationRequest,
-  ): Promise<{ authorityGeneration: number; spaces: SpaceSummary[] }> {
+  ): Promise<{ authorityGeneration: number; spaces: SpaceSummary[]; color?: SpaceColorKey | null | undefined }> {
     let result = WorkspaceChannelReservationResultSchema.parse(await workspace.reserveChannelInSpaces(request));
     if (result.status === "general_missing") {
       const general = await new SpaceService(this.env, this.auth).ensureGeneral();

@@ -12,6 +12,7 @@ import {
   invalidateCachedWorkstreamDetails,
   mergeCachedWorkstreamPage,
   patchCachedWorkstream,
+  patchCachedGeneratedIcon,
   patchCachedWorkstreamAppearance,
   setCachedWorkstreams,
   WORKSTREAMS_QUERY_KEY,
@@ -276,6 +277,21 @@ describe('a Channel listed before its create answers', () => {
     expect(row).toMatchObject({ title: 'Named by Rally' });
     expect(row?.pending).toBeUndefined();
     expect(row?.pendingListed).toBeUndefined();
+  });
+
+  // The naming pass's icon lands on a row nobody has chosen for; the colour
+  // the row was listed with has to survive it.
+  it('is drawn in its Channel\'s colour, and keeps it when Rally names its icon', () => {
+    const client = new QueryClient();
+    addPendingWorkstream(client, {
+      id: pendingId, spaceIds: ['space-1'], scope: 'personal', harnessStatus: 'running',
+      createdAt: '2026-09-24T10:00:00.000Z', color: 'purple',
+    });
+    expect(rows(client)[0]?.appearance).toEqual({ icon: null, color: 'purple' });
+
+    patchCachedGeneratedIcon(client, pendingId, 'database');
+
+    expect(rows(client)[0]?.appearance).toEqual({ icon: 'database', color: 'purple' });
   });
 
   // An import is created by another window, which hands over only the id.
