@@ -1065,11 +1065,12 @@ function ChannelsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }):
  * How many threads were placed in a Channel since this person last read it:
  * each placement takes the next sequence number, so it is the gap between the
  * newest and the read position. A thread moved out again still holds its
- * number, so the gap never claims more threads than the Channel has.
+ * number, so the gap never claims more threads than the Channel has, and a
+ * Channel whose new threads all left again reads as read.
  */
 function newThreadCount(stats: ChannelStats | undefined): number {
   if (!stats?.hasUnread) return 0;
-  return Math.max(1, Math.min(stats.latestAttentionSequenceNumber - stats.readThroughSequenceNumber, stats.threadCount));
+  return Math.max(0, Math.min(stats.latestAttentionSequenceNumber - stats.readThroughSequenceNumber, stats.threadCount));
 }
 
 /** A Channel row: a link, so a modified click opens it elsewhere. */

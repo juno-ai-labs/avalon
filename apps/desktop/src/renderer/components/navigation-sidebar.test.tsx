@@ -123,6 +123,7 @@ describe('the navigation sidebar', () => {
     renderSidebar((client) => {
       client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [
         channel('zebra', 'Zebra'), channel('apple', 'Apple'), channel('outbound', 'Outbound'), channel('growth', 'Growth'),
+        channel('zebra-empty', 'Zulu'),
       ] });
       client.setQueryData(PINS_QUERY_KEY, [
         { kind: 'channel', id: 'outbound', parentId: null },
@@ -134,6 +135,8 @@ describe('the navigation sidebar', () => {
         stats('growth', { threadCount: 2, latestAttentionSequenceNumber: 6, readThroughSequenceNumber: 0, firstUnreadSequenceNumber: 1, hasUnread: true }),
         stats('zebra', { threadCount: 7, latestAttentionSequenceNumber: 7, readThroughSequenceNumber: 7 }),
         stats('outbound', { threadCount: 1, latestAttentionSequenceNumber: 1, firstUnreadSequenceNumber: 1, hasUnread: true }),
+        // Its one new thread moved out again: nothing new is left to show.
+        stats('zebra-empty', { threadCount: 0, latestAttentionSequenceNumber: 1, firstUnreadSequenceNumber: 1, hasUnread: true }),
       ]);
     });
 
@@ -142,7 +145,7 @@ describe('the navigation sidebar', () => {
       .toEqual(['Outbound1 new threadPinned, 1 of 2.', 'Growth2 new threadsPinned, 2 of 2.']);
     const all = within(screen.getByRole('region', { name: 'All channels' }));
     expect(all.getAllByRole('link').filter((row) => row.classList.contains('navigation-channel-row')).map((row) => row.textContent))
-      .toEqual(['Apple2 new threads', 'Zebra']);
+      .toEqual(['Apple2 new threads', 'Zebra', 'Zulu']);
   });
 
   it('reorders a pinned Channel from the keyboard and from its menu, not only by dragging', async () => {
