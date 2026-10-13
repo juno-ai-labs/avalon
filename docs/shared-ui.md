@@ -81,6 +81,12 @@ projection cannot authorize. At the existing 920px responsive boundary and
 below, the host shows an unsupported-width state instead of presenting a
 compressed or partial hierarchy.
 
+`MarkBridge` draws a row of `IdentityMark`s (`spaceMark` for a Channel,
+`workstreamMark` for a thread or Breakout) as one glass shape, each mark a
+control with its own tooltip. It knows nothing about routes; the caller hands
+it names, actions and handlers. `TitlePillHeader` uses it for ancestor crumbs
+too narrow to show their names, when every level carries a `bridge` entry.
+
 Theme application stamps the same `data-theme` attribute before rendering. Desktop
 installs the native theme reporter/broadcast adapter; browser and Sideline install system
 appearance observation. Visual primitives share the same theme subscription.
@@ -127,6 +133,30 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-10-13 — `MarkBridge` fuses a row of marks into one tinted glass shape
+
+**What changed:** `MarkBridge` is new, with `IdentityMark` and its two
+builders beside the tile they describe. A breakout's collapsed Channel and
+thread crumbs use it.
+
+**Why:** Two loose round buttons read as two unrelated controls; one shape
+reads as one path, and the outlines say Channel or thread before a name does.
+SVG gradients interpolate in sRGB, which drags two hues through grey, so each
+neck's blend is cut into stops mixed in OKLCH. It is its own component so any
+row of related objects can use it.
+
+**Considered and rejected:** A CSS goo filter (blur and threshold), which loses
+the hairline edge and the sheen; a flat capsule, the first pass, which did not
+read as joined marks; drawing the shape behind the existing pills, which tied
+its geometry to the pills' CSS.
+
+**Consequences:** The sheen stops above the symbols so each ink sits on its
+raw tint, the colour its contrast was measured against. Its tooltips are not
+hoverable: a hoverable tip held open over the next mark, 6px away, blocked
+that mark's tip.
+
+Shipped in #1203.
 
 ### 2026-10-05 — The sidebar's minimum width fits five top-bar buttons beside the traffic lights
 

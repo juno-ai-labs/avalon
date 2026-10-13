@@ -10,6 +10,16 @@ import type { ReactNode } from 'react';
  */
 export type TileShape = 'squircle' | 'circle';
 
+/** What an object is drawn as: its outline, its symbol, and the pair it is painted in. */
+export interface IdentityMark {
+  shape: TileShape;
+  icon: LucideIcon;
+  /** The fill behind the symbol. */
+  tint: string;
+  /** The symbol, and anything else drawn over that fill. */
+  ink: string;
+}
+
 /**
  * How many badges a tile draws. Each 22px badge sits 14px left of the one
  * before, starting 6px past the tile's right edge, so a 36px tile holds two;
@@ -112,9 +122,15 @@ const OUTLINES: Record<TileShape | 'triangle', ReactNode> = {
   triangle: <path d="M10.6 4.3a1.6 1.6 0 0 1 2.8 0l7.9 13.9a1.6 1.6 0 0 1-1.4 2.4H4.1a1.6 1.6 0 0 1-1.4-2.4z" />,
 };
 
-/** A shape's bare outline, for the section switcher. */
-export function ShapeOutline({ shape, size = 22 }: { shape: TileShape | 'triangle'; size?: number }): React.JSX.Element {
-  return <svg aria-hidden="true" fill="none" height={size} stroke="currentColor" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" width={size}>
+/** A shape's bare outline, for the section switcher and a collapsed title crumb. */
+export function ShapeOutline({ className, shape, size = 22, strokeWidth = 1.8 }: {
+  className?: string | undefined;
+  shape: TileShape | 'triangle';
+  size?: number;
+  /** In the 24-unit grid, so it scales with `size`. */
+  strokeWidth?: number;
+}): React.JSX.Element {
+  return <svg aria-hidden="true" className={className} fill="none" height={size} stroke="currentColor" strokeLinejoin="round" strokeWidth={strokeWidth} viewBox="0 0 24 24" width={size}>
     {OUTLINES[shape]}
   </svg>;
 }

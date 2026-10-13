@@ -4,14 +4,13 @@ import { AppearancePicker, AppearanceSubmenu } from '@rally/ui/components/appear
 import { BreakoutChipRow, type BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { ChannelContainerMenu } from '@rally/ui/components/conversation-menus';
 import type { SidekickRow } from '@rally/ui/components/sidekick-section';
-import { ChannelGlyph } from '@rally/ui/components/space-icon';
+import { ChannelGlyph, spaceMark } from '@rally/ui/components/space-icon';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { TitleMenuItem, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { IconLock, IconPalette, IconPlus } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { useUiStore } from '../lib/ui-store';
 
 import { ChannelComposer } from '../components/channel-composer';
 import { Button, EmptyState, InlineError, LoadingState, Modal } from '../components/primitives';
@@ -64,7 +63,6 @@ function ChannelStack({ channelId, threadId, workspace }: {
   const space = useChannel(channelId);
   const [threadUsesTwoPanes, setThreadUsesTwoPanes] = useState(false);
   const [shown, setShown] = useState<SplitConversationMode>('split');
-  const [narrow, setNarrow] = useState(false);
   const widthKey = layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', 'thread-width');
   const [threadWidth, setThreadWidth] = useState<number | null>(() => {
     const stored = Number.parseFloat(readLayout(widthKey) ?? '');
@@ -80,21 +78,16 @@ function ChannelStack({ channelId, threadId, workspace }: {
     crumb: {
       key: `channel-container:${channelId}`,
       icon: space ? <ChannelGlyph space={space} /> : null,
+      ...(space ? { bridge: { mark: spaceMark(space), name: space.name, action: 'Open channel' } } : {}),
       title: space?.name ?? 'Channel',
-      label: `Back to ${space?.name ?? 'the channel'}`,
-      // Back one step: the Channel and this thread, whatever the thread had
-      // open. A breakout is in the route, which the thread's route drops; a
-      // panel is not, so it is closed here. Where only one pane fits, that
-      // route draws the thread again, so the step back is the Channel alone.
-      onSelect: () => {
-        const ui = useUiStore.getState();
-        if (!narrow && ui.railOpen && ui.railScope === threadId) ui.closeRail();
-        void navigate(narrow ? channelRoute(channelId) : threadRoute(threadId, channelId));
-      },
+      label: `Open ${space?.name ?? 'the channel'}`,
+      // The Channel alone. The thread and its breakout leave with the
+      // thread's route, and each surface closes its own panel as it unmounts.
+      onSelect: () => void navigate(channelRoute(channelId)),
     },
     shifted,
     setThreadUsesTwoPanes,
-  }), [channelId, narrow, navigate, shifted, space, threadId]);
+  }), [channelId, navigate, shifted, space, threadId]);
   return <ChannelPaneContextValue.Provider value={pane}>
     <SplitConversationLayout
       breakout={threadId === null ? null : <WorkstreamRoute key={threadId} />}
@@ -104,7 +97,6 @@ function ChannelStack({ channelId, threadId, workspace }: {
       </PaneVisibility>}
       mode={threadId === null ? 'main' : threadUsesTwoPanes ? 'breakout' : 'split'}
       onBreakoutWidthChange={changeThreadWidth}
-      onNarrowChange={setNarrow}
       onShownChange={setShown}
     />
   </ChannelPaneContextValue.Provider>;
