@@ -939,10 +939,10 @@ The traps, both of which have bitten:
 
 ### 2026-10-13 — A glance draws mentions as chips
 
-**Changed:** In `glance` mode the `a` override routes `person:` and connector
-hrefs through `renderIdentity` instead of flattening them to text. The Channel
-feed's thread card now renders its summary with `MarkdownBody` in that mode,
-after `typedMentionRendering` rewrites the summary's typed `@Name`s into
+**What changed:** In `glance` mode the `a` override routes `person:` and
+connector hrefs through `renderIdentity` instead of flattening them to text.
+The Channel feed's thread card renders its summary with `MarkdownBody` in that
+mode, after `typedMentionRendering` rewrites the summary's typed `@Name`s into
 `person://` links the way the send path resolves them.
 
 **Why:** A thread's summary in the feed printed `@Alex Todorovic` as plain text
@@ -955,6 +955,14 @@ drew its own chip. It worked, but was a second renderer for message text that
 would drift from this one, and drew no Markdown. Storing the opening message's
 mentions on the thread summary would be exact, but needs a server and contract
 change for a line the client can already resolve with the roster it holds.
+
+**Consequences:** Every glance, the resource embed card's included, now draws
+mention chips; anything added to the identity cells must stay a span with no
+destination, or it puts a link inside a card's button. A summary's names are
+only as good as the member roster: a guest, who has none, sees plain text, and
+two members with one name resolve to neither, as they do on send.
+
+Shipped in [#1212](https://github.com/juno-ai-labs/avalon/pull/1212).
 
 ### 2026-10-08 — A person's typed `@address` draws as a chip
 
