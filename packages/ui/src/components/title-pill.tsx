@@ -318,13 +318,16 @@ export function TitlePillHeader({ ancestors = [], className, current, trailing }
   for (const level of ancestors) {
     if (level.bridge) bridge.push({ key: level.key, ...level.bridge, onSelect: level.onSelect });
   }
-  const bridged = ancestors.length > 1 && bridge.length === ancestors.length;
+  const bridged = ancestors.length > 0 && bridge.length === ancestors.length;
   return <header className={clsx('title-pill-header window-drag', className)}>
     <div className={clsx('title-pill-ancestors', bridged && 'is-bridged')}>
       {ancestors.map((level) => <span className="title-pill-ancestor window-no-drag" key={level.key}>
         <TitlePill level={level} variant="ancestor" />
       </span>)}
-      {bridged ? <MarkBridge className="title-pill-bridge window-no-drag" items={bridge} /> : null}
+      {/* The nearest crumb keeps its name, which a bare mark does not say. A
+          phone has no room for it and the stylesheet hides it there; the
+          shape is measured from the name, so it closes back to a circle. */}
+      {bridged ? <MarkBridge className="title-pill-bridge window-no-drag" items={bridge} labelLast /> : null}
     </div>
     <div className="title-pill-current window-no-drag"><TitlePill level={current} /></div>
     <div className="title-pill-trailing">{trailing ? <span className="window-no-drag">{trailing}</span> : null}</div>
@@ -362,11 +365,22 @@ export function TitleMenuSeparator(): React.JSX.Element {
   return <DropdownMenu.Separator className="menu-separator" />;
 }
 
+/**
+ * A round control at the right of a pane's header. Every icon in a header
+ * wears the same raised circle as the pills beside it, so one header never
+ * mixes bare glyphs with round ones.
+ */
+export function TitlePillAction({ children, label, onClick }: {
+  children: ReactNode; label: string; onClick: () => void;
+}): React.JSX.Element {
+  return <IconButton className="title-pill-action" label={label} onClick={onClick}>{children}</IconButton>;
+}
+
 /** The round control that closes a pane, at the right of its header. */
 export function TitlePillClose({ label, onClose }: { label: string; onClose: () => void }): React.JSX.Element {
-  return <IconButton className="title-pill-close" label={label} onClick={onClose}>
+  return <TitlePillAction label={label} onClick={onClose}>
     <IconX aria-hidden="true" size={16} stroke={1.9} />
-  </IconButton>;
+  </TitlePillAction>;
 }
 
 /** A Breakout's mark in its title pill: the arrow its chips and rows wear. */

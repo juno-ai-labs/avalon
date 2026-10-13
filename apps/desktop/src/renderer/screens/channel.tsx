@@ -6,9 +6,9 @@ import { ChannelContainerMenu } from '@rally/ui/components/conversation-menus';
 import type { SidekickRow } from '@rally/ui/components/sidekick-section';
 import { ChannelGlyph, spaceMark } from '@rally/ui/components/space-icon';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
-import { TitleMenuItem, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { TitleMenuItem, TitlePillAction, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { resolveWorkstreamAppearance } from '@rally/ui/components/workstream-glyph';
-import { IconChevronRight, IconLock, IconPalette, IconPlus } from '@tabler/icons-react';
+import { IconChevronRight, IconCloudDownload, IconLock, IconPalette, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -540,6 +540,16 @@ function ChannelHeader({ members, space, workspace }: {
       // Not on the next Channel's screen, if the person moved on meanwhile.
       .catch(() => { if (openSpaceId.current === copied) setFailure('This channel’s link couldn’t be copied.'); });
   } : undefined;
+  // An import starts a thread in this Channel, so it sits on the Channel's
+  // header and is locked to it. Only the Mac app has the embedded browser the
+  // import runs in, and only someone who may start a thread here sees it.
+  const openBrowserImport = typeof window === 'undefined' ? undefined : window.rally?.openBrowserImport;
+  const importButton = editable && openBrowserImport ? <TitlePillAction
+    label="Import from Claude or ChatGPT"
+    onClick={() => void openBrowserImport({ spaces: [{ id: space.id, name: space.name }], spaceLocked: true })}
+  >
+    <IconCloudDownload aria-hidden="true" size={16} stroke={1.9} />
+  </TitlePillAction> : undefined;
   const pinned = pinnedChannels.has(space.id);
   const recommended = new Set(space.defaultSidekickIds);
   const sidekicks: SidekickRow[] = (library.data ?? [])
@@ -627,7 +637,7 @@ function ChannelHeader({ members, space, workspace }: {
   };
   return <>
     <div className="channel-header">
-      <TitlePillHeader current={level} />
+      <TitlePillHeader current={level} trailing={importButton} />
     </div>
     {failure && <InlineError>{failure}</InlineError>}
     <Modal

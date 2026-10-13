@@ -86,6 +86,11 @@ compressed or partial hierarchy.
 control with its own tooltip. It knows nothing about routes; the caller hands
 it names, actions and handlers. `TitlePillHeader` uses it for ancestor crumbs
 too narrow to show their names, when every level carries a `bridge` entry.
+`labelLast` writes the last object's name beside its mark and stretches that
+mark into a pill fitted to the measured name. The header sets it on every
+bridge so the nearest crumb is named on desktop; at phone width (640px and
+below) the stylesheet hides the name, the measured width drops to nothing, and
+the mark closes back to a circle.
 
 Theme application stamps the same `data-theme` attribute before rendering. Desktop
 installs the native theme reporter/broadcast adapter; browser and Sideline install system
@@ -133,6 +138,18 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-10-13 — `MarkBridge` can name its last mark; a lone crumb bridges
+
+**What changed:** `labelLast` stretches the last mark into a pill holding its name, its ends still the circles' radius and its neck to the mark before unchanged. `TitlePillHeader` now bridges one crumb as well as two (below 460px for one), and names the nearest crumb on desktop. On a phone the name is hidden and the crumbs are glass marks alone, where a thread's Channel crumb was a bare round pill.
+
+**Why:** The phone thread header showed its Channel as a plain circle beside the glass shapes a breakout's crumbs got, and a bare mark does not say which Channel it is. The bridge's two-crumb rule dated from the shape it replaced, which only ever joined two.
+
+**Considered and rejected:** A fixed label width, which breaks on any other name or font; measuring with a hidden copy of the text, where measuring the laid-out label needs no second element.
+
+**Consequences:** The shape is measured after layout (`ResizeObserver` on the label and the bridge), so a caller sees one layout pass with the label before the glass fits it. The bridge asks for the name's full width but never grows past its container: Channel and thread names run to 180 characters, so a long one ends in an ellipsis and the pill is drawn to the width the container gave. The circles never shrink. The tint gradient spans the circles and holds the last tint across the stretch.
+
+Shipped in #1209.
 
 ### 2026-10-13 — `MarkBridge` fuses a row of marks into one tinted glass shape
 
