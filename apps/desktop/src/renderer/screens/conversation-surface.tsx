@@ -1,6 +1,7 @@
 import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
 import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, NO_INVITEES, useWorkspaceInvitees } from "../lib/workspace-invitees";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
+import { conversationActivitySubject, reportActivityEvent } from '../lib/activity-events';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { skipToken, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -2669,6 +2670,8 @@ export function ConversationSurface({
     });
   }, [id, routedDetail, transcript, transcriptVirtualizer]);
 
+  // The last Activity read this pane reported, so an unchanged view sends nothing.
+  const activityReportedRef = useRef<{ address: string; through: number } | null>(null);
   const acknowledgeVisibleMessages = useCallback((): void => {
     // A seed's waterlines are what the room said some launches ago; an
     // acknowledgement built on them could read past a mark made since.
@@ -2684,14 +2687,28 @@ export function ConversationSurface({
       .map((item) => item.index);
     // The addressed conversation's own detail entry, so its own waterlines and
     // its own ordinals decide this. A child's are not Main's.
+    const highestVisibleSequence = highestVisibleAttentionSequence(
+      transcript,
+      visibleIndexes,
+      detail.latestAttentionSequenceNumber,
+    );
+    // What Activity is told is what the person has seen, whether or not this
+    // room's own read position needs moving: a position another client already
+    // moved, or one from before Activity kept waterlines, still owes Activity
+    // the read. Once per opening, then again only when it rises; 0 is an open.
+    const reported = activityReportedRef.current;
+    if (reported?.address !== conversationAddress || highestVisibleSequence > reported.through) {
+      activityReportedRef.current = { address: conversationAddress, through: highestVisibleSequence };
+      reportActivityEvent(api, queryClient, {
+        kind: 'read',
+        subject: conversationActivitySubject(id, substreamId),
+        through: highestVisibleSequence,
+      });
+    }
     const pending = conversationReadAcknowledgement({
       parentId: id,
       substreamId,
-      highestVisibleSequence: highestVisibleAttentionSequence(
-        transcript,
-        visibleIndexes,
-        detail.latestAttentionSequenceNumber,
-      ),
+      highestVisibleSequence,
       viewer: detail,
     });
     if (!pending) return;
