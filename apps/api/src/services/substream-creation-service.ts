@@ -384,6 +384,9 @@ export class SubstreamCreationService {
       objective: opening.text,
       openingMessage: opening.text,
       provisionalTitle: title,
+      // The line the child was provisioned with above, which the pass replaces
+      // with a summary if it still stands.
+      provisionalDescription: provisionalWorkstreamDescription(opening.text, "Review the attached files"),
     });
     if (this.defer) this.defer(naming);
     else await span.step("substream.create.naming", () => naming);
