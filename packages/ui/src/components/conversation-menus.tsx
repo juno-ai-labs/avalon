@@ -11,7 +11,6 @@ import {
   IconHash,
   IconHexagons,
   IconLink,
-  IconLock,
   IconPencil,
   IconPin,
   IconPlus,
@@ -636,7 +635,7 @@ export function ChannelContainerMenu({
   onRename,
   people,
   pinned,
-  privacy,
+  publicToOrganization,
   sidekickFailure,
   sidekicks,
 }: {
@@ -652,8 +651,8 @@ export function ChannelContainerMenu({
   onRename?: (() => void) | undefined;
   people?: TitleMenuPeople | undefined;
   pinned?: { on: boolean; onChange: (next: boolean) => void } | undefined;
-  /** Private to its members, and the switch; absent where the viewer may not change it. */
-  privacy?: { on: boolean; onChange: (next: boolean) => void; disabled?: boolean } | undefined;
+  /** Open to the whole Organization, and the switch; absent where the viewer may not change it. */
+  publicToOrganization?: { on: boolean; onChange: (next: boolean) => void; disabled?: boolean } | undefined;
   sidekickFailure?: SidekickSectionFailure | undefined;
   sidekicks?: SidekickRow[] | undefined;
 }): React.JSX.Element {
@@ -667,10 +666,10 @@ export function ChannelContainerMenu({
   if (nav.view?.key === 'more') {
     return <>
       {appearance}
-      {privacy && <SwitchRow checked={privacy.on} disabled={privacy.disabled} icon={<IconLock aria-hidden="true" size={16} stroke={1.8} />} label="Private to its members" onChange={privacy.onChange} />}
       {pinned && <SwitchRow checked={pinned.on} icon={<IconPin aria-hidden="true" size={16} stroke={1.8} />} label="Pinned in my sidebar" onChange={pinned.onChange} />}
+      {publicToOrganization && <SwitchRow checked={publicToOrganization.on} disabled={publicToOrganization.disabled} icon={<IconWorld aria-hidden="true" size={16} stroke={1.8} />} label="Public to organization" onChange={publicToOrganization.onChange} />}
       {onArchive && <>
-        {(appearance || privacy || pinned) && <TitleMenuSeparator />}
+        {(appearance || publicToOrganization || pinned) && <TitleMenuSeparator />}
         <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={onArchive}>Archive channel</TitleMenuItem>
       </>}
     </>;
@@ -680,7 +679,7 @@ export function ChannelContainerMenu({
       <ActionTile disabled={!people} icon={<IconUserPlus aria-hidden="true" size={20} stroke={1.6} />} label="Add people" onSelect={openLevel(nav, PEOPLE_VIEW)} />
       {onRename && <ActionTile icon={<IconPencil aria-hidden="true" size={20} stroke={1.6} />} label="Rename" onSelect={onRename} />}
       {onCopyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={onCopyLink} />}
-      {(appearance || privacy || pinned || onArchive) && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
+      {(appearance || publicToOrganization || pinned || onArchive) && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
     </ActionTiles>
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(members.length, channel.scope, false)} view={PEOPLE_VIEW} />
     <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />

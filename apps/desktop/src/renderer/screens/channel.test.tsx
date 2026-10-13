@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
   getWorkspaceMembers: vi.fn(async () => []),
   archiveSpace: vi.fn(),
   updateSpacePresentation: vi.fn(),
+  updateSpaceAudience: vi.fn(),
   acknowledgeChannelRead: vi.fn(),
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session: null }) }));
@@ -173,7 +174,19 @@ describe('a Channel', () => {
 
     await screen.findByRole('menuitem', { name: 'Icon' });
     expect([...screen.getByRole('menu').querySelectorAll('[role^="menuitem"]')].map((item) => item.textContent?.trim()))
-      .toEqual(['Icon', 'Private to its members', 'Pinned in my sidebar', 'Archive channel']);
+      .toEqual(['Icon', 'Pinned in my sidebar', 'Public to organization', 'Archive channel']);
+  });
+
+  it('makes the Channel private by turning off Public to organization, keeping the person who did it in it', async () => {
+    api.updateSpaceAudience.mockImplementation(async () => ({ ...outbound('organization').items[0], scope: 'personal' }));
+    renderChannel();
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Outbound' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
+    const toggle = await screen.findByRole('menuitemcheckbox', { name: 'Public to organization' });
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(api.updateSpaceAudience).toHaveBeenCalledWith('outbound', { scope: 'personal', participantUserIds: ['me'] }));
   });
 
   describe('read in a focused window', () => {
