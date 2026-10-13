@@ -354,7 +354,12 @@ run — which is what proves the schedule was armed rather than merely accepted 
 and, when the pack seeded a briefing, with that briefing in its history. Canonical content — the room's state, the open
 question, the attached resources, the participants — is read as the room's
 creator, who opened the room by seeding it, and never as the presenter, whose
-unopened state is the demo. Every mismatch is reported as a named gap (a room
+unopened state is the demo. Each viewer must also be a participant of General
+and own an active Personal Channel (`compareSeating`, gaps
+`general_missing`, `general_not_seated`, `personal_channel_missing`,
+`personal_channel_state`); this reads General without making it, so a missing
+one is a gap rather than repaired. Personal Channels hold no seeded thread, so
+they never appear as an unexpected room. Every mismatch is reported as a named gap (a room
 not listed, a title, a state, a missing mention, a wrong order, a wrong count)
 rather than the first one, because the operator's **Waiting for workspace**
 state lists what has not arrived.
@@ -396,7 +401,12 @@ id — which is why that column carries no foreign key to `workspaces`; creates
 it through the onboarding service as the presenter's own — the same rows,
 journal, placement check and object initialization as a person creating one,
 minus the session, because a login minted on somebody's behalf by an operator
-is not something preparation may do; and seats the cast. `copying_connections`
+is not something preparation may do; and seats the cast. Seating includes what
+every member gets ([the Personal Channel](spaces.md#the-personal-channel)):
+creation gives the presenter General and their Personal Channel, and the phase
+then calls `seatOrganizationMember` for everyone it seated, personas included,
+rather than leaving the cast to the relationship dispatch, which runs on a
+five-minute cron and would land after seeding began. `copying_connections`
 is the copier, which matches what it already copied. `seeding_conversations`
 opens the seed session and applies and settles each action in order, recording
 confirmed-of-total on its phase row after every one, so the operator watches
@@ -618,9 +628,9 @@ are closed when access ends ([`access-revocation.md`](access-revocation.md)).
 | `apps/api/test/demo-pack.test.ts` | The playability rules — including a role token in Rally's own prose that names nobody in the cast — that the planner resolves a mention to the bound member at the offsets of the expanded name and expands `@{role}` in Rally's turn to the cast's names, and that the placeholder pack parses. The substream rules separately: a child of a room that does not exist, a line from somebody only in the parent, a mention of somebody not in the child, a personal parent that cannot admit an outsider, a question counted per conversation rather than per room — and that a substream's steps leave the room's facts, which is what the barrier waits on, completely unchanged. |
 | `apps/api/test/demo-seed-provider.test.ts` | The streamed wire form for `say` and for `ask` — the latter with arguments the real elicitation schema accepts — and the refusal of a second request; and the seeded route: an unbound model kept with its fallbacks dropped, an Azure-bound primary stepped past to the first unbound fallback, and a fixed unbound id when every routed model is bound. |
 | `apps/api/test/demo-seed-receipts.test.ts` | Against the real migration: the first confirmation wins, a receipt needs a claimed operation, and an outcome the seeder cannot confirm is refused. |
-| `apps/api/test-workers/demo-readiness.test.ts` | With the effect Queue held, a seeded two-room pack is listed but not Ready — the mention, the new marker and the attention count are named as gaps — and delivering the directory effects through the real consumer makes it Ready with no gaps, including the room the presenter can see without being in, and the order. Proved to fail with the mention comparison removed. |
+| `apps/api/test-workers/demo-readiness.test.ts` | With the effect Queue held, a seeded two-room pack is listed but not Ready — the mention, the new marker and the attention count are named as gaps — and delivering the directory effects through the real consumer makes it Ready with no gaps, including the room the presenter can see without being in, and the order. Proved to fail with the mention comparison removed. After Ready, the presenter taken out of General and their Personal Channel is named as two gaps and cleared by seating them again; proved to fail with the seating comparison removed. |
 | `apps/api/test/demo-readiness.test.ts` | The manifest derived from the placeholder pack — rooms newest first, seats, states, ids from receipts — and its refusal of a pack whose rooms or question were never confirmed; and the schema's check that a viewer's expected rooms are exactly the visible ones. |
-| `apps/api/test-workers/demo-preparation.test.ts` | The launch id handed to the real Workflow binding, so the platform's own instance-id validator judges it (a colon-joined id is refused, the hyphenated one creates an instance). Every phase in order on real objects: the presenter's workspace through onboarding with the cast seated, the template's Google connection copied and left in place, every action confirmed and a completed phase re-run confirming nothing twice, the wait naming its gaps, and Ready published to the register only after the directory effects land; and a failed template check recorded on the operation with its reason. Proved to fail with the register's publication removed from the waiting phase. |
+| `apps/api/test-workers/demo-preparation.test.ts` | The launch id handed to the real Workflow binding, so the platform's own instance-id validator judges it (a colon-joined id is refused, the hyphenated one creates an instance). Every phase in order on real objects: the presenter's workspace through onboarding with the cast seated, everyone in General with a Personal Channel before seeding (proved to fail with the phase's seating removed), the template's Google connection copied and left in place, every action confirmed and a completed phase re-run confirming nothing twice, the wait naming its gaps, and Ready published to the register only after the directory effects land; and a failed template check recorded on the operation with its reason. Proved to fail with the register's publication removed from the waiting phase. |
 | `apps/api/test/demo-operations.test.ts` | Against the real migrations: one operation id starts one Workflow and answers a repeat with the same progress; a cast that misses or invents a role, seats one person twice, seats two people under one name, or names the presenter's role at all, is refused before a row is written, as is a presenter outside the template and anybody who is not a signed-in account on the company's domain; the row stores the accounts it was given and answers their directory names, a repeat meets the cast it was started with, and a cast member who stops being a colleague fails the template check; the template route answers the presenter's members, the cast's candidates and each part's label, offers nobody off the domain, a near-miss domain or unseen, and is refused outside Global; the allocation statement is accepted before the workspace exists; a retry is the next attempt of a failed or a stalled `running` operation; a superseded attempt's phase call writes nothing; the template check runs against the real rows and records a presenter the template lost; a driver that stopped outside a phase is recorded for its own attempt only, with internal text kept off the page; a failed launch marks the operation failed; a retry without a driver leaves the row untouched; the status lists phases in phase order at their latest attempt, and a list past one statement's parameters is answered whole; abandon needs its confirmation, refuses a published demo and closes an operation with no workspace; and the routes — start, list, template, retry, abandon — admit only the `demos` role and reject a malformed start and an unconfirmed abandon. |
 | `apps/ace/test/demos.test.ts`, `apps/ace/test/demos-client.test.tsx` | Ace's side, owned by [`ace.md`](ace.md#testing): the relay forwards the typed confirmation and answers a regional refusal by its own code, and the page reads a retried operation by its current attempt, keeps polling while offline, and names the presenter beside each gap. |
 | `apps/api/test/socket-ticket-transport.test.ts` | Every socket-ticket issuer refuses a `connector` and a `demo_seed` principal alike. |
@@ -731,6 +741,27 @@ the cast discussed is answerable. That was a product defect in every
 multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
+
+### 2026-10-13 — A demo's people are seated in General and given Personal Channels before seeding
+
+**What changed:** `creating_workspace` calls `seatOrganizationMember` for every
+seated person, and the readiness barrier holds Ready until each verified
+viewer is a General participant with an active Personal Channel. The test
+fixture opens its workspace the way creation does, with General and the
+presenter's Personal Channel, instead of letting the first seeded room make
+General.
+
+**Why:** Every member now gets both (`docs/spaces.md#the-personal-channel`).
+Preparation inserts the cast's membership rows directly, so without the call
+their seating waited on the five-minute relationship dispatch cron and a demo
+could be published with its cast missing from General.
+
+**Considered and rejected:** Calling the relationship dispatch from the phase.
+It would also deliver unrelated pending changes, and seating directly is the
+same idempotent call that dispatch makes.
+
+**Consequences:** A demo whose General is missing is never Ready; readiness
+names it instead of making one.
 
 ### 2026-09-23 — Demonstrate human intervention in shared outcomes
 
