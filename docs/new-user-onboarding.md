@@ -18,7 +18,8 @@ ships directly for newly created accounts, with no feature flag.
 | `apps/api/src/services/onboarding-journey-service.ts` | Membership, eligibility and completion checks. |
 | `apps/api/src/routes/onboarding.ts`, `workspace.ts` | Identity and workspace API boundaries. |
 | `apps/desktop/src/renderer/lib/account-profile-editor.ts` | Account-scoped immediate drafts and serial revision-checked autosave. |
-| `apps/api/src/services/organization-name-suggestion.ts` | The organization name prefilled at creation, read from the email domain's homepage. |
+| `apps/api/src/services/organization-name-suggestion.ts` | The organization name prefilled at creation, read from the email domain's homepage and cached per domain. |
+| `packages/db/migrations/0123_organization_name_suggestions.sql` | The per-domain suggestion cache. |
 | `apps/api/src/lib/html-metadata.ts` | Reading `<title>` and `<meta>` out of page source; shared with site social previews. |
 | `apps/desktop/src/renderer/screens/create-organization.tsx` | The create-organization card, shared by the Mac app and the browser. |
 | `apps/desktop/src/renderer/screens/guided-onboarding.tsx` | Recording the introduction, personal setup and invitations. |
@@ -51,7 +52,16 @@ takes the domain of the signed-in person's email, fetches `https://<domain>/`,
 reads only up to the end of `<head>`, and answers `og:site_name`, or else the
 `<title>` segment that matches the domain ("Acme | Tools for builders" gives
 "Acme"), skipping labels such as "Home". Personal mail domains (gmail.com and
-the like) are never fetched. Every failure answers `{ name: null }`. The card
+the like) and RFC 2606 test names are never fetched. Every failure answers
+`{ name: null }`.
+
+The answer is cached per domain in Global D1 (`organization_name_suggestions`,
+migration 0123) for 30 days, and creating an account (Google or email sign-in)
+reads it into the cache in the background, so the create step normally answers
+from one D1 read. A homepage that answers but names nothing is cached as NULL;
+one that cannot be reached (a network error or a 5xx) is not cached, so one bad
+minute does not hide a name for a month. An expired row is replaced on the next
+read. The card
 opens without waiting for it and fills the field only while it is empty and
 untouched, so the suggestion never replaces what the person typed or a
 remembered name.
@@ -139,7 +149,8 @@ Onboarding no longer starts an agent run or a connector authorization.
 
 **What changed:** The create-organization card on the Mac app and in the
 browser fills its name from the homepage of the person's email domain, through
-a new identity route. The `<title>` and `<meta>` readers moved out of site social
+a new identity route. Account creation reads the name ahead into a per-domain
+D1 cache that holds each answer for 30 days. The `<title>` and `<meta>` readers moved out of site social
 previews into `lib/html-metadata.ts` so both use one copy.
 
 **Why:** Product asked that signup suggest the organization name rather than
@@ -152,11 +163,19 @@ whole signup step. A separate read lets the card open at once. Falling back to
 the capitalized domain label when the page offers nothing was left out; it is a
 one-line addition if wanted.
 
+Fetching only when the create step opens was the first version; the name then
+appeared about half a second after the card. Product asked for the read at
+account creation with a 30-day cache instead, which also means colleagues from
+one domain share a single read. The cache is keyed by domain, not by user,
+because the answer depends only on the domain.
+
 **Consequences:** The route makes an outbound request to a host the person's
 email names, so it must keep refusing anything that is not a public hostname
 (`assertSafePublicUrl`) and must never return more than a validated workspace
 name. It has no timeout of its own: nothing waits on it, and a hung homepage
-holds only that one request.
+holds only that one request. The 30-day TTL is the product's number
+(`ORGANIZATION_NAME_SUGGESTION_TTL_MS`). Anything that starts caching
+unreachable homepages turns a transient outage into a month without a name.
 
 ### 2026-10-12 — Remove the introduction screens
 
