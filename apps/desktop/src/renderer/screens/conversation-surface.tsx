@@ -112,6 +112,7 @@ import { AgentCompactionIndicator, AgentWorkTiming, RunStopAcknowledgement, type
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentPanel } from '../components/attachment-panel';
+import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
 import { ConversationAccessRequest } from '../components/conversation-access-request';
@@ -1286,6 +1287,13 @@ export function ConversationSurface({
   // conversation opens lands here rather than in a modal. Closing keeps the
   // occupant so the panel has something to draw while it fades out.
   const [panel, setPanel] = useState<ConversationPanel | null>(null);
+  // The panel's item shown full-window, over the panel, which stays open under it.
+  const [expanded, setExpanded] = useState<AttachmentPreview | null>(null);
+  // Closing the lightbox hands focus back to Expand, not to whatever opened the panel.
+  const expand = useCallback((preview: AttachmentPreview): void => {
+    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    setExpanded(returnFocus ? { ...preview, returnFocus } : preview);
+  }, []);
   const openPanel = useCallback((next: ConversationPanel): void => {
     setPanel(next);
     openOwnRail('context');
@@ -1338,6 +1346,7 @@ export function ConversationSurface({
   useLayoutEffect(() => {
     const savedPanel = readArtifactPanel(artifactPanelKey);
     setPanel(savedPanel ? { kind: 'resource', ...savedPanel } : null);
+    setExpanded(null);
     setResourceDialogOpen(false);
     // Claimed on arrival when there is a panel to restore, or when nobody holds
     // the slot; a Breakout opening beside its Channel must not take a panel
@@ -3256,7 +3265,15 @@ export function ConversationSurface({
       </>}
 
       {railVariant === 'context' && resourcePanel && (railOpen || railLeaving) && <InspectorRail
-        panel={{ resourceId: resourcePanel.resourceId, onClose: closeOwnRail }}
+        panel={{
+          resourceId: resourcePanel.resourceId,
+          onClose: closeOwnRail,
+          ...(api ? { onExpand: (resource: WorkstreamResource) => expand({
+            name: resource.title,
+            ...(resource.mimeType ? { mimeType: resource.mimeType } : {}),
+            loadContent: (signal?: AbortSignal) => loadAttachmentContent(resource.id, signal),
+          }) } : {}),
+        }}
         dropTarget={railDrop}
         {...(api ? { loadResourceContent: loadResourceContent } : {})}
         failure={watchResource.error
@@ -3295,10 +3312,13 @@ export function ConversationSurface({
       {railVariant === 'context' && panel?.kind === 'attachment' && (railOpen || railLeaving) && <AttachmentPanel
         leaving={railLeaving}
         onClose={closeOwnRail}
+        onExpand={expand}
         onResize={setRailWidth}
         preview={panel.preview}
         width={railWidth}
       />}
+
+      <AttachmentLightbox onClose={() => setExpanded(null)} preview={expanded} />
 
       <AddParticipantDialog
         sharing={participantDialogOpen && parentKind === 'workstream' && api && session?.workspace ?

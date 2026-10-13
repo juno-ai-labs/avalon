@@ -818,6 +818,25 @@ describe('resource detail content preview', () => {
     expect(onOpenResourceVersion).toHaveBeenCalledWith(note, version);
   });
 
+  it('expands a resource with readable content, and not a live site', () => {
+    const onExpand = vi.fn();
+    const { unmount } = render(
+      <Tooltip.Provider>
+        <InspectorRail panel={{ resourceId: note.id, onClose: vi.fn(), onExpand }} workstream={{ ...workstream, resources: [note] }} />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+    expect(onExpand).toHaveBeenCalledWith(note);
+    unmount();
+
+    render(
+      <Tooltip.Provider>
+        <InspectorRail panel={{ resourceId: site.id, onClose: vi.fn(), onExpand }} workstream={{ ...workstream, resources: [site] }} />
+      </Tooltip.Provider>,
+    );
+    expect(screen.queryByRole('button', { name: 'Expand' })).toBeNull();
+  });
+
   it('pops every non-site artifact out through its authorized preview bytes', async () => {
     const loadResourceContent = vi.fn(async () => new Blob(['# Quarterly plan'], { type: 'text/markdown' }));
     openDetail(note, loadResourceContent);

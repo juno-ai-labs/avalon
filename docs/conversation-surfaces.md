@@ -694,7 +694,11 @@ which the lightbox now shares. Both panels head themselves the way a thread or
 Breakout pane does: `TitlePillHeader` with the item's own `TitlePill`, whose
 menu holds its actions (a resource's New window, Open source, Refresh, a
 Versions level and Archive; an attachment's Download and Details), and
-`TitlePillClose`. `ActionTiles`, `ActionTile`, `LevelRow` and `openLevel` moved
+`TitlePillClose`, with a round **Expand** beside Close (both `TitlePillAction`)
+that shows the panel's item in the full-window `AttachmentLightbox` over the
+panel; closing it leaves the panel as it was and returns focus to Expand. A live
+site has no Expand, since it has no single file to show; its menu offers New
+window. `ActionTiles`, `ActionTile`, `LevelRow` and `openLevel` moved
 from `conversation-menus.tsx` into `title-pill.tsx` so a panel builds its menu
 from the same parts. A prior version's **Return to current** goes back to the
 resource panel it was opened from. Only a resource is restored after

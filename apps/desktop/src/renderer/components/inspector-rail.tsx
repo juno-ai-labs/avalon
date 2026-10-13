@@ -2,8 +2,8 @@ import { openLink } from '../lib/browser-rail-links';
 import { desktopBridge } from '../lib/platform';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { IconArchive, IconExternalLink, IconHistory, IconRefresh, IconWindowMaximize } from '@tabler/icons-react';
-import { ActionTile, ActionTiles, LevelRow, TitleMenuHeader, TitleMenuItem, TitleMenuSeparator, TitlePillClose, TitlePillHeader, useTitleMenuNav } from '@rally/ui/components/title-pill';
+import { IconArchive, IconArrowsDiagonal, IconExternalLink, IconHistory, IconRefresh, IconWindowMaximize } from '@tabler/icons-react';
+import { ActionTile, ActionTiles, LevelRow, TitleMenuHeader, TitleMenuItem, TitleMenuSeparator, TitlePillAction, TitlePillClose, TitlePillHeader, useTitleMenuNav } from '@rally/ui/components/title-pill';
 import {
   Archive,
   ArrowLeft,
@@ -48,6 +48,8 @@ interface InspectorRailProps {
   panel?: {
     resourceId: string;
     onClose: () => void;
+    /** Shows the resource's readable preview in the full-window lightbox. */
+    onExpand?: (resource: WorkstreamResource) => void;
   };
   failure?: 'watch' | 'detach' | 'refresh' | 'attach';
   /**
@@ -818,6 +820,13 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
             Their tooltips open upward: a live artifact composites a native
             view under this strip that paints above all renderer DOM. */}
         <div className="rail-header-detail-actions" ref={setDetailActionsTarget} />
+        {/* A live site has no single file to show full-window; it has New
+            window in its menu instead. */}
+        {resource && props.panel.onExpand && !isSiteResource(resource) && resource.contentAvailable && (
+          <TitlePillAction label="Expand" onClick={() => props.panel?.onExpand?.(resource)}>
+            <IconArrowsDiagonal aria-hidden="true" size={16} stroke={1.9} />
+          </TitlePillAction>
+        )}
         <TitlePillClose label="Close panel" onClose={closeRail} />
       </>}
     />
