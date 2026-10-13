@@ -58,7 +58,8 @@ interface SymbolBadge extends BadgeBase {
 
 /**
  * Something the caller draws, such as a person's avatar, which paints its own
- * fill. The tile sizes it to the badge and keeps the ring.
+ * fill. The tile keeps the ring; an `.avatar` is sized to the badge, and
+ * anything else keeps its own size.
  */
 interface ContentBadge extends BadgeBase {
   content: ReactNode;
