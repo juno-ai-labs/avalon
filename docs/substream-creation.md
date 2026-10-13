@@ -315,7 +315,7 @@ Archive stores `conversation_children.archived_at`, removes the row from every
 member's child directory, and refuses messages, membership changes and new
 socket tickets. A durable, versioned delivery mirrors archive state into the child; it commits the agent stop request with the local archive. Already-open sockets check that local state without a parent RPC.
 Membership and transcript are retained; the same API accepts `archived: false`
-to restore them. Restoration is API-only; the app has no restore control and its confirmation says so. The UI returns an archived conversation's viewer to Main, including when another member archives it.
+to restore them. Restoration is API-only; the app has no restore control, and its confirmation does not mention restoring. The UI returns an archived conversation's viewer to Main, including when another member archives it.
 
 A generated artifact cited in a child can be linked into Main from its
 right-click menu (**Attach to channel**). The child keeps its own link, so both
