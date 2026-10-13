@@ -232,7 +232,10 @@ Nothing here changes what a digest reads.
 **Read state is one time per person** (`workspace_activity_seen`, migration
 97), moved forward by `PUT /navigation/activity/seen` when the person chooses
 **Mark all read**. Showing the tab reads nothing.
-An item is unread when it is newer than that time.
+An item is unread when it is newer than that time. Moving the mark publishes
+the `activity` sync topic to that person's sockets alone, so their other
+windows and the macOS menu bar, which lists the unread rows
+([`menu-bar.md`](menu-bar.md)), read the feed again.
 
 Starts are not read from the opening message's event. Driving the local stack
 showed that event does not reliably reach WorkspaceDO (only a handful of
