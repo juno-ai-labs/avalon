@@ -42,7 +42,7 @@ import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, MY_THREADS_QUERY_KEY, SPAC
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { latestPinWrite, reportThreadPin, usePinAction, usePinFailure, usePins, usePinWrite, type PinnedThread } from '../lib/pins';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation } from '../lib/telemetry';
-import type { SpaceConversationSummary, Workspace, WorkstreamSummary } from '../lib/types';
+import type { SpaceConversationSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { useUiStore, type SidebarChannelSort, type SidebarSection } from '../lib/ui-store';
 import { useListMotion } from '../lib/use-list-motion';
 import { useSpaceDirectories } from '../lib/use-space-directories';
@@ -1242,22 +1242,20 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
     enabled: Boolean(api) && !guest,
     staleTime: 60_000,
   });
-  const actorName = (item: ActivityItem): string => item.actorLabel
-    || members.data?.find((member) => member.id === item.actorUserId)?.name
+  const actorMember = (item: ActivityItem): WorkspaceMember | undefined =>
+    members.data?.find((member) => member.id === item.actorUserId);
+  const actorName = (item: ActivityItem, member: WorkspaceMember | undefined): string => item.actorLabel
+    || member?.name
     || 'Someone';
   // Who acted, drawn as they are everywhere else: Rally's mark, or the
   // person's own avatar. A guest has no directory, so a person it cannot find
   // is drawn from the name the row carries.
-  const actorBadge = (item: ActivityItem): TileBadge => ({
+  const actorBadge = (item: ActivityItem, member: WorkspaceMember | undefined, name: string): TileBadge => ({
     key: 'actor',
     shape: 'circle',
     content: item.actorUserId === null
       ? <RallyAvatar />
-      : <Avatar
-          member={members.data?.find((member) => member.id === item.actorUserId)
-            ?? { id: item.actorUserId, name: actorName(item), email: '', timezone: '' }}
-          title={null}
-        />,
+      : <Avatar member={member ?? { id: item.actorUserId, name, email: '', timezone: '' }} title={null} />,
   });
   const feed = useInfiniteQuery({
     queryKey: activityQueryKey(only),
@@ -1325,7 +1323,9 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
       <SectionHeading motionKey={`day:${group.label}`}>{group.label}</SectionHeading>
       {group.items.map((item) => {
         const channel = item.channelIds.map((id) => spaces.get(id)).find(Boolean);
-        const actor = actorBadge(item);
+        const member = actorMember(item);
+        const name = actorName(item, member);
+        const actor = actorBadge(item, member, name);
         const thread = resolveWorkstreamAppearance(item.threadId, live.data?.find((candidate) => candidate.id === item.threadId)?.appearance);
         return <Link
           className={clsx('activity-row', item.unread && 'is-unread')}
@@ -1338,7 +1338,7 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
             : <IdentityTile badges={[actor]} icon={thread.Icon} ink={thread.ink} shape="circle" tint={thread.tint} />}
           <span className="activity-row-body">
             <span className="activity-row-text">
-              <strong>{actorName(item)}</strong> {ACTIVITY_VERBS[item.kind]}{' '}
+              <strong>{name}</strong> {ACTIVITY_VERBS[item.kind]}{' '}
               <strong>{item.breakout && item.kind !== 'breakout_started' ? item.breakout.title : item.threadTitle}</strong>
             </span>
             {item.kind === 'breakout_started' && item.breakout && <span className="breakout-chip activity-chip">
