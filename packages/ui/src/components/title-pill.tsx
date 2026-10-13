@@ -376,6 +376,37 @@ export function TitlePillAction({ children, label, onClick }: {
   return <IconButton className="title-pill-action" label={label} onClick={onClick}>{children}</IconButton>;
 }
 
+/** A row of square actions under the menu's header, the most used things done to it. */
+export function ActionTiles({ children }: { children: ReactNode }): React.JSX.Element {
+  return <div className="title-menu-tiles" role="group" aria-label="Actions">{children}</div>;
+}
+
+export function ActionTile({ icon, label, onSelect, disabled }: {
+  icon: ReactNode; label: string; onSelect: (event: Event) => void; disabled?: boolean | undefined;
+}): React.JSX.Element {
+  return <DropdownMenu.Item className="title-menu-tile" disabled={disabled} onSelect={onSelect}>
+    {icon}<span>{label}</span>
+  </DropdownMenu.Item>;
+}
+
+/** A row that opens a level of the menu in place: People, Sidekicks, Breakouts. */
+export function LevelRow({ icon, label, meta, view }: {
+  icon: ReactNode; label: string; meta?: ReactNode; view: TitleMenuView;
+}): React.JSX.Element {
+  const nav = useTitleMenuNav();
+  return <DropdownMenu.Item className="menu-item title-menu-level-row" data-title-menu-level={view.key} onSelect={(event) => { event.preventDefault(); nav.open(view); }}>
+    {icon}
+    <span className="title-menu-item-copy">{label}</span>
+    {meta !== undefined && <span className="title-menu-level-meta">{meta}</span>}
+    <IconChevronRight aria-hidden="true" className="title-menu-level-chevron" size={15} stroke={1.8} />
+  </DropdownMenu.Item>;
+}
+
+/** Selecting a tile that leads to a level keeps the menu open and moves to it. */
+export function openLevel(nav: ReturnType<typeof useTitleMenuNav>, view: TitleMenuView) {
+  return (event: Event): void => { event.preventDefault(); nav.open(view); };
+}
+
 /** The round control that closes a pane, at the right of its header. */
 export function TitlePillClose({ label, onClose }: { label: string; onClose: () => void }): React.JSX.Element {
   return <TitlePillAction label={label} onClick={onClose}>
