@@ -87,8 +87,10 @@ control with its own tooltip. It knows nothing about routes; the caller hands
 it names, actions and handlers. `TitlePillHeader` uses it for ancestor crumbs
 too narrow to show their names, when every level carries a `bridge` entry.
 `labelLast` writes the last object's name beside its mark and stretches that
-mark into a pill fitted to the measured name; the header sets it for a lone
-crumb, a thread's Channel on a phone, so the crumb still says which Channel.
+mark into a pill fitted to the measured name. The header sets it on every
+bridge so the nearest crumb is named on desktop; at phone width (640px and
+below) the stylesheet hides the name, the measured width drops to nothing, and
+the mark closes back to a circle.
 
 Theme application stamps the same `data-theme` attribute before rendering. Desktop
 installs the native theme reporter/broadcast adapter; browser and Sideline install system
@@ -139,7 +141,7 @@ component test runner is needed for the same implementations.
 
 ### 2026-10-13 — `MarkBridge` can name its last mark; a lone crumb bridges
 
-**What changed:** `labelLast` stretches the last mark into a pill holding its name, its ends still the circles' radius and its neck to the mark before unchanged. `TitlePillHeader` now bridges one crumb as well as two: below 460px a thread's Channel crumb is the glass shape with the Channel's name, where it was a bare round pill.
+**What changed:** `labelLast` stretches the last mark into a pill holding its name, its ends still the circles' radius and its neck to the mark before unchanged. `TitlePillHeader` now bridges one crumb as well as two (below 460px for one), and names the nearest crumb on desktop. On a phone the name is hidden and the crumbs are glass marks alone, where a thread's Channel crumb was a bare round pill.
 
 **Why:** The phone thread header showed its Channel as a plain circle beside the glass shapes a breakout's crumbs got, and a bare mark does not say which Channel it is. The bridge's two-crumb rule dated from the shape it replaced, which only ever joined two.
 
