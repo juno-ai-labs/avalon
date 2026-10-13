@@ -11,6 +11,10 @@ export interface IconGroupAction {
   icon: ReactNode;
   onSelect: () => void;
   disabled?: boolean;
+  /** Set for a toggle: the button carries `aria-pressed`, its menu row a check. */
+  pressed?: boolean;
+  /** Where the button's tooltip opens; `bottom` unless the host's content would cover it. */
+  tooltipSide?: 'top' | 'right' | 'bottom' | 'left';
 }
 
 /**
@@ -39,7 +43,15 @@ export function IconGroup({ actions = [], buttonClassName, children, className, 
   return <div className={clsx('icon-group', folded && 'is-folded', className)}>
     {actions.length > 0 && <>
       <span className="icon-group-actions">
-        {actions.map((action) => <IconButton className={buttonClassName} disabled={action.disabled} key={action.key} label={action.label} onClick={action.onSelect}>
+        {actions.map((action) => <IconButton
+          aria-pressed={action.pressed}
+          className={clsx(buttonClassName, action.pressed !== undefined && 'icon-button-toggle')}
+          disabled={action.disabled}
+          key={action.key}
+          label={action.label}
+          onClick={action.onSelect}
+          tooltipSide={action.tooltipSide}
+        >
           {action.icon}
         </IconButton>)}
       </span>
@@ -51,15 +63,22 @@ export function IconGroup({ actions = [], buttonClassName, children, className, 
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
           <DropdownMenu.Content align="end" className="menu-content icon-group-menu" collisionPadding={12} sideOffset={8}>
-            {actions.map((action) => <DropdownMenu.Item className="menu-item" disabled={action.disabled} key={action.key} onSelect={() => {
-              // The item is about to unmount with its menu. An action that
-              // remembers where focus was (Expand, to return to it) should
-              // find the "More" button, which stays.
-              moreRef.current?.focus();
-              action.onSelect();
-            }}>
-              {action.icon}{action.label}
-            </DropdownMenu.Item>)}
+            {actions.map((action) => {
+              const common = {
+                className: 'menu-item',
+                disabled: action.disabled,
+                onSelect: () => {
+                  // The item is about to unmount with its menu. An action that
+                  // remembers where focus was (Expand, to return to it) should
+                  // find the "More" button, which stays.
+                  moreRef.current?.focus();
+                  action.onSelect();
+                },
+              };
+              return action.pressed === undefined
+                ? <DropdownMenu.Item {...common} key={action.key}>{action.icon}{action.label}</DropdownMenu.Item>
+                : <DropdownMenu.CheckboxItem {...common} checked={action.pressed} key={action.key}>{action.icon}{action.label}</DropdownMenu.CheckboxItem>;
+            })}
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
