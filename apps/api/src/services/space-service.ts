@@ -516,13 +516,14 @@ export class SpaceService {
   }
 
   /**
-   * Change a Space's scope and participants: one WorkspaceDO write.
+   * Change a Space's scope and participants: one WorkspaceDO write. `null`
+   * when the caller left a private Space, which then has no summary for them.
    *
    * A Space grants no reader to the threads in it, so making one private or
    * Organization-wide changes who may list the Space and nothing else: there
    * is nothing to preflight and no member thread to reach.
    */
-  async updateAudience(spaceId: SpaceId, input: UpdateSpaceAudienceRequest): Promise<SpaceSummary> {
+  async updateAudience(spaceId: SpaceId, input: UpdateSpaceAudienceRequest): Promise<SpaceSummary | null> {
     const current = await this.editable(spaceId);
     const currentParticipants = new Set<string>(current.participants.map((participant) => participant.userId));
     const requested = new Set<string>(input.participantUserIds);
@@ -549,12 +550,16 @@ export class SpaceService {
         }
       }
     }
-    return this.settled(await (await this.workspace()).noteSpaceAudience({
+    const result = await (await this.workspace()).noteSpaceAudience({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       spaceId,
       audience: input,
-    }), current.name);
+    });
+    // The caller took themselves out of a private Space: written, and no
+    // longer theirs to be shown.
+    if ("left" in result) return null;
+    return this.settled(result, current.name);
   }
 
   /** The addresses of Organization invitees a Space lists, to whoever may edit it. */
