@@ -1246,7 +1246,8 @@ export type SpaceChannelPage = z.infer<typeof SpaceChannelPageSchema>;
 /**
  * One row of a Channel's feed: a thread placed in it that the viewer may open,
  * newest placement first. A private thread the viewer is not in is not a row.
- * `kind` is kept so the row can grow other kinds without a breaking change.
+ * `kind` stays because desktops shipped since 1.563 parse this row by it; it
+ * can go once those builds no longer reach the API.
  */
 export const ChannelFeedItemSchema = z.strictObject({
   kind: z.literal("thread"),
