@@ -194,6 +194,14 @@ describe("seatOrganizationMember", () => {
 
   it("seats a member who joined while the Organization's Spaces were not open once they open", async () => {
     await workspace().reopenSpaceBootstrap({ workspaceId: WORKSPACE_ID });
+    // As the relationship delivery does: record the member, then seat them.
+    await workspace().applyMemberStatus({
+      workspaceId: WORKSPACE_ID, sequence: 1, removed: false,
+      relationship: {
+        workspaceId: WORKSPACE_ID, userId: MEMBER, accessClass: "member", role: "member",
+        status: "active", incarnation: "existing-member", revision: 1,
+      },
+    });
     await expect(workspace().seatOrganizationMember({
       workspaceId: WORKSPACE_ID, userId: MEMBER, personalSpaceId: MEMBER_PERSONAL,
     })).resolves.toEqual({ seated: false, reason: "spaces_not_open" });
@@ -221,6 +229,15 @@ describe("seatOrganizationMember", () => {
     const spaces = await activeSpaces(MEMBER);
     expect(spaces.map((space) => [space.id, participants(space).includes(MEMBER)]).sort())
       .toEqual([[GENERAL, true], [MEMBER_PERSONAL, true]].sort());
+  });
+});
+
+describe("linkTitle", () => {
+  it("names General but never a Personal Channel", async () => {
+    await expect(workspace().linkTitle({ workspaceId: WORKSPACE_ID, target: { kind: "space", spaceId: GENERAL } }))
+      .resolves.toEqual({ title: "General" });
+    await expect(workspace().linkTitle({ workspaceId: WORKSPACE_ID, target: { kind: "space", spaceId: OWNER_PERSONAL } }))
+      .resolves.toEqual({ title: null });
   });
 });
 
@@ -300,6 +317,18 @@ describe("Channel messages", () => {
     });
   });
 
+  it("post each starting position once, so a Channel keeps the words it opened with", async () => {
+    // General opened with one message at position 0; this list rewords it and
+    // adds a second.
+    const drafts = [{ author: { kind: "rally" as const }, body: "Reworded" }, { author: { kind: "rally" as const }, body: "Second" }];
+    await withSpaceStorage(workspace(), (storage) => {
+      storage.postStartingMessages(GENERAL, drafts);
+      storage.postStartingMessages(GENERAL, drafts);
+    });
+    const bodies = (await feedItems(GENERAL, OWNER)).flatMap((item) => (item.kind === "message" ? [item.message.body] : []));
+    expect(bodies.map((body) => body.slice(0, 16)).sort()).toEqual(["Second", "Welcome to Rally"]);
+  });
+
   it("are posted by a member or by Rally, once per key and every time without one", async () => {
     await withSpaceStorage(workspace(), (storage) => {
       const posted = storage.postMessages(GENERAL, [
@@ -354,6 +383,59 @@ describe("Channel messages", () => {
     expect(second.items.map((item) => item.kind)).toEqual(["message"]);
     expect(second.nextCursor).toBeNull();
   });
+
+  // At time `tie` a thread and a message share a timestamp; the thread's id
+  // sorts first. Newer messages push the page edge between the two, or just
+  // past both, so the next page resumes on a message or on a thread.
+  it.each([
+    ["between a thread and a message at the same time", 1],
+    ["on a message, resuming on a thread", 2],
+  ])("walk every row once when a page ends %s", async (_name, short) => {
+    const tiedThread = "00000000-0000-7000-8000-000000000001";
+    const olderThread = "00000000-0000-7000-8000-000000000002";
+    const madeAt = await runInDurableObject(workspace(), (_instance, state) => {
+      const created = state.storage.sql.exec<{ created_at: number }>(
+        "SELECT created_at FROM spaces WHERE space_id = ?", GENERAL,
+      ).one().created_at;
+      for (const [threadId, at] of [[tiedThread, created + 1_000], [olderThread, created + 500]] as const) {
+        state.storage.sql.exec(`INSERT INTO channels (
+          workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+          title, description, preview, scope, exact_state, origin_type, title_status,
+          latest_attention_ordinal, unread_tracking_start_ordinal, last_activity_at,
+          source_created_at, source_updated_at, projected_at
+        ) VALUES (?, 1, 1, ?, 'hash', 'Shared', '', '', 'workspace', 'idle', 'ad_hoc', 'settled', 0, 0, ?, ?, ?, ?)`,
+        threadId, `event-${threadId}`, at, at, at, at);
+        state.storage.sql.exec(`INSERT INTO space_channel_memberships (space_id, workstream_id, state, generation, joined_at, updated_at)
+          VALUES (?, ?, 'active', 1, ?, ?)`, GENERAL, threadId, at, at);
+      }
+      return created;
+    });
+    const tie = madeAt + 1_000;
+    const posted = await withSpaceStorage(workspace(), (storage) => {
+      const tied = storage.postMessages(GENERAL, [{ author: { kind: "rally" }, body: "tied" }], tie)[0]!;
+      const newer = Array.from({ length: SPACE_CHANNEL_PAGE_SIZE - 1 - short }, (_, index) => (
+        storage.postMessages(GENERAL, [{ author: { kind: "rally" }, body: `newer ${index}` }], tie + 1 + index)[0]!
+      ));
+      return { tied, newer };
+    });
+    const ids: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const read = await withSpaceStorage(workspace(), (storage) => (
+        storage.feedPage({ userId: MEMBER, accessClass: "member" }, GENERAL, cursor)
+      ));
+      if (read === false || read === "invalid_cursor") throw new Error(String(read));
+      ids.push(...read.items.map((item) => (item.kind === "thread" ? item.workstreamId : item.message.id)));
+      cursor = read.nextCursor;
+    } while (cursor !== null);
+    const welcome = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ message_id: string }>(
+      "SELECT message_id FROM space_messages WHERE space_id = ? AND message_key IS NOT NULL", GENERAL,
+    ).one().message_id);
+    expect(ids).toEqual([
+      ...[...posted.newer].reverse(),
+      tiedThread, posted.tied, olderThread, welcome,
+    ]);
+  });
 });
 
 describe("migration 103", () => {
@@ -407,6 +489,17 @@ describe("migration 102", () => {
       space, OWNER);
       state.storage.sql.exec(`INSERT INTO space_channel_memberships (space_id, workstream_id, state, generation, joined_at, updated_at)
         VALUES (?, ?, 'active', 1, 5, 5)`, space, thread);
+      // A per-Channel pin: its table holds an ON DELETE CASCADE key to
+      // `spaces`, so a rebuild that drops `spaces` without holding it loses it.
+      state.storage.sql.exec(`INSERT INTO channels (
+        workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+        title, description, preview, scope, exact_state, origin_type, title_status,
+        latest_attention_ordinal, unread_tracking_start_ordinal, last_activity_at,
+        source_created_at, source_updated_at, projected_at
+      ) VALUES (?, 1, 1, 'event-pin', 'hash', 'Pinned', '', '', 'workspace', 'idle', 'ad_hoc', 'settled', 0, 0, 5, 5, 5, 5)`,
+      thread);
+      state.storage.sql.exec(`INSERT INTO workspace_workstream_pins (user_id, space_id, workstream_id, position, created_at, updated_at)
+        VALUES (?, ?, ?, 0, 5, 5)`, OWNER, space, thread);
     });
 
     await runInDurableObject(stub, (_instance, state) => {
@@ -437,7 +530,10 @@ describe("migration 102", () => {
       sql.exec(`UPDATE spaces SET appearance_json = '{"icon":"building-2","color":"red"}' WHERE space_id = ?`, space);
       expect(sql.exec("SELECT workstream_id FROM channel_color_sync WHERE workstream_id = ?", thread).toArray())
         .toEqual([{ workstream_id: thread }]);
-      expect(sql.exec("SELECT COUNT(*) AS count FROM sqlite_master WHERE name = 'spaces_hold'").one()).toEqual({ count: 0 });
+      expect(sql.exec("SELECT user_id, space_id, workstream_id, position FROM workspace_workstream_pins").toArray())
+        .toEqual([{ user_id: OWNER, space_id: space, workstream_id: thread, position: 0 }]);
+      expect(sql.exec(`SELECT COUNT(*) AS count FROM sqlite_master
+        WHERE name IN ('spaces_hold', 'workspace_workstream_pins_hold')`).one()).toEqual({ count: 0 });
       expect(sql.exec("PRAGMA foreign_key_check").toArray()).toEqual([]);
     });
   });

@@ -504,16 +504,26 @@ export const SPACE_PUBLIC_ONLY_MIGRATION: readonly string[] = [
  *
  * SQLite cannot change a `CHECK`, so the table is rebuilt: held, dropped,
  * created with the wider check, refilled, and the hold dropped. No rename, so
- * no trigger elsewhere is re-parsed against a missing table. Nothing holds a
- * foreign key to `spaces` (deliberately; see `SPACE_INVITEES_MIGRATION`), so the
- * drop cascades nowhere. Its two indexes and the colour trigger go with the old
- * table and are created again under the same names and text.
+ * no trigger elsewhere is re-parsed against a missing table. Its two indexes
+ * and the colour trigger go with the old table and are created again under the
+ * same names and text.
+ *
+ * One table holds a foreign key to `spaces`: `workspace_workstream_pins`
+ * (migration 66, `ON DELETE CASCADE`, repointed from
+ * `workspace_space_directory` by migration 72's rename). Dropping `spaces`
+ * with enforcement on, which is the only way it runs
+ * (`docs/durable-object-sqlite.md`), would delete every pin. So the pins are
+ * held and emptied first and put back once `spaces` exists again: the recipe
+ * migrations 31 and 55 follow.
  *
  * `spaces_individual_owner_idx` is the one-per-member rule: two seatings
  * racing for the same person cannot both leave a Personal Channel, whatever
  * id each was given.
  */
 export const SPACE_INDIVIDUAL_SCOPE_MIGRATION: readonly string[] = [
+  `CREATE TABLE workspace_workstream_pins_hold AS
+     SELECT user_id, space_id, workstream_id, position, created_at, updated_at FROM workspace_workstream_pins`,
+  `DELETE FROM workspace_workstream_pins`,
   `CREATE TABLE spaces_hold AS SELECT * FROM spaces`,
   `DROP TABLE spaces`,
   `CREATE TABLE spaces (
@@ -546,6 +556,9 @@ export const SPACE_INDIVIDUAL_SCOPE_MIGRATION: readonly string[] = [
           source_created_at, source_updated_at, latest_attention_ordinal, unread_tracking_start_ordinal
      FROM spaces_hold`,
   `DROP TABLE spaces_hold`,
+  `INSERT INTO workspace_workstream_pins (user_id, space_id, workstream_id, position, created_at, updated_at)
+     SELECT user_id, space_id, workstream_id, position, created_at, updated_at FROM workspace_workstream_pins_hold`,
+  `DROP TABLE workspace_workstream_pins_hold`,
   `CREATE UNIQUE INDEX workspace_space_directory_system_role_idx
     ON spaces(system_role) WHERE system_role IS NOT NULL`,
   `CREATE INDEX workspace_space_directory_active_idx
