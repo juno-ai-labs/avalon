@@ -118,8 +118,8 @@ everyone's, because each answers only for what the person may already reach.
   its name and none of Main".
 - **Reach never flows down.** Seeing a Space or a Channel is never a reason to
   list what is in it. Breaking this lists private Breakouts to everyone in
-  their Channel. Guard: `space-conversation-page.test.ts`. The feed's locked
-  rows are the one exception, and they carry an id and a time only.
+  their Channel. Guard: `space-conversation-page.test.ts`. The Channel feed
+  follows it too: it lists only threads its reader may open.
 - **A private Space reaches nobody through a thread.** If the Space rule
   admitted a private Space through a thread in it, every reader of one thread
   would learn a private Channel's name. Guard:
