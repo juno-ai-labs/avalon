@@ -694,7 +694,10 @@ which the lightbox now shares. Both panels head themselves the way a thread or
 Breakout pane does: `TitlePillHeader` with the item's own `TitlePill`, whose
 menu holds its actions (a resource's New window, Open source, Refresh, a
 Versions level and Archive; an attachment's Download and Details), and
-`TitlePillClose`, with a round **Expand** beside Close (both `TitlePillAction`)
+`TitlePillClose`, with a round **Expand** beside Close (both `TitlePillAction`,
+spaced by `IconGroup`, which `TitlePillHeader` wraps its trailing controls in;
+Expand is an `IconGroup` action, so it folds into a "⋯" dropdown at phone width
+or when the header measures it crowding the pill)
 that shows the panel's item in the full-window `AttachmentLightbox` over the
 panel; closing it leaves the panel as it was and returns focus to Expand. A live
 site has no Expand, since it has no single file to show; its menu offers New
