@@ -9,6 +9,7 @@ import {
   normalizeGeneratedTitle,
   provisionalWorkstreamTitle,
   refreshWorkstreamName,
+  summarizeExistingDescription,
 } from "../src/services/workstream-naming-service";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
@@ -944,6 +945,49 @@ describe("first-pass summary", () => {
 
     expect(description(database)).toBe(objective);
     expect(title(database)).toBe("Danny download link");
+  });
+});
+
+describe("backfilling an existing thread's summary", () => {
+  const summary = "An email to Danny at Mucker with the Avalon download link, asking him to add Alex and Katherine to the Tuesday call.";
+  const target = { workspaceId, workstreamId };
+
+  it("summarizes a description that is still the opening line, and leaves it alone the second time", async () => {
+    const database = seededDatabase();
+    seedMessages(database, 1);
+    const requests: Array<Record<string, unknown>> = [];
+    stubOpenRouter(requests, "Danny download link", undefined, "megaphone", summary);
+    const env = environment(database, []);
+
+    expect(await summarizeExistingDescription(env, target)).toBe("summarized");
+    expect(description(database)).toBe(summary);
+    // The title is the first pass's, and a backfill does not rename anything.
+    expect(title(database)).toBe(provisionalTitle);
+
+    expect(await summarizeExistingDescription(env, target)).toBe("not_the_opening_line");
+    expect(requests).toHaveLength(1);
+  });
+
+  it("asks nothing where a person wrote the description", async () => {
+    const database = seededDatabase();
+    seedMessages(database, 1);
+    objectStoreOf(database).prepare("UPDATE workstream SET description_source = 'authored' WHERE id = 1").run();
+    const requests: Array<Record<string, unknown>> = [];
+    stubOpenRouter(requests, "Danny download link", undefined, "megaphone", summary);
+
+    expect(await summarizeExistingDescription(environment(database, []), target)).toBe("authored");
+    expect(requests).toHaveLength(0);
+    expect(description(database)).toBe(objective);
+  });
+
+  it("fails rather than settling when the model call fails, so the backfill retries it", async () => {
+    const database = seededDatabase();
+    seedMessages(database, 1);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("unavailable", { status: 503 })));
+
+    await expect(summarizeExistingDescription(environment(database, []), target))
+      .rejects.toThrow("description_summary_model_failed");
+    expect(description(database)).toBe(objective);
   });
 });
 

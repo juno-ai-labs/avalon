@@ -12,6 +12,8 @@ import { ResourceSearchProjectionSchema } from '../durable-objects/resource-sear
 import { SearchConversationProjectionMessageSchema, SearchProjectionMessageSchema } from '../durable-objects/search-projection-outbox';
 import { AuthorizationProjectionJobSchema } from '../durable-objects/authorization-projection';
 import { ChannelColorSyncMessageSchema } from "../durable-objects/channel-color-sync";
+import { ThreadBackfillMessageSchema, type ThreadBackfillJob } from "../durable-objects/thread-backfill";
+import { summarizeExistingDescription } from "../services/workstream-naming-service";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { projectAuthorization } from '../services/authorization-projection-service';
 import { createSearchIndexingPipeline, indexSemanticBatch } from '../services/search-indexing-pipeline';
@@ -77,6 +79,17 @@ import { SpaceBootstrapService, spaceBootstrapDriver } from "../services/space-b
 import { SpaceService } from "../services/space-service";
 import { WorkstreamService } from "../services/workstream-service";
 import { hostedParentStub } from "../services/conversation-parent-client";
+
+/**
+ * What each thread-backfill job does to one conversation, and the outcome it
+ * logs. A job must be safe to run twice over the same conversation: a row
+ * whose consumer failed part way is sent again whole.
+ */
+const THREAD_BACKFILL_HANDLERS: Record<ThreadBackfillJob, (env: Env, target: {
+  workspaceId: string; workstreamId: string; substreamId: string;
+}) => Promise<string>> = {
+  description_summary: (env, target) => summarizeExistingDescription(env, target),
+};
 
 /**
  * The shape of a Project default delivery, kept only to recognize one.
@@ -553,6 +566,56 @@ async function consumeOne(message: Message<unknown>, env: Env,
       const attempts = Math.max(1, message.attempts);
       message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
     }
+    return;
+  }
+  const backfill = ThreadBackfillMessageSchema.safeParse(message.body);
+  if (backfill.success) {
+    const target = backfill.data;
+    if (target.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      target.workspaceId,
+      workspaceDOName(env.AVALON_REGION, target.workspaceId),
+    );
+    try {
+      const work = await workspace.threadBackfillWork(target);
+      if (work) {
+        // Main and each open Breakout, in turn. A failure part way leaves the
+        // row in place and the alarm sends it again; every job is written to
+        // do nothing the second time over a conversation it already did.
+        for (const substreamId of work.substreamIds) {
+          const outcome = await THREAD_BACKFILL_HANDLERS[target.job](env, {
+            workspaceId: target.workspaceId, workstreamId: target.workstreamId, substreamId,
+          });
+          logInfo(env, "thread_backfill_conversation", {
+            job: target.job,
+            workspace_id: target.workspaceId,
+            workstream_id: target.workstreamId,
+            substream_id: substreamId,
+            outcome,
+          });
+        }
+        await workspace.completeThreadBackfill(target);
+      }
+    } catch (error) {
+      // A retired Organization's thread is never written again.
+      if (!isRetirementRefusal(error)) {
+        // Acked rather than retried, as colour sync does: the row's own gate
+        // sends it again, and released so it holds no successor back.
+        logWarn(env, "thread_backfill_failed", {
+          job: target.job,
+          workspace_id: target.workspaceId,
+          workstream_id: target.workstreamId,
+          reason: diagnosticErrorCode(error, "thread_backfill_failed"),
+        });
+        await workspace.releaseThreadBackfill(target).catch(() => undefined);
+      }
+    }
+    message.ack();
     return;
   }
   const colorSync = ChannelColorSyncMessageSchema.safeParse(message.body);
