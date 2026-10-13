@@ -93,6 +93,11 @@ bridge so the nearest crumb is named on desktop; at phone width (640px and
 below) the stylesheet hides the name, the measured width drops to nothing, and
 the mark closes back to a circle.
 
+A title pill's menu always opens below the pill. Its bottom edge never counts
+as a Radix collision, so the menu never flips above; its sides still do, so it
+shifts to fit a phone's width. Opening it blurs any focused input, textarea or
+editable region first, so a phone's keyboard drops.
+
 Theme application stamps the same `data-theme` attribute before rendering. Desktop
 installs the native theme reporter/broadcast adapter; browser and Sideline install system
 appearance observation. Visual primitives share the same theme subscription.
@@ -139,6 +144,27 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-10-13 — Title pill menus never open upward
+
+**What changed:** The title pill's menu passes Radix a collision padding with
+no bottom edge, so it always opens below the pill.
+
+**Why:** On a phone, tapping the pill with the keyboard up (the composer
+focused) shrinks the visual viewport, which Floating UI measures, while the
+menu's `100vh` cap does not shrink with it. The menu no longer fit below, Radix
+flipped it above, and nothing re-placed it when the keyboard dropped, so it
+opened upward with its top cut off. The pill sits at the top of its pane, so
+above is never the better side.
+
+**Considered and rejected:** `avoidCollisions={false}`. It turns off the
+sideways shift too, and the menu then overflows a phone's edge when the pill
+is off centre.
+
+**Consequences:** When the room below is short, the menu runs past the
+bottom of the screen rather than flipping; its `max-height` is what bounds it.
+
+Shipped in #1222.
 
 ### 2026-10-13 — Crumbs are always a `MarkBridge`
 
