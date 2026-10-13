@@ -147,6 +147,38 @@ describe("suggestOrganizationName", () => {
     expect(cachedRow("acme.com")).toMatchObject({ outcome: "refused", name: null });
   });
 
+  it("never reads a name from body content that arrived in the head's last chunk", async () => {
+    const fetcher = async () => htmlResponse(
+      `<head><title>Acme</title></head><body><meta property="og:site_name" content="Other">`,
+    );
+    expect(await suggestOrganizationName(sqliteD1(db), "pat@acme.com", fetcher, start)).toBe("Acme");
+  });
+
+  it("keeps an expired name when the refresh cannot reach the homepage", async () => {
+    const d1 = sqliteD1(db);
+    expect(await suggestOrganizationName(d1, "a@initech.com", homepage("Initech"), start)).toBe("Initech");
+    const expired = new Date(start.getTime() + 31 * DAY_MS);
+    expect(await suggestOrganizationName(d1, "b@initech.com", async () => new Response("down", { status: 503 }), expired))
+      .toBe("Initech");
+    expect(cachedRow("initech.com")).toEqual({ outcome: "named", name: "Initech", fetched_at: start.toISOString() });
+  });
+
+  it("does not let an older read that finishes last replace a newer answer", async () => {
+    const d1 = sqliteD1(db);
+    let releaseOlder: (() => void) | undefined;
+    const slow = async () => {
+      await new Promise<void>((resolve) => { releaseOlder = resolve; });
+      return htmlResponse("<title>Hooli Old</title>");
+    };
+    const older = suggestOrganizationName(d1, "a@hooli.com", slow, start);
+    await vi.waitFor(() => expect(releaseOlder).toBeDefined());
+    const later = new Date(start.getTime() + 1000);
+    expect(await suggestOrganizationName(d1, "b@hooli.com", homepage("Hooli"), later)).toBe("Hooli");
+    releaseOlder!();
+    await older;
+    expect(cachedRow("hooli.com")).toEqual({ outcome: "named", name: "Hooli", fetched_at: later.toISOString() });
+  });
+
   it("gives up on a redirect loop without caching it", async () => {
     let calls = 0;
     const looping = async () => {
@@ -182,7 +214,7 @@ describe("readHead", () => {
 
   it("gives up once more than the limit arrives before the head ends", async () => {
     expect(await readHead(chunked("<head><title>Acme</title>", "<script>".padEnd(64, "x")), 32)).toBeNull();
-    expect(await readHead(chunked("<head><title>Acme</title></head>"), 64)).toBe("<head><title>Acme</title></head>");
+    expect(await readHead(chunked("<head><title>Acme</title></head>"), 64)).toBe("<head><title>Acme</title>");
   });
 
   it("finds the end of the head when its marker is split across chunks", async () => {
@@ -192,14 +224,14 @@ describe("readHead", () => {
         for (const part of ["<head><title>Acme</title></he", "ad>"]) controller.enqueue(new TextEncoder().encode(part));
       },
     });
-    expect(await readHead(body, MAX_HOMEPAGE_HEAD_BYTES)).toBe("<head><title>Acme</title></head>");
+    expect(await readHead(body, MAX_HOMEPAGE_HEAD_BYTES)).toBe("<head><title>Acme</title>");
   }, 2_000);
 
   it("reads a heavy but legitimate head whole at the shipped limit", async () => {
     // A head with a few hundred KB of inlined CSS and JS, as heavy real homepages have.
     const script = `<script>${"x".repeat(400_000)}</script>`;
     const head = await readHead(chunked("<head>", script, "<title>Acme</title></head><body>"), MAX_HOMEPAGE_HEAD_BYTES);
-    expect(head).toBe(`<head>${script}<title>Acme</title></head><body>`);
+    expect(head).toBe(`<head>${script}<title>Acme</title>`);
   });
 
   it("stops a head that never ends at the shipped limit", async () => {

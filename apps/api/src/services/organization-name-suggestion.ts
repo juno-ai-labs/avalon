@@ -123,7 +123,8 @@ export async function suggestOrganizationName(
   const reading = await readOrganizationName(domain, fetcher);
   if (reading.outcome === "unreachable") return cached?.name ?? null;
   await db.prepare(`INSERT INTO organization_name_suggestions (domain, outcome, name, fetched_at) VALUES (?, ?, ?, ?)
-    ON CONFLICT(domain) DO UPDATE SET outcome = excluded.outcome, name = excluded.name, fetched_at = excluded.fetched_at`)
+    ON CONFLICT(domain) DO UPDATE SET outcome = excluded.outcome, name = excluded.name, fetched_at = excluded.fetched_at
+    WHERE excluded.fetched_at >= organization_name_suggestions.fetched_at`)
     .bind(domain, reading.outcome, reading.name, now.toISOString()).run();
   return reading.name;
 }
@@ -180,7 +181,7 @@ function isHtml(contentType: string | null): boolean {
 const HEAD_END_OVERLAP = 16;
 
 /**
- * The page up to the end of its `<head>`, or null when more than `maxBytes`
+ * The page up to the end of its `<head>` (the marker excluded), or null when more than `maxBytes`
  * arrive first. Everything a name is read from lives there, so the body is
  * never downloaded. Only the newest chunk, plus enough of the last one to catch
  * a marker split across them, is searched, so the read stays linear.
@@ -198,7 +199,10 @@ export async function readHead(body: ReadableStream<Uint8Array>, maxBytes: numbe
       if (bytes > maxBytes) return null;
       const searchFrom = Math.max(0, source.length - HEAD_END_OVERLAP);
       source += decoder.decode(value, { stream: true });
-      if (/<\/head\s*>|<body\b/iu.test(source.slice(searchFrom))) return source;
+      // Cut at the marker: the rest of the chunk is body, and a tag there must
+      // not name the organization depending on where the network split it.
+      const end = /<\/head\s*>|<body\b/iu.exec(source.slice(searchFrom));
+      if (end) return source.slice(0, searchFrom + end.index);
     }
   } finally {
     void reader.cancel().catch(() => undefined);
