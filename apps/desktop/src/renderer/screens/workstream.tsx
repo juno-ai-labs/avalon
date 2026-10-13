@@ -710,9 +710,12 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const navigate = useNavigate();
   const threadUsesTwoPanes = breakoutPaneOpen || mainOwnsRail;
   const setThreadUsesTwoPanes = channelPane?.setThreadUsesTwoPanes;
+  // Reported again on each expand request too: the Channel stack expands the
+  // thread for one, and a breakout opened while another was already open
+  // changes nothing here that would otherwise end that expansion.
   useEffect(() => {
     setThreadUsesTwoPanes?.(threadUsesTwoPanes);
-  }, [setThreadUsesTwoPanes, threadUsesTwoPanes]);
+  }, [expandRequested, setThreadUsesTwoPanes, threadUsesTwoPanes]);
   useEffect(() => () => setThreadUsesTwoPanes?.(false), [setThreadUsesTwoPanes]);
   const channelCrumbs = channelPane?.shifted ? [channelPane.crumb] : [];
   const changeBreakoutWidth = useCallback((width: number): void => {

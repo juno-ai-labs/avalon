@@ -153,6 +153,8 @@ state, and Back to that entry opens it the same way.
 request has to key it by the location, not just by the pane id, or a sidebar
 open of the pane already open is lost.
 
+Shipped in #1229.
+
 ### 2026-10-13 — A thread can expand over its Channel, a breakout over its thread
 
 **What changed:** The thread beside a Channel, and a breakout beside its
