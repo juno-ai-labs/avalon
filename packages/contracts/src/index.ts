@@ -1912,13 +1912,18 @@ export const DEFAULT_MEMBER_PREFERENCES: MemberPreferences = {
   push: DEFAULT_PUSH_PREFERENCES,
 };
 /**
- * A save. `push` is merged switch by switch into what is stored, so a client
- * that does not know a switch (a desktop older than it saves
- * `showAgentWork` alone) leaves it as it was.
+ * A save. Each field, and each push switch, is optional so one control saves
+ * only what it changed: everything a save leaves out keeps its stored value,
+ * so a window with a stale copy cannot undo a change made elsewhere, and a
+ * desktop older than the push switches (it saves `showAgentWork` alone)
+ * leaves them as they were. An empty save changes nothing and is refused.
  */
 export const MemberPreferencesUpdateSchema = z.object({
-  showAgentWork: z.boolean(),
+  showAgentWork: z.boolean().optional(),
   push: PushPreferencesSchema.partial().optional(),
+}).refine((value) => value.showAgentWork !== undefined
+  || Object.values(value.push ?? {}).some((switched) => switched !== undefined), {
+  message: "A preference to change is required.",
 });
 export type MemberPreferencesUpdate = z.infer<typeof MemberPreferencesUpdateSchema>;
 /** Each field is optional so one control can save its own; an empty body changes nothing and is refused. */

@@ -9499,25 +9499,26 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Save this person's preferences and answer with what is stored. The push
-   * switches merge into what was there, so a save that names none of them
-   * (a desktop older than them) leaves them alone.
+   * Save what this person changed and answer with everything stored. A field
+   * or push switch the save leaves out keeps its stored value.
    */
   async saveMemberPreferences(input: MemberPreferencesWriteRequest): Promise<MemberPreferences> {
     await this.initialized;
     const request = parseRpcInput(MemberPreferencesWriteRequestSchema, input, "save_member_preferences");
     this.assertWorkspace(request.workspaceId);
-    const push = mergePushPreferences(this.readMemberPreferences(request.userId).push, request.preferences.push);
+    const current = this.readMemberPreferences(request.userId);
+    const showAgentWork = request.preferences.showAgentWork ?? current.showAgentWork;
+    const push = mergePushPreferences(current.push, request.preferences.push);
     this.state.storage.sql.exec(
       `INSERT INTO member_preferences (user_id, show_agent_work, push_json, updated_at) VALUES (?, ?, ?, ?)
        ON CONFLICT (user_id) DO UPDATE SET show_agent_work = excluded.show_agent_work,
          push_json = excluded.push_json, updated_at = excluded.updated_at`,
       request.userId,
-      request.preferences.showAgentWork ? 1 : 0,
+      showAgentWork ? 1 : 0,
       JSON.stringify(push),
       Date.now(),
     );
-    return { showAgentWork: request.preferences.showAgentWork, push };
+    return { showAgentWork, push };
   }
 
   private readMemberPreferences(userId: string): MemberPreferences {

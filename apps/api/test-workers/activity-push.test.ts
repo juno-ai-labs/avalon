@@ -364,6 +364,12 @@ describe("what each person has turned off", () => {
       .toEqual({ ...DEFAULT_PUSH_PREFERENCES, mentions: false });
   });
 
+  it("given a save of one push switch, then everything it leaves out keeps its stored value", async () => {
+    await organization().saveMemberPreferences({ workspaceId, userId: member, preferences: { showAgentWork: false } });
+    expect(await organization().saveMemberPreferences({ workspaceId, userId: member, preferences: { push: { added: false } } }))
+      .toEqual({ showAgentWork: false, push: { ...DEFAULT_PUSH_PREFERENCES, added: false } });
+  });
+
   it("given a switch turned off after the push was queued, when it is sent, then nothing goes out", async () => {
     await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
     await turnOff(member, { newThreads: false });

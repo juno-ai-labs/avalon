@@ -546,7 +546,7 @@ describe('Organization settings', () => {
 
   it('saves the agent-work switch to the server', async () => {
     api.getMyPreferences.mockResolvedValue(DEFAULT_MEMBER_PREFERENCES);
-    api.updateMyPreferences.mockImplementation(async (next: { showAgentWork: boolean }) => next);
+    api.updateMyPreferences.mockImplementation(async () => ({ ...DEFAULT_MEMBER_PREFERENCES, showAgentWork: false }));
     renderSettings();
     openSettingsSection('Account');
 
@@ -554,14 +554,15 @@ describe('Organization settings', () => {
     await waitFor(() => expect(toggle).toBeChecked());
     fireEvent.click(toggle);
 
-    await waitFor(() => expect(api.updateMyPreferences).toHaveBeenCalledWith({ ...DEFAULT_MEMBER_PREFERENCES, showAgentWork: false }));
+    await waitFor(() => expect(api.updateMyPreferences).toHaveBeenCalledWith({ showAgentWork: false }));
     await waitFor(() => expect(toggle).not.toBeChecked());
   });
 
   it('saves a push switch for every device and holds its narrower switch while it is off', async () => {
     api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));
     api.getMyPreferences.mockResolvedValue(DEFAULT_MEMBER_PREFERENCES);
-    api.updateMyPreferences.mockImplementation(async (next: unknown) => next);
+    api.updateMyPreferences.mockImplementation(async () => ({ ...DEFAULT_MEMBER_PREFERENCES,
+      push: { ...DEFAULT_PUSH_PREFERENCES, newThreads: false } }));
     renderSettings();
     fireEvent.click(await within(screen.getByRole('navigation', { name: 'Settings sections' }))
       .findByRole('button', { name: 'Notifications' }));
@@ -572,10 +573,8 @@ describe('Organization settings', () => {
     expect(outside).toBeEnabled();
     fireEvent.click(newThreads);
 
-    await waitFor(() => expect(api.updateMyPreferences).toHaveBeenCalledWith({
-      showAgentWork: true,
-      push: { ...DEFAULT_PUSH_PREFERENCES, newThreads: false },
-    }));
+    // Only the switch that changed: a stale copy of the others must not be written back.
+    await waitFor(() => expect(api.updateMyPreferences).toHaveBeenCalledWith({ push: { newThreads: false } }));
     await waitFor(() => expect(newThreads).not.toBeChecked());
     expect(outside).toBeDisabled();
   });
