@@ -447,7 +447,11 @@ describe("the Organization's member table", () => {
     });
   });
 
-  /** Count what the object asks D1 about membership, from here on. */
+  /**
+   * Count what the object asks D1 about a person's membership, from here on.
+   * The Activity push's device read names the member table too, but learns
+   * nobody's relationship, so it is not one of these.
+   */
   function countMemberReads(instance: unknown): string[] {
     const target = instance as { env: Env };
     const reads: string[] = [];
@@ -457,7 +461,7 @@ describe("the Organization's member table", () => {
         ? new Proxy(database, {
           get: (db, key) => key === "prepare"
             ? (query: string) => {
-              if (query.includes("workspace_members")) reads.push(query);
+              if (query.includes("workspace_members") && !query.includes("user_push_devices")) reads.push(query);
               return db.prepare(query);
             }
             : Reflect.get(db, key),

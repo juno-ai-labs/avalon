@@ -1,10 +1,12 @@
 import { notifyOps } from "../observability/ops-slack-notifier";
-import { asWorkspaceId, WorkspaceAttentionSchema } from "@rally/contracts";
+import { asUserId, asWorkspaceId, WorkspaceAttentionSchema } from "@rally/contracts";
 import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
-import { PushDeliveryMessageSchema, type PushDeliveryMessage } from "@rally/contracts/push-notifications";
+import { PushDeliveryMessageSchema, type PushDeliveryMessage, type PushNotificationData } from "@rally/contracts/push-notifications";
 import type { Env } from "../env";
 import { workspaceDOName } from "../durable-objects/names";
+import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import { WorkspaceNotificationIntentDeliverySchema } from "../durable-objects/workspace-notification-intent-protocol";
+import { WorkspaceActivityPushReadResultSchema } from "../durable-objects/workspace-space-protocol";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logInfo, logWarn } from "../observability/logger";
 import { notificationDeliveryContext } from "../services/conversation-effect-service";
@@ -31,43 +33,108 @@ const sendByTransport: PushSend = async (env, device, payload, collapseId) => {
  */
 export type ProviderFaults = Map<PushDevice["transport"], string>;
 
+/** What one push says and where it opens, or why it waits or sends nothing. */
+type PushContent =
+  | { outcome: "pending" }
+  | { outcome: "skipped"; reason: string }
+  | {
+    outcome: "ready";
+    /** What a receipt and the collapse id are keyed on, per workspace. */
+    deliveryKey: string;
+    kind: PushNotificationData["kind"];
+    title: string;
+    body: string;
+    workstreamId: string;
+    substreamId: string | null;
+  };
+
+type WorkspaceStub = DurableObjectStub<WorkspaceDO>;
+
+/** A mention or an add: its notification intent, checked as the processor checks it. */
+async function intentContent(env: Env, workspace: WorkspaceStub, message: PushDeliveryMessage & { intentId: string }): Promise<PushContent> {
+  const raw = await workspace.readNotificationIntentForDelivery({ workspaceId: asWorkspaceId(message.workspaceId), intentId: message.intentId });
+  if (!raw) return { outcome: "skipped", reason: "notification_intent_missing" };
+  const row = WorkspaceNotificationIntentDeliverySchema.parse(raw);
+  if (row.recipientUserId !== message.recipientUserId) throw new Error("Push recipient mismatch");
+  const context = await notificationDeliveryContext(env, row);
+  if (context.outcome !== "ready") return context.outcome === "pending" ? { outcome: "pending" } : { outcome: "skipped", reason: context.reason };
+  const { effect, childId } = context;
+  return {
+    outcome: "ready",
+    deliveryKey: row.intentId,
+    kind: row.notificationKind,
+    title: effect.kind === "mention_notification"
+      ? `${effect.authorNameSnapshot} mentioned you in ${effect.workstreamTitleSnapshot}`
+      : `${effect.actorNameSnapshot} added you to ${effect.workstreamTitleSnapshot}`,
+    body: rewriteMessageAsPlainText(
+      effect.kind === "mention_notification" ? effect.messageText : effect.workstreamObjectiveSnapshot ?? "",
+      { sources: "none" },
+    ),
+    workstreamId: row.workstreamId,
+    substreamId: childId,
+  };
+}
+
+/**
+ * Any other Activity row, read back through the feed now, so a row the person
+ * has read or lost since it was queued sends nothing. Worded as the sidebar
+ * words it.
+ */
+async function activityContent(env: Env, workspace: WorkspaceStub, message: PushDeliveryMessage & { activityItemId: string }): Promise<PushContent> {
+  const item = WorkspaceActivityPushReadResultSchema.parse(await workspace.readActivityItemForPush({
+    workspaceId: asWorkspaceId(message.workspaceId), userId: asUserId(message.recipientUserId), itemId: message.activityItemId,
+  }));
+  if (!item) return { outcome: "skipped", reason: "activity_item_not_pending" };
+  const actor = item.actorUserId === null ? item.actorLabel
+    : (await workspaceRegionalDatabase(env).prepare(`SELECT name FROM users WHERE id = ?`)
+      .bind(item.actorUserId).first<{ name: string | null }>())?.name?.trim() || "Someone";
+  const thread = item.threadTitle.trim() || UNNAMED_THREAD;
+  const breakout = item.breakout ? item.breakout.title.trim() || UNNAMED_BREAKOUT : null;
+  const words = item.kind === "thread_started" ? { title: `${actor} started ${thread}`, body: "" }
+    : item.kind === "breakout_started" ? { title: `${actor} started a breakout on ${thread}`, body: breakout ?? "" }
+    : { title: `${actor} finished ${breakout ?? thread}`, body: breakout ? `in ${thread}` : "" };
+  return {
+    outcome: "ready",
+    deliveryKey: `activity:${item.id}`,
+    kind: item.kind as PushNotificationData["kind"],
+    ...words,
+    workstreamId: item.threadId,
+    substreamId: item.breakout?.substreamId ?? null,
+  };
+}
+const UNNAMED_THREAD = "Untitled thread";
+const UNNAMED_BREAKOUT = "Untitled breakout";
+
 export async function deliverPush(env: Env, message: PushDeliveryMessage, send: PushSend = sendByTransport, faults: ProviderFaults = new Map()): Promise<boolean> {
   if (message.region !== env.AVALON_REGION) throw new Error("Push queue region mismatch");
   if (!await pushEnabled(env, { userId: message.recipientUserId, workspaceId: message.workspaceId })) return true;
   const id = asWorkspaceId(message.workspaceId);
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, id, workspaceDOName(env.AVALON_REGION, id));
-  const raw = await workspace.readNotificationIntentForDelivery({ workspaceId: id, intentId: message.intentId });
-  if (!raw) return true;
-  const row = WorkspaceNotificationIntentDeliverySchema.parse(raw);
-  if (row.recipientUserId !== message.recipientUserId) throw new Error("Push recipient mismatch");
-  const context = await notificationDeliveryContext(env, row);
-  if (context.outcome === "pending") return false;
-  if (context.outcome === "skipped") {
-    logInfo(env, "push_delivery_skipped", { intent_id: row.intentId, reason: context.reason });
+  const content = "intentId" in message
+    ? await intentContent(env, workspace, message)
+    : await activityContent(env, workspace, message);
+  const pointer = "intentId" in message ? message.intentId : message.activityItemId;
+  if (content.outcome === "pending") return false;
+  if (content.outcome === "skipped") {
+    logInfo(env, "push_delivery_skipped", { intent_id: pointer, reason: content.reason });
     return true;
   }
-  const { effect, childId } = context;
-  const title = effect.kind === "mention_notification"
-    ? `${effect.authorNameSnapshot} mentioned you in ${effect.workstreamTitleSnapshot}`
-    : `${effect.actorNameSnapshot} added you to ${effect.workstreamTitleSnapshot}`;
-  const body = rewriteMessageAsPlainText(
-    effect.kind === "mention_notification" ? effect.messageText : effect.workstreamObjectiveSnapshot ?? "",
-    { sources: "none" },
-  );
   // The badge counts what this person's sidebar lists, and a guest's lists less.
   const member = await workspaceRegionalDatabase(env).prepare(`SELECT access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ?`)
-    .bind(row.workspaceId, row.recipientUserId).first<{ access_class: "member" | "guest" }>();
+    .bind(message.workspaceId, message.recipientUserId).first<{ access_class: "member" | "guest" }>();
   const attention = WorkspaceAttentionSchema.parse(await workspace.attention({
-    workspaceId: id, userId: row.recipientUserId, accessClass: member?.access_class ?? "member",
+    workspaceId: id, userId: message.recipientUserId, accessClass: member?.access_class ?? "member",
   }));
-  const url = await canonicalWorkstreamUrl(env, { region: env.AVALON_REGION, workspaceId: row.workspaceId,
-    workstreamId: row.workstreamId, ...(childId ? { substreamId: childId } : {}) });
-  const data = { v: 1 as const, kind: row.notificationKind, region: env.AVALON_REGION, workspaceId: row.workspaceId, url };
-  const collapseId = await pushCollapseId(row.workspaceId, row.intentId);
+  const url = await canonicalWorkstreamUrl(env, { region: env.AVALON_REGION, workspaceId: message.workspaceId,
+    workstreamId: content.workstreamId, ...(content.substreamId ? { substreamId: content.substreamId } : {}) });
+  const data = { v: 1 as const, kind: content.kind, region: env.AVALON_REGION, workspaceId: message.workspaceId, url };
+  const collapseId = await pushCollapseId(message.workspaceId, content.deliveryKey);
+  const { title, body } = content;
   const payload: PushPayloads = {
-    apns: renderPushPayload({ title, body, threadKey: row.workstreamId, badge: attention.readerAttentionCount, data }),
+    apns: renderPushPayload({ title, body, threadKey: content.workstreamId, badge: attention.readerAttentionCount, data }),
     web: renderWebPushPayload({ title, body, collapseId, data, maxBytes: WEB_PUSH_PAYLOAD_BYTES }),
   };
+  const row = { workspaceId: message.workspaceId, recipientUserId: message.recipientUserId, intentId: content.deliveryKey };
   const db = workspaceRegionalDatabase(env);
   const devices = await livePushDevices(env, row.recipientUserId);
   if (!devices.length) logInfo(env, "push_delivery_skipped", { intent_id: row.intentId, reason: "no_live_devices" });
