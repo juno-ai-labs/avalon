@@ -7,8 +7,8 @@ import { CANVA_CONNECTION_DISCLOSURE, connectorProviders, PERSONAL_CONNECT_LABEL
 import { PersonalSetup } from './guided-onboarding';
 import { githubAvailabilityLabels, githubRemoteLabels, mcpAuthLabels } from '../settings/choices';
 import { SettingToggle } from '../settings/setting-toggle';
-import { memberPreferencesQueryKey, useMemberPreferences } from '../lib/use-member-preferences';
-import type { MemberPreferences, PushPreferences } from '@rally/contracts';
+import { useMemberPreferences, useSaveMemberPreferences } from '../lib/use-member-preferences';
+import type { PushPreferences } from '@rally/contracts';
 import { settings, collectSettings, coreSettingsProvider, defineSetting, isSettingAvailable, searchSettings, type SettingSearchResult, type SettingsSearchContext } from '../settings/registry';
 import { SettingCopy, SettingLabel } from '../settings/setting-label';
 import { SettingsSearchResults, useRevealSetting } from '../settings/search-results';
@@ -230,25 +230,8 @@ function PersonalSystemPromptSetting({ api, workspaceId }: { api: RallyApi; work
  * only live while their kind is on.
  */
 function PushPreferencesSettings({ api, workspaceId }: { api: RallyApi; workspaceId: string }): React.JSX.Element {
-  const queryClient = useQueryClient();
   const preferences = useMemberPreferences(api, workspaceId);
-  const queryKey = memberPreferencesQueryKey(workspaceId);
-  const save = useMutation({
-    mutationFn: (next: MemberPreferences) => api.updateMyPreferences(next),
-    // Optimistic, as Show agent work is: the switch moves at once and a
-    // refusal puts it back.
-    onMutate: async (next) => {
-      await queryClient.cancelQueries({ queryKey });
-      const previous = queryClient.getQueryData<MemberPreferences>(queryKey);
-      queryClient.setQueryData(queryKey, next);
-      return { previous };
-    },
-    onError: (_error, _next, context) => {
-      if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
-      else void queryClient.invalidateQueries({ queryKey });
-    },
-    onSuccess: (stored) => queryClient.setQueryData(queryKey, stored),
-  });
+  const save = useSaveMemberPreferences(api, workspaceId);
   const push = preferences.data.push;
   const toggle = (key: keyof PushPreferences, nested = false, enabled = true) => ({
     checked: push[key],
@@ -256,7 +239,7 @@ function PushPreferencesSettings({ api, workspaceId }: { api: RallyApi; workspac
     nested,
     role: 'switch' as const,
     onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
-      save.mutate({ ...preferences.data, push: { ...push, [key]: event.currentTarget.checked } }),
+      save.mutate({ push: { [key]: event.currentTarget.checked } }),
   });
   return (
     <section className="settings-pane">
@@ -282,32 +265,14 @@ function PushPreferencesSettings({ api, workspaceId }: { api: RallyApi; workspac
 
 /** Settings → Account → Agent: whether this person's transcripts show the agent's work. */
 function AgentWorkSetting({ api, workspaceId }: { api: RallyApi; workspaceId: string }): React.JSX.Element {
-  const queryClient = useQueryClient();
   const preferences = useMemberPreferences(api, workspaceId);
-  const queryKey = memberPreferencesQueryKey(workspaceId);
-  const save = useMutation({
-    mutationFn: (next: MemberPreferences) => api.updateMyPreferences(next),
-    // Optimistic: the transcript reads the same key, so it follows the switch
-    // at once, and a refusal puts both back. A read in flight is cancelled
-    // first so it cannot land on top of the switch.
-    onMutate: async (next) => {
-      await queryClient.cancelQueries({ queryKey });
-      const previous = queryClient.getQueryData<MemberPreferences>(queryKey);
-      queryClient.setQueryData(queryKey, next);
-      return { previous };
-    },
-    onError: (_error, _next, context) => {
-      if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
-      else void queryClient.invalidateQueries({ queryKey });
-    },
-    onSuccess: (stored) => queryClient.setQueryData(queryKey, stored),
-  });
+  const save = useSaveMemberPreferences(api, workspaceId);
   return (
     <>
       <SettingToggle setting={settings.showAgentWork}
         checked={preferences.data.showAgentWork}
         disabled={save.isPending}
-        onChange={(event) => save.mutate({ ...preferences.data, showAgentWork: event.currentTarget.checked })}
+        onChange={(event) => save.mutate({ showAgentWork: event.currentTarget.checked })}
         role="switch" />
       {save.error && <InlineError>{save.error.message}</InlineError>}
     </>
