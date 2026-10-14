@@ -29,10 +29,13 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
    last value this device saw for that Organization (`localStorage`), so a cold
    launch does not flash the defaults. Applying the socket's answer cancels any
    REST read still in flight, so an older answer cannot land on top of it.
-3. **Change.** `PUT /workspace/me/preferences` replaces `showAgentWork` and
-   merges `push` switch by switch (`MemberPreferencesUpdateSchema`,
-   `mergePushPreferences`), so a desktop that predates the push switches,
-   which saves `showAgentWork` alone, leaves them as they were. The
+3. **Change.** `PUT /workspace/me/preferences` carries only what changed: each
+   field and each push switch is optional, and whatever a save leaves out keeps
+   its stored value (`MemberPreferencesUpdateSchema`, `mergePushPreferences`).
+   Each control sends its own field through `useSaveMemberPreferences`, so a
+   window holding a stale copy cannot write it back over a change made on
+   another device, and a desktop that predates the push switches, which saves
+   `showAgentWork` alone, leaves them as they were. An empty save is refused. The
    write publishes `viewer_preferences` to the member alone, and their other
    windows refetch. The settings switch updates the cache optimistically and
    puts it back if the write fails.
@@ -77,8 +80,8 @@ predates the field sends no `viewerPreferences`, which also reads as defaults.
 ### 2026-10-14 — Push switches join the record, and a save merges them
 
 **What changed:** The record carries seven push switches, all on by default,
-stored as `push_json`. A save replaces `showAgentWork` and merges `push` switch
-by switch.
+stored as `push_json`. A save carries only what changed, down to one switch,
+and everything it leaves out keeps its stored value.
 
 **Why:** Pushing every Activity row made new threads and Rally's finishes
 noisy in a busy Organization, and people need to choose what reaches their
@@ -86,11 +89,12 @@ devices, on every device at once.
 
 **Considered and rejected:** Replacing the whole record on save, as before:
 every shipped desktop saves `showAgentWork` alone, and would turn every push
-switch back on. A column per switch: seven columns and a migration for each
+switch back on; and any window with a stale copy would undo a change made on
+another device. A column per switch: seven columns and a migration for each
 switch added later, against one JSON column whose absent keys read as on.
 
-**Consequences:** Saves must stay merges for `push`; a client that sends the
-whole object is fine, one that sends nothing for `push` must change nothing.
+**Consequences:** Saves must stay partial. A control sends only its own field;
+sending the whole cached record reopens the stale-copy overwrite.
 
 ### 2026-10-05 — Show agent work, stored per member per Organization
 
