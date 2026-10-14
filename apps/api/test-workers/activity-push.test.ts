@@ -311,30 +311,43 @@ describe("sending an Activity row's push", () => {
 
 describe("what each person has turned off", () => {
   const turnOff = (userId: UserId, push: Partial<PushPreferences>) =>
-    organization().saveMemberPreferences({ workspaceId, userId, preferences: { showAgentWork: true, push } });
+    organization().saveMemberPreferences({ workspaceId, userId, preferences: { push } });
+  /** Whether sending this row's push reaches a device. */
+  const sends = async (userId: UserId, activityItemId: string) => {
+    const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+    await deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: userId, activityItemId }, send);
+    return send.mock.calls.length > 0;
+  };
 
-  it("given a member who turned off new threads, when a thread starts, then they are not pushed it", async () => {
+  it("given a member who turned off new threads, then a start is not sent to them, and turning it back on sends nothing late", async () => {
     await turnOff(member, { newThreads: false });
-    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
-    expect(await pushed()).toEqual([]);
+    await publish(asSubstreamId("0"), [common("Q3 plan", { scope: "personal" }), viewer(owner), viewer(member)]);
+    expect(await sends(member, `started:${thread}`)).toBe(false);
+    // Decided once, whatever the switch said, so a later batch about the
+    // same conversation does not queue the old start again.
+    expect(await pushed()).toEqual([{ user_id: member, item_id: `started:${thread}` }]);
+
+    await turnOff(member, { newThreads: true });
+    await publish(asSubstreamId("0"), [viewer(member)]);
+    expect(await pushed()).toEqual([{ user_id: member, item_id: `started:${thread}` }]);
   });
 
-  it("given a member who hears only about their own Channels, then a start is pushed only for a thread in a Channel they joined", async () => {
+  it("given a member who hears only about their own Channels, then a start is sent only for a thread in a Channel they joined", async () => {
     await turnOff(member, { newThreadsOutsideMyChannels: false });
     await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
-    expect(await pushed()).toEqual([]);
+    expect(await sends(member, `started:${thread}`)).toBe(false);
 
     const other = asWorkstreamId("00000000-0000-4000-8000-0000000a00b0");
     await runInDurableObject(organization(), (_instance, state) => {
       state.storage.sql.exec(`INSERT INTO spaces
         (space_id, title, scope, authority_generation, source_version, payload_hash, revision, created_at, updated_at)
-        VALUES ('space-mine', 'Sales', 'workspace', 1, 1, 'space', 1, 0, 0)`);
+        VALUES ('00000000-0000-4000-8000-0000000a00c0', 'Sales', 'workspace', 1, 1, 'space', 1, 0, 0)`);
       state.storage.sql.exec(`INSERT INTO space_viewers
         (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
-        VALUES ('space-mine', ?, 1, 1, 0, '')`, member);
+        VALUES ('00000000-0000-4000-8000-0000000a00c0', ?, 1, 1, 0, '')`, member);
       state.storage.sql.exec(`INSERT INTO space_channel_memberships
         (space_id, workstream_id, state, generation, joined_at, updated_at)
-        VALUES ('space-mine', ?, 'active', 1, 0, 0)`, other);
+        VALUES ('00000000-0000-4000-8000-0000000a00c0', ?, 'active', 1, 0, 0)`, other);
       state.storage.sql.exec(`INSERT INTO parent_metadata
         (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
         VALUES (?, 'workstream', ?, 'global', 1, 0, 0)`, other, workspaceId);
@@ -345,17 +358,17 @@ describe("what each person has turned off", () => {
       substreamId: asSubstreamId("0"),
       envelopes: [envelope(other, asSubstreamId("0"), common("Pipeline")), envelope(other, asSubstreamId("0"), viewer(owner))],
     });
-    expect(await pushed()).toEqual([{ user_id: member, item_id: `started:${other}` }]);
+    expect(await sends(member, `started:${other}`)).toBe(true);
   });
 
-  it("given people who hear only about their own threads' finishes, then a finish reaches the one who started it", async () => {
+  it("given people who hear only about their own threads' finishes, then a finish is sent to the one who started it", async () => {
     await turnOff(member, { runFinishedOthers: false });
     await turnOff(owner, { runFinishedOthers: false });
     await publish(asSubstreamId("0"), [common("Q3 plan", { scope: "personal" }), viewer(owner), viewer(member)]);
     await publish(asSubstreamId("0"), [common("Q3 plan", { scope: "personal", state: "completed",
       completedAt: new Date().toISOString() })]);
-    const finishes = (await pushed()).filter((row) => row.item_id.startsWith("finished:")).map((row) => row.user_id);
-    expect(finishes).toEqual([owner]);
+    const finish = (await pushed()).find((row) => row.item_id.startsWith("finished:"))!.item_id;
+    expect([await sends(owner, finish), await sends(member, finish)]).toEqual([true, false]);
   });
 
   it("given a save from a client that knows no push switch, then the switches already set are kept", async () => {
@@ -368,15 +381,5 @@ describe("what each person has turned off", () => {
     await organization().saveMemberPreferences({ workspaceId, userId: member, preferences: { showAgentWork: false } });
     expect(await organization().saveMemberPreferences({ workspaceId, userId: member, preferences: { push: { added: false } } }))
       .toEqual({ showAgentWork: false, push: { ...DEFAULT_PUSH_PREFERENCES, added: false } });
-  });
-
-  it("given a switch turned off after the push was queued, when it is sent, then nothing goes out", async () => {
-    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
-    await turnOff(member, { newThreads: false });
-    const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
-
-    expect(await deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: member,
-      activityItemId: `started:${thread}` }, send)).toBe(true);
-    expect(send).not.toHaveBeenCalled();
   });
 });
