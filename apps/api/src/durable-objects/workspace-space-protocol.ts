@@ -8,6 +8,7 @@ import {
   ScopeSchema,
   ActivityEventSchema,
   ActivityFilterSchema,
+  ActivityItemSchema,
   ActivityPageSchema,
   ChannelFeedPageSchema,
   ChannelStatsListSchema,
@@ -444,6 +445,14 @@ export const WorkspaceActivityResultSchema = z.union([
   SpaceFailureSchema,
 ]);
 export type WorkspaceActivityResult = z.infer<typeof WorkspaceActivityResultSchema>;
+
+/** One Activity row a push names, read back when the push is sent. */
+export const WorkspaceActivityPushReadRequestSchema = SpaceActorSchema.extend({
+  itemId: ActivityItemSchema.shape.id,
+}).strict();
+export type WorkspaceActivityPushReadRequest = z.infer<typeof WorkspaceActivityPushReadRequestSchema>;
+
+export const WorkspaceActivityPushReadResultSchema = ActivityItemSchema.nullable();
 
 export const WorkspaceActivitySeenRequestSchema = SpaceActorSchema.extend({
   seenThrough: z.number().int().nonnegative(),

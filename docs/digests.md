@@ -274,6 +274,11 @@ rather than a side effect of the acknowledgement routes, so a new kind of
 event joins the same endpoint without touching how a conversation keeps its
 own unread state.
 
+Every row here is also a push notification:
+[`push-notifications.md`](push-notifications.md#activity-rows) owns how a row
+reaches a device, and reads this feed to decide it, so a row this tab would
+not list is never pushed.
+
 Starts are not read from the opening message's event. Driving the local stack
 showed that event does not reliably reach WorkspaceDO (only a handful of
 thread-level activity receipts for dozens of threads), and a breakout's is not
