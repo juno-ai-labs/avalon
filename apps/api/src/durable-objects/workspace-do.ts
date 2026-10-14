@@ -29,6 +29,7 @@ import {
   WorkspaceSocketClientEventTypeSchema,
   isUnknownSocketEvent,
   safeParseSocketEvent,
+  type ActivityItem,
   type AutomationDetail,
   type SidekickAttachment,
   type SidekickSkillSource,
@@ -222,6 +223,8 @@ import {
 } from "../services/workspace-relationship-service";
 import { evaluateExternalEventPredicate } from "../services/external-event-evaluator";
 import { SIDEBAR_LIST_LIMIT } from "../services/sidebar-reads";
+import { enqueuePushDelivery } from "../services/push-delivery-service";
+import { membersWithLivePushDevices } from "../services/push-device-service";
 import { workspaceConnectorEventContentFingerprint } from "../services/workspace-connector-event-ingress";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import {
@@ -670,10 +673,13 @@ import {
   WorkspaceSpaceChannelPageRequestSchema,
   WorkspaceSpaceChannelPageResultSchema,
   WorkspaceChannelFeedResultSchema,
+  WorkspaceActivityPushReadRequestSchema,
+  WorkspaceActivityPushReadResultSchema,
   WorkspaceActivityRequestSchema,
   WorkspaceActivityResultSchema,
   WorkspaceActivitySeenRequestSchema,
   WorkspaceActivityEventsRequestSchema,
+  type WorkspaceActivityPushReadRequest,
   type WorkspaceActivityRequest,
   type WorkspaceActivityResult,
   type WorkspaceActivitySeenRequest,
@@ -823,6 +829,7 @@ import {
 } from "./thread-backfill";
 import { unreadState } from "./unread-state";
 import { WorkspaceActivityFeed, WORKSPACE_ACTIVITY_READS_MIGRATION } from "./workspace-activity-feed";
+import { WorkspaceActivityPushes, WORKSPACE_ACTIVITY_PUSH_MIGRATION, type ActivityPushSubject } from "./workspace-activity-push";
 import {
   PersonalSystemPromptReadRequestSchema,
   PersonalSystemPromptWriteRequestSchema,
@@ -4335,6 +4342,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // Existing Generals get what General opens with from migration 103's pass; see
   // SPACE_MESSAGES_MIGRATION and docs/spaces.md#channel-messages.
   statements: SPACE_MESSAGES_MIGRATION,
+}, {
+  version: 105,
+  description: "which Activity rows have been pushed to whom, and when pushing them began",
+  // Started threads and breakouts and finished runs push like mentions; see workspace-activity-push.ts.
+  statements: WORKSPACE_ACTIVITY_PUSH_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -4906,6 +4918,20 @@ function internalDirectoryItem(row: WorkspaceDirectoryRow) {
   };
 }
 
+/** What a conversation's directory row says to Activity; see `WorkspaceDO.activityMoment`. */
+interface ActivityMoment {
+  started: boolean;
+  finished: boolean;
+}
+
+interface ActivityMomentRow extends Record<string, SqlStorageValue> {
+  created_by_user_id: string | null;
+  system_kind: string | null;
+  exact_state: string;
+  completed_at: number | null;
+  archived_at: number | null;
+}
+
 // Binding 1 is always the viewer user ID; the access join reuses it as ?1.
 /**
  * Two `workstreamId` → user-id maps as one, mutating neither.
@@ -4950,6 +4976,15 @@ const DirectoryFollowUpSchema = z.strictObject({
    * nobody else who cannot see it is sent anything.
    */
   channelLosses: z.array(z.tuple([z.string(), z.array(z.string())])),
+  /**
+   * Threads and breakouts this batch started or finished a run in, each an
+   * Activity row somebody may be pushed. Absent from a follow-up recorded
+   * before the field existed.
+   */
+  activityPushSubjects: z.array(z.strictObject({
+    threadId: z.string(),
+    substreamId: z.string().nullable(),
+  })).default([]),
 });
 type DirectoryFollowUp = z.infer<typeof DirectoryFollowUpSchema>;
 
@@ -5496,6 +5531,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       viewerChanges: [], breakoutChanges: [], breakoutViewerChanges: [], reopenBootstrap: false,
       watchReconciliations: [], archivalChanges: [], breakoutArchivalChanges: [], refreshTerminal: false,
       refreshWatchKinds: false, directoryChanged: false, syncTopics: [], refreshProductAlarm: false, channelLosses: [],
+      activityPushSubjects: [],
     };
   }
 
@@ -9665,6 +9701,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return WorkspaceActivityResultSchema.parse({ ok: true, page });
   }
 
+  /**
+   * One Activity row a push names, as this person would see it now: unread,
+   * still listed and of a pushed kind, or null. See `workspace-activity-push.ts`.
+   */
+  async readActivityItemForPush(input: WorkspaceActivityPushReadRequest): Promise<ActivityItem | null> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceActivityPushReadRequestSchema, input, "read_activity_item_for_push");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return null;
+    const pushes = new WorkspaceActivityPushes(
+      this.state.storage,
+      new WorkspaceActivityFeed(this.state.storage, this.spaceStorage()),
+    );
+    return WorkspaceActivityPushReadResultSchema.parse(pushes.item(viewer, request.itemId));
+  }
+
   /** Mark the Activity tab read through a time, for this person's other windows too. */
   async markActivitySeen(input: WorkspaceActivitySeenRequest): Promise<void> {
     await this.initialized;
@@ -12069,6 +12122,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const channelLosses = new ChannelRowPlan();
     const breakoutDirectoryReady = breakoutEnvelopes.length === 0
       || this.breakoutStorage().ready();
+    // Conversations this batch started or finished a run in: the Activity
+    // rows that push, decided from each row either side of its common effect.
+    // A finish is the state arriving at `completed`, not `completed_at`
+    // moving: a parent stamps a completed thread's finish with its latest
+    // activity, so ordinary traffic after a run moves it with no new run.
+    const activityPushSubjects: ActivityPushSubject[] = [];
+    const noteActivity = (
+      subject: ActivityPushSubject,
+      before: ActivityMoment | null,
+    ) => {
+      const after = this.activityMoment(subject);
+      if (!after) return;
+      if ((before === null && after.started) || (after.finished && before?.finished !== true)) {
+        activityPushSubjects.push(subject);
+      }
+    };
     for (const envelope of spaceEnvelopes) {
       const changed = this.applySpaceDirectoryEnvelope(envelope, activeUsers);
       spaceDirectoryChanged = changed || spaceDirectoryChanged;
@@ -12087,7 +12156,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // Sidekick would buy nothing.
       const archivedBefore = envelope.effect.kind === "directory_common" && envelope.substreamId !== undefined
         ? this.breakoutArchivedAt(envelope.parentId, envelope.substreamId) : undefined;
+      const breakoutSubject = envelope.effect.kind === "directory_common" && envelope.substreamId !== undefined
+        ? { threadId: envelope.parentId, substreamId: envelope.substreamId } : null;
+      const activityBefore = breakoutSubject ? this.activityMoment(breakoutSubject) : null;
       const breakout = this.applyBreakoutDirectoryEnvelope(envelope, activeUsers);
+      if (breakout.moved && breakoutSubject) noteActivity(breakoutSubject, activityBefore);
       if (breakout.moved && envelope.substreamId !== undefined && archivedBefore !== undefined
         && this.breakoutArchivedAt(envelope.parentId, envelope.substreamId) !== archivedBefore) {
         breakoutArchivalChanges.add(`${envelope.parentId}/${envelope.substreamId}`);
@@ -12104,7 +12177,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
     }
     for (const envelope of channelEnvelopes) {
+      const threadSubject = envelope.effect.kind === "directory_common"
+        ? { threadId: envelope.parentId, substreamId: null } : null;
+      const activityBefore = threadSubject ? this.activityMoment(threadSubject) : null;
       const applied = this.applyDirectoryEnvelope(envelope, activeUsers);
+      if (applied.changed && threadSubject) noteActivity(threadSubject, activityBefore);
       directoryChanged = directoryChanged || applied.changed;
       if (applied.lost !== null) channelLosses.lost(envelope.parentId, applied.lost);
       // A replay reconciles as well as a first application, the way the watch
@@ -12215,8 +12292,83 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         syncTopics: [],
         refreshProductAlarm: false,
         channelLosses: [...channelLosses.channels].map(([id, { lost }]) => [id, [...lost]]),
+        activityPushSubjects,
       },
     };
+  }
+
+  /**
+   * What a conversation's directory row says to Activity: whether it reads as
+   * started by somebody, and whether its run has finished. Compared either
+   * side of a common effect, so a start (no row before, a started row after)
+   * and a finish (not finished before, finished after) stand out from the rest
+   * of a conversation's traffic. Null when there is no row.
+   */
+  private activityMoment(subject: ActivityPushSubject): ActivityMoment | null {
+    const row = subject.substreamId === null
+      ? this.state.storage.sql.exec<ActivityMomentRow>(
+        `SELECT created_by_user_id, system_kind, exact_state, completed_at, archived_at
+           FROM channels WHERE workstream_id = ?`,
+        subject.threadId,
+      ).toArray()[0]
+      : this.state.storage.sql.exec<ActivityMomentRow>(
+        `SELECT created_by_user_id, NULL AS system_kind, exact_state, completed_at, archived_at
+           FROM breakouts WHERE workstream_id = ? AND substream_id = ?`,
+        subject.threadId, subject.substreamId,
+      ).toArray()[0];
+    if (!row) return null;
+    return {
+      started: row.created_by_user_id !== null && row.system_kind === null && row.archived_at === null,
+      finished: row.exact_state === "completed" && row.completed_at !== null,
+    };
+  }
+
+  /**
+   * Push the Activity rows a committed batch made: see
+   * `workspace-activity-push.ts`. Each row is recorded once its push is
+   * queued, so a later batch about the same conversation sends only what is
+   * left.
+   */
+  private async pushActivity(workspaceId: string, subjects: readonly ActivityPushSubject[]): Promise<void> {
+    if (subjects.length === 0) return;
+    const pushes = new WorkspaceActivityPushes(
+      this.state.storage,
+      new WorkspaceActivityFeed(this.state.storage, this.spaceStorage()),
+    );
+    if (!pushes.ready()) return;
+    const audience = pushes.audience(subjects);
+    if (!audience.everyone && audience.userIds.length === 0) return;
+    const recipients = await membersWithLivePushDevices(
+      this.env, workspaceId, audience.everyone ? null : audience.userIds,
+    );
+    for (const recipient of recipients) {
+      const items = pushes.pending(
+        { userId: recipient.userId, accessClass: recipient.accessClass },
+        subjects,
+        this.threadsOnScreen(recipient.userId),
+      );
+      for (const item of items) {
+        await enqueuePushDelivery(this.env, {
+          region: this.env.AVALON_REGION,
+          workspaceId,
+          recipientUserId: recipient.userId,
+          activityItemId: item.id,
+        });
+        pushes.record(recipient.userId, item.id, Date.now());
+      }
+    }
+  }
+
+  /** The threads this person has in front of them in a foreground window. */
+  private threadsOnScreen(userId: string): Set<string> {
+    const threads = new Set<string>();
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (attachment?.userId === userId && contributesPresence(attachment)) {
+        threads.add(attachment.foregroundWorkstreamId);
+      }
+    }
+    return threads;
   }
 
   /** True when a follow-up has nothing to send, reconcile or re-arm. */
@@ -12229,7 +12381,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       && followUp.breakoutArchivalChanges.length === 0
       && !followUp.refreshTerminal && !followUp.refreshWatchKinds && !followUp.directoryChanged
       && followUp.syncTopics.length === 0 && !followUp.refreshProductAlarm
-      && followUp.channelLosses.length === 0;
+      && followUp.channelLosses.length === 0 && followUp.activityPushSubjects.length === 0;
   }
 
   /**
@@ -12412,6 +12564,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     for (const [workstreamId, lost] of followUp.channelLosses) rows.lost(workstreamId, lost);
     if (followUp.refreshProductAlarm) await this.refreshProductAlarm();
+    // Best effort, as the Channel rows are: the row is in Activity whatever
+    // happens here, and a failed push must not re-run the batch's other work.
+    try {
+      await this.pushActivity(followUp.workspaceId, followUp.activityPushSubjects);
+    } catch (error) {
+      logWarn(this.env, "activity_push_failed", {
+        workspace_id: followUp.workspaceId,
+        code: diagnosticErrorCode(error, "activity_push_failed"),
+      });
+    }
   }
 
   /**

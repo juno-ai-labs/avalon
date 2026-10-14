@@ -1,9 +1,12 @@
 # Push notifications
 
-Rally sends mentions and additions to signed-in Macs and iPhones through APNs,
-and to signed-in browser tabs through Web Push, using the existing workspace
-notification intent. Each device registers with one transport and is sent only
-that transport's payload. Push is enabled for everyone from launch through
+Rally pushes every row of the sidebar's Activity tab to signed-in Macs and
+iPhones through APNs, and to signed-in browser tabs through Web Push. Mentions
+and additions use the existing workspace notification intent; the rows Activity
+reads from the directory (a thread or breakout somebody started, a run Rally
+finished) are pushed from the Organization object as they appear
+([Activity rows](#activity-rows)). Each device registers with one transport and
+is sent only that transport's payload. Push is enabled for everyone from launch through
 `push-notifications-enabled`; Slack also sends when available, and email is the
 fallback when neither Slack nor push accepted the notification.
 
@@ -11,7 +14,8 @@ fallback when neither Slack nor push accepted the notification.
 
 - `apps/api/src/services/push-device-service.ts`: regional D1 device/session registry.
 - `apps/api/src/services/push/`: provider authentication and payload rendering; `apns-transport.ts` for Apple, `web-push-transport.ts` for browsers.
-- `apps/api/src/queues/push-delivery-consumer.ts`: intent read, existing access check, send by transport, receipt.
+- `apps/api/src/queues/push-delivery-consumer.ts`: intent or Activity row read, existing access check, send by transport, receipt.
+- `apps/api/src/durable-objects/workspace-activity-push.ts`: which Activity rows a directory batch pushes, to whom, and the record that keeps each to one push.
 - `packages/contracts/src/push-notifications.ts`: the registration contract and the Web Push service host allowlist (`isWebPushServiceUrl`).
 - `apps/desktop/src/renderer/lib/web-push.ts` and `apps/browser/public/sw.js`: browser subscription and the service worker that shows the notification.
 - `apps/desktop/src/main/push-notifications.ts` and `apps/desktop/native/push-notifications/`: Mac registration and native response/permission callbacks.
@@ -109,6 +113,62 @@ iPhone builds sign the development APNs entitlement, so their tokens are
 the Mac.
 Main-window creation waits for renderer protocol and IPC installation, including
 when a native notification response arrives during asynchronous app startup.
+
+## Activity rows
+
+Everything the Activity tab lists is a push. `added` and `mentioned` already
+were, through their notification intents above, which also own their Slack and
+email fallback. `thread_started`, `breakout_started` and `run_finished` are read
+by the feed from the directory rather than from an event
+([`digests.md`](digests.md#the-activity-tab)), so they had no producer, and
+`workspace-activity-push.ts` is it. They push only; there is no Slack or email
+fallback for them.
+
+**The trigger is the directory write.** `applyDirectoryBatch` reads each
+conversation's row either side of its common effect. A row that did not exist
+and now reads as started by somebody is a start; a row whose state arrives at
+`completed` is a finish. A finish is the state moving and not `completed_at`
+moving, because a parent stamps a completed thread's finish with its latest
+activity (`aggregateCommon`), so later traffic moves it with no new run. The
+batch names those conversations in its follow-up (`activityPushSubjects`), so
+the push is decided after the commit, from the follow-up table like the rest
+of the batch's work. It is best effort, as the Channel row sends are: a failed
+device read or queue send is logged as `activity_push_failed` with its reason
+and not retried, because the row is in Activity either way and a push failure
+must not re-run the batch's sync, reconciliations and notices.
+
+**The feed decides what each person is told.** The follow-up asks D1 which
+active members have a live device: everyone, when a subject is
+Organization-wide, else the people its viewer rows name. For each, it reads
+their first Activity page and pushes the rows about those subjects that are
+unread, of the three kinds, from after migration 105 ran
+(`workspace_activity_push_origin`) and not pushed before
+(`workspace_activity_pushes`). So nobody is told about a conversation they
+cannot list, the starter is not told of their own start, and a backfill that
+re-projects old threads pushes nothing. Two rows are left out on purpose:
+
+- a start, when the same page also says the person was added to that
+  conversation, since the add already pushed; and
+- anything about a thread the person has open in a foreground window
+  (`contributesPresence`). Rally finishes a run on every reply, and a banner
+  for the reply already on screen is noise. Mentions keep the old rule of no
+  presence check.
+
+**The queue carries a pointer.** The message names the row
+(`activityItemId`), never its text. The consumer reads the row back through
+the same feed (`readActivityItemForPush`), so a row the person has read, or
+lost access to, since it was queued sends nothing. It is worded as the sidebar
+words it: "Maya started Q3 plan", "Maya started a breakout on Q3 plan" with the
+breakout as the body, "Rally finished Q3 plan". Receipts and the collapse id key
+on `activity:<row id>`. `rally.kind` is the row's kind; an app built before
+these kinds opens no conversation on a tap, and iOS and the Mac accept them
+from this change.
+
+Known gaps: a person who gains a conversation after it started (a personal
+thread made Organization-wide, a breakout they were let into) sees its start in
+Activity but is not pushed it, because no start happened in the batch that let
+them in; a person added is pushed the add. A row more than a page deep when a
+push is read back sends nothing.
 
 ## Web Push for browser members
 
@@ -230,6 +290,8 @@ signed-Mac delivery.
 - A Web Push `404` or `410` disables the browser device at once.
 - The Worker contacts only allowlisted Web Push service hosts and follows no redirect.
 - `sw.js` opens links only on its own origin.
+- An Activity row is pushed only if the feed lists it, unread, to that person when queued and again when sent.
+- Each Activity row is pushed to a person at most once (`workspace_activity_pushes`).
 
 ## Testing
 
@@ -247,7 +309,11 @@ and hosts outside the allowlist. The workerd suite covers routing each device to
 its own transport, disabling a dropped browser subscription at once, and an
 APNs credential fault that leaves Web Push sending. The contract test covers the
 host allowlist and key shapes, and `web-push.test.ts` covers registration,
-re-subscribing on a key change, and the permission prompt coming first. The provider itself and macOS/iOS alert
+re-subscribing on a key change, and the permission prompt coming first.
+`activity-push.test.ts` drives Activity rows through `receiveChildEffects` on
+real workerd: who is pushed a start or a finish, that later traffic on a
+finished thread is not a finish, the push origin, the foreground skip, the
+sidebar wording, and that a row read since it was queued sends nothing. The provider itself and macOS/iOS alert
 presentation require a signed installed build.
 
 Local acceptance on 2026-09-14: lint/typecheck, scoped API and desktop tests,
@@ -259,6 +325,39 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-10-14 — Every Activity row is a push
+
+**What changed:** A thread or breakout somebody else started and a run Rally
+finished now push, as mentions and adds already did. The Organization object
+decides them after the directory batch that made them commits, from the
+Activity feed itself, and records each so it goes once. The push queue message
+names either a notification intent or an Activity row, and the consumer reads
+the row back through the feed when it sends. iOS and the Mac accept the new
+`rally.kind` values.
+
+**Why:** Activity is the list of what happened to a person, and only two of its
+five kinds reached their devices, so a finished run or a new thread waited for
+the person to open the app.
+
+**Considered and rejected:** New notification-intent kinds: the intent table's
+CHECK admits two kinds and needs a rebuild to widen, and its lease, directory
+version gate and Slack/email fallback answer questions these rows do not have.
+A per-person sweep of the whole first page on every directory change: it would
+push an old unread backlog the first time someone got a device, and read every
+member's feed on every message. Detecting a finish from `completed_at`: the
+parent restamps it with later activity, which the first test run caught.
+Re-deciding the audience in the consumer: the producer already reads the feed
+in the object that owns it, and the consumer reads it again anyway. Letting a
+failed push fail the directory follow-up: it re-ran every other step of the
+batch to retry a notification, which the existing suites caught.
+
+**Consequences:** A new Activity kind that the feed reads from the directory
+needs adding to `PUSHED_KINDS`, to `rally.kind`, and to iOS's `pushKinds`, or it
+will not push or not open on a tap. An Organization-wide start reads one feed
+page per member with a device, in the object, after the commit. A change to the
+feed's ids (`started:`, `finished:`) changes what `workspace_activity_pushes`
+dedupes on.
 
 ### 2026-10-06 — Badge is the sidebar attention count, set by APNs and the Mac
 
