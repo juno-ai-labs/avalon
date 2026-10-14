@@ -4984,6 +4984,8 @@ const DirectoryFollowUpSchema = z.strictObject({
   activityPushSubjects: z.array(z.strictObject({
     threadId: z.string(),
     substreamId: z.string().nullable(),
+    kind: z.enum(["start", "finish", "joined"]),
+    userId: z.string().optional(),
   })).default([]),
 });
 type DirectoryFollowUp = z.infer<typeof DirectoryFollowUpSchema>;
@@ -12129,14 +12131,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // activity, so ordinary traffic after a run moves it with no new run.
     const activityPushSubjects: ActivityPushSubject[] = [];
     const noteActivity = (
-      subject: ActivityPushSubject,
+      conversation: { threadId: string; substreamId: string | null },
       before: ActivityMoment | null,
     ) => {
-      const after = this.activityMoment(subject);
+      const after = this.activityMoment(conversation);
       if (!after) return;
-      if ((before === null && after.started) || (after.finished && before?.finished !== true)) {
-        activityPushSubjects.push(subject);
-      }
+      if (before === null && after.started) activityPushSubjects.push({ ...conversation, kind: "start" });
+      if (after.finished && before?.finished !== true) activityPushSubjects.push({ ...conversation, kind: "finish" });
     };
     for (const envelope of spaceEnvelopes) {
       const changed = this.applySpaceDirectoryEnvelope(envelope, activeUsers);
@@ -12172,6 +12173,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           users.add(envelope.effect.userId);
           breakoutViewerChanges.set(envelope.parentId, users);
           if (breakout.participationChanged) reachChangedUsers.add(envelope.effect.userId);
+          if (breakout.participationChanged && envelope.effect.isParticipant && envelope.substreamId !== undefined) {
+            activityPushSubjects.push({ threadId: envelope.parentId, substreamId: envelope.substreamId,
+              kind: "joined", userId: envelope.effect.userId });
+          }
         }
       }
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
@@ -12208,6 +12213,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           reachChannels.add(envelope.parentId);
           reachViewers.add(envelope.effect.userId);
           reachChangedUsers.add(envelope.effect.userId);
+          if (envelope.effect.isParticipant) {
+            activityPushSubjects.push({ threadId: envelope.parentId, substreamId: null,
+              kind: "joined", userId: envelope.effect.userId });
+          }
         } else {
           const users = viewerChanges.get(envelope.parentId) ?? new Set<string>();
           users.add(envelope.effect.userId);
@@ -12304,7 +12313,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * and a finish (not finished before, finished after) stand out from the rest
    * of a conversation's traffic. Null when there is no row.
    */
-  private activityMoment(subject: ActivityPushSubject): ActivityMoment | null {
+  private activityMoment(subject: { threadId: string; substreamId: string | null }): ActivityMoment | null {
     const row = subject.substreamId === null
       ? this.state.storage.sql.exec<ActivityMomentRow>(
         `SELECT created_by_user_id, system_kind, exact_state, completed_at, archived_at
@@ -12325,9 +12334,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /**
    * Push the Activity rows a committed batch made: see
-   * `workspace-activity-push.ts`. Each row is recorded once its push is
-   * queued, so a later batch about the same conversation sends only what is
-   * left.
+   * `workspace-activity-push.ts`. Each row is recorded once it has been handed
+   * to delivery, so a later batch about the same conversation sends only what
+   * is left.
    */
   private async pushActivity(workspaceId: string, subjects: readonly ActivityPushSubject[]): Promise<void> {
     if (subjects.length === 0) return;
@@ -12348,6 +12357,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.threadsOnScreen(recipient.userId),
       );
       for (const item of items) {
+        // Recorded whether or not it was queued: a row not queued (the
+        // person's push flag is off, no transport in this deployment) would
+        // not be queued by a later batch either.
         await enqueuePushDelivery(this.env, {
           region: this.env.AVALON_REGION,
           workspaceId,

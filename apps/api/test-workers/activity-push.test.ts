@@ -249,6 +249,14 @@ describe("Activity rows pushed from the directory", () => {
     socket.close(1000, "done");
   });
 
+  it("given a private thread whose member's viewer row lands after its start, then that member is pushed the start", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan", { scope: "personal" }), viewer(owner)]);
+    expect(await pushed()).toEqual([]);
+
+    await publish(asSubstreamId("0"), [viewer(member)]);
+    expect(await pushed()).toEqual([{ user_id: member, item_id: `started:${thread}` }]);
+  });
+
   it("given an Organization-wide breakout somebody starts, then the members who may list it are pushed its start", async () => {
     await publish(asSubstreamId("0"), [common("Q3 plan", { createdAt: new Date(Date.now() - 86_400_000).toISOString() }), viewer(owner)]);
     await publish(breakout, [common("Pricing"), viewer(owner)]);
@@ -270,6 +278,21 @@ describe("sending an Activity row's push", () => {
     expect(apns.aps.alert.title).toBe("Maya started Q3 plan");
     expect(apns.rally.kind).toBe("thread_started");
     expect(apns.rally.url).toContain(`/workstreams/${thread}`);
+  });
+
+  it("still sends a finish whose time later traffic moved before it was sent", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan", { scope: "personal" }), viewer(owner), viewer(member)]);
+    await publish(asSubstreamId("0"), [common("Q3 plan", { scope: "personal", state: "completed",
+      completedAt: new Date().toISOString() })]);
+    const queued = (await pushed()).find((row) => row.user_id === member && row.item_id.startsWith("finished:"))!.item_id;
+    // A parent stamps a completed thread's finish with its latest activity.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await publish(asSubstreamId("0"), [{ ...common("Q3 plan", { scope: "personal", state: "completed",
+      completedAt: new Date().toISOString() }), preview: "a later message" }]);
+    const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+
+    expect(await deliverPush(pushEnv(), message(queued), send)).toBe(true);
+    expect(JSON.parse(payloads(send)[0]!.apns).aps.alert.title).toBe("Rally finished Q3 plan");
   });
 
   it("sends nothing once the person has opened what the row names", async () => {

@@ -5,22 +5,9 @@ import type { WorkspaceActivityFeed } from "./workspace-activity-feed";
 import type { Viewer } from "./listing-rules";
 
 /**
- * Every Activity row is a push notification too.
- *
- * Mentions and adds already reach a device through their notification intent
- * (`docs/push-notifications.md`), which also owns their Slack and email
- * fallback. The rows the feed reads from the directory rather than from an
- * event (a thread or breakout somebody else started, a run that finished) had
- * no producer, so this file is theirs.
- *
- * It does not decide what a row is or who sees one: that stays the feed's.
- * A directory batch that starts a conversation or finishes a run names it as
- * a {@link ActivityPushSubject}; after the commit, each person who could be
- * told about it and has a live device reads their own first Activity page,
- * and every unread row on it about that subject, of a kind {@link PUSHED_KINDS}
- * names, that has not been pushed before, is pushed. The consumer reads the
- * row back through the feed again when it sends, so a row the person read or
- * lost in between sends nothing.
+ * Every Activity row is a push notification too: the rows the feed reads from
+ * the directory (starts and finished runs), decided from the feed itself.
+ * `docs/push-notifications.md#activity-rows` owns the design.
  */
 
 /** The kinds this path pushes; `added` and `mentioned` have their own. */
@@ -30,11 +17,34 @@ export const PUSHED_KINDS: ReadonlySet<ActivityItemKind> = new Set([
   "run_finished",
 ]);
 
-/** A conversation a directory batch started or finished a run in. */
+const STARTS: ReadonlySet<ActivityItemKind> = new Set(["thread_started", "breakout_started"]);
+
+/**
+ * A conversation a directory batch moved in a way Activity shows. `start` and
+ * `finish` are the conversation's own; `joined` is one person newly able to
+ * see it, which can make its start a row for them after the start itself was
+ * decided (a viewer row lands in its own message, and may land after).
+ */
 export interface ActivityPushSubject {
   threadId: string;
   /** Null for the thread itself. */
   substreamId: string | null;
+  kind: "start" | "finish" | "joined";
+  /** The person, on `joined` only. */
+  userId?: string | undefined;
+}
+
+/** The kinds of row a subject can push. A join pushes the start alone. */
+function subjectKinds(subject: ActivityPushSubject): ReadonlySet<ActivityItemKind> {
+  return subject.kind === "finish" ? new Set(["run_finished"]) : STARTS;
+}
+
+function conversationKey(threadId: string, substreamId: string | null | undefined): string {
+  return `${threadId}:${substreamId ?? "0"}`;
+}
+
+function itemConversation(item: ActivityItem): string {
+  return conversationKey(item.threadId, item.breakout?.substreamId);
 }
 
 /**
@@ -72,30 +82,39 @@ export class WorkspaceActivityPushes {
   }
 
   /**
-   * Who could be told about these subjects: everyone, when one of them is
-   * Organization-wide (the feed then decides, per person, what they may list),
-   * else the people its viewer rows name. Read after the batch commits, so a
-   * viewer row that landed with it counts.
+   * Who could be told about these subjects. A start reaches everyone when its
+   * conversation is Organization-wide (the feed then decides, per person, what
+   * they may list), else the people its viewer rows name; a finish reaches
+   * only its participants, the only people the feed shows one to; a join
+   * reaches the person who joined. Read after the batch commits, so a viewer
+   * row that landed with it counts.
    */
   audience(subjects: readonly ActivityPushSubject[]): { everyone: boolean; userIds: string[] } {
     const userIds = new Set<string>();
     for (const subject of subjects) {
-      const row = subject.substreamId === null
-        ? this.storage.sql.exec<{ scope: string } & Record<string, SqlStorageValue>>(
-          `SELECT scope FROM channels WHERE workstream_id = ?`, subject.threadId,
-        ).toArray()[0]
-        : this.storage.sql.exec<{ scope: string } & Record<string, SqlStorageValue>>(
-          `SELECT scope FROM breakouts WHERE workstream_id = ? AND substream_id = ?`,
-          subject.threadId, subject.substreamId,
-        ).toArray()[0];
-      if (!row) continue;
-      if (row.scope === "workspace") return { everyone: true, userIds: [] };
+      if (subject.kind === "joined") {
+        if (subject.userId) userIds.add(subject.userId);
+        continue;
+      }
+      if (subject.kind === "start") {
+        const row = subject.substreamId === null
+          ? this.storage.sql.exec<{ scope: string } & Record<string, SqlStorageValue>>(
+            `SELECT scope FROM channels WHERE workstream_id = ?`, subject.threadId,
+          ).toArray()[0]
+          : this.storage.sql.exec<{ scope: string } & Record<string, SqlStorageValue>>(
+            `SELECT scope FROM breakouts WHERE workstream_id = ? AND substream_id = ?`,
+            subject.threadId, subject.substreamId,
+          ).toArray()[0];
+        if (row?.scope === "workspace") return { everyone: true, userIds: [] };
+      }
+      const reach = subject.kind === "finish" ? "viewer.is_participant = 1"
+        : "(viewer.is_participant = 1 OR viewer.listable = 1)";
       const viewers = subject.substreamId === null
         ? this.storage.sql.exec<{ user_id: string }>(
           `SELECT viewer.user_id FROM channel_viewers viewer
              JOIN channels directory ON directory.workstream_id = viewer.workstream_id
               AND directory.authority_generation = viewer.authority_generation
-            WHERE viewer.workstream_id = ? AND (viewer.is_participant = 1 OR viewer.listable = 1)`,
+            WHERE viewer.workstream_id = ? AND ${reach}`,
           subject.threadId,
         ).toArray()
         : this.storage.sql.exec<{ user_id: string }>(
@@ -103,8 +122,7 @@ export class WorkspaceActivityPushes {
              JOIN breakouts breakout ON breakout.workstream_id = viewer.workstream_id
               AND breakout.substream_id = viewer.substream_id
               AND breakout.authority_generation = viewer.authority_generation
-            WHERE viewer.workstream_id = ? AND viewer.substream_id = ?
-              AND (viewer.is_participant = 1 OR viewer.listable = 1)`,
+            WHERE viewer.workstream_id = ? AND viewer.substream_id = ? AND ${reach}`,
           subject.threadId, subject.substreamId,
         ).toArray();
       for (const viewer of viewers) userIds.add(viewer.user_id);
@@ -113,33 +131,39 @@ export class WorkspaceActivityPushes {
   }
 
   /**
-   * The rows to push to one person about these subjects: unread, of a pushed
-   * kind, from after the origin, and not pushed before. A start is left out
-   * when the same page tells them they were added to that conversation, which
-   * already pushed, and so is anything about a thread they have on screen.
-   * Nothing is recorded here; {@link record} does that once a push is queued.
+   * The rows to push to one person about these subjects: unread, of a kind
+   * its subject pushes, from after the origin, and not pushed before. A start
+   * is left out when the same page tells them they were added to that
+   * conversation, since the add pushes itself, and so is anything about a
+   * thread they have on screen. Nothing is recorded here; {@link record} does
+   * that once a row has been handed to delivery.
    */
   pending(
     viewer: Viewer,
     subjects: readonly ActivityPushSubject[],
     onScreen: ReadonlySet<string>,
   ): ActivityItem[] {
+    const wanted = new Map<string, Set<ActivityItemKind>>();
+    for (const subject of subjects) {
+      if (subject.kind === "joined" && subject.userId !== viewer.userId) continue;
+      const key = conversationKey(subject.threadId, subject.substreamId);
+      const kinds = wanted.get(key) ?? new Set<ActivityItemKind>();
+      for (const kind of subjectKinds(subject)) kinds.add(kind);
+      wanted.set(key, kinds);
+    }
+    if (wanted.size === 0) return [];
     const page = this.feed.page(viewer, null);
     if (page === "invalid_cursor") return [];
     const origin = this.storage.sql.exec<{ started_at: number }>(
       `SELECT started_at FROM workspace_activity_push_origin WHERE id = 1`,
     ).one().started_at;
-    const conversation = (item: { threadId: string; breakout: { substreamId: string } | null }) =>
-      `${item.threadId}:${item.breakout?.substreamId ?? "0"}`;
-    const wanted = new Set(subjects.map((subject) => `${subject.threadId}:${subject.substreamId ?? "0"}`));
-    const added = new Set(page.items.filter((item) => item.kind === "added").map(conversation));
+    const added = addedConversations(page.items);
     const candidates = page.items.filter((item) => (
       item.unread
-      && PUSHED_KINDS.has(item.kind)
-      && wanted.has(conversation(item))
+      && wanted.get(itemConversation(item))?.has(item.kind) === true
       && Date.parse(item.occurredAt) >= origin
       && !onScreen.has(item.threadId)
-      && !(item.kind !== "run_finished" && added.has(conversation(item)))
+      && !(STARTS.has(item.kind) && added.has(itemConversation(item)))
     ));
     if (candidates.length === 0) return [];
     const pushed = new Set(this.storage.sql.exec<{ item_id: string }>(
@@ -151,7 +175,7 @@ export class WorkspaceActivityPushes {
     return candidates.filter((item) => !pushed.has(item.id));
   }
 
-  /** Note that this row has gone to this person, so no later batch sends it again. */
+  /** Note that this row has been handed to delivery for this person, so no later batch sends it again. */
   record(userId: string, itemId: string, now: number): void {
     this.storage.sql.exec(
       `INSERT INTO workspace_activity_pushes (user_id, item_id, pushed_at) VALUES (?, ?, ?)
@@ -163,12 +187,25 @@ export class WorkspaceActivityPushes {
   /**
    * One person's Activity row, as a push would show it: unread and still
    * listed, or null. Read from the first page, which is where a row pushed
-   * moments ago sits.
+   * moments ago sits. A finish is matched by its conversation, not its id:
+   * the id carries `completed_at`, which a parent restamps with later
+   * activity while the thread stays completed. A start is dropped once the
+   * person has an add for the same conversation, which pushes itself.
    */
   item(viewer: Viewer, itemId: string): ActivityItem | null {
     const page = this.feed.page(viewer, null);
     if (page === "invalid_cursor") return null;
-    const item = page.items.find((candidate) => candidate.id === itemId);
-    return item?.unread && PUSHED_KINDS.has(item.kind) ? item : null;
+    const finish = itemId.startsWith("finished:") ? itemId.slice(0, itemId.lastIndexOf(":") + 1) : null;
+    const item = page.items.find((candidate) => (
+      finish === null ? candidate.id === itemId : candidate.kind === "run_finished" && candidate.id.startsWith(finish)
+    ));
+    if (!item?.unread || !PUSHED_KINDS.has(item.kind)) return null;
+    if (STARTS.has(item.kind) && addedConversations(page.items).has(itemConversation(item))) return null;
+    return item;
   }
+}
+
+/** The conversations a page says the person was added to. */
+function addedConversations(items: readonly ActivityItem[]): Set<string> {
+  return new Set(items.filter((item) => item.kind === "added").map(itemConversation));
 }

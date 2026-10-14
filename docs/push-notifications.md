@@ -116,39 +116,45 @@ when a native notification response arrives during asynchronous app startup.
 
 ## Activity rows
 
-Everything the Activity tab lists is a push. `added` and `mentioned` already
-were, through their notification intents above, which also own their Slack and
-email fallback. `thread_started`, `breakout_started` and `run_finished` are read
-by the feed from the directory rather than from an event
-([`digests.md`](digests.md#the-activity-tab)), so they had no producer, and
-`workspace-activity-push.ts` is it. They push only; there is no Slack or email
-fallback for them.
+Everything the Activity tab lists is a push. `added` and `mentioned` push
+through their notification intents above, which also own their Slack and email
+fallback. `thread_started`, `breakout_started` and `run_finished` are read by
+the feed from the directory rather than from an event
+([`digests.md`](digests.md#the-activity-tab)), and
+`workspace-activity-push.ts` pushes them, with no Slack or email fallback.
 
 **The trigger is the directory write.** `applyDirectoryBatch` reads each
-conversation's row either side of its common effect. A row that did not exist
-and now reads as started by somebody is a start; a row whose state arrives at
-`completed` is a finish. A finish is the state moving and not `completed_at`
-moving, because a parent stamps a completed thread's finish with its latest
-activity (`aggregateCommon`), so later traffic moves it with no new run. The
-batch names those conversations in its follow-up (`activityPushSubjects`), so
-the push is decided after the commit, from the follow-up table like the rest
-of the batch's work. It is best effort, as the Channel row sends are: a failed
-device read or queue send is logged as `activity_push_failed` with its reason
-and not retried, because the row is in Activity either way and a push failure
-must not re-run the batch's sync, reconciliations and notices.
+conversation's row either side of its common effect and names what moved in
+the follow-up (`activityPushSubjects`):
 
-**The feed decides what each person is told.** The follow-up asks D1 which
-active members have a live device: everyone, when a subject is
-Organization-wide, else the people its viewer rows name. For each, it reads
-their first Activity page and pushes the rows about those subjects that are
-unread, of the three kinds, from after migration 105 ran
-(`workspace_activity_push_origin`) and not pushed before
-(`workspace_activity_pushes`). So nobody is told about a conversation they
-cannot list, the starter is not told of their own start, and a backfill that
-re-projects old threads pushes nothing. Two rows are left out on purpose:
+- a **start**: no row before, and a row that reads as started by somebody after;
+- a **finish**: the state arriving at `completed`. Not `completed_at` moving: a
+  parent stamps a completed thread's finish with its latest activity
+  (`aggregateCommon`), so later traffic moves it with no new run;
+- a **join**: a person becoming a participant of a thread or breakout. A viewer
+  row travels in its own message and can land after the start was decided, so
+  a join reconsiders that conversation's start for that person.
 
-- a start, when the same page also says the person was added to that
-  conversation, since the add already pushed; and
+The push runs from the follow-up table after the commit, best effort, as the
+Channel row sends are: a failure is logged as `activity_push_failed` with its
+reason and not retried, because the row is in Activity either way and a push
+must not re-run the batch's other work.
+
+**The feed decides what each person is told.** A start asks everyone when its
+conversation is Organization-wide, else the people its viewer rows name; a
+finish asks only its participants, the only people the feed shows one to; a
+join asks the person who joined. D1 narrows that to active members with a live
+device. For each, the object reads their first Activity page and pushes the
+rows about those subjects that are unread, of the subject's kinds, from after
+migration 105 ran (`workspace_activity_push_origin`) and not handed to
+delivery before (`workspace_activity_pushes`). So nobody is told about a
+conversation they cannot list, the starter is not told of their own start, and
+a backfill that re-projects old threads pushes nothing. Two rows are left out
+on purpose:
+
+- a start, when the person has an add for that conversation, since the add
+  pushes itself; checked when deciding and again when sending, because the add
+  lands after the viewer row it depends on; and
 - anything about a thread the person has open in a foreground window
   (`contributesPresence`). Rally finishes a run on every reply, and a banner
   for the reply already on screen is noise. Mentions keep the old rule of no
@@ -157,18 +163,17 @@ re-projects old threads pushes nothing. Two rows are left out on purpose:
 **The queue carries a pointer.** The message names the row
 (`activityItemId`), never its text. The consumer reads the row back through
 the same feed (`readActivityItemForPush`), so a row the person has read, or
-lost access to, since it was queued sends nothing. It is worded as the sidebar
-words it: "Maya started Q3 plan", "Maya started a breakout on Q3 plan" with the
-breakout as the body, "Rally finished Q3 plan". Receipts and the collapse id key
-on `activity:<row id>`. `rally.kind` is the row's kind; an app built before
-these kinds opens no conversation on a tap, and iOS and the Mac accept them
-from this change.
+lost access to, since it was queued sends nothing. A finish is matched by its
+conversation rather than its id, whose `completed_at` later traffic can move.
+It is worded as the sidebar words it: "Maya started Q3 plan", "Maya started a
+breakout on Q3 plan" with the breakout as the body, "Rally finished Q3 plan".
+Receipts and the collapse id key on `activity:<row id>`. An app built before
+these `rally.kind` values opens no conversation on a tap.
 
-Known gaps: a person who gains a conversation after it started (a personal
-thread made Organization-wide, a breakout they were let into) sees its start in
-Activity but is not pushed it, because no start happened in the batch that let
-them in; a person added is pushed the add. A row more than a page deep when a
-push is read back sends nothing.
+Known gaps: a thread made Organization-wide after it started shows its start to
+people who could not see it before, but is not pushed to them. A finish that
+lands before a participant's viewer row is not pushed to them. A row more than a
+page deep when a push is read back sends nothing.
 
 ## Web Push for browser members
 
@@ -291,7 +296,7 @@ signed-Mac delivery.
 - The Worker contacts only allowlisted Web Push service hosts and follows no redirect.
 - `sw.js` opens links only on its own origin.
 - An Activity row is pushed only if the feed lists it, unread, to that person when queued and again when sent.
-- Each Activity row is pushed to a person at most once (`workspace_activity_pushes`).
+- Each Activity row is handed to delivery for a person at most once (`workspace_activity_pushes`).
 
 ## Testing
 
@@ -311,9 +316,7 @@ APNs credential fault that leaves Web Push sending. The contract test covers the
 host allowlist and key shapes, and `web-push.test.ts` covers registration,
 re-subscribing on a key change, and the permission prompt coming first.
 `activity-push.test.ts` drives Activity rows through `receiveChildEffects` on
-real workerd: who is pushed a start or a finish, that later traffic on a
-finished thread is not a finish, the push origin, the foreground skip, the
-sidebar wording, and that a row read since it was queued sends nothing. The provider itself and macOS/iOS alert
+real workerd, and the consumer's read-back. The provider itself and macOS/iOS alert
 presentation require a signed installed build.
 
 Local acceptance on 2026-09-14: lint/typecheck, scoped API and desktop tests,
@@ -345,19 +348,15 @@ CHECK admits two kinds and needs a rebuild to widen, and its lease, directory
 version gate and Slack/email fallback answer questions these rows do not have.
 A per-person sweep of the whole first page on every directory change: it would
 push an old unread backlog the first time someone got a device, and read every
-member's feed on every message. Detecting a finish from `completed_at`: the
-parent restamps it with later activity, which the first test run caught.
-Re-deciding the audience in the consumer: the producer already reads the feed
-in the object that owns it, and the consumer reads it again anyway. Letting a
-failed push fail the directory follow-up: it re-ran every other step of the
-batch to retry a notification, which the existing suites caught.
+member's feed on every message.
 
 **Consequences:** A new Activity kind that the feed reads from the directory
 needs adding to `PUSHED_KINDS`, to `rally.kind`, and to iOS's `pushKinds`, or it
 will not push or not open on a tap. An Organization-wide start reads one feed
-page per member with a device, in the object, after the commit. A change to the
-feed's ids (`started:`, `finished:`) changes what `workspace_activity_pushes`
-dedupes on.
+page per member with a device, in the object, after the commit; a finish reads
+one per participant. A change to the feed's ids (`started:`, `finished:`)
+changes what `workspace_activity_pushes` dedupes on and how a finish is matched
+when sent.
 
 ### 2026-10-06 — Badge is the sidebar attention count, set by APNs and the Mac
 
