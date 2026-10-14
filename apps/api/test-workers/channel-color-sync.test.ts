@@ -331,11 +331,15 @@ describe("a thread carries its Channel's colour", () => {
     const [first, second, later] = ["e711", "e712", "e713"].map((suffix) => `00000000-0000-7000-8000-00000000${suffix}`);
     // Staged straight into the table: what is under test is the lane's pacing,
     // not which writes mark a thread (the cases above).
-    const stage = (workstreamId: string) => runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec(
-        "INSERT INTO channel_color_sync(workstream_id, revision, attempts, not_before) VALUES (?, 1, 0, 0)",
-        workstreamId,
-      );
+    // Rows staged together land in one object event: the object's alarm can
+    // run the lane between two events and claim the first alone as its batch.
+    const stage = (...workstreamIds: string[]) => runInDurableObject(workspace(), (_instance, state) => {
+      for (const workstreamId of workstreamIds) {
+        state.storage.sql.exec(
+          "INSERT INTO channel_color_sync(workstream_id, revision, attempts, not_before) VALUES (?, 1, 0, 0)",
+          workstreamId,
+        );
+      }
     });
     // The object's own alarm may run the lane too (settling arms it), so each
     // step asserts on what the rows say rather than on which run sent them.
@@ -355,8 +359,7 @@ describe("a thread carries its Channel's colour", () => {
       .toArray()[0]?.attempts ?? null);
     const settled = (workstreamId: string) => ({ ...message(1), workstreamId });
     await runInDurableObject(workspace(), (_instance, state) => { state.storage.sql.exec("DELETE FROM channel_color_sync"); });
-    await stage(first!);
-    await stage(second!);
+    await stage(first!, second!);
 
     await publish();
     expect([await claims(first!), await claims(second!)]).toEqual([1, 1]);

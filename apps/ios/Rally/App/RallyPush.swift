@@ -29,6 +29,11 @@ enum RallyPush {
         data.map { String(format: "%02.2hhx", $0) }.joined()
     }
 
+    /// The `kind` values `PushNotificationDataSchema` admits: every Activity row.
+    static let pushKinds: Set<String> = [
+        "mention", "participant_added", "thread_started", "breakout_started", "run_finished",
+    ]
+
     /// Same `rally` object desktop parses with `PushNotificationDataSchema`.
     static func workstreamURL(from userInfo: [AnyHashable: Any]) -> URL? {
         guard let rally = dictionary(userInfo["rally"]) else { return nil }
@@ -41,7 +46,7 @@ enum RallyPush {
             version = nil
         }
         guard version == 1 else { return nil }
-        guard let kind = rally["kind"] as? String, kind == "mention" || kind == "participant_added" else {
+        guard let kind = rally["kind"] as? String, pushKinds.contains(kind) else {
             return nil
         }
         guard rally["workspaceId"] is String, rally["region"] is String else { return nil }
