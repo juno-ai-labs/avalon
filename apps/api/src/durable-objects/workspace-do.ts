@@ -12414,14 +12414,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         { userId: recipient.userId, accessClass: recipient.accessClass },
         subjects,
         this.threadsOnScreen(recipient.userId),
-      ).filter((item) => this.pushAllowed(recipient.userId, item.kind as PushPreferenceCheckRequest["kind"],
-        item.threadId, item.breakout?.substreamId ?? null));
+      );
       // One person's failed send leaves the others' pushes standing.
       try {
         for (const item of items) {
           // Recorded whether or not it was queued: a row not queued (the
           // person's push flag is off, no transport in this deployment) would
-          // not be queued by a later batch either.
+          // not be queued by a later batch either. The person's push switches
+          // are the consumer's to check, so one turned back on never sends an
+          // old row late.
           await enqueuePushDelivery(this.env, {
             region: this.env.AVALON_REGION,
             workspaceId,
