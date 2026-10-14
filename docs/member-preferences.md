@@ -1,9 +1,13 @@
 # Member preferences
 
-A member's display preferences for one Organization, stored on the server so
-they follow the member across devices. Today there is one: **Show agent work**
-(Settings → Account → Agent), which decides whether the transcript shows the
-agent's thinking and its tool and plugin calls.
+A member's preferences for one Organization, stored on the server so they
+follow the member across devices. Two kinds today:
+
+- **Show agent work** (Settings → Account → Agent), which decides whether the
+  transcript shows the agent's thinking and its tool and plugin calls.
+- **Push switches** (Settings → Notifications → Notify me about), which decide
+  what this person is pushed. How they are enforced is
+  [`push-notifications.md`](push-notifications.md#what-each-person-turns-off).
 
 ## Where the code lives
 
@@ -14,7 +18,10 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
 ## How it works
 
 1. **Storage.** The WorkspaceDO's `member_preferences` table has one row per
-   member (migration 89). No row means every default.
+   member (migration 89). No row means every default. The push switches are
+   `push_json` (migration 106), holding only the switches the member has set;
+   `storedPushPreferences` lays them over `DEFAULT_PUSH_PREFERENCES`, so a
+   switch added later starts on for everyone.
 2. **First paint.** The WorkspaceDO's answer to a workspace socket `subscribe`
    carries `viewerPreferences` beside `featureFlags`. The renderer writes it to
    `['member-preferences', workspaceId]`, so the first frame already honours it
@@ -22,7 +29,13 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
    last value this device saw for that Organization (`localStorage`), so a cold
    launch does not flash the defaults. Applying the socket's answer cancels any
    REST read still in flight, so an older answer cannot land on top of it.
-3. **Change.** `PUT /workspace/me/preferences` replaces the whole record. The
+3. **Change.** `PUT /workspace/me/preferences` carries only what changed: each
+   field and each push switch is optional, and whatever a save leaves out keeps
+   its stored value (`MemberPreferencesUpdateSchema`, `mergePushPreferences`).
+   Each control sends its own field through `useSaveMemberPreferences`, so a
+   window holding a stale copy cannot write it back over a change made on
+   another device, and a desktop that predates the push switches, which saves
+   `showAgentWork` alone, leaves them as they were. An empty save is refused. The
    write publishes `viewer_preferences` to the member alone, and their other
    windows refetch. The settings switch updates the cache optimistically and
    puts it back if the write fails.
@@ -51,8 +64,11 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
 ## Boundary
 
 The desktop and browser renderers honour the preference. iOS does not yet. A new
-preference is a column in `member_preferences`, a field in
-`MemberPreferencesSchema` with a default, and a setting definition.
+display preference is a column in `member_preferences`, a field in
+`MemberPreferencesSchema` with a default, and a setting definition. A new push
+switch is a field in `PushPreferencesSchema` and `DEFAULT_PUSH_PREFERENCES`, a
+case in `pushPreferenceAllows`, and a setting definition; it needs no
+migration.
 
 ## Failure modes and limits
 
@@ -60,6 +76,25 @@ Before the socket answers or REST returns, the defaults render. A server that
 predates the field sends no `viewerPreferences`, which also reads as defaults.
 
 ## Changelog
+
+### 2026-10-14 — Push switches join the record, and a save merges them
+
+**What changed:** The record carries seven push switches, all on by default,
+stored as `push_json`. A save carries only what changed, down to one switch,
+and everything it leaves out keeps its stored value.
+
+**Why:** Pushing every Activity row made new threads and Rally's finishes
+noisy in a busy Organization, and people need to choose what reaches their
+devices, on every device at once.
+
+**Considered and rejected:** Replacing the whole record on save, as before:
+every shipped desktop saves `showAgentWork` alone, and would turn every push
+switch back on; and any window with a stale copy would undo a change made on
+another device. A column per switch: seven columns and a migration for each
+switch added later, against one JSON column whose absent keys read as on.
+
+**Consequences:** Saves must stay partial. A control sends only its own field;
+sending the whole cached record reopens the stale-copy overwrite.
 
 ### 2026-10-05 — Show agent work, stored per member per Organization
 

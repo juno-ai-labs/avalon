@@ -1,7 +1,7 @@
 import "../../../../../tests/isolated-region";
 import { AccountOnboardingGate } from './guided-onboarding';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { ClientFeatureFlagsSchema } from '@rally/contracts';
+import { ClientFeatureFlagsSchema, DEFAULT_MEMBER_PREFERENCES, DEFAULT_PUSH_PREFERENCES } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
@@ -301,7 +301,7 @@ describe('Organization settings', () => {
     api.getWorkspaceInvitations.mockResolvedValue([invitation]);
     api.getConnections.mockResolvedValue([]);
     api.getMyPersonalSystemPrompt.mockResolvedValue('');
-    api.getMyPreferences.mockResolvedValue({ showAgentWork: true });
+    api.getMyPreferences.mockResolvedValue(DEFAULT_MEMBER_PREFERENCES);
     // Every existing test in this file was written before digestsEnabled
     // existed and expects the section to be there; a test that cares about it
     // being hidden overrides this with its own resolved value.
@@ -545,8 +545,8 @@ describe('Organization settings', () => {
   });
 
   it('saves the agent-work switch to the server', async () => {
-    api.getMyPreferences.mockResolvedValue({ showAgentWork: true });
-    api.updateMyPreferences.mockImplementation(async (next: { showAgentWork: boolean }) => next);
+    api.getMyPreferences.mockResolvedValue(DEFAULT_MEMBER_PREFERENCES);
+    api.updateMyPreferences.mockImplementation(async () => ({ ...DEFAULT_MEMBER_PREFERENCES, showAgentWork: false }));
     renderSettings();
     openSettingsSection('Account');
 
@@ -556,6 +556,27 @@ describe('Organization settings', () => {
 
     await waitFor(() => expect(api.updateMyPreferences).toHaveBeenCalledWith({ showAgentWork: false }));
     await waitFor(() => expect(toggle).not.toBeChecked());
+  });
+
+  it('saves a push switch for every device and holds its narrower switch while it is off', async () => {
+    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));
+    api.getMyPreferences.mockResolvedValue(DEFAULT_MEMBER_PREFERENCES);
+    api.updateMyPreferences.mockImplementation(async () => ({ ...DEFAULT_MEMBER_PREFERENCES,
+      push: { ...DEFAULT_PUSH_PREFERENCES, newThreads: false } }));
+    renderSettings();
+    fireEvent.click(await within(screen.getByRole('navigation', { name: 'Settings sections' }))
+      .findByRole('button', { name: 'Notifications' }));
+
+    const newThreads = await screen.findByRole('switch', { name: /^New threads/u });
+    const outside = screen.getByRole('switch', { name: /Include Channels you haven't joined/u });
+    expect(newThreads).toBeChecked();
+    expect(outside).toBeEnabled();
+    fireEvent.click(newThreads);
+
+    // Only the switch that changed: a stale copy of the others must not be written back.
+    await waitFor(() => expect(api.updateMyPreferences).toHaveBeenCalledWith({ push: { newThreads: false } }));
+    await waitFor(() => expect(newThreads).not.toBeChecked());
+    expect(outside).toBeDisabled();
   });
 
   it('saves an edited personal system prompt and offers Save only while it differs', async () => {
@@ -2553,7 +2574,7 @@ describe('Organization settings', () => {
     expect(screen.queryByRole('heading', { name: 'On this Mac' })).toBeNull();
     // jsdom has no service worker, which is exactly the unsupported browser.
     expect(await screen.findByText('This browser cannot show Rally notifications.')).toBeVisible();
-    expect(screen.getByRole('switch', { name: /Notify me about mentions and additions/ })).toBeDisabled();
+    expect(screen.getByRole('switch', { name: /Show notifications/ })).toBeDisabled();
   });
 
   it('tells an iOS Safari tab to add Rally to the Home Screen for notifications', async () => {
@@ -2567,7 +2588,7 @@ describe('Organization settings', () => {
       fireEvent.click(await within(navigation).findByRole('button', { name: 'Notifications' }));
       expect(await screen.findByText(/tap Share, then Add to Home Screen/)).toBeVisible();
       expect(screen.queryByText('This browser cannot show Rally notifications.')).toBeNull();
-      expect(screen.getByRole('switch', { name: /Notify me about mentions and additions/ })).toBeDisabled();
+      expect(screen.getByRole('switch', { name: /Show notifications/ })).toBeDisabled();
     } finally {
       Reflect.deleteProperty(navigator, 'standalone');
     }

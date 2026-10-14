@@ -175,6 +175,24 @@ people who could not see it before, but is not pushed to them. A finish that
 lands before a participant's viewer row is not pushed to them. A row more than a
 page deep when a push is read back sends nothing.
 
+## What each person turns off
+
+Settings → Notifications → **Notify me about** holds the person's push
+switches; the list, how they are stored and how a save merges them are
+[`member-preferences.md`](member-preferences.md). They apply to every device;
+the device switch above them is still the device's own on/off.
+
+`pushPreferenceAllows` in `member-preferences.ts` is the one rule, checked in
+one place: the consumer, before it sends any push, mentions and adds included,
+so a switch turned off after a push was queued still holds. The Activity sweep
+does not check them, and records a row as handed to delivery whatever they
+say, so turning a switch back on never pushes an old row late. The rule reads
+the two facts the narrower switches need only when one of them is off: whether
+the thread is placed in a Channel the person is a participant of, and whether
+they started the conversation (the breakout, for a breakout's finish). The
+switches govern push only: a mention's Slack message is unaffected, and a
+skipped push still counts as accepted, so it does not fall back to email.
+
 ## Web Push for browser members
 
 A member's browser tab registers a `webpush` device: `token` is the
@@ -328,6 +346,22 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-10-14 — People choose which kinds are pushed
+
+**What changed:** The consumer checks the person's push switches
+([`member-preferences.md`](member-preferences.md)) before sending any push.
+
+**Why:** Pushing every Activity row is loud in a busy Organization: every
+Organization-wide start, and a finish on every Rally reply.
+
+**Considered and rejected:** Checking in the sweep as well: it saved a queue
+message, but a row it filtered out was never recorded, so turning the switch
+back on could push it late. Turning a skipped push into an email: the person
+asked not to be told this way, not to be told another way.
+
+**Consequences:** A new pushed kind needs a case in `pushPreferenceAllows`,
+which is exhaustive over `rally.kind`, so the compiler asks for it.
 
 ### 2026-10-14 — Every Activity row is a push
 
