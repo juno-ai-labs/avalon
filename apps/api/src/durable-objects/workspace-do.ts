@@ -12356,17 +12356,26 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         subjects,
         this.threadsOnScreen(recipient.userId),
       );
-      for (const item of items) {
-        // Recorded whether or not it was queued: a row not queued (the
-        // person's push flag is off, no transport in this deployment) would
-        // not be queued by a later batch either.
-        await enqueuePushDelivery(this.env, {
-          region: this.env.AVALON_REGION,
-          workspaceId,
-          recipientUserId: recipient.userId,
-          activityItemId: item.id,
+      // One person's failed send leaves the others' pushes standing.
+      try {
+        for (const item of items) {
+          // Recorded whether or not it was queued: a row not queued (the
+          // person's push flag is off, no transport in this deployment) would
+          // not be queued by a later batch either.
+          await enqueuePushDelivery(this.env, {
+            region: this.env.AVALON_REGION,
+            workspaceId,
+            recipientUserId: recipient.userId,
+            activityItemId: item.id,
+          });
+          pushes.record(recipient.userId, item.id, Date.now());
+        }
+      } catch (error) {
+        logWarn(this.env, "activity_push_failed", {
+          workspace_id: workspaceId,
+          recipient_user_id: recipient.userId,
+          code: diagnosticErrorCode(error, "activity_push_failed"),
         });
-        pushes.record(recipient.userId, item.id, Date.now());
       }
     }
   }
