@@ -96,6 +96,16 @@ it('retries only unreached devices and does not confuse newer notifications with
   expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
   expect(send).toHaveBeenCalledTimes(5);
 });
+it('sends no mention to a person who turned mentions off, and still sends their other kinds', async () => {
+  await workspace().saveMemberPreferences({ workspaceId, userId, preferences: { showAgentWork: true, push: { mentions: false } } });
+  const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'sent' }));
+  expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
+  expect(send).not.toHaveBeenCalled();
+
+  await workspace().saveMemberPreferences({ workspaceId, userId, preferences: { showAgentWork: true, push: { mentions: true, added: false } } });
+  expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
+  expect(send).toHaveBeenCalledTimes(2);
+});
 it('rechecks access after queueing and defers a directory that is still catching up', async () => {
   const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'sent' }));
   await runInDurableObject(workspace(), (_instance, state) => { state.storage.sql.exec(`UPDATE workstream_notification_intents SET required_directory_version = 2`); });

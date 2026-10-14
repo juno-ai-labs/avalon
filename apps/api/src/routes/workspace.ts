@@ -11,6 +11,7 @@ import {
   IdSchema,
   CreateWorkspaceInvitationResponseSchema,
   MemberPreferencesSchema,
+  MemberPreferencesUpdateSchema,
   PersonalSystemPromptSchema,
   UpdateUserTimezoneRequestSchema,
   UpdateWorkspaceMemberRoleRequestSchema,
@@ -143,7 +144,7 @@ workspaceRoutes.get("/me/system-prompt", async (c) =>
 workspaceRoutes.get("/me/preferences", async (c) =>
   c.json(MemberPreferencesSchema.parse(await new WorkspaceService(c.env, getAuth(c)).getMyPreferences())),
 );
-workspaceRoutes.put("/me/preferences", zValidator("json", MemberPreferencesSchema), async (c) =>
+workspaceRoutes.put("/me/preferences", zValidator("json", MemberPreferencesUpdateSchema), async (c) =>
   c.json(MemberPreferencesSchema.parse(
     await new WorkspaceService(c.env, getAuth(c)).updateMyPreferences(c.req.valid("json")))),
 );
