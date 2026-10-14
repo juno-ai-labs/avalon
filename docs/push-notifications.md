@@ -175,7 +175,26 @@ people who could not see it before, but is not pushed to them. A finish that
 lands before a participant's viewer row is not pushed to them. A row more than a
 page deep when a push is read back sends nothing.
 
-## Web Push for browser members
+## What each person turns off
+
+Settings → Notifications → **Notify me about** holds one switch per kind
+(Mentions, Added to a thread, New threads, New breakouts, Rally finished) and
+two narrower ones under their kinds: **Include Channels you haven't joined**
+(off keeps new-thread pushes to threads placed in a Channel the person is a
+participant of) and **Include threads you didn't start** (off keeps finish
+pushes to conversations they started, the breakout for a breakout's finish).
+All are on by default. They are stored with the member's other preferences
+([`member-preferences.md`](member-preferences.md)) and apply to every device;
+the device switch above them is still the device's own on/off.
+
+`pushPreferenceAllows` in `member-preferences.ts` is the one rule, and it reads
+the two facts the narrower switches need only when one of them is off. It is
+checked twice: by the Activity push sweep before it queues a row, which saves
+the queue message, and by the consumer before it sends any push, mentions and
+adds included, so a switch turned off after a push was queued still holds.
+The switches govern push only: a mention's Slack message is unaffected, and a
+skipped push still counts as accepted, so it does not fall back to email.
+
 
 A member's browser tab registers a `webpush` device: `token` is the
 subscription endpoint and `web_push_p256dh` / `web_push_auth` hold its keys
@@ -328,6 +347,26 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-10-14 — People choose which kinds are pushed
+
+**What changed:** Five switches, one per Activity kind, and two narrower ones
+(Channels you haven't joined, threads you didn't start) decide what a person
+is pushed in an Organization, on every device. The sweep checks them before
+queueing and the consumer before sending.
+
+**Why:** Pushing every Activity row pushes every member on every
+Organization-wide thread and on every Rally reply in threads they take part
+in. The two narrower switches keep the useful half of each.
+
+**Considered and rejected:** Checking only at send: the sweep would still queue
+a message per row to be dropped. Checking only when deciding: a switch turned
+off would not hold for pushes already queued. Turning a skipped push into an
+email: the person asked not to be told this way, not to be told another way.
+
+**Consequences:** A new pushed kind needs a case in `pushPreferenceAllows`,
+which is exhaustive over `rally.kind`, so the compiler asks for it.
+
 
 ### 2026-10-14 — Every Activity row is a push
 
