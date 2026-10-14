@@ -227,6 +227,8 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_pins", // Every pin; read and written only by the pin RPCs.
   "workspace_activity_seen", // How far each person read Activity; only the Activity RPCs.
   "workspace_activity_reads", // How far each person read each subject for Activity; only the Activity RPCs.
+  "workspace_activity_pushes", // Which Activity rows went to whom as a push; only the directory follow-up.
+  "workspace_activity_push_origin", // When this object began pushing Activity rows; only the directory follow-up.
   "member_personal_system_prompts", // Read and written only by the personal system prompt RPCs.
   "member_preferences", // Read and written only by the member preference RPCs.
   "conversation_access_requests", // Read and written only by the access request RPCs.
