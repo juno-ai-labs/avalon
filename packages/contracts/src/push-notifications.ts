@@ -68,16 +68,25 @@ export const RegisterPushDeviceRequestSchema = z.discriminatedUnion("platform", 
 /** What a browser needs to subscribe: the server's VAPID public key. */
 export const WebPushConfigurationSchema = z.object({ publicKey: z.string().min(80).max(100) });
 export type RegisterPushDeviceRequest = z.infer<typeof RegisterPushDeviceRequestSchema>;
-export const PushDeliveryMessageSchema = z.object({
+const PushDeliveryAddressSchema = z.object({
   region: RegionSchema,
   workspaceId: z.string(),
   recipientUserId: z.string(),
-  intentId: z.string(),
 });
+/**
+ * What the push queue carries: who, and a pointer to what. A mention or an
+ * add names its notification intent; every other Activity row names the row
+ * itself, which the consumer reads back through the Activity feed. Neither
+ * carries the notification's text.
+ */
+export const PushDeliveryMessageSchema = z.union([
+  PushDeliveryAddressSchema.extend({ intentId: z.string() }).strict(),
+  PushDeliveryAddressSchema.extend({ activityItemId: z.string().min(1).max(400) }).strict(),
+]);
 export type PushDeliveryMessage = z.infer<typeof PushDeliveryMessageSchema>;
 export const PushNotificationDataSchema = z.object({
   v: z.literal(1),
-  kind: z.enum(["mention", "participant_added"]),
+  kind: z.enum(["mention", "participant_added", "thread_started", "breakout_started", "run_finished"]),
   url: HttpsUrlSchema,
   workspaceId: z.string(),
   region: RegionSchema,

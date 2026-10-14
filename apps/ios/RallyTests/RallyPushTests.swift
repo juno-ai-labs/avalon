@@ -19,6 +19,20 @@ final class RallyPushTests: XCTestCase {
         XCTAssertEqual(RallyDeepLink.workstreamTarget(from: parsed)?.substreamId, "child-1")
     }
 
+    func testParsesActivityRowPayloadURL() throws {
+        let url = "https://rallywith.ai/app/workspaces/global/ws_1/workstreams/wsr_9"
+        let parsed = try XCTUnwrap(RallyPush.workstreamURL(from: [
+            "rally": [
+                "v": 1,
+                "kind": "run_finished",
+                "url": url,
+                "workspaceId": "ws_1",
+                "region": "global",
+            ],
+        ]))
+        XCTAssertEqual(parsed.absoluteString, url)
+    }
+
     func testRejectsUnknownKindAndNonHttps() {
         XCTAssertNil(RallyPush.workstreamURL(from: [
             "rally": [

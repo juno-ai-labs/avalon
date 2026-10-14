@@ -1,0 +1,285 @@
+/// <reference types="@cloudflare/vitest-pool-workers/types" />
+
+/**
+ * Every Activity row is a push: the starts and finishes the feed reads from
+ * the directory, pushed by the Organization object after the directory batch
+ * that made them commits, and read back through the feed when sent. Mentions
+ * and adds push through their notification intents (`push-delivery.test.ts`).
+ *
+ * Driven through `receiveChildEffects`, the step a conversation's own publish
+ * runs, so the push is decided from what production writes. What was pushed is
+ * read from `workspace_activity_pushes`: the local environment has no APNs or
+ * Web Push credentials, so `enqueuePushDelivery` queues nothing here and the
+ * consumer is called directly with the message it would have queued.
+ */
+import { env } from "cloudflare:workers";
+import { reset, runInDurableObject } from "cloudflare:test";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  asSubstreamId,
+  asUserId,
+  asWorkspaceId,
+  asWorkstreamId,
+  conversationEffectHash,
+  type ConversationEffect,
+  type ConversationEffectEnvelope,
+  type SubstreamId,
+  type UserId,
+  type WorkstreamId,
+} from "@rally/contracts";
+
+import migration from "../../../packages/db/migrations/0107_user_push_devices.sql?raw";
+import webPushMigration from "../../../packages/db/migrations/0117_web_push_device_keys.sql?raw";
+import { splitSqlStatements } from "../src/lib/sql-statements";
+import { deliverPush } from "../src/queues/push-delivery-consumer";
+import { registerPushDevice } from "../src/services/push-device-service";
+import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
+import type { ApnsOutcome } from "../src/services/push/apns-transport";
+import type { PushPayloads } from "../src/services/push/push-payload";
+import { createTestEnv } from "../test/helpers/cloudflare-test";
+import { hostedParentStub } from "./helpers/hosted-parent";
+
+const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000a0001");
+const thread = asWorkstreamId("00000000-0000-4000-8000-0000000a00a0");
+const breakout = asSubstreamId("00000000-0000-4000-8000-0000000a00a1");
+/** Starts the thread. */
+const owner = asUserId("00000000-0000-4000-8000-0000000a0011");
+/** Has a Mac. */
+const member = asUserId("00000000-0000-4000-8000-0000000a0012");
+/** Has no device. */
+const bystander = asUserId("00000000-0000-4000-8000-0000000a0013");
+
+const organization = () => hostedParentStub(env, workspaceId);
+const flags = createTestEnv({ FLAGS: { getBooleanDetails: async () => ({ value: true, reason: "TARGETING_MATCH" }) } }).FLAGS!;
+const pushEnv = () => ({ ...env, FLAGS: flags });
+
+let messageSeq = 0;
+function envelope(parentId: WorkstreamId, substreamId: SubstreamId, effect: ConversationEffect): ConversationEffectEnvelope {
+  messageSeq += 1;
+  return {
+    kind: "conversation_effect",
+    contractVersion: 1,
+    region: "global",
+    workspaceId,
+    parentKind: "workstream",
+    parentId,
+    substreamId,
+    generation: 1,
+    messageId: `00000000-0000-7000-8000-${String(messageSeq).padStart(12, "0")}`,
+    partitionKey: effect.kind === "directory_user" ? `user:${effect.userId}` : "common",
+    sourceVersion: messageSeq,
+    requiredProjectionVersion: null,
+    payloadHash: conversationEffectHash(effect),
+    effect,
+  };
+}
+
+function common(title: string, extra: Partial<Extract<ConversationEffect, { kind: "directory_common" }>> = {}) {
+  const now = new Date().toISOString();
+  return {
+    kind: "directory_common" as const,
+    title,
+    description: "",
+    preview: "",
+    scope: "workspace" as const,
+    state: "running",
+    systemKind: null,
+    lastActivityAt: now,
+    completedAt: null,
+    archivedAt: null,
+    createdByUserId: owner,
+    latestAttentionOrdinal: 0,
+    unreadTrackingStartOrdinal: 0,
+    createdAt: now,
+    updatedAt: now,
+    ...extra,
+  };
+}
+
+function viewer(userId: UserId) {
+  return {
+    kind: "directory_user" as const,
+    userId,
+    isParticipant: true,
+    unreadCount: 0,
+    youAreMentioned: false,
+    listable: true,
+    seenAttentionOrdinal: 0,
+    manualUnreadFromOrdinal: null,
+    manualUnreadGeneration: 0,
+    latestMentionAttentionOrdinal: 0,
+  };
+}
+
+/** Publish a conversation the way it publishes itself, through the parent step. */
+async function publish(substreamId: SubstreamId, effects: ConversationEffect[]): Promise<void> {
+  await organization().receiveChildEffects({
+    substreamId,
+    envelopes: effects.map((effect) => envelope(thread, substreamId, effect)),
+  });
+}
+
+async function pushed(): Promise<Array<{ user_id: string; item_id: string }>> {
+  return runInDurableObject(organization(), (_instance, state) => state.storage.sql.exec<{ user_id: string; item_id: string }>(
+    `SELECT user_id, item_id FROM workspace_activity_pushes ORDER BY user_id, item_id`,
+  ).toArray());
+}
+
+async function connect(userId: UserId) {
+  const response = await organization().fetch("https://workspace.test/socket", {
+    headers: {
+      Upgrade: "websocket",
+      "x-rally-workspace-id": workspaceId,
+      "x-rally-placement-affinity": "wnam",
+      "x-rally-user-id": userId,
+      "x-rally-session-id": `session-${userId}`,
+      "x-rally-socket-ticket-id": "00000000-0000-7000-8001-000000000001",
+      "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+    },
+  });
+  if (response.status !== 101 || !response.webSocket) throw new Error(`workspace socket rejected: ${response.status}`);
+  const socket = response.webSocket;
+  socket.accept();
+  const subscribed = new Promise<void>((resolve) => {
+    socket.addEventListener("message", (event) => {
+      if (String(event.data).includes("\"workspace_sync\"")) resolve();
+    });
+  });
+  socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+  await subscribed;
+  return socket;
+}
+
+beforeEach(async () => {
+  await reset();
+  clearFlagTargetingAttributeCache();
+  messageSeq = 0;
+  await env.DB.batch([
+    env.DB.prepare(`CREATE TABLE workstream_authority_control (id INTEGER PRIMARY KEY, phase TEXT NOT NULL,
+      generation INTEGER NOT NULL, required_serving_contract_version INTEGER NOT NULL,
+      serving_contract_version INTEGER NOT NULL)`),
+    env.DB.prepare(`INSERT INTO workstream_authority_control VALUES (1, 'durable_object_open', 1, 1, 1)`),
+    env.DB.prepare(`CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT, region TEXT NOT NULL, analytics_workspace_id TEXT,
+      abandoned_at TEXT, placement_affinity TEXT DEFAULT 'wnam')`),
+    env.DB.prepare(`INSERT INTO workspaces (id, name, region) VALUES (?, 'Test', 'global')`).bind(workspaceId),
+    env.DB.prepare(`CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, name TEXT)`),
+    env.DB.prepare(`CREATE TABLE workspace_members (access_class TEXT NOT NULL DEFAULT 'member',
+      incarnation TEXT DEFAULT 'existing-member', workspace_id TEXT NOT NULL, user_id TEXT NOT NULL,
+      status TEXT NOT NULL, role TEXT NOT NULL, last_seen_at TEXT, revision INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (workspace_id, user_id))`),
+    env.DB.prepare(`CREATE TABLE sessions (workspace_incarnation TEXT DEFAULT 'existing-member', id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL, workspace_id TEXT NOT NULL, region TEXT NOT NULL, revoked_at TEXT,
+      expires_at TEXT NOT NULL, impersonator_user_id TEXT)`),
+    ...[[owner, "Maya"], [member, "Theo"], [bystander, "Priya"]].flatMap(([userId, name]) => [
+      env.DB.prepare(`INSERT INTO users (id, email, name) VALUES (?, ?, ?)`).bind(userId, `${name}@example.test`, name),
+      env.DB.prepare(`INSERT INTO workspace_members (workspace_id, user_id, status, role) VALUES (?, ?, 'active', 'member')`)
+        .bind(workspaceId, userId),
+      env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`).bind(`session-${userId}`, userId, workspaceId),
+    ]),
+    ...[migration, webPushMigration].flatMap(splitSqlStatements).map((sql) => env.DB.prepare(sql)),
+  ]);
+  for (const userId of [owner, member]) {
+    await registerPushDevice(env, { userId, workspaceId, sessionId: `session-${userId}`, region: "global", role: "member" },
+      `mac-${userId}`, {
+        platform: "macos", transport: "apns", topic: "ai.rallywith.desktop", apnsEnvironment: "production",
+        token: (userId === owner ? "aa" : "bb").repeat(32), appVersion: "1",
+      });
+  }
+  await organization().initializeWorkspace(workspaceId, "wnam");
+  await runInDurableObject(organization(), (_instance, state) => {
+    state.storage.sql.exec(`INSERT INTO parent_metadata
+      (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
+      VALUES (?, 'workstream', ?, 'global', 1, 0, 0)`, thread, workspaceId);
+    state.storage.sql.exec(`INSERT INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at, title)
+      VALUES (?, '0', 'main', ?, 0, 'Main'), (?, ?, 'child', ?, 1, 'Breakout')`,
+    thread, owner, thread, breakout, owner);
+  });
+});
+
+describe("Activity rows pushed from the directory", () => {
+  it("given an Organization-wide thread somebody starts, then each other member with a device is pushed its start, once", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
+    // The starter is not told of their own start, and a member with no device has nothing to receive it.
+    expect(await pushed()).toEqual([{ user_id: member, item_id: `started:${thread}` }]);
+
+    await publish(asSubstreamId("0"), [common("Q3 plan, renamed")]);
+    expect(await pushed()).toEqual([{ user_id: member, item_id: `started:${thread}` }]);
+  });
+
+  it("given a thread whose start is older than pushing, when it reaches the directory, then nobody is pushed", async () => {
+    const lastWeek = new Date(Date.now() - 7 * 86_400_000).toISOString();
+    await publish(asSubstreamId("0"), [common("Old plan", { createdAt: lastWeek }), viewer(owner)]);
+    expect(await pushed()).toEqual([]);
+  });
+
+  it("given runs finishing in a thread a member takes part in, then each finish is pushed once, and later traffic is not a finish", async () => {
+    const finishes = async (userId: UserId) => (await pushed())
+      .filter((row) => row.user_id === userId && row.item_id.startsWith("finished:")).length;
+    await publish(asSubstreamId("0"), [common("Q3 plan", { scope: "personal" }), viewer(owner), viewer(member)]);
+    const finished = () => common("Q3 plan", { scope: "personal", state: "completed", completedAt: new Date().toISOString() });
+    await publish(asSubstreamId("0"), [finished()]);
+    // A completed thread's finish is stamped with its latest activity, so this
+    // moves the row's time without a run having happened.
+    await publish(asSubstreamId("0"), [{ ...finished(), preview: "a later message" }]);
+    expect([await finishes(member), await finishes(owner)]).toEqual([1, 1]);
+
+    await publish(asSubstreamId("0"), [common("Q3 plan", { scope: "personal", state: "running" })]);
+    await publish(asSubstreamId("0"), [finished()]);
+    // Rally's finish goes to everyone taking part, the person who asked included.
+    expect([await finishes(member), await finishes(owner)]).toEqual([2, 2]);
+  });
+
+  it("given a member with the thread open in a foreground window, when its run finishes, then they are not pushed", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan", { scope: "personal" }), viewer(owner), viewer(member)]);
+    const socket = await connect(member);
+    socket.send(JSON.stringify({ type: "set_presence", revision: 1, applicationState: "foreground", foregroundWorkstreamId: thread }));
+    // The presence frame is not answered; a ping's auto-response arriving says it was read.
+    await new Promise<void>((resolve) => {
+      socket.addEventListener("message", (event) => { if (String(event.data) === "pong") resolve(); });
+      socket.send("ping");
+    });
+    await publish(asSubstreamId("0"), [common("Q3 plan", { scope: "personal", state: "completed",
+      completedAt: new Date().toISOString() })]);
+
+    expect((await pushed()).map((row) => [row.user_id, row.item_id.split(":")[0]])).toEqual([
+      [owner, "finished"],
+      [member, "started"],
+    ]);
+    socket.close(1000, "done");
+  });
+
+  it("given an Organization-wide breakout somebody starts, then the members who may list it are pushed its start", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan", { createdAt: new Date(Date.now() - 86_400_000).toISOString() }), viewer(owner)]);
+    await publish(breakout, [common("Pricing"), viewer(owner)]);
+    expect(await pushed()).toEqual([{ user_id: member, item_id: `started:${breakout}` }]);
+  });
+});
+
+describe("sending an Activity row's push", () => {
+  const payloads = (send: { mock: { calls: unknown[][] } }) => send.mock.calls.map((call) => call[2] as PushPayloads);
+  const message = (activityItemId: string) => ({ region: "global" as const, workspaceId, recipientUserId: member, activityItemId });
+
+  it("reads as the sidebar row does and opens the thread", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
+    const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+
+    expect(await deliverPush(pushEnv(), message(`started:${thread}`), send)).toBe(true);
+
+    const apns = JSON.parse(payloads(send)[0]!.apns) as { aps: { alert: { title: string } }; rally: { kind: string; url: string } };
+    expect(apns.aps.alert.title).toBe("Maya started Q3 plan");
+    expect(apns.rally.kind).toBe("thread_started");
+    expect(apns.rally.url).toContain(`/workstreams/${thread}`);
+  });
+
+  it("sends nothing once the person has opened what the row names", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
+    await organization().recordActivityEvents({
+      workspaceId, userId: member, events: [{ kind: "read", subject: { kind: "thread", threadId: thread }, through: 0 }],
+    });
+    const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+
+    expect(await deliverPush(pushEnv(), message(`started:${thread}`), send)).toBe(true);
+    expect(send).not.toHaveBeenCalled();
+  });
+});
