@@ -119,6 +119,13 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
     logInfo(env, "push_delivery_skipped", { intent_id: pointer, reason: content.reason });
     return true;
   }
+  // Every kind, mentions and adds included: a switch turned off since this was
+  // queued holds too. Slack and email are not push, so they are left alone.
+  if (!await workspace.pushPreferenceAllows({ workspaceId: id, userId: message.recipientUserId, kind: content.kind,
+    threadId: content.workstreamId, substreamId: content.substreamId })) {
+    logInfo(env, "push_delivery_skipped", { intent_id: pointer, reason: "push_preference_off" });
+    return true;
+  }
   // The badge counts what this person's sidebar lists, and a guest's lists less.
   const member = await workspaceRegionalDatabase(env).prepare(`SELECT access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ?`)
     .bind(message.workspaceId, message.recipientUserId).first<{ access_class: "member" | "guest" }>();

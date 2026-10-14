@@ -1874,12 +1874,58 @@ export type PersonalSystemPrompt = z.infer<typeof PersonalSystemPromptSchema>;
  * write. Not strict: a client must keep reading the preferences it knows when
  * a newer server adds one, and unknown keys are stripped rather than refused.
  */
+/**
+ * What this person is pushed in one Organization, on every device. Each
+ * switch is on unless they turn it off. The two narrower ones only matter
+ * while their kind is on: `newThreadsOutsideMyChannels` off keeps new-thread
+ * pushes to threads in Channels the person has joined, and
+ * `runFinishedOthers` off keeps finish pushes to conversations they started.
+ */
+export const PushPreferencesSchema = z.object({
+  mentions: z.boolean(),
+  added: z.boolean(),
+  newThreads: z.boolean(),
+  newThreadsOutsideMyChannels: z.boolean(),
+  newBreakouts: z.boolean(),
+  runFinished: z.boolean(),
+  runFinishedOthers: z.boolean(),
+});
+export type PushPreferences = z.infer<typeof PushPreferencesSchema>;
+export const DEFAULT_PUSH_PREFERENCES: PushPreferences = {
+  mentions: true,
+  added: true,
+  newThreads: true,
+  newThreadsOutsideMyChannels: true,
+  newBreakouts: true,
+  runFinished: true,
+  runFinishedOthers: true,
+};
 export const MemberPreferencesSchema = z.object({
   /** Whether the transcript shows the agent's work: its thinking and its tool and plugin calls. */
   showAgentWork: z.boolean(),
+  /** Absent from a server older than it: read as every default. */
+  push: PushPreferencesSchema.default(DEFAULT_PUSH_PREFERENCES),
 });
 export type MemberPreferences = z.infer<typeof MemberPreferencesSchema>;
-export const DEFAULT_MEMBER_PREFERENCES: MemberPreferences = { showAgentWork: true };
+export const DEFAULT_MEMBER_PREFERENCES: MemberPreferences = {
+  showAgentWork: true,
+  push: DEFAULT_PUSH_PREFERENCES,
+};
+/**
+ * A save. Each field, and each push switch, is optional so one control saves
+ * only what it changed: everything a save leaves out keeps its stored value,
+ * so a window with a stale copy cannot undo a change made elsewhere, and a
+ * desktop older than the push switches (it saves `showAgentWork` alone)
+ * leaves them as they were. An empty save changes nothing and is refused.
+ */
+export const MemberPreferencesUpdateSchema = z.object({
+  showAgentWork: z.boolean().optional(),
+  push: PushPreferencesSchema.partial().optional(),
+}).refine((value) => value.showAgentWork !== undefined
+  || Object.values(value.push ?? {}).some((switched) => switched !== undefined), {
+  message: "A preference to change is required.",
+});
+export type MemberPreferencesUpdate = z.infer<typeof MemberPreferencesUpdateSchema>;
 /** Each field is optional so one control can save its own; an empty body changes nothing and is refused. */
 export const UpdateWorkspaceRequestSchema = z.object({
   name: WorkspaceNameSchema.optional(),

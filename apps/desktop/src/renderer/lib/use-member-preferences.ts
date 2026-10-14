@@ -2,8 +2,9 @@ import {
   DEFAULT_MEMBER_PREFERENCES,
   MemberPreferencesSchema,
   type MemberPreferences,
+  type MemberPreferencesUpdate,
 } from '@rally/contracts';
-import { useQuery, type DefinedUseQueryResult } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type DefinedUseQueryResult } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
 import type { RallyApi } from './api';
@@ -64,4 +65,39 @@ export function useMemberPreferences(
     }
   }, [answered, query.data, workspaceId]);
   return query;
+}
+
+/**
+ * Save one change. Only the change is sent, so a window holding a stale copy
+ * cannot write it back over a change made on another device; the server keeps
+ * everything the save leaves out. Optimistic: every reader of the key follows
+ * at once, and a refusal puts the copy back. A read in flight is cancelled
+ * first so it cannot land on top of the change.
+ */
+export function useSaveMemberPreferences(
+  api: Pick<RallyApi, 'updateMyPreferences'>,
+  workspaceId: string,
+) {
+  const queryClient = useQueryClient();
+  const queryKey = memberPreferencesQueryKey(workspaceId);
+  return useMutation({
+    mutationFn: (change: MemberPreferencesUpdate) => api.updateMyPreferences(change),
+    onMutate: async (change) => {
+      await queryClient.cancelQueries({ queryKey });
+      const previous = queryClient.getQueryData<MemberPreferences>(queryKey);
+      if (previous) {
+        queryClient.setQueryData<MemberPreferences>(queryKey, {
+          showAgentWork: change.showAgentWork ?? previous.showAgentWork,
+          push: { ...previous.push, ...Object.fromEntries(Object.entries(change.push ?? {})
+            .filter(([, value]) => value !== undefined)) },
+        });
+      }
+      return { previous };
+    },
+    onError: (_error, _change, context) => {
+      if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
+      else void queryClient.invalidateQueries({ queryKey });
+    },
+    onSuccess: (stored) => queryClient.setQueryData(queryKey, stored),
+  });
 }
