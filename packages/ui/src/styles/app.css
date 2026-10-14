@@ -2357,6 +2357,7 @@ pre {
   position: absolute;
   right: 14px;
 }
+.settings-preference-row-nested { padding-left: 34px; }
 .settings-preference-row .settings-row-copy strong { font-size: 13px; font-weight: 400; }
 .settings-preference-row .settings-row-copy small { font-size: 12px; }
 

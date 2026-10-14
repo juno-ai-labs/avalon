@@ -842,6 +842,12 @@ import {
   MemberPreferencesReadRequestSchema,
   MemberPreferencesWriteRequestSchema,
   WORKSPACE_MEMBER_PREFERENCES_MIGRATION,
+  WORKSPACE_MEMBER_PUSH_PREFERENCES_MIGRATION,
+  PushPreferenceCheckRequestSchema,
+  mergePushPreferences,
+  pushPreferenceAllows,
+  storedPushPreferences,
+  type PushPreferenceCheckRequest,
   type MemberPreferencesReadRequest,
   type MemberPreferencesWriteRequest,
 } from "./member-preferences";
@@ -4347,6 +4353,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "which Activity rows have been pushed to whom, and when pushing them began",
   // Started threads and breakouts and finished runs push like mentions; see workspace-activity-push.ts.
   statements: WORKSPACE_ACTIVITY_PUSH_MIGRATION,
+}, {
+  version: 106,
+  description: "which push notifications each person has turned off",
+  // Read when a push is decided and again when it is sent; see member-preferences.ts.
+  statements: WORKSPACE_MEMBER_PUSH_PREFERENCES_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -9487,28 +9498,75 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.readMemberPreferences(request.userId);
   }
 
-  /** Replace this person's display preferences and answer with what was stored. */
+  /**
+   * Save this person's preferences and answer with what is stored. The push
+   * switches merge into what was there, so a save that names none of them
+   * (a desktop older than them) leaves them alone.
+   */
   async saveMemberPreferences(input: MemberPreferencesWriteRequest): Promise<MemberPreferences> {
     await this.initialized;
     const request = parseRpcInput(MemberPreferencesWriteRequestSchema, input, "save_member_preferences");
     this.assertWorkspace(request.workspaceId);
+    const push = mergePushPreferences(this.readMemberPreferences(request.userId).push, request.preferences.push);
     this.state.storage.sql.exec(
-      `INSERT INTO member_preferences (user_id, show_agent_work, updated_at) VALUES (?, ?, ?)
+      `INSERT INTO member_preferences (user_id, show_agent_work, push_json, updated_at) VALUES (?, ?, ?, ?)
        ON CONFLICT (user_id) DO UPDATE SET show_agent_work = excluded.show_agent_work,
-         updated_at = excluded.updated_at`,
+         push_json = excluded.push_json, updated_at = excluded.updated_at`,
       request.userId,
       request.preferences.showAgentWork ? 1 : 0,
+      JSON.stringify(push),
       Date.now(),
     );
-    return request.preferences;
+    return { showAgentWork: request.preferences.showAgentWork, push };
   }
 
   private readMemberPreferences(userId: string): MemberPreferences {
-    const row = this.state.storage.sql.exec<{ show_agent_work: number }>(
-      `SELECT show_agent_work FROM member_preferences WHERE user_id = ?`,
+    const row = this.state.storage.sql.exec<{ show_agent_work: number; push_json: string }>(
+      `SELECT show_agent_work, push_json FROM member_preferences WHERE user_id = ?`,
       userId,
     ).toArray()[0];
-    return row ? { showAgentWork: row.show_agent_work === 1 } : { ...DEFAULT_MEMBER_PREFERENCES };
+    return row
+      ? { showAgentWork: row.show_agent_work === 1, push: storedPushPreferences(row.push_json) }
+      : { ...DEFAULT_MEMBER_PREFERENCES };
+  }
+
+  /** Whether this person's push switches let a push about this conversation through. */
+  async pushPreferenceAllows(input: PushPreferenceCheckRequest): Promise<boolean> {
+    await this.initialized;
+    const request = parseRpcInput(PushPreferenceCheckRequestSchema, input, "push_preference_allows");
+    this.assertWorkspace(request.workspaceId);
+    return this.pushAllowed(request.userId, request.kind, request.threadId, request.substreamId);
+  }
+
+  /**
+   * The push switches, and the two facts their narrower switches need: whether
+   * the thread is placed in a Channel the person has joined, and whether they
+   * started the conversation (the breakout, for a breakout's finish).
+   */
+  private pushAllowed(
+    userId: string,
+    kind: PushPreferenceCheckRequest["kind"],
+    threadId: string,
+    substreamId: string | null,
+  ): boolean {
+    return pushPreferenceAllows(this.readMemberPreferences(userId).push, kind, {
+      inMyChannel: () => this.state.storage.sql.exec(
+        `SELECT 1 FROM space_channel_memberships membership
+           JOIN space_viewers viewer ON viewer.space_id = membership.space_id
+          WHERE membership.workstream_id = ? AND membership.state = 'active'
+            AND viewer.user_id = ? AND viewer.is_participant = 1
+          LIMIT 1`,
+        threadId, userId,
+      ).toArray().length === 1,
+      startedByMe: () => (substreamId === null || substreamId === "0"
+        ? this.state.storage.sql.exec<{ created_by_user_id: string | null }>(
+          `SELECT created_by_user_id FROM channels WHERE workstream_id = ?`, threadId,
+        ).toArray()[0]
+        : this.state.storage.sql.exec<{ created_by_user_id: string | null }>(
+          `SELECT created_by_user_id FROM breakouts WHERE workstream_id = ? AND substream_id = ?`,
+          threadId, substreamId,
+        ).toArray()[0])?.created_by_user_id === userId,
+    });
   }
 
   async spaceSummary(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMutationResult> {
@@ -12355,7 +12413,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         { userId: recipient.userId, accessClass: recipient.accessClass },
         subjects,
         this.threadsOnScreen(recipient.userId),
-      );
+      ).filter((item) => this.pushAllowed(recipient.userId, item.kind as PushPreferenceCheckRequest["kind"],
+        item.threadId, item.breakout?.substreamId ?? null));
       // One person's failed send leaves the others' pushes standing.
       try {
         for (const item of items) {
