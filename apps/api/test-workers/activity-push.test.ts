@@ -26,6 +26,8 @@ import {
   type SubstreamId,
   type UserId,
   type WorkstreamId,
+  DEFAULT_PUSH_PREFERENCES,
+  type PushPreferences,
 } from "@rally/contracts";
 
 import migration from "../../../packages/db/migrations/0107_user_push_devices.sql?raw";
@@ -303,6 +305,72 @@ describe("sending an Activity row's push", () => {
     const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
 
     expect(await deliverPush(pushEnv(), message(`started:${thread}`), send)).toBe(true);
+    expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe("what each person has turned off", () => {
+  const turnOff = (userId: UserId, push: Partial<PushPreferences>) =>
+    organization().saveMemberPreferences({ workspaceId, userId, preferences: { showAgentWork: true, push } });
+
+  it("given a member who turned off new threads, when a thread starts, then they are not pushed it", async () => {
+    await turnOff(member, { newThreads: false });
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
+    expect(await pushed()).toEqual([]);
+  });
+
+  it("given a member who hears only about their own Channels, then a start is pushed only for a thread in a Channel they joined", async () => {
+    await turnOff(member, { newThreadsOutsideMyChannels: false });
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
+    expect(await pushed()).toEqual([]);
+
+    const other = asWorkstreamId("00000000-0000-4000-8000-0000000a00b0");
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO spaces
+        (space_id, title, scope, authority_generation, source_version, payload_hash, revision, created_at, updated_at)
+        VALUES ('space-mine', 'Sales', 'workspace', 1, 1, 'space', 1, 0, 0)`);
+      state.storage.sql.exec(`INSERT INTO space_viewers
+        (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
+        VALUES ('space-mine', ?, 1, 1, 0, '')`, member);
+      state.storage.sql.exec(`INSERT INTO space_channel_memberships
+        (space_id, workstream_id, state, generation, joined_at, updated_at)
+        VALUES ('space-mine', ?, 'active', 1, 0, 0)`, other);
+      state.storage.sql.exec(`INSERT INTO parent_metadata
+        (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
+        VALUES (?, 'workstream', ?, 'global', 1, 0, 0)`, other, workspaceId);
+      state.storage.sql.exec(`INSERT INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at, title)
+        VALUES (?, '0', 'main', ?, 0, 'Main')`, other, owner);
+    });
+    await organization().receiveChildEffects({
+      substreamId: asSubstreamId("0"),
+      envelopes: [envelope(other, asSubstreamId("0"), common("Pipeline")), envelope(other, asSubstreamId("0"), viewer(owner))],
+    });
+    expect(await pushed()).toEqual([{ user_id: member, item_id: `started:${other}` }]);
+  });
+
+  it("given people who hear only about their own threads' finishes, then a finish reaches the one who started it", async () => {
+    await turnOff(member, { runFinishedOthers: false });
+    await turnOff(owner, { runFinishedOthers: false });
+    await publish(asSubstreamId("0"), [common("Q3 plan", { scope: "personal" }), viewer(owner), viewer(member)]);
+    await publish(asSubstreamId("0"), [common("Q3 plan", { scope: "personal", state: "completed",
+      completedAt: new Date().toISOString() })]);
+    const finishes = (await pushed()).filter((row) => row.item_id.startsWith("finished:")).map((row) => row.user_id);
+    expect(finishes).toEqual([owner]);
+  });
+
+  it("given a save from a client that knows no push switch, then the switches already set are kept", async () => {
+    await turnOff(member, { mentions: false });
+    expect((await organization().saveMemberPreferences({ workspaceId, userId: member, preferences: { showAgentWork: false } })).push)
+      .toEqual({ ...DEFAULT_PUSH_PREFERENCES, mentions: false });
+  });
+
+  it("given a switch turned off after the push was queued, when it is sent, then nothing goes out", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
+    await turnOff(member, { newThreads: false });
+    const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+
+    expect(await deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: member,
+      activityItemId: `started:${thread}` }, send)).toBe(true);
     expect(send).not.toHaveBeenCalled();
   });
 });

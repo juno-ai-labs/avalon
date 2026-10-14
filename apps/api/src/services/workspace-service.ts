@@ -1,6 +1,6 @@
 import { promoteWorkspaceGuest } from "./workspace-relationship-service";
 import type { Region } from "@rally/contracts/regions";
-import { MemberPreferencesSchema, PersonalPresentationSchema, type MemberPreferences } from '@rally/contracts';
+import { MemberPreferencesSchema, PersonalPresentationSchema, type MemberPreferencesUpdate } from '@rally/contracts';
 import {
   AssignableMemberRoleSchema,
   asUserId,
@@ -434,7 +434,7 @@ export class WorkspaceService {
     }));
   }
 
-  async updateMyPreferences(preferences: MemberPreferences) {
+  async updateMyPreferences(preferences: MemberPreferencesUpdate) {
     return MemberPreferencesSchema.parse(await (await this.workspaceObject()).saveMemberPreferences({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: this.auth.userId,

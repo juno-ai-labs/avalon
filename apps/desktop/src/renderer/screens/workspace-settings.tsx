@@ -8,7 +8,7 @@ import { PersonalSetup } from './guided-onboarding';
 import { githubAvailabilityLabels, githubRemoteLabels, mcpAuthLabels } from '../settings/choices';
 import { SettingToggle } from '../settings/setting-toggle';
 import { memberPreferencesQueryKey, useMemberPreferences } from '../lib/use-member-preferences';
-import type { MemberPreferences } from '@rally/contracts';
+import type { MemberPreferences, PushPreferences } from '@rally/contracts';
 import { settings, collectSettings, coreSettingsProvider, defineSetting, isSettingAvailable, searchSettings, type SettingSearchResult, type SettingsSearchContext } from '../settings/registry';
 import { SettingCopy, SettingLabel } from '../settings/setting-label';
 import { SettingsSearchResults, useRevealSetting } from '../settings/search-results';
@@ -221,6 +221,62 @@ function PersonalSystemPromptSetting({ api, workspaceId }: { api: RallyApi; work
       {saved.error && <InlineError>{saved.error.message}</InlineError>}
       {save.error && <InlineError>{save.error.message}</InlineError>}
     </div>
+  );
+}
+
+/**
+ * Settings → Notifications: what this person is pushed in this Organization,
+ * on every device. Each switch saves on its own; the two narrower ones are
+ * only live while their kind is on.
+ */
+function PushPreferencesSettings({ api, workspaceId }: { api: RallyApi; workspaceId: string }): React.JSX.Element {
+  const queryClient = useQueryClient();
+  const preferences = useMemberPreferences(api, workspaceId);
+  const queryKey = memberPreferencesQueryKey(workspaceId);
+  const save = useMutation({
+    mutationFn: (next: MemberPreferences) => api.updateMyPreferences(next),
+    // Optimistic, as Show agent work is: the switch moves at once and a
+    // refusal puts it back.
+    onMutate: async (next) => {
+      await queryClient.cancelQueries({ queryKey });
+      const previous = queryClient.getQueryData<MemberPreferences>(queryKey);
+      queryClient.setQueryData(queryKey, next);
+      return { previous };
+    },
+    onError: (_error, _next, context) => {
+      if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
+      else void queryClient.invalidateQueries({ queryKey });
+    },
+    onSuccess: (stored) => queryClient.setQueryData(queryKey, stored),
+  });
+  const push = preferences.data.push;
+  const toggle = (key: keyof PushPreferences, nested = false, enabled = true) => ({
+    checked: push[key],
+    disabled: save.isPending || !enabled,
+    nested,
+    role: 'switch' as const,
+    onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
+      save.mutate({ ...preferences.data, push: { ...push, [key]: event.currentTarget.checked } }),
+  });
+  return (
+    <section className="settings-pane">
+      <div className="settings-pane-heading settings-pane-heading-spaced">
+        <h2>Notify me about</h2>
+        <p>These apply on every device signed in to this Organization.</p>
+      </div>
+      <div className="settings-list-card">
+        <SettingToggle setting={settings.pushMentions} {...toggle('mentions')} />
+        <SettingToggle setting={settings.pushAdded} {...toggle('added')} />
+        <SettingToggle setting={settings.pushNewThreads} {...toggle('newThreads')} />
+        <SettingToggle setting={settings.pushNewThreadsOutsideMyChannels}
+          {...toggle('newThreadsOutsideMyChannels', true, push.newThreads)} />
+        <SettingToggle setting={settings.pushNewBreakouts} {...toggle('newBreakouts')} />
+        <SettingToggle setting={settings.pushRunFinished} {...toggle('runFinished')} />
+        <SettingToggle setting={settings.pushRunFinishedOthers}
+          {...toggle('runFinishedOthers', true, push.runFinished)} />
+      </div>
+      {save.error && <InlineError>{save.error.message}</InlineError>}
+    </section>
   );
 }
 
@@ -1597,6 +1653,9 @@ export function WorkspaceSettingsScreen({
                 </div>
                 {updatePushNotifications.error && <InlineError>{updatePushNotifications.error.message}</InlineError>}
               </section>
+            )}
+            {activeSection === 'notifications' && featureFlags.data?.pushNotificationsEnabled && api && (
+              <PushPreferencesSettings api={api} workspaceId={workspace.id} />
             )}
             {activeSection === 'digest'  && api && digestSettingsAvailable && (
               <DigestSettings
