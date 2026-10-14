@@ -64,6 +64,8 @@ aim above them.
 - The first frame must already be readable: it is the thumbnail when autoplay
   is off. `hookCard({ tin: 0 })` draws the first card fully at t = 0.
 - Logo on screen from frame 0 (`brandBug`), then the end card or the final hold.
+  Placed top right, the logo carries `rallywith.ai` under it; `brandBug` adds
+  it there on its own.
 - If the cut runs long, make the film longer rather than squeezing reads. The
   team prefers a 16 to 18s ad that reads to a 15s one that does not.
 
