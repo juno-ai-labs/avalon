@@ -128,11 +128,19 @@ function windowFrame(ctx, x, y, w, h, title) {
   [0, 1, 2].forEach(i => { ctx.beginPath(); ctx.arc(x + 28 + i * 22, y + 28, 7, 0, 7); ctx.fillStyle = 'rgba(255,255,255,.18)'; ctx.fill(); });
   if (title) { rr(ctx, x + 104, y + 12, w - 132, 32, 16); ctx.fillStyle = 'rgba(255,255,255,.06)'; ctx.fill(); text(ctx, title, x + 124, y + 35, F.ui(500, 20), UI.muted); }
 }
-/** Small "rally" lockup for a corner. Keep it on screen from the first frame of an ad. */
-function brandBug(ctx, alpha = 1, x = 92, y = 92, size = 52) {
+/**
+ * Small "rally" lockup for a corner. Keep it on screen from the first frame of an ad.
+ * Placed top right, it carries the URL under it, right-aligned to the wordmark.
+ */
+function brandBug(ctx, alpha = 1, x = 92, y = 92, size = 52, url = 'rallywith.ai') {
   if (alpha <= 0) return;
   ctx.save(); ctx.globalAlpha = alpha;
   drawMark(ctx, x, y, size, 1, C.volt, 18);
-  text(ctx, 'rally', x + size * .65, y + size * .27, F.disp(750, size * .85), C.paper, 'left', -size * .042);
+  const wf = F.disp(750, size * .85), wx = x + size * .65, wy = y + size * .27;
+  text(ctx, 'rally', wx, wy, wf, C.paper, 'left', -size * .042);
+  if (url && x > W / 2 && y < H / 2) {
+    const right = wx + measure(ctx, 'rally', wf, -size * .042);
+    text(ctx, url, right, wy + size * .72, F.ui(600, size * .4), C.muted, 'right');
+  }
   ctx.restore();
 }
