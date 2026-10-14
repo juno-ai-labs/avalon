@@ -71,6 +71,7 @@ start((ctx, t) => {                                        // draw instant t (se
   chatStack(ctx, APP, MSGS, t);                             // bottom-anchored, scrolls by itself
   if (t >= 11.3) endCard(ctx, t - 11.3);                     // needs about 3.5s
   brandBug(ctx);                                            // logo from frame 0
+  // brandBug(ctx, 1, W - 220, 92);                        // top right: adds rallywith.ai under it
 });
 ```
 
