@@ -170,9 +170,14 @@ that works the first time.
    a stateless site may read them too.)
 
 7. **Design the page for where it actually lives.** The primary viewing
-   surface is a narrow pane in Rally's right rail (roughly phone-width),
-   then a pop-out window, then a browser tab — so build narrow-first
-   responsive layouts that also breathe at desktop width. The page's
+   surface is a pane beside the conversation, often 400–600 CSS pixels
+   wide, then a pop-out window, then a browser tab. Write the base
+   stylesheet for a 400px-wide viewport and add \`min-width\` media
+   queries for wider layouts, never the reverse: a desktop layout with
+   \`max-width\` overrides is the one that breaks in the pane. After
+   publishing, call \`preview_site\` with the url the publish returned and
+   look at the picture; fix anything cramped, clipped, or one word per
+   line, republish, and check again before you announce the site. The page's
    own UI carries every interaction: never \`alert()\`, \`confirm()\`, or
    \`prompt()\` (build inline messages and confirmations instead), and
    never a Print, Save, or Export button — saving and exporting are the
@@ -218,6 +223,14 @@ that works the first time.
   renders without it, silently and wrongly. Do instead: vendor the file
   into the directory and reference it relatively. Inline \`<script>\` and
   \`<style>\` blocks are fine, as are \`data:\` images.
+- **Hiding a grid item without removing its column.** \`display: none\`
+  takes the element out of the grid but leaves its track, so the next
+  item moves into it. Hide a 64px side rail below a breakpoint while
+  keeping \`grid-template-columns: 0 1fr\`, and the main content lands in
+  the zero-width column and renders one word per line. Do instead: when
+  you hide a column's item, change \`grid-template-columns\` in the same
+  rule so the track goes too (\`1fr\`), or place items with
+  \`grid-column\` so they do not depend on what came before them.
 - **A server for a public static page.** An \`index.js\` that only ever
   falls through to \`env.ASSETS.fetch(request)\` is overhead with no
   behavior. Do instead: delete it; \`index.html\` alone serves faster

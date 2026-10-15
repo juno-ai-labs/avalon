@@ -6088,7 +6088,12 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   width: var(--rail-slot);
 }
 .rail-surface.is-leaving .rail-surface-content { animation: rail-content-close 160ms ease forwards; }
-.rail-resizer { bottom: 0; justify-content: flex-start; right: calc(var(--rail-slot) - 10px); top: 0; width: 10px; }
+/* The target reaches mostly over the conversation, not into the panel: a live
+   site composites a native view over the panel's body, which takes the
+   pointer from anything drawn under it. A target inside the panel's edge was
+   grabbable only along the header, a strip a few pixels wide. The divider
+   line stays on the panel's edge. */
+.rail-resizer { bottom: 0; justify-content: flex-start; padding-left: 10px; right: calc(var(--rail-slot) - 4px); top: 0; width: 14px; }
 .rail-resizer > span {
   align-self: stretch;
   background: color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent);

@@ -419,7 +419,8 @@ function summarizeCommand(input: RunCommandInput, output: TerminalCommandOutput)
   return `${output.state === "completed" ? "Completed" : "Finished"} ${label}`;
 }
 
-export function createTerminalToolExecutors(runtime: TerminalRuntime): TerminalToolExecutors {
+/** Every Terminal executor that runs through the sandbox runtime; `preview_site` does not. */
+export function createTerminalToolExecutors(runtime: TerminalRuntime): Omit<TerminalToolExecutors, "preview_site"> {
   return {
     async read_file(rawInput, context): Promise<HarnessToolResult> {
       const input: ReadFileInput = TerminalArgumentSchemas.read_file.parse(rawInput);
