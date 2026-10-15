@@ -21,8 +21,9 @@ browser.
 
 Rally can also reach you. When someone mentions you or adds you to a Thread,
 Rally tells you, on your Mac, on your iPhone or in Slack. If you would rather
-not hear about everything the moment it happens, Rally can write you a digest
-instead: a short summary of what moved, on the days and at the times you pick.
+not hear about everything the moment it happens, Rally can send you a digest
+instead: whatever is still unread in your Activity, at the start and end of
+your day.
 
 The thing to hold on to is that these are all doors into the same rooms. A
 thread you start in Slack becomes a Thread in Rally. A reply you type on your

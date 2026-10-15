@@ -173,14 +173,12 @@ emits is trusted either — each surface escapes for its own output, and
 ### The other half
 
 `RESPONSE_FORMATTING_POLICY` is a section in the work-stream system prompt —
-which every work-stream run carries, digest runs included — and in both meeting
+which every work-stream run carries — and in both meeting
 prompts. It states that written answers are GitHub-flavoured Markdown while an
 elicitation's question is a plain-text label, that TeX and math delimiters are
 never to be written, that a literal backslash belongs only in code formatting,
-and that a dollar sign in ordinary prose is plain text. It is deliberately not
-repeated in the digest brief: a second copy at the user-message layer competed
-with the brief's own output shape, and `prompts.test.ts` pins the TeX line so a
-tidy-up cannot silently delete it.
+and that a dollar sign in ordinary prose is plain text. `prompts.test.ts` pins
+the TeX line so a tidy-up cannot silently delete it.
 
 A prompt is guidance, not a guarantee, which is why the repair exists at all. But
 it is the only half that also fixes the copy of the text that is *stored* —

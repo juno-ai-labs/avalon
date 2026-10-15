@@ -40,7 +40,7 @@ migrations and the RPC schemas. `personalSystemPromptFor` in
 - **Only a member's own act carries it.** The principal must be a user, and the
   run's reason must be in `PERSONAL_SYSTEM_PROMPT_REASONS`: a message, an
   elicitation answer or a retry, in Rally or from a linked Slack account.
-  Digests, wake-ups, connector triggers and inbound email all run as a user
+  Wake-ups, connector triggers and inbound email all run as a user
   without that user acting, so the list allows rather than denies. Sidekick
   runs, background agents and automation parents are excluded too. Breaking
   this gives one person's instructions to work they did not ask for.

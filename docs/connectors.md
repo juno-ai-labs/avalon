@@ -424,7 +424,7 @@ request per member: private conversations may legitimately reach the connector's
 
 ### Delivering a digest to a person
 
-A connector that can hand a finished digest to a specific person declares `userDelivery` in its manifest: the `targetType` stored on the digest destination, the label and one-line description the digest settings screen shows, and `requiresPersonalIdentityLink`. Nothing about which providers can deliver is written into the API or the client — declaring this is what puts a connection in the digest's destination list, and a connector that declares nothing is never offered. The scheduled digest ([`digests.md`](digests.md)) is the one consumer. It used to serve personal automation results as well; automations no longer have destinations of their own — a run sends its result with the connector tools it holds, inside the loop — so a connector that starts declaring a surface becomes a digest destination without the digest changing.
+A connector that can hand a finished digest to a specific person declares `userDelivery` in its manifest: the `targetType` stored on the digest destination, the label and one-line description the Daily digest's **Send to** choice shows, and `requiresPersonalIdentityLink`. Nothing about which providers can deliver is written into the API or the client — declaring this is what puts a connection in the digest's destination list, and a connector that declares nothing is never offered. The scheduled digest ([`digests.md`](digests.md)) is the one consumer. It used to serve personal automation results as well; automations no longer have destinations of their own — a run sends its result with the connector tools it holds, inside the loop — so a connector that starts declaring a surface becomes a digest destination without the digest changing.
 
 `requiresPersonalIdentityLink` marks the providers whose installation is workspace-wide. A team-wide bot addresses nobody on its own, so such a connection becomes a destination only for a user who has linked their own provider identity to it. `apps/api/src/services/user-delivery.ts` answers that question: it maps each delivery target type to the table recording "this Rally user is this provider user on this connection" — `slack_user_links` for `slack_agent_dm` — and is the one place a new linked provider is registered. A target type absent from that map needs no link, because its connection already belongs to one person. The connections endpoint resolves `userDelivery` per requesting user, so a disabled connection, an unlinked installation, or a connector Rally does not register in this region is simply not a destination. A connection merely marked `needs_reconnect` stays a destination: the send is what discovers whether the credential still works.
 
@@ -1060,6 +1060,13 @@ catalog, in
 
 #### Declaring what a digest may read
 
+**Nothing reads this declaration today.** The digest lists what is unread in a
+person's Activity tab (mentions, additions, thread and breakout starts, finished
+runs), and none of those are connector events, so connector activity does not
+reach the digest. The declaration is still required and still written to the
+log, kept for a future surface that tells somebody about connector activity;
+the rules below are what that surface would read.
+
 **Every activity type a connector declares must say whether a person should be told about it in a digest, and there is no default.** `ConnectorActivityTriggerDescriptor` carries a required `digestible`, and `defineConnectorActivityTriggers` takes the event types as two lists rather than one:
 
 ```ts
@@ -1083,7 +1090,7 @@ with the reason, is in [`connector-digestibility.md`](connector-digestibility.md
 
 A **polling activity stream** declares `digestible` too, and it is required for the same reason: a stream is the granularity a connector author actually thinks in — Gmail is somebody's day, Drive's change feed is a file watcher — and a stream added later has to state which it is. **A stream can only ever withhold.** An activity is digestible when its event type says so *and* the stream that produced it agrees, so the two declarations cannot contradict each other into somebody's inbox, and a stream saying yes grants nothing on its own. `pollCheckpointedActivityStreams` stamps the withholding onto every activity a non-digestible stream returns, at the one place all polled activity passes through, so an adapter can neither forget to mark its output nor grant itself a digest it was not given.
 
-The manifest is read when the activity log is written, in `activityIsDigestible`, keyed on the event type — the one thing an activity carries all the way from the provider to the log. **Everything unknown is withheld**: a connector this region does not register, an event type a manifest has dropped, an activity older than the declaration. None of those are somebody confirming that a person wants this in their inbox, and being wrong costs one way only. What happens to the answer afterwards — the `activity_events.digestible` column, the cursor that steps over what was withheld — belongs to [`digests.md`](digests.md#digestible-what-a-person-should-be-told).
+The manifest is read when the activity log is written, in `activityIsDigestible`, keyed on the event type — the one thing an activity carries all the way from the provider to the log. **Everything unknown is withheld**: a connector this region does not register, an event type a manifest has dropped, an activity older than the declaration. None of those are somebody confirming that a person wants this in their inbox, and being wrong costs one way only. The answer is stored in `workspace_activity_events.digestible`, which nothing reads today; [`digests.md`](digests.md#digestible-what-a-person-should-be-told) owns it.
 
 #### Dropping events that say nothing new
 
@@ -1339,7 +1346,7 @@ It does not own:
 | The retired Suggested context feature | [`contextual-routing.md`](contextual-routing.md) |
 | Which unclaimed activity becomes a home-screen suggestion | [`suggested-work.md`](suggested-work.md) |
 | One row per declared activity type, with the reason | [`connector-digestibility.md`](connector-digestibility.md) |
-| What happens to `digestible` after the log is written | [`digests.md`](digests.md#digestible-what-a-person-should-be-told) |
+| What `digestible` is kept for, now that nothing reads it | [`digests.md`](digests.md#digestible-what-a-person-should-be-told) |
 | The registrations, secrets, and the zero-copy definition | [`provider-apps.md`](provider-apps.md) |
 | Slack's product surface and its scope inventory | [`slack-integration.md`](slack-integration.md), [`slack-permissions.md`](slack-permissions.md) |
 | Linear's protocol and native-agent gate | [`linear-integration.md`](linear-integration.md) |
@@ -1409,9 +1416,9 @@ now guards it.
   settlement is lease-fenced. A caught processing failure settles the event
   `failed` before requesting an individual retry; an exhausted delivery remains
   failed and enters the regional activities DLQ.
-- **Everything unknown is withheld from a digest** — a connector this region does
+- **Everything unknown is marked not digestible** — a connector this region does
   not register, an event type a manifest has dropped, an activity older than the
-  declaration. None of those are somebody confirming a person wants this in their
+  declaration. Nothing reads the mark today, but a future reader inherits it. None of those are somebody confirming a person wants this in their
   inbox, and being wrong costs one way only.
 - **A stream can only ever withhold.** An activity is digestible when its event type
   says so *and* its stream agrees; a stream saying yes grants nothing on its own.

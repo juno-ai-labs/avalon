@@ -356,7 +356,7 @@ did. Each id the caller passes brings its facts with it:
 | `workstreamCreatedByUserId` | string | Who created it | `workstreamId` |
 | `workstreamCreatorEmailDomain` | string | That person's email domain | `workstreamId` |
 | `workstreamFromOpportunity` | boolean | Whether it was started from a suggested work item | `workstreamId` |
-| `workstreamIsSystem` | boolean | Whether it is machinery (`system_kind`), such as a digest's work stream | `workstreamId` |
+| `workstreamIsSystem` | boolean | Whether it is machinery (`system_kind`), such as a work stream an older digest created | `workstreamId` |
 
 An attribute whose fact is unknown is **omitted rather than sent empty**, so a
 rule can never match a placeholder. The consequence worth knowing: a rule on an
@@ -496,7 +496,7 @@ behave:
 | `developer-settings` | boolean | `false` | Whether Application → Developer exists on this device |
 | `suggested-work-enabled` | boolean | `false` | Whether Electron shows Suggested Work surfaces |
 | `live-artifacts-enabled` | boolean | `false` | Whether Electron shows live-artifact surfaces — the rail's site detail and preview pane, the Data view, and the artifact window. Presentation only: an artifact's authorization is structural, so a URL somebody already holds keeps working through its session checks whether or not this is on. See [`live-web-artifacts.md`](live-web-artifacts.md) |
-| `digests-enabled` | boolean | `true` | Whether Electron shows the Digest settings section — resolved through `digest-flags.ts`, the same function that gates delivery; see [`digests.md`](digests.md#the-run) |
+| `digests-enabled` | boolean | `true` | Whether Electron shows the Daily digest group in Settings → Notifications, resolved through `digest-flags.ts`, the same function that gates delivery; see [`digests.md`](digests.md#an-occurrence) |
 | `multiple-workspaces-enabled` | boolean | `false` | Whether Electron shows workspace switching, invitations, creation, and background attention |
 
 `GET /feature-flags` serves them all as one object — `{ "developerSettings":
@@ -530,11 +530,11 @@ multiple-workspaces flag off hides the account-menu affordances; it does not
 collapse memberships or discard stored workspace credentials.
 
 **`digestsEnabled` breaks that pattern on purpose.** As a client field it is
-presentation-only exactly like the other six — Electron shows or hides a
-settings section, nothing else changes. But the Flagship flag behind it,
+presentation-only exactly like the other six — Electron shows or hides the
+Daily digest group in Settings → Notifications, nothing else changes. But the Flagship flag behind it,
 `digests-enabled`, is not merely a rollout control: `fireDigestSchedule`
 reads the identical flag to decide whether to actually send. A hidden
-Suggested Work surface sits above a live API; a hidden Digest section sits
+Suggested Work surface sits above a live API; a hidden Daily digest group sits
 above delivery that has genuinely stopped. This is one evaluation read from
 two places, not a presentation flag that happens to share a name with a
 kill switch elsewhere.
@@ -708,7 +708,7 @@ what they do with the model they are handed:
 
 | For | Read |
 | --- | --- |
-| Why digests need a kill switch, and exactly where it is checked | [`digests.md`](digests.md#the-run) |
+| Why digests need a kill switch, and exactly where it is checked | [`digests.md`](digests.md#an-occurrence) |
 | The run loop, the route plan's failure policy, the inference ledger | [`agent-harness.md`](agent-harness.md) |
 | The `model_override` column and where it is copied | [`data-model.md`](data-model.md) |
 | The cadence's other half, and what a snapshot travels with | [`meeting-notes.md`](meeting-notes.md) |
@@ -843,7 +843,7 @@ defaults and does not overwrite an existing definition. Every product flag
 defaults off except `push-notifications-enabled`, which defaults **on** for
 everyone from launch, and `digests-enabled`, which defaults **on** — a digest already sends by default
 for every existing person, so provisioning it must not be the thing that
-silently stops delivery; see [`digests.md`](digests.md#the-run). Once created,
+silently stops delivery; see [`digests.md`](digests.md#an-occurrence). Once created,
 edit product flags and each model flag's current default route through Ace
 rather than the Flagship dashboard: Flagship's
 documented API has no outbound change webhook, so only Ace performs the Queue
@@ -951,7 +951,7 @@ of how `developer-settings` reaches staff — either in Ace's editor or with
 `wrangler flagship flags update <APP_ID> digests-enabled --add-rule "serve=off; when=workspaceOwnerEmailDomain equals example.com"`.
 `wrangler flagship flags changelog <APP_ID> digests-enabled` is the audit trail
 for who turned digests off and when regardless of which surface made the
-change. See [`digests.md`](digests.md#the-run) for why this flag exists and
+change. See [`digests.md`](digests.md#an-occurrence) for why this flag exists and
 why it fails open rather than closed.
 
 ### Changing an agent's models
@@ -1588,7 +1588,7 @@ effect the same way a `hypersight-enabled` save always did.
 already named, reading a new `digests-enabled` boolean. It fails open, the
 same direction as the model flags and for the same reason. It is Ace's fifth
 managed flag — the first that is not presentation-only and the first Ace
-provisions on rather than off. `docs/digests.md#the-run` and `docs/ace.md`
+provisions on rather than off. `docs/digests.md#an-occurrence` and `docs/ace.md`
 carry the full rationale; this document's tables and provisioning walkthrough
 now include it alongside the other three resolvers.
 
