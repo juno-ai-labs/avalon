@@ -265,6 +265,9 @@ function OpenWorkstreamScreen(): React.JSX.Element {
           originTurnId: live?.originTurnId ?? item.originTurnId ?? null,
           ...(live?.appearance ?? item.appearance ? { appearance: live?.appearance ?? item.appearance } : {}),
           ...(live || item.needsAttention === undefined ? {} : { needsAttention: item.needsAttention }),
+          // Until the private list answers, the author and dates above are
+          // stand-ins; a byline must not name them.
+          ...(live ? {} : { standIn: true as const }),
         };
       })
     : children.data?.privateChildren;
@@ -654,6 +657,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     originTurnId: child.originTurnId ?? null,
     lastActivityAt: ('lastActivityAt' in child ? child.lastActivityAt : undefined) ?? child.updatedAt,
     createdAt: child.createdAt,
+    createdByUserId: 'standIn' in child ? undefined : child.createdByUserId,
     unreadCount: 'unreadCount' in child ? child.unreadCount : undefined,
     youAreMentioned: 'youAreMentioned' in child ? child.youAreMentioned : undefined,
     unseen: 'unseen' in child ? child.unseen : undefined,

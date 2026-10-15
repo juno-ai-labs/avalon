@@ -2,7 +2,6 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  BreakoutChipRow,
   BreakoutTickBar,
   breakoutHasActivity,
   breakoutNewsLabel,
@@ -124,35 +123,3 @@ describe('BreakoutTickBar', () => {
   });
 });
 
-describe('BreakoutChipRow', () => {
-  it('presses the open chip, says what is new, and opens the one clicked', () => {
-    const onOpen = vi.fn();
-    render(<BreakoutChipRow
-      breakouts={[mark('one', { title: 'Pricing', unreadCount: 1 }), mark('two', { title: 'Launch' })]}
-      onOpen={onOpen}
-      openSubstreamId="two"
-    />);
-
-    const row = screen.getByRole('group', { name: 'Breakouts from this message' });
-    const [pricing, launch] = within(row).getAllByRole('button');
-    expect(pricing).toHaveTextContent('Pricing· 1 new');
-    expect(pricing).toHaveAttribute('aria-pressed', 'false');
-    expect(launch).toHaveTextContent('Launch· Open');
-    expect(launch).toHaveAttribute('aria-pressed', 'true');
-
-    fireEvent.click(pricing!);
-    expect(onOpen).toHaveBeenCalledWith('one');
-  });
-
-  it('badges a Breakout waiting on an answer, open or not', () => {
-    render(<BreakoutChipRow
-      breakouts={[mark('one', { title: 'Rain', needsInput: true }), mark('two', { title: 'Snow', needsInput: true })]}
-      onOpen={vi.fn()}
-      openSubstreamId="two"
-    />);
-
-    const [rain, snow] = within(screen.getByRole('group', { name: 'Breakouts from this message' })).getAllByRole('button');
-    expect(rain).toHaveAccessibleName('Rain, Needs input');
-    expect(snow).toHaveAccessibleName('Snow, Needs input, Open');
-  });
-});

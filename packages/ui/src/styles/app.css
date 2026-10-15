@@ -8215,9 +8215,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .title-menu-sidekicks .workstream-context-row .sidebar-row-icon > svg { height: 15px; width: 15px; }
 
 /* ── Breakouts in the Channel ──────────────────────────────────────────────
-   Chips under the message a Breakout started from, and the tick bar down the
-   Channel's leading edge. */
-.breakout-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+   Cards under the message a Breakout started from (`.conversation-card`), and
+   the tick bar down the Channel's leading edge. */
+.breakout-card-list { align-items: flex-end; display: flex; flex-direction: column; gap: 28px; margin: 14px 0 6px; padding: 0 10px; }
 /* Under Rally's newest reply, the breakout action as a quiet line instead of
    a hover action: the likeliest place to branch, said without a button's weight. */
 .message-start-breakout-link {
@@ -8257,9 +8257,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .breakout-chip:hover { background: var(--av-sys-color-surface-raised-hover); }
 .breakout-chip-icon { color: var(--av-sys-color-text-muted); flex: none; }
 .breakout-chip-title { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.breakout-chip-news { color: var(--av-sys-color-workstream-news); flex: none; font-weight: 600; }
-/* A Breakout waiting on an answer, in the sidebar badge's colours. */
-.breakout-chip-badge {
+/* A conversation waiting on an answer, in the sidebar badge's colours. */
+.conversation-card-badge {
   background: var(--av-sys-color-danger-base);
   border-radius: var(--av-sys-size-radius-pill);
   color: var(--av-sys-color-danger-on);
@@ -8269,9 +8268,6 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   line-height: 18px;
   padding: 0 7px;
 }
-.breakout-chip-open { flex: none; font-weight: 600; }
-.breakout-chip.is-open { background: var(--av-sys-color-accent-wash); box-shadow: 0 0 0 1.5px var(--av-sys-color-accent-base); color: var(--av-sys-color-accent-strong); }
-.breakout-chip.is-open .breakout-chip-icon { color: var(--av-sys-color-accent-base); }
 
 /* The top of a Breakout: the Channel message it started from as a card, and
    up to three before it, each a step fainter the further back it is, so the
@@ -8779,9 +8775,11 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .channel-feed-day::before,
 .channel-feed-day::after { background: var(--av-sys-color-border-default); content: ""; flex: 1; height: 1px; }
 .channel-feed-item { display: flex; justify-content: flex-end; }
-/* A thread is its title, summary and byline set to the trailing side, with
-   its mark beside them. The whole entry is the button that opens it. */
-.channel-feed-thread {
+/* A conversation as a feed entry (`ConversationCard`): title, summary and
+   byline, with its mark beside them. The whole entry is the button that opens
+   it. Threads and Breakouts both sit on the trailing side: a person started
+   them. */
+.conversation-card {
   align-items: flex-start;
   background: transparent;
   border: 0;
@@ -8796,15 +8794,15 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   padding: 8px 10px;
   text-align: right;
 }
-.channel-feed-thread:hover,
-.channel-feed-thread.is-open { background: var(--av-sys-color-state-hover); }
-.channel-feed-thread:focus-visible { box-shadow: var(--av-sys-focus-ring-default); outline: none; }
-.channel-feed-body { align-items: flex-end; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-.channel-feed-title { align-items: center; color: var(--av-sys-color-text-default); display: flex; font-size: 15.5px; font-weight: 650; gap: 6px; max-width: 100%; }
-.channel-feed-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.channel-feed-caret { color: var(--av-sys-color-text-subtle); flex: none; }
-.channel-feed-news { color: var(--av-sys-color-workstream-news); flex: none; font-size: 12.5px; font-weight: 600; }
-.channel-feed-summary {
+.conversation-card:hover,
+.conversation-card.is-open { background: var(--av-sys-color-state-hover); }
+.conversation-card:focus-visible { box-shadow: var(--av-sys-focus-ring-default); outline: none; }
+.conversation-card-body { align-items: flex-end; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.conversation-card-title { align-items: center; color: var(--av-sys-color-text-default); display: flex; font-size: 15.5px; font-weight: 650; gap: 6px; max-width: 100%; }
+.conversation-card-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-card-caret { color: var(--av-sys-color-text-subtle); flex: none; }
+.conversation-card-news { color: var(--av-sys-color-workstream-news); flex: none; font-size: 12.5px; font-weight: 600; }
+.conversation-card-summary {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   color: var(--av-sys-color-text-muted);
@@ -8819,14 +8817,17 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 /* The summary is drawn by the message renderer, but reads as the card's own
    line: its size and ink, and no paragraph or heading spacing to spend the
    clamp on. */
-.channel-feed-summary .markdown-body { --markdown-ink: currentColor; --markdown-ink-strong: currentColor; color: inherit; font-size: inherit; line-height: inherit; }
-.channel-feed-summary .markdown-body :is(p, h1, h2, h3, h4, h5, h6) { font-size: inherit; margin: 0; }
-.channel-feed-summary .markdown-body :is(ul, ol, blockquote, pre, table, hr, .markdown-code-block) { margin: 0; }
-.channel-feed-summary .markdown-body :is(ul, ol, li, blockquote) { border: 0; display: block; list-style: none; padding: 0; text-align: inherit; }
+.conversation-card-summary .markdown-body { --markdown-ink: currentColor; --markdown-ink-strong: currentColor; color: inherit; font-size: inherit; line-height: inherit; }
+.conversation-card-summary .markdown-body :is(p, h1, h2, h3, h4, h5, h6) { font-size: inherit; margin: 0; }
+.conversation-card-summary .markdown-body :is(ul, ol, blockquote, pre, table, hr, .markdown-code-block) { margin: 0; }
+.conversation-card-summary .markdown-body :is(ul, ol, li, blockquote) { border: 0; display: block; list-style: none; padding: 0; text-align: inherit; }
+.conversation-card-meta,
 .channel-feed-meta { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: 12px; gap: 6px; margin-top: 2px; }
+.conversation-card-meta .avatar,
 .channel-feed-meta .avatar { height: 18px; margin-right: 2px; width: 18px; }
+.conversation-card-meta .avatar-fallback,
 .channel-feed-meta .avatar-fallback { font-size: 8px; }
-.channel-feed-mark {
+.conversation-card-mark {
   background: var(--av-sys-color-surface-sunken);
   border-radius: 50%;
   color: var(--av-sys-color-text-muted);
