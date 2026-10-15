@@ -11,11 +11,10 @@ without maintaining a second list of section keywords.
 | `apps/desktop/src/renderer/settings/registry.ts` | Definitions, availability contract, provider collection and matching. |
 | `apps/desktop/src/renderer/settings/setting-label.tsx` | Shared labels, descriptions and inert focus targets. |
 | `apps/desktop/src/renderer/settings/setting-toggle.tsx` | Registry-backed switch presentation with existing state and mutation bindings. |
-| `apps/desktop/src/renderer/settings/choices.ts` | Digest choices and value-keyed permission labels shared by controls and search. |
+| `apps/desktop/src/renderer/settings/choices.ts` | Value-keyed permission labels shared by controls and search. |
 | `apps/desktop/src/renderer/components/primitives.tsx` | `SegmentedControl`, the one exclusive-choice strip the appearance preference and the connections filter both draw. |
 | `packages/ui/src/styles/app.css` | Settings layout and reveal treatment; appearance ownership is in [theming](theming.md). |
 | `apps/desktop/src/common/settings.ts` | Section identities shared with the desktop window. |
-| `apps/desktop/src/renderer/settings/digest-provider.ts` | Connection-backed digest destination definitions. |
 | `apps/desktop/src/renderer/settings/search-results.tsx` | Result navigation and lazy target revelation. |
 | `apps/desktop/src/renderer/components/sidebar-search.tsx` | Search control shared by the main and Settings sidebars. |
 | `apps/desktop/src/renderer/components/organization-usage.tsx` | The Usage section of the Organization pane and the Organization menu's usage line. |
@@ -48,8 +47,7 @@ entries from the definitions, leaving out those with a `connectionKind`.
 Connection providers derive entries from the already-authorized connection
 snapshot: each installed connection is an entry for its own page, its
 `connectionKind` definitions are repeated once per matching connection, both
-retaining the connection ID, and digest
-destinations use the same delivery capability that makes their control visible.
+retaining the connection ID.
 The connector catalogue supplies setup entry points even before connecting.
 
 Typing searches labels, descriptions, section names, options, aliases and
@@ -75,7 +73,12 @@ matches. A `connection` request with no live connection, including a deep link,
 lands on Connections once the list has loaded.
 
 A section's id is its deep link, so it outlives the label. The **Security** page
-keeps the id `internet-access` from when it was called Internet access. Search
+keeps the id `internet-access` from when it was called Internet access. A page
+that is folded into another keeps its old id as an alias: the digest settings are
+the **Daily digest** group inside `notifications` (**Start of day**, **End of
+day**, **Send to**, **Days**), and `parseDesktopSettingsSection` still reads
+`digest` as `notifications`, because digest emails already sent and older builds
+link to it. Search
 indexes the id, not the label, so a renamed page carries its visible name as an
 alias on its definitions.
 
@@ -160,7 +163,7 @@ ranking, availability, instance identity and replay deduplication.
 navigation and interaction cancellation, and action-button focus exclusion.
 `workspace-settings.test.tsx` searches every core definition, waits for its real
 rendered destination, and asserts that navigation does not execute consequential
-actions. The existing settings, digest, theme and icon behavior tests continue
+actions. The existing settings, theme and icon behavior tests continue
 to cover persistence bindings. Use the desktop renderer Vitest lane; backend
 services and Electron IPC are existing test doubles, not assertions about live
 authorization. Real Electron checks cover positioning, keyboard navigation,

@@ -471,11 +471,11 @@ covers the mechanism, which WorkspaceDO and SubstreamAgent share.
 
 A person's scheduled digest is one `schedules` row per delivery time, because a
 single RRULE multiplies `BYHOUR` by `BYMINUTE` and so cannot carry an arbitrary
-list of times. When one fires, the workspace freezes a window over the first-party
-`activity_events` log, claims the occurrence, and starts an ordinary run in a
-hidden `system_kind` work stream; what the run writes is then delivered by email or
-by any connector declaring a personal delivery surface. See
-[`digests.md`](digests.md).
+list of times. When one fires, the workspace reads what is still unread in the
+person's Activity tab, renders it as one section per kind, claims the occurrence
+with that text, and sends it by email, to the person's Personal Channel, or through
+any connector declaring a personal delivery surface. No model runs. Nothing unread
+means nothing is sent. See [`digests.md`](digests.md#the-digest).
 
 A work stream can schedule its own wake-up through `schedule_wakeup`,
 giving a relative duration or an exact ISO-8601 instant plus the prompt to act on.

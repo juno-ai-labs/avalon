@@ -76,7 +76,7 @@ interface WorkstreamSlackDelivery {
   recipientEmail: string;
   /** Seeds the per-chunk `client_msg_id`, so a retry posts the same message. */
   sourceId: string;
-  kind: "mention" | "participant_added";
+  kind: "mention" | "participant_added" | "activity";
   chunks: (target: string, maximum: number) => string[];
 }
 
@@ -123,6 +123,48 @@ export async function sendWorkstreamParticipantAddedSlack(
     sourceId: input.sourceId,
     kind: "participant_added",
     chunks: (target, maximum) => slackParticipantAddedChunks(input, target, maximum),
+  }, input.workstreamId, request, sleep);
+}
+
+/**
+ * Any other Activity row, for a person who chose Slack for its kind: a thread
+ * or breakout somebody started, or a run Rally finished. Worded as the
+ * sidebar and the push word it.
+ */
+export interface WorkstreamSlackActivity {
+  /** The Activity row's own id, so a retried send is one message. */
+  itemId: string;
+  recipientUserId: string;
+  recipientEmail: string;
+  workspaceId: string;
+  workspaceName: string;
+  workstreamId: string;
+  substreamId?: string;
+  title: string;
+  body: string;
+}
+
+export async function sendWorkstreamActivitySlack(
+  env: Env,
+  input: WorkstreamSlackActivity,
+  request: typeof fetch = fetch,
+  sleep: (milliseconds: number) => Promise<void> = delay,
+): Promise<SlackMentionDelivery> {
+  return deliverWorkstreamSlack(env, {
+    workspaceId: input.workspaceId,
+    ...(input.substreamId ? { substreamId: input.substreamId } : {}),
+    recipientUserId: input.recipientUserId,
+    recipientEmail: input.recipientEmail,
+    sourceId: input.itemId,
+    kind: "activity",
+    chunks: (target, maximum) => chunkSlackTokens([
+      ...escapedSlackTokens(input.title),
+      " in ",
+      ...escapedSlackTokens(input.workspaceName),
+      ".\n\n",
+      ...(input.body ? [...escapedSlackTokens(input.body), "\n\n"] : []),
+      `<${target}|Open in Rally>`,
+    ], maximum),
   }, input.workstreamId, request, sleep);
 }
 
@@ -402,8 +444,29 @@ async function deliverWorkstreamSlack(
       reason,
       posted_chunks: postedChunks,
     });
+    // A message somebody chose to get by Slack has no other channel standing in
+    // for it, so a failure a retry can clear goes back to the queue rather than
+    // being dropped. Chunks carry a stable `client_msg_id`, so a retry does not
+    // post twice what already landed.
+    if (slackFailureRetryable(error)) throw error;
     return outcome;
   }
+}
+
+/**
+ * Whether a retry could succeed: the network failed, or Slack answered with
+ * a server error or a rate limit. Anything Slack refused by name (no such
+ * user, missing scope, an invalid token) will be refused again.
+ */
+function slackFailureRetryable(error: unknown): boolean {
+  if (error instanceof ConnectorError) {
+    const details = error.details;
+    if (details && typeof details === "object" && typeof (details as { error?: unknown }).error === "string") return false;
+    if (error.code !== "provider_error") return false;
+    const status = providerStatus(error);
+    return status === 0 || status === 429 || status >= 500;
+  }
+  return !(error instanceof z.ZodError);
 }
 
 async function postSlackMentionChunk(

@@ -13,6 +13,7 @@ import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logWarn } from "../observability/logger";
 import { digestEmailHtml } from "./digest-email-content";
+import { postDigestToPersonalChannel } from "./digest-personal-channel";
 import { markdownToEmailText } from "./email-markdown";
 import { sendResendEmail, singleLine } from "./resend";
 import { SlackAgentService } from "./slack-agent-service";
@@ -62,6 +63,18 @@ const CONNECTOR_DELIVERIES: Partial<Record<
   DigestDeliveryTargetType,
   (env: Env, context: DigestDeliveryContext, target: WorkspaceDigestDeliveryTarget) => Promise<void>
 >> = {
+  // Frozen with the Space as its connection and the person as its user; see
+  // `DigestService.resolveDeliveryTargets`.
+  personal_channel: async (env, context, target) => {
+    await postDigestToPersonalChannel(env, {
+      workspaceId: context.workspaceId,
+      userId: context.userId,
+      spaceId: target.connectionId!,
+      deliveryId: context.deliveryId,
+      title: digestThreadTitle(context.plannedFor, context.timezone),
+      markdown: context.bodyMarkdown,
+    });
+  },
   slack_agent_dm: async (env, context, target) => {
     await new SlackAgentService(env).deliverDigest({
       workspaceId: context.workspaceId,
@@ -77,12 +90,13 @@ const CONNECTOR_DELIVERIES: Partial<Record<
 };
 
 /**
- * Sends one written digest to every destination frozen on the schedule.
+ * Sends one digest to every destination frozen on the schedule.
  *
  * Each destination settles on its own: one failing does not hold back the
- * others, and each records its own delivery so a retry of this step re-sends
- * only what has not landed. The first failure is rethrown so the workflow step
- * retries, and the rest are logged rather than lost to settle order.
+ * others, and each records its own delivery. Nothing is rethrown: the digest
+ * is rebuilt from unread Activity at its next occurrence, so a destination
+ * that is down loses one copy, where retrying would hold the schedule row
+ * and every later occurrence behind it until that destination recovered.
  *
  * The three counts are distinct on purpose. `skipped` is "nothing was sent and
  * nothing went wrong" — a destination that already received this digest on an
@@ -162,10 +176,9 @@ export async function deliverDigest(
   for (const failure of failures) {
     logWarn(env, "digest_delivery_failed", {
       delivery_id: context.deliveryId,
-      reason: failure instanceof Error ? failure.message : "unknown",
+      code: failure instanceof ApiError ? failure.code : failure instanceof Error ? failure.name : "unknown_error",
     });
   }
-  if (failures.length > 0) throw failures[0];
   return { delivered, skipped, failed };
 }
 
@@ -194,7 +207,7 @@ async function deliverToTarget(
       }),
       text: [digestTitle(context), "", markdownToEmailText(context.bodyMarkdown)].join("\n"),
       idempotencyKey: `avalon-digest/${target.id}/${context.deliveryId}`,
-      category: "scheduled_digest",
+      category: "daily_digest",
       region: env.AVALON_REGION,
       sender: "notification",
       errors: EMAIL_ERRORS,
@@ -250,8 +263,32 @@ export function occurrenceLabel(plannedFor: string, timezone: string): string {
   }
 }
 
+/** Which of the person's two digests this is: before noon in their day is the start of it. */
+export function digestName(plannedFor: string, timezone: string): "Start of day" | "End of day" {
+  try {
+    const hour = Number(new Intl.DateTimeFormat("en-US", { hour: "numeric", hourCycle: "h23", timeZone: timezone })
+      .format(new Date(plannedFor)));
+    return hour < 12 ? "Start of day" : "End of day";
+  } catch {
+    return "Start of day";
+  }
+}
+
 function digestTitle(context: DigestDeliveryContext): string {
-  return `Your ${singleLine(context.workspaceName)} digest · ${occurrenceLabel(context.plannedFor, context.timezone)}`;
+  return `${digestName(context.plannedFor, context.timezone)} in ${singleLine(context.workspaceName)} · ${occurrenceLabel(context.plannedFor, context.timezone)}`;
+}
+
+/**
+ * A digest thread's title: short enough for a sidebar row, with the day
+ * last so two days' digests read apart.
+ */
+export function digestThreadTitle(plannedFor: string, timezone: string): string {
+  try {
+    const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: timezone }).format(new Date(plannedFor));
+    return `${digestName(plannedFor, timezone)} · ${day}`;
+  } catch {
+    return digestName(plannedFor, timezone);
+  }
 }
 
 async function markDelivered(

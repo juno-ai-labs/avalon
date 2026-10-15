@@ -2165,8 +2165,8 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       },
       userDelivery: {
         targetType: "slack_agent_dm",
-        label: "Slack DM",
-        description: "Rally Agent DM in this Slack workspace.",
+        label: "Slack",
+        description: "A direct message from Rally in your Slack.",
         // The bot is installed for the whole team, so it can only address a
         // person once that person has linked their Slack identity to Avalon.
         requiresPersonalIdentityLink: true,

@@ -233,6 +233,8 @@ const automationTriggerType = z.enum([
   "manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook", "inbound_email",
 ]);
 const automationDeliveryTargetType = z.enum(["email", "slack_agent_dm"]);
+/** Where a digest goes: an automation destination, or the person's own Personal Channel. */
+const digestDeliveryTargetType = z.enum(["email", "slack_agent_dm", "personal_channel"]);
 const connectorScope = z.enum(["personal", "workspace"]);
 const connectorSetupMethod = z.enum(["oauth", "api_key", "direct", "webhook"]);
 const connectorHealth = z.enum(["healthy", "needs_reconnect", "error", "disabled", "unknown"]);
@@ -1983,7 +1985,7 @@ export const TELEMETRY_EVENTS = {
       dayCount: countBucket,
       timeCount: countBucket,
       cadence: z.enum(["disabled", "daily", "multiple_daily", "weekly", "multiple_weekly"]),
-      deliveryTargetTypes: z.array(automationDeliveryTargetType).max(2),
+      deliveryTargetTypes: z.array(digestDeliveryTargetType).max(3),
       result: resultClass,
     })),
   }),
@@ -1998,7 +2000,7 @@ export const TELEMETRY_EVENTS = {
       deliveryId: resourceId,
       result: resultClass,
       activityCount: countBucket,
-      targetTypes: z.array(automationDeliveryTargetType).max(2),
+      targetTypes: z.array(digestDeliveryTargetType).max(3),
       firstDelivery: z.boolean(),
     })),
     priority: "high",

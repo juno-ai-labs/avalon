@@ -40,8 +40,8 @@ describe('settings reveal lifecycle', () => {
     const click = vi.fn();
     function Action() {
       const root = useRef<HTMLDivElement>(null);
-      useRevealSetting(root, { key: 'digestSave', definition: settings.digestSave });
-      return <div ref={root}><button onClick={click}><span tabIndex={-1} data-setting-id="digestSave">Save</span></button></div>;
+      useRevealSetting(root, { key: 'inviteSend', definition: settings.inviteSend });
+      return <div ref={root}><button onClick={click}><span tabIndex={-1} data-setting-id="inviteSend">Send</span></button></div>;
     }
     render(<Action />);
     expect(document.activeElement?.closest('button')).toBeNull();

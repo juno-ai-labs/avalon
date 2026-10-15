@@ -7,8 +7,9 @@ reads from the directory (a thread or breakout somebody started, a run Rally
 finished) are pushed from the Organization object as they appear
 ([Activity rows](#activity-rows)). Each device registers with one transport and
 is sent only that transport's payload. Push is enabled for everyone from launch through
-`push-notifications-enabled`; Slack also sends when available, and email is the
-fallback when neither Slack nor push accepted the notification.
+`push-notifications-enabled`. Each kind of row also goes by email or Slack when
+the person chose that for it ([What each person chooses](#what-each-person-chooses));
+nothing falls back from one channel to another.
 
 ## Where the code lives
 
@@ -38,8 +39,7 @@ Settlement retains the payload only when push was enqueued, until the existing
 intent retention expires. The consumer reads content through `WorkspaceDO.readNotificationIntentForDelivery`
 and reuses the processor's `notificationDeliveryContext`. A projection behind
 its required version retries; revoked access stops delivery. No presence check is
-added. Successful enqueue with a live device counts as push acceptance for email
-fallback, not proof of an Apple alert.
+added. Successful enqueue with a live device is not proof of an Apple alert.
 
 Success receipts key on workspace, intent and device. A partial retry skips only
 those devices already reached for that intent. Sending precedes recording, so an
@@ -116,12 +116,12 @@ when a native notification response arrives during asynchronous app startup.
 
 ## Activity rows
 
-Everything the Activity tab lists is a push. `added` and `mentioned` push
-through their notification intents above, which also own their Slack and email
-fallback. `thread_started`, `breakout_started` and `run_finished` are read by
-the feed from the directory rather than from an event
-([`digests.md`](digests.md#the-activity-tab)), and
-`workspace-activity-push.ts` pushes them, with no Slack or email fallback.
+Everything the Activity tab lists can be a push, an email or a Slack message.
+`added` and `mentioned` go through their notification intents above, whose
+processor sends each channel the person chose. `thread_started`,
+`breakout_started` and `run_finished` are read by the feed from the directory
+rather than from an event ([`digests.md`](digests.md#the-activity-tab)), and
+`workspace-activity-push.ts` queues one message per chosen channel.
 
 **The trigger is the directory write.** `applyDirectoryBatch` reads each
 conversation's row either side of its common effect and names what moved in
@@ -143,8 +143,9 @@ must not re-run the batch's other work.
 **The feed decides what each person is told.** A start asks everyone when its
 conversation is Organization-wide, else the people its viewer rows name; a
 finish asks only its participants, the only people the feed shows one to; a
-join asks the person who joined. D1 narrows that to active members with a live
-device. For each, the object reads their first Activity page and pushes the
+join asks the person who joined. D1 narrows that to active members, and the
+object keeps those with a live device or a channel other than push chosen for
+these kinds. For each, the object reads their first Activity page and pushes the
 rows about those subjects that are unread, of the subject's kinds, from after
 migration 105 ran (`workspace_activity_push_origin`) and not handed to
 delivery before (`workspace_activity_pushes`). So nobody is told about a
@@ -161,7 +162,10 @@ on purpose:
   presence check.
 
 **The queue carries a pointer.** The message names the row
-(`activityItemId`), never its text. The consumer reads the row back through
+(`activityItemId`), never its text, and a `channel` when it is an email or a
+connector surface rather than a push. The consumer sends those through
+`sendActivityEmail` and `sendWorkstreamActivitySlack`, keyed on the row so a
+retry is one message. The consumer reads the row back through
 the same feed (`readActivityItemForPush`), so a row the person has read, or
 lost access to, since it was queued sends nothing. A finish is matched by its
 conversation rather than its id, whose `completed_at` later traffic can move.
@@ -175,23 +179,27 @@ people who could not see it before, but is not pushed to them. A finish that
 lands before a participant's viewer row is not pushed to them. A row more than a
 page deep when a push is read back sends nothing.
 
-## What each person turns off
+## What each person chooses
 
-Settings → Notifications → **Notify me about** holds the person's push
-switches; the list, how they are stored and how a save merges them are
-[`member-preferences.md`](member-preferences.md). They apply to every device;
-the device switch above them is still the device's own on/off.
+Settings → Notifications → **Notify me about** holds, for each of the five
+kinds, the channels it goes by: `push`, `email`, and any connector surface the
+person can be reached on (`userDelivery`, such as Slack). How they are stored
+and how a save merges them is [`member-preferences.md`](member-preferences.md).
+They apply to every device; the device switch above them is still the
+device's own on/off. An empty list means Activity and the daily digest only.
 
-`pushPreferenceAllows` in `member-preferences.ts` is the one rule, checked in
-one place: the consumer, before it sends any push, mentions and adds included,
-so a switch turned off after a push was queued still holds. The Activity sweep
-does not check them, and records a row as handed to delivery whatever they
-say, so turning a switch back on never pushes an old row late. The rule reads
-the two facts the narrower switches need only when one of them is off: whether
-the thread is placed in a Channel the person is a participant of, and whether
-they started the conversation (the breakout, for a breakout's finish). The
-switches govern push only: a mention's Slack message is unaffected, and a
-skipped push still counts as accepted, so it does not fall back to email.
+`notificationAllows` in `member-preferences.ts` is the one rule. The push
+consumer checks it before any push, and before any email or Slack message it
+sends for an Activity row, so a choice changed after a message was queued
+still holds. The mention and add processor reads the same choice and sends
+only those channels. The Activity sweep records a row as decided for a person
+with a device whatever they chose, so choosing a kind again never sends an old
+row late.
+
+The row of buttons in Settings is `ChannelPicker`: a button per channel while
+they all fit beside the row's words, one menu of checkboxes when they do not.
+Each row measures itself, because the number of channels grows with the
+person's connectors.
 
 ## Web Push for browser members
 
@@ -346,6 +354,34 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-10-15 — Each kind goes by push, email or a connector, as the person chose
+
+**What changed:** The push switches became a channel list per kind. Mentions
+and adds send exactly the chosen channels; the email fallback is gone. New
+threads, breakouts and finished runs can now go by email or Slack too, queued
+on the push queue with a `channel` and read back through the feed like a push.
+The two narrower switches (Channels not joined, threads not started) no longer
+change what is sent.
+
+**Why:** People wanted to choose how each kind reaches them, not only whether
+it is pushed, and to choose email or Slack for kinds that never had them.
+
+**Considered and rejected:** Keeping email as a fallback when nothing else
+accepted: it sent email to people who had chosen not to get it, and the
+choice in Settings could not say so. A separate queue for email and Slack:
+the push queue already carries a pointer the consumer reads back through the
+feed, which is what the other channels need too.
+
+Because no other channel stands in any more, a Slack send that fails in a way a
+retry can clear (a network fault, a 5xx, a rate limit) now throws back to its
+queue instead of settling as skipped; the stable `client_msg_id` keeps a retry
+from posting a chunk twice.
+
+**Consequences:** A person with no device and no Slack now gets a mention only
+in Activity and the digest unless they choose email. A new channel is a
+connector declaring `userDelivery` plus a sender for Activity rows; the
+picker shows it with no change.
 
 ### 2026-10-14 — People choose which kinds are pushed
 

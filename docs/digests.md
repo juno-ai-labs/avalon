@@ -1,9 +1,10 @@
 # Activity events and scheduled digests
 
-Two things live here because the second is the first's only consumer today. The
+Two things live here because the second is built on the first. The
 **activity log** is Rally's first-party record of what happened that someone
-should hear about. The **digest** is a scheduled agent run that reads a person's
-slice of that log and writes them a summary.
+should hear about, and it feeds the Activity tab. The **digest** is what is
+still unread in that tab, sent to a person at the start and end of their day.
+The digest reads the tab, not the log.
 
 Read this before adding a notification surface, adding something a digest should
 mention, or changing what a connector can deliver to a person.
@@ -12,20 +13,19 @@ mention, or changing what a connector can deliver to a person.
 
 | Concern | File |
 | --- | --- |
-| The log: writes, visibility-scoped reads, cursors | `apps/api/src/services/activity-event-service.ts`, backed by WorkspaceDO SQLite |
+| The log: writes | `apps/api/src/services/activity-event-service.ts`, backed by WorkspaceDO SQLite |
 | Digest configuration, RRULE derivation, schedule rows | `apps/api/src/services/digest-service.ts` |
-| Firing one occurrence, the window, the hidden work stream, the brief | `apps/api/src/services/digest-run-service.ts` |
+| Firing one occurrence: the unread rows, the text, the claim, the settle | `apps/api/src/services/digest-run-service.ts` |
 | The `digests-enabled` kill switch | `apps/api/src/services/digest-flags.ts` |
-| Getting the brief in front of the model | `loadRunPromptContext` in `apps/api/src/services/integrations.ts`, rendered by `renderScheduledDigestBriefMessage` |
-| Deciding whether a connector activity may be digested | `activityIsDigestible` in `apps/api/src/queues/activity-consumer.ts` |
-| Recording and sending what a run wrote | `apps/api/src/services/digest-run-settlement.ts` |
+| Deciding whether a connector activity may be digested (written, read by nothing today; see [Digestible](#digestible-what-a-person-should-be-told)) | `activityIsDigestible` in `apps/api/src/queues/activity-consumer.ts` |
 | Destination dispatch | `apps/api/src/services/digest-delivery-service.ts` |
+| The digest as a thread in the person's Personal Channel | `apps/api/src/services/digest-personal-channel.ts` |
 | Email HTML | `apps/api/src/services/digest-email-content.ts` |
 | Access-request acknowledgements, plain text only through the shared reducer | `apps/api/src/services/access-request-service.ts`; lifecycle in [private access](private-access.md). |
 | Markdown → email HTML | `apps/api/src/services/email-markdown.ts` |
 | Which lines are code, for both of the above | `packages/contracts/src/markdown-code.ts` — see [`markdown-code.md`](markdown-code.md) |
 | Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs` |
-| Settings screen | `apps/desktop/src/renderer/components/digest-settings.tsx` |
+| Settings → Notifications → Daily digest | `DailyDigestSettings` in `apps/desktop/src/renderer/components/notification-settings.tsx` |
 | The work-stream list every renderer surface shares | `apps/desktop/src/renderer/lib/use-workstreams-query.ts`, served by `WorkspaceDO` |
 | The Activity tab's read over the log and the directory, and its read mark | `apps/api/src/durable-objects/workspace-activity-feed.ts` |
 | A breakout mention's emptied shape and its author-only audience | `apps/api/src/durable-objects/breakout-activity.ts` |
@@ -78,14 +78,11 @@ knew what happened wrote `title` and `body` at the time.
 | `user` | exactly one person | a personal connection's activity |
 | `workstream` | the work stream's current active participants | work-stream messages |
 
-It is resolved against the reader at read time, in
-`listActivityEventsForUser` and nowhere else. After membership is revalidated
-against D1, WorkspaceDO performs the audience join against its own authoritative
-directory/viewer rows in the same local database. Storing recipients instead would
-freeze the audience at write time: someone added to a work stream today would
-never see what happened in it yesterday. System work streams are excluded there
-too, so digest machinery can never appear inside a digest — visible in the
-sidebar or not.
+It is resolved against the reader at read time, by every reader of the log,
+against WorkspaceDO's own authoritative directory/viewer rows in the same local
+database. Storing recipients instead would freeze the audience at write time:
+someone added to a work stream today would never see what happened in it
+yesterday.
 
 **`workspace_activity_event_targets` is involvement, not audience.** Audience says who
 *may* see an event; a target row says the event is *about* someone — `mentioned`,
@@ -94,8 +91,9 @@ with "you were tagged" rather than burying it in a list of everything that moved
 A target outside the audience is stored anyway; the read query still filters by
 audience, so recording involvement never grants visibility.
 
-**`event_sequence` is the cursor axis.** A consumer resumes where it stopped, so it
-needs a total order that an insert can only ever extend. Timestamps cannot give
+**`event_sequence` is the cursor axis.** No reader resumes from a cursor today
+(the digest did until 2026-10-15), but one that does needs a total order that an
+insert can only ever extend. Timestamps cannot give
 one — two events written in the same millisecond tie, and any tiebreak (a UUID, a
 hash) can place the second one *below* a cursor taken after the first, dropping
 it from every future read. `event_sequence` is `INTEGER PRIMARY KEY AUTOINCREMENT`:
@@ -113,9 +111,8 @@ bounded batches and lets the cascade take their targets. The oldest retained
 row schedules the next expiry; an idle workspace does not wake on a polling
 cadence. The log is append-only and would otherwise grow forever.
 
-Ninety days is far longer than anything reads: a first run looks back 72 hours
-and every run after that starts from its own cursor, so the window only has to
-survive a schedule being paused and resumed. Reaping never disturbs a cursor —
+Ninety days is far longer than anything reads: the Activity tab shows one page
+of recent rows, and the digest lists what is in that page. Reaping never disturbs a cursor —
 an expired `event_sequence` sits below every live one, so a window that has lost
 its rows reads as empty rather than as new. A surface that wants to read further
 back than ninety days needs this number raised, not a second table.
@@ -129,11 +126,16 @@ development emits two events per check run and three per workflow run, so the
 oldest two hundred events in a window can be seventeen minutes of one morning's
 builds while the reviews, merges and comments sit behind them unread.
 
-**Every event carries the answer on its row**, in `workspace_activity_events.digestible`,
-and `listActivityEventsForUser` takes a required `digestibleOnly` — required
-rather than defaulted because both readings are legitimate and the wrong one is
-invisible. An activity feed wants everything that happened; a digest, which
-interrupts somebody on a schedule, wants the subset. A digest passes `true`.
+**Every event carries the answer on its row**, in `workspace_activity_events.digestible`.
+**Nothing reads it today.** Until 2026-10-15 the digest read the log through
+`listActivityEvents` with a required `digestibleOnly`; the digest now lists
+unread Activity rows (mentions, additions, starts and finished runs), which are
+not connector events, so connector activity reaches nobody on a schedule. The
+column and the manifests' declarations stay because they are cheap to keep and
+expensive to rebuild: a surface that interrupts somebody about connector
+activity reads the subset this column marks, and should take the choice as a
+required argument rather than a default, because both readings are legitimate
+and the wrong one is invisible.
 
 **A withheld event is not a lesser event.** It is ingested, routed, matched
 against automations and watches, recorded in the log, and readable by everyone
@@ -145,11 +147,6 @@ and why changing it is expensive. It governs only an insert that does not name
 the column, which no production code path performs, so anything reaching
 the workspace activity log outside `recordActivityEvent` must set `digestible` itself
 rather than expect the column to withhold on its behalf.
-
-**The window still ends at the top of the log.** The cursor steps over what was
-withheld, so a quiet occurrence settles as `empty` and moves on; stopping at the
-last digestible event would make every later occurrence re-scan the same
-withheld rows forever.
 
 For connector activity the answer comes from the connector's own manifest —
 `digestible` on each activity type, plus a polling stream's veto over its own
@@ -219,7 +216,7 @@ reads the next. A server filter like `only=mentions` is the fix if that bites.
 **A breakout's mentions** reach the log in one narrow shape
 (`breakout-activity.ts`). A breakout is private to the people in it, and a
 `workstream`-audience event reaches every participant of the parent thread
-through `listActivityEvents`. So the parent (`HostedParent`) forwards a
+through any reader of the log. So the parent (`HostedParent`) forwards a
 breakout's message event only when it names somebody, stamps
 `metadata.substreamId` on it, and forwards it emptied: no body, `digestible:
 false`, its targets the mentions alone. WorkspaceDO stores any event that
@@ -289,22 +286,28 @@ member directory, as the Channel feed names its authors.
 
 ### The digest
 
-One digest per person per workspace: a set of days, a set of times, and a set of
-destinations. It deliberately cannot vary times per day — that is one integer
-day mask and a set of times rather than a seven-way join.
+One digest per person per workspace: a set of days, up to two times, and a set
+of destinations. Settings → Notifications → **Daily digest** shows it as two
+slots, **Start of day** (the first time before noon) and **End of day** (the
+first after it), a **Send to** choice, and **Weekdays** or **Every day**.
+
+**It is what is still unread in Activity, and nothing else.** No model writes
+it. At each occurrence the scheduler reads the person's first Activity page
+(`listActivity`, the same read the sidebar makes), keeps the rows that are
+`unread`, and lists them under one `##` section per kind, in the order Settings
+lists the kinds, each worded as the sidebar words it and linked to what it
+names (`renderUnreadDigest`). Nothing unread, nothing sent: the occurrence
+settles as `empty`.
 
 **A digest is on by default**, for people who already exist and for anyone who
-joins later: weekdays at 09:00 in their own timezone, by email. Nobody should
-have to find a settings screen to be told what they missed.
+joins later: weekdays at 09:00 in their own timezone, to their email and, for
+anyone who is not a guest, their Personal Channel.
 
 **There is no digest timezone.** A digest's times are wall-clock times in its
-owner's own day, and `users.timezone` already says when that is. A second copy
-would be a second answer to the same question, and the two would disagree the
-first time somebody moved. The derived `schedules` rows carry the resolved zone
-because that is the scheduler's contract, and `rebuildDigestSchedulesForTimezone`
-re-derives them whenever the account timezone changes — the configuration does
-not change, only the instants it resolves to. The settings screen shows the zone
-and links to Account rather than offering a second control.
+owner's own day, and `users.timezone` already says when that is. The derived
+`schedules` rows carry the resolved zone because that is the scheduler's
+contract, and `rebuildDigestSchedulesForTimezone` re-derives them whenever the
+account timezone changes.
 
 #### Who gets one
 
@@ -321,224 +324,75 @@ the four that exist today, and repairs a half-written save instead of leaving it
    That is the state a fresh default lands in, and the state a save leaves if it
    fails between writing the configuration and deriving the rows.
 
-Both passes are idempotent and bounded per tick, and the workspace alarm is
-refreshed once per workspace rather than once per digest.
-
 #### Scheduling
 
 Each **time** gets its own `schedules` row, not each digest. A single RRULE
 cannot carry a list of times: `BYHOUR` and `BYMINUTE` multiply out, so 09:00 plus
-12:30 would also fire at 09:30 and 12:00. One rule per time says exactly what was
+17:30 would also fire at 09:30 and 17:00. One rule per time says exactly what was
 asked for, and the workspace's alarm already advances, retries and disables each
 row independently.
 
-A digest is recurring timing with no payload, which is what `schedules` is for —
-unlike `workstream_wakeups`, which is one-shot and carries a prompt, and so keeps
-its own table. `schedules` gained `digest_schedule_id` and a CHECK that exactly
-one target column is set.
-
 Saving replaces everything: destinations are resolved and frozen *before*
 anything is written, so a destination that has gone away fails the request rather
-than leaving a schedule that fires into nowhere. A disabled digest keeps its
-configuration and loses its schedule rows, so re-enabling is a save rather than a
-rebuild. The workspace alarm is refreshed *after* the write — the scheduler
-reads WorkspaceDO, so refreshing early would arm it from the rows the save just replaced.
+than leaving a schedule that fires into nowhere. A digest with no slot on, or
+nowhere to send it, is saved switched off. The workspace alarm is refreshed
+*after* the write.
 
-#### The run
+#### An occurrence
 
-Before anything else, the scheduler checks `digests-enabled` — a Flagship
-Boolean, and the fourth reader of `env.FLAGS` alongside the three
-[`feature-flags.md`](feature-flags.md) already names. It is checked
-immediately after the schedule's own `enabled` bit and before anything is
-written, so an occurrence it skips claims nothing and moves no cursor: the
-next occurrence to fire reads `previousCursor` exactly as it always does and
-catches up on whatever was missed while the flag was off. It fails **open** —
-the opposite of the four presentation-only product Booleans Ace already
-managed — because a digest is already on by default for every existing
-person, so the behavior a Flagship outage has to reproduce is delivery
-*continuing*, not stopping; only an operator's explicit `false` variation
-turns it off. It is Ace's fifth managed flag and the first that is not
-presentation-only in the usual sense, but it *is* client-visible: it defaults
-**on** rather than off, which is why `apps/ace/scripts/deploy.mjs` provisions
-it with an explicit third argument instead of relying on `ensureFlag`'s
-ordinary default, and `client-feature-flags.ts` serves it as `digestsEnabled`
-so Electron can hide the Digest settings section for whoever it resolves
-`false` for — through the identical evaluation the scheduler uses, never a
-second check the client derives on its own. See [`ace.md`](ace.md) and
-[`feature-flags.md`](feature-flags.md#provisioning).
+`fireDigestSchedule` checks the schedule's own `enabled` bit, then
+`digests-enabled` (a Flagship Boolean that fails open; see
+[`feature-flags.md`](feature-flags.md)), then the execution principal, before
+anything is written. Then:
 
-A digest runs on the ordinary agent loop, with the ordinary tool surface. The
-scheduler:
+1. The occurrence's id is derived from its schedule and instant, so a retried
+   alarm finds the delivery its first attempt claimed.
+2. A first attempt reads the unread rows, renders them, and claims the
+   occurrence in `digest_deliveries` (unique on
+   `(digest_schedule_id, planned_for)`) with the text in `summary_markdown`.
+   A retry sends that kept text rather than reading Activity again, so every
+   destination receives the same digest.
+3. Each destination is sent and records its own `last_delivered_delivery_id`.
+   A destination's failure is recorded and not thrown: the next occurrence is
+   rebuilt from unread Activity anyway, and a retry would hold the schedule row
+   and every later occurrence until that destination recovered. An attempt that
+   dies before settling is retried by the alarm and sends only what has not
+   landed.
+4. The occurrence settles `delivered`, or `failed` when every destination
+   failed, exactly once.
 
-1. Re-validates the execution principal and the membership.
-2. Freezes the window: `cursor_from` is the last settled delivery's
-   `cursor_through`; `cursor_through` is the workspace's current maximum
-   `event_sequence`. Freezing the top is what makes events arriving mid-run belong
-   to the *next* digest rather than being skipped.
-3. Claims the occurrence by inserting `digest_deliveries`, unique on
-   `(digest_schedule_id, planned_for)`. A retried alarm resolves to the attempt
-   already in flight.
-4. Creates this occurrence's work stream and links it to the delivery. The claim
-   is what makes this safe to do unconditionally: exactly one attempt per
-   occurrence gets past step 3, so there is no second creator to race.
-5. Writes the window into that transcript as a system message and launches the
-   harness with it as the trigger.
-
-An empty window settles as `empty` without running the model, and its cursor
-still advances so the next digest does not re-scan it. It never reaches step 4,
-so an occurrence with nothing to say costs no work stream either.
-
-An attempt that throws before the harness is launched releases both the claim and
-the work stream, so the scheduler's retry starts clean rather than accumulating
-an empty transcript per failure. Whether the launch happened is read from the
-returned run id and not from the row's status: the status write is itself inside
-the attempt, so a launch that succeeded and failed only to record itself still
-leaves the row `planned`, and releasing that would strand a live run.
-
-**The brief reaches the model through the run's trigger context, not through the
-transcript.** Step 5 puts it in `messages` as a `system` row, and system rows are
-UI state that the protocol projector deliberately drops — they answer "why did
-this start on its own?" for a person opening the work stream, and admitting them
-to the model would replay unlabelled connector text as history on every later
-turn. So `loadRunPromptContext` re-reads the brief through the delivery, whose
-`digest:<delivery-id>` client message id makes it impossible to pick up another
-occurrence's window, and renders it as a labelled user-role message beside a
-wake-up's and a trigger activity's.
-
-Without that message a digest run reaches the model as a bare system prompt
-carrying only the work stream's objective, and a model asked to summarize a
-window it cannot see does not report that it cannot see one — it goes looking in
-memory and durable tables, finds nothing, and writes that nothing happened. That
-shipped: `digest-run-context.test.ts` is the regression, and it also pins the
-transcript row staying invisible, so the two halves cannot drift apart.
-
-A run that cannot find its brief throws rather than proceeding. An unsettled
-delivery folds its window into the next occurrence; one that runs blind consumes
-the window and delivers nothing.
-
-**Digests never touch `workstream_read_states`.** A digest cursor means "what you
-have already been told"; a read waterline means "what you have read". Collapsing
-them would let skimming an email on a phone silently clear the unread badges in
-the app.
-
-#### The system work stream
-
-Creation uses the existing `provisionWorkstreamObject` path and keeps the
-recipient as its only initial participant. It does not perform a grant handoff
-before delivery; first sharing prepares that authority when needed. Replaying
-provisioning preserves the original local roster.
-
-The agent loop is work-stream shaped end to end — the transcript is `messages`,
-and compaction, tool invocations and the realtime room all key off
-`workstream_id`. Running the *normal* loop therefore means having a work stream,
-and reusing that abstraction is the point: a digest run gets compaction, tool
-receipts, the realtime room and the transcript for free.
-
-Two columns, answering two different questions. A digest's work stream carries
-both.
-
-- **`scope` — who may read it.** `personal` means an active participant and
-  nobody else; `workspace` means anyone in the workspace. This is the same
-  column and the same vocabulary `notes.scope` uses, so "private" means one
-  thing in Rally and is declared on the row rather than inferred by each
-  caller. A digest's work stream has exactly one participant, its recipient,
-  which is also what makes every tool the run reaches for resolve against their
-  own access. Another member cannot open it knowing its id, because the brief
-  inside is assembled from their private activity.
-- **`system_kind` — whether it is machinery.** This decides whether the row is
-  *listed*: off by default, and the WorkspaceDO directory request's
-  `includeSystem: true` asks for it, which the desktop sends when Application → Developer → **Debug enabled**
-  is on. It widens what is shown, never who may read it. A private work stream
-  that is not machinery is protected exactly the same way.
-
-In the interface, a personal work stream's sidebar row paints the existing
-`AvatarStack` of the other people in it rather than the lock a personal note still wears.
-The work-stream header keeps its **Private** badge. A digest occurrence is
-almost always an empty trailing slot, because the pile omits the reader.
-
-Shown, they render one level down: dimmed, with a small gear, full opacity on
-hover and while active — hierarchy should not cost legibility once you are in it.
-
-The debug preference changes what the desktop *asks for*, never where the answer
-is stored. Every work-stream list reads `WORKSTREAMS_QUERY_KEY`, an
-unparameterized `['workstreams']`, because realtime handlers, renames and
-read-state callbacks patch that cache entry directly; a key that varied with the
-preference would strand every one of those writes on an entry nobody observes.
-`useWorkstreamsQuery` owns the key, the fetcher and the refetch that a toggle
-asks for.
-
-**One work stream per occurrence, not per person.** It is created when the
-occurrence claims itself and recorded on `digest_deliveries.workstream_id`, so
-the transcript has exactly the lifetime of the thing it is a transcript of. A
-digest run is a pure function from a frozen window to a summary, and the only
-state that has to survive between occurrences is the cursor, which the delivery
-already carries.
-
-The title is the occurrence in the recipient's own timezone and nothing else,
-compactly: `Digest · 12 Aug · 5:30 PM`. A listing of these is a list of
-occurrences rather than one row per person, and a sidebar row title is
-ellipsized, so whatever sits in front survives truncation and the *time* — the
-one thing telling two occurrences on the same day apart — is what gets cut. The
-email's `occurrenceLabel` ("Tuesday 11 August · 5:00 PM") is deliberately not
-reused: it is right above a message somebody is reading and about nine characters
-too long for the sidebar, which was enough to render both of one day's rows
-identically. The recipient's name is left out for the same reason, and because it
-identifies nobody to the only person who can open one.
-
-Nothing reaps them, so they accumulate — roughly one per digest per person, which
-a weekday digest makes about 260 a year each. That is a deliberate trade for
-being able to open any past run and read what it actually did; the rows are
-small, and `digest_deliveries.summary_markdown` keeps the digest text whether the
-   transcript survives or not. If the volume ever stops being worth it, a
-   bounded maintenance Workflow driven by the workspace scheduler is the shape
-   it should take, and the cascade already takes the transcript's dependent rows.
-
-**They are listed the same way everything else is**, paged by recency, with no
-cap and no separate section. WorkspaceDO filters them out unless the caller
-passes `includeSystem`, and when it does they simply take their place in
-the order. With Debug enabled a daily digest therefore does take the newest
-pages — but the sidebar follows `nextCursor` as it scrolls, so that costs a
-scroll rather than the rows themselves. Lifting them out into a bounded set was
-tried and reverted: it put a second population inside one method, with its own
-cap and its own ordering, to solve a reachability problem that paging had already
-solved. See [`workstream-pinning.md`](workstream-pinning.md), which owns
-workspace-directory paging.
-
-What the accumulation does change is the index. The ordinary WorkspaceDO query
-uses `workspace_workstream_directory_list_idx` on `channels` over archive, system kind,
-recency, and work-stream ID, so hidden digest rows do not require a fan-out or a
-scan of child databases. A listing that asks for machinery uses the same bounded
-local SQLite authority and simply widens its predicate.
+**Digests never touch the read state.** Sending a digest does not mark anything
+read: a row stays in Activity, and in the next digest, until the person reads
+it or marks Activity read. Someone who reads nothing between the start and end
+of their day gets the same rows twice, which is what "unread" means.
 
 #### Delivery
 
-Email is the built-in default and needs no connector. Every other destination is
-a connection whose connector declares a `userDelivery` surface in its manifest —
-the same declaration [`connectors.md`](connectors.md) describes and the same one
-personal automations use. The settings screen renders whatever the API offers, so
-a connector that starts declaring a surface becomes a digest destination with no
-UI change.
+Email is the built-in destination and needs no connector. The person's
+**Personal Channel** is the other built-in one: the digest arrives as a new
+thread in it (`postDigestToPersonalChannel`), titled `Start of day · 15 Oct`,
+holding one message from Rally and no run. Nobody created the thread, so it
+reaches its owner unread and unseen like any message Rally writes, and no
+`thread_started` row announces it. Every step is keyed on the delivery, so a
+retry lands on the same thread and message. Its destination row stores the
+Space where a connection would be and the person where a provider user would
+be, which is the row's shape for anything that is not an email address. A
+guest has no Personal Channel and is refused it.
 
-Adding transport for a new surface is one entry in `CONNECTOR_DELIVERIES` in
-`digest-delivery-service.ts`. A target type with no entry is skipped rather than
-failing the run — it was saved by a region that has the connector and this one
-does not.
+Every other destination is a connection whose connector declares a
+`userDelivery` surface in its manifest — the same declaration
+[`connectors.md`](connectors.md) describes. The settings screen renders
+whatever the API offers, so a connector that starts declaring a surface becomes
+a digest destination with no UI change. Adding transport for a new surface is
+one entry in `CONNECTOR_DELIVERIES` in `digest-delivery-service.ts`; a target
+type with no entry is skipped rather than failing the occurrence.
 
-Each destination settles independently and records its own
-`last_delivered_delivery_id`, so a retried workflow step re-sends only what has
-not landed. The delivery is marked `delivered` only after every destination has
-settled. A destination the provider permanently rejects is moved to
-`needs_input` and surfaced on the digest rather than failing silently forever.
-Digest configuration, schedule rows, frozen targets, occurrence cursors, and
-per-target `last_delivered_delivery_id` fences all live in WorkspaceDO. The
-regional sender resolves current D1 member/user identity before sending. A
-future transport needing a multi-destination lease has to model one — the
-`external_delivery_attempts` ledger reserved for it was retired unused — and D1
-is never a delivery-state projection or fallback.
+A destination the provider permanently rejects is moved to `needs_input` rather
+than failing silently forever.
 
 #### The email
 
-`digest-email-content.ts` wraps the run's Markdown, rendered to email-safe HTML by the shared `email-markdown.ts`, in the digest's own shell.
+`digest-email-content.ts` wraps the digest's Markdown, rendered to email-safe HTML by the shared `email-markdown.ts`, in the digest's own shell.
 
 It is dark, and deliberately only dark: the email is a copy of a Rally surface
 and the app has one appearance. Every colour is the app's own token from
@@ -575,8 +429,8 @@ action, and a footer. Layout is tables and inline styles only — no flexbox, no
 grid, nothing a 2007 renderer has to guess at.
 
 A general Markdown library is the wrong tool here: clients ignore most of what
-one emits, and rendering raw HTML would mean rendering model output into an
-email. The renderer covers `#` document titles, `##` sections with a brand
+one emits, and rendering raw HTML would mean rendering whatever a thread title or
+a model's answer holds into an email. The renderer covers `#` document titles, `##` sections with a brand
 rule, `###` subheads, bullets one level deep, numbered lists, links, bold,
 `*` or `_` emphasis, inline code, and blockquote, and escapes everything before
 a single tag is added, so an `href` can only ever be one it built itself — with
@@ -601,9 +455,11 @@ footnote handling at all.
 The TeX repair escapes Markdown punctuation in what it unwraps, and a `\[` it
 manufactured would stop looking like the link the citation pass has to find.
 
-The brief names exactly that subset, so what the model writes and what the
-template styles are the same list. Each source group carries its canonical link,
-so the digest points at the real thing rather than describing it.
+The digest's own text uses only `##` sections, bullets and links, so it never
+reaches the parts of that list a model's answer needs.
+
+The subject names the slot and the occurrence: `Start of day in Juno Labs ·
+Wednesday 15 October · 9:00 AM`. Its category tag is `daily_digest`.
 
 #### Looking at it
 
@@ -639,9 +495,9 @@ day/time counts, delivery target types, and result. A delivery emits once when
 settlement reaches a terminal state, with its opaque delivery ID, bounded
 activity count, target types, and whether it is the member's first delivery.
 Schedule times, timezones, email addresses, activity IDs/content, generated
-digest text, work-stream title, and delivery-provider responses never enter
+digest text, thread title, and delivery-provider responses never enter
 telemetry. The schedule/delivery tables remain authoritative; reporting failure
-cannot change a saved schedule, cursor, or settlement.
+cannot change a saved schedule or settlement.
 
 ## Invariants
 
@@ -659,8 +515,8 @@ cannot change a saved schedule, cursor, or settlement.
   `channels-threads-navigation.test.ts` "given a breakout's mention whose
   author is unknown, when it is applied, then it is not stored at all rather
   than shown to the parent thread".
-- **Audience is resolved against the reader at read time**, in
-  `listActivityEventsForUser` and nowhere else. Storing recipients instead freezes
+- **Audience is resolved against the reader at read time**, by every reader
+  of the log. Storing recipients instead freezes
   the audience at write time, so someone added to a work stream today would never
   see what happened in it yesterday.
 - **After the DO authority switch, work-stream audience uses the versioned
@@ -674,36 +530,19 @@ cannot change a saved schedule, cursor, or settlement.
   inserts events whose provider timestamp is hours old. Timestamps tie within a
   millisecond and any tiebreak can place the second event below a cursor taken
   after the first, dropping it from every future read.
-- **`digestible` is fixed on the row when it is written**, and
-  `listActivityEventsForUser` takes a *required* `digestibleOnly` — required rather
-  than defaulted because both readings are legitimate and the wrong one is
-  invisible.
+- **`digestible` is fixed on the row when it is written.** Nothing reads it
+  today; a reader that does takes the choice as a required argument.
 - **Anything reaching `workspace_activity_events` goes through the typed
   `recordActivityEvent` contract and sets `digestible` itself.** The strict
   object-local column has no default, so an undecided producer cannot fail open.
   Legacy D1 rows use their historical default only while being imported and are
   scrubbed before the WorkspaceDO route activates.
-- **The window ends at the top of the log, not at the last digestible event.** The
-  cursor steps over what was withheld; stopping short would make every later
-  occurrence re-scan the same withheld rows forever.
 - **Which events matter is declared by the connector's manifest**, not here and not
   in the digest.
-- **The top of the window is frozen before the run starts.** That is what makes
-  events arriving mid-run belong to the *next* digest rather than being skipped.
-- **The occurrence is claimed before its work stream is created.** Exactly one
-  attempt per occurrence gets past the unique `(digest_schedule_id, planned_for)`
-  insert, so there is no second creator to race.
-- **Whether a launch happened is read from the returned run id, never from the
-  row's status.** The status write is itself inside the attempt, so a launch that
-  succeeded and failed only to record itself still leaves the row `planned`, and
-  releasing that would strand a live run.
-- **A run that cannot find its brief throws rather than proceeding.** An unsettled
-  delivery folds its window into the next occurrence; one that runs blind consumes
-  the window and delivers nothing.
-- **Digests never touch `workstream_read_states`.** A digest cursor means "what you
-  have already been told"; a read waterline means "what you have read". Collapsing
-  them would let skimming an email on a phone silently clear the unread badges in
-  the app.
+- **A retried occurrence sends the text its first attempt kept.** Reading
+  Activity again would send different destinations different digests.
+- **Sending a digest never marks anything read.** Unread is the person's state,
+  and a digest only reports it.
 - **A digest has no timezone of its own.** `users.timezone` answers when its
   wall-clock times are, and a second copy would disagree the first time somebody
   moved.
@@ -716,12 +555,12 @@ cannot change a saved schedule, cursor, or settlement.
   cannot resurrect it.
 - **`digests-enabled` gates firing and client visibility, never a person's own
   configuration.** It is checked before the occurrence is claimed, so a skip
-  moves no cursor and the reconciler keeps creating and repairing digest
+  claims nothing and the reconciler keeps creating and repairing digest
   defaults exactly as if the flag did not exist. It fails open to keep
   sending — the opposite fail direction from the four presentation-only
   client flags, even though it is now client-visible like they are — see
   [`feature-flags.md`](feature-flags.md).
-- **The Digest settings section reads the identical evaluation the scheduler
+- **The Daily digest settings group reads the identical evaluation the scheduler
   uses.** `client-feature-flags.ts` calls the same `resolveDigestsEnabled`,
   never a second "is it off for the workspace" check the client combines with
   it. One evaluation, reused, so the section's visibility and the scheduler's
@@ -729,23 +568,22 @@ cannot change a saved schedule, cursor, or settlement.
 
 ## Boundary
 
-This document owns the WorkspaceDO activity log and the scheduled digest that is its
-first consumer. It does not own:
+This document owns the WorkspaceDO activity log and the scheduled digest built
+on the Activity tab it feeds. It does not own:
 
 | For | Read |
 | --- | --- |
 | Which connector activity types are worth telling someone about | [`connectors.md`](connectors.md#declaring-what-a-digest-may-read), [`connector-digestibility.md`](connector-digestibility.md) |
 | The WorkspaceDO connector-event authority, global route, Queue, and processing Workflow | [`connectors.md`](connectors.md) |
-| The agent loop a digest run rides on | [`agent-harness.md`](agent-harness.md) |
-| WorkspaceDO directory paging, which digest work streams take their place in | [`workstream-pinning.md`](workstream-pinning.md) |
+| How each kind of Activity row reaches a person as it happens | [`push-notifications.md`](push-notifications.md) |
 | The scheduler and its alarm | [`architecture.md`](architecture.md) |
 | The columns and their constraints | [`data-model.md`](data-model.md) |
 | The other consumer of a connector's `userDelivery` surface | [`workstream-email-addresses.md`](workstream-email-addresses.md) |
 | The `FLAGS` binding, the other three resolvers, and how each one fails | [`feature-flags.md`](feature-flags.md) |
 
-A surface that wants "what happened, for this person, since this instant" reads
-the workspace activity log through `listActivityEventsForUser`. Nothing else is a supported
-entry point, and nothing else resolves audience correctly.
+A surface that wants "what happened, for this person" reads the Activity tab's
+read (`listActivity`), as the digest does. A new reader of the log itself must
+apply the audience columns the same way; see [Invariants](#invariants).
 
 ## Failure modes and limits
 
@@ -758,29 +596,22 @@ entry point, and nothing else resolves audience correctly.
 - **`recordActivityEvent` never throws into its caller.** An event log that can fail
   a message post is worse than one that occasionally misses a row; use
   `recordActivityEventOrThrow` where the write genuinely has to land.
-- **An empty window settles as `empty` without running the model**, and its cursor
-  still advances. It never creates a work stream, so an occurrence with nothing to
-  say costs nothing.
-- **An attempt that throws before the harness is launched releases both the claim
-  and the work stream**, so the scheduler's retry starts clean rather than
-  accumulating an empty transcript per failure.
+- **Nothing unread settles as `empty`** and sends nothing.
+- **A digest lists the first Activity page only**, 250 rows, newest first. Older
+  unread rows are in Activity and not in the digest.
+- **A digest with more than two times keeps the first of each slot.** Older
+  schedules could hold up to twelve; the first save from Settings keeps one
+  before noon and one after.
 - **A target type with no `CONNECTOR_DELIVERIES` entry is skipped rather than
-  failing the run** — it was saved by a region that has the connector and this one
+  failing the occurrence** — it was saved by a region that has the connector and this one
   does not.
 - **Each destination settles independently** and records its own
-  `last_delivered_delivery_id`, so a retried workflow step re-sends only what has
-  not landed. The delivery is marked `delivered` only after every destination has
-  settled, and one the provider permanently rejects moves to `needs_input` and is
-  surfaced on the digest rather than failing silently forever.
+  `last_delivered_delivery_id`, so a retried occurrence re-sends only what has
+  not landed. A destination's failure is recorded, not thrown. The delivery is
+  marked `delivered` once every destination has settled and one landed, and one the provider permanently rejects moves to `needs_input` rather
+  than failing silently forever.
 - **A member with no account address is skipped by the reconciler**, because the
   default destination is that address.
-- **Digest work streams accumulate and nothing reaps them** — roughly one per digest
-  per person, about 260 a year each for a weekday digest. That is a deliberate trade
-  for being able to open any past run and read what it actually did; the rows are
-  small, and `digest_deliveries.summary_markdown` keeps the digest text whether the
-  transcript survives or not. If the volume ever stops being worth it, a bounded
-  maintenance Workflow driven by the workspace scheduler is the shape it should
-  take, and the cascade already takes the transcript's dependent rows.
 - **The email is dark only** — not because the app has one appearance, which it
   does not, but because a mail client cannot report the reader's chosen theme, so
   it renders in the shipped default. It renders a Markdown subset: titles,
@@ -802,18 +633,16 @@ entry point, and nothing else resolves audience correctly.
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test-workers/workspace-read-cost.test.ts` | Activity first-page, resumed, and empty cursor results plus workerd rows-read cost; run with `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-read-cost.test.ts`. |
 | `apps/api/test/activity-event-projection.test.ts` | Projection from `activities`, audience resolution, target rows, and the cursor. |
-| `apps/api/test/digest-run-context.test.ts` | That the brief reaches the model through the run's trigger context **and** that the transcript row stays invisible to it. The two halves are pinned together deliberately, because a digest run that reaches the model without its window does not report that it cannot see one — it writes that nothing happened, and that shipped. |
 | `apps/api/test/digest-email-content.test.ts` | The digest shell: inline styles, counts, and the preheader. |
 | `apps/api/test/email-markdown.test.ts` | The shared Markdown subset, escaping, refused link targets, and the preview line. |
-| `apps/api/test/digest-schedule.test.ts` | The day mask, one `schedules` row per time, timezone re-derivation, and the reconciler's two passes. |
-| `apps/api/test/digest-run.test.ts` | The frozen window, the claim, the empty settle, the release on a pre-launch throw, and that a `digests-enabled` skip claims nothing and moves no cursor. |
+| `apps/api/test/digest-schedule.test.ts` | The day mask, one `schedules` row per time, timezone re-derivation, the reconciler's two passes, and the Personal Channel frozen as a destination and refused to a guest. |
+| `apps/api/test-workers/daily-digest.test.ts` | On real workerd: an unread start listed as the sidebar words it, nothing unread settling as `empty`, a fired-again occurrence sending nothing twice, and a claimed but unsent occurrence sending the text it kept. |
 | `apps/api/test/digest-flags.test.ts` | That `digests-enabled` fails open on every failure mode and only an explicit `false` variation turns it off. |
 | `apps/api/test/digest-delivery.test.ts` | Independent per-destination settlement, the skipped unknown target type, and `needs_input` on a permanent rejection. |
 
 Run one with
-`pnpm --filter @rally/api exec vitest run test/digest-run-context.test.ts` — the
+`pnpm --filter @rally/api exec vitest run test/digest-schedule.test.ts` — the
 path is package-relative.
 
 **A test proves the markup contains a string, not that the hierarchy reads.** Every
@@ -824,14 +653,54 @@ preview does *not* reproduce on its own.
 
 ## Device notification transport
 
-Mention and seating intents now also enqueue regional Apple push when the
-recipient's flag is enabled and a live device exists. Slack still sends;
-email is sent only when Slack did not send and push was not enqueued. Both the
-intent processor and push consumer use `notificationDeliveryContext`, preserving
-existing audience and projection semantics. [Apple push](push-notifications.md)
-owns device registration, provider delivery and retry receipts.
+Mention and seating intents are sent on the channels the person chose for
+that kind: push, email, and any connector surface such as Slack. Nothing falls
+back to another channel. Both the intent processor and push consumer use
+`notificationDeliveryContext`, preserving existing audience and projection
+semantics. [Push notifications](push-notifications.md) owns the channels,
+device registration, provider delivery and retry receipts.
 
 ## Changelog
+
+### 2026-10-15 — The digest is unread Activity, at the start and end of the day
+
+**What changed:** A digest no longer runs the agent. Each occurrence lists what
+is still unread in the person's Activity, one section per kind, and sends it to
+their email, their Personal Channel (as a new thread from Rally), or a
+connector surface such as Slack. Settings shows it inside Notifications as
+two slots, Start of day and End of day. The per-occurrence hidden work
+stream, the brief, the run settlement and the window cursor are gone. New
+members default to their email and their Personal Channel.
+
+**Why:** People asked for one place that says what they have not looked at
+yet, twice a day, and Activity already is that place. A summary written by a
+model reported a different set of things from the sidebar, cost a run per
+person per occurrence, and could not be checked against anything.
+
+**Considered and rejected:** Keeping the model to write a summary of the unread
+rows: the rows are already short and worded, and the summary was the part
+people could not verify. A new table for the Personal Channel destination: its
+row fits the existing shape with the Space where a connection would be, and
+the CHECK needs no rebuild. Marking rows read once sent: the person has not
+read them, and the sidebar would stop telling them.
+
+**Consequences:** `summary_markdown` is now the text every destination of an
+occurrence receives, written at claim. The cursor columns are written as zero.
+Old digest work streams (`system_kind = 'digest'`) stay as they were, hidden
+unless Debug is on.
+
+**Connector activity is no longer digested, on purpose.** The old digest read
+the log, where connector events live; Activity holds only mentions, additions,
+starts and finished runs, so a GitHub review or a received email no longer
+reaches anyone on a schedule. `listActivityEvents` and
+`latestActivityEventCursor` had no other caller and are removed. The
+`digestible` column and the manifests' declarations stay, read by nothing,
+for the next surface that wants connector news on a schedule.
+
+**A destination that fails no longer fails the occurrence.** Its failure is
+recorded and the next occurrence rebuilds from Activity anyway; retrying held
+the schedule row, and every later occurrence, behind a destination that was
+down. Only an attempt that dies before settling is retried.
 
 ### 2026-10-13 — Activity rows are settled by what the person does
 

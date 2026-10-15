@@ -126,10 +126,12 @@ member's verified Rally login email with `users.lookupByEmail`; Rally sends a bo
 DM only when exactly one installed team returns a valid active human. This lookup is used only
 as a delivery address: it does not create a `slack_user_links` row, authenticate the recipient,
 or authorize personal Slack tools. Missing, ambiguous, invalid, or incompletely authorized
-matches fall back to the ordinary mention email. Existing installations must complete the
+matches send nothing to Slack. Nothing falls back to email: a mention is emailed only when
+the person chose email for that kind
+([`push-notifications.md`](push-notifications.md#what-each-person-chooses)). Existing installations must complete the
 Rally OAuth flow again to grant additive `users:read`, `users:read.email`, and
-`reactions:read` and `reactions:write` bot scopes. Until the identity scopes arrive, lookup-based mentions use
-email. If an already-admitted prompt discovers that `reactions:write` is missing, Rally
+`reactions:read` and `reactions:write` bot scopes. Until the identity scopes arrive, lookup-based mentions are
+not sent to Slack. If an already-admitted prompt discovers that `reactions:write` is missing, Rally
 continues that task and marks the installation for reconnect. The mark is a diagnosis, not a
 gate: later prompts still reach Slack and fail on Slack's answer if the scope is really gone —
 see [Stored status is a belief, not a gate](connectors.md#stored-status-is-a-belief-not-a-gate).
@@ -692,7 +694,7 @@ not own:
   reply.
 - **Existing workspace installations must reconnect after a scope expansion**
   before health checks and tool calls succeed. Until the identity scopes arrive,
-  lookup-based mentions fall back to email.
+  lookup-based mentions are not sent to Slack, and nothing is sent in their place.
 - **Result content is never streamed to Slack.** After Rally reloads the saved
   canonical turn, the reply is posted in complete 12,000-character
   `chat.postMessage` chunks. A pending elicitation is rendered from its saved
@@ -729,7 +731,7 @@ not own:
 | `apps/api/test/slack-workstream-creator-attribution.test.ts` | Creator resolution and the one case where an existing creator is rewritten. |
 | `apps/api/test/slack-thread-audience.test.ts` | The conversation's visibility and room, bounded roster enrichment, participant events, per-message delivery routing, shared feedback controls, a second linked member continuing a thread, and an unmapped Slack member's reply. |
 | `apps/api/test/slack-connection-health.test.ts` | That a stored status diagnoses rather than gates. |
-| `apps/api/test/slack-notification-service.test.ts` | The lookup-based DM path and its email fallback. |
+| `apps/api/test/slack-notification-service.test.ts` | The lookup-based DM path and the cases it skips. |
 | `apps/api/test/slack-routing.test.ts` | The Global team route and the regional hand-off. |
 | `apps/api/test/slack-unfurl-refresh.test.ts` | The unfurl card and its refresh sweep — owned by [`workstream-links.md`](workstream-links.md). |
 | `apps/api/test/slack-workspace-assignment.test.ts` | The one-team-one-workspace invariant, the ingress re-drive, the link-challenge reap and the `slack_ingress` due time it clears, the operator notice an exhausted job posts, and the connector principal: a linked member's create and reply present exactly the marked auth to the object, and the object's refusal stays retryable without flipping the installation. |
