@@ -291,8 +291,8 @@ Each Breakout row the thread receives carries `originTurnId` and
   transcript cache, so it draws only when the origin is loaded there, and only
   above the Breakout's first message, never above a window with earlier pages.
 - **Cards:** `MessageFeed` draws a `ConversationCard` for each Breakout after
-  the last row of its origin turn, on the leading side: the same entry the
-  Channel feed draws for a thread, with the Breakout's mark, its title, "N
+  the last row of its origin turn, on the trailing side because a person
+  started it: the same entry the Channel feed draws for a thread, with the Breakout's mark, its title, "N
   new" when there is news, and who started it and when. The open Breakout's
   card is pressed, its name ends in "Open", and it drops its news, as an open
   thread's card in the Channel does. The byline waits for the
@@ -436,7 +436,8 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 
 **What changed:** The Channel feed's thread entry is now `ConversationCard` in
 `packages/ui`, and a thread's feed draws each Breakout under its origin turn
-with it, on the leading side, in place of `BreakoutChipRow`, which is gone.
+with it, on the trailing side as a person started it, in place of
+`BreakoutChipRow`, which is gone.
 A Breakout's card has no summary; its byline names who started it and when.
 The card, not its caller, drops the news on the open conversation, so an open
 Breakout stops saying "New" as an open thread already did.

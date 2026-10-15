@@ -290,7 +290,6 @@ export function MessageFeed({
     if (breakouts.length === 0) return null;
     return <div aria-label="Breakouts from this message" className="breakout-card-list" role="group">
       {breakouts.map((breakout) => <ConversationCard
-        align="start"
         conversation={breakout}
         key={breakout.substreamId}
         meta={breakoutCards.renderMeta?.(breakout)}
