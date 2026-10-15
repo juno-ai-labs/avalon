@@ -1193,6 +1193,11 @@ build is more than seven days old (`STALE_BUILD_PROMPT_AGE_MS` in
 `electron.vite.config.ts` stamps into the main bundle; an unstamped build never
 prompts.
 
+The first automatic check waits ten minutes after launch
+(`STARTUP_CHECK_DELAY_MS` in `updater.ts`), so the feed request and any
+download stay out of startup; after that Rally checks every three hours. **Check
+for Updates…** and a channel change still check at once.
+
 A staged build does not stop the three-hourly check. Those checks run with
 `autoDownload` off so the staged version is not fetched and handed to Squirrel
 again; when the feed names a different (and so newer) version, Rally downloads
