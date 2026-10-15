@@ -1,3 +1,4 @@
+import { TERMINAL_NETWORK_MANIFEST_VERSION, TERMINAL_NETWORK_MAX_TARGETS } from "../services/terminal/network-policy";
 import {
   WorkspaceTerminalNetworkModeSchema,
   WorkspaceTerminalNetworkSettingsSchema,
@@ -85,11 +86,37 @@ export function workspaceTerminalNetworkSettings(
       request.at,
       request.at,
     );
+    // A Trusted-only policy saved under an older platform baseline is brought
+    // up to this one: its custom domains on the current baseline, under a new
+    // revision, so every sandbox re-applies and reads the list back on its next
+    // acquisition through the ordinary reconcile path. Only a settled policy:
+    // a change in flight is the person's and is compiled when it is applied.
+    // A list past Daytona's cap is left as it was rather than stored unusable;
+    // the settings screen shows no slots left and the admin removes domains.
+    // Only a caller on this object's own baseline may move a policy, so an
+    // older Worker still serving during a deploy cannot roll one back.
+    const customDomains = domainsOf(storage, request.workspaceId);
+    const upgraded = [...new Set([...request.defaultEffectiveDomains, ...customDomains])].sort();
+    if (request.baselineManifestVersion === TERMINAL_NETWORK_MANIFEST_VERSION
+      && upgraded.length <= TERMINAL_NETWORK_MAX_TARGETS) {
+      storage.sql.exec(
+        `UPDATE workspace_sandbox_network_policies
+            SET effective_domains_json = ?, baseline_manifest_version = ?,
+                revision = revision + 1, updated_at = ?
+          WHERE workspace_id = ? AND mode = 'trusted_only' AND verification_state = 'verified'
+            AND baseline_manifest_version <> ?`,
+        JSON.stringify(upgraded),
+        request.baselineManifestVersion,
+        request.at,
+        request.workspaceId,
+        request.baselineManifestVersion,
+      );
+    }
     const row = policyOf(storage, request.workspaceId);
     if (!row) throw new Error("terminal_network_policy_missing");
     return WorkspaceTerminalNetworkSettingsSchema.parse({
       policy: policyView(row),
-      customDomains: domainsOf(storage, request.workspaceId),
+      customDomains,
     });
   });
 }
@@ -296,13 +323,14 @@ export function commitWorkspaceTerminalPolicyApplication(
     const published = storage.sql.exec<{ revision: number }>(
       `UPDATE workspace_sandbox_network_policies
           SET mode = ?, revision = ?, verification_state = 'verified',
-              effective_domains_json = ?, failure_code = NULL,
+              effective_domains_json = ?, baseline_manifest_version = ?, failure_code = NULL,
               last_verified_at = ?, updated_at = ?
         WHERE workspace_id = ? AND revision = ? AND verification_state = 'pending'
         RETURNING revision`,
       request.mode,
       request.resultingRevision,
       JSON.stringify(request.effectiveDomains),
+      request.baselineManifestVersion,
       request.at,
       request.at,
       request.workspaceId,
