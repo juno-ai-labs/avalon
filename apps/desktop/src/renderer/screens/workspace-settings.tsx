@@ -554,15 +554,18 @@ function isPhoneLayout(): boolean {
   return window.matchMedia?.(PHONE_LAYOUT_QUERY).matches ?? false;
 }
 
+/** The digest moved into Notifications; an older link, such as the one in a digest email, still names its own page. */
+function currentSection(section: SettingsSection): SettingsSection {
+  return section === 'digest' ? 'notifications' : section;
+}
+
 function linkedSettingsSection(): SettingsSection | null {
   const nativeSection = parseDesktopSettingsSection(
     new URLSearchParams(window.location.search).get('settingsSection'),
   );
   const hashQuery = window.location.hash.split('?', 2)[1];
   const section = nativeSection ?? parseDesktopSettingsSection(new URLSearchParams(hashQuery ?? '').get('section'));
-  // The digest moved into Notifications; an older link, such as the one in a
-  // digest email, still names its own page.
-  return section === 'digest' ? 'notifications' : section;
+  return section && currentSection(section);
 }
 
 export function WorkspaceSettingsScreen({
@@ -1119,7 +1122,9 @@ export function WorkspaceSettingsScreen({
   }), [browserHost, availableSections, isAdmin, developerSettingsAvailable, applicationSettings?.menuBarAvailable, applicationSettings?.launchAtLoginAvailable, applicationSettings?.releaseChannelAvailable]);
   const [searchTarget, setSearchTarget] = useState<SettingSearchResult | null>(null);
   const searchEntries = useMemo(() => collectSettings([
-    { ...coreSettingsProvider, entries: coreSettingsProvider.entries.filter((entry) => !entry.definition.connectionKind)
+    // The digest's rows are searchable only while the digest is drawn.
+    { ...coreSettingsProvider, entries: coreSettingsProvider.entries.filter((entry) => !entry.definition.connectionKind
+      && (digestSettingsAvailable || !entry.definition.id.startsWith('digest')))
       .map((entry) => ({ ...entry, instanceLabel: connectorProviders.find((provider) =>
         'provider:' + provider.id === entry.definition.entryPoint)?.name })) },
     {
@@ -1143,7 +1148,7 @@ export function WorkspaceSettingsScreen({
         instanceId: connection.id,
       })),
     },
-  ], settingsContext), [connections.data, installedConnections, isAdmin, settingsContext]);
+  ], settingsContext), [connections.data, installedConnections, isAdmin, settingsContext, digestSettingsAvailable]);
   const searchResults = useMemo(() => {
     const action = navigationQuery.trim().toLowerCase();
     const exactConnectAction = [PERSONAL_CONNECT_LABEL, 'Connect for organization'].some((label) => label.toLowerCase() === action);
@@ -1212,7 +1217,7 @@ export function WorkspaceSettingsScreen({
     // A section request names no connection, so it must not reopen whichever
     // page was last shown; `connection` without one lands on Connections.
     setConnectionPageId(null);
-    setActiveSection(nextSection);
+    setActiveSection(currentSection(nextSection));
     if (nextSection === 'workspace') setUsageRequest((count) => count + 1);
   }), [bridge]);
 
