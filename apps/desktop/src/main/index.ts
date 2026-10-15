@@ -3475,6 +3475,7 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
         const [width = 0, height = 0] = window.getContentSize();
         return { width, height };
       },
+      zoomFactor: () => window.webContents.getZoomFactor(),
       removeView: (view) => {
         const child = artifactViews.get(view);
         if (child) window.contentView.removeChildView(child);
