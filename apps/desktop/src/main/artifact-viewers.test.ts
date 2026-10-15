@@ -111,6 +111,13 @@ describe('the preview rectangle', () => {
     expect(clampBounds({ x: 10.4, y: 10.6, width: 100.5, height: 100.4 }, window))
       .toEqual({ x: 10, y: 11, width: 101, height: 100 });
   });
+
+  it('converts CSS-pixel bounds through the renderer zoom before clamping', () => {
+    expect(clampBounds({ x: 400, y: 80, width: 320, height: 240 }, window, 1.25))
+      .toEqual({ x: 500, y: 100, width: 400, height: 300 });
+    expect(clampBounds({ x: 400, y: 80, width: 320, height: 240 }, { width: 800, height: 600 }, 0.8))
+      .toEqual({ x: 320, y: 64, width: 256, height: 192 });
+  });
 });
 
 describe('the isolation contract both surfaces share', () => {
@@ -441,6 +448,7 @@ describe('the rail preview controller', () => {
     servingDomain = DOMAIN,
     loadFailure: Error | null = null,
     load?: (url: string) => Promise<void>,
+    zoom = 1,
   ) {
     const views: {
       url: string | null;
@@ -457,6 +465,7 @@ describe('the rail preview controller', () => {
       {
         destroyed: () => host.destroyed,
         contentSize: () => ({ width: 1_200, height: 800 }),
+        zoomFactor: () => zoom,
         removeView: (view) => removed.push(view),
       },
       servingDomain,
@@ -600,6 +609,14 @@ describe('the rail preview controller', () => {
     controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
     controller.setBounds({ x: 900, y: 100, width: 9_000, height: 9_000 });
     expect(views[0]?.bounds.at(-1)).toEqual({ x: 900, y: 100, width: 300, height: 700 });
+  });
+
+  it('places the view in window points when the renderer is zoomed', async () => {
+    const { controller, views } = harness(DOMAIN, null, undefined, 1.25);
+    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 })).toBe(true);
+    expect(views[0]?.bounds.at(-1)).toEqual({ x: 1_125, y: 125, width: 75, height: 500 });
+    controller.setBounds({ x: 400, y: 80, width: 320, height: 240 });
+    expect(views[0]?.bounds.at(-1)).toEqual({ x: 500, y: 100, width: 400, height: 300 });
   });
 
   it('destroys the view and forgets the artifact', () => {

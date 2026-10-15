@@ -337,12 +337,13 @@ is the only place that can forward into it.
   must also come from that same response: the ID selects its isolated
   storage partition while the URL selects its confined origin.
 - **Everything the renderer measures is a request, not an instruction.** The
-  preview rectangle is clamped to the window, because a wrong or hostile one
-  would paint artifact content over the chrome a person needs to escape it. And
-  a `WebContentsView` composites *above* the renderer's DOM, so any app surface
-  that can overlap the rail — a dialog, the command palette, a lightbox — must
-  collapse the view to nothing while it is open, or artifact content paints over
-  it.
+  preview rectangle is converted through the Rally window's zoom factor (CSS
+  pixels to window points) and then clamped to the window, because a wrong or
+  hostile one would paint artifact content over the chrome a person needs to
+  escape it. And a `WebContentsView` composites *above* the renderer's DOM, so
+  any app surface that can overlap the rail — a dialog, the command palette, a
+  lightbox — must collapse the view to nothing while it is open, or artifact
+  content paints over it.
 - **No artifact may register a service worker.** `worker-src 'none'` is written
   out because `default-src 'self'` would permit a same-origin one, and a
   root-scoped service worker is the single thing an artifact can install that
@@ -497,7 +498,7 @@ facet that holds a stateful artifact's data. It does not own:
 | `pnpm --filter @rally/api exec vitest run test/terminal-runtime.test.ts` | Directory publish end to end through the runtime, against a simulated sandbox shell. |
 | `pnpm --filter @rally/api exec vitest run test/artifact-open-service.test.ts` | Which authority answers which question at open time, that a refusal mints nothing, and that a missing artifact and an invisible one are indistinguishable. |
 | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/site-resource-detail.test.tsx` | The detail: that the first access response drives the initial preview without a second mint, later surfaces get fresh single-use codes, it measures and hands over rather than embedding, its actions land in the host's header and each carries a tooltip, Copy link carries no code, the data toggle only exists for a site that keeps data and takes the composited view down with it, and the pane never flashes its unavailable state. |
-| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp, the isolation contract, the activation gate (unattended navigation dropped, an activated link handed over and never followed in place, redirects and disallowed schemes refused either way, one press buying one departure and not a loop of them, a refused navigation leaving the press unspent, the press dropped when its document goes, a same-origin `_blank` shown in place, and the exact event set that does and does not arm it), the overlay collapse, and the teardown guards — each surface's lifecycle branch separately, since one guard covering both reads as covered while half of it is dead. |
+| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp (including CSS-pixel to window-point conversion at a non-1 zoom), the isolation contract, the activation gate (unattended navigation dropped, an activated link handed over and never followed in place, redirects and disallowed schemes refused either way, one press buying one departure and not a loop of them, a refused navigation leaving the press unspent, the press dropped when its document goes, a same-origin `_blank` shown in place, and the exact event set that does and does not arm it), the overlay collapse, and the teardown guards — each surface's lifecycle branch separately, since one guard covering both reads as covered while half of it is dead. |
 | `pnpm --filter @rally/api exec vitest run test/workstream-artifact-data-tools.test.ts` | The data tools' contract and the site read-remediation, including its round trip through the real structured-failure sanitizer. |
 | `pnpm --filter @rally/agent-harness exec vitest run` | The skill's shape and the standing policy's byte budget — the prompt bound is what keeps the policy six lines rather than nine. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-stateless-module.test.ts` | A **stateless active** site's isolate on real workerd: that the `ASSETS` stub crosses the loader's env at all, that it serves this artifact's files, that the relative-string read works, and that `fetch()` throws. Scope is the isolate contract, not admission — the fences in front of it are the policy suite's. |
@@ -561,6 +562,20 @@ mint one; that is inside that console's stated authority rather than a boundary
 this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 
 ## Changelog
+
+### 2026-10-15 — The rail preview converts CSS pixels through window zoom
+
+**What changed:** The composited `WebContentsView` converts the renderer's
+CSS-pixel rectangle through the window zoom factor before `setBounds`. The
+embedded browser's `dimensions()` now calls the same `clampBounds` helper.
+
+**Why:** A Rally window whose zoom was not 1 placed the native view short of
+the pane: zoomed out, a gap on the left of the rail; zoomed in, overlap into
+the transcript. Prompting the generated site did nothing because the page
+was already flush in a normal tab.
+
+**Consequences:** Desktop preview bounds must keep using the window zoom;
+dropping the factor reintroduces the gap or the overlap.
 
 ### 2026-10-13 — A detail's header actions are data the header draws
 

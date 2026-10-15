@@ -60,6 +60,8 @@ export interface ArtifactHostWindow {
   /** Whether the window is gone; see `ArtifactViewHandle.destroyed`. */
   destroyed(): boolean;
   contentSize(): { width: number; height: number };
+  /** Rally's renderer zoom; native views use window points. */
+  zoomFactor(): number;
   removeView(view: ArtifactViewHandle): void;
 }
 
@@ -155,18 +157,22 @@ export async function loadArtifactInitialUrl(loadURL: () => Promise<void>): Prom
 /**
  * Keep the preview inside the window it is composited over.
  *
- * The renderer measures the rectangle, so a wrong or hostile one would put a
- * view over the whole window — including over chrome a person needs to escape
- * it. Clamping is what makes the bounds a *request* rather than an instruction.
+ * The renderer measures the rectangle in CSS pixels, so a wrong or hostile one
+ * would put a view over the whole window. `zoom` converts to window points;
+ * clamping is what makes the bounds a *request* rather than an instruction.
  */
-export function clampBounds(bounds: PreviewBounds, window: { width: number; height: number }): PreviewBounds {
-  const x = Math.max(0, Math.min(Math.round(bounds.x), window.width));
-  const y = Math.max(0, Math.min(Math.round(bounds.y), window.height));
+export function clampBounds(
+  bounds: PreviewBounds,
+  window: { width: number; height: number },
+  zoom = 1,
+): PreviewBounds {
+  const x = Math.max(0, Math.min(Math.round(bounds.x * zoom), window.width));
+  const y = Math.max(0, Math.min(Math.round(bounds.y * zoom), window.height));
   return {
     x,
     y,
-    width: Math.max(0, Math.min(Math.round(bounds.width), window.width - x)),
-    height: Math.max(0, Math.min(Math.round(bounds.height), window.height - y)),
+    width: Math.max(0, Math.min(Math.round(bounds.width * zoom), window.width - x)),
+    height: Math.max(0, Math.min(Math.round(bounds.height * zoom), window.height - y)),
   };
 }
 
@@ -583,6 +589,6 @@ export class ArtifactPreviewController {
       this.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
       return;
     }
-    this.view.setBounds(clampBounds(this.bounds, this.window.contentSize()));
+    this.view.setBounds(clampBounds(this.bounds, this.window.contentSize(), this.window.zoomFactor()));
   }
 }
