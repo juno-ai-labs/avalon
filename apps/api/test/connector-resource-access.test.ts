@@ -257,4 +257,31 @@ describe("reaching one resource through whichever connection can", () => {
       summary: "Creator Content Intake: plugin_google (personal) none; plugin_google_2 (workspace) edit",
     });
   });
+
+  it("reports only what the run froze, not grants added to the connection since", async () => {
+    // The live row grants Drive and Sheets; the run started when it did not.
+    googleAsTwoAccounts({ visibleTo: ["workspace-token"] });
+    const { env, personal, workspace } = await fixture();
+    const frozenWithoutDrive = { ...workspace, grantedScopes: ["gmail.read"], toolCapabilities: ["gmail.read"] } as Frozen;
+    const tool = __integrationTesting.createAvalonTools(env, workflowInput(), {
+      connectorTypes: ["google"],
+      connections: () => [personal, frozenWithoutDrive],
+    }).find((candidate) => candidate.definition.name === "check_resource_access");
+
+    const result = await tool!.execute({ connector: "google", resource: FILE_ID }, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      harnessRunId: HARNESS_RUN_ID,
+      toolCallId: "check-access-frozen",
+      executionPrincipal: { type: "user", userId: USER_ID },
+      signal: new AbortController().signal,
+    });
+    expect(result.output).toMatchObject({
+      connections: [
+        { plugin: "plugin_google", access: "none" },
+        { plugin: "plugin_google_2", access: "none", reason: "capability_not_granted" },
+      ],
+      canRead: null,
+    });
+  });
 });
