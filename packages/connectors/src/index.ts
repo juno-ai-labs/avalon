@@ -3237,9 +3237,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       if (name === "drive.get_metadata" || name === "drive.download") {
         const args = z.strictObject({ fileId: z.string().min(1).max(500) }).parse(rawArgs);
         const metadataUrl = googleDriveMetadataUrl(args.fileId);
-        const payload = await api(context.connection, metadataUrl.toString(), { signal: context.signal }).then((response) =>
-          safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
-        );
+        const payload = await withGoogleReadAccess(() => api(context.connection, metadataUrl.toString(), { signal: context.signal })
+          .then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)));
         const metadata = sanitizeDriveFile(payload);
         if (name === "drive.get_metadata") {
           return {
@@ -3248,7 +3247,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             providerOperationId: args.fileId
           };
         }
-        const content = await readDriveTextContent(api, context.connection, args.fileId, payload, context.signal, GOOGLE_TOOL_TEXT_BYTES, config.documents);
+        const content = await withGoogleReadAccess(() =>
+          readDriveTextContent(api, context.connection, args.fileId, payload, context.signal, GOOGLE_TOOL_TEXT_BYTES, config.documents));
         return {
           output: boundedToolOutput({ ...metadata, ...content }),
           summary: content.textContent == null ? "Read Drive metadata; binary or large content was omitted" : "Read bounded Drive text content",
@@ -3269,11 +3269,11 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             providerOperationId: args.fileId
           };
         }
-        const response = await api(
+        const response = await withGoogleReadAccess(() => api(
           context.connection,
           `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(args.fileId)}/export?mimeType=${encodeURIComponent(args.mimeType)}`,
           { signal: context.signal }
-        );
+        ));
         const bytes = await readBounded(response, GOOGLE_TOOL_TEXT_BYTES);
         const text = new TextDecoder().decode(bytes);
         return {
