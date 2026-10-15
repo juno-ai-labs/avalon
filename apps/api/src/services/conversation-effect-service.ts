@@ -329,7 +329,11 @@ export async function processWorkstreamNotificationIntent(
   }
   const { identity, effect, childId, viewer } = context;
   try {
-    const push = await enqueuePushDelivery(env, { region: env.AVALON_REGION, workspaceId: row.workspaceId,
+    // Each channel the person chose for this kind, and only those. Nothing
+    // falls back to another: an empty choice means Activity and the digest.
+    const preferences = await workspace.memberPreferences({ workspaceId: typedWorkspaceId, userId: row.recipientUserId });
+    const channels = preferences.notify[row.notificationKind === "participant_added" ? "added" : "mentions"];
+    const push = channels.includes("push") && await enqueuePushDelivery(env, { region: env.AVALON_REGION, workspaceId: row.workspaceId,
       recipientUserId: row.recipientUserId, intentId });
     const recipient = {
       recipientUserId: effect.recipientUserId,
@@ -341,7 +345,8 @@ export async function processWorkstreamNotificationIntent(
       ...(childId ? { substreamId: childId } : {}),
     };
     const sourceId = effect.kind === "participant_notification" ? effect.sourceId : effect.messageId;
-    const slack = effect.kind === "participant_notification"
+    const slack = !channels.includes("slack_agent_dm") ? "skipped" as const
+      : effect.kind === "participant_notification"
       ? await sendWorkstreamParticipantAddedSlack(env, {
         ...recipient,
         sourceId: effect.sourceId,
@@ -364,10 +369,10 @@ export async function processWorkstreamNotificationIntent(
       recipient_user_id: effect.recipientUserId,
       channel: "slack",
       outcome: slack,
-      reason: slack === "sent" ? "provider_accepted" : "fallback_required",
+      reason: slack === "sent" ? "provider_accepted" : channels.includes("slack_agent_dm") ? "not_delivered" : "channel_not_chosen",
     });
     let email: "sent" | "skipped" | null = null;
-    if (slack !== "sent" && !push) {
+    if (channels.includes("email")) {
       const fallback = {
         ...recipient,
         recipientName: identity.recipient_name,
@@ -418,8 +423,9 @@ export async function processWorkstreamNotificationIntent(
       source_id: sourceId,
       recipient_user_id: effect.recipientUserId,
       outcome: "delivered",
-      reason: push ? "push_enqueued" : slack === "sent" ? "slack_sent" : "email_fallback_completed",
-      delivery_channel: push ? "push" : slack === "sent" ? "slack" : "email",
+      reason: channels.length ? "chosen_channels_attempted" : "no_channel_chosen",
+      channels: channels.join(","),
+      push_enqueued: push,
       slack_outcome: slack,
       email_outcome: email,
     });

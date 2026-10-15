@@ -1077,7 +1077,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       if (intent.kind === 'settings') {
         const openSettings = async (): Promise<void> => {
           setDeepLinkError(null);
-          await bridge.openSettings(intent.section);
+          // The digest moved into Notifications; links that name it still land there.
+          await bridge.openSettings(intent.section === 'digest' ? 'notifications' : intent.section);
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openSettings);
         else await openSettings();

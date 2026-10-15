@@ -233,7 +233,8 @@ overlap.
   `digests-enabled` is the one field in that schema that defaults **true**
   instead: it is provisioned **on**, because a digest already sends by default
   for every existing person, and Electron reads it to decide whether to show
-  the Digest settings section — see [`digests.md`](digests.md#the-run).
+  the Daily digest group in Settings → Notifications. See
+  [`digests.md`](digests.md#an-occurrence).
 - The account-wide and regional Queue messages never carry a flag value. Values
   are user-specific and are evaluated in the owning WorkspaceDO after Flagship
   propagation; carrying one value would leak one audience's answer to another.

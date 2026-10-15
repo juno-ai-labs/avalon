@@ -469,6 +469,9 @@ describe("substream preparation on workerd", () => {
     } else if (recipientState === "archived") {
       await service.archive(WORKSTREAM_ID, substreamId, true);
     }
+    // Email is the one transport this test can read, so the recipient chooses it.
+    await TEST_ENV.WORKSPACE_DOS.get(TEST_ENV.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)))
+      .saveMemberPreferences({ workspaceId: WORKSPACE_ID, userId: OTHER_ID, preferences: { notify: { mentions: ["email"] } } });
     await deliverParentEffects({ ...TEST_ENV,
       WORKSPACE_DOS: localJurisdiction(TEST_ENV.WORKSPACE_DOS),
       APP_ENV: "production", RESEND_API_KEY: "test-only",

@@ -24,8 +24,7 @@ Rally only ever keeps one Settings window. Opening it again brings the existing
 one to the front instead of making a second.
 
 Changes take effect the moment you make them. There is no **Save** button to
-forget, with one exception: the **Digest** section, which has **Save digest**
-because a schedule is easier to set up in one go.
+forget.
 
 ### Closing it
 
@@ -44,8 +43,7 @@ Rally on this Mac.
 | Section | What you find there | More in |
 | --- | --- | --- |
 | **Account** | Your profile, your default time zone, and **Sign out of Rally**. | This page, and [Signing in, signing out and Lockdown mode](../11-privacy-and-security/01-signing-in-and-out.md) |
-| **Digest** | When Rally writes you a summary and where it sends it. | [The digest](../08-rally-everywhere/05-the-digest.md) |
-| **Notifications** | Whether this Mac tells you about mentions and additions. | [Notifications](../08-rally-everywhere/04-notifications.md) |
+| **Notifications** | Whether this Mac shows alerts, how each kind of Activity reaches you, and your daily digest. | [Notifications](../08-rally-everywhere/04-notifications.md), [The digest](../08-rally-everywhere/05-the-digest.md) |
 | **Organization** | The Organization's name, its default time zone, its members and invitations. | [Organization settings](../10-running-an-organization/03-organization-settings.md) |
 | **Security** | Where code Rally runs is allowed to connect. | [Organization settings](../10-running-an-organization/03-organization-settings.md) |
 | **Connections** | Every tool you or your Organization have connected, and the ones you could add. | [Settings → Connections](../05-connecting-your-tools/01-connections.md) |
@@ -55,10 +53,10 @@ Rally on this Mac.
 
 Not everyone sees every section, and a missing one is not a fault:
 
-- **Digest** is hidden if digests have been switched off for your account.
-- **Notifications** appears only once notifications on the Mac have been turned
-  on for your account. Rally is still rolling this out, so many people do not
-  have it yet.
+- **Daily digest**, inside **Notifications**, is hidden if digests have been
+  switched off for your account.
+- **On this Mac**, inside **Notifications**, appears only once notifications
+  on the Mac have been turned on for your account.
 - **GitHub** appears only after someone has connected GitHub, and **MCP tools**
   only after a custom MCP server is connected.
 
@@ -135,8 +133,8 @@ Rally uses it in two places:
   description under the setting still calls them "personal automations", which
   is the old name for Sidekicks. See
   [Triggers and schedules](../07-sidekicks/03-triggers-and-schedules.md).
-- **Your digest.** Digest times are in this time zone too. The **Digest**
-  section has a link that brings you back here to change it.
+- **Your digest.** Digest times are in this time zone too. **Change**, next to
+  the digest's **Days**, brings you back here to change it.
 
 This is your own time zone. The Organization has a separate **Default timezone**
 under **Organization**, used for Sidekicks that belong to the whole

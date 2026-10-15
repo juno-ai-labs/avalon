@@ -1,7 +1,8 @@
 import "../../../../../tests/isolated-region";
 import { AccountOnboardingGate } from './guided-onboarding';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { ClientFeatureFlagsSchema, DEFAULT_MEMBER_PREFERENCES, DEFAULT_PUSH_PREFERENCES } from '@rally/contracts';
+import { ClientFeatureFlagsSchema, DEFAULT_MEMBER_PREFERENCES,
+  DEFAULT_NOTIFICATION_CHANNELS } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
@@ -10,7 +11,6 @@ import { coreSettingsProvider } from '../settings/registry';
 import type { PendingConnectorOAuth } from '../lib/app-session';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import { ApiError } from '../lib/api';
-import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from '../lib/use-client-feature-flags';
 import type { Workspace, WorkspaceInvitation } from '../lib/types';
 import { WorkspaceSettingsScreen } from './workspace-settings';
 import { CollaborationSessionProvider } from '../lib/collaboration-session';
@@ -202,7 +202,7 @@ async function openConnection(name: string): Promise<void> {
 }
 
 function openSettingsSection(
-  name: 'Account' | 'Digest' | 'Organization' | 'Security' | 'Connections' | 'Application',
+  name: 'Account' | 'Notifications' | 'Organization' | 'Security' | 'Connections' | 'Application',
 ): void {
   const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
   fireEvent.click(within(navigation).getByRole('button', { name }));
@@ -558,25 +558,38 @@ describe('Organization settings', () => {
     await waitFor(() => expect(toggle).not.toBeChecked());
   });
 
-  it('saves a push switch for every device and holds its narrower switch while it is off', async () => {
+  it('saves one kind\'s channels for every device and leaves the other kinds alone', async () => {
     api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));
     api.getMyPreferences.mockResolvedValue(DEFAULT_MEMBER_PREFERENCES);
     api.updateMyPreferences.mockImplementation(async () => ({ ...DEFAULT_MEMBER_PREFERENCES,
-      push: { ...DEFAULT_PUSH_PREFERENCES, newThreads: false } }));
+      notify: { ...DEFAULT_NOTIFICATION_CHANNELS, newThreads: ['push', 'email'] } }));
     renderSettings();
     fireEvent.click(await within(screen.getByRole('navigation', { name: 'Settings sections' }))
       .findByRole('button', { name: 'Notifications' }));
 
-    const newThreads = await screen.findByRole('switch', { name: /^New threads/u });
-    const outside = screen.getByRole('switch', { name: /Include Channels you haven't joined/u });
-    expect(newThreads).toBeChecked();
-    expect(outside).toBeEnabled();
-    fireEvent.click(newThreads);
+    // jsdom lays nothing out, so the row has no room for a button each and offers its menu.
+    const menu = await screen.findByRole('button', { name: 'How to tell you about new threads' });
+    expect(menu).toHaveTextContent('Push');
+    fireEvent.pointerDown(menu, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: /^Email/u }));
 
-    // Only the switch that changed: a stale copy of the others must not be written back.
-    await waitFor(() => expect(api.updateMyPreferences).toHaveBeenCalledWith({ push: { newThreads: false } }));
-    await waitFor(() => expect(newThreads).not.toBeChecked());
-    expect(outside).toBeDisabled();
+    // Only the kind that changed, whole: a stale copy of the others must not be written back.
+    await waitFor(() => expect(api.updateMyPreferences).toHaveBeenCalledWith({ notify: { newThreads: ['push', 'email'] } }));
+    await waitFor(() => expect(menu).toHaveTextContent('Push and Email'));
+  });
+
+  it('keeps Slack on screen for a person whose Slack account is not linked, so they can turn it off', async () => {
+    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));
+    api.getMyPreferences.mockResolvedValue(DEFAULT_MEMBER_PREFERENCES);
+    // The workspace has Slack, but this person has not linked to it, so no connection offers it.
+    api.getConnections.mockResolvedValue([{ id: 'slack-one', connectorType: 'slack', scope: 'workspace',
+      displayName: 'Juno Labs', capabilities: [], status: 'healthy', settingsKind: null }]);
+    renderSettings();
+    fireEvent.click(await within(screen.getByRole('navigation', { name: 'Settings sections' }))
+      .findByRole('button', { name: 'Notifications' }));
+
+    const menu = await screen.findByRole('button', { name: 'How to tell you about mentions' });
+    await waitFor(() => expect(menu).toHaveTextContent('Push and Slack'));
   });
 
   it('saves an edited personal system prompt and offers Save only while it differs', async () => {
@@ -685,7 +698,7 @@ describe('Organization settings', () => {
         || button.dataset.settingResult?.startsWith(definition.id + ':'));
     expect(result, definition.id).toBeDefined();
     fireEvent.click(result!);
-    if (definition.id === 'inviteSend' || definition.id === 'digestSave') {
+    if (definition.id === 'inviteSend') {
       await waitFor(() => expect(document.querySelector(`[data-setting-id="${definition.id}"]`)).toHaveClass('settings-search-highlight'));
       expect(document.activeElement?.closest('button[type="submit"]')).toBeNull();
     } else {
@@ -3170,72 +3183,16 @@ describe('Organization settings', () => {
     expect(await screen.findByText('Application settings could not be read.')).toBeVisible();
   });
 
-  it('hides the Digest section entirely when digestsEnabled resolves false', async () => {
+  it('leaves the Daily digest out of Notifications when digestsEnabled resolves false', async () => {
     api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ digestsEnabled: false }));
     renderSettings();
+    openSettingsSection('Notifications');
 
-    const navigation = await screen.findByRole('navigation', { name: 'Settings sections' });
-    await waitFor(() => expect(within(navigation).queryByRole('button', { name: 'Digest' })).toBeNull());
+    await screen.findByText('Notify me about');
     // Their digest has in fact stopped arriving — see the same comment on
     // `digestSettingsAvailable`'s use site — but there is no copy here for a
-    // paused state, so it is simply not one of the sections offered.
-    expect(within(navigation).getByRole('button', { name: 'Account' })).toBeInTheDocument();
-  });
-
-  it('withdraws the Digest section and redirects away when the flag flips live', async () => {
-    const client = createTestQueryClient();
-    renderSettings(workspace, client, true);
-    openSettingsSection('Digest');
-    await waitFor(
-      () => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Digest'),
-      { timeout: 10_000 },
-    );
-
-    // The production path for this is the workspace socket writing a
-    // `workspace_feature_flags` push into this same query key, not a
-    // re-fetch — simulate it the same way, by writing the cache directly.
-    act(() => {
-      client.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, ClientFeatureFlagsSchema.parse({ digestsEnabled: false }));
-    });
-
-    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
-    await waitFor(
-      () => expect(within(navigation).queryByRole('button', { name: 'Digest' })).toBeNull(),
-      { timeout: 10_000 },
-    );
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Account');
-  }, 30_000);
-
-  it('keeps the Digest pane from painting when a live flip and a non-matching search both strand activeSection on it', async () => {
-    api.getDigestSchedule.mockResolvedValue({
-      id: '00000000-0000-4000-8000-000000000001',
-      enabled: true,
-      days: [1, 2, 3, 4, 5],
-      times: [9 * 60],
-      timezone: 'Europe/London',
-      deliveryTargets: [
-        { type: 'email', connectionId: null, displayName: 'adam@rally.local', status: 'active', lastDeliveredAt: null },
-      ],
-      nextRunAt: null,
-      lastDeliveredAt: null,
-    });
-    const client = createTestQueryClient();
-    renderSettings(workspace, client, true);
-    openSettingsSection('Digest');
-    await screen.findByLabelText('New digest time');
-
-    act(() => {
-      client.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, ClientFeatureFlagsSchema.parse({ digestsEnabled: false }));
-    });
-    // A non-matching search collapses every group to no items, so
-    // `availableSections` is empty and the redirect effect has no `first` to
-    // move to — `activeSection` stays 'digest' indefinitely. Nothing but the
-    // render guard on the Digest pane itself keeps it from painting here.
-    fireEvent.change(screen.getByRole('searchbox', { name: 'Search settings' }), {
-      target: { value: 'no setting matches this text' },
-    });
-
-    await waitFor(() => expect(screen.queryByLabelText('New digest time')).toBeNull());
+    // paused state, so the section is simply not offered.
+    expect(screen.queryByText('Daily digest')).toBeNull();
   });
 });
 
@@ -3332,19 +3289,6 @@ describe('Closing the settings window with Escape', () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
-  it('closes over a digest time, which is a picker rather than a draft', async () => {
-    renderSettings(workspace, createTestQueryClient(), true);
-    openSettingsSection('Digest');
-
-    // `New digest time` is initialised to 09:00 and is never empty, so counting
-    // it as unsaved text would leave Escape permanently dead in this section.
-    const time = await screen.findByLabelText('New digest time');
-    fireEvent.change(time, { target: { value: '10:30' } });
-    fireEvent.keyDown(time, { key: 'Escape' });
-
-    expect(close).toHaveBeenCalledOnce();
-  });
-
   it('still closes from every section when nothing has been typed', async () => {
     renderSettings(workspace, createTestQueryClient(), true);
 
@@ -3352,7 +3296,7 @@ describe('Closing the settings window with Escape', () => {
     // to render a saved value into a writable text field would make Escape
     // permanently dead in that section, and the symptom is a key that quietly
     // stopped working rather than a failing assertion anywhere near the cause.
-    for (const section of ['Account', 'Digest', 'Organization', 'Security', 'Connections', 'Application'] as const) {
+    for (const section of ['Account', 'Notifications', 'Organization', 'Security', 'Connections', 'Application'] as const) {
       openSettingsSection(section);
       await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(section));
 

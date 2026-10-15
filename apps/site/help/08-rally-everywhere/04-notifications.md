@@ -1,52 +1,52 @@
 ---
 title: Notifications
-description: Get told on your Mac or iPhone when someone mentions you or adds you to a Thread.
+description: Choose how each kind of Activity reaches you, by push, email or Slack.
 ---
 
-Rally does not ping you about everything. It notifies you in exactly two
-situations:
+Rally can tell you about anything in your **Activity** list:
 
-- Someone @mentions you in a Thread or a Breakout.
-- Someone adds you to a Thread. (If you created the Thread yourself,
-  Rally assumes you already know.)
+- **Mentions.** Someone @mentions you in a Thread or a Breakout.
+- **Added to a thread.** Someone adds you to a Thread or Breakout. (If you
+  created it yourself, Rally assumes you already know.)
+- **New threads.** Someone starts a Thread you can open.
+- **New breakouts.** Someone starts a Breakout you can open.
+- **Rally finished.** Rally finishes working in a Thread or Breakout you take
+  part in.
 
-That is the whole list. Rally finishing a job, a teammate posting, a Sidekick
-running: none of those send you a notification. For those, look at
-**Activity** and the
-[status dots](../02-working-in-a-channel/06-status-dots-and-badges.md)
-in the app, or let the [digest](05-the-digest.md) round them up for you.
+## Choosing how each one reaches you
 
-## How a notification reaches you
+Open **Settings → Notifications**. Under **Notify me about**, each kind has a
+button for every way Rally can reach you. Click one to turn it on or off; a dark
+button is on. Choose any mix, or none.
 
-Rally tries the quickest route it has for you, in this order:
+- **Push** alerts every Mac, iPhone and browser where you are signed in and
+  have notifications on.
+- **Email** comes from **Rally <notifications@rallywith.ai>** with an **Open in
+  Rally** link. For a mention you can reply to post into the Thread, as
+  [Email into Rally](03-email-into-rally.md#replying-to-a-notification-email)
+  explains.
+- **Slack** is a direct message from the Rally app. It appears once Rally is
+  [installed in your Slack workspace](01-rally-in-slack.md) and you have linked
+  your account with **Connect Rally**. Other messaging apps that can reach you
+  appear here too.
 
-1. Slack. If Rally is installed in your Slack workspace, you get a direct
-   message from the Rally bot, such as “Sam mentioned you in ‘Q3 plan’” or “Sam
-   added you to ‘Q3 plan’”, with an **Open in Rally** link.
-2. Your Mac and iPhone. If you have turned on notifications on a Mac or an
-   iPhone, it gets an alert as well. One mention can reach Slack and your phone
-   at the same time.
-3. Email, as a last resort. Only if neither Slack nor a device took the
-   notification, Rally emails you from **Rally <notifications@rallywith.ai>**,
-   with a subject such as "Sam mentioned you in Q3 plan" and an **Open in Rally**
-   link. You can reply to that email to post into the Thread, as
-   [Email into Rally](03-email-into-rally.md#replying-to-a-notification-email)
-   explains.
+With none chosen, that kind only shows in Activity and your
+[daily digest](05-the-digest.md). Nothing is sent another way instead.
 
-For Slack, Rally sends the message to the Slack account you linked with
-**Connect Rally** (see [Rally in Slack](01-rally-in-slack.md#linking-your-slack-account-with-connect-rally)).
-If you have not linked one, Rally looks for a single Slack account whose email
-address exactly matches your Rally sign-in. If it finds none, or more than one,
-you get email instead. Linking your account removes the guesswork.
+When the window is narrow, each kind shows one button naming what is on, such
+as **Push and Slack**. Click it for a list you can tick.
+
+Your choices apply on every device in that Organization. By default, mentions
+and additions come by push and Slack, and everything else by push.
 
 Notification text is plain: formatting is removed and mentions appear as
 **@Name**.
 
 ## Notifications on your Mac
 
-Open **Settings → Notifications**. Under **On this Mac** there is one switch:
-**Notify me about mentions and additions**. It is on unless you
-turn it off.
+Open **Settings → Notifications**. At the top, under **On this Mac**, one switch
+turns alerts on this Mac on or off. It is on unless you turn it off, and your
+choices under **Notify me about** still apply to your other devices.
 
 - Alerts arrive even when Rally is closed.
 - Click an alert and Rally opens the exact Thread or Breakout it is about.
@@ -86,18 +86,15 @@ button.
 ## The small print
 
 - Turning the switch off, or refusing permission, takes that device off the
-  list, so Rally can fall back to email for you instead.
+  list. Rally does not send an email instead unless you chose email.
 - Signing out of Rally on a Mac stops notifications to that Mac.
 - If your device is off or offline, Apple holds alerts for up to 24 hours.
 - Now and then the same alert can arrive twice. Rally would rather tell you
   twice than not at all.
-- There is no setting to choose between mentions and additions. You get both
-  or, by turning the switches off, neither.
 
 ## Notifications and the digest
 
-Notifications are for the things aimed at you, the moment they happen. The
-[digest](05-the-digest.md), on the next page, covers everything else: a written
-summary of what moved, on the days and at the times you choose. Most people
-keep both, notifications for "come here now" and the digest for "here is what
-you missed".
+Notifications are for the moment something happens. The
+[daily digest](05-the-digest.md), on the next page, lists whatever is still
+unread at the start and end of your day. Most people keep both: notifications
+for "come here now" and the digest for "here is what you have not looked at".
