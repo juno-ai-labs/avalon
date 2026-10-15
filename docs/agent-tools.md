@@ -132,10 +132,11 @@ are the initial annotated tools.
 
 `get_connector_connection_state` and `show_connector_connection` are
 the user-run-only recovery pair. Both accept only a trusted connector catalog
-id and `personal`/`workspace` scope. The read returns `connected`,
-`reconnect_required`, or `not_connected` from the caller-visible WorkspaceDO
-rows; `connected` is the last durable state Rally observed, not a provider
-health check. The presentation tool asks the main desktop feed for a
+id and a `personal`/`workspace` scope; the read's scope is optional, and left
+out it checks every scope the connector offers in one query. It returns each
+checked scope's state, `connected`, `reconnect_required`, or `not_connected`,
+from the caller-visible rows, plus the best of them as `state`; `connected` is
+the last durable state Rally observed, not a provider health check. The presentation tool asks the main desktop feed for a
 person-facing control rather than provider data. That feed resolves the card's
 name, mark, copy, capability grant, displayed connection state, and OAuth
 destination; none of those are model-authored. Check state before claiming a
@@ -147,12 +148,14 @@ history rather than depending on a transient started event.
 
 The model-facing flow is deliberately literal:
 
-1. Call `get_connector_connection_state` with `connectorId` and `scope`.
-2. If it returns `connected`, continue the task and do not show a card.
-3. If it returns `reconnect_required` or `not_connected` and that blocks the
-   task, explain the blocker briefly.
-4. Call `show_connector_connection` with the same values, then stop the
-   connector-dependent work for that run. Do not claim the connection worked.
+1. Call `get_connector_connection_state` with `connectorId` and no `scope`.
+2. If a connected scope can do the task, continue with it and do not show a
+   card.
+3. If none can and `reconnect_required` or `not_connected` blocks the task,
+   explain the blocker briefly.
+4. Call `show_connector_connection` with the same `connectorId` and the scope
+   the task needs, then stop the connector-dependent work for that run. Do not
+   claim the connection worked.
 
 ### 1. Fail loud, never silently ignore an input
 
@@ -1196,6 +1199,24 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-10-15 — The connection check covers every scope unless told otherwise
+
+**What changed:** `get_connector_connection_state` takes `scope` as optional.
+Left out, it reads the caller's personal rows and the Organization's workspace
+rows for that connector in one query and returns a state per scope, plus the
+best of them. Its summary names each scope. The card tool still takes one
+scope.
+
+**Why:** the check read one scope, and the model chose which. In production a
+member whose personal Google Drive had been connected for twelve days was
+told Drive was `not_connected` and shown a connect card, because the model
+asked about the workspace scope. The same Thread later asked her to connect a
+workspace Slack she did not need. A person can hold a personal connection while
+the Organization holds a workspace one, and either may be the one a task
+needs, so the read that answers "is this connected" has to look at both.
+Rejected: telling the model to call twice, which leaves the miss to a prompt.
+A future change should keep the default covering every scope.
 
 ### 2026-09-20 — Give optional scalar arguments an explicit unspecified value
 

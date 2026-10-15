@@ -105,8 +105,12 @@ import {
   AutomationRunDefinitionV1Schema,
   ConnectorConnectionCardCatalog,
   ConnectorConnectionCardInputSchema,
+  ConnectorConnectionStateInputSchema,
   ConnectorConnectionStateResultSchema,
+  bestConnectorConnectionState,
   connectorConnectionCardSummary,
+  connectorConnectionStateSummary,
+  type ConnectorConnectionCardScope,
   type AutomationRunDefinitionV1,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
@@ -7641,36 +7645,50 @@ async function readConnectorConnectionState(
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "executionPrincipal">,
   raw: unknown,
 ) {
-  const request = ConnectorConnectionCardInputSchema.parse(raw);
+  const request = ConnectorConnectionStateInputSchema.parse(raw);
   if (input.executionPrincipal.type !== "user") throw new Error("connector_connection_state_requires_user");
   const catalog = ConnectorConnectionCardCatalog[request.connectorId];
+  const scopes: readonly ConnectorConnectionCardScope[] = request.scope ? [request.scope] : catalog.scopes;
   const available = connectorRegistryForEnv(env).list()
     .some((manifest) => manifest.type === catalog.providerType);
   if (!available) {
-    return ConnectorConnectionStateResultSchema.parse({ ...request, state: "unavailable" });
+    return ConnectorConnectionStateResultSchema.parse({
+      connectorId: request.connectorId,
+      state: "unavailable",
+      connections: scopes.map((scope) => ({ scope, state: "unavailable" })),
+    });
   }
+  // One read for every scope: a person may hold a personal connection and the
+  // Organization a workspace one, and either can be the one the task needs.
   const result = await env.DB.prepare(
-    `SELECT granted_scopes_json, status FROM connector_connections
-      WHERE workspace_id = ? AND connector_type = ? AND scope = ?
-        AND (scope = 'workspace' OR owner_user_id = ?)`,
+    `SELECT scope, granted_scopes_json, status FROM connector_connections
+      WHERE workspace_id = ? AND connector_type = ?
+        AND (scope = 'workspace' OR (scope = 'personal' AND owner_user_id = ?))`,
   ).bind(
     input.workspaceId,
     catalog.providerType,
-    request.scope,
     input.executionPrincipal.userId,
-  ).all<{ granted_scopes_json: string; status: string }>();
+  ).all<{ scope: string; granted_scopes_json: string; status: string }>();
   const matching = (result.results ?? []).filter((row) => {
     if (catalog.capabilityPrefixes.length === 0) return true;
     const capabilities = parseJson<string[]>(row.granted_scopes_json, []);
     return capabilities.some((capability) =>
       catalog.capabilityPrefixes.some((prefix) => capability.startsWith(prefix)));
   });
-  const state = matching.some((row) => row.status === "healthy")
-    ? "connected"
-    : matching.some((row) => row.status === "needs_reconnect" || row.status === "error")
-      ? "reconnect_required"
-      : "not_connected";
-  return ConnectorConnectionStateResultSchema.parse({ ...request, state });
+  const connections = scopes.map((scope) => {
+    const rows = matching.filter((row) => row.scope === scope);
+    const state = rows.some((row) => row.status === "healthy")
+      ? "connected" as const
+      : rows.some((row) => row.status === "needs_reconnect" || row.status === "error")
+        ? "reconnect_required" as const
+        : "not_connected" as const;
+    return { scope, state };
+  });
+  return ConnectorConnectionStateResultSchema.parse({
+    connectorId: request.connectorId,
+    state: bestConnectorConnectionState(connections.map(({ state }) => state)),
+    connections,
+  });
 }
 
 function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessTool[] {
@@ -7697,15 +7715,12 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       {
         definition: AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION,
         validateInput: (raw: unknown) => {
-          const parsed = ConnectorConnectionCardInputSchema.safeParse(raw);
+          const parsed = ConnectorConnectionStateInputSchema.safeParse(raw);
           return parsed.success ? null : parsed.error;
         },
         execute: async (raw: unknown) => {
           const state = await readConnectorConnectionState(env, input, raw);
-          return {
-            output: state,
-            summary: `${state.connectorId} ${state.scope} connection is ${state.state}`,
-          };
+          return { output: state, summary: connectorConnectionStateSummary(state) };
         },
       } satisfies HarnessTool,
       {
