@@ -572,19 +572,16 @@ this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 
 ## Changelog
 
-### 2026-10-15 — The model can see its site, and the pane opens wide enough to show it
+### 2026-10-15 — The model can see its site
 
 **What changed:** A new Terminal tool, `preview_site`, renders a published
 site at a viewport the model picks (480×900 by default) and returns the
 screenshot. The skill now tells the model to write the base stylesheet for a
 400px viewport with `min-width` queries, to call `preview_site` before
-announcing a site, and names the hidden-grid-item trap. On the desktop a live
-site opens at an even split with the conversation instead of the inspector's
-320px default, keeping a wider width the person dragged to. Opening a panel
-already widens the window by the panel's width where the screen has room, so
-the even split is the conversation's present width, capped at half of what the
-screen allows; a maximized window splits in half. The rail's resize target now
-reaches over the conversation instead of into the panel. `isArtifactUrl` moved
+announcing a site, and names the hidden-grid-item trap. On the desktop the
+right panel's resize target now reaches over the conversation instead of into
+the panel. Panels, sites among them, open at an even split; that and the
+shared edge width are recorded in [`desktop-layout.md`](desktop-layout.md). `isArtifactUrl` moved
 from the desktop to `@rally/contracts` so the desktop and the API share it.
 
 **Why:** A generated market map rendered one word per line in the pane and
@@ -593,8 +590,7 @@ fine in a browser tab. The site's CSS hid its side rail below 900px with
 into the zero-wide column. Nothing in Rally was wrong. The skill already said
 "narrow-first"; the model wrote desktop-first anyway and had no way to see the
 result, and a person's "it looks broken" had nothing to correct against. The
-320px default put most sites into their phone layout on open. The resize
-target sat inside the panel's left edge, where the composited site view takes
+resize target sat inside the panel's left edge, where the composited site view takes
 the pointer, so only the strip beside the header could be grabbed.
 
 Rejected: installing a browser in the sandbox snapshot. It adds a large
@@ -602,9 +598,8 @@ download behind the Trusted-only egress policy and startup cost to every
 sandbox, while the API already holds a renderer.
 
 **Consequences:** `preview_site` must keep refusing non-artifact URLs. The
-renderer runs outside the sandbox and its network policy. The half split is
-applied on open, not held: a person may drag narrower, and the next open
-widens again.
+renderer runs outside the sandbox and its network policy. The panel's resize
+target must stay clear of the area the native view covers.
 
 ### 2026-10-15 — The rail preview converts CSS pixels through window zoom
 
