@@ -171,6 +171,8 @@ export function DailyDigestSettings({ api, connections, onEditTimezone }: {
     staleTime: 15_000,
   });
   const save = useMutation({
+    // One at a time, in the order made: each save replaces the whole schedule.
+    scope: { id: 'digest-schedule' },
     mutationFn: (draft: DigestDraft) => api.updateDigestSchedule(scheduleFromDraft(draft)),
     onSuccess: (saved) => queryClient.setQueryData(['digest-schedule'], saved),
   });

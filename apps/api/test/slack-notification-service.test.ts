@@ -278,19 +278,21 @@ describe("workspace Slack mention delivery", () => {
     expect(sleep).toHaveBeenCalledWith(1_000);
   });
 
-  it("reports partial Slack delivery without triggering a duplicate full email", async () => {
+  it("records a partial Slack delivery and hands a server error back for a retry", async () => {
     const database = migratedDatabase();
     const env = environment(database);
     await seed(database, env, false);
     const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
+    // Slack answered 500 for the second chunk: a retry can finish it, and the
+    // first chunk's stable client_msg_id keeps it from posting twice.
     await expect(sendWorkstreamMentionSlack(
       env,
       { ...mention(), messageText: "x".repeat(40_001) },
       slackApiFixture(calls, undefined, { failPostFrom: 2 }),
       async () => undefined,
-    )).resolves.toBe("partial");
+    )).rejects.toMatchObject({ code: "provider_error" });
 
     expect(warning).toHaveBeenCalledWith(expect.objectContaining({
       event: "slack_notification_delivery_incomplete",

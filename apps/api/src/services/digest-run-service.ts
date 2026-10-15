@@ -118,11 +118,11 @@ export async function fireDigestSchedule(
       highlightCount: items.filter((item) => item.kind === "mentioned").length,
       // Nothing unread, nothing sent.
       status: markdown ? "planned" : "empty",
+      summaryMarkdown: markdown,
       at: nowIso(),
     }));
     if (claimed.outcome === "already_planned") return { sent: false, reason: "already_settled" };
     if (!markdown) return { sent: false, reason: "empty" };
-    await workspace.recordDigestSummary({ workspaceId: input.workspaceId, deliveryId, summaryMarkdown: markdown, at: nowIso() });
     delivery = {
       id: deliveryId,
       userId: digest.userId,

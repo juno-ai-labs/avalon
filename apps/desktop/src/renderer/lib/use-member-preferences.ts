@@ -81,6 +81,9 @@ export function useSaveMemberPreferences(
   const queryClient = useQueryClient();
   const queryKey = memberPreferencesQueryKey(workspaceId);
   return useMutation({
+    // One at a time, in the order made: a kind's save replaces its whole
+    // channel list, so an earlier save landing after a later one would undo it.
+    scope: { id: `member-preferences:${workspaceId}` },
     mutationFn: (change: MemberPreferencesUpdate) => api.updateMyPreferences(change),
     onMutate: async (change) => {
       await queryClient.cancelQueries({ queryKey });

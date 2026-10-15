@@ -349,7 +349,6 @@ import {
   WorkspaceDigestRowStateRequestSchema,
   WorkspaceDigestSettingsRequestSchema,
   WorkspaceDigestSettleRequestSchema,
-  WorkspaceDigestSummaryRequestSchema,
   WorkspaceDigestTargetDeliveredRequestSchema,
   WorkspaceDigestTargetFailedRequestSchema,
   WorkspaceDigestTerminalContextRequestSchema,
@@ -372,7 +371,6 @@ import {
   type WorkspaceDigestSettingsRequest,
   type WorkspaceDigestSettleRequest,
   type WorkspaceDigestSettleResult,
-  type WorkspaceDigestSummaryRequest,
   type WorkspaceDigestTargetDeliveredRequest,
   type WorkspaceDigestTargetFailedRequest,
   type WorkspaceDigestTargetOutcomeResult,
@@ -384,7 +382,6 @@ import {
   ensureDefaultWorkspaceDigestSchedule,
   markWorkspaceDigestTargetDelivered,
   markWorkspaceDigestTargetFailed,
-  recordWorkspaceDigestSummary,
   replaceWorkspaceDigestSchedule,
   replaceWorkspaceDigestScheduleRows,
   settleWorkspaceDigestDelivery,
@@ -15046,13 +15043,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return workspaceDigestDeliveryContext(this.state.storage, request);
   }
 
-  /** Keep what the run wrote, before delivery decides what happens to it. */
-  async recordDigestSummary(input: WorkspaceDigestSummaryRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceDigestSummaryRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    recordWorkspaceDigestSummary(this.state.storage, request);
-  }
 
   /**
    * Settle one occurrence, exactly once.
