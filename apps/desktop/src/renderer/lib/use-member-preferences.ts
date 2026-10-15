@@ -90,6 +90,8 @@ export function useSaveMemberPreferences(
           showAgentWork: change.showAgentWork ?? previous.showAgentWork,
           push: { ...previous.push, ...Object.fromEntries(Object.entries(change.push ?? {})
             .filter(([, value]) => value !== undefined)) },
+          notify: { ...previous.notify, ...Object.fromEntries(Object.entries(change.notify ?? {})
+            .filter(([, value]) => value !== undefined)) },
         });
       }
       return { previous };
