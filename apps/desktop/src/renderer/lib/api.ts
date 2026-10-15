@@ -131,7 +131,7 @@ import type { TelemetrySurfaceEntrypoint } from './telemetry';
 import { reportJavascriptError, reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './telemetry';
 import type {
   AgentModelOverride,
-  AutomationDeliveryTargetType,
+  DigestDeliveryTargetType,
   AutomationDetail,
   AutomationRun,
   AutomationScope,
@@ -993,7 +993,7 @@ export class RallyApi {
     enabled: boolean;
     days: number[];
     times: number[];
-    deliveryTargets: Array<{ type: AutomationDeliveryTargetType; connectionId: string | null }>;
+    deliveryTargets: Array<{ type: DigestDeliveryTargetType; connectionId: string | null }>;
   }): Promise<DigestSchedule> {
     return this.request('/digest', { method: 'PUT', body: input, schema: WireDigestScheduleSchema });
   }

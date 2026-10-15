@@ -38,7 +38,7 @@ it starts at weekdays, 9:00 AM.
 
 From the phone, email is the only destination you can save. As the screen puts
 it, "Other delivery connectors stay on the Mac." To get your digest in Slack, or
-to change days and times, use **Settings → Digest** on the Mac.
+to change days and times, use **Settings → Notifications → Daily digest** on the Mac.
 
 ### Organization members
 

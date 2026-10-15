@@ -94,7 +94,7 @@ describe("the connection list's reads", () => {
     expect(listed.map((connection) => [connection.id, connection.ownerName, connection.userDelivery])).toEqual([[
       connectionId,
       "Workspace Owner",
-      { targetType: "slack_agent_dm", label: "Slack DM", description: "Rally Agent DM in this Slack workspace." },
+      { targetType: "slack_agent_dm", label: "Slack", description: "A direct message from Rally in your Slack." },
     ]]);
     // Concurrent, in either order: each read starts before the other ends.
     expect(events.indexOf("owners:start")).toBeLessThan(events.lastIndexOf("links:end"));
