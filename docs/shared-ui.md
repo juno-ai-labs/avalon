@@ -147,19 +147,11 @@ component test runner is needed for the same implementations.
 
 ### 2026-10-15 — A meter fills in the text colour, not the brand
 
-**What changed:** `cmp.meter.fill` is `sys.color.text.default` in both
-appearances, where it was `sys.color.brand.base`. Settings' own override to
-the text colour is gone, since the default now matches it.
-
-**Why:** The product owner asked that the Quota bar in the Organization menu
-use a standard theme colour rather than the volt brand yellow. Settings had
-already moved its meter to the text colour; moving the token makes every meter,
-including the onboarding checklist, agree without a per-surface override.
-
-**Consequences:** The account menu still fills in the viewer's personal colour
-when they have one (`onboarding.css`), and the warning fill still wins below
-the low-quota line. A surface that wants the brand fill sets
-`--av-cmp-meter-fill` itself.
+**What changed:** `cmp.meter.fill` is `sys.color.text.default` in both themes,
+where it was `sys.color.brand.base`, and Settings' own override to the text
+colour is gone. The product owner asked for a standard theme colour rather than
+the volt brand yellow on the Quota bar. The value sits in each theme file, not
+`base.json`, because a base token may alias only base tokens.
 
 ### 2026-10-13 — Title pill menus never open upward
 
