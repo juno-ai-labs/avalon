@@ -39,7 +39,8 @@ vi.mock('./workstream', async () => {
         <RouterLink to="/channels/outbound/threads/secret">Next thread</RouterLink>
         <RouterLink state={OPEN_EXPANDED} to="/channels/outbound/threads/secret">Sidebar thread</RouterLink>
         <button onClick={pane.crumb.onSelect} type="button">Channel crumb</button>
-        <button onClick={() => pane.setExpanded(!pane.expanded)} type="button">{pane.expanded ? 'Collapse' : 'Expand'}</button>
+        {/* As the real header: Collapse while expanded, Expand while beside the Channel, neither once shifted. */}
+        {(pane.expanded || !pane.shifted) && <button onClick={() => pane.setExpanded(!pane.expanded)} type="button">{pane.expanded ? 'Collapse' : 'Expand'}</button>}
         <button onClick={() => pane.setThreadUsesTwoPanes(true)} type="button">Open breakout</button>
         <button onClick={() => pane.setThreadUsesTwoPanes(false)} type="button">Close breakout</button>
       </>}</div>;
@@ -186,8 +187,9 @@ describe('a Channel', () => {
     renderChannel('/channels/outbound/threads/plan');
     fireEvent.click(await screen.findByRole('button', { name: 'Expand' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open breakout' }));
-    // Split with its breakout, the thread offers no Collapse.
-    expect(screen.getByRole('button', { name: 'Expand' })).toBeInTheDocument();
+    // Split with its breakout, the thread offers neither Expand nor Collapse.
+    expect(screen.queryByRole('button', { name: 'Expand' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Collapse' })).toBeNull();
     expect(screen.getByText('composer')).not.toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Close breakout' }));
