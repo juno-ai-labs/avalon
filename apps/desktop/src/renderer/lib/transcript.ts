@@ -17,6 +17,7 @@ import {
 import {
   AutomationActivationV1Schema,
   AutomationDraftProposedV1Schema,
+  ConnectorResourceAuthorizationRequestSchema,
   ElicitationSchema,
   agentMessageNotice,
   agentMessageNoticeReason,
@@ -1452,7 +1453,10 @@ function pluginGroupContribution(message: Message): {
  * and that is the case this feature exists for. Anything a person reads or
  * answers does close it: a sentence from Rally is a report on the work above
  * it, and folding work that came after the sentence back into a row printed
- * before it would put the feed out of order with its own narration.
+ * before it would put the feed out of order with its own narration. A card that
+ * asks them to connect an account or authorize a file is the same class of
+ * row — hiding it inside "Used Google" leaves the agent waiting on a button
+ * nobody can see.
  *
  * This answers only what a row *is*. A row that opens a stretch of transcript
  * after an unloaded one closes the run too, whatever its type, and each caller
@@ -1460,9 +1464,27 @@ function pluginGroupContribution(message: Message): {
  */
 function continuesPluginActivityRun(message: Message): boolean {
   if (isConnectorConnectionCardWireName(message.toolEvent?.name)) return false;
+  if (isConnectorResourceAuthorizationCard(message)) return false;
   return message.messageType === 'tool_event'
     || message.messageType === 'plugin_activity'
     || message.messageType === 'thought';
+}
+
+/**
+ * A failed write that asked the reader to grant Rally one file.
+ *
+ * The recovery lives on the tool row's `output`, not on a dedicated wire name,
+ * so grouping cannot recognize it the way it recognizes a connection card.
+ * Parse here — the same schema the card renderer uses — or the row is folded
+ * into its plugin and the button never mounts.
+ */
+function isConnectorResourceAuthorizationCard(message: Message): boolean {
+  if (message.toolEvent?.status !== 'failed') return false;
+  const output = message.toolEvent.output;
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return false;
+  return ConnectorResourceAuthorizationRequestSchema.safeParse(
+    (output as Record<string, unknown>).recovery,
+  ).success;
 }
 
 /**

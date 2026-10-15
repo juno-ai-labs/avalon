@@ -76,7 +76,11 @@ duration and no spans, which is a state the accordion is built to expect.
 3. **Grouping.** `groupPluginToolMessages` walks the composed list once. Each
    tool or plugin-activity row resolves to a group through `pluginGroup`; the
    first row of a group becomes the group's row, at that position, and every
-   later row of the same group folds into it and disappears.
+   later row of the same group folds into it and disappears. Two tool rows
+   close the run instead of joining it: a connector connection card, and a
+   failed write whose result carries a resource-authorization recovery. Those
+   are requests the reader has to act on; folding them would leave the agent
+   waiting on a button nobody can see.
 4. **Collapsing the thinking.** `groupThinkingMessages` walks the result the
    same way, over the same run boundary, and sums a run's thinking rows into
    the first of them. The response's own total is not thinking and is left
@@ -486,11 +490,14 @@ is the one that might have been partly unloaded, and what follows it is loaded.
 
 ## Invariants
 
-- **No tool row survives grouping in the work-stream feed.** A tool row that
-  resolves to no plugin is dropped rather than rendered, because the only thing
-  it carries is a tool name — the thing this feature exists to hide. Rendering
-  it as a fallback would put the old surface back on screen for exactly the runs
-  where the transcript is least settled.
+- **No tool row survives grouping in the work-stream feed, except a row that
+  asks the reader to act.** A connector connection card and a failed write
+  carrying a resource-authorization recovery stay as `tool_event` rows so their
+  buttons mount. Every other tool row that resolves to no plugin is dropped
+  rather than rendered, because the only thing it carries is a tool name — the
+  thing this feature exists to hide. Rendering those as a fallback would put
+  the old surface back on screen for exactly the runs where the transcript is
+  least settled.
 - **A group's timing comes from plugin activities when it has any, and from
   summed call durations only when it has none.** The two are not additive: an
   activity already contains the calls. Adding them would roughly double a
@@ -766,7 +773,7 @@ It deliberately does **not** cover:
 | --- | --- | --- |
 | `lib/plugin-groups.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/plugin-groups.test.ts` | The map: the two virtual groups, the unnamed-first-party fallback, name keying across the two id families, every glyph, and that no shipped connector still draws the plug. |
 | `lib/plugin-marks.test.ts` | same, `src/renderer/lib/plugin-marks.test.ts` | The marks: the monochrome variant asked for wherever a brand ships one, and one distinct mark per brand. |
-| `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering. Collapsing thinking: the summed run, the run boundary, the response total left out of it, the unknown segment, and the concurrent starts. Closing a reported-on stretch: what goes in the drawer, every stretch of a self-narrating run folding rather than only the last, the total moving out of the header and staying there when the response produced several drawers, the settled-total response boundary and a steer not being one, the two seam checks, a partially loaded response withholding its total until the next settled total, a stretch held open by a live timer or by a plugin run still marked active and closing once it settles, a final answer that folds nothing keeping its total in the header, and the derived id. A stretch's own total: the union of its rows' spans rather than the sum of their durations, the response total still winning where the drawer is the whole response, an upper-bound row making the stretch one, a row that cannot say when it worked making the drawer say nothing, and the spans surviving both grouping passes. |
+| `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering, and that a resource-authorization recovery stays a tool row so **Allow editing** can mount. Collapsing thinking: the summed run, the run boundary, the response total left out of it, the unknown segment, and the concurrent starts. Closing a reported-on stretch: what goes in the drawer, every stretch of a self-narrating run folding rather than only the last, the total moving out of the header and staying there when the response produced several drawers, the settled-total response boundary and a steer not being one, the two seam checks, a partially loaded response withholding its total until the next settled total, a stretch held open by a live timer or by a plugin run still marked active and closing once it settles, a final answer that folds nothing keeping its total in the header, and the derived id. A stretch's own total: the union of its rows' spans rather than the sum of their durations, the response total still winning where the drawer is the whole response, an upper-bound row making the stretch one, a row that cannot say when it worked making the drawer say nothing, and the spans surviving both grouping passes. |
 | `components/workstream-blocks.test.tsx` | same, `src/renderer/components/workstream-blocks.test.tsx` | The row: its wording in both tenses, its stable accessible name while the number ticks, the pulsing mark, the absent orb, and the thinking row's brain. The accordion: closed and open, the unknown and recovered totals, and the open flag taken from the feed. |
 | `screens/workspace-settings.test.tsx` | same, `src/renderer/screens/workspace-settings.test.tsx` | Settings: an installed row and the provider card it came from carrying the same mark, and a webhook carrying none. |
 
@@ -779,6 +786,36 @@ stack cannot run a real turn, so the way to get a multi-plugin transcript on
 screen is to write a hand-built `WorkstreamTranscriptSnapshot` into the
 renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
+
+### 2026-10-14 — A resource-authorization card survives plugin grouping
+
+**What changed:** `continuesPluginActivityRun` now treats a failed tool row
+whose `output.recovery` is a `connector_resource_authorization` request the
+same way it already treats a connector connection card: the row closes the
+plugin-activity run and stays a `tool_event`, so `MessageBlock` can mount
+**Allow editing**.
+
+**Why:** A Google Sheets write that needs Rally's one-file grant already
+attaches that recovery on the failed tool and tells the model to point the
+reader at the button. Grouping then folded the write into "Used Google" and
+cleared `toolEvent`, so the card never mounted. Rally claimed it had surfaced
+the prompt; the reader saw only the work row. Connection cards were exempted
+for this exact reason; resource-authorization recoveries were not, because
+they have no dedicated wire name — the grant rides on the failed write
+itself.
+
+**Considered and rejected:** Teaching the accordion to fish recoveries out of
+grouped plugin rows. The card's click handler and latch key off the failed
+tool's `output.recovery`; once grouping has stripped `toolEvent` there is
+nothing left to restore. Also rejected: showing every failed connector write.
+A read-only file and a missing grant are different failures, and only the
+grant-shaped recovery is something the reader can approve.
+
+**Consequences:** A grant request splits the plugin row around it — tools
+before the failed write stay one "Used Google", tools after start another.
+The accordion still swallows only `plugin_activity` and thought, so the card
+stays in the feed when the answer arrives. `withoutAgentWork` already spared
+these rows; grouping is what had been eating them afterwards.
 
 ### 2026-10-08 — Custom MCP servers wear the Model Context Protocol mark
 
