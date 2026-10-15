@@ -13,6 +13,7 @@ import {
   resourceDirectionForRelationship,
   ResourceRelationshipTypeSchema,
   WorkstreamAppearanceSchema,
+  type AutomationOwningThread,
   type AutomationSummary,
   type ChannelRail,
   type ChannelRailOwnedSidekick,
@@ -47,23 +48,63 @@ export interface AutomationDirectoryRow extends Record<string, SqlStorageValue> 
   projected_at: number;
 }
 
-function storedAppearance(row: AutomationDirectoryRow, report: InvalidAppearanceReport): WorkstreamAppearance | undefined {
-  if (!row.appearance_json) return undefined;
+/** A stored appearance, or undefined with the reason reported when it no longer parses. */
+function parsedAppearance(json: string | null, prefix: string, report: (code: string) => void): WorkstreamAppearance | undefined {
+  if (!json) return undefined;
   let value: unknown;
   try {
-    value = JSON.parse(row.appearance_json);
+    value = JSON.parse(json);
   } catch {
-    report(row.automation_id, "automation_appearance_invalid:-root-:invalid_json");
+    report(`${prefix}_invalid:-root-:invalid_json`);
     return undefined;
   }
   const parsed = WorkstreamAppearanceSchema.safeParse(value);
   if (parsed.success) return parsed.data;
-  report(row.automation_id, zodDiagnosticCode(parsed.error, "automation_appearance") ?? "automation_appearance_invalid");
+  report(zodDiagnosticCode(parsed.error, prefix) ?? `${prefix}_invalid`);
   return undefined;
 }
 
+function storedAppearance(row: AutomationDirectoryRow, report: InvalidAppearanceReport): WorkstreamAppearance | undefined {
+  return parsedAppearance(row.appearance_json, "automation_appearance", (code) => report(row.automation_id, code));
+}
+
+/** Told which Thread's stored appearance no longer parses, and why; the Thread is named without it. */
+export type InvalidThreadAppearanceReport = (workstreamId: string, code: string) => void;
+
+/**
+ * The Threads that own these Sidekicks, by id, in one read: each one's title
+ * and the glyph it chose. An archived Thread is left out, as it is from every
+ * participant read, so its Sidekick is labelled without a name rather than
+ * with a link to a Thread that will not open.
+ */
+export function owningThreads(
+  sql: Sql,
+  workstreamIds: readonly string[],
+  report: InvalidThreadAppearanceReport,
+): Map<string, AutomationOwningThread> {
+  const result = new Map<string, AutomationOwningThread>();
+  if (workstreamIds.length === 0) return result;
+  for (const row of sql.exec<{ workstream_id: string; title: string; appearance_json: string | null }>(
+    `SELECT workstream_id, title, appearance_json FROM channels
+      WHERE workstream_id IN (SELECT value FROM json_each(?)) AND archived_at IS NULL`,
+    JSON.stringify([...new Set(workstreamIds)]),
+  ).toArray()) {
+    const appearance = parsedAppearance(row.appearance_json, "thread_appearance", (code) => report(row.workstream_id, code));
+    result.set(row.workstream_id, {
+      id: row.workstream_id,
+      title: truncateUtf16Safe(row.title, 180),
+      ...(appearance ? { appearance } : {}),
+    });
+  }
+  return result;
+}
+
 /** A directory row as a summary; an appearance that no longer parses is left out and reported. */
-export function automationSummary(row: AutomationDirectoryRow, report: InvalidAppearanceReport): AutomationSummary {
+export function automationSummary(
+  row: AutomationDirectoryRow,
+  report: InvalidAppearanceReport,
+  owningThread: AutomationOwningThread | null = null,
+): AutomationSummary {
   const appearance = storedAppearance(row, report);
   return {
     id: row.automation_id,
@@ -74,6 +115,7 @@ export function automationSummary(row: AutomationDirectoryRow, report: InvalidAp
     emailAddress: null,
     scope: row.scope,
     owningWorkstreamId: row.owning_workstream_id,
+    owningThread,
     status: row.lifecycle,
     nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
     lastRunAt: null,

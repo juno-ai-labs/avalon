@@ -112,6 +112,7 @@ import { parseDesktopSettingsSection } from '../common/settings';
 import { WORKSPACE_SYNC_RELAY_IPC_CHANNELS } from '../common/workspace-sync-relay';
 import type { SidekicksWindowTarget } from '../common/sidekicks';
 import { parseSidekicksWindowTarget } from '../common/sidekicks';
+import { parseThreadId } from '../common/open-thread';
 import { fontScheme } from '../common/theme-assets';
 import {
   defaultThemeChoice,
@@ -4314,6 +4315,14 @@ function registerIpc(): void {
     const target = rawTarget === undefined ? undefined : parseSidekicksWindowTarget(rawTarget);
     if (rawTarget !== undefined && !target) throw new Error('Invalid Sidekicks window target');
     await createSidekicksWindow(target ?? undefined);
+  });
+  ipcMain.handle('system:open-thread', (event, rawWorkstreamId: unknown) => {
+    assertTrustedIpcSender(event);
+    const workstreamId = parseThreadId(rawWorkstreamId);
+    if (!workstreamId) throw new Error('Invalid thread id');
+    // The route a menu-bar pick or a finished import takes, so the main window
+    // opens the Thread whether or not it was up, and comes forward to show it.
+    emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'in_app_link');
   });
   ipcMain.handle('system:open-settings', async (event, rawSection: unknown) => {
     assertTrustedIpcSender(event);

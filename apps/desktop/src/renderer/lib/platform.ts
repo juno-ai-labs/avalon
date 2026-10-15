@@ -639,6 +639,10 @@ const browserBridge: RallyDesktopBridge = {
   async openSidekicks(requested) {
     window.location.hash = requested ? `#/sidekicks/${encodeURIComponent(requested)}` : '#/sidekicks';
   },
+  // The library is a route of this tab, so opening a Thread is navigating to it.
+  async openThread(workstreamId) {
+    window.location.hash = `#/workstreams/${encodeURIComponent(workstreamId)}`;
+  },
   async openSettings(section) {
     const target = section ? `/settings?section=${encodeURIComponent(section)}` : '/settings';
     window.location.hash = `#${target}`;
