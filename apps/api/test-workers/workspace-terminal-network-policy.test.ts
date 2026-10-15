@@ -131,6 +131,49 @@ describe("Terminal network policy", () => {
     expect((await settings()).policy.revision).toBe(1);
   });
 
+  it("moves a policy saved under an older baseline onto the current one, once", async () => {
+    await settings();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO workspace_sandbox_network_domains (workspace_id, domain, created_by_user_id, created_at)
+         VALUES (?, 'custom.example', ?, ?)`,
+        WORKSPACE_ID, ADMIN, AT,
+      );
+    });
+    const read = async () => WorkspaceTerminalNetworkSettingsSchema.parse(await workspace().terminalNetworkSettings({
+      workspaceId: WORKSPACE_ID,
+      baselineManifestVersion: "manifest-2",
+      defaultEffectiveDomains: ["cdn.playwright.dev", "registry.npmjs.org"],
+      at: AT,
+    }));
+
+    const upgraded = await read();
+    // A new revision is what makes each sandbox re-apply the list.
+    expect(upgraded.policy).toMatchObject({
+      revision: 2,
+      verificationState: "verified",
+      baselineManifestVersion: "manifest-2",
+      effectiveDomains: ["cdn.playwright.dev", "custom.example", "registry.npmjs.org"],
+    });
+    expect((await read()).policy.revision).toBe(2);
+  });
+
+  it("leaves a Full internet policy's empty allow list alone", async () => {
+    await settings();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE workspace_sandbox_network_policies SET mode = 'full_internet', effective_domains_json = '[]'`,
+      );
+    });
+    const read = WorkspaceTerminalNetworkSettingsSchema.parse(await workspace().terminalNetworkSettings({
+      workspaceId: WORKSPACE_ID,
+      baselineManifestVersion: "manifest-2",
+      defaultEffectiveDomains: ["cdn.playwright.dev"],
+      at: AT,
+    }));
+    expect(read.policy).toMatchObject({ mode: "full_internet", revision: 1, effectiveDomains: [] });
+  });
+
   it("answers the mode without creating anything, for the agent path", async () => {
     expect(WorkspaceTerminalNetworkModeSchema.parse(
       await workspace().terminalNetworkMode({ workspaceId: WORKSPACE_ID }),

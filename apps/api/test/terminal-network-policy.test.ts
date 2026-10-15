@@ -19,6 +19,7 @@ describe("Terminal network policy compiler", () => {
       "System packages",
       "Python packages",
       "JavaScript packages",
+      "Rally sites and Playwright browsers",
     ]);
     expect(compiled.customDomains).toEqual(["*.xn--bcher-kva.example", "api.example.com"]);
     expect(compiled.effectiveDomains).toEqual([
