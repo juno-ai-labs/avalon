@@ -7,7 +7,7 @@ import { ActionTile, ActionTiles, LevelRow, TitleMenuHeader, TitleMenuItem, Titl
 import { classifyAttachmentKind } from '@rally/contracts';
 import { DetailHeaderActionsHost } from './detail-header-actions';
 import type { IconGroupAction } from '@rally/ui/components/icon-group';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { formatDateTime, formatSparseRelativeDate } from '../lib/format';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreview, readResourcePreviewText } from '../lib/resource-preview';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
@@ -708,26 +708,6 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
     setPopOutFailed(false);
     setPoppingOut(false);
   }, [inspector?.id]);
-
-  // A live site lays itself out for the width it is given, and at the
-  // inspector's narrow default most generated sites drop to their phone
-  // layout. So a site opens at an even split with the conversation. Opening a
-  // panel widens the window by the panel's width where the screen has room
-  // (`conversation-details-geometry.ts`), so the even split is the
-  // conversation's present width, capped at half of what the screen allows.
-  // A wider width the person dragged to is kept, as the browser rail does.
-  const liveSiteId = resource && isSiteResource(resource) && props.siteArtifacts ? resource.id : null;
-  useLayoutEffect(() => {
-    if (!liveSiteId) return;
-    const pane = document.querySelector('.main-pane');
-    if (!pane) return;
-    const left = pane.getBoundingClientRect().left;
-    const conversation = window.innerWidth - left;
-    const screenRoom = Math.max(window.screen.availWidth, window.innerWidth) - left;
-    const even = Math.round(Math.min(conversation, screenRoom / 2));
-    const ui = useUiStore.getState();
-    if (ui.railWidth < even) ui.setRailWidth(even);
-  }, [liveSiteId]);
 
   const popOutGeneratedArtifact = async (): Promise<void> => {
     if (!resource || resource.direction !== 'artifact' || isSiteResource(resource)

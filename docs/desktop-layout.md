@@ -9,6 +9,7 @@ the device remembers only the view the person chose.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/lib/ui-store.ts` | Rail widths and collapse preferences. |
+| `apps/desktop/src/renderer/lib/rail-split.ts` | The even split an attachment or artifact panel opens at. |
 | `apps/desktop/src/renderer/lib/desktop-layout.ts` | Scoped local keys and artifact panel selection. `useSemanticScroll` is still exported and tested, but nothing calls it. |
 | `apps/desktop/src/renderer/components/app-shell.tsx`, `screens/workstream-landing.tsx` | Last route save and directory-checked startup restoration. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Artifact panel selection per Channel or Breakout. |
@@ -28,6 +29,21 @@ the first visible row by id (`useSemanticScroll`), and the new Threads,
 Channels and Activity lists do not call it, so each opens at its top. The
 selected artifact panel is scoped to a thread and Breakout address; its resource is looked up in the freshly loaded
 conversation before the panel is drawn.
+
+Every attachment and artifact opens its panel at an even split with the
+conversation (`sizeRailToEvenSplit`, called from `openPanel`). Opening a panel
+already widens the window by the panel's width where the screen has room, so
+the split is the conversation's present width, capped at half of what the
+screen allows; a maximized window splits in half. It applies only when the
+panel opens: switching items in an open panel keeps the width the person
+dragged it to, and that width is stored per conversation as before.
+
+Every draggable edge, the sidebar's, the right panel's, and the
+split-conversation divider's, takes the same hit width,
+`--resize-hit-size` in `packages/ui/src/styles/app.css`. The sidebar's and the
+divider's are centred on their line. The panel's reaches mostly over the
+conversation, because a live site's native view covers the panel's body and
+takes the pointer from anything under it.
 
 The shell records Channel routes (`/channels/:id`, with or without an open
 thread) and lone thread routes (`/workstreams/:id`), including a breakout
@@ -86,6 +102,23 @@ The desktop acceptance check opens, moves, quits, and relaunches real Electron
 windows, and checks that rail positions and panels return visibly.
 
 ## Changelog
+
+### 2026-10-15 — Panels open 50/50, and every edge is equally easy to grab
+
+**What changed:** Attachments and artifacts open their panel at an even split
+with the conversation instead of the 320px default. The sidebar, the right
+panel and the split-conversation divider share one hit width, 14px, through
+`--resize-hit-size`; they had been 12px, 14px and 8px.
+
+**Why:** At 320px most generated sites fell into their phone layout and a
+document read as a narrow column. The edges had drifted apart one by one, and
+the panel's had been mostly covered by the site view (see
+[`live-web-artifacts.md`](live-web-artifacts.md#changelog)), so it felt like
+one pixel. One token keeps them from drifting again.
+
+**Consequences:** The split is applied on opening only, so a dragged width
+survives switching items. A new draggable edge should take its width from
+`--resize-hit-size`.
 
 ### 2026-10-10 — Restore Channel routes and the sidebar's section
 
