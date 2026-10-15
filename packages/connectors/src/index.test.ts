@@ -16,7 +16,9 @@ import {
   createGoogleConnector,
   CredentialCipher,
   defineConnectorActivityTriggers,
+  googleDriveFileIdFromReference,
   googleTools,
+  isConnectorResourceAccessRefusal,
   pollCheckpointedActivityStreams,
   verifyGenericWebhook,
   authorizedConnection,
@@ -2829,7 +2831,91 @@ describe("connectors", () => {
       resource: { id: "sheet-1", type: "document", name: "Read-only sheet" },
       connection: googleConnection(["sheets.write"]),
       signal: neverAborts(),
+
     })).rejects.toMatchObject({ code: "unsupported_capability" });
+  });
+  it("reads a Drive file id out of the links people paste, and nothing else", () => {
+    const id = "1irpjLvtBj5qZCrBJzEuuwJ2M-yj7rUDWhk8f1TfyGuI";
+    expect(googleDriveFileIdFromReference(`https://docs.google.com/spreadsheets/d/${id}/edit#gid=0`)).toBe(id);
+    expect(googleDriveFileIdFromReference(`https://docs.google.com/document/d/${id}`)).toBe(id);
+    expect(googleDriveFileIdFromReference(`https://drive.google.com/file/d/${id}/view?usp=sharing`)).toBe(id);
+    expect(googleDriveFileIdFromReference(`https://drive.google.com/open?id=${id}`)).toBe(id);
+    expect(googleDriveFileIdFromReference(` ${id} `)).toBe(id);
+    expect(googleDriveFileIdFromReference(`http://docs.google.com/document/d/${id}`)).toBeNull();
+    expect(googleDriveFileIdFromReference(`https://docs.google.com.evil.example/document/d/${id}`)).toBeNull();
+    expect(googleDriveFileIdFromReference("https://x.com/masonwarner/status/2110403718604853440")).toBeNull();
+    expect(googleDriveFileIdFromReference("Creator")).toBeNull();
+  });
+
+  it("reports how far a connection reaches a file without writing to it", async () => {
+    const requests: string[] = [];
+    const metadata = (file: Record<string, unknown>): typeof fetch => async (input, init) => {
+      requests.push(`${init?.method ?? "GET"} ${requestUrl(input).hostname}`);
+      return googleJson(file);
+    };
+    const sheet = { id: "sheet-file-id-01", name: "Creator Content Intake",
+      mimeType: "application/vnd.google-apps.spreadsheet" };
+    const link = "https://docs.google.com/spreadsheets/d/sheet-file-id-01/edit";
+
+    await expect(googleAdapter(metadata({ ...sheet, isAppAuthorized: true, capabilities: { canEdit: true } }))
+      .probeResourceAccess!(googleConnection(["drive.read", "sheets.write"]), link, neverAborts()))
+      .resolves.toEqual({ access: "edit", resourceId: "sheet-file-id-01", name: "Creator Content Intake" });
+    await expect(googleAdapter(metadata({ ...sheet, isAppAuthorized: false, capabilities: { canEdit: true } }))
+      .probeResourceAccess!(googleConnection(["drive.read", "sheets.write"]), link, neverAborts()))
+      .resolves.toEqual({ access: "read", resourceId: "sheet-file-id-01", name: "Creator Content Intake", editNeedsGrant: true });
+    // Editable by the account, but this connection holds no Sheets write.
+    await expect(googleAdapter(metadata({ ...sheet, isAppAuthorized: true, capabilities: { canEdit: true } }))
+      .probeResourceAccess!(googleConnection(["drive.read"]), link, neverAborts()))
+      .resolves.toEqual({ access: "read", resourceId: "sheet-file-id-01", name: "Creator Content Intake" });
+    await expect(googleAdapter(async () => googleJson({ error: { code: 404 } }, 404))
+      .probeResourceAccess!(googleConnection(["drive.read"]), link, neverAborts()))
+      .resolves.toEqual({ access: "none", resourceId: "sheet-file-id-01", reason: "not_found_or_not_shared" });
+    expect(requests.every((request) => request.startsWith("GET "))).toBe(true);
+
+    const unused = googleAdapter(async () => { throw new Error("provider must not be called"); });
+    await expect(unused.probeResourceAccess!(googleConnection(["gmail.read", "calendar.read"]), link, neverAborts()))
+      .resolves.toEqual({ access: "none", resourceId: "sheet-file-id-01", reason: "capability_not_granted" });
+    await expect(unused.probeResourceAccess!(googleConnection(["drive.read"]), "https://x.com/a/status/1", neverAborts()))
+      .resolves.toEqual({ access: "unrecognized" });
+  });
+
+  it("marks only refusals that came before any write as safe to try on another connection", async () => {
+    const context = {
+      connection: googleConnection(["drive.read", "sheets.read", "sheets.write"]),
+      principal: { type: "user" as const, userId: TEST_USER_ID },
+      signal: neverAborts()
+    };
+    const write = { spreadsheetId: "sheet-file-id-01", range: "A1:B1", values: [["a", "b"]], valueInputOption: "RAW" };
+
+    // The writability check refuses; the write request is never sent.
+    const sent: string[] = [];
+    const notShared: typeof fetch = async (input, init) => {
+      const url = requestUrl(input);
+      if (url.hostname === "sheets.googleapis.com") sent.push(init?.method ?? "GET");
+      return googleJson({ error: { code: 404 } }, 404);
+    };
+    const preflight = await googleAdapter(notShared).executeTool("sheets.update_values", write, context)
+      .catch((error: unknown) => error);
+    expect(isConnectorResourceAccessRefusal(preflight)).toBe(true);
+    expect(sent).toEqual([]);
+
+    // A read Google refuses for access.
+    const read = await googleAdapter(async () => googleJson({ error: { code: 403 } }, 403))
+      .executeTool("sheets.read_values", { spreadsheetId: "sheet-file-id-01", range: "A1:B1" }, context)
+      .catch((error: unknown) => error);
+    expect(isConnectorResourceAccessRefusal(read)).toBe(true);
+    expect(read).toMatchObject({ code: "provider_error", message: "Google API failed (403)" });
+
+    // The check passes and the write request itself is refused: not marked,
+    // because a refusal after a write was sent is not one Rally may retry.
+    const refusedWrite = await googleAdapter(async (input) => requestUrl(input).hostname === "www.googleapis.com"
+      ? googleJson({ id: "sheet-file-id-01", name: "Sheet", mimeType: "application/vnd.google-apps.spreadsheet",
+        isAppAuthorized: true, capabilities: { canEdit: true } })
+      : googleJson({ error: { code: 403 } }, 403))
+      .executeTool("sheets.update_values", write, context)
+      .catch((error: unknown) => error);
+    expect(refusedWrite).toMatchObject({ code: "provider_error" });
+    expect(isConnectorResourceAccessRefusal(refusedWrite)).toBe(false);
   });
 
   it("leaves the provider failure alone when Drive cannot say what the id is", async () => {

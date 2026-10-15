@@ -29,6 +29,8 @@ import {
   AVALON_TABLES_PLUGIN_ID,
   AVALON_WEB_PLUGIN_ID,
   AVALON_WORKSTREAM_PLUGIN_ID,
+  CHECK_RESOURCE_ACCESS_TOOL_NAME,
+  checkResourceAccessToolDefinition,
   AVALON_DISCOVERY_TOOL_DEFINITIONS,
   ADDRESSING_FALLBACK_MODEL,
   BUILT_IN_SKILLS,
@@ -125,6 +127,7 @@ import {
   CUSTOM_MCP_DISPLAY_NAME,
   ConnectorError,
   GoogleFileWriteAuthorizationGuidance,
+  isConnectorResourceAccessRefusal,
   pollCheckpointedActivityStreams,
   type AuthorizedConnectorConnection,
   type ConnectorActivityStreamError,
@@ -5374,7 +5377,15 @@ async function loadHarnessTools(
   // The page-ID namespaces stay `table_` and `workstream_`: they name where a
   // page came from, are stored on issued rows, and are validated on the way
   // back in. Only `rally:workstream`'s model-facing prefix went away.
-  const coreTools = createAvalonTools(env, input).flatMap((tool) => {
+  // Filled by the connection loop below; the access check reads it when it
+  // runs, by which point every connection of the run is in it.
+  const frozenConnections = new Map<string, FrozenConnectorPlugin>();
+  const coreTools = createAvalonTools(env, input, {
+    connectorTypes: registry.list()
+      .map((manifest) => manifest.type)
+      .filter((type) => Boolean(registry.get(type).probeResourceAccess)),
+    connections: () => [...frozenConnections.values()],
+  }).flatMap((tool) => {
     const tableTool = tool.definition.capability.startsWith("table.");
     return expandPages(tool, tableTool ? "table" : "workstream", null, tableTool ? "table" : "");
   }).filter((tool) =>
@@ -5439,7 +5450,6 @@ async function loadHarnessTools(
     (plugin): plugin is HarnessPlugin => plugin !== null,
   );
   const plugins: HarnessPlugin[] = [...builtinPlugins];
-  const frozenConnections = new Map<string, FrozenConnectorPlugin>();
   const pluginSurfaceHashes = new Map<string, string>();
   const legacyPluginSurfaceHashes = new Map<string, string>();
   const prePaginationSurfaceHashes = new Map<string, string>();
@@ -5581,6 +5591,14 @@ async function loadHarnessTools(
           undefined,
           context.effectIntentId,
           context.authorizationContext,
+          // A provider-authored (MCP) surface can differ between two accounts
+          // of one connector, so only a code-authored tool has a twin to retry.
+          dynamicCapability ? undefined : () => [...frozenConnections.values()].filter((candidate) => (
+            candidate !== frozen
+            && candidate.connectorType === frozen.connectorType
+            && candidate.grantedScopes.includes(definition.capability)
+            && connectorCapabilitySupportsScope(adapter, definition.capability, candidate.scope)
+          )),
         ),
       };
       const expanded = includeStaticInputValidator ? expandPages(tool, shortWireName, connectionId) : [tool];
@@ -6238,7 +6256,75 @@ type PreparedConnectorAuthorization = {
   row: Record<string, unknown>;
 };
 
+/**
+ * Run a connector tool, and when its connection cannot reach the resource, the
+ * same call on the run's next connection of that connector that can.
+ *
+ * A person's own Google account and the Organization's are different accounts
+ * that see different files, and the model picks one plugin per call. A write
+ * refused on the one it picked, while the other could have made it, is a
+ * failure the person cannot see the reason for.
+ *
+ * The guard against a write landing twice is what triggers the retry: only a
+ * refusal built with `connectorResourceAccessRefused`, which an adapter raises
+ * before asking the provider to change anything, and only from an adapter that
+ * implements `probeResourceAccess` and so has made that promise. Any other
+ * failure on a later connection ends the walk with that failure, since it may
+ * have had an effect. `alternates` comes in run order: attached, then the
+ * person's own, then the Organization's. The receipt keeps the connection the
+ * model chose; the result names the one that served it.
+ */
 async function executeAuthorizedConnectorTool(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  frozen: FrozenConnectorPlugin,
+  toolName: string,
+  capability: string,
+  toolInput: unknown,
+  signal: AbortSignal,
+  providerIdempotencyKey?: string,
+  ownershipGuard?: () => Promise<void>,
+  effectIntentId?: string,
+  authorizationContext?: unknown,
+  alternates?: () => readonly FrozenConnectorPlugin[],
+) {
+  try {
+    return await executeConnectorToolOnConnection(env, input, frozen, toolName, capability, toolInput,
+      signal, providerIdempotencyKey, ownershipGuard, effectIntentId, authorizationContext);
+  } catch (error) {
+    if (!isConnectorResourceAccessRefusal(error)
+      || !connectorRegistryForEnv(env).get(frozen.connectorType).probeResourceAccess) {
+      throw error;
+    }
+    for (const candidate of alternates?.() ?? []) {
+      try {
+        const result = await executeConnectorToolOnConnection(env, input, candidate, toolName, capability,
+          toolInput, signal, providerIdempotencyKey, ownershipGuard, effectIntentId);
+        return servedThrough(result, candidate, frozen);
+      } catch (next) {
+        if (!isConnectorResourceAccessRefusal(next)) throw next;
+      }
+    }
+    throw error;
+  }
+}
+
+function servedThrough<Result extends { output: unknown; summary: string }>(
+  result: Result,
+  served: FrozenConnectorPlugin,
+  refused: FrozenConnectorPlugin,
+): Result {
+  const output = result.output;
+  return {
+    ...result,
+    output: output && typeof output === "object" && !Array.isArray(output)
+      ? { ...output, servedThrough: { plugin: served.modelPluginId, scope: served.scope, couldNotReach: refused.modelPluginId } }
+      : output,
+    summary: `${result.summary} (through ${served.modelPluginId}; ${refused.modelPluginId} could not reach it)`,
+  };
+}
+
+async function executeConnectorToolOnConnection(
   env: Env,
   input: WorkstreamWorkflowInput,
   frozen: FrozenConnectorPlugin,
@@ -7481,7 +7567,8 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
     tool.definition.name === "current_time"
     || tool.definition.name === "request_elicitation"
     || tool.definition.name === "get_connector_connection_state"
-    || tool.definition.name === "show_connector_connection");
+    || tool.definition.name === "show_connector_connection"
+    || tool.definition.name === CHECK_RESOURCE_ACCESS_TOOL_NAME);
   const memoryTools = tools.filter((tool) => tool.definition.capability.startsWith("memory."));
   const tableTools = tools.filter((tool) => tool.definition.capability.startsWith("table."));
   return [
@@ -7503,7 +7590,10 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
               : []),
             ...(coreTools.some((tool) => tool.definition.name === "get_connector_connection_state")
               && coreTools.some((tool) => tool.definition.name === "show_connector_connection")
-              ? ["For a connector, call get_connector_connection_state first. If it returns connected, continue without a card. If it returns reconnect_required or not_connected and that blocks the task, explain why and call show_connector_connection with the same connectorId and scope. If it returns unavailable, explain that the connector is not configured in this Rally region and do not show a card. Do not invent an authorization URL or claim the connection succeeded."]
+              ? ["For a connector, call get_connector_connection_state first, without a scope. If a connected scope can do the task, continue without a card. If none can and reconnect_required or not_connected blocks the task, explain why and call show_connector_connection with the same connectorId and the scope the task needs. If it returns unavailable, explain that the connector is not configured in this Rally region and do not show a card. Do not invent an authorization URL or claim the connection succeeded."]
+              : []),
+            ...(coreTools.some((tool) => tool.definition.name === CHECK_RESOURCE_ACCESS_TOOL_NAME)
+              ? ["Before reading or editing a linked file, or after a call on it was refused, call check_resource_access to learn which connection can open it, then use that plugin."]
               : []),
           ].join(" "),
           tools: coreTools,
@@ -7640,6 +7730,69 @@ const ScheduleWakeupInputSchema = z.strictObject({
   timezone: z.string().min(1).max(100).optional(),
 });
 
+type ResourceAccessRow = { plugin: string; scope: "personal" | "workspace" } & (
+  | { access: "unrecognized" }
+  | { access: "none"; resourceId: string; reason: string }
+  | { access: "read" | "edit"; resourceId: string; name: string; editNeedsGrant?: boolean }
+  | { access: "unknown"; reason: string }
+);
+
+/**
+ * Ask every connection of one connector in this run how far it reaches a
+ * resource, all at once. A probe that fails is reported as that connection's
+ * own `unknown` with a code, so one unreachable account does not hide what the
+ * others can do.
+ */
+async function checkResourceAccess(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  connections: readonly FrozenConnectorPlugin[],
+  connectorTypes: readonly [string, ...string[]],
+  raw: unknown,
+  signal: AbortSignal,
+) {
+  const args = z.strictObject({
+    connector: z.enum(connectorTypes),
+    resource: z.string().min(1),
+  }).parse(raw);
+  const adapter = connectorRegistryForEnv(env).get(args.connector);
+  const rows = await Promise.all(connections
+    .filter((frozen) => frozen.connectorType === args.connector)
+    .map(async (frozen): Promise<ResourceAccessRow> => {
+      const identity = { plugin: frozen.modelPluginId, scope: frozen.scope };
+      try {
+        const { connection } = await loadAuthorizedConnectionContext(env, input, frozen, undefined, signal);
+        const access = await withAuthorizedConnection(env, { connection, adapter, signal },
+          (authorized) => adapter.probeResourceAccess!(authorized, args.resource, signal));
+        return { ...identity, ...access };
+      } catch (error) {
+        if (signal.aborted) throw error;
+        return { ...identity, access: "unknown", reason: diagnosticErrorCode(error, "resource_access_probe_failed") };
+      }
+    }));
+  const named = rows.find((row): row is Extract<ResourceAccessRow, { name: string }> => "name" in row);
+  return {
+    connector: args.connector,
+    resource: args.resource,
+    ...(named ? { name: named.name } : {}),
+    connections: rows,
+    canEdit: rows.find((row) => row.access === "edit")?.plugin ?? null,
+    canRead: rows.find((row) => row.access === "edit" || row.access === "read")?.plugin ?? null,
+  };
+}
+
+function resourceAccessSummary(result: Awaited<ReturnType<typeof checkResourceAccess>>): string {
+  if (result.connections.length === 0) return `No ${result.connector} connection is available to this run`;
+  if (result.connections.every((row) => row.access === "unrecognized")) {
+    return `That is not a ${result.connector} resource Rally recognizes`;
+  }
+  const rows = result.connections.map((row) => {
+    const grant = "editNeedsGrant" in row && row.editNeedsGrant ? ", editing needs the one-file grant" : "";
+    return `${row.plugin} (${row.scope}) ${row.access}${grant}`;
+  });
+  return `${result.name ?? result.connector}: ${rows.join("; ")}`;
+}
+
 async function readConnectorConnectionState(
   env: Env,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "executionPrincipal">,
@@ -7691,8 +7844,26 @@ async function readConnectorConnectionState(
   });
 }
 
-function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessTool[] {
+/** What the access check needs from the run that holds it. */
+type ResourceAccessPort = {
+  /** Connector types whose adapter can answer a probe in this deployment. */
+  connectorTypes: readonly string[];
+  /** The run's connections, read when the check runs. */
+  connections: () => readonly FrozenConnectorPlugin[];
+};
+
+function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAccess?: ResourceAccessPort): HarnessTool[] {
+  const [firstAccessType, ...otherAccessTypes] = resourceAccess?.connectorTypes ?? [];
   const tools: HarnessTool[] = [
+    ...(resourceAccess && firstAccessType ? [{
+      definition: checkResourceAccessToolDefinition([firstAccessType, ...otherAccessTypes]),
+      execute: async (raw: unknown, context: { signal: AbortSignal }) => {
+        const result = await checkResourceAccess(
+          env, input, resourceAccess.connections(), [firstAccessType, ...otherAccessTypes], raw, context.signal,
+        );
+        return { output: result, summary: resourceAccessSummary(result) };
+      },
+    } satisfies HarnessTool] : []),
     ...createWorkstreamAttachmentTools(env, input),
     // Reading a live artifact's stored data is a work-stream capability, not a
     // Terminal one: answering "who hasn't voted?" must not require a sandbox,

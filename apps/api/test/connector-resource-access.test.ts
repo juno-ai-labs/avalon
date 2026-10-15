@@ -1,0 +1,232 @@
+import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import type { WorkstreamWorkflowInput } from "@rally/contracts";
+import type { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { Env } from "../src/env";
+import { encryptString } from "../src/lib/crypto";
+import { __integrationTesting } from "../src/services/integrations";
+import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
+import { createTestEnv } from "./helpers/cloudflare-test";
+import {
+  seedWorkstreamObjectRoot,
+  seedWorkstreamRun,
+  testSubstreamAgentsBinding,
+  testWorkstreamObjectStore,
+} from "./helpers/durable-authority";
+import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
+
+const USER_ID = asUserId("00000000-0000-4000-8000-000000000000");
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
+const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
+const HARNESS_RUN_ID = asHarnessRunId("00000000-0000-4000-8000-000000000003");
+const PERSONAL_ID = "00000000-0000-4000-8000-000000000030";
+const WORKSPACE_CONNECTION_ID = "00000000-0000-4000-8000-000000000031";
+const FILE_ID = "sheet-file-id-01";
+const NOW = "2026-01-01T00:00:00.000Z";
+const CAPABILITIES = ["drive.read", "sheets.read", "sheets.write"];
+
+type Frozen = Parameters<typeof __integrationTesting.executeAuthorizedConnectorTool>[2];
+
+const openDatabases: DatabaseSync[] = [];
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  for (const database of openDatabases.splice(0)) database.close();
+});
+
+function workflowInput(): WorkstreamWorkflowInput {
+  return {
+    region: "global",
+    workspaceId: WORKSPACE_ID,
+    parentKind: "workstream",
+    parentId: WORKSTREAM_ID,
+    loopId: `workstream:${WORKSTREAM_ID}:substream:0:loop`,
+    harnessRunId: HARNESS_RUN_ID,
+    triggerMessageId: null,
+    activityId: null,
+    executionPrincipal: { type: "user", userId: USER_ID },
+    reason: "Connector resource access test",
+  };
+}
+
+/**
+ * A member with a personal Google connection in an Organization that also
+ * holds a workspace one, each sealed with its own access token.
+ */
+async function fixture(): Promise<{ env: Env; personal: Frozen; workspace: Frozen }> {
+  const database = migratedSqliteDatabase();
+  openDatabases.push(database);
+  database.prepare(
+    `INSERT INTO users(id, google_subject, email, name, created_at, updated_at)
+     VALUES (?, 'google-resource-access', 'member@example.test', 'Member', ?, ?)`,
+  ).run(USER_ID, NOW, NOW);
+  database.prepare(
+    `INSERT INTO workspaces(id, name, slug, region, created_by_user_id, created_at, updated_at)
+     VALUES (?, 'Test', 'test', 'global', ?, ?, ?)`,
+  ).run(WORKSPACE_ID, USER_ID, NOW, NOW);
+  database.prepare(
+    `INSERT INTO workspace_members(workspace_id, user_id, role, status, joined_at)
+     VALUES (?, ?, 'owner', 'active', ?)`,
+  ).run(WORKSPACE_ID, USER_ID, NOW);
+  const objectStore = testWorkstreamObjectStore();
+  openDatabases.push(objectStore);
+  seedWorkstreamObjectRoot(objectStore, {
+    workstreamId: WORKSTREAM_ID,
+    workspaceId: WORKSPACE_ID,
+    title: "Creator content",
+    description: "Creator content",
+    originType: "ad_hoc",
+    createdByUserId: USER_ID,
+    exactState: "running",
+  });
+  seedWorkstreamRun(objectStore, { id: HARNESS_RUN_ID,
+    executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }) });
+  const workspaceObject = createTestWorkspaceDO({
+    workspaceId: WORKSPACE_ID,
+    regionalDatabase: database,
+    register: (created) => { openDatabases.push(created); },
+  });
+  const baseEnv = createTestEnv({
+    DB: sqliteD1(database),
+    AVALON_REGION: "global",
+    APP_ENV: "test",
+    PUBLIC_API_BASE_URL: "https://api.example.test",
+    GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "google-client",
+    GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "google-secret",
+    CONNECTOR_CREDENTIALS_KEY: "resource-access-credential-key",
+    CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
+    WORKSPACE_DOS: testSubstreamAgentsBinding(objectStore, {
+      extra: workspaceObjectRpcs(workspaceObject.instance, ["executeRuntimeSql"]),
+    }),
+  });
+  const insert = async (id: string, scope: "personal" | "workspace", token: string, plugin: string): Promise<Frozen> => {
+    const sealed = await encryptString(JSON.stringify({ accessToken: token }), baseEnv.CONNECTOR_CREDENTIALS_KEY, id);
+    workspaceObject.objectDatabase.prepare(
+      `INSERT INTO connector_connections
+         (id, workspace_id, connector_type, scope, owner_user_id, display_name, granted_scopes_json,
+          encrypted_credentials, credential_iv, credential_key_version, status, created_at, updated_at, model_plugin_id)
+       VALUES (?, ?, 'google', ?, ?, 'Google Drive', ?, ?, ?, 1, 'healthy', ?, ?, ?)`,
+    ).run(id, WORKSPACE_ID, scope, scope === "personal" ? USER_ID : null, JSON.stringify(CAPABILITIES),
+      sealed.ciphertext, sealed.iv, NOW, NOW, plugin);
+    return {
+      pluginId: `connection:${id}`,
+      modelPluginId: plugin,
+      connectionId: id,
+      workspaceId: WORKSPACE_ID,
+      connectorType: "google",
+      scope,
+      ownerUserId: scope === "personal" ? USER_ID : null,
+      grantedScopes: CAPABILITIES,
+      toolCapabilities: CAPABILITIES,
+      shortWireName: plugin.replace("plugin_", ""),
+    } as Frozen;
+  };
+  return {
+    env: withWorkspaceRuntimeDatabase(baseEnv, WORKSPACE_ID),
+    personal: await insert(PERSONAL_ID, "personal", "personal-token", "plugin_google"),
+    workspace: await insert(WORKSPACE_CONNECTION_ID, "workspace", "workspace-token", "plugin_google_2"),
+  };
+}
+
+/**
+ * Google as two accounts. By default the personal token's account was never
+ * shared the file and the Organization's can edit it. Returns each Sheets
+ * write, by the token that sent it.
+ */
+function googleAsTwoAccounts(options: { visibleTo?: readonly string[]; refuseWritesFrom?: string } = {}): string[] {
+  const visibleTo = options.visibleTo ?? ["workspace-token"];
+  const writes: string[] = [];
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    const token = String(new Headers(init?.headers).get("authorization")).replace("Bearer ", "");
+    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
+      status, headers: { "content-type": "application/json" } });
+    if (url.hostname === "www.googleapis.com") {
+      return !visibleTo.includes(token)
+        ? json({ error: { code: 404 } }, 404)
+        : json({ id: FILE_ID, name: "Creator Content Intake", mimeType: "application/vnd.google-apps.spreadsheet",
+          isAppAuthorized: true, capabilities: { canEdit: true } });
+    }
+    if (url.hostname === "sheets.googleapis.com" && init?.method === "PUT") {
+      writes.push(token);
+      return token === options.refuseWritesFrom
+        ? json({ error: { code: 403 } }, 403)
+        : json({ updatedRange: "A1:B1", updatedRows: 1, updatedCells: 2 });
+    }
+    return json({ error: { code: 404 } }, 404);
+  });
+  return writes;
+}
+
+const write = { spreadsheetId: FILE_ID, range: "A1:B1", values: [["a", "b"]], valueInputOption: "RAW" };
+
+describe("reaching one resource through whichever connection can", () => {
+  it("writes through the Organization's connection when the person's own cannot reach the file", async () => {
+    const writes = googleAsTwoAccounts();
+    const { env, personal, workspace } = await fixture();
+
+    const result = await __integrationTesting.executeAuthorizedConnectorTool(
+      env, workflowInput(), personal, "sheets.update_values", "sheets.write", write,
+      new AbortController().signal, undefined, undefined, undefined, undefined, () => [workspace],
+    );
+
+    expect(writes).toEqual(["workspace-token"]);
+    expect(result.output).toMatchObject({
+      servedThrough: { plugin: "plugin_google_2", scope: "workspace", couldNotReach: "plugin_google" },
+    });
+    expect(result.summary).toBe("Updated 1 row in Google Sheets (through plugin_google_2; plugin_google could not reach it)");
+  });
+
+  it("does not retry a write the provider refused after it was sent", async () => {
+    // Both accounts can edit the file, so only the guard stops a second write.
+    const writes = googleAsTwoAccounts({
+      visibleTo: ["workspace-token", "personal-token"],
+      refuseWritesFrom: "workspace-token",
+    });
+    const { env, personal, workspace } = await fixture();
+
+    // The Organization's connection passes the check, sends the write, and
+    // Google refuses it. Whatever happened there, it is not tried again.
+    await expect(__integrationTesting.executeAuthorizedConnectorTool(
+      env, workflowInput(), workspace, "sheets.update_values", "sheets.write", write,
+      new AbortController().signal, undefined, undefined, undefined, undefined, () => [personal],
+    )).rejects.toMatchObject({ code: "provider_error" });
+    expect(writes).toEqual(["workspace-token"]);
+  });
+
+  it("names which connection can open a file and how far", async () => {
+    googleAsTwoAccounts();
+    const { env, personal, workspace } = await fixture();
+    const tool = __integrationTesting.createAvalonTools(env, workflowInput(), {
+      connectorTypes: ["google"],
+      connections: () => [personal, workspace],
+    }).find((candidate) => candidate.definition.name === "check_resource_access");
+    const link = `https://docs.google.com/spreadsheets/d/${FILE_ID}/edit`;
+
+    expect(tool?.definition).toMatchObject({ mode: "read", idempotency: "safe" });
+    await expect(tool!.execute({ connector: "google", resource: link }, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      harnessRunId: HARNESS_RUN_ID,
+      toolCallId: "check-access",
+      executionPrincipal: { type: "user", userId: USER_ID },
+      signal: new AbortController().signal,
+    })).resolves.toEqual({
+      output: {
+        connector: "google",
+        resource: link,
+        name: "Creator Content Intake",
+        connections: [
+          { plugin: "plugin_google", scope: "personal", access: "none", resourceId: FILE_ID, reason: "not_found_or_not_shared" },
+          { plugin: "plugin_google_2", scope: "workspace", access: "edit", resourceId: FILE_ID, name: "Creator Content Intake" },
+        ],
+        canEdit: "plugin_google_2",
+        canRead: "plugin_google_2",
+      },
+      summary: "Creator Content Intake: plugin_google (personal) none; plugin_google_2 (workspace) edit",
+    });
+  });
+});
