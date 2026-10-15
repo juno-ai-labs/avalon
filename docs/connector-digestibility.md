@@ -1,10 +1,17 @@
-# What each connector activity type puts in a digest
+# What each connector activity type declares for a digest
 
 One row per declared activity type, for every connector Rally registers. The
 rule these answer to, and the contract that makes stating them mandatory, is in
 [`connectors.md`](connectors.md#declaring-what-a-digest-may-read); what happens
 to the answer afterwards is in
 [`digests.md`](digests.md#digestible-what-a-person-should-be-told).
+
+**Nothing reads these answers today.** Since the digest became a list of unread
+Activity (mentions, additions, thread and breakout starts, finished runs),
+connector activity does not reach it at all. The manifests still declare every
+type, the activity log still records the answer, and this table still has to
+match them; they are kept for a future surface that tells somebody about
+connector activity, so read "digest" below as that surface.
 
 This is a reference appendix to [`connectors.md`](connectors.md), not a second
 document about connectors: that document owns the contract, the rule, and the
@@ -296,13 +303,12 @@ One of three.
 One of two. Fireflies reports the same meeting twice, minutes apart, and only
 the second report has anything written about it.
 
-Worth stating plainly, because the Yes above promises more than the digest
-receives: a Fireflies webhook carries `{event, timestamp, meeting_id}` and
-nothing else, so the activity has no title, no snippet and no link, and the
-digest brief renders it as "Fireflies meeting summarized" with no meeting
-identity. The overview and action items exist, but only behind a hydration the
-digest path does not perform — the same shape as Granola. Fixing that is a
-change to how the digest hydrates, not to this row.
+Worth stating plainly, because the Yes above promises more than the log
+holds: a Fireflies webhook carries `{event, timestamp, meeting_id}` and
+nothing else, so the activity has no title, no snippet and no link. The
+overview and action items exist only behind a hydration, the same shape as
+Granola. A surface that reads this row would have to hydrate it; that is a
+change to the reader, not to this row.
 
 | Activity type | Digestible | Reason |
 | --- | --- | --- |

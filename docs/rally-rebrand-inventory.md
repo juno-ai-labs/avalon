@@ -279,7 +279,8 @@ the automation architect in `prompts/automation-compiler.ts` (since deleted with
 the first automation object), and the read-only sub-agent in `integrations.ts`. The prompt bodies moved with them — the
 addressing classifier, work-opportunity admission and ranking, the Bind
 summarization instructions, and the injected context headers (`SCHEDULED DIGEST
-BRIEF FROM RALLY`, `USER-SELECTED RALLY SUGGESTED-WORK BRIEF`).
+BRIEF FROM RALLY`, since deleted with the digest's model run, and
+`USER-SELECTED RALLY SUGGESTED-WORK BRIEF`).
 
 Three things here were not prose, and each moved as a pair or not at all:
 

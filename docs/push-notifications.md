@@ -39,8 +39,7 @@ Settlement retains the payload only when push was enqueued, until the existing
 intent retention expires. The consumer reads content through `WorkspaceDO.readNotificationIntentForDelivery`
 and reuses the processor's `notificationDeliveryContext`. A projection behind
 its required version retries; revoked access stops delivery. No presence check is
-added. Successful enqueue with a live device counts as push acceptance for email
-fallback, not proof of an Apple alert.
+added. Successful enqueue with a live device is not proof of an Apple alert.
 
 Success receipts key on workspace, intent and device. A partial retry skips only
 those devices already reached for that intent. Sending precedes recording, so an

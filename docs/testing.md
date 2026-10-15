@@ -1043,7 +1043,7 @@ The remaining methods without a workerd RPC exercise are:
 
 | Object | Unexercised |
 | --- | --- |
-| `WorkspaceDO` | `activityEventSource`, `applyWorkstreamRegionalEffect`, `dueWorkstreamDirectory`, `existingOpportunities`, `getOpportunity`, `latestActivityEventCursor`, `notificationDirectoryState`, `opportunityWindow`, `resourceAccess`, `workstreamScheduleTargets` |
+| `WorkspaceDO` | `activityEventSource`, `applyWorkstreamRegionalEffect`, `dueWorkstreamDirectory`, `existingOpportunities`, `getOpportunity`, `notificationDirectoryState`, `opportunityWindow`, `resourceAccess`, `workstreamScheduleTargets` |
 | `SubstreamAgent` | `publishEvent` |
 
 **Uncovered here does not mean untested** — several have Node suites over their

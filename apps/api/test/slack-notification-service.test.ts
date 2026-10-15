@@ -155,7 +155,7 @@ describe("workspace Slack mention delivery", () => {
     ]);
   });
 
-  it("falls back to email when exact-email matches in multiple installed Slack teams", async () => {
+  it("skips Slack when exact-email matches in multiple installed Slack teams", async () => {
     const database = migratedDatabase();
     const env = environment(database);
     await seed(database, env, false);
@@ -301,7 +301,7 @@ describe("workspace Slack mention delivery", () => {
     }));
   });
 
-  it("rejects an email result from another Slack team and lets email handle the notification", async () => {
+  it("rejects an email result from another Slack team and skips Slack", async () => {
     const database = migratedDatabase();
     const env = environment(database);
     await seed(database, env, false);
@@ -325,7 +325,7 @@ describe("workspace Slack mention delivery", () => {
     }));
   });
 
-  it("fails closed to email when the installation has not yet received the lookup scope", async () => {
+  it("skips Slack when the installation has not yet received the lookup scope", async () => {
     const database = migratedDatabase();
     const env = environment(database);
     await seed(database, env, false);
