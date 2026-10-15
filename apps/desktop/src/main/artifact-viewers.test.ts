@@ -113,11 +113,6 @@ describe('the preview rectangle', () => {
   });
 
   it('converts CSS-pixel bounds through the renderer zoom before clamping', () => {
-    // The renderer measures the pane in CSS pixels. Native views use window
-    // points, which differ when Rally's zoom factor is not one — the same
-    // conversion the embedded browser already makes. Without it the page sits
-    // short of the pane, which reads as a gap down the left of a zoomed-out
-    // window (or overlap into the transcript when zoomed in).
     expect(clampBounds({ x: 400, y: 80, width: 320, height: 240 }, window, 1.25))
       .toEqual({ x: 500, y: 100, width: 400, height: 300 });
     expect(clampBounds({ x: 400, y: 80, width: 320, height: 240 }, { width: 800, height: 600 }, 0.8))
