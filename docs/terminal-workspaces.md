@@ -318,8 +318,10 @@ baseline version it was compiled under; the first settings read after
 `TERMINAL_NETWORK_MANIFEST_VERSION` changes rewrites a settled policy to the
 current baseline plus its custom domains under a new revision, and each sandbox
 re-applies and reads the list back on its next acquisition through the
-ordinary reconcile path. A policy with a change in flight, and a Full internet
-one, is left as it is. Settings shows only workspace-approved domains; the managed
+ordinary reconcile path. A policy with a change in flight, a Full internet one,
+and one whose upgraded list would pass the 20-target cap are left as they are;
+an applied change records the baseline version it was compiled under, so the
+next read does not move it again. Settings shows only workspace-approved domains; the managed
 baseline is not a participant-facing policy surface. Full internet clears
 `domainAllowList`. Schemes, ports, paths, IP addresses, CIDR, public suffixes,
 and private names are rejected. An admin confirms one warning that running

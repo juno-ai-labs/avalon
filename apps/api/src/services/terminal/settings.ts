@@ -286,6 +286,7 @@ export class TerminalSettingsService {
       resultingRevision,
       customDomains,
       effectiveDomains,
+      baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION,
       at: timestamp,
     });
     const telemetryMode = (mode: TerminalNetworkMode, domains: string[]) => mode === "full_internet"
