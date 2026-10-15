@@ -9,7 +9,7 @@ import type { MentionIdentity } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
 import { optimisticOpeningTranscript } from '../lib/launched-conversation';
-import { threadRoute } from '../lib/navigation-routes';
+import { OPEN_EXPANDED, threadRoute } from '../lib/navigation-routes';
 import { holdCreationTraceUntilSendReady, startPerfTrace, type PerfTrace } from '../lib/perf-trace';
 import { uuidV7 } from '../lib/telemetry';
 import type { AgentModelOverride, CreatedWorkstream, MessageAttachment, Workspace, WorkspaceMember, WorkstreamDetail } from '../lib/types';
@@ -252,7 +252,7 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
       objective: openingMessage,
       color: channelColor,
     });
-    void navigate(threadRoute(threadId, channelId));
+    void navigate(threadRoute(threadId, channelId), { state: OPEN_EXPANDED });
     await create.mutateAsync({
       attachmentIds: readyAttachments.map((attachment) => attachment.resource!.id),
       attachmentLocalIds: readyAttachments.map((attachment) => attachment.localId),

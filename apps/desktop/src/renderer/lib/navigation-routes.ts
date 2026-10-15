@@ -37,8 +37,9 @@ export function homeChannelId(spaceIds: readonly string[], preferred?: string | 
 /**
  * The `location.state` a link passes to open its thread, or its breakout,
  * expanded: taking the whole window, with what it covers as its crumbs. The
- * sidebar opens everything this way; a link inside a pane does not, so what it
- * opens comes up beside it.
+ * sidebar opens everything this way, and a Channel opens its threads this way
+ * (from the feed or by starting one); any other link inside a pane does not, so
+ * a breakout or a panel comes up beside what opened it.
  */
 export const OPEN_EXPANDED = { openExpanded: true } as const;
 

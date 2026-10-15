@@ -113,11 +113,15 @@ describe('a Channel', () => {
     expect(screen.getByText('composer')).toBeInTheDocument();
   });
 
-  it('opens a thread beside the Channel from its chip', async () => {
+  it('opens a thread expanded over the Channel from its chip, and Collapse puts it beside the Channel', async () => {
     renderChannel();
     fireEvent.click(await screen.findByRole('button', { name: 'Q4 plan' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/plan');
-    expect(await screen.findByText('thread pane')).toBeInTheDocument();
+    expect(await screen.findByText('thread pane')).toBeVisible();
+    expect(screen.getByText('composer')).not.toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse' }));
+    expect(screen.getByText('composer')).toBeVisible();
   });
 
   it('opens the Channel alone from its crumb, leaving the thread and its breakout', async () => {
@@ -171,6 +175,8 @@ describe('a Channel', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Expand' }));
     fireEvent.click(screen.getByRole('button', { name: 'Channel crumb' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Q4 plan' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Collapse' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Next thread' }));
 
     expect(await screen.findByText('thread pane')).toBeVisible();
     expect(screen.getByText('composer')).toBeVisible();
