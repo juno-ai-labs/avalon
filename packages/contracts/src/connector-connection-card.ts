@@ -56,8 +56,12 @@ const personalOrWorkspaceConnectorIds = ConnectorConnectionCardIds.filter((conne
   ConnectorConnectionCardCatalog[connectorId].scopes.includes("workspace" as never));
 
 const ConnectorConnectionCardShape = z.strictObject({
+  // The `-workspace` in `google-drive-workspace` is Google Workspace, the
+  // product. Two agents read it as Rally's workspace scope and asked only
+  // about the Organization's connection while the person's own worked.
   connectorId: z.enum(ConnectorConnectionCardIds).describe(
-    `Connector to check or show. Personal only: ${personalOnlyConnectorIds.join(", ")}. Personal or workspace: ${personalOrWorkspaceConnectorIds.join(", ")}.`,
+    `Connector to check or show. Personal only: ${personalOnlyConnectorIds.join(", ")}. Personal or workspace: ${personalOrWorkspaceConnectorIds.join(", ")}.`
+    + " google-drive-workspace is Google Drive, Docs and Sheets; the word workspace in it names Google's product, not a scope.",
   ),
   scope: z.enum(ConnectorConnectionCardScopes).describe(
     "Use personal for the current user's account. Use workspace only for an id described as personal or workspace.",
@@ -87,14 +91,16 @@ export const ConnectorConnectionStateSchema = z.enum([
 /**
  * What the state check accepts: the card's selection with the scope optional.
  *
- * Left out, the check covers every scope the connector offers. A model asked
- * to pick one picked the workspace scope for a person whose personal Drive was
- * connected, read `not_connected`, and asked them to connect what they had.
+ * The check always covers every scope the connector offers, so `scope` is
+ * accepted only so calls written before that still validate. Models asked to
+ * pick one picked the workspace scope for people whose personal Drive was
+ * connected, read `not_connected`, and asked them to connect what they had;
+ * honoring an explicit scope let that happen again whenever a model named one.
  */
 export const ConnectorConnectionStateInputSchema = z.strictObject({
   connectorId: ConnectorConnectionCardShape.shape.connectorId,
   scope: z.enum(ConnectorConnectionCardScopes).optional().describe(
-    "Leave out to check every scope this connector offers. Set only to check one scope on purpose.",
+    "Leave out. Every scope this connector offers is checked whatever is sent.",
   ),
 }).superRefine((input, context) => {
   const supportedScopes: readonly ConnectorConnectionCardScope[] = ConnectorConnectionCardCatalog[input.connectorId].scopes;

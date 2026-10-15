@@ -7590,7 +7590,7 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
               : []),
             ...(coreTools.some((tool) => tool.definition.name === "get_connector_connection_state")
               && coreTools.some((tool) => tool.definition.name === "show_connector_connection")
-              ? ["For a connector, call get_connector_connection_state first, without a scope. If a connected scope can do the task, continue without a card. If none can and reconnect_required or not_connected blocks the task, explain why and call show_connector_connection with the same connectorId and the scope the task needs. If it returns unavailable, explain that the connector is not configured in this Rally region and do not show a card. Do not invent an authorization URL or claim the connection succeeded."]
+              ? ["For a connector, call get_connector_connection_state first; it reports every scope. A connected personal connection is enough: do not ask for the workspace one when the person's own can do the task. If no connected scope can and reconnect_required or not_connected blocks the task, explain why and call show_connector_connection with the same connectorId and the scope the task needs. If it returns unavailable, explain that the connector is not configured in this Rally region and do not show a card. A state check is not a refusal: when a connected plugin can do the work, try it. Never tell a person to complete a connection prompt unless show_connector_connection ran in that same reply, and never tell another agent that a connection blocks it unless a tool refused for that reason. Do not invent an authorization URL or claim the connection succeeded."]
               : []),
             ...(coreTools.some((tool) => tool.definition.name === CHECK_RESOURCE_ACCESS_TOOL_NAME)
               ? ["Before reading or editing a linked file, or after a call on it was refused, call check_resource_access to learn which connection can open it, then use that plugin."]
@@ -7801,7 +7801,9 @@ async function readConnectorConnectionState(
   const request = ConnectorConnectionStateInputSchema.parse(raw);
   if (input.executionPrincipal.type !== "user") throw new Error("connector_connection_state_requires_user");
   const catalog = ConnectorConnectionCardCatalog[request.connectorId];
-  const scopes: readonly ConnectorConnectionCardScope[] = request.scope ? [request.scope] : catalog.scopes;
+  // Every scope, whatever was asked: a model that names `workspace` while the
+  // person's own connection works must still be told that it works.
+  const scopes: readonly ConnectorConnectionCardScope[] = catalog.scopes;
   const available = connectorRegistryForEnv(env).list()
     .some((manifest) => manifest.type === catalog.providerType);
   if (!available) {
