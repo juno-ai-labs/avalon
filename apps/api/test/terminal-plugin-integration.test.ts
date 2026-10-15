@@ -189,7 +189,7 @@ describe("Terminal Bind integration", () => {
 
     expect(plugin).toMatchObject({ preload: false, explicit: false, shortWireName: "" });
     expect(plugin?.tools.map((tool) => tool.definition.name)).toEqual([
-      "read_file", "edit_file", "write_file", "apply_patch", "run_command",
+      "read_file", "view_image", "edit_file", "write_file", "apply_patch", "run_command",
       "checkout_repository", "import_resource", "publish_resource", "publish_branch_and_pr",
     ]);
     expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_workspace")).toEqual({ count: 0 });
@@ -666,7 +666,7 @@ describe("Terminal Bind integration", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const tools = await __integrationTesting.loadHarnessTools(env, input);
     const plugin = tools.plugins.find((candidate) => candidate.canonicalId === "rally:terminal");
-    expect(plugin?.tools).toHaveLength(9);
+    expect(plugin?.tools).toHaveLength(10);
     // Activation stopped blocking the model, so it also stopped being the place
     // a provider failure is raised. The breaker now surfaces on the first tool
     // that actually needs a sandbox, with the same operator guidance, while the

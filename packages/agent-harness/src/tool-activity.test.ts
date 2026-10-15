@@ -182,6 +182,12 @@ describe("tool activity names", () => {
       .toBe("Could not check out a repository");
   });
 
+  it("words the image view as looking, not as reading a file", () => {
+    expect(toolActivityName({ toolName: "view_image", status: "started" })).toBe("Looking at an image");
+    expect(toolActivityName({ toolName: "view_image", status: "completed" })).toBe("Looked at an image");
+    expect(toolActivityName({ toolName: "view_image", status: "failed" })).toBe("Could not look at an image");
+  });
+
   it("words a work stream row the same under its current and its retired wire name", () => {
     for (const [current, retired] of [
       ["list_resources", "workstream_list_resources"],
