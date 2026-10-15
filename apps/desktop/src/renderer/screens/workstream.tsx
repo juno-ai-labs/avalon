@@ -682,11 +682,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const breakoutOwnsRail = storeRailOpen && breakoutScope !== null && railScope === breakoutScope;
   const mainOwnsRail = storeRailOpen && railScope === id;
   // A breakout expanded over its thread. A panel the breakout opens ends it.
-  const {
-    expanded: breakoutExpanded,
-    setExpanded: setBreakoutExpanded,
-    request: expandRequested,
-  } = usePaneExpansion(openBreakoutId);
+  const { expanded: breakoutExpanded, setExpanded: setBreakoutExpanded } = usePaneExpansion(openBreakoutId);
   if (breakoutOwnsRail && breakoutExpanded) setBreakoutExpanded(false);
   const splitMode: SplitConversationMode = !breakoutPaneOpen ? 'main'
     : !mainVisible || breakoutOwnsRail || breakoutExpanded ? 'breakout'
@@ -707,12 +703,9 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const navigate = useNavigate();
   const threadUsesTwoPanes = breakoutPaneOpen || mainOwnsRail;
   const setThreadUsesTwoPanes = channelPane?.setThreadUsesTwoPanes;
-  // Reported again on each expand request too: the Channel stack expands the
-  // thread for one, and a breakout opened while another was already open
-  // changes nothing here that would otherwise end that expansion.
   useEffect(() => {
     setThreadUsesTwoPanes?.(threadUsesTwoPanes);
-  }, [expandRequested, setThreadUsesTwoPanes, threadUsesTwoPanes]);
+  }, [setThreadUsesTwoPanes, threadUsesTwoPanes]);
   useEffect(() => () => setThreadUsesTwoPanes?.(false), [setThreadUsesTwoPanes]);
   const channelCrumbs = channelPane?.shifted ? [channelPane.crumb] : [];
   const changeBreakoutWidth = useCallback((width: number): void => {

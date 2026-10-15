@@ -38,6 +38,7 @@ vi.mock('./workstream', async () => {
       return <div>thread pane{pane && <>
         <RouterLink to="/channels/outbound/threads/secret">Next thread</RouterLink>
         <RouterLink state={OPEN_EXPANDED} to="/channels/outbound/threads/secret">Sidebar thread</RouterLink>
+        <RouterLink state={OPEN_EXPANDED} to="/channels/outbound/threads/plan?substream=child">Sidebar breakout</RouterLink>
         <button onClick={pane.crumb.onSelect} type="button">Channel crumb</button>
         {/* As the real header: Collapse while expanded, Expand while beside the Channel, neither once shifted. */}
         {(pane.expanded || !pane.shifted) && <button onClick={() => pane.setExpanded(!pane.expanded)} type="button">{pane.expanded ? 'Collapse' : 'Expand'}</button>}
@@ -89,6 +90,7 @@ function renderChannel(path = '/channels/outbound', seed: (client: QueryClient) 
     <MemoryRouter initialEntries={[{ ...parsePath(path), state }]}>
       <Routes><Route element={<ChannelScreen workspace={workspace} />} path="/channels/:channelId/*" /></Routes>
       <Routes><Route element={<Location />} path="*" /></Routes>
+      <Link to="/channels/outbound/threads/plan">Plain link to Q4 plan</Link>
     </MemoryRouter>
   </Tooltip.Provider></QueryClientProvider>);
   return { ...view, client };
@@ -175,9 +177,7 @@ describe('a Channel', () => {
     renderChannel('/channels/outbound/threads/plan');
     fireEvent.click(await screen.findByRole('button', { name: 'Expand' }));
     fireEvent.click(screen.getByRole('button', { name: 'Channel crumb' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Q4 plan' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Collapse' }));
-    fireEvent.click(screen.getByRole('link', { name: 'Next thread' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Plain link to Q4 plan' }));
 
     expect(await screen.findByText('thread pane')).toBeVisible();
     expect(screen.getByText('composer')).toBeVisible();
@@ -195,6 +195,15 @@ describe('a Channel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close breakout' }));
     expect(screen.getByText('composer')).not.toBeVisible();
     expect(screen.getByRole('button', { name: 'Collapse' })).toBeInTheDocument();
+  });
+
+  it('leaves a thread beside the Channel when the sidebar opens one of its breakouts expanded', async () => {
+    renderChannel('/channels/outbound/threads/plan');
+    fireEvent.click(await screen.findByRole('button', { name: 'Open breakout' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Sidebar breakout' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close breakout' }));
+    expect(screen.getByText('composer')).toBeVisible();
   });
 
   it('returns to the Channel and the thread when a breakout closes on a thread opened beside it', async () => {
