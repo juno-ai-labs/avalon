@@ -208,7 +208,9 @@ callers perform their own active-member check. This is a host-selected execution
 path, not a model argument, durable grant, or run-long authorization cache.
 
 Sidekick discovery uses the existing authorized directory and ranks the current
-workstream's Sidekicks first. Minimal creation defaults to workstream ownership;
+workstream's Sidekicks first. Each result carries `ownedByThisWorkstream` rather
+than the owner's id, because the model is never told its own workstream id and
+cannot compare one; only an owned Sidekick is a candidate for reuse. Minimal creation defaults to workstream ownership;
 setup travels through messages. First authorized contact joins the authoring
 conversation to the team. Drafting tools are available only on a Sidekick's main
 authoring conversation, not ordinary workstreams, workers or scheduled runs.
@@ -286,6 +288,25 @@ stop/replay/continuation, a worker reply to the foreground, and independently
 owned Sidekick contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
+
+### 2026-10-15 — `sidekicks_list` says which Sidekicks this workstream owns
+
+**What changed:** `sidekicks_list` returns `ownedByThisWorkstream` in place of
+`owningWorkstreamId`. The tool description and the plugin's guidance tell the
+model to reuse only a Sidekick marked owned, and that scope `"workstream"` alone
+means some workstream owns it, not this one. A conversation with no owning
+workstream now owns nothing, where before a `null` owner ranked every personal
+and workspace Sidekick as its own.
+
+**Why:** A thread asked to set up a monitor listed Sidekicks, got another
+thread's blank `"New Sidekick"` draft first with scope `"workstream"`, took it
+for its own, and reconfigured it by message. The owner id was the only true
+signal and the model had nothing to compare it with; "this workstream's
+Sidekicks first" read as "the first one is this workstream's". Filtering other
+workstreams' Sidekicks out of the list was considered and not done here: the
+list is also how a room finds Sidekicks to use, and a flag fixes the misreading
+without changing what is found. Refusing an authoring message from a
+non-owning workstream would close the hole outright and is still open.
 
 ### 2026-09-24 — Count background agents in the conversation that started them
 
