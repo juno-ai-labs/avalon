@@ -305,8 +305,7 @@ is the only place that can forward into it.
   main process to composite a view, so its guest and member shells preview a
   live artifact in an `<iframe>` with
   `sandbox="allow-scripts allow-same-origin allow-forms"`, a constant beside the
-  element in `site-resource-detail.tsx`. Absolute `inset: 0` is what sizes that
-  iframe to the pane, not the pane's grid alignment.
+  element in `site-resource-detail.tsx`.
   `allow-same-origin` keeps the artifact in *its own* origin on the artifact
   domain, never the app's, which its code redemption needs. The serving Worker's
   `allowBrowserFraming` gives a response carrying the default policy
@@ -564,40 +563,19 @@ this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 
 ## Changelog
 
-### 2026-10-15 — The rail preview fills the pane flush left
+### 2026-10-15 — The rail preview converts CSS pixels through window zoom
 
-**What changed:** On desktop, the composited `WebContentsView` converts the
-renderer's CSS-pixel rectangle through the window zoom factor before
-`setBounds`, the same conversion the embedded browser already made. The
-preview pane's grid default is stretch; Opening/empty placeholders opt into
-`place-self: center`. The framed iframe still fills by `position: absolute;
-inset: 0` — that was already true, and it is still what sizes it.
+**What changed:** The composited `WebContentsView` converts the renderer's
+CSS-pixel rectangle through the window zoom factor before `setBounds`. The
+embedded browser's `dimensions()` now calls the same `clampBounds` helper.
 
-**Why:** A generated site that was flush left in Chrome showed a large blank
-band down the left of Rally's in-app preview, and prompting the model to
-change the page did nothing — the gap was the shell, not the document. A
-Rally window whose zoom was not 1 (Cmd+/−, or the development client's common
-non-default factor) placed the native view short of the pane: zoomed out, a
-gap on the left of the rail; zoomed in, overlap into the transcript. An
-earlier reading blamed `place-items: center` for sitting the iframe at 300×150;
-that cannot have been the live layout, because `.site-detail-frame` already
-had explicit `inset: 0` / `width` / `height` 100%. The pane still stopped
-defaulting to center so an in-flow child would fill rather than sit at
-intrinsic size, and so placeholders center themselves instead of the grid.
+**Why:** A Rally window whose zoom was not 1 placed the native view short of
+the pane: zoomed out, a gap on the left of the rail; zoomed in, overlap into
+the transcript. Prompting the generated site did nothing because the page
+was already flush in a normal tab.
 
-**Considered and rejected:** Injecting a stylesheet into the artifact to force
-left alignment. The page is already flush in a normal tab; wrapping it would
-fight every layout the model writes and still leave the misplaced native view.
-Teaching the site-authoring skill to avoid `margin: auto` would not have
-moved the native view.
-
-**Consequences:** Placeholders (`Opening…`, the unavailable empty state) still
-center themselves with `place-self`. Absolute `inset: 0` is what sizes the
-framed page; dropping it, not the grid's `place-items`, is what would sit an
-iframe at 300×150. Desktop preview bounds must keep using the window zoom;
-dropping the factor reintroduces the gap. The embedded browser's conversion
-is still local to that module — they are the same arithmetic, not yet one
-helper.
+**Consequences:** Desktop preview bounds must keep using the window zoom;
+dropping the factor reintroduces the gap or the overlap.
 
 ### 2026-10-13 — A detail's header actions are data the header draws
 

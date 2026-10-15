@@ -60,12 +60,7 @@ export interface ArtifactHostWindow {
   /** Whether the window is gone; see `ArtifactViewHandle.destroyed`. */
   destroyed(): boolean;
   contentSize(): { width: number; height: number };
-  /**
-   * Rally's renderer zoom. Native views use window points; the rectangle the
-   * renderer measures is in CSS pixels, so a factor other than one has to be
-   * applied before `setBounds` or the page sits short of the pane — the same
-   * conversion the embedded browser already makes.
-   */
+  /** Rally's renderer zoom; native views use window points. */
   zoomFactor(): number;
   removeView(view: ArtifactViewHandle): void;
 }
@@ -162,9 +157,9 @@ export async function loadArtifactInitialUrl(loadURL: () => Promise<void>): Prom
 /**
  * Keep the preview inside the window it is composited over.
  *
- * The renderer measures the rectangle, so a wrong or hostile one would put a
- * view over the whole window — including over chrome a person needs to escape
- * it. Clamping is what makes the bounds a *request* rather than an instruction.
+ * The renderer measures the rectangle in CSS pixels, so a wrong or hostile one
+ * would put a view over the whole window. `zoom` converts to window points;
+ * clamping is what makes the bounds a *request* rather than an instruction.
  */
 export function clampBounds(
   bounds: PreviewBounds,
