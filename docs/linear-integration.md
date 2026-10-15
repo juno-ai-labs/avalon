@@ -229,7 +229,7 @@ scope mapping, the routing, and the native-agent gate. It does not own:
 | --- | --- |
 | The registry, manifests, and adapter rules every connector obeys | [`connectors.md`](connectors.md) |
 | The registration itself and its regional routing | [`provider-apps.md`](provider-apps.md) |
-| Which Linear activity types a person hears about in a digest | [`connector-digestibility.md`](connector-digestibility.md) |
+| Which Linear activity types are declared digestible | [`connector-digestibility.md`](connector-digestibility.md) |
 | The configured deployment boundary the shared ingress sits on | [`regionalization.md`](regionalization.md) |
 | The flag that gates the native-agent surface | [`feature-flags.md`](feature-flags.md) |
 | Credential encryption and webhook verification rules | [`security.md`](security.md) |

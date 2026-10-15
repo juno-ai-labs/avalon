@@ -210,7 +210,7 @@ rendering is what makes the layering real:
   agent needs to know where it is. The text a stranger wrote is not.
 
 `prompts.test.ts` enforces the third rule directly: an injection string is
-rendered through the digest, semantic-trigger, naming, description and addressing
+rendered through the semantic-trigger, naming, description and addressing
 renderers and asserted to reach the user-role message and never the system one. A
 new renderer that carries outside content belongs in that test.
 

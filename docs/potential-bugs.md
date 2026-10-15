@@ -264,6 +264,12 @@ than to widen the window.
 
 **Severity:** coverage-gap
 
+**2026-10-15 update:** The log's read RPC, `listActivityEvents`, was deleted
+with its last caller when the digest became a list of unread Activity, and the
+#628 cursor test went with it. Nothing reads the log through a per-user cursor
+now, so the cursor half of this entry has no subject; whether anything still
+needs the audience filtering below is unsettled.
+
 **2026-09-09 update:** #628 adds RPC coverage for cursor boundaries, physical
 read cost, digestibility, a time floor, and exclusion of another user's event.
 `durable-object-runtime.test.ts` also covers target marking and dedupe. The
