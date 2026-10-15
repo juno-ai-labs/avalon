@@ -21,7 +21,7 @@ import { reportActivityEvent } from '../lib/activity-events';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { copySpaceLink } from '../lib/copy-workstream-link';
-import { ChannelPaneContextValue, channelRoute, threadRoute, usePaneExpansion, type ChannelPaneContext } from '../lib/navigation-routes';
+import { ChannelPaneContextValue, OPEN_EXPANDED, channelRoute, threadRoute, usePaneExpansion, type ChannelPaneContext } from '../lib/navigation-routes';
 import { PaneVisibility } from '../lib/pane-visibility';
 import { useNow } from '../lib/clock';
 import { formatDayLabel } from '../lib/format';
@@ -308,7 +308,9 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
 
   if (active.data === undefined) return <LoadingState label="Opening channel…" />;
   if (!space) return <EmptyState description="It may have been archived, made private, or you may no longer have access." title="Channel not found" />;
-  const openThread = (threadId: string): void => void navigate(threadRoute(threadId, channelId));
+  // A thread opened from its Channel takes the whole window; Collapse puts it
+  // back beside the Channel.
+  const openThread = (threadId: string): void => void navigate(threadRoute(threadId, channelId), { state: OPEN_EXPANDED });
   // Only a member may start a thread in a private Channel; a thread placed
   // there is the Channel's to accept (`canEdit` on the server).
   const canStart = workspace.currentUser.accessClass !== 'guest' && space.reach !== 'through_channel';
