@@ -107,6 +107,7 @@ import {
   type SidekickSkillReadRequest,
 } from "./automation-do-protocol";
 import { ReceiveChildEffectsRequestSchema, type DirectoryCommonEffect, type ReceiveChildEffectsRequest } from "./conversation-parent-object";
+import { owningThreads } from "./channel-rails";
 import { sidekickAudienceAllows } from "./sidekick-audience";
 import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type ScheduledAlarm, type ScheduledAlarmOutcome, type ScheduledAlarmStore } from "./scheduled-alarms";
 
@@ -644,7 +645,7 @@ export class HostedSidekick {
       throw new ApiError(422, "sidekick_definition_not_ready", "The Sidekick's definition is not ready to apply");
     }
     if (row.lifecycle === "active" && row.accepted_definition_revision === revision.definition_revision) {
-      return this.detail();
+      return this.detail(request.actor.userId);
     }
     const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
     const prepared = definition.triggers.length === 0
@@ -700,7 +701,7 @@ export class HostedSidekick {
         code: error instanceof Error ? error.message : "sidekick_memory_tables_failed",
       });
     });
-    return this.detail();
+    return this.detail(request.actor.userId);
   }
 
   /** Explicit reconciliation when the loading policy changes. */
@@ -742,7 +743,7 @@ export class HostedSidekick {
       );
       this.touchDirectory(now);
     });
-    return this.detail();
+    return this.detail(request.actor.userId);
   }
 
   async pause(input: AutomationActorRequest): Promise<void> {
@@ -1106,7 +1107,7 @@ export class HostedSidekick {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "read_detail");
     const row = this.assertSidekick(request.workspaceId, request.automationId);
     await this.assertReader(row, request.actor);
-    return this.detail();
+    return this.detail(request.actor.userId);
   }
 
   async listRuns(input: AutomationActorRequest): Promise<{ items: AutomationRun[] }> {
@@ -2117,7 +2118,11 @@ export class HostedSidekick {
     throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
   }
 
-  detail(): AutomationDetail {
+  /**
+   * The detail as this reader sees it. The owning Thread is named only to a
+   * participant of it, the library's rule, read from this object's own rows.
+   */
+  detail(readerUserId: string): AutomationDetail {
     // The row with both revisions and its last run in one read; the recent
     // runs are the second. `next_run_at` is kept by `touchDirectory`.
     const row = first(this.sql.exec<HostedSidekickRow & {
@@ -2142,6 +2147,12 @@ export class HostedSidekick {
     const acceptedDefinition = row.accepted_definition_json
       ? AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json))
       : null;
+    const threadId = row.scope === "workstream" ? row.owning_workstream_id : null;
+    const owningThread = threadId !== null && this.host.isChannelParticipant(threadId, readerUserId)
+      ? owningThreads(this.sql, [threadId], (workstreamId, code) => logWarn(this.env, "owning_thread_appearance_invalid", {
+        ...this.logFields(), workstream_id: workstreamId, code,
+      })).get(threadId) ?? null
+      : null;
     return AutomationDetailSchema.parse({
       id: row.automation_id,
       ...(row.appearance_json ? { appearance: WorkstreamAppearanceSchema.parse(JSON.parse(row.appearance_json)) } : {}),
@@ -2151,6 +2162,7 @@ export class HostedSidekick {
       emailAddress: acceptedDefinition !== null && sidekickReceivesEmail(acceptedDefinition) ? row.email_address : null,
       scope: row.scope,
       owningWorkstreamId: row.owning_workstream_id,
+      owningThread,
       status: row.lifecycle,
       nextRunAt: iso(row.lifecycle === "active" ? row.next_run_at : null),
       lastRunAt: iso(row.last_run_at),

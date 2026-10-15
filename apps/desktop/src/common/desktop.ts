@@ -567,6 +567,12 @@ export interface RallyDesktopBridge {
    * `parseSidekicksWindowTarget` rather than routing on it directly.
    */
   openSidekicks: (target?: string) => Promise<void>;
+  /**
+   * Open a Thread in the main window and bring it forward, from a window that
+   * cannot route there itself, such as the Sidekicks window. Main checks the id
+   * and hands it to the same deep link an in-app link takes.
+   */
+  openThread: (workstreamId: string) => Promise<void>;
   openSettings: (section?: DesktopSettingsSection) => Promise<void>;
   startSystemAudioCapture: () => Promise<DesktopSystemAudioCaptureInfo>;
   stopSystemAudioCapture: () => Promise<void>;
