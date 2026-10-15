@@ -2872,6 +2872,12 @@ describe("connectors", () => {
       .resolves.toEqual({ access: "none", resourceId: "sheet-file-id-01", reason: "not_found_or_not_shared" });
     expect(requests.every((request) => request.startsWith("GET "))).toBe(true);
 
+    // Seeing a Doc's details through a Sheets-only grant is not being able to read it.
+    await expect(googleAdapter(metadata({ id: "doc-file-id-0001", name: "Notes",
+      mimeType: "application/vnd.google-apps.document", isAppAuthorized: false, capabilities: { canEdit: true } }))
+      .probeResourceAccess!(googleConnection(["sheets.read"]), "doc-file-id-0001", neverAborts()))
+      .resolves.toEqual({ access: "none", resourceId: "doc-file-id-0001", reason: "capability_not_granted" });
+
     const unused = googleAdapter(async () => { throw new Error("provider must not be called"); });
     await expect(unused.probeResourceAccess!(googleConnection(["gmail.read", "calendar.read"]), link, neverAborts()))
       .resolves.toEqual({ access: "none", resourceId: "sheet-file-id-01", reason: "capability_not_granted" });
@@ -2897,6 +2903,14 @@ describe("connectors", () => {
     const preflight = await googleAdapter(notShared).executeTool("sheets.update_values", write, context)
       .catch((error: unknown) => error);
     expect(isConnectorResourceAccessRefusal(preflight)).toBe(true);
+    // A 403 on the same check is a refusal before any write too.
+    const forbidden: typeof fetch = async (input, init) => {
+      if (requestUrl(input).hostname === "sheets.googleapis.com") sent.push(init?.method ?? "GET");
+      return googleJson({ error: { code: 403 } }, 403);
+    };
+    const preflightForbidden = await googleAdapter(forbidden).executeTool("sheets.update_values", write, context)
+      .catch((error: unknown) => error);
+    expect(isConnectorResourceAccessRefusal(preflightForbidden)).toBe(true);
     expect(sent).toEqual([]);
 
     // A read Google refuses for access.

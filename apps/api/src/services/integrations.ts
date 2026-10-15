@@ -7787,7 +7787,11 @@ async function checkResourceAccess(
     .map(async (frozen): Promise<ResourceAccessRow> => {
       const identity = { plugin: frozen.modelPluginId, scope: frozen.scope };
       try {
-        const { connection } = await loadAuthorizedConnectionContext(env, input, frozen, undefined, signal);
+        const loaded = await loadAuthorizedConnectionContext(env, input, frozen, undefined, signal);
+        // The run's authority is what it froze: a capability granted to the
+        // connection since then is not this run's to report on.
+        const connection = { ...loaded.connection,
+          grantedScopes: loaded.connection.grantedScopes.filter((capability) => frozen.grantedScopes.includes(capability)) };
         const access = await withAuthorizedConnection(env, { connection, adapter, signal },
           (authorized) => adapter.probeResourceAccess!(authorized, args.resource, signal));
         return { ...identity, ...access };
