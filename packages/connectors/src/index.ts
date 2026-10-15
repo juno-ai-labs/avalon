@@ -2527,14 +2527,21 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       const metadata = await safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES);
       if (readBoolean(metadata, "trashed") === true) return { access: "none", resourceId: fileId, reason: "trashed" };
       const name = readString(metadata, "name") ?? "Untitled file";
-      const writeCapability = GOOGLE_FILE_WRITE_CAPABILITY[readString(metadata, "mimeType") ?? ""];
+      const mimeType = readString(metadata, "mimeType") ?? "";
+      // Seeing the file's details is not reading it: a connection holding only
+      // `sheets.read` sees a Doc's metadata and has no tool that reads it.
+      const readCapability = GOOGLE_FILE_READ_CAPABILITY[mimeType];
+      const canRead = connection.grantedScopes.includes("drive.read")
+        || Boolean(readCapability && connection.grantedScopes.includes(readCapability));
+      const writeCapability = GOOGLE_FILE_WRITE_CAPABILITY[mimeType];
       const capabilities = readRecord(metadata, "capabilities");
       const canEdit = Boolean(writeCapability && connection.grantedScopes.includes(writeCapability)
         && capabilities && readBoolean(capabilities, "canEdit") === true);
-      if (!canEdit) return { access: "read", resourceId: fileId, name };
-      return readBoolean(metadata, "isAppAuthorized") === true
-        ? { access: "edit", resourceId: fileId, name }
-        : { access: "read", resourceId: fileId, name, editNeedsGrant: true };
+      if (canEdit && readBoolean(metadata, "isAppAuthorized") === true) return { access: "edit", resourceId: fileId, name };
+      if (!canRead) return { access: "none", resourceId: fileId, reason: "capability_not_granted" };
+      return canEdit
+        ? { access: "read", resourceId: fileId, name, editNeedsGrant: true }
+        : { access: "read", resourceId: fileId, name };
     },
 
     async hydrateResource(connection, resource, signal) {
@@ -4597,6 +4604,10 @@ type GoogleApiRequester = (
 ) => Promise<Response>;
 
 const GOOGLE_FILE_CAPABILITY_PREFIXES = ["drive.", "docs.", "sheets."] as const;
+const GOOGLE_FILE_READ_CAPABILITY: Readonly<Record<string, string>> = {
+  "application/vnd.google-apps.document": "docs.read",
+  "application/vnd.google-apps.spreadsheet": "sheets.read",
+};
 const GOOGLE_FILE_WRITE_CAPABILITY: Readonly<Record<string, string>> = {
   "application/vnd.google-apps.document": "docs.write",
   "application/vnd.google-apps.spreadsheet": "sheets.write",
@@ -4644,8 +4655,8 @@ async function assertGoogleDriveFileWritable(
   expected: (typeof GOOGLE_DRIVE_FILE_TYPES)[number],
   signal: AbortSignal
 ): Promise<void> {
-  const response = await api(connection, googleDriveMetadataUrl(fileId).toString(), { signal }, [404]);
-  if (response.status === 404) throw googleDriveFileNotWritableError(fileId, false, false);
+  const response = await api(connection, googleDriveMetadataUrl(fileId).toString(), { signal }, [403, 404]);
+  if (!response.ok) throw googleDriveFileNotWritableError(fileId, false, false);
   const metadata = await safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES);
   const mimeType = readString(metadata, "mimeType");
   const actual = GOOGLE_DRIVE_FILE_TYPES.find((type) => GOOGLE_DRIVE_FILE_TYPE_MIME[type] === mimeType);
