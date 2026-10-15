@@ -2905,6 +2905,16 @@ describe("connectors", () => {
       .catch((error: unknown) => error);
     expect(isConnectorResourceAccessRefusal(read)).toBe(true);
     expect(read).toMatchObject({ code: "provider_error", message: "Google API failed (403)" });
+    for (const [tool, args] of [
+      ["drive.get_metadata", { fileId: "sheet-file-id-01" }],
+      ["drive.download", { fileId: "sheet-file-id-01" }],
+      ["drive.export", { fileId: "sheet-file-id-01", mimeType: "text/plain" }],
+    ] as const) {
+      const driveRead = await googleAdapter(async () => googleJson({ error: { code: 404 } }, 404))
+        .executeTool(tool, args, context)
+        .catch((error: unknown) => error);
+      expect(isConnectorResourceAccessRefusal(driveRead), tool).toBe(true);
+    }
 
     // The check passes and the write request itself is refused: not marked,
     // because a refusal after a write was sent is not one Rally may retry.

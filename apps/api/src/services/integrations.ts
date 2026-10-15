@@ -4403,9 +4403,12 @@ export async function runWorkstreamHarness(
             const pluginActivityId = plugin.activityId;
             const pluginPresentation = transcriptPluginPresentation(harnessTools, event.pluginId);
             await ensureTranscriptToolParents(event);
-            const connectionId = event.pluginId.startsWith("connection:")
-              ? event.pluginId.slice("connection:".length)
-              : null;
+            const refusingConnectionId = event.data?.details?.resourceAuthorizationConnectionId;
+            const connectionId = !event.pluginId.startsWith("connection:")
+              ? null
+              : typeof refusingConnectionId === "string"
+                ? refusingConnectionId
+                : event.pluginId.slice("connection:".length);
             const resourceAuthorization = ConnectorResourceAuthorizationHintSchema.safeParse(
               event.data?.details?.resourceAuthorization,
             );
@@ -6296,6 +6299,10 @@ async function executeAuthorizedConnectorTool(
       || !connectorRegistryForEnv(env).get(frozen.connectorType).probeResourceAccess) {
       throw error;
     }
+    // The refusal reported when no connection serves the call: the first one
+    // that carries a grant request, so the person still gets the Allow editing
+    // card when only another of their connections needs the one-file grant.
+    let refusal: ConnectorError = error;
     for (const candidate of alternates?.() ?? []) {
       try {
         const result = await executeConnectorToolOnConnection(env, input, candidate, toolName, capability,
@@ -6303,10 +6310,32 @@ async function executeAuthorizedConnectorTool(
         return servedThrough(result, candidate, frozen);
       } catch (next) {
         if (!isConnectorResourceAccessRefusal(next)) throw next;
+        if (!carriesResourceAuthorization(refusal) && carriesResourceAuthorization(next)) {
+          refusal = refusedOnConnection(next, candidate);
+        }
       }
     }
-    throw error;
+    throw refusal;
   }
+}
+
+function carriesResourceAuthorization(error: ConnectorError): boolean {
+  const details = error.details;
+  return Boolean(details && typeof details === "object" && "resourceAuthorization" in details);
+}
+
+/**
+ * Name the connection a grant request belongs to when it is not the one the
+ * call was made on. The recovery otherwise takes the failed call's own
+ * connection, and the card would ask to authorize an account that cannot even
+ * see the file. The start route re-checks this connection for whoever presses
+ * the button.
+ */
+function refusedOnConnection(error: ConnectorError, connection: FrozenConnectorPlugin): ConnectorError {
+  return new ConnectorError(error.code, error.message, {
+    ...(error.details as Record<string, unknown>),
+    resourceAuthorizationConnectionId: connection.connectionId,
+  });
 }
 
 function servedThrough<Result extends { output: unknown; summary: string }>(
