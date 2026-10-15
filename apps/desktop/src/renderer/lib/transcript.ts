@@ -21,6 +21,7 @@ import {
   agentMessageNotice,
   agentMessageNoticeReason,
   connectorConnectionCardInputFromToolEvent,
+  connectorResourceAuthorizationRequestFromToolEvent,
   isAgentMessageContent,
   isAgentMessageSendWireName,
   isAgentStartWireName,
@@ -1459,7 +1460,13 @@ function pluginGroupContribution(message: Message): {
  * checks `precededByTranscriptGap` itself — see `Message`.
  */
 function continuesPluginActivityRun(message: Message): boolean {
+  // A row that asks the person to act stands on its own, like a connection
+  // card. A plugin's write refused for want of Google's one-file grant carries
+  // the Allow editing request on its tool event, and folding it into the
+  // plugin's row dropped that event: the card never rendered, and the agent
+  // told the person three times to press a button that was not there.
   if (isConnectorConnectionCardWireName(message.toolEvent?.name)) return false;
+  if (connectorResourceAuthorizationRequestFromToolEvent(message.toolEvent)) return false;
   return message.messageType === 'tool_event'
     || message.messageType === 'plugin_activity'
     || message.messageType === 'thought';
