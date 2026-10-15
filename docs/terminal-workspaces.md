@@ -106,7 +106,10 @@ this generation; otherwise it goes through readiness like a write.
 
 Rally creates sandboxes from its own `rally-terminal-1` snapshot: Daytona's
 managed `daytonaio/sandbox:0.9.0` base with SQLite, `gh`, pnpm, and `tsx`
-preinstalled by `terminal:build-snapshot`. On first creation an idempotent
+preinstalled by `terminal:build-snapshot`, plus Playwright with its Chromium
+under `/opt/rally/ms-playwright` (`PLAYWRIGHT_BROWSERS_PATH`), which the
+acceptance gate requires rather than a per-sandbox probe (the changelog entry
+of 2026-10-15 says why). On first creation an idempotent
 compatibility bootstrap creates the owned `/workspace`, installs only missing
 SQLite/`gh`/pnpm/`tsx` capabilities through the compiled Trusted-only apt/npm
 hosts — a no-op against the owned snapshot — and then executes the complete
@@ -309,8 +312,22 @@ publisher, but it is not a gate around standard Git and GitHub CLI use.
 
 Every workspace chooses Trusted only or Full internet. Trusted only compiles an
 internal immutable baseline for Rally/GitHub, Debian packages, Python packages,
-and JavaScript packages plus up to the remainder of Daytona's 20 exact/wildcard
-domain targets. Settings shows only workspace-approved domains; the managed
+JavaScript packages, and Rally sites with Playwright's browser downloads
+(`*.rallyusercontent.com`, `cdn.playwright.dev`,
+`playwright.download.prss.microsoft.com`) plus up to the remainder of Daytona's
+20 exact/wildcard domain targets. A stored Trusted-only policy carries the
+baseline version it was compiled under; the first settings read after
+`TERMINAL_NETWORK_MANIFEST_VERSION` changes rewrites a settled policy to the
+current baseline plus its custom domains under a new revision, and each sandbox
+re-applies and reads the list back on its next acquisition through the
+ordinary reconcile path. That reconcile stops a running sandbox, so every
+active Terminal in a Trusted-only workspace is stopped once, mid-run, after a
+baseline change deploys, ending any dev server or background process. Only a
+caller on the object's own baseline version moves a policy, so an older
+Worker serving during a deploy cannot roll one back. A policy with a change in flight, a Full internet one,
+and one whose upgraded list would pass the 20-target cap are left as they are;
+an applied change records the baseline version it was compiled under, so the
+next read does not move it again. Settings shows only workspace-approved domains; the managed
 baseline is not a participant-facing policy surface. Full internet clears
 `domainAllowList`. Schemes, ports, paths, IP addresses, CIDR, public suffixes,
 and private names are rejected. An admin confirms one warning that running
@@ -774,7 +791,10 @@ network proxy, or a general GitHub administration surface.
   directory, symlink, device, or changing file. Resource bridge byte and count
   limits are enforced before R2 publication.
 - Trusted only has 20 effective Daytona targets. The immutable baseline consumes
-  thirteen; duplicate custom targets do not consume another slot.
+  fifteen, leaving five for a workspace's own domains; duplicate custom targets
+  do not consume another slot. A saved list a larger baseline pushed past the
+  cap still loads in settings, showing no slots left, so the admin can remove
+  domains; only a new list is refused.
 - Git publication allows one fixed branch and convergent PR, bounded changed
   paths, no `.github/workflows/` changes, and no
   protected/default-ref push. Closed or merged convergent PRs are not reopened.
@@ -1234,13 +1254,37 @@ pipeline (`normalizeModelImageBytes`).
 **Why:** A generated site rendered one word per line in Rally's narrow panel,
 and the agent had no way to see that. With Playwright in the snapshot
 (juno-ai-labs/avalon#1246) it can take a screenshot; this lets it look at one,
-and at any chart or image it generates. A Cloudflare Browser Rendering tool was
-built first and replaced: it could only see published sites, from outside the
-sandbox.
+and at any chart or image it generates.
 
 **Consequences:** `view_image` reads through the same contained, size-limited
 read as `read_file`, and names why it cannot show a file rather than failing
 generically.
+
+### 2026-10-15 — The weekly snapshot carries Playwright, and Trusted only reaches Rally sites
+
+**What changed:** The Rally-owned snapshot image installs Playwright
+(`TERMINAL_PLAYWRIGHT_VERSION`) and its Chromium in a build step of its own,
+and the provider acceptance gate requires a working screenshot. The
+Trusted-only baseline adds `*.rallyusercontent.com`, `cdn.playwright.dev` and
+`playwright.download.prss.microsoft.com` under `terminal-network-v2`, and a
+stored policy from an older baseline is rewritten to the current one under a
+new revision on its next settings read.
+
+**Why:** A generated site rendered one word per line in Rally's narrow
+panel, and the agent that built it had no way to see that. A browser in the
+sandbox lets it screenshot a page before publishing, under the workspace's
+own network setting. A Cloudflare Browser Rendering tool was considered and
+dropped: it can only see published sites, from outside the sandbox.
+
+**Consequences:** Playwright stays image-only: installing it from the
+runtime bootstrap would exceed the bootstrap's 120-second budget. Making it a
+per-sandbox probe would refuse every sandbox until a rebuilt snapshot is
+adopted, so anything that tells the model to use it must handle its absence.
+The download hosts let an agent in a sandbox from an older snapshot install
+the browser itself. Before this, a baseline change reached only new workspaces and
+re-saved policies; the version-triggered rewrite is what lets a future baseline
+change reach every workspace. The baseline now uses fifteen of twenty slots; no
+production workspace had a custom domain when it was raised.
 
 ### 2026-10-08 — A failed policy change no longer deletes sandboxes
 
@@ -2521,6 +2565,8 @@ and verify it again" the deleted `catch` produced.
 `effective_domains_json` is returned as stored rather than recompiled on read. It is what the sandbox provider was
 actually told, and recompiling would answer what the current manifest *would*
 send — identical until the manifest changes, and silently wrong afterwards.
+(A baseline version change is the one rewrite, and it is not silent: it moves
+the revision, so every sandbox re-applies the list it now reports.)
 The three tables stay named in `WORKSPACE_LOCAL_TABLES` even though nothing
 routes to them now, so an accidental generic statement reaches the object
 rather than falling through to regional D1. Whether the object then refuses it

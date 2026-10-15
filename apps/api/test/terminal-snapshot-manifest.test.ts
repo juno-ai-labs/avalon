@@ -12,6 +12,8 @@ import {
   terminalBaselineHostAcceptanceCommand,
   terminalManagedSnapshotBootstrapCommand,
   terminalPackageManagerAcceptanceCommand,
+  terminalPlaywrightAcceptanceCommand,
+  terminalPlaywrightImageBuildCommand,
   terminalProbeRunnerCommand,
   terminalSnapshotImageBuildCommand,
   terminalSnapshotProbeCommand,
@@ -215,6 +217,41 @@ describe("Terminal snapshot manifest", () => {
     expect(encoded).not.toBeNull();
     expect(Buffer.from(encoded![1]!, "base64").toString("utf8"))
       .toBe(terminalManagedSnapshotBootstrapCommand());
+  });
+
+  it("bakes the Playwright step into one Dockerfile-safe line of its own", () => {
+    const command = terminalPlaywrightImageBuildCommand();
+    expect(command).not.toContain("\n");
+    const encoded = command.match(/^echo ([A-Za-z0-9+/=]+) \| base64 -d \| bash -l$/u);
+    expect(encoded).not.toBeNull();
+    // Against literals rather than the helper that produced the line, so an
+    // edit to the install step cannot change both sides of the assertion.
+    const script = Buffer.from(encoded![1]!, "base64").toString("utf8");
+    expect(script.split("\n")).toEqual([
+      "set -euo pipefail",
+      'sudo -n install -d -o "$(id -u)" -g "$(id -g)" -m 755 /opt/rally/ms-playwright',
+      "npm install --global playwright@1.56.1 >/dev/null",
+      'sudo -n env "PATH=$PATH" PLAYWRIGHT_BROWSERS_PATH=/opt/rally/ms-playwright playwright install --with-deps chromium',
+      'sudo -n chown -R "$(id -u):$(id -g)" /opt/rally/ms-playwright',
+    ]);
+  });
+
+  it("accepts a snapshot only when its playwright writes a real PNG", () => {
+    // Chromium cannot be assumed here, so a stand-in `playwright` on PATH
+    // writes either a PNG signature or junk to the path it is handed last.
+    const bin = mkdtempSync(join(tmpdir(), "avalon-playwright-"));
+    const run = (writes: string): number => {
+      writeFileSync(join(bin, "playwright"), `#!/bin/bash\nfor last; do :; done\nprintf '${writes}' > "$last"\n`, { mode: 0o755 });
+      return spawnSync("bash", ["-c", terminalPlaywrightAcceptanceCommand()], {
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      }).status ?? -1;
+    };
+    try {
+      expect(run("\\x89PNG\\r\\n\\x1a\\n")).toBe(0);
+      expect(run("not a png")).not.toBe(0);
+    } finally {
+      rmSync(bin, { recursive: true, force: true });
+    }
   });
 
   it("functionally exercises every supported installer in Trusted only", () => {

@@ -138,8 +138,9 @@ Showing it reads nothing: a row stays unread until **Mark all read**, which
 moves the read time to the newest row held and clears every held dot at once
 (the PRD's decision log, 2026-10-12).
 
-A row opened from any list opens the thread beside one of its Channels — the
-one already open when it sits there — so a Channel is always one step back.
+A row opened from any list opens the thread under one of its Channels — the
+one already open when it sits there — expanded over it, so a Channel is always
+one step back ([`pane-stack.md`](pane-stack.md)).
 Every row in the three lists is a link, so a modified click opens it
 elsewhere (a new tab, in the web app). Each list draws placeholder rows until
 its first page arrives. A guest has no Channels section, per the navigation
@@ -160,9 +161,9 @@ its threads and messages, and a composer at the foot.
   scrolled up, and loading an earlier page does not move what they were
   reading. A hairline with the day's name ("Today",
   "Yesterday", a weekday, then a date; `formatDayLabel`) sits above the first
-  thread of each day. Each thread is one button that opens it beside the
-  Channel: its title, its description, and who started it and when, with the
-  thread's own mark beside them. A row the socket holds is drawn from the
+  thread of each day. Each thread is one button that opens it expanded over
+  the Channel ([`pane-stack.md`](pane-stack.md)): its title, its description,
+  and who started it and when, with the thread's own mark beside them. A row the socket holds is drawn from the
   socket, so its dot and title move live, and a thread started here a moment
   ago shows at once. **Show earlier** loads the next page.
 - **Messages.** A Channel's own messages
@@ -175,7 +176,8 @@ its threads and messages, and a composer at the foot.
   ([`listing-rules.md`](listing-rules.md)); only a link to it reaches the
   access request screen ([`channel-access-requests.md`](channel-access-requests.md)).
 - **Composer.** `ChannelComposer` starts a thread
-  ([`workstream-creation.md`](workstream-creation.md)). A guest, and a reader
+  ([`workstream-creation.md`](workstream-creation.md)) and opens it expanded
+  over the Channel, as the feed does. A guest, and a reader
   who reaches the Channel only through a thread in it, get no composer. In a
   Channel that is not Organization-wide, a Personal Channel included, the
   composer starts a private thread.

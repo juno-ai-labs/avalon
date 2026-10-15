@@ -554,14 +554,15 @@
   --av-cmp-toggle-knob-off: #8d8375;
 
   /* A meter: a fill on a track, for a measured share such as the week's quota
-   * left. The fill is the brand on the track in both appearances, and
-   * `fill-warning` replaces it when the value is low enough to warn about. The
-   * track is not `sys.color.surface.sunken` in light because a settings card
-   * is that same grey there, so the empty part of a meter drawn on a card
-   * would vanish; dark keeps the sunken fill, which already reads as a recess
-   * on both the card and a menu. */
+   * left. The fill is the text colour, near-black in light and near-white in
+   * dark, not the brand: a measured share is information, and the brand yellow
+   * is kept for accents. `fill-warning` replaces it when the value is low
+   * enough to warn about. The track is not `sys.color.surface.sunken` in light
+   * because a settings card is that same grey there, so the empty part of a
+   * meter drawn on a card would vanish; dark keeps the sunken fill, which
+   * already reads as a recess on both the card and a menu. */
   --av-cmp-meter-track: var(--av-ref-color-neutral-5);
-  --av-cmp-meter-fill: var(--av-sys-color-brand-base);
+  --av-cmp-meter-fill: var(--av-sys-color-text-default);
   --av-cmp-meter-fill-warning: var(--av-sys-color-warning-base);
 
   /* Neutral primary actions, separate from brand identity and semantic danger
@@ -902,7 +903,7 @@
   --av-cmp-toggle-knob-off: #8a8070;
 
   --av-cmp-meter-track: var(--av-sys-color-surface-sunken);
-  --av-cmp-meter-fill: var(--av-sys-color-brand-base);
+  --av-cmp-meter-fill: var(--av-sys-color-text-default);
   --av-cmp-meter-fill-warning: var(--av-sys-color-warning-base);
 
   --av-cmp-button-primary-background: #fcfcfc;
