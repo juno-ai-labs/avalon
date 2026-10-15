@@ -51,9 +51,13 @@ An expansion is held for the pane it was asked on and dropped when that pane
 closes or another opens, or when it opens a breakout or a panel of its own,
 which then split the window as they would have.
 
-The navigation sidebar asks for it too: its Threads and Activity rows ask
-through location state, which both levels read with `usePaneExpansion`. Links
-inside a pane don't, so what they open comes up beside it.
+Navigation asks for it too, through location state (`OPEN_EXPANDED`), which
+both levels read with `usePaneExpansion`. The sidebar's Threads and Activity
+rows ask for it, and so does a Channel opening one of its threads, from a feed
+row or by starting one in its composer: a thread opened from its Channel takes
+the whole window, and Collapse puts it beside the Channel. Other links inside a
+pane don't ask, so a breakout or a panel opened from a thread comes up beside
+it, and that ends the thread's expansion as above.
 
 Each step is drawn as movement, by `SplitConversationLayout` itself so both
 levels share it. A pane that opens beside another slides in from the right; a
@@ -115,8 +119,9 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
 
 ## Testing
 
-- `apps/desktop/src/renderer/screens/channel.test.tsx` (a thread opens beside
-  the Channel, expands over it and collapses back, and a breakout ends the
+- `apps/desktop/src/renderer/screens/channel.test.tsx` (a thread opens from
+  its Channel's feed expanded and collapses beside it, expands over it and
+  collapses back, and a breakout ends the
   expansion, a thread closed while expanded reopens beside the Channel, and a
   sidebar link opens one expanded);
   `workstream-sidebar-switch.test.tsx` (the real header's Expand and Collapse,
@@ -131,6 +136,25 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
   window under Xvfb, per [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-15 — A Channel opens its threads expanded
+
+**What changed:** A thread opened from its Channel's feed, or started from its
+composer, opens expanded over the Channel instead of beside it. A breakout or a
+panel the thread opens still comes up beside the thread.
+
+**Why:** The product asked that a thread opened from a Channel take the whole
+window, as one opened from the sidebar already did, with the right pane kept
+for what the thread itself opens.
+
+**Considered and rejected:** Making expanded the default mode of the Channel
+level. Links inside the thread that open another thread still open it beside
+the Channel, and Collapse has to keep working; asking per navigation, as the
+sidebar does, changes only the two openings the product named.
+
+**Consequences:** The pair (Channel and thread side by side) is now reached by
+Collapse, or by closing a breakout the thread opened, which still ends the
+expansion and returns to the pair.
 
 ### 2026-10-13 — The sidebar opens a thread or breakout expanded
 
