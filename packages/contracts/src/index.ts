@@ -4391,6 +4391,27 @@ export const ConnectorResourceAuthorizationRequestSchema = ConnectorResourceAuth
 });
 export type ConnectorResourceAuthorizationRequest = z.infer<typeof ConnectorResourceAuthorizationRequestSchema>;
 
+/**
+ * Recover a one-file grant request from a failed durable tool event.
+ *
+ * Grouping and the card renderer both have to answer the same question: is this
+ * failed write something the reader can authorize? The recovery lives on the
+ * tool's `output`, not on a dedicated wire name, so both callers parse here
+ * rather than each keeping a copy of the gate.
+ */
+export function connectorResourceAuthorizationRequestFromToolEvent(event: {
+  output?: unknown;
+  status?: string;
+} | undefined): ConnectorResourceAuthorizationRequest | null {
+  if (event?.status !== "failed") return null;
+  const output = event.output;
+  if (!output || typeof output !== "object" || Array.isArray(output)) return null;
+  const parsed = ConnectorResourceAuthorizationRequestSchema.safeParse(
+    (output as Record<string, unknown>).recovery,
+  );
+  return parsed.success ? parsed.data : null;
+}
+
 export const ConnectorResourceAuthorizationTargetSchema = z.strictObject({
   parentKind: ConversationParentKindSchema.default("workstream"),
   parentId: IdSchema,

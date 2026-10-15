@@ -63,6 +63,26 @@ const RESOURCE_AUTHORIZATION = {
   continuationId: '9c1f0000-0000-4000-8000-000000000003',
 };
 
+function resourceAuthorizationWrite(id = 'sheets-write'): Message {
+  return {
+    id,
+    workstreamId: 'workstream-one',
+    sequenceNumber: 0,
+    authorType: 'agent',
+    messageType: 'tool_event',
+    createdAt: '2026-08-26T12:00:00.000Z',
+    toolEvent: {
+      id,
+      toolCallId: id,
+      name: 'sheets_update_values',
+      status: 'failed',
+      pluginId: `connection:${RESOURCE_AUTHORIZATION.connectionId}`,
+      pluginName: 'Google',
+      output: { recovery: RESOURCE_AUTHORIZATION },
+    },
+  };
+}
+
 describe('transcript messages', () => {
   it('collapses only adjacent repeats of the same connector card', () => {
     const first = createToolEventMessage({
@@ -124,22 +144,6 @@ describe('transcript messages', () => {
         pluginId: 'rally:core',
         pluginName: 'Rally',
         input: { connectorId: 'slack', scope: 'personal' },
-      },
-    });
-
-    expect(groupPluginToolMessages([card])).toEqual([card]);
-  });
-
-  it('keeps a connector resource authorization card out of collapsed plugin machinery', () => {
-    const card = createToolEventMessage({
-      ...base,
-      toolEvent: {
-        id: 'sheets-write',
-        name: 'sheets_update_values',
-        status: 'failed',
-        pluginId: `connection:${RESOURCE_AUTHORIZATION.connectionId}`,
-        pluginName: 'Google',
-        output: { recovery: RESOURCE_AUTHORIZATION },
       },
     });
 
@@ -1699,18 +1703,7 @@ describe('grouping tool calls by plugin', () => {
   });
 
   it('keeps a resource authorization card among other calls of the same plugin', () => {
-    const write = row('sheets-write', {
-      messageType: 'tool_event',
-      toolEvent: {
-        id: 'sheets-write',
-        toolCallId: 'sheets-write',
-        name: 'sheets_update_values',
-        status: 'failed',
-        pluginId: `connection:${RESOURCE_AUTHORIZATION.connectionId}`,
-        pluginName: 'Google',
-        output: { recovery: RESOURCE_AUTHORIZATION },
-      },
-    });
+    const write = resourceAuthorizationWrite();
     const grouped = groupPluginToolMessages([
       toolRow('sheets-read', `connection:${RESOURCE_AUTHORIZATION.connectionId}`, 'Google'),
       write,
@@ -1738,21 +1731,9 @@ describe('grouping tool calls by plugin', () => {
   });
 
   it('leaves a resource authorization card outside the work accordion', () => {
-    const write = row('sheets-write', {
-      messageType: 'tool_event',
-      toolEvent: {
-        id: 'sheets-write',
-        toolCallId: 'sheets-write',
-        name: 'sheets_update_values',
-        status: 'failed',
-        pluginId: `connection:${RESOURCE_AUTHORIZATION.connectionId}`,
-        pluginName: 'Google',
-        output: { recovery: RESOURCE_AUTHORIZATION },
-      },
-    });
     const collapsed = collapseSettledWorkIntoAccordion(groupPluginToolMessages([
       toolRow('sheets-read', `connection:${RESOURCE_AUTHORIZATION.connectionId}`, 'Google'),
-      write,
+      resourceAuthorizationWrite(),
       row('answer', { messageType: 'text', text: 'Please authorize editing.' }),
     ]));
 
@@ -2063,21 +2044,9 @@ describe('hiding the agent\'s work', () => {
   });
 
   it('keeps a resource authorization card after hiding the rest of the plugin work', () => {
-    const write = row('sheets-write', {
-      messageType: 'tool_event',
-      toolEvent: {
-        id: 'sheets-write',
-        toolCallId: 'sheets-write',
-        name: 'sheets_update_values',
-        status: 'failed',
-        pluginId: `connection:${RESOURCE_AUTHORIZATION.connectionId}`,
-        pluginName: 'Google',
-        output: { recovery: RESOURCE_AUTHORIZATION },
-      },
-    });
     const shown = groupPluginToolMessages(withoutAgentWork([
       tool('read'),
-      write,
+      resourceAuthorizationWrite(),
       row('thinking', {
         messageType: 'thought',
         thoughtEvent: { status: 'completed', durationMs: 900, activeVerb: 'thinking', completedVerb: 'thought' },
