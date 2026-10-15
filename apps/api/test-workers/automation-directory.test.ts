@@ -214,6 +214,44 @@ describe("automation directory", () => {
       .items).toEqual([]);
   });
 
+  it("names the owning Thread to a reader who is in it, and to nobody who has left it", async () => {
+    // One Sidekick the author made and one somebody else made, so both the
+    // reader's own row and a row read through the Thread are covered.
+    const authored = await createAndPublish("workstream");
+    const othersId = nextAutomationId();
+    await writeSidekickDirectoryRow(env, {
+      automationId: othersId, workspaceId: WORKSPACE_ID, authorUserId: "00000000-0000-7000-8000-00000000ad2f",
+      lifecycle: "active", scope: "workstream", owningWorkstreamId: ROOM_ID, title: "Release notes", description: "",
+    });
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE channels SET appearance_json = ? WHERE workstream_id = ?`,
+        JSON.stringify({ icon: "rocket", color: "purple" }), ROOM_ID);
+    });
+    const thread = { id: ROOM_ID, title: "Release room", appearance: { icon: "rocket", color: "purple" } };
+    const author = { userId: AUTHOR_ID, actorRole: "member" as const, participantOfOwningWorkstream: true };
+
+    const library = await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID });
+    expect(Object.fromEntries(library.items.map((item) => [item.id, item.owningThread])))
+      .toEqual({ [authored]: thread, [othersId]: thread });
+    const detail: AutomationDetail = await workspaceStub().sidekickReadDetail({
+      workspaceId: WORKSPACE_ID, automationId: authored, actor: author,
+    });
+    expect(detail.owningThread).toEqual(thread);
+
+    // The author leaves the Thread. They still read the Sidekick they made,
+    // and it no longer names the room.
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE channel_viewers SET is_participant = 0 WHERE workstream_id = ? AND user_id = ?", ROOM_ID, AUTHOR_ID);
+    });
+    const after = await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID });
+    expect(after.items.map((item) => ({ id: item.id, owningThread: item.owningThread })))
+      .toEqual([{ id: authored, owningThread: null }]);
+    const detailAfter: AutomationDetail = await workspaceStub().sidekickReadDetail({
+      workspaceId: WORKSPACE_ID, automationId: authored, actor: { ...author, participantOfOwningWorkstream: false },
+    });
+    expect(detailAfter.owningThread).toBeNull();
+  });
+
   it("reads the Sidekicks asked for and the ones a Channel recommends in one call, asked-for first and each once", async () => {
     // Created in this order, so their ids sort A < B < C < D: an order by id
     // is not the order asked for.

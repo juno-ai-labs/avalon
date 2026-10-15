@@ -288,6 +288,7 @@ const bridge: RallyDesktopBridge = {
   updatePoppedOutArtifact: (request) =>
     ipcRenderer.invoke('artifact:update-pop-out', request) as Promise<boolean>,
   openSidekicks: (target) => ipcRenderer.invoke('system:open-sidekicks', target) as Promise<void>,
+  openThread: (workstreamId) => ipcRenderer.invoke('system:open-thread', workstreamId) as Promise<void>,
   openSettings: (section) => ipcRenderer.invoke('system:open-settings', section) as Promise<void>,
   startSystemAudioCapture: () =>
     ipcRenderer.invoke('transcription-audio:start-system-capture') as Promise<DesktopSystemAudioCaptureInfo>,

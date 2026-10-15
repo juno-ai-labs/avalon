@@ -522,6 +522,7 @@ function automationDetail(
     emailAddress: null,
     scope: "workstream",
     owningWorkstreamId: WORKSTREAM_ID,
+    owningThread: null,
     status: "active",
     nextRunAt: null,
     lastRunAt: null,
