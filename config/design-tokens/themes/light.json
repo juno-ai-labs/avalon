@@ -182,6 +182,7 @@
     "cmp.toggle.track": "#dad3c5",
     "cmp.toggle.knob-off": "#8d8375",
     "cmp.meter.track": "{ref.color.neutral.5}",
+    "cmp.meter.fill": "{sys.color.text.default}",
     "cmp.meter.fill-warning": "{sys.color.warning.base}",
     "cmp.button.primary-background": "#070707",
     "cmp.button.primary-color": "#fcfcfc",
