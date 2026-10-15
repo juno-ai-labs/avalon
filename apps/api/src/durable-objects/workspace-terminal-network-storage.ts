@@ -1,4 +1,4 @@
-import { TERMINAL_NETWORK_MAX_TARGETS } from "../services/terminal/network-policy";
+import { TERMINAL_NETWORK_MANIFEST_VERSION, TERMINAL_NETWORK_MAX_TARGETS } from "../services/terminal/network-policy";
 import {
   WorkspaceTerminalNetworkModeSchema,
   WorkspaceTerminalNetworkSettingsSchema,
@@ -92,10 +92,13 @@ export function workspaceTerminalNetworkSettings(
     // acquisition through the ordinary reconcile path. Only a settled policy:
     // a change in flight is the person's and is compiled when it is applied.
     // A list past Daytona's cap is left as it was rather than stored unusable;
-    // the settings screen already refuses to compile it and asks for removals.
+    // the settings screen shows no slots left and the admin removes domains.
+    // Only a caller on this object's own baseline may move a policy, so an
+    // older Worker still serving during a deploy cannot roll one back.
     const customDomains = domainsOf(storage, request.workspaceId);
     const upgraded = [...new Set([...request.defaultEffectiveDomains, ...customDomains])].sort();
-    if (upgraded.length <= TERMINAL_NETWORK_MAX_TARGETS) {
+    if (request.baselineManifestVersion === TERMINAL_NETWORK_MANIFEST_VERSION
+      && upgraded.length <= TERMINAL_NETWORK_MAX_TARGETS) {
       storage.sql.exec(
         `UPDATE workspace_sandbox_network_policies
             SET effective_domains_json = ?, baseline_manifest_version = ?,
