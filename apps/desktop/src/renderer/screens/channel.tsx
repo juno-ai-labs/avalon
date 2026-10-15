@@ -1,22 +1,21 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import type { ChannelMessage, ChannelStats, ChannelStatsList, SpaceSummary, WorkstreamAppearancePatch } from '@rally/contracts';
 import { AppearancePicker, AppearanceSubmenu } from '@rally/ui/components/appearance-picker';
-import { breakoutNewsLabel, type BreakoutMark } from '@rally/ui/components/breakout-marks';
+import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
+import { ConversationCard } from '@rally/ui/components/conversation-card';
 import { ChannelContainerMenu } from '@rally/ui/components/conversation-menus';
 import type { SidekickRow } from '@rally/ui/components/sidekick-section';
 import { ChannelGlyph, spaceMark } from '@rally/ui/components/space-icon';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { TitleMenuItem, TitlePillAction, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { resolveWorkstreamAppearance } from '@rally/ui/components/workstream-glyph';
-import { IconChevronRight, IconCloudDownload, IconPalette, IconPlus } from '@tabler/icons-react';
-import clsx from 'clsx';
+import { IconCloudDownload, IconPalette, IconPlus } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
 
 import { ChannelComposer } from '../components/channel-composer';
 import { MarkdownBody } from '../components/workstream-blocks';
-import { Avatar, Button, EmptyState, InlineError, LoadingState, Modal, RallyAvatar, TitleSkeleton } from '../components/primitives';
+import { Avatar, Button, EmptyState, InlineError, LoadingState, Modal, RallyAvatar } from '../components/primitives';
 import { RelativeTime } from '../components/relative-time';
 import { reportActivityEvent } from '../lib/activity-events';
 import { useAppSession } from '../lib/app-session';
@@ -393,20 +392,17 @@ function ThreadCard({ author, members, onOpen, open, placedAt, thread }: {
   thread: WorkstreamSummary;
 }): React.JSX.Element {
   // The title says what the thread's own title pill says at every moment: a
-  // skeleton while Rally names it, never the request's first line, and no
-  // "new" on the thread the reader has open beside it, which they are reading
-  // as it arrives.
+  // skeleton while Rally names it, never the request's first line.
   const mark: BreakoutMark = {
     substreamId: thread.id,
     title: thread.title,
     naming: thread.pending === true || thread.titleStatus === 'naming',
-    unreadCount: open || !thread.hasUnread ? 0 : 1,
-    youAreMentioned: !open && thread.youAreMentioned,
-    unseen: !open && thread.unseen,
+    unreadCount: thread.hasUnread ? 1 : 0,
+    youAreMentioned: thread.youAreMentioned,
+    unseen: thread.unseen,
     needsInput: thread.harnessStatus === 'needs_input',
+    appearance: thread.appearance,
   };
-  const news = breakoutNewsLabel(mark);
-  const { Icon, tint, ink } = resolveWorkstreamAppearance(thread.id, thread.appearance);
   // Rally starts a thread only when nobody did; a person this reader cannot
   // look up (a guest has no member list, and a member's loads after the feed)
   // is somebody, not Rally.
@@ -416,35 +412,18 @@ function ThreadCard({ author, members, onOpen, open, placedAt, thread }: {
   // by the renderer the message itself uses.
   const summary = useMemo(() => typedMentionRendering(thread.objective ?? '', members), [members, thread.objective]);
   return <li className="channel-feed-item">
-    <button
-      aria-label={[mark.naming ? 'Rally is choosing a name' : thread.title, news, open && 'Open'].filter(Boolean).join(', ')}
-      aria-pressed={open}
-      className={clsx('channel-feed-thread', open && 'is-open')}
-      onClick={() => onOpen(thread.id)}
-      type="button"
-    >
-      <span className="channel-feed-body">
-        <span className="channel-feed-title">
-          {news && (mark.needsInput
-            ? <span className="breakout-chip-badge">{news}</span>
-            : <span className="channel-feed-news">{news}</span>)}
-          <span className="channel-feed-title-text">{mark.naming ? <TitleSkeleton className="breakout-chip-skeleton" /> : thread.title}</span>
-          <IconChevronRight aria-hidden="true" className="channel-feed-caret" size={13} stroke={2} />
-        </span>
-        {thread.objective && <span className="channel-feed-summary">
-          <MarkdownBody glance mentions={summary.mentions} preserveLineBreaks rallyMentions verbatim>{summary.text}</MarkdownBody>
-        </span>}
-        <span className="channel-feed-meta">
-          {author && <Avatar member={author} size="small" title={null} />}
-          <span>{byline}</span>
-          <span aria-hidden="true">·</span>
-          <RelativeTime value={placedAt} />
-        </span>
-      </span>
-      <span aria-hidden="true" className="channel-feed-mark" style={{ background: tint, color: ink }}>
-        <Icon size={19} strokeWidth={1.8} />
-      </span>
-    </button>
+    <ConversationCard
+      conversation={mark}
+      meta={<>
+        {author && <Avatar member={author} size="small" title={null} />}
+        <span>{byline}</span>
+        <span aria-hidden="true">·</span>
+        <RelativeTime value={placedAt} />
+      </>}
+      onOpen={() => onOpen(thread.id)}
+      open={open}
+      summary={thread.objective && <MarkdownBody glance mentions={summary.mentions} preserveLineBreaks rallyMentions verbatim>{summary.text}</MarkdownBody>}
+    />
   </li>;
 }
 

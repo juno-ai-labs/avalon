@@ -1,5 +1,6 @@
 import { useVirtualizer, type Virtualizer } from '@tanstack/react-virtual';
-import { BreakoutChipRow, type BreakoutMark } from '@rally/ui/components/breakout-marks';
+import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
+import { ConversationCard } from '@rally/ui/components/conversation-card';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { AttachmentPreview } from './attachments';
 import type { CitationContext } from './markdown-citations';
@@ -45,13 +46,15 @@ interface MessageFeedProps {
   onOpenAttachment?: (preview: AttachmentPreview) => void;
   onStartSubstream?: (throughTurnId: string) => void;
   /**
-   * The Breakouts started from each turn, drawn as chips under the last row of
+   * The Breakouts started from each turn, drawn as cards under the last row of
    * that turn. Absent on a surface that has no Breakouts of its own.
    */
-  breakoutChips?: {
+  breakoutCards?: {
     byTurn: ReadonlyMap<string, BreakoutMark[]>;
     openSubstreamId: string | null;
     onOpen: (substreamId: string) => void;
+    /** Who started each one and when, as the host can name them. */
+    renderMeta?: (breakout: BreakoutMark) => React.ReactNode;
   };
   /** Creates the automation a proposal card names; see its card. */
   onAcceptDraft?: (automationId: string) => void;
@@ -180,7 +183,7 @@ export function MessageFeed({
   onAnswerElicitation,
   onOpenAttachment,
   onStartSubstream,
-  breakoutChips,
+  breakoutCards,
   onAcceptDraft,
   acceptingDraftFor,
   acceptDraftFailureFor,
@@ -260,17 +263,17 @@ export function MessageFeed({
     }),
   }), [expandedRows]);
   // A turn can be several rows — its text and the tools around it — and its
-  // chips belong after the last of them, where the turn ends.
+  // cards belong after the last of them, where the turn ends.
   const lastRowOfTurn = useMemo(() => {
     const last = new Map<string, number>();
-    if (!breakoutChips || breakoutChips.byTurn.size === 0) return last;
+    if (!breakoutCards || breakoutCards.byTurn.size === 0) return last;
     messages.forEach((message, index) => {
-      if (message.transcriptTurnId && breakoutChips.byTurn.has(message.transcriptTurnId)) {
+      if (message.transcriptTurnId && breakoutCards.byTurn.has(message.transcriptTurnId)) {
         last.set(message.transcriptTurnId, index);
       }
     });
     return last;
-  }, [breakoutChips, messages]);
+  }, [breakoutCards, messages]);
   // The newest thing Rally said: the one turn whose breakout action is shown
   // outright rather than on hover, since it is the likeliest place to branch.
   const latestReplyId = useMemo(() => {
@@ -280,14 +283,21 @@ export function MessageFeed({
     }
     return null;
   }, [messages]);
-  const chipsAfter = (message: Message, index: number): React.JSX.Element | null => {
+  const cardsAfter = (message: Message, index: number): React.JSX.Element | null => {
     const turnId = message.transcriptTurnId;
-    if (!breakoutChips || !turnId || lastRowOfTurn.get(turnId) !== index) return null;
-    return <BreakoutChipRow
-      breakouts={breakoutChips.byTurn.get(turnId) ?? []}
-      onOpen={breakoutChips.onOpen}
-      openSubstreamId={breakoutChips.openSubstreamId}
-    />;
+    if (!breakoutCards || !turnId || lastRowOfTurn.get(turnId) !== index) return null;
+    const breakouts = breakoutCards.byTurn.get(turnId) ?? [];
+    if (breakouts.length === 0) return null;
+    return <div aria-label="Breakouts from this message" className="breakout-card-list" role="group">
+      {breakouts.map((breakout) => <ConversationCard
+        align="start"
+        conversation={breakout}
+        key={breakout.substreamId}
+        meta={breakoutCards.renderMeta?.(breakout)}
+        onOpen={() => breakoutCards.onOpen(breakout.substreamId)}
+        open={breakout.substreamId === breakoutCards.openSubstreamId}
+      />)}
+    </div>;
   };
   const row = (message: Message, index: number): React.JSX.Element => (
     <div className="message-arrival-layer" data-arrival-id={message.id} data-arrival-kind={message.messageType}>
@@ -321,7 +331,7 @@ export function MessageFeed({
           onResourceAuthorized={markResourceAuthorized}
         />
       )}
-      {chipsAfter(message, index)}
+      {cardsAfter(message, index)}
     </div>
   );
 
