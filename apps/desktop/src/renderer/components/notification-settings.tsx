@@ -8,7 +8,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bell, Mail, MessageCircle } from 'lucide-react';
 
 import type { RallyApi } from '../lib/api';
-import type { DigestDeliveryTargetType, DigestSchedule, WorkstreamConnection } from '../lib/types';
+import { UNLINKED_DELIVERY_TARGETS, type AutomationDeliveryTargetType, type DigestDeliveryTargetType, type DigestSchedule, type WorkstreamConnection } from '../lib/types';
 import { useMemberPreferences, useSaveMemberPreferences } from '../lib/use-member-preferences';
 import { settings, type SettingDefinition } from '../settings/registry';
 import { SettingCopy } from '../settings/setting-label';
@@ -59,12 +59,29 @@ export function NotificationChannelSettings({ api, workspaceId, connections, pus
 }): React.JSX.Element {
   const preferences = useMemberPreferences(api, workspaceId);
   const save = useSaveMemberPreferences(api, workspaceId);
-  const options: ChannelOption[] = [
+  const notify = preferences.data.notify;
+  const offered: ChannelOption[] = [
     ...(pushAvailable ? [{ id: 'push', label: 'Push', hint: 'On every device signed in', icon: <Bell aria-hidden="true" size={ICON_SIZE} /> }] : []),
     { id: 'email', label: 'Email', hint: email ? `To ${email}` : 'To your account address', icon: <Mail aria-hidden="true" size={ICON_SIZE} /> },
     ...connectorSurfaces(connections).map(connectorOption),
   ];
-  const notify = preferences.data.notify;
+  // A connector channel that is chosen and can still reach this person stays
+  // on screen so it can be turned off, though no connection offers it: Slack
+  // reaches someone who has not linked their account by their email address.
+  const options: ChannelOption[] = [
+    ...offered,
+    ...[...new Set(Object.values(notify).flat())].flatMap((channel) => {
+      const unlinked = UNLINKED_DELIVERY_TARGETS[channel as AutomationDeliveryTargetType];
+      if (!unlinked || offered.some((option) => option.id === channel)
+        || !connections.some((connection) => connection.connectorType === unlinked.connectorType && connection.status !== 'disabled')) return [];
+      return [{
+        id: channel,
+        label: unlinked.label,
+        hint: 'Found by your email address. Link your account in Connections.',
+        icon: <MessageCircle aria-hidden="true" size={ICON_SIZE} />,
+      }];
+    }),
+  ];
   // A channel stored but not offered here, such as Slack once disconnected,
   // stays in the list: only the one toggled is added or removed.
   const toggle = (kind: NotificationKind, channel: string) => save.mutate({
