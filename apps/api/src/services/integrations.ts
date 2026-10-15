@@ -132,6 +132,7 @@ import {
   type AuthorizedConnectorConnection,
   type ConnectorActivityStreamError,
   type ConnectorConnectionContext,
+  type ConnectorResourceAccess,
   type ConnectorToolContext,
   type ResolvedConnectorAdapter,
 } from "@rally/connectors";
@@ -7759,12 +7760,8 @@ const ScheduleWakeupInputSchema = z.strictObject({
   timezone: z.string().min(1).max(100).optional(),
 });
 
-type ResourceAccessRow = { plugin: string; scope: "personal" | "workspace" } & (
-  | { access: "unrecognized" }
-  | { access: "none"; resourceId: string; reason: string }
-  | { access: "read" | "edit"; resourceId: string; name: string; editNeedsGrant?: boolean }
-  | { access: "unknown"; reason: string }
-);
+type ResourceAccessRow = { plugin: string; scope: "personal" | "workspace" }
+  & (ConnectorResourceAccess | { access: "unknown"; reason: string });
 
 /**
  * Ask every connection of one connector in this run how far it reaches a
@@ -7884,13 +7881,15 @@ type ResourceAccessPort = {
 };
 
 function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAccess?: ResourceAccessPort): HarnessTool[] {
-  const [firstAccessType, ...otherAccessTypes] = resourceAccess?.connectorTypes ?? [];
+  const accessTypes = resourceAccess?.connectorTypes.length
+    ? resourceAccess.connectorTypes as readonly [string, ...string[]]
+    : null;
   const tools: HarnessTool[] = [
-    ...(resourceAccess && firstAccessType ? [{
-      definition: checkResourceAccessToolDefinition([firstAccessType, ...otherAccessTypes]),
+    ...(resourceAccess && accessTypes ? [{
+      definition: checkResourceAccessToolDefinition(accessTypes),
       execute: async (raw: unknown, context: { signal: AbortSignal }) => {
         const result = await checkResourceAccess(
-          env, input, resourceAccess.connections(), [firstAccessType, ...otherAccessTypes], raw, context.signal,
+          env, input, resourceAccess.connections(), accessTypes, raw, context.signal,
         );
         return { output: result, summary: resourceAccessSummary(result) };
       },

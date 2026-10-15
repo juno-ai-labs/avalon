@@ -44,12 +44,11 @@ describe("connector connection card contract", () => {
     }).success).toBe(false);
   });
 
-  it("lets the state check leave scope out but not name one the connector lacks", () => {
+  it("lets the state check leave scope out, and accepts any scope it is sent", () => {
     expect(ConnectorConnectionStateInputSchema.parse({ connectorId: "slack" })).toEqual({ connectorId: "slack" });
-    expect(ConnectorConnectionStateInputSchema.parse({ connectorId: "slack", scope: "workspace" }))
-      .toEqual({ connectorId: "slack", scope: "workspace" });
-    expect(ConnectorConnectionStateInputSchema.safeParse({ connectorId: "granola", scope: "workspace" }).success)
-      .toBe(false);
+    // Ignored by the check, so a scope the connector lacks is no reason to fail the call.
+    expect(ConnectorConnectionStateInputSchema.parse({ connectorId: "granola", scope: "workspace" }))
+      .toEqual({ connectorId: "granola", scope: "workspace" });
   });
 
   it("folds per-scope states to the best one and names each in the summary", () => {

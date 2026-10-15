@@ -1060,6 +1060,25 @@ export type ResolvedConnectorAdapter = Omit<ConnectorAdapter, "manifest"> & {
  * which is worse than the bare refusal it replaced. Restricted this way it also
  * discloses nothing beyond the run's own tool list.
  */
+export function connectorCapabilityRefused(
+  providerLabel: string,
+  requested: string,
+  tools: readonly ToolDefinition[],
+  grantedCapabilities: readonly string[],
+): ConnectorError {
+  const granted = new Set(grantedCapabilities);
+  const available = [...new Set(
+    tools.map((tool) => tool.capability).filter((capability) => granted.has(capability)),
+  )].sort();
+  return new ConnectorError(
+    "unsupported_capability",
+    available.length
+      ? `The ${providerLabel} connection has not granted ${requested}. Its usable capabilities on this run are: ${available.join(", ")}.`
+      : `The ${providerLabel} connection has not granted ${requested}, and has no usable tool capabilities on this run.`,
+    { reason: "capability_not_granted", field: requested, available },
+  );
+}
+
 /** What `probeResourceAccess` found for one connection. */
 export type ConnectorResourceAccess =
   /** The reference is not a resource this connector names. */
@@ -1099,25 +1118,6 @@ export function isConnectorResourceAccessRefusal(error: unknown): error is Conne
   const details = error.details;
   return Boolean(details && typeof details === "object"
     && (details as { resourceAccessRefused?: unknown }).resourceAccessRefused === true);
-}
-
-export function connectorCapabilityRefused(
-  providerLabel: string,
-  requested: string,
-  tools: readonly ToolDefinition[],
-  grantedCapabilities: readonly string[],
-): ConnectorError {
-  const granted = new Set(grantedCapabilities);
-  const available = [...new Set(
-    tools.map((tool) => tool.capability).filter((capability) => granted.has(capability)),
-  )].sort();
-  return new ConnectorError(
-    "unsupported_capability",
-    available.length
-      ? `The ${providerLabel} connection has not granted ${requested}. Its usable capabilities on this run are: ${available.join(", ")}.`
-      : `The ${providerLabel} connection has not granted ${requested}, and has no usable tool capabilities on this run.`,
-    { reason: "capability_not_granted", field: requested, available },
-  );
 }
 
 export class ConnectorError extends Error {
