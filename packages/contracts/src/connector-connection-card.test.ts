@@ -6,8 +6,11 @@ import {
   ConnectorConnectionCardIds,
   ConnectorConnectionCardInputSchema,
   ConnectorConnectionCardScopes,
+  ConnectorConnectionStateInputSchema,
   ConnectorConnectionStateResultSchema,
+  bestConnectorConnectionState,
   connectorConnectionCardSummary,
+  connectorConnectionStateSummary,
   connectorConnectionCardInputFromToolEvent,
   isConnectorConnectionCardWireName,
   LEGACY_CONNECTOR_CONNECTION_CARD_WIRE_NAME,
@@ -26,19 +29,38 @@ describe("connector connection card contract", () => {
   it("accepts only closed connector connection states", () => {
     expect(ConnectorConnectionStateResultSchema.parse({
       connectorId: "slack",
-      scope: "personal",
       state: "connected",
-    })).toEqual({ connectorId: "slack", scope: "personal", state: "connected" });
+      connections: [{ scope: "personal", state: "connected" }],
+    })).toEqual({ connectorId: "slack", state: "connected", connections: [{ scope: "personal", state: "connected" }] });
     expect(ConnectorConnectionStateResultSchema.safeParse({
       connectorId: "slack",
-      scope: "personal",
       state: "probably_connected",
+      connections: [{ scope: "personal", state: "connected" }],
     }).success).toBe(false);
-    expect(ConnectorConnectionStateResultSchema.parse({
+    expect(ConnectorConnectionStateResultSchema.safeParse({
       connectorId: "slack",
-      scope: "personal",
-      state: "unavailable",
-    }).state).toBe("unavailable");
+      state: "connected",
+      connections: [],
+    }).success).toBe(false);
+  });
+
+  it("lets the state check leave scope out but not name one the connector lacks", () => {
+    expect(ConnectorConnectionStateInputSchema.parse({ connectorId: "slack" })).toEqual({ connectorId: "slack" });
+    expect(ConnectorConnectionStateInputSchema.parse({ connectorId: "slack", scope: "workspace" }))
+      .toEqual({ connectorId: "slack", scope: "workspace" });
+    expect(ConnectorConnectionStateInputSchema.safeParse({ connectorId: "granola", scope: "workspace" }).success)
+      .toBe(false);
+  });
+
+  it("folds per-scope states to the best one and names each in the summary", () => {
+    expect(bestConnectorConnectionState(["not_connected", "connected"])).toBe("connected");
+    expect(bestConnectorConnectionState(["not_connected", "reconnect_required"])).toBe("reconnect_required");
+    expect(bestConnectorConnectionState(["unavailable"])).toBe("unavailable");
+    expect(connectorConnectionStateSummary({
+      connectorId: "slack",
+      state: "connected",
+      connections: [{ scope: "personal", state: "not_connected" }, { scope: "workspace", state: "connected" }],
+    })).toBe("slack: personal not_connected, workspace connected");
   });
 
   it("recovers durable card identity without accepting arbitrary summary prose", () => {

@@ -18,6 +18,7 @@ import {
   withoutUnusableAutomationResourceIds,
   AutomationDraftSchema,
   ConnectorConnectionCardInputSchema,
+  ConnectorConnectionStateInputSchema,
   PickedAppearanceSchema,
   PROJECT_COLOR_KEYS_STORABLE,
   PROJECT_COLOR_RING,
@@ -3650,14 +3651,19 @@ const connectorConnectionCardInputJsonSchema = memoizedValue(
   () => z.toJSONSchema(ConnectorConnectionCardInputSchema, { io: "input" }) as Record<string, unknown>,
 );
 
-/** Read the durable connection state for the same trusted catalog selection a card presents. */
+const connectorConnectionStateInputJsonSchema = memoizedValue(
+  () => z.toJSONSchema(ConnectorConnectionStateInputSchema, { io: "input" }) as Record<string, unknown>,
+);
+
+/** Read the durable connection state for the same trusted catalog a card presents, across its scopes. */
 export const AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION = {
   name: "get_connector_connection_state",
   description: [
-    "Check Rally's saved connection state for a connector and scope. Call this first.",
-    "Returns connected, reconnect_required, not_connected, or unavailable.",
-    "If connected, continue the task and do not show a card.",
-    "If reconnect_required or not_connected blocks the task, briefly explain why, then call show_connector_connection with the same connectorId and scope.",
+    "Check Rally's saved connection state for a connector. Call this first.",
+    "Leave scope out: the check covers every scope the connector offers and returns each one's state, plus the best of them.",
+    "Each state is connected, reconnect_required, not_connected, or unavailable.",
+    "If a connected scope can do the task, continue with it and do not show a card.",
+    "If no connected scope can and reconnect_required or not_connected blocks the task, briefly explain why, then call show_connector_connection with the same connectorId and the scope the task needs.",
     "If unavailable, explain that this connector is not configured in this Rally region and do not show a card.",
     "This checks Rally's saved state, not the provider directly.",
   ].join(" "),
@@ -3665,7 +3671,7 @@ export const AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION = {
   mode: "read",
   idempotency: "safe",
   get inputSchema() {
-    return connectorConnectionCardInputJsonSchema();
+    return connectorConnectionStateInputJsonSchema();
   },
 } as const satisfies ToolDefinition;
 
@@ -3679,7 +3685,7 @@ export const AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION = {
   description: [
     "Show a persistent card that lets the user connect or reconnect a connector.",
     "Call only after get_connector_connection_state returns reconnect_required or not_connected and the missing connection blocks the task.",
-    "Use the same connectorId and scope. Briefly explain what is blocked before this call.",
+    "Use the same connectorId, and the scope the task needs. Briefly explain what is blocked before this call.",
     "After this call, do not claim the connector is connected or retry connector-dependent work in this run.",
     "Never create an authorization URL or ask for credentials.",
   ].join(" "),
