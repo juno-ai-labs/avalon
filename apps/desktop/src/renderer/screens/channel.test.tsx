@@ -182,11 +182,23 @@ describe('a Channel', () => {
     expect(screen.getByText('composer')).toBeVisible();
   });
 
-  it('ends the expansion when the thread opens a breakout, so closing it returns to the Channel and the thread', async () => {
+  it('holds the expansion while the thread has a breakout open, so closing it returns to the thread expanded', async () => {
     renderChannel('/channels/outbound/threads/plan');
     fireEvent.click(await screen.findByRole('button', { name: 'Expand' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open breakout' }));
+    // Split with its breakout, the thread offers no Collapse.
     expect(screen.getByRole('button', { name: 'Expand' })).toBeInTheDocument();
+    expect(screen.getByText('composer')).not.toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close breakout' }));
+    expect(screen.getByText('composer')).not.toBeVisible();
+    expect(screen.getByRole('button', { name: 'Collapse' })).toBeInTheDocument();
+  });
+
+  it('returns to the Channel and the thread when a breakout closes on a thread opened beside it', async () => {
+    renderChannel('/channels/outbound/threads/plan');
+    fireEvent.click(await screen.findByRole('button', { name: 'Open breakout' }));
+    expect(screen.getByText('composer')).not.toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Close breakout' }));
     expect(screen.getByText('composer')).toBeVisible();

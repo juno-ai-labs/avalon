@@ -879,7 +879,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   };
 
   // Beside its Channel, the thread can take the whole window, and give it
-  // back. Opening a breakout or a panel ends the expansion.
+  // back. A breakout or a panel holds the expansion until it closes.
   const threadExpandAction = !channelPane ? undefined
     : expandToggle(channelPane.expanded, !channelPane.shifted, channelPane.setExpanded);
   // A breakout beside its thread can do the same, one level down.
