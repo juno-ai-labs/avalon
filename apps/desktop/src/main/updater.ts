@@ -159,6 +159,8 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   /** The build staged for install. While set, checks keep running in the
    * background and the restart offer stays up until a newer build replaces it. */
   let stagedVersion: string | null = null;
+  /** The build `stagedVersion` replaced, kept in case Squirrel fails to stage it. */
+  let previousStagedVersion: string | null = null;
   let currentChannel = deps.releaseChannel;
   let channelRecheckPending = false;
   let channelRecheckScheduled = false;
@@ -325,6 +327,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     checkStartedAt = null;
     downloadStartedAt = null;
     stagedVersion = null;
+    previousStagedVersion = null;
     setStatus({ kind: 'idle' });
     // electron-updater decides whether to auto-download immediately after it
     // emits update-available. Leave autoDownload false until that synchronous
@@ -416,6 +419,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
       return;
     }
     updater.autoInstallOnAppQuit = true;
+    previousStagedVersion = stagedVersion;
     stagedVersion = info.version;
     setStatus({ kind: 'downloaded', version: info.version });
     // The renderer offers the restart; a dialog interrupts only a stale build.
@@ -423,6 +427,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     promptIfStaleBuild();
   });
   updater.on('error', (error) => {
+    const checking = checkInFlight;
     checkInFlight = false;
     if (channelRecheckPending) {
       log.info('[rally] previous-channel update work settled after the channel changed');
@@ -431,6 +436,17 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     }
     if (downloadInFlight) {
       handleDownloadFailure(error);
+      return;
+    }
+    if (stagedVersion !== null && !checking) {
+      // MacUpdater emits update-downloaded before Squirrel.Mac stages the
+      // archive, so an error outside a check is that staging failing. Fall
+      // back to the build Squirrel already held, if any; the next check
+      // downloads the failed version again.
+      log.error(`[rally] could not stage update ${stagedVersion}`, error);
+      stagedVersion = previousStagedVersion;
+      previousStagedVersion = null;
+      setStatus(stagedVersion === null ? { kind: 'idle' } : { kind: 'downloaded', version: stagedVersion });
       return;
     }
     log.error('[rally] auto-update error', error);
@@ -516,6 +532,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
           // Withdraw the restart offer now, even while a background check or
           // download from the previous feed is still settling.
           stagedVersion = null;
+          previousStagedVersion = null;
           setStatus({ kind: 'idle' });
         }
         if (downloadRetryScheduled || (!checkInFlight && !downloadInFlight)) {
