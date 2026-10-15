@@ -37,7 +37,6 @@ import {
   canonicalToolInputHash,
   createTextDeltaBatcher,
   memberSafeHarnessFailureMessage,
-  renderScheduledDigestBriefMessage,
   renderScheduledWakeupMessage,
   renderPersonalSystemPrompt,
   renderWorkstreamSystemPrompt,
@@ -193,7 +192,6 @@ import {
   emitProductUsageTelemetry,
   telemetryCountBucket,
 } from "../telemetry/product-usage";
-import { WorkspaceDigestDeliveryContextSchema } from "../durable-objects/workspace-digests-protocol";
 import {
   withWorkspaceRuntimeDatabase,
 } from "./workspace-runtime-database";
@@ -4900,45 +4898,6 @@ async function loadRunPromptContext(
       dueAt: wakeup.due_at,
     }), "scheduled_wakeup", input.scheduledWakeupId);
   }
-  if (input.digestDeliveryId) {
-    // The brief is in the transcript as a `system` row, and the protocol
-    // projector drops those as UI state. A digest therefore needs its window
-    // carried here like any other trigger, or the run reaches the model with
-    // nothing but its objective and writes a digest saying nothing happened.
-    //
-    // Re-read through the delivery rather than through the workflow's
-    // `triggerMessageId`: the delivery owns `digest:<id>` as the brief's
-    // client-message id, so this cannot pick up a later message in the same
-    // work stream, and one occurrence's run can never be handed another's
-    // window.
-    const digestWorkspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      input.workspaceId,
-      workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)),
-    );
-    const digestWindow = WorkspaceDigestDeliveryContextSchema.parse(
-      await digestWorkspace.digestDeliveryContext({
-        workspaceId: input.workspaceId,
-        deliveryId: input.digestDeliveryId,
-      }),
-    ).delivery;
-    const digestMessage = await createMessageObjectPort(env, input.workspaceId, input.parentId)
-      .messageByClientId({ clientMessageId: `digest:${input.digestDeliveryId}` });
-    // Failing the attempt rather than running without the window: a digest with
-    // no brief cannot be written, and settlement folds an unsettled window into
-    // the next occurrence instead of consuming it.
-    if (!digestWindow || !digestMessage?.text_content.trim()) {
-      throw new Error("digest_brief_context_not_found");
-    }
-    // Nothing is pushed to `memoryQueryParts` here — the brief is this run's
-    // trigger message, so the branch above already added its text.
-    triggerMessage = modelDerivative(renderScheduledDigestBriefMessage({
-      brief: digestMessage.text_content,
-      plannedFor: digestWindow.plannedFor,
-      eventCount: digestWindow.eventCount,
-    }), "digest_delivery", input.digestDeliveryId);
-  }
   const memoryContextPreparation = recallsMemoryAtAdmission
     ? new Preparation(() => freezeRunMemoryContext(
         env,
@@ -4992,7 +4951,6 @@ async function loadRunPromptContext(
           ? "external_delivery"
           : automationSendsOutward ? "self_delivery" : "workstream"
         : input.reason === "inbound_email"
-          || Boolean(input.digestDeliveryId)
           || Boolean(input.slackOrigin)
           ? "external_delivery"
           : "workstream",

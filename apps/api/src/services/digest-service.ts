@@ -25,6 +25,7 @@ import { isRetirementRefusal } from "../durable-objects/object-retirement";
 import { logInfo, logWarn } from "../observability/logger";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 import { declaredUserDeliveryTargetType, resolveFrozenDeliveryIdentity } from "./user-delivery";
+import { personalSpaceIdFor } from "../durable-objects/workspace-space-protocol";
 import { emitProductUsageTelemetry, telemetryCountBucket } from "../telemetry/product-usage";
 import {
   withWorkspaceRuntimeDatabase,
@@ -172,6 +173,7 @@ export async function rebuildDigestSchedulesForTimezone(
 
 /** What a person gets before they have chosen anything: weekdays at 09:00, by email. */
 const DEFAULT_DAYS = [1, 2, 3, 4, 5];
+const PERSONAL_CHANNEL_NAME = "Personal Channel";
 const DEFAULT_MINUTE_OF_DAY = 9 * 60;
 /** Bounded so one cron tick cannot spend its whole budget on a large workspace. */
 const RECONCILE_LIMIT = 200;
@@ -181,6 +183,7 @@ interface MemberWithoutDigestRow {
   user_id: string;
   email: string | null;
   timezone: string;
+  access_class: "member" | "guest";
 }
 
 /**
@@ -213,7 +216,7 @@ export async function reconcileDigestDefaults(env: Env): Promise<{
     `SELECT after_workspace_id, after_user_id FROM digest_reconciliation_control WHERE id = 1`,
   ).first<{ after_workspace_id: string; after_user_id: string }>();
   const members = await regionalDatabase.prepare(
-    `SELECT m.workspace_id, m.user_id, u.email, u.timezone
+    `SELECT m.workspace_id, m.user_id, u.email, u.timezone, m.access_class
       FROM workspace_members m
       JOIN users u ON u.id = m.user_id
       WHERE m.status = 'active'
@@ -266,6 +269,11 @@ export async function reconcileDigestDefaults(env: Env): Promise<{
           dayMask: dayMaskFromDays(DEFAULT_DAYS),
           minuteOfDay: DEFAULT_MINUTE_OF_DAY,
           emailAddress: member.email.trim(),
+          // A guest has no Personal Channel.
+          personalChannel: member.access_class === "guest" ? null : {
+            targetId: newId(),
+            spaceId: await personalSpaceIdFor(member.workspace_id, member.user_id),
+          },
           executionPrincipalJson: JSON.stringify({ type: "user", userId: member.user_id }),
           at,
         }),
@@ -460,6 +468,7 @@ export class DigestService {
     const email = await this.env.DB.prepare("SELECT email FROM users WHERE id = ?")
       .bind(this.auth.userId).first<{ email: string | null }>();
     const address = email?.email?.trim();
+    const personal = await this.hasPersonalChannel();
     return DigestScheduleSchema.parse({
       id: DIGEST_UNSAVED_ID,
       // The reconciler skips a member with no address, so this mirrors that too.
@@ -468,7 +477,13 @@ export class DigestService {
       times: [DEFAULT_MINUTE_OF_DAY],
       timezone: await this.accountTimezone(),
       deliveryTargets: address
-        ? [{ type: "email", connectionId: null, displayName: address, status: "active", lastDeliveredAt: null }]
+        ? [
+          { type: "email", connectionId: null, displayName: address, status: "active", lastDeliveredAt: null },
+          ...(personal ? [{
+            type: "personal_channel", connectionId: await personalSpaceIdFor(this.auth.workspaceId, this.auth.userId),
+            displayName: PERSONAL_CHANNEL_NAME, status: "active", lastDeliveredAt: null,
+          }] : []),
+        ]
         : [],
       nextRunAt: null,
       lastDeliveredAt: null,
@@ -495,7 +510,9 @@ export class DigestService {
     return (result.results ?? []).map((row) => ({
       type: row.target_type as DigestDeliveryTargetType,
       connectionId: row.connection_id,
-      displayName: row.email_address ?? row.connector_display_name ?? row.target_type,
+      displayName: row.target_type === "personal_channel"
+        ? PERSONAL_CHANNEL_NAME
+        : row.email_address ?? row.connector_display_name ?? row.target_type,
       status: row.status,
       lastDeliveredAt: row.last_delivered_at,
     }));
@@ -532,6 +549,22 @@ export class DigestService {
         throw new ApiError(422, "duplicate_delivery_target", "Each destination can only be chosen once");
       }
       seen.add(target.type);
+      if (target.type === "personal_channel") {
+        if (!await this.hasPersonalChannel()) {
+          throw new ApiError(422, "personal_channel_unavailable", "Guests have no Personal Channel to send digests to");
+        }
+        // The Space stands where a connection would, and the person where a
+        // provider user would: the destination row's shape for anything that
+        // is not an email address.
+        resolved.push({
+          type: "personal_channel",
+          connectionId: await personalSpaceIdFor(this.auth.workspaceId, this.auth.userId),
+          providerTenantId: this.auth.workspaceId,
+          providerUserId: this.auth.userId,
+          emailAddress: null,
+        });
+        continue;
+      }
       if (target.type === "email") {
         resolved.push({
           type: "email",
@@ -567,6 +600,14 @@ export class DigestService {
       });
     }
     return resolved;
+  }
+
+  /** Whether this person has a Personal Channel: every active member except a guest. */
+  private async hasPersonalChannel(): Promise<boolean> {
+    const row = await workspaceRegionalDatabase(this.env).prepare(
+      `SELECT access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+    ).bind(this.auth.workspaceId, this.auth.userId).first<{ access_class: string }>();
+    return row?.access_class === "member";
   }
 
   /**

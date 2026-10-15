@@ -8,8 +8,8 @@ import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_PUSH_PREFERENCES } from "@rally/contracts";
-import { storedPushPreferences } from "../src/durable-objects/member-preferences";
+import { DEFAULT_NOTIFICATION_CHANNELS, DEFAULT_PUSH_PREFERENCES } from "@rally/contracts";
+import { storedMemberPreferences, storedPushPreferences } from "../src/durable-objects/member-preferences";
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 
@@ -40,6 +40,34 @@ describe("migration 106", () => {
       ).one();
       expect({ showAgentWork: row.show_agent_work, updatedAt: row.updated_at }).toEqual({ showAgentWork: 0, updatedAt: 42 });
       expect(storedPushPreferences(row.push_json)).toEqual(DEFAULT_PUSH_PREFERENCES);
+    });
+  });
+});
+
+describe("migration 107", () => {
+  it("upgrades a populated Organization at 106, carrying each push switch someone turned off into that kind's channels", async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName("member-notify-preferences-v106");
+    await stub.ping();
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 106),
+        component: "workspace_do", workerVersionId: "before-notify-preferences", now: 1,
+      });
+      state.storage.sql.exec(
+        `INSERT INTO member_preferences (user_id, show_agent_work, push_json, updated_at) VALUES (?, 1, ?, 42)`,
+        MEMBER, JSON.stringify({ newThreads: false, runFinishedOthers: false }),
+      );
+    });
+
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS, component: "workspace_do",
+        workerVersionId: "with-notify-preferences", now: 2,
+      });
+      const row = state.storage.sql.exec<{ show_agent_work: number; push_json: string; notify_json: string }>(
+        `SELECT show_agent_work, push_json, notify_json FROM member_preferences WHERE user_id = ?`, MEMBER,
+      ).one();
+      expect(storedMemberPreferences(row).notify).toEqual({ ...DEFAULT_NOTIFICATION_CHANNELS, newThreads: [] });
     });
   });
 });

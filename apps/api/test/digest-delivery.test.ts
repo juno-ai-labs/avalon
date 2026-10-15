@@ -13,7 +13,6 @@ vi.mock("../src/telemetry/product-usage", async (importOriginal) => ({
 import type * as ProductUsageModule from "../src/telemetry/product-usage";
 import type { Env } from "../src/env";
 import { deliverDigest } from "../src/services/digest-delivery-service";
-import { settleDigestRun } from "../src/services/digest-run-settlement";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
@@ -21,11 +20,8 @@ import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
-  seedWorkstreamRun,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
-  workstreamObjectGet,
-  workstreamObjectRootRow,
 } from "./helpers/durable-authority";
 
 const WORKSPACE = "00000000-0000-7000-8000-000000000001";
@@ -34,25 +30,6 @@ const SCHEDULE = "00000000-0000-7000-8000-000000000005";
 const DELIVERY = "00000000-0000-7000-8000-000000000006";
 const TARGET = "00000000-0000-7000-8000-000000000007";
 const WORKSTREAM = "00000000-0000-7000-8000-000000000008";
-const RUN = "00000000-0000-7000-8000-000000000009";
-
-/**
- * A digest of realistic shape. Settlement refuses text too short to be one, so
- * a stand-in like "## Launch" now means "the run wrote a receipt" rather than
- * "the run wrote a digest", and would exercise the wrong branch in every test
- * below that is really about delivery.
- */
-const DIGEST = [
-  "The pricing rollout needs a decision from you before Thursday.",
-  "",
-  "## Needs you",
-  "",
-  "- **Pricing rollout** is blocked on the tier names. Dana asked twice and nobody has answered.",
-  "",
-  "## Launch",
-  "",
-  "- Shipped it. The staged rollout finished at 14:20 with no errors reported.",
-].join("\n");
 
 const databases: DatabaseSync[] = [];
 /** The digest work stream's own object database, rebuilt per fixture. */
@@ -184,17 +161,6 @@ const context = {
 
 const acceptingResend = vi.fn(async () => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
 
-/**
- * `settleDigestRun` owns the whole tail of a run and calls the transport itself,
- * so a test drives it by replacing the global transport rather than by threading
- * a stub through production code that has no other reason to accept one.
- */
-function withTransport(response: () => Response): ReturnType<typeof vi.fn> {
-  const request = vi.fn(async () => response());
-  vi.stubGlobal("fetch", request);
-  return request;
-}
-
 afterEach(() => vi.unstubAllGlobals());
 
 /**
@@ -206,11 +172,6 @@ function recordingTransport() {
   return vi.fn<(url: string, init: RequestInit) => Promise<Response>>(
     async () => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }),
   );
-}
-
-function deliveryStatus(): { status: string; error_json: string | null } {
-  return workspaceStore.prepare("SELECT status, error_json FROM digest_deliveries WHERE id = ?")
-    .get(DELIVERY) as { status: string; error_json: string | null };
 }
 
 describe("digest delivery", () => {
@@ -281,228 +242,6 @@ describe("digest delivery", () => {
   });
 });
 
-describe("settling a digest run", () => {
-  it("records what the run wrote and marks the delivery delivered", async () => {
-    const database = seededDatabase();
-    withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
-
-    await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", DIGEST);
-
-    expect(deliveryStatus().status).toBe("delivered");
-    expect(workspaceStore.prepare("SELECT summary_markdown FROM digest_deliveries WHERE id = ?").get(DELIVERY))
-      .toEqual({ summary_markdown: DIGEST });
-  });
-
-  it("notes the delivery in the occurrence's own work stream", async () => {
-    const database = seededDatabase();
-    withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
-
-    await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", DIGEST);
-
-    // Resolved through the delivery's own `workstream_id`, so it lands whether
-    // or not the launch recorded a `harness_run_id` to join back through. A
-    // transcript whose summary carries no note is a digest nobody received,
-    // which is what somebody chasing a missing email is looking for. The note
-    // and the sequence counter both live in the work stream's object.
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT content AS text_content FROM canonical_conversation_turn_details WHERE client_message_id = ?",
-      `digest-delivered:${DELIVERY}`,
-    )).toEqual({
-      text_content: "Delivered to 1 destination.",
-    });
-    expect(workstreamObjectRootRow(objectStore, "next_sequence_number"))
-      .toEqual({ next_sequence_number: 3 });
-  });
-
-  it("still notes a delivered digest when telemetry context lookup fails", async () => {
-    const database = seededDatabase();
-    withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
-    // The lookup is a typed object method now, so the failure is injected at
-    // the same boundary production crosses.
-    const env = envFor(database, {
-      digestTerminalTelemetryContext: async () => {
-        throw new Error("telemetry lookup unavailable");
-      },
-    });
-
-    await expect(settleDigestRun(env, WORKSPACE, DELIVERY, "completed", DIGEST)).resolves.toBeUndefined();
-
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT content AS text_content FROM canonical_conversation_turn_details WHERE client_message_id = ?",
-      `digest-delivered:${DELIVERY}`,
-    )).toEqual({ text_content: "Delivered to 1 destination." });
-  });
-
-  it("still settles a delivery claimed without the workstream column, and skips only the note", async () => {
-    const database = seededDatabase();
-    withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
-    // A delivery claimed before `workstream_id` was written used to resolve its
-    // work stream by joining back through `harness_runs`. That fallback lived
-    // on the legacy D1 branch; since the cutover the run row is object-local
-    // and cannot be joined from regional settlement, so the durable path
-    // deliberately writes no note for such a delivery — the settlement itself
-    // must still land rather than fail the whole run over a missing note.
-    seedWorkstreamRun(objectStore, { id: RUN, status: "completed", origin: "scheduled_digest",
-      executionPrincipalJson: JSON.stringify({ type: "user", userId: OWNER }) });
-    workspaceStore.exec(`
-      UPDATE digest_deliveries
-         SET workstream_id = NULL, harness_run_id = '${RUN}' WHERE id = '${DELIVERY}';
-    `);
-
-    await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", DIGEST);
-
-    expect(deliveryStatus().status).toBe("delivered");
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT COUNT(*) AS count FROM canonical_conversation_turn_details WHERE client_message_id = ?",
-      `digest-delivered:${DELIVERY}`,
-    )).toEqual({ count: 0 });
-  });
-
-  it("keeps the terminal event when a target type this build does not know appears", async () => {
-    const database = seededDatabase();
-    withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
-    // `target_type` is bare TEXT in the object schema — the value list is
-    // enforced on the write path, not by a CHECK — so a newer build or a
-    // backfill can leave a type this one has never heard of. It must cost one
-    // array entry, never the whole terminal event.
-    workspaceStore.exec(`
-      INSERT INTO digest_delivery_targets
-        (id, workspace_id, digest_schedule_id, user_id, target_type, connection_id,
-         provider_tenant_id, provider_user_id, status, created_at, updated_at)
-      VALUES ('00000000-0000-7000-8000-00000000000a', '${WORKSPACE}', '${SCHEDULE}', '${OWNER}',
-              'carrier_pigeon', '00000000-0000-7000-8000-00000000000b', 'tenant-1', 'pigeon-1',
-              'disabled', '2026-01-01', '2026-01-01');
-    `);
-
-    await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", DIGEST);
-
-    expect(deliveryStatus().status).toBe("delivered");
-    const terminal = emitProductUsageTelemetry.mock.calls
-      .map(([, input]) => input as { name: string; properties: { targetTypes: string[] } })
-      .find((input) => input.name === "digest_delivery_terminal");
-    expect(terminal?.properties.targetTypes).toEqual(["email"]);
-  });
-
-  it("keeps a settled delivery when the transcript note cannot be written", async () => {
-    const database = seededDatabase();
-    withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
-    const env = envFor(database, {}, {
-      executeMessageOperation: () => {
-        throw new Error("transcript authority offline");
-      },
-    });
-
-    await expect(settleDigestRun(env, WORKSPACE, DELIVERY, "completed", DIGEST)).resolves.toBeUndefined();
-
-    // The settle has already won. Failing the step over the note would make
-    // the retry read `already_settled` and return before writing one — the
-    // note would be lost either way, with a failed run as the extra price.
-    expect(deliveryStatus().status).toBe("delivered");
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT COUNT(*) AS count FROM canonical_conversation_turn_details WHERE client_message_id = ?",
-      `digest-delivered:${DELIVERY}`,
-    )).toEqual({ count: 0 });
-  });
-
-  it("sends nothing when the run finished without writing a digest", async () => {
-    const database = seededDatabase();
-
-    await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", null);
-
-    // A placeholder sentence describing the run is not a digest. Failing here
-    // keeps the window unconsumed, so its events reach the next occurrence.
-    expect(deliveryStatus().status).toBe("failed");
-    expect(deliveryStatus().error_json).toContain("digest_run_completed");
-  });
-
-  it("refuses a final message too short to be a digest, and keeps the window", async () => {
-    const database = seededDatabase();
-    const request = withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
-    // The exact shape of the failure that motivated removing artifacts: the run
-    // wrote its digest somewhere else and signed off with a receipt. It is
-    // non-empty and the run completed, so every other signal reads as success.
-    const receipt = "Outcome: Digest artifact created (id 9ba24c36-0665-5b6c-8c13-04c58415be68).\n"
-      + "No changes since last digest.";
-
-    await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", receipt);
-
-    expect(deliveryStatus().status).toBe("failed");
-    expect(deliveryStatus().error_json).toContain("digest_run_completed");
-    // Nothing was mailed and nothing was stored, so the cursor did not move and
-    // this window is folded into the next occurrence rather than lost.
-    expect(request).not.toHaveBeenCalled();
-    expect(workspaceStore.prepare("SELECT summary_markdown FROM digest_deliveries WHERE id = ?").get(DELIVERY))
-      .toEqual({ summary_markdown: null });
-  });
-
-  it("does not consume the window when every destination failed", async () => {
-    const database = seededDatabase();
-    // Permanently rejected, so `deliverDigest` records it and returns rather
-    // than throwing — the path where a run could otherwise look successful.
-    withTransport(() => new Response("bad recipient", { status: 422 }));
-
-    await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", DIGEST);
-
-    expect(deliveryStatus().status).toBe("failed");
-    expect(deliveryStatus().error_json).toContain("digest_not_delivered");
-  });
-
-  it("still consumes the window when nothing was sent but nothing failed", async () => {
-    const database = seededDatabase();
-    withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
-    // Already served on an earlier attempt of this same step.
-    workspaceStore.exec(
-      `UPDATE digest_delivery_targets SET last_delivered_delivery_id = '${DELIVERY}' WHERE id = '${TARGET}'`,
-    );
-
-    await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", DIGEST);
-
-    expect(deliveryStatus().status).toBe("delivered");
-  });
-
-  it("settles once, so a retried step does not send the digest again", async () => {
-    const database = seededDatabase("delivered");
-    withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
-
-    await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", DIGEST);
-
-    expect(workspaceStore.prepare("SELECT summary_markdown FROM digest_deliveries WHERE id = ?").get(DELIVERY))
-      .toEqual({ summary_markdown: null });
-  });
-
-  it("does not deliver a run that needs input", async () => {
-    const database = seededDatabase();
-
-    await settleDigestRun(
-      envFor(database),
-      WORKSPACE,
-      DELIVERY,
-      "needs_input",
-      "What did you mean?",
-    );
-
-    expect(deliveryStatus().status).toBe("failed");
-  });
-
-  it("carries the frozen counts into the email rather than recounting them", async () => {
-    const database = seededDatabase();
-    const request = recordingTransport();
-    const env = envFor(database);
-    // The delivery was claimed with 4 events, 2 of which name this person.
-    // Recomputing either would have to re-derive the audience filter, the
-    // look-back floor and the per-run cap.
-    await deliverDigest(env, { ...context, itemCount: 4, highlightCount: 2 }, request as unknown as typeof fetch);
-
-    const body = JSON.parse(String(request.mock.calls[0]![1].body)) as { html: string };
-    expect(body.html).toContain("2 for you");
-    expect(body.html).toContain("4 updates");
-  });
-});
-
 describe("digest email transport", () => {
   it("addresses the frozen address and tags the message", async () => {
     const database = seededDatabase();
@@ -518,7 +257,7 @@ describe("digest email transport", () => {
     };
     expect(body.to).toEqual(["owner@example.com"]);
     expect(body.subject).toContain("Avalon Studio");
-    expect(body.tags).toContainEqual({ name: "category", value: "scheduled_digest" });
+    expect(body.tags).toContainEqual({ name: "category", value: "daily_digest" });
     expect(new Headers(init.headers).get("idempotency-key")).toBe(`avalon-digest/${TARGET}/${DELIVERY}`);
   });
 

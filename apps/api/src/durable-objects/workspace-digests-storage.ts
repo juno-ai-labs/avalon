@@ -1,37 +1,28 @@
 import {
   WorkspaceDigestClaimResultSchema,
-  WorkspaceDigestCursorSchema,
   WorkspaceDigestDefaultResultSchema,
   WorkspaceDigestDeliveryContextSchema,
   WorkspaceDigestDeliveryTargetsSchema,
   WorkspaceDigestFireScheduleSchema,
-  WorkspaceDigestReleaseClaimResultSchema,
   WorkspaceDigestReplaceResultSchema,
   WorkspaceDigestRowStateSchema,
-  WorkspaceDigestRunningResultSchema,
   WorkspaceDigestSettingsSchema,
   WorkspaceDigestSettleResultSchema,
   WorkspaceDigestTargetOutcomeResultSchema,
   WorkspaceDigestTerminalContextSchema,
   type WorkspaceDigestClaimRequest,
   type WorkspaceDigestClaimResult,
-  type WorkspaceDigestCursor,
   type WorkspaceDigestDefaultRequest,
   type WorkspaceDigestDefaultResult,
   type WorkspaceDigestDeliveryContext,
-  type WorkspaceDigestDeliveryRunningRequest,
   type WorkspaceDigestDeliveryTargets,
   type WorkspaceDigestDeliveryTargetsRequest,
-  type WorkspaceDigestDeliveryWorkstreamRequest,
   type WorkspaceDigestFireSchedule,
-  type WorkspaceDigestReleaseClaimRequest,
-  type WorkspaceDigestReleaseClaimResult,
   type WorkspaceDigestReplaceRequest,
   type WorkspaceDigestReplaceResult,
   type WorkspaceDigestReplaceRowsRequest,
   type WorkspaceDigestRowState,
   type WorkspaceDigestRowStateRequest,
-  type WorkspaceDigestRunningResult,
   type WorkspaceDigestSettingsRequest,
   type WorkspaceDigestSettings,
   type WorkspaceDigestSettleRequest,
@@ -288,6 +279,23 @@ export function ensureDefaultWorkspaceDigestSchedule(
       request.at,
       request.at,
     );
+    if (request.personalChannel) {
+      storage.sql.exec(
+        `INSERT INTO digest_delivery_targets
+           (id, workspace_id, digest_schedule_id, user_id, target_type, connection_id,
+            provider_tenant_id, provider_user_id, email_address, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'personal_channel', ?, ?, ?, NULL, 'active', ?, ?)`,
+        request.personalChannel.targetId,
+        request.workspaceId,
+        request.scheduleId,
+        request.userId,
+        request.personalChannel.spaceId,
+        request.workspaceId,
+        request.userId,
+        request.at,
+        request.at,
+      );
+    }
     return WorkspaceDigestDefaultResultSchema.parse({
       created: true,
       schedule: { id: request.scheduleId, dayMask: request.dayMask, enabled: true },
@@ -358,34 +366,6 @@ export function workspaceDigestScheduleForFire(
   });
 }
 
-/**
- * Where the next digest starts reading: the highest point this schedule has
- * committed to covering.
- *
- * "Committed" includes a delivery that is still `planned` or `running`, not
- * just a settled one — two configured times a minute apart, or one slow run,
- * would otherwise both start from the last *settled* cursor and summarize the
- * same events into consecutive emails. `failed` is excluded, which is what
- * folds an undelivered window into the next digest rather than losing it. The
- * maximum rather than the newest row, because a retried or late occurrence can
- * settle out of order and the cursor must never move backwards.
- */
-export function latestWorkspaceDigestCursor(
-  storage: DurableObjectStorage,
-  request: { workspaceId: string; digestScheduleId: string },
-): WorkspaceDigestCursor {
-  const row = storage.sql.exec<{ cursor_through: number | null }>(
-    `SELECT MAX(cursor_through) AS cursor_through
-       FROM digest_deliveries
-      WHERE digest_schedule_id = ?
-        AND status IN ('delivered', 'empty', 'planned', 'running')`,
-    request.digestScheduleId,
-  ).toArray()[0];
-  return WorkspaceDigestCursorSchema.parse({
-    cursorThrough: row?.cursor_through == null ? null : Number(row.cursor_through),
-  });
-}
-
 /** Claim one occurrence, or learn a retried alarm already did. */
 export function claimWorkspaceDigestDelivery(
   storage: DurableObjectStorage,
@@ -417,51 +397,6 @@ export function claimWorkspaceDigestDelivery(
   });
 }
 
-/** Record which hidden work stream this occurrence executes in. */
-export function recordWorkspaceDigestDeliveryWorkstream(
-  storage: DurableObjectStorage,
-  request: WorkspaceDigestDeliveryWorkstreamRequest,
-): void {
-  storage.sql.exec(
-    `UPDATE digest_deliveries SET workstream_id = ?, updated_at = ? WHERE id = ?`,
-    request.workstreamId,
-    request.at,
-    request.deliveryId,
-  );
-}
-
-/** The launch succeeded: the claim graduates from `planned` to `running`, or says it could not. */
-export function markWorkspaceDigestDeliveryRunning(
-  storage: DurableObjectStorage,
-  request: WorkspaceDigestDeliveryRunningRequest,
-): WorkspaceDigestRunningResult {
-  const marked = storage.sql.exec<{ id: string }>(
-    `UPDATE digest_deliveries SET status = 'running', harness_run_id = ?, updated_at = ?
-      WHERE id = ? AND status = 'planned'
-      RETURNING id`,
-    request.harnessRunId,
-    request.at,
-    request.deliveryId,
-  ).toArray()[0];
-  return WorkspaceDigestRunningResultSchema.parse({
-    outcome: marked ? "running" : "not_planned",
-  });
-}
-
-/** Undo a claim whose launch never started, so the scheduler's retry gets another go. */
-export function releaseWorkspaceDigestDeliveryClaim(
-  storage: DurableObjectStorage,
-  request: WorkspaceDigestReleaseClaimRequest,
-): WorkspaceDigestReleaseClaimResult {
-  const released = storage.sql.exec<{ id: string }>(
-    `DELETE FROM digest_deliveries WHERE id = ? AND status = 'planned' RETURNING id`,
-    request.deliveryId,
-  ).toArray()[0];
-  return WorkspaceDigestReleaseClaimResultSchema.parse({
-    outcome: released ? "released" : "kept",
-  });
-}
-
 /** One occurrence as settlement, the trigger context, and the delivery note read it. */
 export function workspaceDigestDeliveryContext(
   storage: DurableObjectStorage,
@@ -475,8 +410,9 @@ export function workspaceDigestDeliveryContext(
     highlight_count: number;
     status: string;
     workstream_id: string | null;
+    summary_markdown: string | null;
   }>(
-    `SELECT id, user_id, planned_for, event_count, highlight_count, status, workstream_id
+    `SELECT id, user_id, planned_for, event_count, highlight_count, status, workstream_id, summary_markdown
        FROM digest_deliveries WHERE id = ? AND workspace_id = ?`,
     request.deliveryId,
     request.workspaceId,
@@ -491,6 +427,7 @@ export function workspaceDigestDeliveryContext(
         highlightCount: Number(row.highlight_count),
         status: row.status,
         workstreamId: row.workstream_id,
+        summaryMarkdown: row.summary_markdown,
       }
       : null,
   });
@@ -551,7 +488,7 @@ export function workspaceDigestTerminalContext(
   const targets = storage.sql.exec<{ target_type: string }>(
     `SELECT DISTINCT target_type FROM digest_delivery_targets target
        JOIN digest_deliveries delivery ON delivery.digest_schedule_id = target.digest_schedule_id
-      WHERE delivery.id = ? ORDER BY target_type LIMIT 2`,
+      WHERE delivery.id = ? ORDER BY target_type LIMIT 3`,
     request.deliveryId,
   ).toArray();
   const prior = storage.sql.exec<{ count: number }>(

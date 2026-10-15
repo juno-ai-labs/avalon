@@ -76,7 +76,7 @@ interface WorkstreamSlackDelivery {
   recipientEmail: string;
   /** Seeds the per-chunk `client_msg_id`, so a retry posts the same message. */
   sourceId: string;
-  kind: "mention" | "participant_added";
+  kind: "mention" | "participant_added" | "activity";
   chunks: (target: string, maximum: number) => string[];
 }
 
@@ -123,6 +123,48 @@ export async function sendWorkstreamParticipantAddedSlack(
     sourceId: input.sourceId,
     kind: "participant_added",
     chunks: (target, maximum) => slackParticipantAddedChunks(input, target, maximum),
+  }, input.workstreamId, request, sleep);
+}
+
+/**
+ * Any other Activity row, for a person who chose Slack for its kind: a thread
+ * or breakout somebody started, or a run Rally finished. Worded as the
+ * sidebar and the push word it.
+ */
+export interface WorkstreamSlackActivity {
+  /** The Activity row's own id, so a retried send is one message. */
+  itemId: string;
+  recipientUserId: string;
+  recipientEmail: string;
+  workspaceId: string;
+  workspaceName: string;
+  workstreamId: string;
+  substreamId?: string;
+  title: string;
+  body: string;
+}
+
+export async function sendWorkstreamActivitySlack(
+  env: Env,
+  input: WorkstreamSlackActivity,
+  request: typeof fetch = fetch,
+  sleep: (milliseconds: number) => Promise<void> = delay,
+): Promise<SlackMentionDelivery> {
+  return deliverWorkstreamSlack(env, {
+    workspaceId: input.workspaceId,
+    ...(input.substreamId ? { substreamId: input.substreamId } : {}),
+    recipientUserId: input.recipientUserId,
+    recipientEmail: input.recipientEmail,
+    sourceId: input.itemId,
+    kind: "activity",
+    chunks: (target, maximum) => chunkSlackTokens([
+      ...escapedSlackTokens(input.title),
+      " in ",
+      ...escapedSlackTokens(input.workspaceName),
+      ".\n\n",
+      ...(input.body ? [...escapedSlackTokens(input.body), "\n\n"] : []),
+      `<${target}|Open in Rally>`,
+    ], maximum),
   }, input.workstreamId, request, sleep);
 }
 
