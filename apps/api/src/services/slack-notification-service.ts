@@ -444,8 +444,29 @@ async function deliverWorkstreamSlack(
       reason,
       posted_chunks: postedChunks,
     });
+    // A message somebody chose to get by Slack has no other channel standing in
+    // for it, so a failure a retry can clear goes back to the queue rather than
+    // being dropped. Chunks carry a stable `client_msg_id`, so a retry does not
+    // post twice what already landed.
+    if (slackFailureRetryable(error)) throw error;
     return outcome;
   }
+}
+
+/**
+ * Whether a retry could succeed: the network failed, or Slack answered with
+ * a server error or a rate limit. Anything Slack refused by name (no such
+ * user, missing scope, an invalid token) will be refused again.
+ */
+function slackFailureRetryable(error: unknown): boolean {
+  if (error instanceof ConnectorError) {
+    const details = error.details;
+    if (details && typeof details === "object" && typeof (details as { error?: unknown }).error === "string") return false;
+    if (error.code !== "provider_error") return false;
+    const status = providerStatus(error);
+    return status === 0 || status === 429 || status >= 500;
+  }
+  return !(error instanceof z.ZodError);
 }
 
 async function postSlackMentionChunk(

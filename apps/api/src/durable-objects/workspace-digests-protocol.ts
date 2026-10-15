@@ -161,8 +161,13 @@ export const WorkspaceDigestClaimRequestSchema = deferredZodSchema(() => z.stric
   cursorThrough: z.number().int().nonnegative(),
   eventCount: z.number().int().nonnegative(),
   highlightCount: z.number().int().nonnegative(),
-  /** `empty` settles the occurrence at claim time: nothing runs, the cursor still moves. */
+  /** `empty` settles the occurrence at claim time: nothing is sent. */
   status: z.enum(["empty", "planned"]),
+  /**
+   * What every destination of a `planned` occurrence receives, written with
+   * the claim so a claimed occurrence is never without it.
+   */
+  summaryMarkdown: z.string().min(1).nullable(),
   at: TimestampSchema,
 }));
 
@@ -192,13 +197,6 @@ export const WorkspaceDigestDeliveryContextSchema = deferredZodSchema(() => z.st
     /** What this occurrence sends, kept at claim so a retry sends the same thing. */
     summaryMarkdown: z.string().nullable(),
   }).nullable(),
-}));
-
-export const WorkspaceDigestSummaryRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  deliveryId: IdSchema,
-  summaryMarkdown: z.string().min(1),
-  at: TimestampSchema,
 }));
 
 export const WorkspaceDigestSettleRequestSchema = deferredZodSchema(() => z.strictObject({
@@ -287,7 +285,6 @@ export type WorkspaceDigestDeliveryContextRequest =
   z.infer<typeof WorkspaceDigestDeliveryContextRequestSchema>;
 export type WorkspaceDigestDeliveryContext =
   z.infer<typeof WorkspaceDigestDeliveryContextSchema>;
-export type WorkspaceDigestSummaryRequest = z.infer<typeof WorkspaceDigestSummaryRequestSchema>;
 export type WorkspaceDigestSettleRequest = z.infer<typeof WorkspaceDigestSettleRequestSchema>;
 export type WorkspaceDigestSettleResult = z.infer<typeof WorkspaceDigestSettleResultSchema>;
 export type WorkspaceDigestTerminalContextRequest =
