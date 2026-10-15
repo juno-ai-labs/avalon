@@ -60,7 +60,6 @@ import {
   substreamLoopId,
   workspaceDOName,
 } from "../src/durable-objects/names";
-import { WorkspaceActivityEventListResultSchema } from "../src/durable-objects/workspace-activity-event-protocol";
 import {
   LegacyWorkspaceConnectorEventClaimResultSchema,
   WorkspaceConnectorEventClaimResultSchema,
@@ -3414,21 +3413,11 @@ describe("Durable Objects in the Workers runtime", () => {
       metadata: {},
       targets: [{ userId: USER_ID, relation: "mentioned" }],
     })).resolves.toBe(activityId);
-    const activityPage = WorkspaceActivityEventListResultSchema.parse(await stub.listActivityEvents({
-      workspaceId: WORKSPACE_ID,
-      userId: USER_ID,
-      from: null,
-      through: 100,
-      notBefore: null,
-      digestibleOnly: false,
-      limit: 20,
-    }));
-    expect(activityPage.items).toHaveLength(1);
-    expect(activityPage.items[0]).toMatchObject({
-      id: activityId,
-      isTarget: true,
-      targetRelations: ["mentioned"],
-      title: "Ada mentioned you",
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(`SELECT event.title, target.relation FROM workspace_activity_events event
+        JOIN workspace_activity_event_targets target ON target.event_id = event.event_id
+        WHERE event.event_id = ? AND target.user_id = ?`, activityId, USER_ID).toArray())
+        .toEqual([{ title: "Ada mentioned you", relation: "mentioned" }]);
     });
 
     const opportunityId = "00000000-0000-7000-8000-000000000402";

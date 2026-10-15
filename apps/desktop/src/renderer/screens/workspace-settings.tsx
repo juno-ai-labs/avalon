@@ -554,18 +554,13 @@ function isPhoneLayout(): boolean {
   return window.matchMedia?.(PHONE_LAYOUT_QUERY).matches ?? false;
 }
 
-/** The digest moved into Notifications; an older link, such as the one in a digest email, still names its own page. */
-function currentSection(section: SettingsSection): SettingsSection {
-  return section === 'digest' ? 'notifications' : section;
-}
-
 function linkedSettingsSection(): SettingsSection | null {
   const nativeSection = parseDesktopSettingsSection(
     new URLSearchParams(window.location.search).get('settingsSection'),
   );
+  if (nativeSection) return nativeSection;
   const hashQuery = window.location.hash.split('?', 2)[1];
-  const section = nativeSection ?? parseDesktopSettingsSection(new URLSearchParams(hashQuery ?? '').get('section'));
-  return section && currentSection(section);
+  return parseDesktopSettingsSection(new URLSearchParams(hashQuery ?? '').get('section'));
 }
 
 export function WorkspaceSettingsScreen({
@@ -1217,7 +1212,7 @@ export function WorkspaceSettingsScreen({
     // A section request names no connection, so it must not reopen whichever
     // page was last shown; `connection` without one lands on Connections.
     setConnectionPageId(null);
-    setActiveSection(currentSection(nextSection));
+    setActiveSection(nextSection);
     if (nextSection === 'workspace') setUsageRequest((count) => count + 1);
   }), [bridge]);
 

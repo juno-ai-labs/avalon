@@ -22,6 +22,7 @@ import { stableUuid } from "../lib/stable-uuid";
 import { emitProductUsageTelemetry, resourceTelemetryEventId, telemetryCountBucket } from "../telemetry/product-usage";
 import { deliverDigest } from "./digest-delivery-service";
 import { resolveDigestsEnabled } from "./digest-flags";
+import { singleLine } from "./resend";
 import { withWorkspaceRuntimeDatabase, workspaceRegionalDatabase } from "./workspace-runtime-database";
 import { canonicalWorkstreamUrl } from "./workstream-link-service";
 
@@ -71,7 +72,7 @@ export async function fireDigestSchedule(
     scheduleId: input.scheduleId,
   })).schedule;
   const identity = digest ? await workspaceRegionalDatabase(env).prepare(
-    `SELECT u.timezone, u.name AS user_name, w.name AS workspace_name, m.access_class
+    `SELECT u.timezone, u.name AS user_name, w.name AS workspace_name
        FROM users u JOIN workspaces w ON w.id = ?
        JOIN workspace_members m ON m.workspace_id = w.id AND m.user_id = u.id AND m.status = 'active'
       WHERE u.id = ?`,
@@ -79,7 +80,6 @@ export async function fireDigestSchedule(
     timezone: string;
     user_name: string;
     workspace_name: string;
-    access_class: "member" | "guest";
   }>() : null;
   // A revoked membership or a deleted schedule is a decision, not a failure:
   // retrying would only reach the same answer.
@@ -136,7 +136,8 @@ export async function fireDigestSchedule(
   }
   if (!delivery.summaryMarkdown) throw new Error("digest_summary_missing");
 
-  // A transient failure throws, so the alarm retries and lands here again.
+  // A destination's failure is recorded, not thrown; an attempt that dies
+  // before settling is retried by the alarm and lands here again.
   const outcome = await deliverDigest(env, {
     workspaceId: input.workspaceId,
     deliveryId,
@@ -170,7 +171,9 @@ async function unreadActivity(env: Env, workspaceId: string, userId: string): Pr
     cursor: null,
     only: null,
   }));
-  return result.ok ? result.page.items.filter((item) => item.unread) : [];
+  // Thrown, not read as "nothing unread": an empty settle would hide why.
+  if (!result.ok) throw new Error(`digest_activity_unreadable:${result.code}`);
+  return result.page.items.filter((item) => item.unread);
 }
 
 /** The sections of a digest, in the order Settings lists the kinds. */
@@ -226,9 +229,13 @@ export async function renderUnreadDigest(env: Env, workspaceId: string, items: r
   return [`${count} unread item${count === 1 ? "" : "s"} in your Activity.`, ...sections].join("\n\n");
 }
 
-/** Brackets and emphasis marks a title may hold, so it stays text inside a link. */
+/**
+ * A title or name as one line of text: its line breaks folded, so it cannot
+ * start a heading or a bullet of its own, and its brackets and emphasis marks
+ * escaped, so it stays text inside a link.
+ */
 function escapeMarkdown(value: string): string {
-  return value.replace(/[\\[\]*_`]/gu, (character) => `\\${character}`);
+  return singleLine(value).replace(/[\\[\]*_`#>]/gu, (character) => `\\${character}`);
 }
 
 async function emitDigestTerminal(

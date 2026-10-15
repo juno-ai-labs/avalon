@@ -21,6 +21,7 @@ import {
   type UserId,
 } from "@rally/contracts";
 
+import { stableUuid } from "../src/lib/stable-uuid";
 import { fireDigestSchedule } from "../src/services/digest-run-service";
 import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
 import { createTestEnv } from "../test/helpers/cloudflare-test";
@@ -176,5 +177,22 @@ describe("the daily digest", () => {
 
     expect(await fireDigestSchedule(digestEnv(), { scheduleId, workspaceId, plannedFor }))
       .toEqual({ sent: false, reason: "already_settled" });
+  });
+
+  it("given an occurrence claimed but not sent, when its alarm fires again, then it sends the text the claim kept rather than reading Activity again", async () => {
+    // A first attempt that claimed and then failed before sending: what was
+    // unread then is kept, and Activity has since been read.
+    const deliveryId = await stableUuid(["digest_delivery", scheduleId, plannedFor]);
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO digest_deliveries
+        (id, workspace_id, digest_schedule_id, user_id, planned_for, cursor_through, event_count, highlight_count,
+         status, summary_markdown, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 0, 2, 1, 'planned', 'Kept from the first attempt.', '2026-01-01', '2026-01-01')`,
+      deliveryId, workspaceId, scheduleId, member, plannedFor);
+    });
+
+    expect(await fireDigestSchedule(digestEnv(), { scheduleId, workspaceId, plannedFor }))
+      .toEqual({ sent: true, deliveryId, itemCount: 2 });
+    expect(await occurrence()).toMatchObject({ status: "delivered", event_count: 2, summary_markdown: "Kept from the first attempt." });
   });
 });

@@ -90,12 +90,13 @@ const CONNECTOR_DELIVERIES: Partial<Record<
 };
 
 /**
- * Sends one written digest to every destination frozen on the schedule.
+ * Sends one digest to every destination frozen on the schedule.
  *
  * Each destination settles on its own: one failing does not hold back the
- * others, and each records its own delivery so a retry of this step re-sends
- * only what has not landed. The first failure is rethrown so the workflow step
- * retries, and the rest are logged rather than lost to settle order.
+ * others, and each records its own delivery. Nothing is rethrown: the digest
+ * is rebuilt from unread Activity at its next occurrence, so a destination
+ * that is down loses one copy, where retrying would hold the schedule row
+ * and every later occurrence behind it until that destination recovered.
  *
  * The three counts are distinct on purpose. `skipped` is "nothing was sent and
  * nothing went wrong" — a destination that already received this digest on an
@@ -175,10 +176,9 @@ export async function deliverDigest(
   for (const failure of failures) {
     logWarn(env, "digest_delivery_failed", {
       delivery_id: context.deliveryId,
-      reason: failure instanceof Error ? failure.message : "unknown",
+      code: failure instanceof ApiError ? failure.code : failure instanceof Error ? failure.name : "unknown_error",
     });
   }
-  if (failures.length > 0) throw failures[0];
   return { delivered, skipped, failed };
 }
 
