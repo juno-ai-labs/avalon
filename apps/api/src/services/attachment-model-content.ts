@@ -255,7 +255,14 @@ export async function normalizeModelImageBytes(
     || dimensions.width * dimensions.height > MAX_IMAGE_PIXELS)) {
     return { ok: false, reason: "image_too_large" };
   }
-  const image = await normalizeImage(bytes, format, options.images, options.documentProcessor);
+  // A truncated GIF or TIFF makes its codec throw rather than return null,
+  // and a TIFF's size is only known once its codec has read it.
+  let image: NormalizedModelImage | null;
+  try {
+    image = await normalizeImage(bytes, format, options.images, options.documentProcessor);
+  } catch {
+    return { ok: false, reason: "image_not_convertible" };
+  }
   return image ? { ok: true, image } : { ok: false, reason: "image_not_convertible" };
 }
 

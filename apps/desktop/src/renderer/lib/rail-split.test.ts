@@ -21,26 +21,32 @@ describe('the even split a panel opens at', () => {
 
   it('matches the conversation when the window can grow to fit the panel', () => {
     vi.spyOn(window.screen, 'availWidth', 'get').mockReturnValue(2_000);
-    sizeRailToEvenSplit();
+    sizeRailToEvenSplit(true);
     expect(useUiStore.getState().railWidth).toBe(824);
   });
 
   it('splits what the screen allows when the window can only partly grow', () => {
     vi.spyOn(window.screen, 'availWidth', 'get').mockReturnValue(1_400);
-    sizeRailToEvenSplit();
+    sizeRailToEvenSplit(true);
     expect(useUiStore.getState().railWidth).toBe(600);
   });
 
   it('splits the window in half when it cannot grow', () => {
     vi.spyOn(window.screen, 'availWidth', 'get').mockReturnValue(1_024);
-    sizeRailToEvenSplit();
+    sizeRailToEvenSplit(true);
+    expect(useUiStore.getState().railWidth).toBe(412);
+  });
+
+  it('splits a browser tab in half, since a tab cannot widen its window', () => {
+    vi.spyOn(window.screen, 'availWidth', 'get').mockReturnValue(2_000);
+    sizeRailToEvenSplit(false);
     expect(useUiStore.getState().railWidth).toBe(412);
   });
 
   it('narrows a panel left wider than an even split', () => {
     vi.spyOn(window.screen, 'availWidth', 'get').mockReturnValue(1_024);
     useUiStore.setState({ railWidth: 700 });
-    sizeRailToEvenSplit();
+    sizeRailToEvenSplit(true);
     expect(useUiStore.getState().railWidth).toBe(412);
   });
 });
