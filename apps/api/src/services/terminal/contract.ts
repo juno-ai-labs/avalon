@@ -5,7 +5,6 @@ import type {
   HarnessToolResult,
 } from "@rally/agent-harness";
 import type { ToolDefinition } from "@rally/contracts";
-import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 
 export const TERMINAL_PLUGIN_ID = "rally:terminal";
@@ -20,6 +19,7 @@ export const TERMINAL_PLUGIN_SYSTEM_MESSAGE = "You have a Linux sandbox with Bas
 
 export const TERMINAL_TOOL_NAMES = [
   "read_file",
+  "view_image",
   "edit_file",
   "write_file",
   "apply_patch",
@@ -27,7 +27,6 @@ export const TERMINAL_TOOL_NAMES = [
   "checkout_repository",
   "import_resource",
   "publish_resource",
-  "preview_site",
   "publish_branch_and_pr",
 ] as const;
 
@@ -40,6 +39,9 @@ const readFileArguments = z.strictObject({
   filePath: relativePath,
   offset: z.number().int().positive().optional(),
   limit: z.number().int().positive().max(1_000).optional(),
+});
+const viewImageArguments = z.strictObject({
+  filePath: relativePath,
 });
 const editFileArguments = z.strictObject({
   filePath: relativePath,
@@ -80,11 +82,6 @@ const publishResourceArguments = z.strictObject({
   displayName: z.string().min(1).max(300).optional(),
   description: z.string().max(2_000).optional(),
 });
-const previewSiteArguments = z.strictObject({
-  url: HttpsUrlSchema,
-  width: z.number().int().positive().optional(),
-  height: z.number().int().positive().optional(),
-});
 const publishBranchAndPrArguments = z.strictObject({
   title: z.string().min(1).max(256),
   body: z.string().max(65_536),
@@ -92,6 +89,7 @@ const publishBranchAndPrArguments = z.strictObject({
 
 export const TerminalArgumentSchemas = {
   read_file: readFileArguments,
+  view_image: viewImageArguments,
   edit_file: editFileArguments,
   write_file: writeFileArguments,
   apply_patch: applyPatchArguments,
@@ -99,7 +97,6 @@ export const TerminalArgumentSchemas = {
   checkout_repository: checkoutRepositoryArguments,
   import_resource: importResourceArguments,
   publish_resource: publishResourceArguments,
-  preview_site: previewSiteArguments,
   publish_branch_and_pr: publishBranchAndPrArguments,
 } as const;
 
@@ -183,6 +180,17 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
       filePath: pathProperty("UTF-8 text-file path relative to the workspace root, using / separators, no leading / and no .. segment."),
       offset: { type: "integer", minimum: 1, description: "One-based starting line. Defaults to 1." },
       limit: { type: "integer", minimum: 1, maximum: 1_000, default: 200, description: "Number of lines to return, at most 1,000 and 256 KiB." },
+    }, ["filePath"]),
+  },
+  view_image: {
+    name: "view_image",
+    description: "Look at one PNG, JPEG, GIF, or WebP image file from the workspace: the image itself is returned to you, not its bytes as text. Use it to check a chart, a generated image, or a screenshot you took, such as a Playwright screenshot of a site you built. Paths are relative to the workspace root.",
+    capability: "terminal.file.read",
+    mode: "read",
+    idempotency: "safe",
+    timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 30_000,
+    inputSchema: objectSchema({
+      filePath: pathProperty("Image path relative to the workspace root, using / separators, no leading / and no .. segment."),
     }, ["filePath"]),
   },
   edit_file: {
@@ -282,19 +290,6 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
       displayName: { type: "string", minLength: 1, maxLength: 300, description: "Optional participant-visible resource title." },
       description: { type: "string", maxLength: 2_000, description: "Optional participant-visible description." },
     }, ["filePath"]),
-  },
-  preview_site: {
-    name: "preview_site",
-    description: "Render a published Rally site in a real browser at a chosen viewport and see the result as an image. Pass the url publish_resource returned. The default viewport is 480 by 900 CSS pixels, about the width of the pane Rally opens a site in, so call it after publishing a site and fix anything that does not read well before you announce the site. Use a wider width to check the desktop layout too.",
-    capability: "terminal.site.preview",
-    mode: "read",
-    idempotency: "safe",
-    timeoutMs: 60_000,
-    inputSchema: objectSchema({
-      url: { type: "string", minLength: 1, maxLength: 4_096, description: "The site url publish_resource returned, optionally with a path." },
-      width: { type: "integer", minimum: 1, description: "Viewport width in CSS pixels. Defaults to 480." },
-      height: { type: "integer", minimum: 1, description: "Viewport height in CSS pixels. Defaults to 900." },
-    }, ["url"]),
   },
   publish_branch_and_pr: {
     name: "publish_branch_and_pr",

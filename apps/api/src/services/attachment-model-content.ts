@@ -236,6 +236,29 @@ export async function loadBrowserCompatibleImage(
     ?? await loadAndCreateModelImage(payloads, attachment, options);
 }
 
+/**
+ * Bring image bytes that are not a stored resource, such as a file in a
+ * Terminal sandbox, to what a model accepts: the same format detection, pixel
+ * bound and Images downscale an attachment gets. A refusal names its reason.
+ */
+export async function normalizeModelImageBytes(
+  bytes: Uint8Array,
+  options: Pick<AttachmentModelContentOptions, "images" | "documentProcessor"> = {},
+): Promise<
+  | { ok: true; image: NormalizedModelImage }
+  | { ok: false; reason: "not_an_image" | "image_too_large" | "image_not_convertible" }
+> {
+  const format = detectImageFormat(bytes);
+  if (!format) return { ok: false, reason: "not_an_image" };
+  const dimensions = nativeSourceDimensions(bytes, format);
+  if (dimensions && (!Number.isSafeInteger(dimensions.width * dimensions.height)
+    || dimensions.width * dimensions.height > MAX_IMAGE_PIXELS)) {
+    return { ok: false, reason: "image_too_large" };
+  }
+  const image = await normalizeImage(bytes, format, options.images, options.documentProcessor);
+  return image ? { ok: true, image } : { ok: false, reason: "image_not_convertible" };
+}
+
 export function modelImageDataUri(
   bytes: Uint8Array,
   mimeType: NormalizedModelImage["mimeType"],

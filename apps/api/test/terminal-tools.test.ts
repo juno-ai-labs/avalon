@@ -437,3 +437,44 @@ describe("Terminal file and command tools", () => {
     });
   });
 });
+
+describe("view_image", () => {
+  // A PNG header carrying its dimensions: what the pipeline reads before it
+  // decides whether the bytes can go to the model as they are.
+  function png(width: number, height: number): Uint8Array {
+    const bytes = new Uint8Array(33);
+    bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(16, width);
+    view.setUint32(20, height);
+    return bytes;
+  }
+
+  function withFile(path: string, bytes: Uint8Array) {
+    const { value } = runtime();
+    return createTerminalToolExecutors({ ...value, readFile: async (_context, read) => read === path ? bytes : null });
+  }
+
+  it("hands the model the image itself, not its bytes as text", async () => {
+    const result = await withFile("shots/site-480.png", png(480, 900)).view_image({ filePath: "shots/site-480.png" }, context);
+
+    expect(result.output).toEqual({ filePath: "shots/site-480.png", mimeType: "image/png", sizeBytes: 33 });
+    expect(result.contentParts).toHaveLength(1);
+    expect(result.contentParts?.[0]).toMatchObject({ type: "image_url", image_url: { detail: "auto" } });
+    expect((result.contentParts?.[0] as { image_url: { url: string } }).image_url.url.startsWith("data:image/png;base64,iVBORw0KGgo")).toBe(true);
+  });
+
+  it.each([
+    ["notes.txt", new TextEncoder().encode("not an image"), "not_an_image"],
+    ["huge.png", png(10_000, 10_000), "image_too_large"],
+    // Over the model's edge with no Images binding to scale it down.
+    ["wide.png", png(4_000, 1_000), "image_not_convertible"],
+  ])("refuses %s and says why", async (path, bytes, code) => {
+    await expect(withFile(path, bytes).view_image({ filePath: path }, context)).rejects.toMatchObject({ code });
+  });
+
+  it("says when the file is not there", async () => {
+    await expect(withFile("a.png", png(1, 1)).view_image({ filePath: "missing.png" }, context))
+      .rejects.toMatchObject({ code: "not_found" });
+  });
+});
