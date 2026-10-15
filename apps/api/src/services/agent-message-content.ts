@@ -1,4 +1,4 @@
-import { AGENT_MESSAGE_CONTENT_KIND, AgentExchangeSchema } from "@rally/contracts";
+import { AGENT_MESSAGE_CONTENT_KIND, AgentExchangeSchema, modelAgentId } from "@rally/contracts";
 import { z } from "zod";
 
 /** Durable message content used both on admission and when rebuilding model context. */
@@ -29,14 +29,14 @@ export function renderAgentMessage(content: z.infer<typeof AgentMessageContentSc
       content.notice === "failed"
         ? `Notice from Rally, not from an agent: the agent below failed${content.noticeReason ? ` (${content.noticeReason})` : ""}.`
         : "Notice from Rally, not from an agent: the agent below finished without replying.",
-      `Agent: ${content.senderAgentId}.`,
+      `Agent: ${modelAgentId(content.senderAgentId)}.`,
       text,
     ].join("\n");
   }
   return [
-    `Message from agent ${content.senderAgentId}.`,
+    `Message from agent ${modelAgentId(content.senderAgentId)}.`,
     `Message ID: ${content.messageId}. Use this message ID when responding to the sender.`,
-    `Team: ${content.teamId}.`,
+    `Team: ${modelAgentId(content.teamId)}.`,
     text,
     ...(content.attachmentIds.length
       ? [`Attached resource IDs: ${content.attachmentIds.join(", ")}. Use the resource tools to inspect them.`] : []),

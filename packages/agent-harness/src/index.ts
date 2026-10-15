@@ -2688,19 +2688,19 @@ const automationDraftSubmissionJsonSchema = {
   properties: {
     sidekickId: {
       type: ["string", "null"],
-      description: "The id of a Sidekick this conversation already owns, from sidekicks_list, to replace its definition with this draft. Null creates a new Sidekick. In a Sidekick's own conversation the draft always goes to that Sidekick."
+      description: "This Sidekick's id, or null. The draft always goes to the Sidekick whose conversation this is."
     },
     name: { type: "string", description: "A short name for the Sidekick as it appears in the person's list, for example \"Weekly release notes\"." },
     description: { type: "string", description: "One sentence saying what the Sidekick does, for the list beside its name." },
     icon: {
       type: "string",
       enum: [...WORKSTREAM_ICON_KEYS_STORABLE],
-      description: `The Sidekick's icon, drawn inside its hexagon wherever it is listed, as the exact key of one mark below. Each line is a key and a description of the mark it draws. A Sidekick that already has one keeps it unless the person asks for another: sidekicks_list shows the current one. A new choice is one of the marks below. The other values are accepted only to keep a Sidekick's current icon.\n\n${WORKSTREAM_ICON_CATALOG}`,
+      description: `The Sidekick's icon, drawn inside its hexagon wherever it is listed, as the exact key of one mark below. Each line is a key and a description of the mark it draws. A Sidekick that already has one keeps it unless the person asks for another: sidekick_sidekicks_list shows the current one. A new choice is one of the marks below. The other values are accepted only to keep a Sidekick's current icon.\n\n${WORKSTREAM_ICON_CATALOG}`,
     },
     color: {
       type: "string",
       enum: [...PROJECT_COLOR_KEYS_STORABLE],
-      description: `The color of the Sidekick's hexagon. A Sidekick that already has one keeps it unless the person asks for another: sidekicks_list shows the current one. A new choice is one of ${PROJECT_COLOR_RING.join(", ")}. The other values are accepted only to keep a Sidekick's current color.`,
+      description: `The color of the Sidekick's hexagon. A Sidekick that already has one keeps it unless the person asks for another: sidekick_sidekicks_list shows the current one. A new choice is one of ${PROJECT_COLOR_RING.join(", ")}. The other values are accepted only to keep a Sidekick's current color.`,
     },
     overview: { type: "string", description: "A few sentences for the person approving it: what it watches, what it does each time, and where the result goes. This is what somebody reads to decide whether to accept the draft." },
     instructions: { type: "string", description: "What each run should actually do, written for a run that cannot see this conversation. Name the steps, the tools, and what finishing looks like. A result meant to reach an inbox, a channel, or a document is only sent if a step here says to send it." },
@@ -3050,7 +3050,7 @@ export function activityTriggerScopeRefusal(
   plugin: Pick<AutomationCreatorPluginCatalogEntry, "displayName" | "scope" | "activityRequiresScope">,
 ): string | null {
   if (!plugin.activityRequiresScope || plugin.activityRequiresScope === plugin.scope) return null;
-  return `${plugin.displayName} events reach Rally only through a ${plugin.activityRequiresScope} connection, and this one is ${plugin.scope}, so no automation can be triggered by it. Tell the person a ${plugin.activityRequiresScope} connection is required and stop; do not substitute a schedule or another plugin's events.`;
+  return `${plugin.displayName} events reach Rally only through a ${plugin.activityRequiresScope} connection, and this one is ${plugin.scope}, so no Sidekick can be triggered by it. Tell the person a ${plugin.activityRequiresScope} connection is required and stop; do not substitute a schedule or another plugin's events.`;
 }
 
 export function executeAutomationCreatorDiscoveryTool(
@@ -3796,7 +3796,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "sidekicks_list",
-    description: "List editable Sidekick definitions (canEdit) and, in workstreams, workspace Sidekick summaries available to recommend (canAttach, attached). Edit definitions in the Sidekick's authoring conversation; use attach or detach for workspace recommendations. Recommendations affect future executions; load_skill is still required to use one now.",
+    description: "In a Sidekick's own conversation, its current definition, which an edit starts from. In a thread, the organization Sidekicks this thread can recommend (canAttach, attached); use attach or detach for those. Recommendations affect future executions; load_skill is still required to use one now.",
     capability: "rally.sidekick.list",
     mode: "read",
     idempotency: "safe",

@@ -116,7 +116,7 @@ export function createTerminalRepositorySelector(
         throw new TerminalToolError(
           "repository_user_authority_required",
           "Repository checkout requires an active participant's user authority. Run this work stream from an active participant account.",
-          { reason: "A workspace automation cannot choose a repository until it has explicit repository authority." },
+          { reason: "An organization Sidekick cannot choose a repository until it has explicit repository authority." },
         );
       }
       const requesterUserId = context.executionPrincipal.userId;

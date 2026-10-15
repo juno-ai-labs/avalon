@@ -588,7 +588,6 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
 export const AUTOMATIONS_PLUGIN_ID = "rally:sidekicks";
 
 export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
-  "Workspace Sidekicks marked canAttach may be attached or detached proactively when useful for this workstream. Attachment recommends them in future executions; call load_skill separately to use them now. Only edit entries marked canEdit.",
   "Sidekicks let people delegate work or knowledge. Create and edit them through conversation; never ask users to edit system instructions.",
   "Generate both internal instructions and a clear user-friendly description of the behavior. Explain missing details through questions.",
   "A ready submission saves and activates immediately. Do not ask the person to press Create or Apply. Submit only the behavior they requested.",
@@ -601,8 +600,8 @@ export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
   "A Sidekick outlives whoever asked for it. Include each result destination and delivery step in its instructions.",
   "To send a result to an inbox, channel, DM, or document, name the recipient and tell the run to send it.",
   "Scheduled result delivery to a workstream is limited to the owning workstream.",
-  "To change a Sidekick that already exists, discover it and start from its current definition,",
-  "and submit the whole revised draft with its sidekickId; ready changes save immediately.",
+  "To change this Sidekick, read its current definition with sidekick_sidekicks_list first,",
+  "and submit the whole revised draft; ready changes save immediately.",
 ].join(" ");
 
 /**

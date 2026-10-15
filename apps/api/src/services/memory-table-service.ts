@@ -1445,7 +1445,7 @@ export async function materializeAutomationMemoryTables(
         throw new ApiError(
           422,
           "sidekick_memory_table_conflict",
-          `A durable table named "${declared.name}" already exists in this automation's memory with a different shape`,
+          `A durable table named "${declared.name}" already exists in this Sidekick's memory with a different shape`,
         );
       }
       results.push({ name: declared.name, memoryTableId: outcome.memoryTableId, outcome: "opened" });
