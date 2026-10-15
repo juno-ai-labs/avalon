@@ -524,6 +524,8 @@ const rendererCrashRecovery = new RendererCrashRecovery({
 });
 let conversationDetailsExpansion = 0;
 let conversationDetailsAppliedWidth = 0;
+let conversationDetailsShift = 0;
+let conversationDetailsAppliedX = 0;
 let settingsWindow: BrowserWindow | null = null;
 let sidekicksWindow: BrowserWindow | null = null;
 /** The one window that imports a signed-in Claude or ChatGPT conversation. */
@@ -4161,6 +4163,7 @@ function registerIpc(): void {
       // Native window modes belong to the person. Never unmaximize or arm a
       // delayed restore that could overwrite a later open/close cycle.
       conversationDetailsExpansion = 0;
+      conversationDetailsShift = 0;
       return;
     }
     if (!input.open && conversationDetailsExpansion === 0) return;
@@ -4171,9 +4174,13 @@ function registerIpc(): void {
       input.open ? input.width : 0,
       mainWindow.getMinimumSize()[0] ?? 0,
       conversationDetailsAppliedWidth,
+      conversationDetailsShift,
+      conversationDetailsAppliedX,
     );
     conversationDetailsExpansion = next.addedWidth;
     conversationDetailsAppliedWidth = next.bounds.width;
+    conversationDetailsShift = next.shiftedLeft;
+    conversationDetailsAppliedX = next.bounds.x;
     if (next.bounds.width !== bounds.width || next.bounds.x !== bounds.x) {
       mainWindow.setBounds(next.bounds, true);
     }

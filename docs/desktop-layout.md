@@ -31,19 +31,31 @@ selected artifact panel is scoped to a thread and Breakout address; its resource
 conversation before the panel is drawn.
 
 Every attachment and artifact opens its panel at an even split with the
-conversation (`sizeRailToEvenSplit`, called from `openPanel`). Opening a panel
-already widens the window by the panel's width where the screen has room, so
-the split is the conversation's present width, capped at half of what the
-screen allows; a maximized window splits in half. It applies only when the
-panel opens: switching items in an open panel keeps the width the person
-dragged it to, and that width is stored per conversation as before.
+conversation (`openRailAtEvenSplit`, called from `openPanel`). Opening a panel
+widens the window by the panel's width where the screen has room, and closing
+it gives back that width and any distance the window moved left to fit it
+(`conversation-details-geometry.ts`), unless the person moved or resized the
+window in between. So the split is the conversation's present width, capped
+at half of what the screen allows; a maximized window splits in half, and so
+does a browser tab, which cannot resize its window. The conversation is
+measured without the room it keeps for a panel already open beside it, so a
+Breakout taking over its Channel's panel splits against itself alone.
+
+Switching items in a panel already open for the same conversation keeps the
+width the person dragged it to. The split itself is not saved: the width
+stored per conversation is the one last dragged to, and it is what a panel
+restored on relaunch comes back at. Double-click or `Enter` on the panel's
+edge resets it to the narrow 320px default, not to the split.
 
 Every draggable edge, the sidebar's, the right panel's, and the
 split-conversation divider's, takes the same hit width,
-`--resize-hit-size` in `packages/ui/src/styles/app.css`. The sidebar's and the
-divider's are centred on their line. The panel's reaches mostly over the
-conversation, because a live site's native view covers the panel's body and
-takes the pointer from anything under it.
+`--resize-hit-size` in `packages/ui/src/styles/app.css`. The sidebar's is
+centred on its line. The panel's and the divider's sit inside the panel or
+Breakout and reach only 2px over the conversation, so the transcript's
+scrollbar beside them stays draggable. A panel holding a live site or a
+browser page is the exception: its native view covers the panel's body and
+takes the pointer from anything under it, so there the target reaches over
+the conversation instead and covers the scrollbar's last few pixels.
 
 The shell records Channel routes (`/channels/:id`, with or without an open
 thread) and lone thread routes (`/workstreams/:id`), including a breakout
@@ -97,7 +109,9 @@ the windows the person left open.
 
 `workstream-landing.test.tsx` checks route restoration and the landing order;
 `desktop-layout.test.tsx` checks the unused semantic row hook;
-`artifact-window-state.test.ts` checks the local registry and monitor clamp.
+`artifact-window-state.test.ts` checks the local registry and monitor clamp;
+`rail-split.test.ts` checks the width a panel opens at, and
+`conversation-details-geometry.test.ts` the window's growth and its return.
 The desktop acceptance check opens, moves, quits, and relaunches real Electron
 windows, and checks that rail positions and panels return visibly.
 
@@ -106,19 +120,35 @@ windows, and checks that rail positions and panels return visibly.
 ### 2026-10-15 — Panels open 50/50, and every edge is equally easy to grab
 
 **What changed:** Attachments and artifacts open their panel at an even split
-with the conversation instead of the 320px default. The sidebar, the right
-panel and the split-conversation divider share one hit width, 14px, through
-`--resize-hit-size`; they had been 12px, 14px and 8px.
+with the conversation instead of the 320px default, without saving the split
+over the dragged width. Closing a panel now also moves the window back to
+where it was. The sidebar, the right panel and the split-conversation divider
+share one hit width, 14px, through `--resize-hit-size`; they had been 12px,
+10px and 8px.
 
 **Why:** At 320px most generated sites fell into their phone layout and a
-document read as a narrow column. The edges had drifted apart one by one, and
-the panel's had been mostly covered by the site view (see
-[`live-web-artifacts.md`](live-web-artifacts.md#changelog)), so it felt like
-one pixel. One token keeps them from drifting again.
+document read as a narrow column. The panel's target sat inside its edge,
+where a live site's composited view takes the pointer, so only the strip
+beside the header could be grabbed and it felt like one pixel; the edges had
+also drifted apart one by one. Growing the window by the conversation's whole
+width, rather than 320px, made the old leftward drift on close large enough to
+notice: a default window on a laptop ended pinned to the screen's left edge.
 
-**Consequences:** The split is applied on opening only, so a dragged width
-survives switching items. A new draggable edge should take its width from
-`--resize-hit-size`.
+**Considered and rejected:** Splitting evenly only for live sites, and only
+when the panel was narrower than the split, was the first version. Every kind
+of panel had the same narrow-column problem, and a rule that sometimes kept
+the old width made the opening width hard to predict. Saving the split as the
+conversation's width was rejected because every opening would then overwrite
+the width the person dragged to. Putting every target over the conversation,
+as a live site needs, covered the transcript's scrollbar on every panel.
+
+**Consequences:** The renderer predicts how far the main process will grow the
+window; a change to `conversation-details-geometry.ts`'s rules has to move
+`rail-split.ts` with it. Double-click reset goes to 320px, not the split. A new
+draggable edge should take its width from `--resize-hit-size` and keep clear
+of a scrollbar beside it.
+
+Shipped in [#1248](https://github.com/juno-ai-labs/avalon/pull/1248).
 
 ### 2026-10-10 — Restore Channel routes and the sidebar's section
 

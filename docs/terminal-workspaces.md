@@ -4,14 +4,14 @@ Terminal is Rally's deferred Bind plugin for bounded code execution, file
 mutation, resource exchange, and GitHub repository work. It gives a
 conversation one private Daytona sandbox — shared with every background agent
 that conversation starts — without turning Rally into an interactive coding
-harness: the model receives nine typed tools, not a PTY or a provider API, and a
+harness: the model receives ten typed tools, not a PTY or a provider API, and a
 sandbox is allocated only when one of those tools executes.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/services/terminal/contract.ts` | Canonical plugin prompt, nine tool descriptors and strict argument schemas, and regional configuration contract. |
+| `apps/api/src/services/terminal/contract.ts` | Canonical plugin prompt, ten tool descriptors and strict argument schemas, and regional configuration contract. |
 | `apps/api/src/services/terminal/plugin.ts` | Regional composition boundary and allocation-free deferred plugin registration. |
 | `apps/api/src/services/terminal/authority.ts` | Which conversation's sandbox a run uses: its own, or for a background agent the conversation that (transitively) started it, resolved once at plugin composition from WorkspaceDO's delegation records. |
 | `apps/api/src/services/terminal/coordinator.ts` | One-sandbox-per-conversation acquisition, authority fencing, exclusive mutation leases — including a lease held by a run in another conversation — and recovery after ambiguous provider calls. |
@@ -36,7 +36,7 @@ sandbox is allocated only when one of those tools executes.
 ### Loading and allocation
 
 `rally:terminal` is a built-in deferred plugin. Bind can discover it without
-any provider operation. An explicit load exposes all nine tools and the language
+any provider operation. An explicit load exposes all ten tools and the language
 guidance and starts the sandbox acquisition in the background: activation
 registers the shared per-run acquisition promise and returns without holding
 the model, so the sandbox is built while the model does work that needs no
@@ -79,7 +79,7 @@ the sweep or a policy change) runs readiness again under the lease. So a
 conversation and the agents it starts interleave at call granularity: a
 sibling's `sandbox_busy` is a wait of seconds, for the length of one call or
 one command, and the model is told to retry rather than to wait for a run.
-`read_file` takes no lease at all: it needs the sandbox running and the
+The reads, `read_file` and `view_image`, take no lease at all: it needs the sandbox running and the
 authority fingerprint to be this caller's, both read from the row, and it
 neither waits on another run's call nor blocks one. The bargain is that a read
 can observe a file another run is mid-way through writing. A run whose command
@@ -124,12 +124,16 @@ model not to install another runtime or manager.
 ### Files and commands
 
 The model receives `read_file`, `view_image`, `edit_file`, `write_file`,
-`apply_patch`, and `run_command`. `view_image` reads a PNG, JPEG, GIF or WebP
-through the same contained read as `read_file` and returns the picture to the
-model, normalized by the attachment image pipeline
-(`normalizeModelImageBytes`), so a chart or a Playwright screenshot can be
-checked by looking at it. A file it cannot deliver is refused with
-`not_an_image`, `image_too_large` or `image_not_convertible`. File paths are relative to the workspace root, `/workspace`,
+`apply_patch`, and `run_command`. `view_image` reads a PNG, JPEG, GIF, WebP,
+TIFF or HEIF through the contained whole-file read an `edit_file` starts with,
+and returns the picture to the model for that turn only, normalized by the
+attachment image pipeline (`normalizeModelImageBytes`): scaled by the region's
+Images binding to the model's edge limit and refused past its byte limit. A
+chart or a Playwright screenshot can then be checked by looking at it. A file it
+cannot deliver is refused with `not_an_image`, `image_too_large` or
+`image_not_convertible`. The picture is not kept in the tool receipt, so a
+replayed `view_image` reads the file again rather than returning a success with
+nothing to see. File paths are relative to the workspace root, `/workspace`,
 which `cwd` may name as `.` or leave out; `publish_resource` alone resolves its
 path against `$AVALON_RESOURCE_DIR` (`/workspace/.rally-output`). Path syntax
 is validated before provider I/O, and a refusal echoes the value it refused,
@@ -686,8 +690,8 @@ personless; it is not duplicated into these product events.
   runs, looks only at the ancestors of the path that tool addressed, and the
   model neither calls it nor sees its raw output.
 - **The probe never decides a tool's outcome, and no mutation waits for it.**
-  The fragment rides the two reads only, the `read_file` page read and the
-  read an `edit_file` starts with, runs in an isolated subshell whose status
+  The fragment rides the reads only: the `read_file` page read, and the
+  whole-file read that `edit_file` starts with and `view_image` makes, runs in an isolated subshell whose status
   never escapes, and reports what it found; the instructions arrive with that
   batch, and a write, a patch, a command or an import is never refused for an
   instruction file it has not seen (the gate that did so was removed on
@@ -713,7 +717,8 @@ adapter. Bind owns deferred-plugin discovery, durable tool receipts, transcript
 streaming, and execution-principal context; see
 [`agent-harness.md`](agent-harness.md). The attachment subsystem owns generated
 resource lifecycle and current-authority reads; see
-[`agent-attachments.md`](agent-attachments.md). The GitHub connector owns the App
+[`agent-attachments.md`](agent-attachments.md), which also owns the model-image
+normalization `view_image` uses. The GitHub connector owns the App
 installation and webhook boundary. WorkspaceDO owns alarm serialization through
 its shared alarm list — see [`durable-object-alarms.md`](durable-object-alarms.md)
 — while Terminal supplies only its due-row projection and transition
@@ -776,12 +781,12 @@ network proxy, or a general GitHub administration surface.
 - A provider create timeout is reconciled by stable sandbox name. Provider,
   lifecycle, and policy failures remain durable and retryable; policy read-back
   mismatch leaves verification failed rather than claiming the new policy.
-- Files are UTF-8 regular files and at most 10 MiB. Reads return at most 1,000
+- Files are regular files and at most 10 MiB; the text tools read UTF-8 only. Reads return at most 1,000
   lines and 256 KiB. A patch is at most 2 MiB and 100 files, in either format.
 - An instruction file's delivered content and a kind's prompt section are
   bounded by two limits that are open placeholders until the team sets them;
   [`resident-context.md`](resident-context.md#failure-modes-and-limits) owns
-  them. The probe rides the two read commands only; no mutation carries one
+  them. The probe rides the read commands only; no mutation carries one
   or pays a probe command of its own.
 - A command is at most 32 KiB, defaults to 120 seconds, and is capped at 900
   seconds. Inline stdout and stderr are each head/tail bounded to 128 KiB; the
@@ -1247,18 +1252,30 @@ update lag before changing the default.
 
 ### 2026-10-15 — The agent can look at an image it made
 
-**What changed:** A new read tool, `view_image`, returns a PNG, JPEG, GIF or
-WebP from the workspace to the model as an image, through the attachment image
-pipeline (`normalizeModelImageBytes`).
+**What changed:** A new read tool, `view_image`, returns an image file from
+the workspace to the model as a picture for that turn, through the attachment
+image pipeline (`normalizeModelImageBytes`). A completed `view_image` receipt is
+never replayed: the host discards it and the read runs again.
 
-**Why:** A generated site rendered one word per line in Rally's narrow panel,
-and the agent had no way to see that. With Playwright in the snapshot
-(juno-ai-labs/avalon#1246) it can take a screenshot; this lets it look at one,
-and at any chart or image it generates.
+**Why:** #1246 put Playwright in the snapshot so an agent can screenshot the
+site it built (that entry tells the incident); without a way to see the
+screenshot, the step was pointless. A Terminal tool, not `view_resource`,
+because a screenshot is scratch work, and publishing each one as a resource
+would put it in front of the participants and write it to R2.
 
-**Consequences:** `view_image` reads through the same contained, size-limited
-read as `read_file`, and names why it cannot show a file rather than failing
-generically.
+**Considered and rejected:** Replaying the receipt with only its JSON, which
+every other Terminal read does. The model would get a success with no picture
+and announce a layout it never saw. The picture cannot be rebuilt from regional
+state either, because the file lives in the sandbox and may have changed.
+
+**Consequences:** The terminal now depends on the attachment image limits and
+the region's `IMAGES` binding: without Images, an image with an edge over
+2048px is refused rather than scaled, and a change to those limits in
+`attachment-model-content.ts` changes what this tool accepts. Nothing bounds how
+many images a run may view; each one stays in the live window and is resent on
+every later model call.
+
+Shipped in [#1248](https://github.com/juno-ai-labs/avalon/pull/1248).
 
 ### 2026-10-15 — The weekly snapshot carries Playwright, and Trusted only reaches Rally sites
 

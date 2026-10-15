@@ -186,6 +186,12 @@ These, by contrast, are **not** brittle literals and are fine to name:
   names a skill's `ownerPlugin` back to the model. Say "load the Google
   plugin", not "call `gmail_search_messages`".
 - **Another skill's name** — a composition reference is a stable anchor.
+- **The owner plugin's own tools, in a skill that plugin owns** — a skill
+  whose `ownerPlugin` is the plugin that defines the tool is only offered where
+  that tool is, and its tool names are as fixed as the plugin's. So
+  `building-live-sites`, owned by `rally:terminal`, names `run_command`,
+  `view_image` and `publish_resource`. A tool from any other plugin is still a
+  behavior to describe.
 
 Error-code literals the model branches on are a softer smell: prefer describing
 the condition ("if the tool reports the connection is no longer authorized")

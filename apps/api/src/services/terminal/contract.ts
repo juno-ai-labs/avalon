@@ -184,7 +184,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
   },
   view_image: {
     name: "view_image",
-    description: "Look at one PNG, JPEG, GIF, or WebP image file from the workspace: the image itself is returned to you, not its bytes as text. Use it to check a chart, a generated image, or a screenshot you took, such as a Playwright screenshot of a site you built. Paths are relative to the workspace root.",
+    description: "Look at one PNG, JPEG, GIF, WebP, TIFF, or HEIF image file from the workspace: the image itself is returned to you, not its bytes as text. Use it to check a chart, a generated image, or a screenshot you took.",
     capability: "terminal.file.read",
     mode: "read",
     idempotency: "safe",
