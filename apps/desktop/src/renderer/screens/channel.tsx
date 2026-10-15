@@ -11,7 +11,7 @@ import { TitleMenuItem, TitlePillAction, TitlePillHeader, type TitlePillLevel } 
 import { IconCloudDownload, IconPalette, IconPlus } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { ChannelComposer } from '../components/channel-composer';
 import { MarkdownBody } from '../components/workstream-blocks';
@@ -21,7 +21,7 @@ import { reportActivityEvent } from '../lib/activity-events';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { copySpaceLink } from '../lib/copy-workstream-link';
-import { ChannelPaneContextValue, channelRoute, threadRoute, usePaneExpansion, type ChannelPaneContext } from '../lib/navigation-routes';
+import { ChannelPaneContextValue, OPEN_EXPANDED, channelRoute, threadRoute, usePaneExpansion, type ChannelPaneContext } from '../lib/navigation-routes';
 import { PaneVisibility } from '../lib/pane-visibility';
 import { useNow } from '../lib/clock';
 import { formatDayLabel } from '../lib/format';
@@ -70,13 +70,14 @@ function ChannelStack({ channelId, threadId, workspace }: {
   const { session } = useAppSession();
   const space = useChannel(channelId);
   const [threadUsesTwoPanes, setThreadUsesTwoPanes] = useState(false);
-  const { expanded, setExpanded } = usePaneExpansion(threadId);
-  // A breakout or a panel ends the expansion: the thread and what it opened
-  // split the window as they would have, and closing it returns to the pair.
-  const reportThreadUsesTwoPanes = useCallback((twoPanes: boolean): void => {
-    setThreadUsesTwoPanes(twoPanes);
-    if (twoPanes) setExpanded(false);
-  }, [setExpanded]);
+  // A request to open a breakout expanded is the breakout's: the thread keeps
+  // whatever it had, beside the Channel or expanded over it.
+  const opensBreakout = new URLSearchParams(useLocation().search).has('substream');
+  const { expanded: held, setExpanded } = usePaneExpansion(threadId, !opensBreakout);
+  // A breakout or a panel puts the expansion on hold: the thread and what it
+  // opened split the window as they would have, and closing it returns to the
+  // thread expanded, as it was.
+  const expanded = held && !threadUsesTwoPanes;
   const [shown, setShown] = useState<SplitConversationMode>('split');
   const widthKey = layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', 'thread-width');
   const [threadWidth, setThreadWidth] = useState<number | null>(() => {
@@ -101,10 +102,10 @@ function ChannelStack({ channelId, threadId, workspace }: {
       onSelect: () => void navigate(channelRoute(channelId)),
     },
     shifted,
-    setThreadUsesTwoPanes: reportThreadUsesTwoPanes,
+    setThreadUsesTwoPanes,
     expanded,
     setExpanded,
-  }), [channelId, expanded, navigate, reportThreadUsesTwoPanes, setExpanded, shifted, space, threadId]);
+  }), [channelId, expanded, navigate, setExpanded, shifted, space, threadId]);
   return <ChannelPaneContextValue.Provider value={pane}>
     <SplitConversationLayout
       breakout={threadId === null ? null : <WorkstreamRoute key={threadId} />}
@@ -308,7 +309,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
 
   if (active.data === undefined) return <LoadingState label="Opening channel…" />;
   if (!space) return <EmptyState description="It may have been archived, made private, or you may no longer have access." title="Channel not found" />;
-  const openThread = (threadId: string): void => void navigate(threadRoute(threadId, channelId));
+  const openThread = (threadId: string): void => void navigate(threadRoute(threadId, channelId), { state: OPEN_EXPANDED });
   // Only a member may start a thread in a private Channel; a thread placed
   // there is the Channel's to accept (`canEdit` on the server).
   const canStart = workspace.currentUser.accessClass !== 'guest' && space.reach !== 'through_channel';
