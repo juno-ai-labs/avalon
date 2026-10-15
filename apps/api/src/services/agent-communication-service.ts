@@ -261,11 +261,16 @@ export class AgentCommunicationService {
       ? await workspace.listSidekickDirectoryForAuthorizedMember(request)
       : await workspace.listSidekickDirectory(request);
     const owningWorkstreamId = await this.owningWorkstream();
-    return { sidekicks: listed.items.sort((a, b) =>
-      Number(b.owningWorkstreamId === owningWorkstreamId) - Number(a.owningWorkstreamId === owningWorkstreamId),
-    ).map((sidekick) => ({
+    // The model is never told its own workstream id, so a raw owner id gave it
+    // nothing to compare against: it read a blank draft owned by another
+    // thread as this one's and rewrote it. Ownership is answered here instead.
+    // A conversation with no owning workstream owns none, so `null` never
+    // matches a personal or workspace Sidekick's absent owner.
+    const owned = (sidekick: { owningWorkstreamId: string | null }) =>
+      owningWorkstreamId !== null && sidekick.owningWorkstreamId === owningWorkstreamId;
+    return { sidekicks: listed.items.sort((a, b) => Number(owned(b)) - Number(owned(a))).map((sidekick) => ({
       sidekickId: sidekick.id, name: sidekick.name, description: sidekick.description,
-      scope: sidekick.scope, owningWorkstreamId: sidekick.owningWorkstreamId,
+      scope: sidekick.scope, ownedByThisWorkstream: owned(sidekick),
       agentId: agentIdForAddress({ parentKind: "automation", parentId: sidekick.id, substreamId: asSubstreamId("0") }),
     })) };
   }
