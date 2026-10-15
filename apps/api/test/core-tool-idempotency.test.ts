@@ -276,10 +276,10 @@ describe("Avalon connector connection tools", () => {
       .resolves.toEqual({
         output: {
           connectorId: "google-drive-workspace",
-          scope: "personal",
           state: "connected",
+          connections: [{ scope: "personal", state: "connected" }],
         },
-        summary: "google-drive-workspace personal connection is connected",
+        summary: "google-drive-workspace: personal connected",
       });
 
     objectDatabase.prepare(
@@ -306,6 +306,69 @@ describe("Avalon connector connection tools", () => {
     );
     await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "workspace" }, context()))
       .resolves.toMatchObject({ output: { state: "connected" } });
+  });
+
+  it("checks every scope a connector offers when no scope is named", async () => {
+    // A person whose personal Drive was connected was asked to connect Drive,
+    // because the check looked at the workspace scope alone.
+    const { env, objectDatabase } = fixture();
+    const stateTool = __integrationTesting.createAvalonTools(env, workflowInput())
+      .find((candidate) => candidate.definition.name === "get_connector_connection_state");
+    objectDatabase.prepare(
+      `INSERT INTO connector_connections
+         (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+          granted_scopes_json, status, created_at, updated_at, model_plugin_id)
+       VALUES (?, ?, 'google', 'personal', ?, 'Google Drive + Docs + Sheets',
+          ?, 'healthy', '2026-01-01', '2026-01-01', 'plugin_google')`,
+    ).run(
+      "00000000-0000-4000-8000-000000000020",
+      WORKSPACE_ID,
+      USER_ID,
+      JSON.stringify(["drive.read", "sheets.write"]),
+    );
+
+    await expect(stateTool!.execute({ connectorId: "google-drive-workspace" }, context()))
+      .resolves.toEqual({
+        output: {
+          connectorId: "google-drive-workspace",
+          state: "connected",
+          connections: [
+            { scope: "personal", state: "connected" },
+            { scope: "workspace", state: "not_connected" },
+          ],
+        },
+        summary: "google-drive-workspace: personal connected, workspace not_connected",
+      });
+
+    objectDatabase.prepare(
+      `INSERT INTO connector_connections
+         (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+          granted_scopes_json, status, created_at, updated_at, model_plugin_id)
+       VALUES (?, ?, 'google', 'workspace', NULL, 'Workspace Google Drive',
+          ?, 'needs_reconnect', '2026-01-01', '2026-01-01', 'plugin_google_workspace')`,
+    ).run(
+      "00000000-0000-4000-8000-000000000021",
+      WORKSPACE_ID,
+      JSON.stringify(["drive.read"]),
+    );
+    objectDatabase.prepare(
+      "UPDATE connector_connections SET status = 'disabled' WHERE model_plugin_id = 'plugin_google'",
+    ).run();
+    await expect(stateTool!.execute({ connectorId: "google-drive-workspace" }, context()))
+      .resolves.toMatchObject({
+        output: {
+          state: "reconnect_required",
+          connections: [
+            { scope: "personal", state: "not_connected" },
+            { scope: "workspace", state: "reconnect_required" },
+          ],
+        },
+      });
+    // A personal-only connector reports the one scope it has.
+    await expect(stateTool!.execute({ connectorId: "google-mail-calendar" }, context()))
+      .resolves.toMatchObject({
+        output: { state: "not_connected", connections: [{ scope: "personal", state: "not_connected" }] },
+      });
   });
 
   it("returns easy-English current time in the user's configured timezone", async () => {

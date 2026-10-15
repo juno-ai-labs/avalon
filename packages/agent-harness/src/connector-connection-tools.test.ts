@@ -15,14 +15,15 @@ describe("connector connection tool guidance", () => {
     expect(show.name).toBe("show_connector_connection");
     expect(check.description).toContain("Call this first.");
     expect(check.description).toContain("connected, reconnect_required, not_connected, or unavailable");
-    expect(check.description).toContain("show_connector_connection with the same connectorId and scope");
+    expect(check.description).toContain("Leave scope out: the check covers every scope the connector offers");
+    expect(check.description).toContain("show_connector_connection with the same connectorId and the scope the task needs");
     expect(show.description).toContain("Call only after get_connector_connection_state returns");
-    expect(show.description).toContain("Use the same connectorId and scope.");
+    expect(show.description).toContain("Use the same connectorId, and the scope the task needs.");
     expect(show.description).toContain("do not claim the connector is connected");
   });
 
-  it("describes both shared parameters in direct product language", () => {
-    const schema = AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION.inputSchema as {
+  it("describes both card parameters in direct product language", () => {
+    const schema = AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION.inputSchema as {
       additionalProperties?: unknown;
       properties?: Record<string, { description?: string }>;
       required?: string[];
@@ -51,6 +52,15 @@ describe("connector connection tool guidance", () => {
     }
     expect(schema.properties?.scope?.description)
       .toBe("Use personal for the current user's account. Use workspace only for an id described as personal or workspace.");
-    expect(AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION.inputSchema).toEqual(schema);
+  });
+
+  it("lets the state check leave scope out", () => {
+    const schema = AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION.inputSchema as {
+      properties?: Record<string, { description?: string }>;
+      required?: string[];
+    };
+    expect(schema.required).toEqual(["connectorId"]);
+    expect(schema.properties?.scope?.description)
+      .toBe("Leave out to check every scope this connector offers. Set only to check one scope on purpose.");
   });
 });

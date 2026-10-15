@@ -84,12 +84,52 @@ export const ConnectorConnectionStateSchema = z.enum([
   "not_connected",
   "unavailable",
 ]);
+/**
+ * What the state check accepts: the card's selection with the scope optional.
+ *
+ * Left out, the check covers every scope the connector offers. A model asked
+ * to pick one picked the workspace scope for a person whose personal Drive was
+ * connected, read `not_connected`, and asked them to connect what they had.
+ */
+export const ConnectorConnectionStateInputSchema = z.strictObject({
+  connectorId: ConnectorConnectionCardShape.shape.connectorId,
+  scope: z.enum(ConnectorConnectionCardScopes).optional().describe(
+    "Leave out to check every scope this connector offers. Set only to check one scope on purpose.",
+  ),
+}).superRefine((input, context) => {
+  const supportedScopes: readonly ConnectorConnectionCardScope[] = ConnectorConnectionCardCatalog[input.connectorId].scopes;
+  if (input.scope === undefined || supportedScopes.includes(input.scope)) return;
+  context.addIssue({
+    code: "custom",
+    path: ["scope"],
+    message: `${input.connectorId} does not support a ${input.scope} connection`,
+  });
+});
+export type ConnectorConnectionStateInput = z.infer<typeof ConnectorConnectionStateInputSchema>;
+
 export const ConnectorConnectionStateResultSchema = z.strictObject({
   connectorId: z.enum(ConnectorConnectionCardIds),
-  scope: z.enum(ConnectorConnectionCardScopes),
+  /** The best state across `connections`: connected if any scope is. */
   state: ConnectorConnectionStateSchema,
+  connections: z.array(z.strictObject({
+    scope: z.enum(ConnectorConnectionCardScopes),
+    state: ConnectorConnectionStateSchema,
+  })).min(1),
 });
 export type ConnectorConnectionStateResult = z.infer<typeof ConnectorConnectionStateResultSchema>;
+
+const STATE_PRECEDENCE = ["connected", "reconnect_required", "not_connected", "unavailable"] as const;
+
+/** Fold per-scope states into the one a caller acts on first. */
+export function bestConnectorConnectionState(
+  states: readonly z.infer<typeof ConnectorConnectionStateSchema>[],
+): z.infer<typeof ConnectorConnectionStateSchema> {
+  return STATE_PRECEDENCE.find((state) => states.includes(state)) ?? "not_connected";
+}
+
+export function connectorConnectionStateSummary(result: ConnectorConnectionStateResult): string {
+  return `${result.connectorId}: ${result.connections.map(({ scope, state }) => `${scope} ${state}`).join(", ")}`;
+}
 
 /**
  * The canonical definition names, which are also the model-facing wire names:
