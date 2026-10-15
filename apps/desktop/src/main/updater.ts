@@ -11,6 +11,9 @@ import type { DesktopUpdateStatus } from '../common/desktop';
 import type { DesktopReleaseChannel } from '../common/release-channels';
 
 const UPDATE_INTERVAL_MS = 3 * 60 * 60 * 1000;
+/** The first automatic check waits this long after launch, keeping the feed
+ * request and any download out of the app's startup. */
+export const STARTUP_CHECK_DELAY_MS = 10 * 60 * 1000;
 const DOWNLOAD_RETRY_BASE_DELAY_MS = 3_000;
 const MAX_DOWNLOAD_RETRIES = 5;
 /** A downloaded update waits quietly behind the sidebar button until the
@@ -478,7 +481,8 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     `[rally] auto-update initialized (current=${deps.currentVersion}, platform=${deps.platform}, `
       + `arch=${deps.arch}, channel=${deps.releaseChannel}, differentialDownload=enabled)`,
   );
-  runCheck(false);
+  // A manual check or a channel change before this fires still checks at once.
+  scheduleTimeout(() => runCheck(false), STARTUP_CHECK_DELAY_MS).unref();
   const scheduleInterval = deps.scheduleInterval
     ?? ((callback: () => void, delayMs: number) => {
       const handle = setInterval(callback, delayMs);
