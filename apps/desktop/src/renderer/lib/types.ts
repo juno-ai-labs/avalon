@@ -834,8 +834,11 @@ export interface DigestSchedule {
   lastDeliveredAt: string | null;
 }
 
+/** Where a digest goes: the person's own Personal Channel, or any automation destination. */
+export type DigestDeliveryTargetType = 'personal_channel' | AutomationDeliveryTargetType;
+
 export interface DigestDeliveryTarget {
-  type: AutomationDeliveryTargetType;
+  type: DigestDeliveryTargetType;
   connectionId: string | null;
   displayName: string;
   status: 'active' | 'needs_input' | 'disabled';

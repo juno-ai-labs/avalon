@@ -5,9 +5,10 @@ follow the member across devices. Two kinds today:
 
 - **Show agent work** (Settings → Account → Agent), which decides whether the
   transcript shows the agent's thinking and its tool and plugin calls.
-- **Push switches** (Settings → Notifications → Notify me about), which decide
-  what this person is pushed. How they are enforced is
-  [`push-notifications.md`](push-notifications.md#what-each-person-turns-off).
+- **Channels per kind** (Settings → Notifications → Notify me about), which
+  decide how each kind of Activity row reaches this person: push, email, or a
+  connector surface such as Slack. How they are enforced is
+  [`push-notifications.md`](push-notifications.md#what-each-person-chooses).
 
 ## Where the code lives
 
@@ -18,10 +19,12 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
 ## How it works
 
 1. **Storage.** The WorkspaceDO's `member_preferences` table has one row per
-   member (migration 89). No row means every default. The push switches are
-   `push_json` (migration 106), holding only the switches the member has set;
-   `storedPushPreferences` lays them over `DEFAULT_PUSH_PREFERENCES`, so a
-   switch added later starts on for everyone.
+   member (migration 89). No row means every default. The channels are
+   `notify_json` (migration 107), holding only the kinds the member has set; a
+   kind not named reads from the push switch in `push_json` (migration 106)
+   someone may have turned off before channels existed, then from
+   `DEFAULT_NOTIFICATION_CHANNELS` (`storedMemberPreferences`). `push` in the
+   record is derived from the channels, for clients older than them.
 2. **First paint.** The WorkspaceDO's answer to a workspace socket `subscribe`
    carries `viewerPreferences` beside `featureFlags`. The renderer writes it to
    `['member-preferences', workspaceId]`, so the first frame already honours it
@@ -30,8 +33,11 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
    launch does not flash the defaults. Applying the socket's answer cancels any
    REST read still in flight, so an older answer cannot land on top of it.
 3. **Change.** `PUT /workspace/me/preferences` carries only what changed: each
-   field and each push switch is optional, and whatever a save leaves out keeps
-   its stored value (`MemberPreferencesUpdateSchema`, `mergePushPreferences`).
+   field, each kind's channel list and each push switch is optional, and
+   whatever a save leaves out keeps its stored value
+   (`MemberPreferencesUpdateSchema`, `savedNotify`). A kind named replaces that
+   kind's list whole; a push switch from an older client adds or removes `push`
+   on its kind.
    Each control sends its own field through `useSaveMemberPreferences`, so a
    window holding a stale copy cannot write it back over a change made on
    another device, and a desktop that predates the push switches, which saves
@@ -65,10 +71,10 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
 
 The desktop and browser renderers honour the preference. iOS does not yet. A new
 display preference is a column in `member_preferences`, a field in
-`MemberPreferencesSchema` with a default, and a setting definition. A new push
-switch is a field in `PushPreferencesSchema` and `DEFAULT_PUSH_PREFERENCES`, a
-case in `pushPreferenceAllows`, and a setting definition; it needs no
-migration.
+`MemberPreferencesSchema` with a default, and a setting definition. A new kind
+is a value in `NotificationKindSchema` with a default in
+`DEFAULT_NOTIFICATION_CHANNELS` and an entry in `NOTIFICATION_KIND_FOR_PUSH`;
+it needs no migration. A new channel needs no change here at all.
 
 ## Failure modes and limits
 
@@ -76,6 +82,24 @@ Before the socket answers or REST returns, the defaults render. A server that
 predates the field sends no `viewerPreferences`, which also reads as defaults.
 
 ## Changelog
+
+### 2026-10-15 — Channels per kind replace the push switches
+
+**What changed:** The record carries `notify`, a channel list for each of five
+kinds, stored as `notify_json` (migration 107) with only the kinds a member set.
+`push` is now derived from it for older clients, and a push switch they save
+still lands, as `push` added to or removed from its kind.
+
+**Why:** A kind can now go by email or Slack as well as push, and a switch per
+channel per kind would have been fifteen booleans and a column for each new
+connector.
+
+**Considered and rejected:** Converting `push_json` into `notify_json` in the
+migration: an object migration rewriting every row on wake, when reading the
+old switch for a kind nobody has set yet gives the same answer.
+
+**Consequences:** A save of a kind replaces its whole list, so a client must
+send the list it means, including a channel it does not show.
 
 ### 2026-10-14 — Push switches join the record, and a save merges them
 

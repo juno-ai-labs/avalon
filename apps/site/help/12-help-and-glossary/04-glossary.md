@@ -82,8 +82,8 @@ place: an invitation, the end of signing in, the end of connecting a tool, a
 Channel or a Thread. When Rally refuses one, it tells you why. See
 [When a link won't open](01-when-a-link-wont-open.md).
 
-**Digest.** A written summary of everything that moved since the last one,
-sent on the days and at the times you choose. See
+**Digest.** Whatever is still unread in your Activity, sent at the start and
+end of your day. See
 [The digest](../08-rally-everywhere/05-the-digest.md).
 
 ## G
