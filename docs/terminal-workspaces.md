@@ -106,13 +106,7 @@ this generation; otherwise it goes through readiness like a write.
 
 Rally creates sandboxes from its own `rally-terminal-1` snapshot: Daytona's
 managed `daytonaio/sandbox:0.9.0` base with SQLite, `gh`, pnpm, and `tsx`
-preinstalled by `terminal:build-snapshot`, plus Playwright with its Chromium
-under `/opt/rally/ms-playwright` (`PLAYWRIGHT_BROWSERS_PATH`). Playwright is
-baked into the image only: the runtime bootstrap never installs it, and it is
-not a per-sandbox probe, because production serves the previous snapshot until
-a rebuild is adopted and a fail-closed probe would refuse every sandbox in
-between. The acceptance gate requires a working screenshot instead, so no
-snapshot without it is adopted. On first creation an idempotent
+preinstalled by `terminal:build-snapshot`. On first creation an idempotent
 compatibility bootstrap creates the owned `/workspace`, installs only missing
 SQLite/`gh`/pnpm/`tsx` capabilities through the compiled Trusted-only apt/npm
 hosts — a no-op against the owned snapshot — and then executes the complete
@@ -1231,25 +1225,22 @@ update lag before changing the default.
 
 ## Changelog
 
-### 2026-10-15 — The agent can screenshot a page and look at the picture
+### 2026-10-15 — The agent can look at an image it made
 
-**What changed:** The weekly snapshot image now carries Playwright
-(`TERMINAL_PLAYWRIGHT_VERSION`) and its Chromium, and the acceptance gate
-requires a working screenshot. A new read tool, `view_image`, returns an
-image file from the workspace to the model.
+**What changed:** A new read tool, `view_image`, returns a PNG, JPEG, GIF or
+WebP from the workspace to the model as an image, through the attachment image
+pipeline (`normalizeModelImageBytes`).
 
-**Why:** A generated site rendered one word per line in Rally's narrow
-panel, and the agent had no way to see that. A Cloudflare Browser Rendering
-tool was built first and replaced: it could only see published sites, and
-only from outside the sandbox. Playwright in the sandbox can check a page
-before it is published and follows the workspace's network setting.
+**Why:** A generated site rendered one word per line in Rally's narrow panel,
+and the agent had no way to see that. With Playwright in the snapshot
+(juno-ai-labs/avalon#1246) it can take a screenshot; this lets it look at one,
+and at any chart or image it generates. A Cloudflare Browser Rendering tool was
+built first and replaced: it could only see published sites, from outside the
+sandbox.
 
-**Consequences:** Playwright stays image-only. Installing it from the
-runtime bootstrap would exceed the bootstrap's 120-second budget, and the
-Trusted-only allow list does not reach Playwright's browser download host.
-Making it a per-sandbox probe would refuse every sandbox until a rebuilt
-snapshot is adopted. In Trusted-only workspaces the sandbox cannot reach
-published site URLs, so the site skill screenshots a locally served copy.
+**Consequences:** `view_image` reads through the same contained, size-limited
+read as `read_file`, and names why it cannot show a file rather than failing
+generically.
 
 ### 2026-10-08 — A failed policy change no longer deletes sandboxes
 
