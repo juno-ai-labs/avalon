@@ -191,6 +191,103 @@ describe('desktop auto-update runtime', () => {
     expect(showMessageBox).not.toHaveBeenCalled();
   });
 
+  it('keeps checking after a download and replaces the staged build with a newer one', async () => {
+    let tick!: () => void;
+    const { controller, updater, statuses } = setup({
+      scheduleInterval: (callback) => { tick = callback; return { unref: () => undefined }; },
+    });
+    updater.emit('update-available', { version: '1.1.0' });
+    updater.emit('update-downloaded', { version: '1.1.0' });
+    const stagedStatuses = statuses.length;
+
+    tick();
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
+    expect(updater.autoDownload).toBe(false);
+    updater.emit('checking-for-update');
+    updater.emit('update-available', { version: '1.2.0' });
+    updater.emit('download-progress', { percent: 30 });
+    await vi.waitFor(() => expect(updater.downloadUpdate).toHaveBeenCalledOnce());
+    expect(updater.autoDownload).toBe(true);
+    // The restart into 1.1.0 stays on offer while 1.2.0 downloads.
+    expect(statuses.length).toBe(stagedStatuses);
+
+    updater.emit('update-downloaded', { version: '1.2.0' });
+    expect(statuses.slice(stagedStatuses)).toEqual([{ kind: 'downloaded', version: '1.2.0' }]);
+    controller.installDownloadedUpdate();
+    await vi.waitFor(() => expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true));
+  });
+
+  it('does not fetch the staged build again or drop it when a background check fails', async () => {
+    let tick!: () => void;
+    const { updater, statuses, showMessageBox, scheduleTimeout } = setup({
+      scheduleInterval: (callback) => { tick = callback; return { unref: () => undefined }; },
+    });
+    updater.emit('update-available', { version: '1.1.0' });
+    updater.emit('update-downloaded', { version: '1.1.0' });
+
+    tick();
+    updater.emit('update-available', { version: '1.1.0' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(updater.downloadUpdate).not.toHaveBeenCalled();
+    expect(updater.autoDownload).toBe(true);
+
+    updater.checkForUpdates.mockRejectedValueOnce(new Error('feed unavailable'));
+    tick();
+    updater.emit('error', new Error('feed unavailable'));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(statuses.at(-1)).toEqual({ kind: 'downloaded', version: '1.1.0' });
+    expect(showMessageBox).not.toHaveBeenCalled();
+    expect(scheduleTimeout).not.toHaveBeenCalled();
+  });
+
+  it('keeps the staged build when downloading a newer one runs out of retries', async () => {
+    let tick!: () => void;
+    const { updater, statuses, timeouts, showMessageBox } = setup({
+      scheduleInterval: (callback) => { tick = callback; return { unref: () => undefined }; },
+    });
+    updater.emit('update-available', { version: '1.1.0' });
+    updater.emit('update-downloaded', { version: '1.1.0' });
+    updater.downloadUpdate.mockRejectedValue(new Error('download failed'));
+
+    tick();
+    updater.emit('update-available', { version: '1.2.0' });
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await vi.waitFor(() => expect(timeouts).toHaveLength(attempt + 1));
+      timeouts[attempt]!.callback();
+    }
+    await vi.waitFor(() => expect(updater.downloadUpdate).toHaveBeenCalledTimes(6));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(statuses.at(-1)).toEqual({ kind: 'downloaded', version: '1.1.0' });
+    expect(showMessageBox).not.toHaveBeenCalled();
+    tick();
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(3);
+  });
+
+  it('withdraws the staged build at once when the channel changes during a background check', async () => {
+    let tick!: () => void;
+    const { controller, updater, statuses } = setup({
+      scheduleInterval: (callback) => { tick = callback; return { unref: () => undefined }; },
+    });
+    updater.emit('update-available', { version: '1.1.0' });
+    updater.emit('update-downloaded', { version: '1.1.0' });
+    tick();
+
+    controller.setReleaseChannel('faster');
+    expect(statuses.at(-1)).toEqual({ kind: 'idle' });
+    expect(updater.autoInstallOnAppQuit).toBe(false);
+    controller.installDownloadedUpdate();
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
+
+    updater.emit('update-not-available', { version: '1.1.0' });
+    await vi.waitFor(() => expect(updater.checkForUpdates).toHaveBeenCalledTimes(3));
+    expect(updater.autoDownload).toBe(true);
+    expect(statuses.at(-1)).toEqual({ kind: 'checking' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+  });
+
   it('keeps the app running when protected state cannot be prepared', async () => {
     const beforeInstall = vi.fn(async () => {
       throw new Error('session flush failed');
