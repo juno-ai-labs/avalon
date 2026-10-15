@@ -60,6 +60,13 @@ export interface ArtifactHostWindow {
   /** Whether the window is gone; see `ArtifactViewHandle.destroyed`. */
   destroyed(): boolean;
   contentSize(): { width: number; height: number };
+  /**
+   * Rally's renderer zoom. Native views use window points; the rectangle the
+   * renderer measures is in CSS pixels, so a factor other than one has to be
+   * applied before `setBounds` or the page sits short of the pane — the same
+   * conversion the embedded browser already makes.
+   */
+  zoomFactor(): number;
   removeView(view: ArtifactViewHandle): void;
 }
 
@@ -159,14 +166,18 @@ export async function loadArtifactInitialUrl(loadURL: () => Promise<void>): Prom
  * view over the whole window — including over chrome a person needs to escape
  * it. Clamping is what makes the bounds a *request* rather than an instruction.
  */
-export function clampBounds(bounds: PreviewBounds, window: { width: number; height: number }): PreviewBounds {
-  const x = Math.max(0, Math.min(Math.round(bounds.x), window.width));
-  const y = Math.max(0, Math.min(Math.round(bounds.y), window.height));
+export function clampBounds(
+  bounds: PreviewBounds,
+  window: { width: number; height: number },
+  zoom = 1,
+): PreviewBounds {
+  const x = Math.max(0, Math.min(Math.round(bounds.x * zoom), window.width));
+  const y = Math.max(0, Math.min(Math.round(bounds.y * zoom), window.height));
   return {
     x,
     y,
-    width: Math.max(0, Math.min(Math.round(bounds.width), window.width - x)),
-    height: Math.max(0, Math.min(Math.round(bounds.height), window.height - y)),
+    width: Math.max(0, Math.min(Math.round(bounds.width * zoom), window.width - x)),
+    height: Math.max(0, Math.min(Math.round(bounds.height * zoom), window.height - y)),
   };
 }
 
@@ -583,6 +594,6 @@ export class ArtifactPreviewController {
       this.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
       return;
     }
-    this.view.setBounds(clampBounds(this.bounds, this.window.contentSize()));
+    this.view.setBounds(clampBounds(this.bounds, this.window.contentSize(), this.window.zoomFactor()));
   }
 }
