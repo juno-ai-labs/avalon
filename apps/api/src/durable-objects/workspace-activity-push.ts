@@ -17,6 +17,9 @@ export const PUSHED_KINDS: ReadonlySet<ActivityItemKind> = new Set([
   "run_finished",
 ]);
 
+/** {@link PUSHED_KINDS} as a list, in the push payload's own words. */
+export const ACTIVITY_PUSH_KINDS = ["thread_started", "breakout_started", "run_finished"] as const;
+
 const STARTS: ReadonlySet<ActivityItemKind> = new Set(["thread_started", "breakout_started"]);
 
 /**

@@ -113,7 +113,6 @@ import {
   WorkspacePresenceEventSchema,
   WorkspaceReachChangedEventSchema,
   WorkspaceSocketSyncEventSchema,
-  DEFAULT_MEMBER_PREFERENCES,
   type MemberPreferences,
   WorkspaceSyncTopicSchema,
   WORKSTREAM_NAMING_GRACE_MS,
@@ -223,8 +222,9 @@ import {
 } from "../services/workspace-relationship-service";
 import { evaluateExternalEventPredicate } from "../services/external-event-evaluator";
 import { SIDEBAR_LIST_LIMIT } from "../services/sidebar-reads";
-import { enqueuePushDelivery } from "../services/push-delivery-service";
-import { membersWithLivePushDevices } from "../services/push-device-service";
+import { enqueueActivityDelivery, enqueuePushDelivery } from "../services/push-delivery-service";
+import type { PushNotificationData } from "@rally/contracts/push-notifications";
+import { activeMembersForActivity } from "../services/push-device-service";
 import { workspaceConnectorEventContentFingerprint } from "../services/workspace-connector-event-ingress";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import {
@@ -340,14 +340,10 @@ import {
 } from "./workspace-connector-event-protocol";
 import {
   WorkspaceDigestClaimRequestSchema,
-  WorkspaceDigestCursorRequestSchema,
   WorkspaceDigestDefaultRequestSchema,
   WorkspaceDigestDeliveryContextRequestSchema,
-  WorkspaceDigestDeliveryRunningRequestSchema,
   WorkspaceDigestDeliveryTargetsRequestSchema,
-  WorkspaceDigestDeliveryWorkstreamRequestSchema,
   WorkspaceDigestFireScheduleRequestSchema,
-  WorkspaceDigestReleaseClaimRequestSchema,
   WorkspaceDigestReplaceRequestSchema,
   WorkspaceDigestReplaceRowsRequestSchema,
   WorkspaceDigestRowStateRequestSchema,
@@ -359,26 +355,19 @@ import {
   WorkspaceDigestTerminalContextRequestSchema,
   type WorkspaceDigestClaimRequest,
   type WorkspaceDigestClaimResult,
-  type WorkspaceDigestCursor,
-  type WorkspaceDigestCursorRequest,
   type WorkspaceDigestDefaultRequest,
   type WorkspaceDigestDefaultResult,
   type WorkspaceDigestDeliveryContext,
   type WorkspaceDigestDeliveryContextRequest,
-  type WorkspaceDigestDeliveryRunningRequest,
   type WorkspaceDigestDeliveryTargets,
   type WorkspaceDigestDeliveryTargetsRequest,
-  type WorkspaceDigestDeliveryWorkstreamRequest,
   type WorkspaceDigestFireSchedule,
   type WorkspaceDigestFireScheduleRequest,
-  type WorkspaceDigestReleaseClaimRequest,
-  type WorkspaceDigestReleaseClaimResult,
   type WorkspaceDigestReplaceRequest,
   type WorkspaceDigestReplaceResult,
   type WorkspaceDigestReplaceRowsRequest,
   type WorkspaceDigestRowState,
   type WorkspaceDigestRowStateRequest,
-  type WorkspaceDigestRunningResult,
   type WorkspaceDigestSettings,
   type WorkspaceDigestSettingsRequest,
   type WorkspaceDigestSettleRequest,
@@ -393,13 +382,9 @@ import {
 import {
   claimWorkspaceDigestDelivery,
   ensureDefaultWorkspaceDigestSchedule,
-  latestWorkspaceDigestCursor,
-  markWorkspaceDigestDeliveryRunning,
   markWorkspaceDigestTargetDelivered,
   markWorkspaceDigestTargetFailed,
-  recordWorkspaceDigestDeliveryWorkstream,
   recordWorkspaceDigestSummary,
-  releaseWorkspaceDigestDeliveryClaim,
   replaceWorkspaceDigestSchedule,
   replaceWorkspaceDigestScheduleRows,
   settleWorkspaceDigestDelivery,
@@ -829,7 +814,7 @@ import {
 } from "./thread-backfill";
 import { unreadState } from "./unread-state";
 import { WorkspaceActivityFeed, WORKSPACE_ACTIVITY_READS_MIGRATION } from "./workspace-activity-feed";
-import { WorkspaceActivityPushes, WORKSPACE_ACTIVITY_PUSH_MIGRATION, type ActivityPushSubject } from "./workspace-activity-push";
+import { ACTIVITY_PUSH_KINDS, WorkspaceActivityPushes, WORKSPACE_ACTIVITY_PUSH_MIGRATION, type ActivityPushSubject } from "./workspace-activity-push";
 import {
   PersonalSystemPromptReadRequestSchema,
   PersonalSystemPromptWriteRequestSchema,
@@ -843,11 +828,15 @@ import {
   MemberPreferencesWriteRequestSchema,
   WORKSPACE_MEMBER_PREFERENCES_MIGRATION,
   WORKSPACE_MEMBER_PUSH_PREFERENCES_MIGRATION,
-  PushPreferenceCheckRequestSchema,
+  WORKSPACE_MEMBER_NOTIFY_PREFERENCES_MIGRATION,
+  NotificationAllowsRequestSchema,
   mergePushPreferences,
-  pushPreferenceAllows,
+  NOTIFICATION_KIND_FOR_PUSH,
+  notificationAllows,
+  savedNotify,
+  storedMemberPreferences,
   storedPushPreferences,
-  type PushPreferenceCheckRequest,
+  type NotificationAllowsRequest,
   type MemberPreferencesReadRequest,
   type MemberPreferencesWriteRequest,
 } from "./member-preferences";
@@ -4358,6 +4347,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "which push notifications each person has turned off",
   // Read when a push is decided and again when it is sent; see member-preferences.ts.
   statements: WORKSPACE_MEMBER_PUSH_PREFERENCES_MIGRATION,
+}, {
+  version: 107,
+  description: "how each kind of notification reaches each person",
+  // Push, email or a connector's surface per kind; see member-preferences.ts.
+  statements: WORKSPACE_MEMBER_NOTIFY_PREFERENCES_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -9499,75 +9493,49 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Save what this person changed and answer with everything stored. A field
-   * or push switch the save leaves out keeps its stored value.
+   * Save what this person changed and answer with everything stored. A field,
+   * kind or push switch the save leaves out keeps its stored value.
    */
   async saveMemberPreferences(input: MemberPreferencesWriteRequest): Promise<MemberPreferences> {
     await this.initialized;
     const request = parseRpcInput(MemberPreferencesWriteRequestSchema, input, "save_member_preferences");
     this.assertWorkspace(request.workspaceId);
-    const current = this.readMemberPreferences(request.userId);
+    const row = this.memberPreferencesRow(request.userId);
+    const current = storedMemberPreferences(row);
     const showAgentWork = request.preferences.showAgentWork ?? current.showAgentWork;
-    const push = mergePushPreferences(current.push, request.preferences.push);
+    const push = mergePushPreferences(storedPushPreferences(row?.push_json), request.preferences.push);
+    const notify = savedNotify(row, current.notify, request.preferences);
+    const stored = { show_agent_work: showAgentWork ? 1 : 0, push_json: JSON.stringify(push), notify_json: JSON.stringify(notify) };
     this.state.storage.sql.exec(
-      `INSERT INTO member_preferences (user_id, show_agent_work, push_json, updated_at) VALUES (?, ?, ?, ?)
+      `INSERT INTO member_preferences (user_id, show_agent_work, push_json, notify_json, updated_at) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT (user_id) DO UPDATE SET show_agent_work = excluded.show_agent_work,
-         push_json = excluded.push_json, updated_at = excluded.updated_at`,
+         push_json = excluded.push_json, notify_json = excluded.notify_json, updated_at = excluded.updated_at`,
       request.userId,
-      showAgentWork ? 1 : 0,
-      JSON.stringify(push),
+      stored.show_agent_work,
+      stored.push_json,
+      stored.notify_json,
       Date.now(),
     );
-    return { showAgentWork, push };
+    return storedMemberPreferences(stored);
+  }
+
+  private memberPreferencesRow(userId: string) {
+    return this.state.storage.sql.exec<{ show_agent_work: number; push_json: string; notify_json: string }>(
+      `SELECT show_agent_work, push_json, notify_json FROM member_preferences WHERE user_id = ?`,
+      userId,
+    ).toArray()[0];
   }
 
   private readMemberPreferences(userId: string): MemberPreferences {
-    const row = this.state.storage.sql.exec<{ show_agent_work: number; push_json: string }>(
-      `SELECT show_agent_work, push_json FROM member_preferences WHERE user_id = ?`,
-      userId,
-    ).toArray()[0];
-    return row
-      ? { showAgentWork: row.show_agent_work === 1, push: storedPushPreferences(row.push_json) }
-      : { ...DEFAULT_MEMBER_PREFERENCES };
+    return storedMemberPreferences(this.memberPreferencesRow(userId));
   }
 
-  /** Whether this person's push switches let a push about this conversation through. */
-  async pushPreferenceAllows(input: PushPreferenceCheckRequest): Promise<boolean> {
+  /** Whether this person's choices send a notification of this kind on this channel. */
+  async notificationAllows(input: NotificationAllowsRequest): Promise<boolean> {
     await this.initialized;
-    const request = parseRpcInput(PushPreferenceCheckRequestSchema, input, "push_preference_allows");
+    const request = parseRpcInput(NotificationAllowsRequestSchema, input, "notification_allows");
     this.assertWorkspace(request.workspaceId);
-    return this.pushAllowed(request.userId, request.kind, request.threadId, request.substreamId);
-  }
-
-  /**
-   * The push switches, and the two facts their narrower switches need: whether
-   * the thread is placed in a Channel the person has joined, and whether they
-   * started the conversation (the breakout, for a breakout's finish).
-   */
-  private pushAllowed(
-    userId: string,
-    kind: PushPreferenceCheckRequest["kind"],
-    threadId: string,
-    substreamId: string | null,
-  ): boolean {
-    return pushPreferenceAllows(this.readMemberPreferences(userId).push, kind, {
-      inMyChannel: () => this.state.storage.sql.exec(
-        `SELECT 1 FROM space_channel_memberships membership
-           JOIN space_viewers viewer ON viewer.space_id = membership.space_id
-          WHERE membership.workstream_id = ? AND membership.state = 'active'
-            AND viewer.user_id = ? AND viewer.is_participant = 1
-          LIMIT 1`,
-        threadId, userId,
-      ).toArray().length === 1,
-      startedByMe: () => (substreamId === null || substreamId === "0"
-        ? this.state.storage.sql.exec<{ created_by_user_id: string | null }>(
-          `SELECT created_by_user_id FROM channels WHERE workstream_id = ?`, threadId,
-        ).toArray()[0]
-        : this.state.storage.sql.exec<{ created_by_user_id: string | null }>(
-          `SELECT created_by_user_id FROM breakouts WHERE workstream_id = ? AND substream_id = ?`,
-          threadId, substreamId,
-        ).toArray()[0])?.created_by_user_id === userId,
-    });
+    return notificationAllows(this.readMemberPreferences(request.userId).notify, request.kind, request.channel);
   }
 
   async spaceSummary(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMutationResult> {
@@ -12406,10 +12374,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!pushes.ready()) return;
     const audience = pushes.audience(subjects);
     if (!audience.everyone && audience.userIds.length === 0) return;
-    const recipients = await membersWithLivePushDevices(
+    const recipients = await activeMembersForActivity(
       this.env, workspaceId, audience.everyone ? null : audience.userIds,
     );
     for (const recipient of recipients) {
+      // The channels this person chose for a kind; push only with a device.
+      const notify = this.readMemberPreferences(recipient.userId).notify;
+      const channels = (kind: PushNotificationData["kind"]) => notify[NOTIFICATION_KIND_FOR_PUSH[kind]]
+        .filter((channel) => channel !== "push" || recipient.hasDevice);
+      // Someone with a device is decided even with every channel off, so a
+      // kind turned back on later never sends an old row; someone with no
+      // device and nothing else chosen is not asked at all, as before.
+      if (!recipient.hasDevice && !ACTIVITY_PUSH_KINDS.some((kind) => channels(kind).length > 0)) continue;
       const items = pushes.pending(
         { userId: recipient.userId, accessClass: recipient.accessClass },
         subjects,
@@ -12418,17 +12394,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // One person's failed send leaves the others' pushes standing.
       try {
         for (const item of items) {
-          // Recorded whether or not it was queued: a row not queued (the
-          // person's push flag is off, no transport in this deployment) would
-          // not be queued by a later batch either. The person's push switches
-          // are the consumer's to check, so one turned back on never sends an
-          // old row late.
-          await enqueuePushDelivery(this.env, {
-            region: this.env.AVALON_REGION,
-            workspaceId,
-            recipientUserId: recipient.userId,
-            activityItemId: item.id,
-          });
+          // Recorded whether or not it was queued: a row not queued (no
+          // channel chosen, no transport in this deployment) would not be
+          // queued by a later batch either. The consumer checks the choice
+          // again when it sends, so one changed since never sends an old
+          // row late.
+          for (const channel of channels(item.kind as PushNotificationData["kind"])) {
+            const address = { region: this.env.AVALON_REGION, workspaceId, recipientUserId: recipient.userId, activityItemId: item.id };
+            if (channel === "push") await enqueuePushDelivery(this.env, address);
+            else await enqueueActivityDelivery(this.env, { ...address, channel });
+          }
           pushes.record(recipient.userId, item.id, Date.now());
         }
       } catch (error) {
@@ -15051,14 +15026,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return workspaceDigestScheduleForFire(this.state.storage, request);
   }
 
-  /** The highest point this schedule has committed to covering. */
-  async latestDigestCursor(input: WorkspaceDigestCursorRequest): Promise<WorkspaceDigestCursor> {
-    await this.initialized;
-    const request = WorkspaceDigestCursorRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return latestWorkspaceDigestCursor(this.state.storage, request);
-  }
-
   /** Claim one occurrence; a retried alarm learns the first attempt already has it. */
   async claimDigestDelivery(
     input: WorkspaceDigestClaimRequest,
@@ -15067,36 +15034,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceDigestClaimRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     return claimWorkspaceDigestDelivery(this.state.storage, request);
-  }
-
-  /** Record which hidden work stream this occurrence executes in. */
-  async recordDigestDeliveryWorkstream(
-    input: WorkspaceDigestDeliveryWorkstreamRequest,
-  ): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceDigestDeliveryWorkstreamRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    recordWorkspaceDigestDeliveryWorkstream(this.state.storage, request);
-  }
-
-  /** The launch succeeded: the claim graduates from `planned` to `running`, or says it could not. */
-  async markDigestDeliveryRunning(
-    input: WorkspaceDigestDeliveryRunningRequest,
-  ): Promise<WorkspaceDigestRunningResult> {
-    await this.initialized;
-    const request = WorkspaceDigestDeliveryRunningRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return markWorkspaceDigestDeliveryRunning(this.state.storage, request);
-  }
-
-  /** Undo a claim whose launch never started, so the scheduler's retry gets another go. */
-  async releaseDigestDeliveryClaim(
-    input: WorkspaceDigestReleaseClaimRequest,
-  ): Promise<WorkspaceDigestReleaseClaimResult> {
-    await this.initialized;
-    const request = WorkspaceDigestReleaseClaimRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return releaseWorkspaceDigestDeliveryClaim(this.state.storage, request);
   }
 
   /** One occurrence, as settlement and the run's trigger context read it. */
