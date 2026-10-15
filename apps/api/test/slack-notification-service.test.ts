@@ -155,7 +155,7 @@ describe("workspace Slack mention delivery", () => {
     ]);
   });
 
-  it("falls back to email when exact-email matches in multiple installed Slack teams", async () => {
+  it("skips Slack when exact-email matches in multiple installed Slack teams", async () => {
     const database = migratedDatabase();
     const env = environment(database);
     await seed(database, env, false);
@@ -278,19 +278,21 @@ describe("workspace Slack mention delivery", () => {
     expect(sleep).toHaveBeenCalledWith(1_000);
   });
 
-  it("reports partial Slack delivery without triggering a duplicate full email", async () => {
+  it("records a partial Slack delivery and hands a server error back for a retry", async () => {
     const database = migratedDatabase();
     const env = environment(database);
     await seed(database, env, false);
     const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
+    // Slack answered 500 for the second chunk: a retry can finish it, and the
+    // first chunk's stable client_msg_id keeps it from posting twice.
     await expect(sendWorkstreamMentionSlack(
       env,
       { ...mention(), messageText: "x".repeat(40_001) },
       slackApiFixture(calls, undefined, { failPostFrom: 2 }),
       async () => undefined,
-    )).resolves.toBe("partial");
+    )).rejects.toMatchObject({ code: "provider_error" });
 
     expect(warning).toHaveBeenCalledWith(expect.objectContaining({
       event: "slack_notification_delivery_incomplete",
@@ -299,7 +301,7 @@ describe("workspace Slack mention delivery", () => {
     }));
   });
 
-  it("rejects an email result from another Slack team and lets email handle the notification", async () => {
+  it("rejects an email result from another Slack team and skips Slack", async () => {
     const database = migratedDatabase();
     const env = environment(database);
     await seed(database, env, false);
@@ -323,7 +325,7 @@ describe("workspace Slack mention delivery", () => {
     }));
   });
 
-  it("fails closed to email when the installation has not yet received the lookup scope", async () => {
+  it("skips Slack when the installation has not yet received the lookup scope", async () => {
     const database = migratedDatabase();
     const env = environment(database);
     await seed(database, env, false);

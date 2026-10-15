@@ -104,6 +104,7 @@ async function claim(overrides: {
     eventCount: 4,
     highlightCount: 1,
     status: overrides.status ?? "planned",
+    summaryMarkdown: (overrides.status ?? "planned") === "planned" ? "1 unread item in your Activity." : null,
     at: AT,
   }));
 }
@@ -232,63 +233,6 @@ describe("claiming an occurrence", () => {
     ]);
 
     expect(outcomes.map((result) => result.outcome).sort()).toEqual(["already_planned", "claimed"]);
-  });
-
-  it("releases a claim only while it is still planned", async () => {
-    const { scheduleId } = await replace();
-    const deliveryId = nextId();
-    await claim({ deliveryId, digestScheduleId: scheduleId });
-    await workspace().markDigestDeliveryRunning({
-      workspaceId: WORKSPACE_ID,
-      deliveryId,
-      harnessRunId: "run-1",
-      at: AT,
-    });
-
-    // A launch that recorded its run keeps the occurrence: deleting it now
-    // would let the scheduler's retry digest the same window twice.
-    expect(await workspace().releaseDigestDeliveryClaim({
-      workspaceId: WORKSPACE_ID,
-      deliveryId,
-    })).toEqual({ outcome: "kept" });
-  });
-
-  it("says so when the running transition finds no planned claim", async () => {
-    const { scheduleId } = await replace();
-    const deliveryId = nextId();
-    await claim({ deliveryId, digestScheduleId: scheduleId });
-
-    const mark = (harnessRunId: string) => workspace().markDigestDeliveryRunning({
-      workspaceId: WORKSPACE_ID,
-      deliveryId,
-      harnessRunId,
-      at: AT,
-    });
-
-    expect(await mark("run-1")).toEqual({ outcome: "running" });
-    // The claim has already left `planned`, so a second transition must answer
-    // rather than silently matching zero rows.
-    expect(await mark("run-2")).toEqual({ outcome: "not_planned" });
-  });
-
-  it("folds a failed window into the next cursor and counts everything else", async () => {
-    const { scheduleId } = await replace();
-    const failedId = nextId();
-    await claim({ deliveryId: failedId, digestScheduleId: scheduleId, cursorThrough: 9 });
-    await settle(failedId, "failed");
-    await claim({
-      digestScheduleId: scheduleId,
-      plannedFor: "2026-08-29T12:00:00.000Z",
-      status: "empty",
-      cursorThrough: 6,
-    });
-
-    // The failed occurrence's window comes back — its cursor does not count —
-    // while an empty one still advances, so its window is never re-scanned.
-    expect(await workspace().latestDigestCursor({
-      workspaceId: WORKSPACE_ID,
-      digestScheduleId: scheduleId,
-    })).toEqual({ cursorThrough: 6 });
   });
 });
 

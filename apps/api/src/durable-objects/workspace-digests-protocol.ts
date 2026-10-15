@@ -96,6 +96,11 @@ export const WorkspaceDigestDefaultRequestSchema = deferredZodSchema(() => z.str
   dayMask: DayMaskSchema,
   minuteOfDay: MinuteOfDaySchema,
   emailAddress: z.string().min(1),
+  /**
+   * The person's Personal Channel, frozen as a second destination, or null for
+   * someone who has none (a guest). Optional for a caller deployed before it.
+   */
+  personalChannel: z.strictObject({ targetId: IdSchema, spaceId: IdSchema }).nullable().optional(),
   executionPrincipalJson: z.string().min(2),
   at: TimestampSchema,
 }));
@@ -146,15 +151,6 @@ export const WorkspaceDigestFireScheduleSchema = deferredZodSchema(() => z.stric
   }).nullable(),
 }));
 
-export const WorkspaceDigestCursorRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  digestScheduleId: IdSchema,
-}));
-
-export const WorkspaceDigestCursorSchema = deferredZodSchema(() => z.strictObject({
-  cursorThrough: z.number().int().nonnegative().nullable(),
-}));
-
 export const WorkspaceDigestClaimRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   deliveryId: IdSchema,
@@ -165,8 +161,13 @@ export const WorkspaceDigestClaimRequestSchema = deferredZodSchema(() => z.stric
   cursorThrough: z.number().int().nonnegative(),
   eventCount: z.number().int().nonnegative(),
   highlightCount: z.number().int().nonnegative(),
-  /** `empty` settles the occurrence at claim time: nothing runs, the cursor still moves. */
+  /** `empty` settles the occurrence at claim time: nothing is sent. */
   status: z.enum(["empty", "planned"]),
+  /**
+   * What every destination of a `planned` occurrence receives, written with
+   * the claim so a claimed occurrence is never without it.
+   */
+  summaryMarkdown: z.string().min(1).nullable(),
   at: TimestampSchema,
 }));
 
@@ -177,43 +178,6 @@ export const WorkspaceDigestClaimRequestSchema = deferredZodSchema(() => z.stric
  */
 export const WorkspaceDigestClaimResultSchema = deferredZodSchema(() => z.strictObject({
   outcome: z.enum(["claimed", "already_planned"]),
-}));
-
-export const WorkspaceDigestDeliveryWorkstreamRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  deliveryId: IdSchema,
-  workstreamId: IdSchema,
-  at: TimestampSchema,
-}));
-
-export const WorkspaceDigestDeliveryRunningRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  deliveryId: IdSchema,
-  harnessRunId: z.string().min(1),
-  at: TimestampSchema,
-}));
-
-/**
- * `not_planned` means the claim was no longer waiting for its launch — it was
- * released, settled, or never existed. The caller just launched a run against
- * it, so silence here would leave nothing saying the two disagree.
- */
-export const WorkspaceDigestRunningResultSchema = deferredZodSchema(() => z.strictObject({
-  outcome: z.enum(["running", "not_planned"]),
-}));
-
-export const WorkspaceDigestReleaseClaimRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  deliveryId: IdSchema,
-}));
-
-/**
- * `kept` means the claim had already left `planned` — a launch that got as far
- * as recording its run must keep the occurrence, or a retry would digest the
- * same window twice.
- */
-export const WorkspaceDigestReleaseClaimResultSchema = deferredZodSchema(() => z.strictObject({
-  outcome: z.enum(["released", "kept"]),
 }));
 
 export const WorkspaceDigestDeliveryContextRequestSchema = deferredZodSchema(() => z.strictObject({
@@ -230,14 +194,9 @@ export const WorkspaceDigestDeliveryContextSchema = deferredZodSchema(() => z.st
     highlightCount: z.number().int().nonnegative(),
     status: z.enum(["planned", "running", "delivered", "empty", "failed"]),
     workstreamId: z.string().nullable(),
+    /** What this occurrence sends, kept at claim so a retry sends the same thing. */
+    summaryMarkdown: z.string().nullable(),
   }).nullable(),
-}));
-
-export const WorkspaceDigestSummaryRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  deliveryId: IdSchema,
-  summaryMarkdown: z.string().min(1),
-  at: TimestampSchema,
 }));
 
 export const WorkspaceDigestSettleRequestSchema = deferredZodSchema(() => z.strictObject({
@@ -320,25 +279,12 @@ export type WorkspaceDigestRowState = z.infer<typeof WorkspaceDigestRowStateSche
 export type WorkspaceDigestReplaceRowsRequest = z.infer<typeof WorkspaceDigestReplaceRowsRequestSchema>;
 export type WorkspaceDigestFireScheduleRequest = z.infer<typeof WorkspaceDigestFireScheduleRequestSchema>;
 export type WorkspaceDigestFireSchedule = z.infer<typeof WorkspaceDigestFireScheduleSchema>;
-export type WorkspaceDigestCursorRequest = z.infer<typeof WorkspaceDigestCursorRequestSchema>;
-export type WorkspaceDigestCursor = z.infer<typeof WorkspaceDigestCursorSchema>;
 export type WorkspaceDigestClaimRequest = z.infer<typeof WorkspaceDigestClaimRequestSchema>;
 export type WorkspaceDigestClaimResult = z.infer<typeof WorkspaceDigestClaimResultSchema>;
-export type WorkspaceDigestDeliveryWorkstreamRequest =
-  z.infer<typeof WorkspaceDigestDeliveryWorkstreamRequestSchema>;
-export type WorkspaceDigestDeliveryRunningRequest =
-  z.infer<typeof WorkspaceDigestDeliveryRunningRequestSchema>;
-export type WorkspaceDigestRunningResult =
-  z.infer<typeof WorkspaceDigestRunningResultSchema>;
-export type WorkspaceDigestReleaseClaimRequest =
-  z.infer<typeof WorkspaceDigestReleaseClaimRequestSchema>;
-export type WorkspaceDigestReleaseClaimResult =
-  z.infer<typeof WorkspaceDigestReleaseClaimResultSchema>;
 export type WorkspaceDigestDeliveryContextRequest =
   z.infer<typeof WorkspaceDigestDeliveryContextRequestSchema>;
 export type WorkspaceDigestDeliveryContext =
   z.infer<typeof WorkspaceDigestDeliveryContextSchema>;
-export type WorkspaceDigestSummaryRequest = z.infer<typeof WorkspaceDigestSummaryRequestSchema>;
 export type WorkspaceDigestSettleRequest = z.infer<typeof WorkspaceDigestSettleRequestSchema>;
 export type WorkspaceDigestSettleResult = z.infer<typeof WorkspaceDigestSettleResultSchema>;
 export type WorkspaceDigestTerminalContextRequest =

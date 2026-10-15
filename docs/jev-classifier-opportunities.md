@@ -54,7 +54,8 @@ answer, and the rest are writing tasks with nothing closed-set about them.
 The more interesting population is not in that list at all: decisions that were
 *declined* rather than implemented, because the only tool available was a
 generative call whose self-reported confidence nobody trusted. Two are recorded
-in this tree in close to those words. One is entry 3 below. The other is the
+in this tree in close to those words. One is entry 3 below, since retired with the
+digest's model run. The other is the
 retired contextual-routing gate, whose post-mortem says its only quality control
 was "a constant compared against a number the model made up about its own
 answer" ([`contextual-routing.md`](contextual-routing.md), 2026-08-12); that
@@ -232,6 +233,10 @@ failure with different names. Entry 1 first, because it is reversible and
 touches no authorization path.
 
 ### 3. Digest settlement, a decision this tree already declined for want of JEV
+
+**No longer a candidate.** The scheduled digest stopped running a model: it now
+sends a fixed list of unread Activity, so there is no final message to judge and
+`digest-run-settlement.ts` is deleted. The entry is kept for its reasoning.
 
 **Observed.** `digest-run-settlement.ts` mails a digest run's final message and
 "has no way to tell a digest from a sign-off" (`:36`-`:57`). A run that ended

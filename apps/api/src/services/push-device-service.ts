@@ -47,25 +47,25 @@ export async function livePushDevices(env: Env, userId: string): Promise<PushDev
   return rows.results;
 }
 /**
- * The active members of a workspace with at least one live device, and their
- * access class: `livePushDevices`'s test, for a set of people in one read.
- * `userIds` null asks about every active member.
+ * The active members of a workspace, their access class, and whether each has
+ * at least one live device: `livePushDevices`'s test, for a set of people in
+ * one read. `userIds` null asks about every active member.
  */
-export async function membersWithLivePushDevices(
+export async function activeMembersForActivity(
   env: Env,
   workspaceId: string,
   userIds: readonly string[] | null,
-): Promise<Array<{ userId: string; accessClass: "member" | "guest" }>> {
+): Promise<Array<{ userId: string; accessClass: "member" | "guest"; hasDevice: boolean }>> {
   if (userIds !== null && userIds.length === 0) return [];
-  const rows = await workspaceRegionalDatabase(env).prepare(`SELECT m.user_id AS userId, m.access_class AS accessClass
-    FROM workspace_members m
-    WHERE m.workspace_id = ?1 AND m.status = 'active'
-      AND (?2 IS NULL OR m.user_id IN (SELECT value FROM json_each(?2)))
-      AND EXISTS (SELECT 1 FROM user_push_devices d
+  const rows = await workspaceRegionalDatabase(env).prepare(`SELECT m.user_id AS userId, m.access_class AS accessClass,
+      EXISTS (SELECT 1 FROM user_push_devices d
         JOIN user_push_device_sessions ds ON ds.device_id = d.id
         JOIN sessions s ON s.id = ds.session_id
-        WHERE d.user_id = m.user_id AND d.disabled_at IS NULL AND s.revoked_at IS NULL AND s.expires_at > ?3)`)
+        WHERE d.user_id = m.user_id AND d.disabled_at IS NULL AND s.revoked_at IS NULL AND s.expires_at > ?3) AS hasDevice
+    FROM workspace_members m
+    WHERE m.workspace_id = ?1 AND m.status = 'active'
+      AND (?2 IS NULL OR m.user_id IN (SELECT value FROM json_each(?2)))`)
     .bind(workspaceId, userIds === null ? null : JSON.stringify(userIds), new Date().toISOString())
-    .all<{ userId: string; accessClass: "member" | "guest" }>();
-  return rows.results;
+    .all<{ userId: string; accessClass: "member" | "guest"; hasDevice: number }>();
+  return rows.results.map((row) => ({ userId: row.userId, accessClass: row.accessClass, hasDevice: row.hasDevice === 1 }));
 }

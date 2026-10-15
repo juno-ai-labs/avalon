@@ -179,7 +179,7 @@ used to stay out of the model's context for good. The conversation object now
 records how far into the transcript the projection has looked, and every
 admission first appends the conversation turns between that mark and its own
 admission point, in transcript order, before appending itself. Model-only
-activation inputs — connector activity, scheduled wake-ups, digest briefs,
+activation inputs — connector activity, scheduled wake-ups,
 Slack origin wrappers, and frozen recalled memory — cross a separate host
 boundary on every activation. Each carries full
 derived provenance plus a stable logical `activationInputId` that is independent
@@ -312,7 +312,7 @@ executing. The receipt keeps `triggerMessageId` as immutable execution
 provenance; the persistent loop keeps the conversation itself and is resumed
 rather than reconstructed from that trigger on every activation.
 
-System producers that already own a canonical trigger—such as a digest brief,
+System producers that already own a canonical trigger—such as an
 automation opening input, activity, or inbound email—may prepare an unlinked
 execution receipt and wake the same loop. `transcriptFenceMessageId` separates
 the trigger's identity from the newest canonical turn that activation may see.
@@ -359,7 +359,7 @@ A document-shaped request is written as a Markdown file in the work stream's ter
 
 The same module's **Sites** section is the site-shaped equivalent: a request whose natural output is a page or a small app becomes a *directory* of files, published as a live artifact people open. It carries only the trigger and the two rules a model gets wrong without it — publish the directory rather than a file inside it, and a request for a new thing is a new site at a new path — plus the pointer to the skill. The build craft is hundreds of lines and would be charged to every request, so it ships as the loadable `building-live-sites` skill and is read at the moment it matters. Like the document half it is standing rather than gated, and falls back the same way when the sandbox cannot be reached. [`live-web-artifacts.md`](live-web-artifacts.md) owns what a published directory becomes and how it is served.
 
-An answer says what it rests on, inline (`CITATION_POLICY`, `prompts/citations.ts`). The section teaches the link form for referring to a resource in a sentence, GFM footnotes for a source that backs a specific claim, and the definition grammar the renderer actually lifts — exactly one link, targeting a `resource://` identifier or an `https://` URL, with optional words around it. It says once what to do when no identifier is in context (name the thing in plain words) rather than repeating a prohibition the working-style rule and the attachment policy already carry twice; those two answer "ask a person", which a headless automation run cannot. The *announcement* rule — the embed form for a document the run just published — lives in `DOCUMENT_GENERATION_POLICY` so there is one rule for that act. Rendered for every work-stream run — interactive, automation and scheduled digest alike, since they share one system prompt; the meeting prompts compose `RESPONSE_FORMATTING_POLICY` separately and correctly do not get it. [`markdown-rendering.md`](markdown-rendering.md) owns the renderer half, and [`digests.md`](digests.md) and [`slack-integration.md`](slack-integration.md) own the reductions the two non-renderer delivery surfaces apply.
+An answer says what it rests on, inline (`CITATION_POLICY`, `prompts/citations.ts`). The section teaches the link form for referring to a resource in a sentence, GFM footnotes for a source that backs a specific claim, and the definition grammar the renderer actually lifts — exactly one link, targeting a `resource://` identifier or an `https://` URL, with optional words around it. It says once what to do when no identifier is in context (name the thing in plain words) rather than repeating a prohibition the working-style rule and the attachment policy already carry twice; those two answer "ask a person", which a headless automation run cannot. The *announcement* rule — the embed form for a document the run just published — lives in `DOCUMENT_GENERATION_POLICY` so there is one rule for that act. Rendered for every work-stream run, interactive and automation alike, since they share one system prompt; the meeting prompts compose `RESPONSE_FORMATTING_POLICY` separately and correctly do not get it. [`markdown-rendering.md`](markdown-rendering.md) owns the renderer half, and [`digests.md`](digests.md) and [`slack-integration.md`](slack-integration.md) own the reductions the two non-renderer delivery surfaces apply.
 
 Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are never written — Unicode or plain words are used instead (`RESPONSE_FORMATTING_POLICY`, composed into the work-stream system prompt and both meeting prompts). Elicitation questions and option labels are plain text because their surface does not render Markdown. The TeX rule exists because no Rally surface renders TeX and several routed models emit it for symbols; [`model-text-normalization.md`](model-text-normalization.md) owns the display-side repair this pairs with, and `prompts.test.ts` pins the rule's exact wording because that document depends on it.
 
@@ -1022,7 +1022,7 @@ the preview before the data crosses the API boundary, so the list never carries
 the full prompt just to label a compact marker; the work-stream tools remain the
 boundary for complete wake-up detail.
 
-That split — a labelled trigger message for the model, a system row for the person reading the transcript — is the contract for every scheduler-started run, not a wake-up detail. A scheduled digest carries its frozen window the same way ([`digests.md`](digests.md#the-run)). A run whose instructions exist only as a transcript `system` row reaches the model with nothing but its work stream's objective, because the protocol projector drops those rows as UI state; whatever starts a run has to hand the host something to render.
+That split — a labelled trigger message for the model, a system row for the person reading the transcript — is the contract for every scheduler-started run, not a wake-up detail. A run whose instructions exist only as a transcript `system` row reaches the model with nothing but its work stream's objective, because the protocol projector drops those rows as UI state; whatever starts a run has to hand the host something to render.
 
 ### Loop stop, receipt cancellation, and deferred systems
 
@@ -1250,7 +1250,6 @@ It does not own:
 | Which model each agent runs on, and the pin that overrides it | [`feature-flags.md`](feature-flags.md) |
 | Connector adapters, grants, and health semantics | [`connectors.md`](connectors.md) |
 | The create path a run is launched from | [`workstream-creation.md`](workstream-creation.md) |
-| The digest that rides this loop | [`digests.md`](digests.md) |
 | The description pass that runs after a terminal run | [`workstream-descriptions.md`](workstream-descriptions.md) |
 | Reading a captured inference record back | [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference) |
 | Regional analytical inference capture and retention | [`inference-lakehouse.md`](inference-lakehouse.md) |
@@ -1375,7 +1374,6 @@ proof.
 | `apps/api/test/message-run-context.test.ts` | Message-origin runs skip automatic long-term-memory recall while non-message runs retain their frozen admission context. |
 | `apps/api/test/model-protocol-transcript.test.ts` | Historical tool-pair reconstruction, including sanitized structured failure recovery after resume. |
 | `apps/api/test/workstream-transcript-storage.test.ts` | Atomic activation-input admission under the exact execution/Bind fence, full-provenance replay checks, pending-input suppression, ordered multi-input commits, idempotency across compaction, repair of a host reservation missing its Bind edge, and stop winning a steer-preparation race without consuming input. |
-| `apps/api/test/digest-run-context.test.ts` | A scheduled digest's hidden brief becomes an explicit derived activation input with stable logical identity instead of disappearing on loop resume. |
 | `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, typed refusal codes and remediation, the pending sidebar marker, and claim-before-launch. |
 | `apps/api/test/bind-host-durability.test.ts` | Host-only boundaries around activation persistence, ambiguous halts, and attachment grounding, including the validation-versus-content-failure distinction and post-start validation receipt reuse. |
 | `apps/api/test/attachment-tool-receipts.test.ts` | Exact derivative and completed-output-reference dependency fencing, replay reauthorization, all-or-nothing multi-image registration, and successor-safe mismatch cleanup. |

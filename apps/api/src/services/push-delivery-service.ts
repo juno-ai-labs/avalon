@@ -17,3 +17,17 @@ export async function enqueuePushDelivery(env: Env, message: PushDeliveryMessage
   await env.PUSH_DELIVERY_QUEUE.send(message);
   return true;
 }
+
+/**
+ * An Activity row for a channel other than push: queued on the same queue,
+ * whose consumer reads it back and sends it. Push availability does not
+ * gate it; only the queue's own binding does.
+ */
+export async function enqueueActivityDelivery(
+  env: Env,
+  message: PushDeliveryMessage & { activityItemId: string; channel: NonNullable<Extract<PushDeliveryMessage, { activityItemId: string }>["channel"]> },
+): Promise<boolean> {
+  if (!env.PUSH_DELIVERY_QUEUE) return false;
+  await env.PUSH_DELIVERY_QUEUE.send(message);
+  return true;
+}

@@ -8,12 +8,10 @@ import { PersonalSetup } from './guided-onboarding';
 import { githubAvailabilityLabels, githubRemoteLabels, mcpAuthLabels } from '../settings/choices';
 import { SettingToggle } from '../settings/setting-toggle';
 import { useMemberPreferences, useSaveMemberPreferences } from '../lib/use-member-preferences';
-import type { PushPreferences } from '@rally/contracts';
 import { settings, collectSettings, coreSettingsProvider, defineSetting, isSettingAvailable, searchSettings, type SettingSearchResult, type SettingsSearchContext } from '../settings/registry';
 import { SettingCopy, SettingLabel } from '../settings/setting-label';
 import { SettingsSearchResults, useRevealSetting } from '../settings/search-results';
 import { SidebarSearch } from '../components/sidebar-search';
-import { digestDeliverySetting } from '../settings/digest-provider';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
@@ -23,7 +21,6 @@ import {
   MailPlus,
   Menu,
   MonitorCog,
-  Newspaper,
   Bell,
   ChevronRight,
   Ellipsis,
@@ -60,7 +57,7 @@ import { Avatar, Badge, Button, ConnectorMark, DropdownSelect, EmptyState, IconB
 import { connectorBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { ThemePicker } from '../components/theme-picker';
-import { DigestSettings } from '../components/digest-settings';
+import { DailyDigestSettings, NotificationChannelSettings } from '../components/notification-settings';
 import { UsageSettingsSection } from '../components/organization-usage';
 import { InlineEditableText } from '../components/inline-editable-text';
 import { useAppSession } from '../lib/app-session';
@@ -224,45 +221,6 @@ function PersonalSystemPromptSetting({ api, workspaceId }: { api: RallyApi; work
   );
 }
 
-/**
- * Settings → Notifications: what this person is pushed in this Organization,
- * on every device. Each switch saves on its own; the two narrower ones are
- * only live while their kind is on.
- */
-function PushPreferencesSettings({ api, workspaceId }: { api: RallyApi; workspaceId: string }): React.JSX.Element {
-  const preferences = useMemberPreferences(api, workspaceId);
-  const save = useSaveMemberPreferences(api, workspaceId);
-  const push = preferences.data.push;
-  const toggle = (key: keyof PushPreferences, nested = false, enabled = true) => ({
-    checked: push[key],
-    disabled: save.isPending || !enabled,
-    nested,
-    role: 'switch' as const,
-    onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
-      save.mutate({ push: { [key]: event.currentTarget.checked } }),
-  });
-  return (
-    <section className="settings-pane">
-      <div className="settings-pane-heading settings-pane-heading-spaced">
-        <h2>Notify me about</h2>
-        <p>These apply on every device signed in to this Organization.</p>
-      </div>
-      <div className="settings-list-card">
-        <SettingToggle setting={settings.pushMentions} {...toggle('mentions')} />
-        <SettingToggle setting={settings.pushAdded} {...toggle('added')} />
-        <SettingToggle setting={settings.pushNewThreads} {...toggle('newThreads')} />
-        <SettingToggle setting={settings.pushNewThreadsOutsideMyChannels}
-          {...toggle('newThreadsOutsideMyChannels', true, push.newThreads)} />
-        <SettingToggle setting={settings.pushNewBreakouts} {...toggle('newBreakouts')} />
-        <SettingToggle setting={settings.pushRunFinished} {...toggle('runFinished')} />
-        <SettingToggle setting={settings.pushRunFinishedOthers}
-          {...toggle('runFinishedOthers', true, push.runFinished)} />
-      </div>
-      {save.error && <InlineError>{save.error.message}</InlineError>}
-    </section>
-  );
-}
-
 /** Settings → Account → Agent: whether this person's transcripts show the agent's work. */
 function AgentWorkSetting({ api, workspaceId }: { api: RallyApi; workspaceId: string }): React.JSX.Element {
   const preferences = useMemberPreferences(api, workspaceId);
@@ -407,9 +365,6 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
     label: 'Settings',
     items: [
       { id: 'account', label: 'Account', icon: UserRound },
-      // Directly under Account, because a digest is a personal preference like
-      // the timezone it borrows — not a workspace-level setting.
-      { id: 'digest', label: 'Digest', icon: Newspaper },
       { id: 'notifications', label: 'Notifications', icon: Bell },
       { id: 'workspace', label: 'Organization', icon: Users },
       // Its own top-level page rather than part of Organization: the Terminal
@@ -1143,11 +1098,10 @@ export function WorkspaceSettingsScreen({
     // this available to me."
     return { ...withConnections, items: withConnections.items.filter((item) =>
       (!guest || GUEST_SETTINGS_SECTIONS.has(item.id))
-      && (item.id !== 'digest' || digestSettingsAvailable)
-      && (item.id !== 'notifications' || featureFlags.data?.pushNotificationsEnabled === true)) };
+      ) };
   // Every Application setting but appearance is about the Mac app itself, so a
   // browser drops the whole Desktop app group and shows appearance in Account.
-  }).filter((group) => !browserHost || group.label !== 'Desktop app'), [browserHost, guest, connectionNavigationItems, digestSettingsAvailable, featureFlags.data?.pushNotificationsEnabled]);
+  }).filter((group) => !browserHost || group.label !== 'Desktop app'), [browserHost, guest, connectionNavigationItems]);
   const availableSections = useMemo(
     () => new Set(settingsNavigationWithConnectors.flatMap((group) => group.items.map((item) => item.id))),
     [settingsNavigationWithConnectors],
@@ -1163,15 +1117,9 @@ export function WorkspaceSettingsScreen({
   }), [browserHost, availableSections, isAdmin, developerSettingsAvailable, applicationSettings?.menuBarAvailable, applicationSettings?.launchAtLoginAvailable, applicationSettings?.releaseChannelAvailable]);
   const [searchTarget, setSearchTarget] = useState<SettingSearchResult | null>(null);
   const searchEntries = useMemo(() => collectSettings([
-    {
-      id: 'digest-destinations',
-      entries: (connections.data ?? []).filter((connection) => connection.userDelivery)
-        .map((connection) => {
-          const definition = digestDeliverySetting(connection);
-          return { key: definition.id, definition };
-        }),
-    },
-    { ...coreSettingsProvider, entries: coreSettingsProvider.entries.filter((entry) => !entry.definition.connectionKind)
+    // The digest's rows are searchable only while the digest is drawn.
+    { ...coreSettingsProvider, entries: coreSettingsProvider.entries.filter((entry) => !entry.definition.connectionKind
+      && (digestSettingsAvailable || !entry.definition.id.startsWith('digest')))
       .map((entry) => ({ ...entry, instanceLabel: connectorProviders.find((provider) =>
         'provider:' + provider.id === entry.definition.entryPoint)?.name })) },
     {
@@ -1195,7 +1143,7 @@ export function WorkspaceSettingsScreen({
         instanceId: connection.id,
       })),
     },
-  ], settingsContext), [connections.data, installedConnections, isAdmin, settingsContext]);
+  ], settingsContext), [connections.data, installedConnections, isAdmin, settingsContext, digestSettingsAvailable]);
   const searchResults = useMemo(() => {
     const action = navigationQuery.trim().toLowerCase();
     const exactConnectAction = [PERSONAL_CONNECT_LABEL, 'Connect for organization'].some((label) => label.toLowerCase() === action);
@@ -1619,11 +1567,17 @@ export function WorkspaceSettingsScreen({
                 {updatePushNotifications.error && <InlineError>{updatePushNotifications.error.message}</InlineError>}
               </section>
             )}
-            {activeSection === 'notifications' && featureFlags.data?.pushNotificationsEnabled && api && (
-              <PushPreferencesSettings api={api} workspaceId={workspace.id} />
+            {activeSection === 'notifications' && api && (
+              <NotificationChannelSettings
+                api={api}
+                connections={connections.data ?? []}
+                email={session?.user.email ?? null}
+                pushAvailable={featureFlags.data?.pushNotificationsEnabled === true}
+                workspaceId={workspace.id}
+              />
             )}
-            {activeSection === 'digest'  && api && digestSettingsAvailable && (
-              <DigestSettings
+            {activeSection === 'notifications' && api && digestSettingsAvailable && (
+              <DailyDigestSettings
                 api={api}
                 connections={connections.data ?? []}
                 onEditTimezone={() => setActiveSection('account')}

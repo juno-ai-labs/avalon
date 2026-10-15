@@ -1,7 +1,7 @@
 import type { DesktopSettingsSection } from '../../common/settings';
 import { appearanceModeDescriptions } from '../../common/themes';
 import { applicationIconChoices } from '../../common/application-icons';
-import { DAY_PRESETS, WEEKDAYS, githubAvailabilityLabels, githubRemoteLabels, mcpAuthLabels } from './choices';
+import { githubAvailabilityLabels, githubRemoteLabels, mcpAuthLabels } from './choices';
 
 export type SettingsAvailability = 'admin' | 'developer' | 'menuBar' | 'login' | 'releaseChannel' | 'browser';
 export interface SettingDefinition {
@@ -29,7 +29,6 @@ export const settings = {
   inviteEmail: defineSetting({ id: 'inviteEmail', section: 'workspace', label: "Email address", kind: 'custom', description: "Invite a teammate by email.", availability: 'admin' }),
   inviteRole: defineSetting({ id: 'inviteRole', section: 'workspace', label: "Role", kind: 'select', description: "Choose the invited teammate’s organization role.", availability: 'admin' }),
   inviteSend: defineSetting({ id: 'inviteSend', section: 'workspace', label: "Send invitation", kind: 'action', description: "Send the invitation after entering an email address.", availability: 'admin' }),
-  digestSave: defineSetting({ id: 'digestSave', section: 'digest', label: "Save digest", kind: 'action', description: "Save your digest schedule and delivery preferences." }),
   mcpSetupPolicy: defineSetting({ id: 'mcpSetupPolicy', section: 'connections', label: 'Tools Rally may use', kind: 'select', description: 'Choose which tools the organization server may expose.', availability: 'admin', entryPoint: 'provider:custom-mcp', options: ['All tools', 'Read-only tools'] }),
   mcpName: defineSetting({ id: 'mcpName', section: 'connections', label: "Name", kind: 'custom', description: "How this connection is listed in Rally. The server is never asked what it is called.", entryPoint: 'provider:custom-mcp' }),
   mcpUrl: defineSetting({ id: 'mcpUrl', section: 'connections', label: "Server URL", kind: 'custom', description: "The Streamable HTTP endpoint, over HTTPS. Rally checks it responds before saving anything.", entryPoint: 'provider:custom-mcp' }),
@@ -78,13 +77,11 @@ export const settings = {
   // Account. Same control and copy; only the section search sends you to differs.
   accountAppearance: defineSetting({ id: 'accountAppearance', section: 'account', label: "Appearance", kind: 'select', description: "Follow this device or keep Rally light or dark.", options: appearanceModeDescriptions.map((option) => option.label), availability: 'browser', aliases: ['theme'] }),
   pushNotifications: defineSetting({ id: 'pushNotifications', section: 'notifications', label: "Show notifications", description: "Show notifications on this device, even when Rally is closed.", kind: 'toggle', aliases: ['push'] }),
-  pushMentions: defineSetting({ id: 'pushMentions', section: 'notifications', label: "Mentions", description: "When someone mentions you.", kind: 'toggle', aliases: ['push', 'notify'] }),
-  pushAdded: defineSetting({ id: 'pushAdded', section: 'notifications', label: "Added to a thread", description: "When someone adds you to a thread or breakout.", kind: 'toggle', aliases: ['push', 'notify', 'additions'] }),
-  pushNewThreads: defineSetting({ id: 'pushNewThreads', section: 'notifications', label: "New threads", description: "When someone starts a thread you can open.", kind: 'toggle', aliases: ['push', 'notify'] }),
-  pushNewThreadsOutsideMyChannels: defineSetting({ id: 'pushNewThreadsOutsideMyChannels', section: 'notifications', label: "Include Channels you haven't joined", description: "Turn off to hear only about threads started in Channels you've joined.", kind: 'toggle', aliases: ['push', 'notify'] }),
-  pushNewBreakouts: defineSetting({ id: 'pushNewBreakouts', section: 'notifications', label: "New breakouts", description: "When someone starts a breakout you can open.", kind: 'toggle', aliases: ['push', 'notify'] }),
-  pushRunFinished: defineSetting({ id: 'pushRunFinished', section: 'notifications', label: "Rally finished", description: "When Rally finishes working in a thread or breakout you take part in.", kind: 'toggle', aliases: ['push', 'notify', 'run', 'done'] }),
-  pushRunFinishedOthers: defineSetting({ id: 'pushRunFinishedOthers', section: 'notifications', label: "Include threads you didn't start", description: "Turn off to hear only when Rally finishes in a thread or breakout you started.", kind: 'toggle', aliases: ['push', 'notify'] }),
+  notifyMentions: defineSetting({ id: 'notifyMentions', section: 'notifications', label: "Mentions", description: "When someone mentions you.", kind: 'custom', aliases: ['push', 'email', 'slack', 'notify'] }),
+  notifyAdded: defineSetting({ id: 'notifyAdded', section: 'notifications', label: "Added to a thread", description: "When someone adds you to a thread or breakout.", kind: 'custom', aliases: ['push', 'email', 'slack', 'notify', 'additions'] }),
+  notifyNewThreads: defineSetting({ id: 'notifyNewThreads', section: 'notifications', label: "New threads", description: "When someone starts a thread you can open.", kind: 'custom', aliases: ['push', 'email', 'slack', 'notify'] }),
+  notifyNewBreakouts: defineSetting({ id: 'notifyNewBreakouts', section: 'notifications', label: "New breakouts", description: "When someone starts a breakout you can open.", kind: 'custom', aliases: ['push', 'email', 'slack', 'notify'] }),
+  notifyRunFinished: defineSetting({ id: 'notifyRunFinished', section: 'notifications', label: "Rally finished", description: "When Rally finishes working in a thread or breakout you take part in.", kind: 'custom', aliases: ['push', 'email', 'slack', 'notify', 'run', 'done'] }),
   menuBar: defineSetting({ id: 'menuBar', section: 'application', label: "Show Rally in the menu bar", kind: 'toggle', description: "Keep the Rally mark in the menu bar for a new meeting or note, a new automation, what Rally suggests next, and your recent threads.", availability: 'menuBar', aliases: ["status item","meetings"] }),
   appIcon: defineSetting({ id: 'appIcon', section: 'application', label: "App icon", kind: 'custom', description: "Choose how Rally appears in the Dock, Finder, Launchpad, and Spotlight.", options: applicationIconChoices.map((option) => option.label) }),
   releaseChannel: defineSetting({ id: 'releaseChannel', section: 'application', label: "Update channel", kind: 'select', description: "Stable receives no more than one desktop release every 24 hours. Faster receives every desktop release.", options: ['Stable', 'Faster'], availability: 'releaseChannel', aliases: ['release pace', 'updates'] }),
@@ -92,11 +89,10 @@ export const settings = {
   debug: defineSetting({ id: 'debug', section: 'application', label: "Debug enabled", kind: 'toggle', description: "Show debugging actions such as copying a thread or automation identifier from its right-click menu, and the rows describing how a thread is wired in its Details.", availability: 'developer', aliases: ["developer","diagnostics"] }),
   about: defineSetting({ id: 'about', section: 'application', label: "About", kind: 'information', description: "Which release of Rally this Mac is running." }),
   version: defineSetting({ id: 'version', section: 'application', label: "Version", kind: 'information', description: "" }),
-  digestEnabled: defineSetting({ id: 'digestEnabled', section: 'digest', label: "Send me a digest", kind: 'toggle', description: "Rally writes it at the times you choose and sends it where you choose.", aliases: ["notifications","summary"] }),
-  digestDays: defineSetting({ id: 'digestDays', section: 'digest', label: "Days", kind: 'custom', description: "Choose the days of the week.", options: [...DAY_PRESETS.map((choice) => choice.label), ...WEEKDAYS.map((choice) => choice.name)] }),
-  digestTimes: defineSetting({ id: 'digestTimes', section: 'digest', label: "Times", kind: 'custom', description: "Add or remove delivery times for your digest." }),
-  digestDelivery: defineSetting({ id: 'digestDelivery', section: 'digest', label: "Deliver to", kind: 'collection', description: "Choose email or a connected messaging service." }),
-  digestEmail: defineSetting({ id: 'digestEmail', section: 'digest', label: "Email", kind: 'toggle', description: "Sent to your Rally account address." }),
+  digestStartOfDay: defineSetting({ id: 'digestStartOfDay', section: 'notifications', label: "Start of day", kind: 'custom', description: "What came in overnight and is still unread.", aliases: ['digest', 'summary', 'morning'] }),
+  digestEndOfDay: defineSetting({ id: 'digestEndOfDay', section: 'notifications', label: "End of day", kind: 'custom', description: "What is still unread before you log off.", aliases: ['digest', 'summary', 'evening'] }),
+  digestSendTo: defineSetting({ id: 'digestSendTo', section: 'notifications', label: "Send to", kind: 'custom', description: "Any mix. Each gets the same list.", aliases: ['digest', 'personal channel', 'email', 'slack'] }),
+  digestDays: defineSetting({ id: 'digestDays', section: 'notifications', label: "Days", kind: 'custom', description: "Weekdays or every day.", options: ['Weekdays', 'Every day'], aliases: ['digest'] }),
 } satisfies Record<string, SettingDefinition>;
 
 export interface SettingsSearchContext {

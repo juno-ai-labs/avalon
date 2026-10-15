@@ -10,12 +10,10 @@ import type { Viewer } from "./listing-rules";
  * `docs/push-notifications.md#activity-rows` owns the design.
  */
 
-/** The kinds this path pushes; `added` and `mentioned` have their own. */
-export const PUSHED_KINDS: ReadonlySet<ActivityItemKind> = new Set([
-  "thread_started",
-  "breakout_started",
-  "run_finished",
-]);
+/** The kinds this path pushes, in the push payload's words; `added` and `mentioned` have their own. */
+export const ACTIVITY_PUSH_KINDS = ["thread_started", "breakout_started", "run_finished"] as const satisfies readonly ActivityItemKind[];
+
+const PUSHED_KINDS: ReadonlySet<ActivityItemKind> = new Set(ACTIVITY_PUSH_KINDS);
 
 const STARTS: ReadonlySet<ActivityItemKind> = new Set(["thread_started", "breakout_started"]);
 

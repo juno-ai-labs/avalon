@@ -2559,116 +2559,97 @@ pre {
 .workstream-row.is-system .sidebar-row-title > svg { color: var(--av-sys-color-text-disabled); flex: none; }
 .workstream-row.is-system.is-active .sidebar-row-title { color: var(--av-sys-color-text-subtle); }
 
-.digest-card { display: flex; flex-direction: column; gap: 14px; padding: 14px; }
-
-.digest-day-presets { display: flex; flex-wrap: wrap; gap: 6px; }
-.digest-preset {
+/* Settings → Notifications. A row's choices as one toggle button each, or, when
+   they do not all fit beside the row's words, one menu (`ChannelPicker`). The
+   probe lays the buttons out unseen so the row can measure what they need. */
+.channel-picker { display: flex; justify-content: flex-end; min-width: 0; position: relative; }
+.channel-chips { display: flex; flex-wrap: nowrap; gap: 6px; }
+.channel-chips-probe { pointer-events: none; position: absolute; right: 0; top: 0; visibility: hidden; }
+.channel-chip {
+  align-items: center;
   background: var(--av-sys-color-surface-raised);
   border: 1px solid var(--av-ref-color-line-3);
-  border-radius: var(--av-sys-size-radius-pill);
+  border-radius: var(--av-cmp-control-radius);
   color: var(--av-sys-color-text-muted);
-  font-size: 10.5px;
-  font-weight: 600;
-  padding: 5px 12px;
+  display: inline-flex;
+  font-size: 12px;
+  gap: 6px;
+  height: 30px;
+  justify-content: center;
+  min-width: 80px;
+  padding: 0 12px;
   transition: background 120ms, border-color 120ms, color 120ms;
+  white-space: nowrap;
 }
-.digest-preset:hover { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
-.digest-preset[aria-pressed='true'] {
-  background: var(--av-ref-color-neutral-5);
-  border-color: var(--av-sys-color-border-default);
-  color: var(--av-sys-color-text-default);
-}
-
-.digest-day-toggles { display: flex; gap: 6px; }
-.digest-day {
-  background: var(--av-sys-color-surface-raised);
-  border: 1px solid var(--av-ref-color-line-3);
-  border-radius: var(--av-sys-size-radius-md);
-  color: var(--av-sys-color-text-muted);
-  font-size: 11.5px;
-  font-weight: 700;
-  height: 34px;
-  transition: background 120ms, border-color 120ms, color 120ms;
-  width: 34px;
-}
-.digest-day:hover { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
-.digest-day[aria-pressed='true'] {
+.channel-chip:hover { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
+.channel-chip[aria-pressed='true'] {
   background: var(--av-sys-color-text-default);
   border-color: var(--av-sys-color-text-default);
   color: var(--av-sys-color-text-on-inverse);
 }
-.digest-day:focus-visible,
-.digest-preset:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-focus-quiet); outline: none; }
-
-.digest-empty { color: var(--av-sys-color-text-muted); font-size: 10.5px; margin: 0; }
-
-.digest-time-list { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
-.digest-time {
+.channel-chip:focus-visible,
+.channel-menu-trigger:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-focus-quiet); outline: none; }
+.channel-menu-trigger {
   align-items: center;
   background: var(--av-sys-color-surface-raised);
   border: 1px solid var(--av-ref-color-line-3);
-  border-radius: var(--av-sys-size-radius-pill);
+  border-radius: var(--av-cmp-control-radius);
   color: var(--av-sys-color-text-default);
   display: inline-flex;
-  font-size: 11px;
-  font-weight: 600;
-  gap: 6px;
-  padding: 5px 6px 5px 11px;
+  font-size: 12px;
+  gap: 8px;
+  height: 30px;
+  max-width: 100%;
+  padding: 0 10px 0 12px;
+  white-space: nowrap;
 }
-.digest-time > svg { color: var(--av-sys-color-text-muted); }
-.digest-time button {
+.channel-menu-trigger > span { overflow: hidden; text-overflow: ellipsis; }
+.channel-menu-trigger > svg { color: var(--av-sys-color-text-muted); flex: none; }
+.channel-menu-trigger[data-state='open'] { border-color: var(--av-sys-color-border-strong); }
+.channel-menu { width: 260px; }
+.channel-menu-item { align-items: flex-start; gap: 10px; }
+.channel-menu-check {
   align-items: center;
-  background: transparent;
-  border-radius: 50%;
-  color: var(--av-sys-color-text-muted);
+  border: 1px solid var(--av-ref-color-line-4);
+  border-radius: 4px;
   display: inline-flex;
-  height: 18px;
+  flex: none;
+  height: 16px;
   justify-content: center;
-  width: 18px;
+  margin-top: 2px;
+  width: 16px;
 }
-.digest-time button:hover { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
+.channel-menu-item[data-state='checked'] .channel-menu-check {
+  background: var(--av-sys-color-text-default);
+  border-color: var(--av-sys-color-text-default);
+  color: var(--av-sys-color-text-on-inverse);
+}
+.channel-menu-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.channel-menu-copy > span { color: var(--av-sys-color-text-default); }
+.channel-menu-copy > small { color: var(--av-sys-color-text-muted); font-size: 11px; }
 
-.digest-time-add { align-items: center; display: flex; gap: 8px; }
-.digest-time-add input {
-  background: var(--av-sys-color-surface-default);
+/* A note under a settings card, inset to the heading above the card. */
+.settings-footnote { color: var(--av-sys-color-text-muted); font-size: 12px; line-height: 1.5; margin: 8px 0 0; padding-inline: 8px 4px; }
+
+.digest-slot-controls { align-items: center; display: inline-flex; gap: 12px; }
+.digest-slot-time {
+  background: var(--av-sys-color-surface-raised);
   border: 1px solid var(--av-ref-color-line-3);
-  border-radius: var(--av-sys-size-radius-md);
+  border-radius: var(--av-cmp-control-radius);
   color: var(--av-sys-color-text-default);
-  font-family: inherit;
-  font-size: 11.5px;
-  padding: 7px 10px;
+  font-size: 12px;
+  height: 28px;
+  padding: 0 8px;
 }
-.digest-time-add input:focus-visible { border-color: var(--av-sys-color-focus-default); outline: none; }
-
-.digest-timezone {
-  align-items: center;
-  border-top: 1px solid var(--av-sys-color-border-subtle);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin: 0;
-  padding-top: 12px;
-}
-.digest-timezone > span { color: var(--av-sys-color-text-muted); font-size: 10.5px; }
-.digest-timezone > strong { color: var(--av-sys-color-text-subtle); font-size: 10.5px; font-weight: 600; }
+.digest-slot-time:disabled { opacity: .5; }
 .digest-timezone-link {
   background: transparent;
   color: var(--av-sys-color-text-default);
-  font-size: 10.5px;
+  font-size: inherit;
   font-weight: 600;
-  margin-left: 3px;
   padding: 0;
 }
 .digest-timezone-link:hover { text-decoration: underline; }
-
-.digest-actions {
-  align-items: center;
-  display: flex;
-  gap: 12px;
-  justify-content: space-between;
-  margin-top: 18px;
-}
-.digest-actions small { color: var(--av-sys-color-text-muted); font-size: 10.5px; line-height: 1.5; }
 
 .dropdown-select-trigger {
   align-items: center;

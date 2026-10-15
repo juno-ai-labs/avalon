@@ -1,3 +1,4 @@
+import { AutomationDeliveryTargetTypeSchema } from "./index";
 import { RegionSchema } from "./regions";
 import { z } from "zod";
 import { HttpsUrlSchema } from "./url-schemas";
@@ -78,10 +79,17 @@ const PushDeliveryAddressSchema = z.object({
  * add names its notification intent; every other Activity row names the row
  * itself, which the consumer reads back through the Activity feed. Neither
  * carries the notification's text.
+ *
+ * An Activity row carries `channel` when it goes somewhere other than the
+ * person's devices: an email, or a connector's delivery surface. Without it,
+ * the message is a push.
  */
 export const PushDeliveryMessageSchema = z.union([
   PushDeliveryAddressSchema.extend({ intentId: z.string() }).strict(),
-  PushDeliveryAddressSchema.extend({ activityItemId: z.string().min(1).max(400) }).strict(),
+  PushDeliveryAddressSchema.extend({
+    activityItemId: z.string().min(1).max(400),
+    channel: AutomationDeliveryTargetTypeSchema.optional(),
+  }).strict(),
 ]);
 export type PushDeliveryMessage = z.infer<typeof PushDeliveryMessageSchema>;
 export const PushNotificationDataSchema = z.object({

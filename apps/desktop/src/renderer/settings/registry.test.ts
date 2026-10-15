@@ -40,7 +40,7 @@ describe('settings registry', () => {
   it('ranks labels before descriptions and shares selectable option labels', () => {
     const entries = collectSettings([coreSettingsProvider], context);
     expect(searchSettings(entries, 'appearance')[0]?.definition.id).toBe('appearance');
-    expect(searchSettings(entries, 'weekends').some((entry) => entry.definition.id === 'digestDays')).toBe(true);
+    expect(searchSettings(entries, 'every day').some((entry) => entry.definition.id === 'digestDays')).toBe(true);
     expect(searchSettings(entries, 'dark').some((entry) => entry.definition.id === 'appearance')).toBe(true);
     expect(searchSettings(entries, 'time zone').some((entry) => entry.definition.id === 'personalTimezone')).toBe(true);
     expect(searchSettings(entries, '')).toEqual([]);
@@ -72,8 +72,8 @@ describe('settings registry', () => {
   });
   it('ranks competing labels before metadata and non-actions before tied actions', () => {
     const entries = collectSettings([coreSettingsProvider], context);
-    expect(searchSettings(entries, 'email')[0]?.definition.id).toBe('digestEmail');
-    expect(searchSettings(entries, 'digest')[0]?.definition.id).toBe('digestEnabled');
+    expect(searchSettings(entries, 'email')[0]?.definition.id).toBe('inviteEmail');
+    expect(searchSettings(entries, 'start of day')[0]?.definition.id).toBe('digestStartOfDay');
     const withoutInstalledMcp = collectSettings([coreSettingsProvider], { ...context, sections: new Set(['connections']) });
     expect(searchSettings(withoutInstalledMcp, 'Tools Rally may use')[0]?.definition.entryPoint).toBe('provider:custom-mcp');
   });

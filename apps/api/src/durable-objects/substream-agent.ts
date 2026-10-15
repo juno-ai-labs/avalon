@@ -134,7 +134,6 @@ import {
   runWorkstreamHarness,
   type WorkstreamHarnessResult,
 } from "../services/integrations";
-import { settleDigestRun } from "../services/digest-run-settlement";
 import { canonicalExternalResultText } from "../services/external-result-delivery";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
@@ -5623,17 +5622,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // cleanup may still run without a final turn, but no adapter may invent or
     // stream response prose that the canonical transcript does not contain.
     const text = canonicalExternalResultText(message);
-
-    if (input.digestDeliveryId) {
-      await settleDigestRun(
-        this.env,
-        input.workspaceId,
-        input.digestDeliveryId,
-        outcome.status,
-        text,
-      );
-      return settlementDiagnosticCode;
-    }
 
     // Only a Channel's run has a Slack thread waiting on its outcome.
     if (input.parentKind !== "workstream") return settlementDiagnosticCode;

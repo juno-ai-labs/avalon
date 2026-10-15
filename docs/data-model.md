@@ -428,9 +428,9 @@ SQL joins.
   rule. A suggestion carries its own
   `audience_scope` across the same
   way: a `workspace` one was shown to every member before anyone started it, and
-  the work stream it becomes stays readable by the people it was offered to. A `system_kind` row — a digest occurrence — is the other
-  direction: `personal` with its single recipient seated, so every tool the run
-  reaches for resolves against that person's access.
+  the work stream it becomes stays readable by the people it was offered to. A `system_kind` row (an older digest occurrence) is the other
+  direction: `personal` with its single recipient seated, so every tool its run
+  reached for resolved against that person's access.
 - A work stream born from a connector conversation uses that same scope rather
   than introducing a second visibility model: a public conversation starts as
   `workspace`, while a private or unclassified one starts as `personal` with the
@@ -459,13 +459,14 @@ SQL joins.
   automation's conversation has no scope toggle at all; its readers are its
   parent's decision. Its creator is also seated as a participant.
 - `workstream.system_kind` is the different question of whether a work stream is
-  *machinery*. `NULL` is ordinary work; any non-`NULL` value (`digest` today) is a
-  subsystem's own work stream, so an internal run can reuse the whole agent loop
-  rather than inventing a second one. It decides whether the row is *listed* — off
-  unless the caller passes `includeSystem`, which the desktop does when Debug
-  enabled is on — never who may read it. A digest's work stream carries both:
-  `scope = 'personal'` and `system_kind = 'digest'`. See
-  [`digests.md`](digests.md).
+  *machinery*. `NULL` is ordinary work; any non-`NULL` value is a subsystem's own
+  work stream, so an internal run can reuse the whole agent loop rather than
+  inventing a second one. It decides whether the row is *listed* — off unless the
+  caller passes `includeSystem`, which the desktop does when Debug enabled is on —
+  never who may read it. The only value is `digest`, on work streams the scheduled
+  digest created when it still ran a model: `scope = 'personal'` and
+  `system_kind = 'digest'`. The digest no longer runs a model, so nothing creates
+  new ones. See [`digests.md`](digests.md).
 - `workstream.model_override` pins this one work stream's runs to an OpenRouter
   model, ahead of the `agent-model-workstream` flag. `NULL` — the overwhelming
   majority — means the flag decides. It exists because model *selection* is a
@@ -888,7 +889,9 @@ column catalog; what follows is only what WorkspaceDO still holds.
   filtered out on read. `event_type` and `subject_type` are open strings so a
   producer adds a value rather than a column.
 - `workspace_activity_events.digestible` is the separate question of whether anybody *wants*
-  to hear about an event, as opposed to who *may*. It is fixed when the row is
+  to hear about an event, as opposed to who *may*. It is still written, but nothing
+  reads it today: the digest lists unread Activity, which carries no connector
+  activity. It is kept for a future surface. It is fixed when the row is
   written — from the connector's manifest for connector activity, at the call site
   for a first-party producer — because the question is asked far more often than it
   is answered, and re-deriving it on read would need a manifest that may have
@@ -906,9 +909,9 @@ column catalog; what follows is only what WorkspaceDO still holds.
   incidental — a reused rowid would appear beneath a cursor that has already
   passed.
 - `digest_schedules` is one digest per person per workspace, carrying a `day_mask`
-  (bit 0 Sunday). It owns no work stream: those belong to the occurrence, not the
-  configuration. Every active member gets one — weekdays at 09:00, by email —
-  created by the cron reconciler rather than at the several places a membership is
+  (bit 0 Sunday). It owns no work stream. Every active member gets one (weekdays
+  at 09:00, to email and, for a member who is not a guest, their Personal
+  Channel), created by the cron reconciler rather than at the several places a membership is
   made. A row is never deleted, so its absence unambiguously means "never had one"
   and the reconciler cannot resurrect a digest somebody switched off. It
   deliberately has no timezone column — a digest's times are wall-clock times in
@@ -920,18 +923,22 @@ column catalog; what follows is only what WorkspaceDO still holds.
   `BYHOUR` and `BYMINUTE` multiply out.
 - `digest_delivery_targets` freezes each destination, with a per-family `CHECK`:
   `email` carries an address and no connection, and every other type carries a
-  connection plus the frozen provider identity. `target_type` is deliberately not
+  connection plus the frozen provider identity. `personal_channel` fills that
+  shape with the person's Personal Channel in place of the connection and the
+  person in place of the provider user. `target_type` is deliberately not
   an enum, so a connector declaring a new `userDelivery` surface becomes selectable
   without a migration.
-- `digest_deliveries` is both the idempotency record and the cursor.
-  `(digest_schedule_id, planned_for)` is unique, so a re-fired alarm resolves to the
-  attempt already in flight; `cursor_through` of the newest settled row is where the
-  next digest starts reading. `empty` is a settled outcome, not a failure.
-  `workstream_id` is the work stream this occurrence ran in, created with the claim
-  and `SET NULL` rather than `CASCADE` — losing a transcript must never lose the
-  delivery, or the cursor it carries would move backwards and re-digest a window
-  somebody has already read. Digests never write `workstream_read_states`: a digest
-  cursor is what someone has been *told*, a read waterline is what they have *read*.
+- `digest_deliveries` is the idempotency record for one occurrence. Its id is
+  derived from the schedule and `planned_for`, and `(digest_schedule_id,
+  planned_for)` is unique, so a re-fired alarm resolves to the attempt already in
+  flight. The first attempt claims the row with `summary_markdown` already set:
+  that text is what every destination receives, and a retry sends it unchanged
+  rather than reading Activity again. `empty` is a settled outcome, not a failure.
+  `cursor_from` and `cursor_through` are written as `NULL` and `0`: the digest
+  reads unread Activity, not a window over the log, so there is no cursor to
+  move. `workstream_id` is unused for new rows; it names the work stream an older
+  occurrence ran in. Digests never write `workstream_read_states` and never mark
+  anything read.
 
 - `WorkspaceDO.connector_installations` owns a connection's unique setup attempt,
   initiating user and input digest, generation, typed registration document, and

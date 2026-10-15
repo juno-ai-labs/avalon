@@ -8,6 +8,7 @@ import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import { WorkspaceNotificationIntentDeliverySchema } from "../durable-objects/workspace-notification-intent-protocol";
 import { WorkspaceActivityPushReadResultSchema } from "../durable-objects/workspace-space-protocol";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { ApiError } from "../lib/api-error";
 import { logInfo, logWarn } from "../observability/logger";
 import { notificationDeliveryContext } from "../services/conversation-effect-service";
 import { pushEnabled } from "../services/push-delivery-service";
@@ -18,6 +19,8 @@ import { renderPushPayload, renderWebPushPayload, pushCollapseId, type PushPaylo
 import { sendWebPush, WEB_PUSH_PAYLOAD_BYTES, type WebPushOutcome } from "../services/push/web-push-transport";
 import { workspaceRegionalDatabase } from "../services/workspace-runtime-database";
 import { canonicalWorkstreamUrl } from "../services/workstream-link-service";
+import { sendActivityEmail } from "../services/activity-email-service";
+import { sendWorkstreamActivitySlack } from "../services/slack-notification-service";
 
 /** One send per device, to the transport the device registered with. */
 export type PushSend = (env: Env, device: PushDevice, payload: PushPayloads, collapseId: string) => Promise<ApnsOutcome | WebPushOutcome>;
@@ -105,8 +108,97 @@ async function activityContent(env: Env, workspace: WorkspaceStub, message: Push
 const UNNAMED_THREAD = "Untitled thread";
 const UNNAMED_BREAKOUT = "Untitled breakout";
 
-export async function deliverPush(env: Env, message: PushDeliveryMessage, send: PushSend = sendByTransport, faults: ProviderFaults = new Map()): Promise<boolean> {
+/**
+ * An Activity row by email or a connector's surface, for a person who chose
+ * that for its kind. Read back and checked as a push is, so a row read or a
+ * choice changed since it was queued sends nothing. The provider's own
+ * idempotency key is the receipt: a retry sends the same message once.
+ */
+async function deliverActivityElsewhere(
+  env: Env,
+  workspace: WorkspaceStub,
+  message: PushDeliveryMessage & { activityItemId: string; channel: NonNullable<ActivityChannel> },
+  senders: ActivitySenders,
+): Promise<boolean> {
+  const content = await activityContent(env, workspace, message);
+  if (content.outcome === "pending") return false;
+  if (content.outcome === "skipped") {
+    logInfo(env, "activity_delivery_skipped", { activity_item_id: message.activityItemId, channel: message.channel, reason: content.reason });
+    return true;
+  }
+  const ready = content;
+  if (!await workspace.notificationAllows({ workspaceId: asWorkspaceId(message.workspaceId), userId: message.recipientUserId,
+    kind: ready.kind, channel: message.channel })) {
+    logInfo(env, "activity_delivery_skipped", { activity_item_id: message.activityItemId, channel: message.channel, reason: "channel_not_chosen" });
+    return true;
+  }
+  const identity = await workspaceRegionalDatabase(env).prepare(
+    `SELECT u.email AS email, w.name AS workspace_name
+       FROM workspace_members m JOIN users u ON u.id = m.user_id JOIN workspaces w ON w.id = m.workspace_id
+      WHERE m.workspace_id = ? AND m.user_id = ? AND m.status = 'active'`,
+  ).bind(message.workspaceId, message.recipientUserId).first<{ email: string; workspace_name: string }>();
+  if (!identity) {
+    logInfo(env, "activity_delivery_skipped", { activity_item_id: message.activityItemId, channel: message.channel, reason: "recipient_inactive" });
+    return true;
+  }
+  const outcome = await sendElsewhere(message.channel);
+  logInfo(env, "activity_delivery_terminal", { activity_item_id: message.activityItemId, channel: message.channel, outcome });
+  return true;
+
+  // Exhaustive over the channel: a connector surface added to the contract
+  // without a sender here fails to compile rather than going out as another.
+  async function sendElsewhere(channel: NonNullable<ActivityChannel>) {
+    switch (channel) {
+      case "email": return senders.email(env, {
+        itemId: message.activityItemId,
+        recipientUserId: message.recipientUserId,
+        recipientEmail: identity!.email,
+        workspaceName: identity!.workspace_name,
+        title: ready.title,
+        body: ready.body,
+        url: await canonicalWorkstreamUrl(env, { region: env.AVALON_REGION, workspaceId: message.workspaceId,
+          workstreamId: ready.workstreamId, ...(ready.substreamId ? { substreamId: ready.substreamId } : {}) }),
+        region: env.AVALON_REGION,
+      });
+      case "slack_agent_dm": return senders.slack(env, {
+        itemId: message.activityItemId,
+        recipientUserId: message.recipientUserId,
+        recipientEmail: identity!.email,
+        workspaceId: message.workspaceId,
+        workspaceName: identity!.workspace_name,
+        workstreamId: ready.workstreamId,
+        ...(ready.substreamId ? { substreamId: ready.substreamId } : {}),
+        title: ready.title,
+        body: ready.body,
+      });
+      default: {
+        const unknown: never = channel;
+        throw new Error(`activity_channel_unsupported:${String(unknown)}`);
+      }
+    }
+  }
+}
+type ActivityChannel = Extract<PushDeliveryMessage, { activityItemId: string }>["channel"];
+/** The providers an Activity row is sent through when it is not a push. */
+export interface ActivitySenders {
+  email: typeof sendActivityEmail;
+  slack: typeof sendWorkstreamActivitySlack;
+}
+const activitySenders: ActivitySenders = { email: sendActivityEmail, slack: sendWorkstreamActivitySlack };
+
+export async function deliverPush(
+  env: Env,
+  message: PushDeliveryMessage,
+  send: PushSend = sendByTransport,
+  faults: ProviderFaults = new Map(),
+  senders: ActivitySenders = activitySenders,
+): Promise<boolean> {
   if (message.region !== env.AVALON_REGION) throw new Error("Push queue region mismatch");
+  if ("activityItemId" in message && message.channel) {
+    const id = asWorkspaceId(message.workspaceId);
+    const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, id, workspaceDOName(env.AVALON_REGION, id));
+    return deliverActivityElsewhere(env, workspace, { ...message, channel: message.channel }, senders);
+  }
   if (!await pushEnabled(env, { userId: message.recipientUserId, workspaceId: message.workspaceId })) return true;
   const id = asWorkspaceId(message.workspaceId);
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, id, workspaceDOName(env.AVALON_REGION, id));
@@ -119,10 +211,10 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
     logInfo(env, "push_delivery_skipped", { intent_id: pointer, reason: content.reason });
     return true;
   }
-  // Every kind, mentions and adds included: a switch turned off since this was
-  // queued holds too. Slack and email are not push, so they are left alone.
-  if (!await workspace.pushPreferenceAllows({ workspaceId: id, userId: message.recipientUserId, kind: content.kind,
-    threadId: content.workstreamId, substreamId: content.substreamId })) {
+  // Every kind, mentions and adds included: a choice changed since this was
+  // queued holds too.
+  if (!await workspace.notificationAllows({ workspaceId: id, userId: message.recipientUserId, kind: content.kind,
+    channel: "push" })) {
     logInfo(env, "push_delivery_skipped", { intent_id: pointer, reason: "push_preference_off" });
     return true;
   }
@@ -187,9 +279,18 @@ export async function consumePushDeliveryQueue(batch: MessageBatch<unknown>, env
     try {
       if (await deliverPush(env, PushDeliveryMessageSchema.parse(message.body), send, faults)) message.ack();
       else message.retry();
-    } catch {
-      logWarn(env, "push_delivery_failed", { message_id: message.id });
-      message.retry();
+    } catch (error) {
+      // The queue carries email and Slack too, so the failure names its channel and its code.
+      const permanent = error instanceof ApiError && error.details?.retryable === false;
+      logWarn(env, "push_delivery_failed", {
+        message_id: message.id,
+        channel: (message.body as { channel?: unknown } | null)?.channel ?? "push",
+        code: error instanceof ApiError ? error.code : error instanceof Error ? error.name : "unknown_error",
+        permanent,
+      });
+      // A provider that refused the message outright will refuse it again.
+      if (permanent) message.ack();
+      else message.retry();
     }
   }
   for (const [transport, reason] of faults) await notifyOps(env, {

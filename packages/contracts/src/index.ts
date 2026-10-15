@@ -1875,11 +1875,10 @@ export type PersonalSystemPrompt = z.infer<typeof PersonalSystemPromptSchema>;
  * a newer server adds one, and unknown keys are stripped rather than refused.
  */
 /**
- * What this person is pushed in one Organization, on every device. Each
- * switch is on unless they turn it off. The two narrower ones only matter
- * while their kind is on: `newThreadsOutsideMyChannels` off keeps new-thread
- * pushes to threads in Channels the person has joined, and
- * `runFinishedOthers` off keeps finish pushes to conversations they started.
+ * The push switches a client older than `NotificationChannelsSchema` reads
+ * and writes. Each kind's switch mirrors whether that kind's channels include
+ * `push`. The two narrower switches no longer change what is sent; they stay
+ * so an older client can still parse the record.
  */
 export const PushPreferencesSchema = z.object({
   mentions: z.boolean(),
@@ -1900,16 +1899,61 @@ export const DEFAULT_PUSH_PREFERENCES: PushPreferences = {
   runFinished: true,
   runFinishedOthers: true,
 };
+/**
+ * Where one notification can reach a person: a push to their devices, an
+ * email, or any surface a connector declares for delivering to a person
+ * (`userDelivery`). A new connector surface joins through
+ * `AutomationDeliveryTargetTypeSchema` and needs no change here.
+ */
+export const NotificationChannelSchema = z.union([z.literal("push"), AutomationDeliveryTargetTypeSchema]);
+export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
+/** The kinds of Activity row a person chooses channels for, one per row in Settings. */
+export const NotificationKindSchema = z.enum(["mentions", "added", "newThreads", "newBreakouts", "runFinished"]);
+export type NotificationKind = z.infer<typeof NotificationKindSchema>;
+/**
+ * Lenient on read: a channel this build does not know (a newer server's, or
+ * one a rollback left stored) is dropped rather than failing the whole record.
+ */
+const NotificationChannelListSchema = z.array(z.string()).transform((channels) => [...new Set(channels.flatMap((channel) => {
+  const known = NotificationChannelSchema.safeParse(channel);
+  return known.success ? [known.data] : [];
+}))]);
+/**
+ * How each kind reaches this person. An empty list means it is only in
+ * Activity and the daily digest.
+ */
+export const NotificationChannelsSchema = z.object({
+  mentions: NotificationChannelListSchema,
+  added: NotificationChannelListSchema,
+  newThreads: NotificationChannelListSchema,
+  newBreakouts: NotificationChannelListSchema,
+  runFinished: NotificationChannelListSchema,
+});
+export type NotificationChannels = z.infer<typeof NotificationChannelsSchema>;
+export const DEFAULT_NOTIFICATION_CHANNELS: NotificationChannels = {
+  mentions: ["push", "slack_agent_dm"],
+  added: ["push", "slack_agent_dm"],
+  newThreads: ["push"],
+  newBreakouts: ["push"],
+  runFinished: ["push"],
+};
 export const MemberPreferencesSchema = z.object({
   /** Whether the transcript shows the agent's work: its thinking and its tool and plugin calls. */
   showAgentWork: z.boolean(),
-  /** Absent from a server older than it: read as every default. */
+  /**
+   * What a client older than `notify` reads: each kind's switch is whether
+   * `notify` lists `push` for it. Absent from a server older than it: read as
+   * every default.
+   */
   push: PushPreferencesSchema.default(DEFAULT_PUSH_PREFERENCES),
+  /** Absent from a server older than it: read as every default. */
+  notify: NotificationChannelsSchema.default(DEFAULT_NOTIFICATION_CHANNELS),
 });
 export type MemberPreferences = z.infer<typeof MemberPreferencesSchema>;
 export const DEFAULT_MEMBER_PREFERENCES: MemberPreferences = {
   showAgentWork: true,
   push: DEFAULT_PUSH_PREFERENCES,
+  notify: DEFAULT_NOTIFICATION_CHANNELS,
 };
 /**
  * A save. Each field, and each push switch, is optional so one control saves
@@ -1921,8 +1965,11 @@ export const DEFAULT_MEMBER_PREFERENCES: MemberPreferences = {
 export const MemberPreferencesUpdateSchema = z.object({
   showAgentWork: z.boolean().optional(),
   push: PushPreferencesSchema.partial().optional(),
+  /** Each kind named replaces that kind's channels whole. */
+  notify: NotificationChannelsSchema.partial().optional(),
 }).refine((value) => value.showAgentWork !== undefined
-  || Object.values(value.push ?? {}).some((switched) => switched !== undefined), {
+  || Object.values(value.push ?? {}).some((switched) => switched !== undefined)
+  || Object.values(value.notify ?? {}).some((channels) => channels !== undefined), {
   message: "A preference to change is required.",
 });
 export type MemberPreferencesUpdate = z.infer<typeof MemberPreferencesUpdateSchema>;
@@ -1942,13 +1989,12 @@ export const DigestWeekdaySchema = z.number().int().min(0).max(6);
 export const DigestMinuteOfDaySchema = z.number().int().min(0).max(1439);
 
 /**
- * A destination a digest can be sent to. `email` is always offered and needs no
- * connector; every other value is a connector's declared `userDelivery` surface,
- * which is why this is the connector target enum plus nothing — the two lists
- * are the same list, and a connector declaring a new surface must not need a
- * contract change to become a digest destination.
+ * A destination a digest can be sent to: the person's own Personal Channel,
+ * where it arrives as a new thread; `email`, which needs no connector; or a
+ * connector's declared `userDelivery` surface. A connector declaring a new
+ * surface becomes a digest destination with no change here.
  */
-export const DigestDeliveryTargetTypeSchema = AutomationDeliveryTargetTypeSchema;
+export const DigestDeliveryTargetTypeSchema = z.union([z.literal("personal_channel"), AutomationDeliveryTargetTypeSchema]);
 
 export const DigestDeliveryTargetSchema = z.object({
   type: DigestDeliveryTargetTypeSchema,
@@ -3667,13 +3713,6 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * nullable so every existing producer keeps parsing unchanged.
    */
   scheduledWakeupId: IdSchema.optional(),
-  /**
-   * Set when the workspace scheduler started this run to write a scheduled
-   * digest. The run reads its window from the delivery row and the delivery is
-   * what gets sent when the run finishes. Optional for the same reason
-   * `scheduledWakeupId` is: every existing producer keeps parsing unchanged.
-   */
-  digestDeliveryId: IdSchema.optional(),
   executionPrincipal: ExecutionPrincipalSchema,
   /** Server-injected correlation for a user-started semantic run journey. */
   telemetryOperationId: IdSchema.optional(),
