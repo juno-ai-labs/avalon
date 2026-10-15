@@ -136,7 +136,12 @@ async function fixture(): Promise<{ env: Env; personal: Frozen; workspace: Froze
  * shared the file and the Organization's can edit it. Returns each Sheets
  * write, by the token that sent it.
  */
-function googleAsTwoAccounts(options: { visibleTo?: readonly string[]; refuseWritesFrom?: string } = {}): string[] {
+function googleAsTwoAccounts(options: {
+  visibleTo?: readonly string[];
+  refuseWritesFrom?: string;
+  /** Tokens whose account can edit the file but has not granted Rally it. */
+  needGrant?: readonly string[];
+} = {}): string[] {
   const visibleTo = options.visibleTo ?? ["workspace-token"];
   const writes: string[] = [];
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -148,7 +153,7 @@ function googleAsTwoAccounts(options: { visibleTo?: readonly string[]; refuseWri
       return !visibleTo.includes(token)
         ? json({ error: { code: 404 } }, 404)
         : json({ id: FILE_ID, name: "Creator Content Intake", mimeType: "application/vnd.google-apps.spreadsheet",
-          isAppAuthorized: true, capabilities: { canEdit: true } });
+          isAppAuthorized: !(options.needGrant ?? []).includes(token), capabilities: { canEdit: true } });
     }
     if (url.hostname === "sheets.googleapis.com" && init?.method === "PUT") {
       writes.push(token);
@@ -195,6 +200,29 @@ describe("reaching one resource through whichever connection can", () => {
       new AbortController().signal, undefined, undefined, undefined, undefined, () => [personal],
     )).rejects.toMatchObject({ code: "provider_error" });
     expect(writes).toEqual(["workspace-token"]);
+  });
+
+  it("reports the Organization's grant request when only that account could edit", async () => {
+    // The person's own account cannot see the file; the Organization's can edit
+    // it once Rally has the one-file grant. The card must ask about that one.
+    const writes = googleAsTwoAccounts({ needGrant: ["workspace-token"] });
+    const { env, personal, workspace } = await fixture();
+
+    await expect(__integrationTesting.executeAuthorizedConnectorTool(
+      env, workflowInput(), personal, "sheets.update_values", "sheets.write", write,
+      new AbortController().signal, undefined, undefined, undefined, undefined, () => [workspace],
+    )).rejects.toMatchObject({
+      message: expect.stringMatching(/^Rally needs a one-file grant\./u),
+      details: {
+        resourceAuthorizationConnectionId: WORKSPACE_CONNECTION_ID,
+        resourceAuthorization: {
+          kind: "connector_resource_authorization",
+          capability: "sheets.write",
+          resource: { id: FILE_ID, name: "Creator Content Intake" },
+        },
+      },
+    });
+    expect(writes).toEqual([]);
   });
 
   it("names which connection can open a file and how far", async () => {
