@@ -173,12 +173,12 @@ describe('SettingsWindowController', () => {
     await opened;
     expect(test.latest().shown).toBe(1);
 
-    await test.controller.open('digest');
+    await test.controller.open('notifications');
 
     expect(test.createWindow).toHaveBeenCalledTimes(1);
     expect(test.latest().shown).toBe(2);
     expect(test.latest().focused).toBe(2);
-    expect(test.latest().delivered).toEqual(['digest']);
+    expect(test.latest().delivered).toEqual(['notifications']);
   });
 
   it('restores a prewarmed window that the person had minimized', async () => {
@@ -394,7 +394,7 @@ describe('SettingsWindowController', () => {
 
     // Raising a window already on screen is not somebody arriving at Settings;
     // before prewarming it did not even remount the renderer.
-    await test.controller.open('digest');
+    await test.controller.open('notifications');
     expect(test.latest().announced).toBe(1);
     expect(test.latest().shown).toBe(2);
   });

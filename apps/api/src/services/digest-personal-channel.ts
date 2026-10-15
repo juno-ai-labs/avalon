@@ -55,10 +55,14 @@ export async function postDigestToPersonalChannel(env: Env, input: {
     },
     createdByUserId: null,
   }));
-  // The Personal Channel is gone or no longer theirs. That will not change on
-  // a retry, so the destination is parked for the person to see.
   if (reserved.status !== "reserved") {
-    throw new ApiError(422, "personal_channel_unavailable", "Your Personal Channel is not available", { retryable: false });
+    const code = reserved.status === "refused" ? reserved.code : reserved.status;
+    // Spaces still being set up for this Organization will be ready for a
+    // later occurrence. Anything else (the Space is gone, or no longer theirs)
+    // will not change, so the destination is parked for the person to see.
+    throw new ApiError(422, `personal_channel_${code}`, "Your Personal Channel is not available", {
+      retryable: code === "space_bootstrap_pending",
+    });
   }
   await provisionWorkstreamObject(env, {
     workspaceId: input.workspaceId,

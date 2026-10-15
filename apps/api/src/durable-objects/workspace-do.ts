@@ -272,16 +272,10 @@ import {
   type DurableObjectSqliteMigration,
 } from "./sqlite-migrations";
 import {
-  WorkspaceActivityEventCursorRequestSchema,
   WorkspaceActivityEventInputSchema,
-  WorkspaceActivityEventListRequestSchema,
-  WorkspaceActivityEventListResultSchema,
   WorkspaceActivityEventSourceRequestSchema,
   WorkspaceActivityEventSourceSchema,
-  type WorkspaceActivityEventCursorRequest,
   type WorkspaceActivityEventInput,
-  type WorkspaceActivityEventListRequest,
-  type WorkspaceActivityEventListResult,
   type WorkspaceActivityEventSourceRequest,
 } from "./workspace-activity-event-protocol";
 import {
@@ -11478,111 +11472,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return eventId;
   }
 
-  /** Read one active member's visibility-filtered, insertion-ordered activity window. */
-  async listActivityEvents(
-    input: WorkspaceActivityEventListRequest,
-  ): Promise<WorkspaceActivityEventListResult> {
-    await this.initialized;
-    const request = WorkspaceActivityEventListRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const member = await this.env.DB.prepare(
-      `SELECT 1 FROM workspace_members
-        WHERE workspace_id = ? AND user_id = ? AND status = 'active' LIMIT 1`,
-    ).bind(request.workspaceId, request.userId).first();
-    if (!member) return { items: [] };
-    const rows = this.state.storage.sql.exec<{
-      event_sequence: number;
-      event_id: string;
-      event_type: string;
-      subject_type: string;
-      subject_id: string | null;
-      subject_sequence_number: number | null;
-      actor_type: string;
-      actor_user_id: string | null;
-      actor_label: string;
-      title: string;
-      body: string;
-      canonical_url: string | null;
-      occurred_at: number;
-      created_at: number;
-      metadata_json: string;
-      is_target: number;
-      target_relations: string | null;
-    }>(
-      `SELECT event.event_sequence, event.event_id, event.event_type,
-              event.subject_type, event.subject_id, event.subject_sequence_number,
-              event.actor_type, event.actor_user_id, event.actor_label,
-              event.title, event.body, event.canonical_url, event.occurred_at,
-              event.created_at, event.metadata_json,
-              CASE WHEN target.user_id IS NULL THEN 0 ELSE 1 END AS is_target,
-              target.relations AS target_relations
-         FROM workspace_activity_events event
-         LEFT JOIN (
-           SELECT event_id, user_id, group_concat(relation) AS relations
-             FROM workspace_activity_event_targets
-            WHERE user_id = ? GROUP BY event_id, user_id
-         ) target ON target.event_id = event.event_id
-        WHERE ${request.from == null ? "1 = 1" : "event.event_sequence > ?"}
-          AND event.event_sequence <= ?
-          AND (? IS NULL OR event.created_at >= ?)
-          AND (? = 0 OR event.digestible = 1)
-          AND (
-            event.audience_kind = 'workspace'
-            OR (event.audience_kind = 'user' AND event.audience_user_id = ?)
-            OR (event.audience_kind = 'workstream' AND EXISTS (
-              SELECT 1 FROM channels directory
-              JOIN channel_viewers viewer
-                ON viewer.workstream_id = directory.workstream_id
-               AND viewer.authority_generation = directory.authority_generation
-               AND viewer.user_id = ?
-             WHERE directory.workstream_id = event.audience_workstream_id
-               AND directory.archived_at IS NULL AND directory.system_kind IS NULL
-               AND viewer.is_participant = 1
-            ))
-          )
-        ORDER BY event.event_sequence LIMIT ?`,
-      request.userId,
-      ...(request.from == null ? [] : [request.from]),
-      request.through,
-      epoch(request.notBefore ?? null),
-      epoch(request.notBefore ?? null),
-      request.digestibleOnly ? 1 : 0,
-      request.userId,
-      request.userId,
-      request.limit,
-    ).toArray();
-    return WorkspaceActivityEventListResultSchema.parse({
-      items: rows.map((row) => ({
-        sequence: Number(row.event_sequence),
-        id: row.event_id,
-        eventType: row.event_type,
-        subjectType: row.subject_type,
-        subjectId: row.subject_id,
-        subjectSequenceNumber: row.subject_sequence_number,
-        actorType: row.actor_type,
-        actorUserId: row.actor_user_id,
-        actorLabel: row.actor_label,
-        title: row.title,
-        body: row.body,
-        canonicalUrl: row.canonical_url,
-        occurredAt: iso(row.occurred_at),
-        createdAt: iso(row.created_at),
-        metadata: JSON.parse(row.metadata_json) as unknown,
-        isTarget: row.is_target === 1,
-        targetRelations: row.target_relations?.split(",").filter(Boolean) ?? [],
-      })),
-    });
-  }
-
-  async latestActivityEventCursor(input: WorkspaceActivityEventCursorRequest): Promise<number> {
-    await this.initialized;
-    const request = WorkspaceActivityEventCursorRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return Number(this.state.storage.sql.exec<{ sequence: number | null }>(
-      `SELECT MAX(event_sequence) AS sequence FROM workspace_activity_events`,
-    ).one().sequence ?? 0);
-  }
-
   async activityEventSource(input: WorkspaceActivityEventSourceRequest) {
     await this.initialized;
     const request = WorkspaceActivityEventSourceRequestSchema.parse(input);
@@ -12375,21 +12264,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.env, workspaceId, audience.everyone ? null : audience.userIds,
     );
     for (const recipient of recipients) {
-      // The channels this person chose for a kind; push only with a device.
-      const notify = this.readMemberPreferences(recipient.userId).notify;
-      const channels = (kind: PushNotificationData["kind"]) => notify[NOTIFICATION_KIND_FOR_PUSH[kind]]
-        .filter((channel) => channel !== "push" || recipient.hasDevice);
-      // Someone with a device is decided even with every channel off, so a
-      // kind turned back on later never sends an old row; someone with no
-      // device and nothing else chosen is not asked at all, as before.
-      if (!recipient.hasDevice && !ACTIVITY_PUSH_KINDS.some((kind) => channels(kind).length > 0)) continue;
-      const items = pushes.pending(
-        { userId: recipient.userId, accessClass: recipient.accessClass },
-        subjects,
-        this.threadsOnScreen(recipient.userId),
-      );
-      // One person's failed send leaves the others' pushes standing.
+      // One person's failure leaves the others' deliveries standing.
       try {
+        // The channels this person chose for a kind; push only with a device.
+        const notify = this.readMemberPreferences(recipient.userId).notify;
+        const channels = (kind: PushNotificationData["kind"]) => notify[NOTIFICATION_KIND_FOR_PUSH[kind]]
+          .filter((channel) => channel !== "push" || recipient.hasDevice);
+        // Someone with a device is decided even with every channel off, so a
+        // kind turned back on later never sends an old row; someone with no
+        // device and nothing else chosen is not asked at all, as before.
+        if (!recipient.hasDevice && !ACTIVITY_PUSH_KINDS.some((kind) => channels(kind).length > 0)) continue;
+        const items = pushes.pending(
+          { userId: recipient.userId, accessClass: recipient.accessClass },
+          subjects,
+          this.threadsOnScreen(recipient.userId),
+        );
         for (const item of items) {
           // Recorded whether or not it was queued: a row not queued (no
           // channel chosen, no transport in this deployment) would not be

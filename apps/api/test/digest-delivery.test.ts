@@ -230,12 +230,12 @@ describe("digest delivery", () => {
     expect(result).toEqual({ delivered: 0, skipped: 1, failed: 0 });
   });
 
-  it("rethrows a retryable failure so the workflow step retries it", async () => {
+  it("records a retryable failure and returns, so a destination that is down never holds the schedule", async () => {
     const database = seededDatabase();
     const request = vi.fn(async () => new Response("upstream down", { status: 503 }));
 
     await expect(deliverDigest(envFor(database), context, request as unknown as typeof fetch))
-      .rejects.toBeDefined();
+      .resolves.toEqual({ delivered: 0, skipped: 0, failed: 1 });
     expect(workspaceStore.prepare("SELECT status FROM digest_delivery_targets WHERE id = ?").get(TARGET))
       .toEqual({ status: "active" });
   });
