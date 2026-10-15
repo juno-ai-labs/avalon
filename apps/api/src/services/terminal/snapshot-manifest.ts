@@ -136,6 +136,59 @@ export function terminalSnapshotImageBuildCommand(): string {
 }
 
 /**
+ * Playwright with its Chromium, so an agent can screenshot a page it built,
+ * such as a generated site at the width of Rally's side panel. Pinned like
+ * every package here.
+ *
+ * Baked into the Rally-owned image only, never installed by the runtime
+ * bootstrap: the browser and its system libraries are a few hundred megabytes,
+ * past the bootstrap's 120-second budget, and the Trusted-only allow list does
+ * not reach Playwright's browser download host. So it is not a per-sandbox
+ * probe either. Production keeps serving the previous snapshot until the weekly
+ * rebuild is adopted, and a fail-closed probe would refuse every sandbox in
+ * between. The acceptance gate requires it instead (`terminalPlaywrightAcceptanceCommand`),
+ * so no snapshot without it is adopted. Anything that tells the model to use
+ * Playwright must allow for a sandbox from an older snapshot without it.
+ */
+export const TERMINAL_PLAYWRIGHT_VERSION = "1.56.1";
+/** Shared by every user of the sandbox, and named in the image's environment. */
+export const TERMINAL_PLAYWRIGHT_BROWSERS_PATH = "/opt/rally/ms-playwright";
+
+export function terminalPlaywrightInstallCommand(): string {
+  return [
+    "set -euo pipefail",
+    `sudo -n install -d -o "$(id -u)" -g "$(id -g)" -m 755 ${TERMINAL_PLAYWRIGHT_BROWSERS_PATH}`,
+    `npm install --global playwright@${TERMINAL_PLAYWRIGHT_VERSION} >/dev/null`,
+    // `--with-deps` installs Chromium's system libraries through apt, which
+    // needs root; the browser lands where the image's environment points.
+    `sudo -n env "PATH=$PATH" PLAYWRIGHT_BROWSERS_PATH=${TERMINAL_PLAYWRIGHT_BROWSERS_PATH} playwright install --with-deps chromium`,
+    `sudo -n chown -R "$(id -u):$(id -g)" ${TERMINAL_PLAYWRIGHT_BROWSERS_PATH}`,
+  ].join("\n");
+}
+
+/** The Playwright step as one Dockerfile-safe line, for the reason the bootstrap's is. */
+export function terminalPlaywrightImageBuildCommand(): string {
+  const encoded = Buffer.from(terminalPlaywrightInstallCommand(), "utf8").toString("base64");
+  return `echo ${encoded} | base64 -d | bash -l`;
+}
+
+/**
+ * Proves a built snapshot can take a screenshot: Chromium starts, renders a
+ * local page at the pane's width, and writes a PNG. Run by the acceptance gate,
+ * which every weekly rebuild passes before it is adopted.
+ */
+export function terminalPlaywrightAcceptanceCommand(): string {
+  return [
+    "set -euo pipefail",
+    "probe=$(mktemp -d)",
+    "trap 'rm -rf -- \"$probe\"' EXIT",
+    "printf '<!doctype html><p>screenshot probe</p>' > \"$probe/index.html\"",
+    "playwright screenshot --viewport-size '480, 900' \"file://$probe/index.html\" \"$probe/shot.png\" >/dev/null",
+    "test \"$(head -c 8 \"$probe/shot.png\" | od -An -tx1 | tr -d ' \\n')\" = 89504e470d0a1a0a",
+  ].join("\n");
+}
+
+/**
  * Verifies the pinned snapshot still satisfies the manifest.
  *
  * The probes are independent of one another, and each one pays a whole runtime
@@ -248,6 +301,11 @@ export function terminalBaselineHostAcceptanceCommand(): string {
     "https://pypi.org/simple/six/",
     "https://files.pythonhosted.org/",
     "https://registry.npmjs.org/is-number",
+    // Any label under the wildcard reaches the artifact Worker, which answers
+    // an unknown site with its neutral page.
+    "https://acceptance-probe-g.rallyusercontent.com/",
+    "https://cdn.playwright.dev/",
+    "https://playwright.download.prss.microsoft.com/",
   ];
   return [
     "set -euo pipefail",

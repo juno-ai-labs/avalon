@@ -85,11 +85,29 @@ export function workspaceTerminalNetworkSettings(
       request.at,
       request.at,
     );
+    // A Trusted-only policy saved under an older platform baseline is brought
+    // up to this one: its custom domains on the current baseline, under a new
+    // revision, so every sandbox re-applies and reads the list back on its next
+    // acquisition through the ordinary reconcile path. Only a settled policy:
+    // a change in flight is the person's and is compiled when it is applied.
+    const customDomains = domainsOf(storage, request.workspaceId);
+    storage.sql.exec(
+      `UPDATE workspace_sandbox_network_policies
+          SET effective_domains_json = ?, baseline_manifest_version = ?,
+              revision = revision + 1, updated_at = ?
+        WHERE workspace_id = ? AND mode = 'trusted_only' AND verification_state = 'verified'
+          AND baseline_manifest_version <> ?`,
+      JSON.stringify([...new Set([...request.defaultEffectiveDomains, ...customDomains])].sort()),
+      request.baselineManifestVersion,
+      request.at,
+      request.workspaceId,
+      request.baselineManifestVersion,
+    );
     const row = policyOf(storage, request.workspaceId);
     if (!row) throw new Error("terminal_network_policy_missing");
     return WorkspaceTerminalNetworkSettingsSchema.parse({
       policy: policyView(row),
-      customDomains: domainsOf(storage, request.workspaceId),
+      customDomains,
     });
   });
 }

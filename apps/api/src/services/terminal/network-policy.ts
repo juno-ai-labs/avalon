@@ -2,7 +2,7 @@ import { regions } from "@rally/contracts/regions";
 import { parse as parseDomain } from "tldts";
 
 export const TERMINAL_NETWORK_MAX_TARGETS = 20;
-export const TERMINAL_NETWORK_MANIFEST_VERSION = "terminal-network-v1";
+export const TERMINAL_NETWORK_MANIFEST_VERSION = "terminal-network-v2";
 
 export const TERMINAL_NETWORK_BASELINE = [
   {
@@ -34,6 +34,14 @@ export const TERMINAL_NETWORK_BASELINE = [
     id: "javascript_packages",
     label: "JavaScript packages",
     domains: ["get.pnpm.io", "registry.npmjs.org"],
+  },
+  {
+    // So an agent can screenshot a site it published, and a sandbox whose
+    // snapshot predates the baked browser can run `playwright install`. The
+    // second Playwright host is the CDN's own fallback mirror.
+    id: "rally_sites_and_browsers",
+    label: "Rally sites and Playwright browsers",
+    domains: ["*.rallyusercontent.com", "cdn.playwright.dev", "playwright.download.prss.microsoft.com"],
   },
 ] as const;
 
