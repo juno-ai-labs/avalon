@@ -96,7 +96,7 @@ export class TerminalSettingsService {
 
   async get(): Promise<TerminalWorkspaceSettings> {
     const { policy, customDomains } = await this.settings();
-    const compiled = compileTerminalNetworkPolicy(policy.mode, customDomains);
+    const compiled = compileTerminalNetworkPolicy(policy.mode, customDomains, { stored: true });
     const configuration = parseTerminalRegionConfiguration(this.env);
     return {
       availability: configuration.capability === "unsupported"
@@ -131,7 +131,7 @@ export class TerminalSettingsService {
     } catch (error) {
       throw new ApiError(422, "invalid_terminal_network_policy", error instanceof Error ? error.message : "The Terminal network policy is invalid");
     }
-    const currentCompiled = compileTerminalNetworkPolicy(policy.mode, currentDomains);
+    const currentCompiled = compileTerminalNetworkPolicy(policy.mode, currentDomains, { stored: true });
     if (
       policy.mode === input.mode
       && currentCompiled.customDomains.join("\n") === compiled.customDomains.join("\n")

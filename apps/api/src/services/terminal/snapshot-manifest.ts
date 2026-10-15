@@ -142,9 +142,8 @@ export function terminalSnapshotImageBuildCommand(): string {
  *
  * Baked into the Rally-owned image only, never installed by the runtime
  * bootstrap: the browser and its system libraries are a few hundred megabytes,
- * past the bootstrap's 120-second budget, and the Trusted-only allow list does
- * not reach Playwright's browser download host. So it is not a per-sandbox
- * probe either. Production keeps serving the previous snapshot until the weekly
+ * past the bootstrap's 120-second budget. So it is not a per-sandbox probe
+ * either. Production keeps serving the previous snapshot until the weekly
  * rebuild is adopted, and a fail-closed probe would refuse every sandbox in
  * between. The acceptance gate requires it instead (`terminalPlaywrightAcceptanceCommand`),
  * so no snapshot without it is adopted. Anything that tells the model to use

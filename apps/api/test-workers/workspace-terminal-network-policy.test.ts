@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
+import { TERMINAL_NETWORK_MANIFEST_VERSION } from "../src/services/terminal/network-policy";
 import {
   WorkspaceTerminalNetworkModeSchema,
   WorkspaceTerminalNetworkSettingsSchema,
@@ -144,7 +145,7 @@ describe("Terminal network policy", () => {
     });
     const read = async () => WorkspaceTerminalNetworkSettingsSchema.parse(await workspace().terminalNetworkSettings({
       workspaceId: WORKSPACE_ID,
-      baselineManifestVersion: "manifest-2",
+      baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION,
       defaultEffectiveDomains: ["cdn.playwright.dev", "registry.npmjs.org"],
       at: AT,
     }));
@@ -154,10 +155,23 @@ describe("Terminal network policy", () => {
     expect(upgraded.policy).toMatchObject({
       revision: 2,
       verificationState: "verified",
-      baselineManifestVersion: "manifest-2",
+      baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION,
       effectiveDomains: ["cdn.playwright.dev", "custom.example", "registry.npmjs.org"],
     });
     expect((await read()).policy.revision).toBe(2);
+
+    // An older Worker still serving during a deploy must not roll it back.
+    const older = WorkspaceTerminalNetworkSettingsSchema.parse(await workspace().terminalNetworkSettings({
+      workspaceId: WORKSPACE_ID,
+      baselineManifestVersion: "manifest-1",
+      defaultEffectiveDomains: ["registry.npmjs.org"],
+      at: AT,
+    }));
+    expect(older.policy).toMatchObject({
+      revision: 2,
+      baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION,
+      effectiveDomains: ["cdn.playwright.dev", "custom.example", "registry.npmjs.org"],
+    });
   });
 
   it("leaves a Full internet policy's empty allow list alone", async () => {
@@ -169,7 +183,7 @@ describe("Terminal network policy", () => {
     });
     const read = WorkspaceTerminalNetworkSettingsSchema.parse(await workspace().terminalNetworkSettings({
       workspaceId: WORKSPACE_ID,
-      baselineManifestVersion: "manifest-2",
+      baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION,
       defaultEffectiveDomains: ["cdn.playwright.dev"],
       at: AT,
     }));
@@ -189,7 +203,7 @@ describe("Terminal network policy", () => {
     });
     const read = WorkspaceTerminalNetworkSettingsSchema.parse(await workspace().terminalNetworkSettings({
       workspaceId: WORKSPACE_ID,
-      baselineManifestVersion: "manifest-2",
+      baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION,
       defaultEffectiveDomains: ["registry.npmjs.org"],
       at: AT,
     }));
@@ -205,15 +219,15 @@ describe("Terminal network policy", () => {
       claimedRevision: result.current.revision,
       resultingRevision: result.current.revision + 1,
       customDomains: ["registry.npmjs.org"],
-      baselineManifestVersion: "manifest-2",
+      baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION,
     });
     const read = WorkspaceTerminalNetworkSettingsSchema.parse(await workspace().terminalNetworkSettings({
       workspaceId: WORKSPACE_ID,
-      baselineManifestVersion: "manifest-2",
+      baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION,
       defaultEffectiveDomains: ["cdn.playwright.dev", "registry.npmjs.org"],
       at: AT,
     }));
-    expect(read.policy).toMatchObject({ revision: 2, baselineManifestVersion: "manifest-2" });
+    expect(read.policy).toMatchObject({ revision: 2, baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION });
   });
 
   it("answers the mode without creating anything, for the agent path", async () => {
