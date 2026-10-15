@@ -273,6 +273,36 @@ describe('desktop auto-update runtime', () => {
     expect(timeouts).toEqual([]);
   });
 
+  it('falls back to the build Squirrel held when staging a newer one fails', async () => {
+    let tick!: () => void;
+    const { updater, statuses } = setup({
+      scheduleInterval: (callback) => { tick = callback; return { unref: () => undefined }; },
+    });
+    updater.emit('update-available', { version: '1.1.0' });
+    updater.emit('update-downloaded', { version: '1.1.0' });
+    tick();
+    updater.emit('update-available', { version: '1.2.0' });
+    await vi.waitFor(() => expect(updater.downloadUpdate).toHaveBeenCalledOnce());
+    updater.emit('update-downloaded', { version: '1.2.0' });
+
+    updater.emit('error', new Error('Squirrel could not stage the archive'));
+    expect(statuses.at(-1)).toEqual({ kind: 'downloaded', version: '1.1.0' });
+
+    tick();
+    updater.emit('update-available', { version: '1.2.0' });
+    await vi.waitFor(() => expect(updater.downloadUpdate).toHaveBeenCalledTimes(2));
+  });
+
+  it('withdraws the restart offer when staging the first download fails', () => {
+    const { updater, statuses } = setup();
+    updater.emit('update-available', { version: '1.1.0' });
+    updater.emit('update-downloaded', { version: '1.1.0' });
+
+    updater.emit('error', new Error('Squirrel could not stage the archive'));
+
+    expect(statuses.at(-1)).toEqual({ kind: 'idle' });
+  });
+
   it('keeps the staged build when downloading a newer one runs out of retries', async () => {
     let tick!: () => void;
     const { updater, statuses, timeouts, showMessageBox } = setup({
