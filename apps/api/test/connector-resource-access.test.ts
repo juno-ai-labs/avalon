@@ -225,6 +225,27 @@ describe("reaching one resource through whichever connection can", () => {
     expect(writes).toEqual([]);
   });
 
+  it("shows the card rather than writing as the Organization when the person's own account only needs the grant", async () => {
+    // Both accounts can edit; the person's own lacks only Rally's one-file grant.
+    const writes = googleAsTwoAccounts({
+      visibleTo: ["workspace-token", "personal-token"],
+      needGrant: ["personal-token"],
+    });
+    const { env, personal, workspace } = await fixture();
+
+    const refusal = await __integrationTesting.executeAuthorizedConnectorTool(
+      env, workflowInput(), personal, "sheets.update_values", "sheets.write", write,
+      new AbortController().signal, undefined, undefined, undefined, undefined, () => [workspace],
+    ).catch((error: unknown) => error);
+
+    expect(writes).toEqual([]);
+    expect(refusal).toMatchObject({
+      details: { resourceAuthorization: { kind: "connector_resource_authorization", resource: { id: FILE_ID } } },
+    });
+    // The request is the chosen connection's own, so the card asks about it.
+    expect((refusal as { details: Record<string, unknown> }).details.resourceAuthorizationConnectionId).toBeUndefined();
+  });
+
   it("names which connection can open a file and how far", async () => {
     googleAsTwoAccounts();
     const { env, personal, workspace } = await fixture();
