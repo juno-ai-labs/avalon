@@ -8217,7 +8217,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 /* ── Breakouts in the Channel ──────────────────────────────────────────────
    Cards under the message a Breakout started from (`.conversation-card`), and
    the tick bar down the Channel's leading edge. */
-.breakout-card-list { align-items: flex-end; display: flex; flex-direction: column; gap: 12px; margin: 14px 0 6px; padding: 0 10px; }
+.breakout-card-list { align-items: flex-end; display: flex; flex-direction: column; gap: 28px; margin: 14px 0 6px; padding: 0 10px; }
 /* Under Rally's newest reply, the breakout action as a quiet line instead of
    a hover action: the likeliest place to branch, said without a button's weight. */
 .message-start-breakout-link {
