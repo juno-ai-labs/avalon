@@ -374,6 +374,11 @@ choice in Settings could not say so. A separate queue for email and Slack:
 the push queue already carries a pointer the consumer reads back through the
 feed, which is what the other channels need too.
 
+Because no other channel stands in any more, a Slack send that fails in a way a
+retry can clear (a network fault, a 5xx, a rate limit) now throws back to its
+queue instead of settling as skipped; the stable `client_msg_id` keeps a retry
+from posting a chunk twice.
+
 **Consequences:** A person with no device and no Slack now gets a mention only
 in Activity and the digest unless they choose email. A new channel is a
 connector declaring `userDelivery` plus a sender for Activity rows; the

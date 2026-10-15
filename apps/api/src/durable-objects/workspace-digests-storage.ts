@@ -27,7 +27,6 @@ import {
   type WorkspaceDigestSettings,
   type WorkspaceDigestSettleRequest,
   type WorkspaceDigestSettleResult,
-  type WorkspaceDigestSummaryRequest,
   type WorkspaceDigestTargetDeliveredRequest,
   type WorkspaceDigestTargetFailedRequest,
   type WorkspaceDigestTargetOutcomeResult,
@@ -375,8 +374,8 @@ export function claimWorkspaceDigestDelivery(
     `INSERT INTO digest_deliveries
        (id, workspace_id, digest_schedule_id, user_id, planned_for,
         cursor_from, cursor_through, event_count, highlight_count,
-        harness_run_id, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+        harness_run_id, status, summary_markdown, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
      ON CONFLICT DO NOTHING
      RETURNING id`,
     request.deliveryId,
@@ -389,6 +388,7 @@ export function claimWorkspaceDigestDelivery(
     request.eventCount,
     request.highlightCount,
     request.status,
+    request.summaryMarkdown,
     request.at,
     request.at,
   ).toArray()[0];
@@ -431,19 +431,6 @@ export function workspaceDigestDeliveryContext(
       }
       : null,
   });
-}
-
-/** Keep what the run wrote, before delivery decides what happens to it. */
-export function recordWorkspaceDigestSummary(
-  storage: DurableObjectStorage,
-  request: WorkspaceDigestSummaryRequest,
-): void {
-  storage.sql.exec(
-    `UPDATE digest_deliveries SET summary_markdown = ?, updated_at = ? WHERE id = ?`,
-    request.summaryMarkdown,
-    request.at,
-    request.deliveryId,
-  );
 }
 
 /**

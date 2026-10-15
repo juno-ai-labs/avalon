@@ -65,7 +65,6 @@ function envFor(
       extra: {
         ...workspaceObjectRpcs(workspaceDO, [
           "digestDeliveryContext",
-          "recordDigestSummary",
           "settleDigestDelivery",
           "digestTerminalTelemetryContext",
           "digestDeliveryTargets",

@@ -104,6 +104,7 @@ async function claim(overrides: {
     eventCount: 4,
     highlightCount: 1,
     status: overrides.status ?? "planned",
+    summaryMarkdown: (overrides.status ?? "planned") === "planned" ? "1 unread item in your Activity." : null,
     at: AT,
   }));
 }
