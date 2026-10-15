@@ -258,8 +258,8 @@ describe('a Channel', () => {
       { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, objective: '@Alex Todorovic @Nobody here are the **mockups**' } },
     ] });
     const { container } = renderChannel();
-    await waitFor(() => expect(container.querySelector('.channel-feed-summary .mention-chip')).not.toBeNull());
-    const summary = container.querySelector('.channel-feed-summary')!;
+    await waitFor(() => expect(container.querySelector('.conversation-card-summary .mention-chip')).not.toBeNull());
+    const summary = container.querySelector('.conversation-card-summary')!;
     expect(summary.querySelectorAll('.mention-chip')).toHaveLength(1);
     expect(summary.querySelector('.mention-chip')).toHaveAttribute('data-person-id', alex);
     expect(summary.querySelector('.mention-chip-label')).toHaveTextContent('Alex Todorovic');
@@ -275,8 +275,8 @@ describe('a Channel', () => {
       { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, objective: 'Ask @alex@rally.test\n\n- [ ] Follow up' } },
     ] });
     const { container } = renderChannel();
-    await waitFor(() => expect(container.querySelector('.channel-feed-summary .mention-chip')).not.toBeNull());
-    const summary = container.querySelector('.channel-feed-summary')!;
+    await waitFor(() => expect(container.querySelector('.conversation-card-summary .mention-chip')).not.toBeNull());
+    const summary = container.querySelector('.conversation-card-summary')!;
     expect(summary.querySelector('.mention-chip')).toHaveAttribute('data-person-id', 'alex');
     expect(summary).toHaveTextContent('Follow up');
     expect(summary.querySelector('input')).toBeNull();

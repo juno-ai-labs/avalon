@@ -4,7 +4,6 @@ import { IconCornerDownRight } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
 import { statusLabel } from '../lib/format';
-import { TitleSkeleton } from './primitives';
 
 /**
  * What a Channel's feed knows about one of its Breakouts: enough to place it
@@ -25,6 +24,8 @@ export interface BreakoutMark {
   needsAttention?: boolean | undefined;
   /** The Breakout's run is paused on a question only it can answer. */
   needsInput?: boolean | undefined;
+  /** Who started it; absent when the host does not know yet. */
+  createdByUserId?: string | undefined;
   /** Rally is still choosing its title: a skeleton stands in, as in its title pill. */
   naming?: boolean | undefined;
 }
@@ -79,36 +80,6 @@ export function orderBreakoutsForTicks(breakouts: readonly BreakoutMark[], turnO
 
 function compareCreated(a: BreakoutMark, b: BreakoutMark): number {
   return (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.substreamId.localeCompare(b.substreamId);
-}
-
-/** The chips under a message for the Breakouts started from it. */
-export function BreakoutChipRow({ breakouts, onOpen, openSubstreamId }: {
-  breakouts: readonly BreakoutMark[];
-  onOpen: (substreamId: string) => void;
-  openSubstreamId: string | null;
-}): React.JSX.Element | null {
-  if (breakouts.length === 0) return null;
-  return <div aria-label="Breakouts from this message" className="breakout-chip-row" role="group">
-    {breakouts.map((breakout) => {
-      const open = breakout.substreamId === openSubstreamId;
-      const news = breakoutNewsLabel(breakout);
-      return <button
-        aria-label={[breakout.naming ? 'Rally is choosing a name' : breakout.title, news, open && 'Open'].filter(Boolean).join(', ')}
-        aria-pressed={open}
-        className={clsx('breakout-chip', open && 'is-open', news && 'has-news')}
-        key={breakout.substreamId}
-        onClick={() => onOpen(breakout.substreamId)}
-        type="button"
-      >
-        <IconCornerDownRight aria-hidden="true" className="breakout-chip-icon" size={13} stroke={1.9} />
-        <span className="breakout-chip-title">{breakout.naming ? <TitleSkeleton className="breakout-chip-skeleton" /> : breakout.title}</span>
-        {breakout.needsInput
-          ? <span className="breakout-chip-badge">{news}</span>
-          : news && <span className="breakout-chip-news">· {news}</span>}
-        {open && <span className="breakout-chip-open">· Open</span>}
-      </button>;
-    })}
-  </div>;
 }
 
 /**
