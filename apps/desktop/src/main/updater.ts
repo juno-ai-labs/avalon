@@ -153,6 +153,9 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   let downloadRetryScheduled = false;
   let manualRecoveryPrompted = false;
   let installInFlight = false;
+  /** The build staged for install. While set, checks keep running in the
+   * background and the restart offer stays up until a newer build replaces it. */
+  let stagedVersion: string | null = null;
   let currentChannel = deps.releaseChannel;
   let channelRecheckPending = false;
   let channelRecheckScheduled = false;
@@ -268,6 +271,9 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
       downloadInFlight = false;
       outcome('download', 'failed', downloadStartedAt);
       downloadStartedAt = null;
+      // A staged build still installs, so the next scheduled check tries the
+      // newer one again instead of sending the user to the manual installer.
+      if (stagedVersion !== null) return;
       setStatus({ kind: 'idle' });
       promptManualRecovery();
       return;
@@ -275,7 +281,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
 
     downloadRetryCount += 1;
     downloadRetryScheduled = true;
-    setStatus({ kind: 'downloading' });
+    if (stagedVersion === null) setStatus({ kind: 'downloading' });
     const delayMs = DOWNLOAD_RETRY_BASE_DELAY_MS * (2 ** (downloadRetryCount - 1));
     log.info(
       `[rally] retrying update download in ${delayMs}ms `
@@ -315,6 +321,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     manualCheck = false;
     checkStartedAt = null;
     downloadStartedAt = null;
+    stagedVersion = null;
     setStatus({ kind: 'idle' });
     // electron-updater decides whether to auto-download immediately after it
     // emits update-available. Leave autoDownload false until that synchronous
@@ -331,7 +338,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   updater.on('checking-for-update', () => {
     checkInFlight = true;
     checkStartedAt ??= now();
-    setStatus({ kind: 'checking' });
+    if (stagedVersion === null) setStatus({ kind: 'checking' });
     log.info('[rally] checking for updates');
   });
   updater.on('update-available', (info) => {
@@ -344,13 +351,26 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
       finishSupersededChannelWork();
       return;
     }
+    // With a build staged the check ran with autoDownload off, so the staged
+    // version is not fetched and handed to Squirrel again every interval. The
+    // feed is monotonic and downgrades are off, so any other version is newer.
+    if (stagedVersion !== null && info.version === stagedVersion) return;
     downloadInFlight = true;
     downloadRetryCount = 0;
     downloadRetryScheduled = false;
     manualRecoveryPrompted = false;
     downloadStartedAt = now();
-    setStatus({ kind: 'downloading' });
     log.info(`[rally] update ${info.version} is available`);
+    if (stagedVersion === null) {
+      setStatus({ kind: 'downloading' });
+      return;
+    }
+    // Keep offering the staged build while the newer one downloads: Squirrel
+    // still holds it, so a restart now installs it.
+    log.info(`[rally] downloading ${info.version} to replace staged ${stagedVersion}`);
+    void Promise.resolve()
+      .then(() => updater.downloadUpdate())
+      .catch((error: unknown) => handleDownloadFailure(error));
   });
   updater.on('update-not-available', () => {
     outcome('check', 'current', checkStartedAt);
@@ -358,6 +378,10 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     checkInFlight = false;
     if (channelRecheckPending) {
       finishSupersededChannelWork();
+      return;
+    }
+    if (stagedVersion !== null) {
+      log.info(`[rally] staged update ${stagedVersion} is still the latest`);
       return;
     }
     setStatus({ kind: 'idle' });
@@ -373,7 +397,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   });
   updater.on('download-progress', (progress) => {
     downloadInFlight = true;
-    if (channelRecheckPending) return;
+    if (channelRecheckPending || stagedVersion !== null) return;
     setStatus({ kind: 'downloading', percent: progress.percent });
   });
   updater.on('update-downloaded', (info) => {
@@ -389,6 +413,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
       return;
     }
     updater.autoInstallOnAppQuit = true;
+    stagedVersion = info.version;
     setStatus({ kind: 'downloaded', version: info.version });
     // The renderer offers the restart; a dialog interrupts only a stale build.
     log.info(`[rally] update ${info.version} downloaded`);
@@ -408,28 +433,45 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     log.error('[rally] auto-update error', error);
     outcome('check', 'failed', checkStartedAt);
     checkStartedAt = null;
+    if (stagedVersion !== null) return;
     setStatus({ kind: 'idle' });
     showCheckFailure();
   });
 
   function runCheck(manual: boolean): void {
-    if (checkInFlight || status.kind === 'downloading' || status.kind === 'downloaded') return;
-    manualCheck = manual;
+    if (checkInFlight || downloadInFlight || installInFlight) return;
+    const background = stagedVersion !== null;
+    // The menu offers only the restart while a build is staged, so a check
+    // then is always the quiet background one.
+    manualCheck = manual && !background;
     checkInFlight = true;
     checkStartedAt = now();
-    setStatus({ kind: 'checking' });
-    void updater.checkForUpdates().catch((error: unknown) => {
-      checkInFlight = false;
-      outcome('check', 'failed', checkStartedAt);
-      checkStartedAt = null;
-      if (channelRecheckPending) {
-        finishSupersededChannelWork();
-        return;
-      }
-      setStatus({ kind: 'idle' });
-      log.error('[rally] update check failed', error);
-      showCheckFailure();
-    });
+    if (background) {
+      // Decide in update-available whether the result is worth downloading.
+      updater.autoDownload = false;
+    } else {
+      setStatus({ kind: 'checking' });
+    }
+    void updater.checkForUpdates()
+      .catch((error: unknown) => {
+        checkInFlight = false;
+        outcome('check', 'failed', checkStartedAt);
+        checkStartedAt = null;
+        if (channelRecheckPending) {
+          finishSupersededChannelWork();
+          return;
+        }
+        log.error('[rally] update check failed', error);
+        if (stagedVersion !== null) return;
+        setStatus({ kind: 'idle' });
+        showCheckFailure();
+      })
+      .finally(() => {
+        // electron-updater reads autoDownload synchronously after emitting
+        // update-available, so restore it only once the check has settled. A
+        // channel change owns the flag until its own recheck.
+        if (background && !channelRecheckPending) updater.autoDownload = true;
+      });
   }
 
   log.info(
@@ -460,13 +502,19 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
       updater.channel = channel;
       updater.allowDowngrade = false;
       log.info(`[rally] update channel changed to ${channel}`);
-      if (checkInFlight || downloadInFlight || status.kind === 'downloaded') {
+      if (checkInFlight || downloadInFlight || stagedVersion !== null) {
         channelRecheckPending = true;
         // Prevent a previous-feed update from beginning a download after its
         // check returns, or installing on quit if it is already staged.
         updater.autoDownload = false;
         updater.autoInstallOnAppQuit = false;
-        if (status.kind === 'downloaded' || downloadRetryScheduled) {
+        if (stagedVersion !== null) {
+          // Withdraw the restart offer now, even while a background check or
+          // download from the previous feed is still settling.
+          stagedVersion = null;
+          setStatus({ kind: 'idle' });
+        }
+        if (downloadRetryScheduled || (!checkInFlight && !downloadInFlight)) {
           finishSupersededChannelWork();
         }
         return;
