@@ -527,6 +527,18 @@ export function instrumentConnectorAdapter(
         );
       },
     } : {}),
+    ...(adapter.probeResourceAccess ? {
+      probeResourceAccess(connection, reference, signal) {
+        registerConnectionObservation(connection, connectorType, observer);
+        return observeAsync(
+          observer,
+          connectorType,
+          "resource_access_probe",
+          connectionFields(connection),
+          () => adapter.probeResourceAccess!(connection, reference, signal),
+        );
+      },
+    } : {}),
     ...(adapter.origin ? {
       origin: {
         ...adapter.origin,

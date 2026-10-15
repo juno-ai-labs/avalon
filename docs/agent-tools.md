@@ -146,6 +146,15 @@ described as one. Its validated id and scope are also the completed tool fact's
 participant-safe result, so the card remains reconstructible from durable
 history rather than depending on a transient started event.
 
+`check_resource_access` takes a connector and a resource link or id and asks
+every connection of that connector in the run how far it reaches the resource,
+in parallel: `edit`, `read` (with `editNeedsGrant` when Google's one-file grant
+is missing), `none` with a reason code, or `unknown` with a code when the probe
+itself failed. It names the first plugin that can edit and the first that can
+read. It lists only connectors whose adapter implements `probeResourceAccess`;
+the probe and the retry it pairs with are in
+[`connectors.md`](connectors.md#2026-10-15-a-connection-that-cannot-reach-a-resource-hands-the-call-to-one-that-can).
+
 The model-facing flow is deliberately literal:
 
 1. Call `get_connector_connection_state` with `connectorId` and no `scope`.
@@ -1211,8 +1220,8 @@ scope.
 **Why:** the check read one scope, and the model chose which. In production a
 member whose personal Google Drive had been connected for twelve days was
 told Drive was `not_connected` and shown a connect card, because the model
-asked about the workspace scope. The same Thread later asked her to connect a
-workspace Slack she did not need. A person can hold a personal connection while
+asked about the workspace scope. The same Thread later asked them to connect a
+workspace Slack they did not need. A person can hold a personal connection while
 the Organization holds a workspace one, and either may be the one a task
 needs, so the read that answers "is this connected" has to look at both.
 Rejected: telling the model to call twice, which leaves the miss to a prompt.
