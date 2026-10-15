@@ -42,6 +42,7 @@ import { createTerminalInstructionFiles } from "./instructions";
 import { createResidentContextPortFactory } from "../../runtime/resident-context-port";
 import { createTerminalRepositorySelector } from "./repository-selection";
 import { createGitHubTerminalCatalogGateway } from "./workstream-state";
+import { previewSite } from "./site-preview";
 import { createTerminalToolExecutors, TerminalToolError } from "./tools";
 import { refreshWorkspaceSchedule } from "../workstream-wakeup-service";
 import {
@@ -286,7 +287,11 @@ export async function createAvalonTerminalPlugin(
     undefined,
     instructions,
   );
-  const executors = createTerminalToolExecutors(runtime);
+  const executors: TerminalToolExecutors = {
+    ...createTerminalToolExecutors(runtime),
+    // Rendered by Cloudflare rather than in the sandbox, so it needs no runtime.
+    preview_site: async (toolInput) => previewSite(env, toolInput),
+  };
   const observedExecutors = Object.fromEntries(TERMINAL_TOOL_NAMES.map((name) => [
     name,
     async (toolInput: unknown, context: Parameters<TerminalToolExecutors[typeof name]>[1]) => {

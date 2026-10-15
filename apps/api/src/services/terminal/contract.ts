@@ -5,6 +5,7 @@ import type {
   HarnessToolResult,
 } from "@rally/agent-harness";
 import type { ToolDefinition } from "@rally/contracts";
+import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 
 export const TERMINAL_PLUGIN_ID = "rally:terminal";
@@ -26,6 +27,7 @@ export const TERMINAL_TOOL_NAMES = [
   "checkout_repository",
   "import_resource",
   "publish_resource",
+  "preview_site",
   "publish_branch_and_pr",
 ] as const;
 
@@ -78,6 +80,11 @@ const publishResourceArguments = z.strictObject({
   displayName: z.string().min(1).max(300).optional(),
   description: z.string().max(2_000).optional(),
 });
+const previewSiteArguments = z.strictObject({
+  url: HttpsUrlSchema,
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+});
 const publishBranchAndPrArguments = z.strictObject({
   title: z.string().min(1).max(256),
   body: z.string().max(65_536),
@@ -92,6 +99,7 @@ export const TerminalArgumentSchemas = {
   checkout_repository: checkoutRepositoryArguments,
   import_resource: importResourceArguments,
   publish_resource: publishResourceArguments,
+  preview_site: previewSiteArguments,
   publish_branch_and_pr: publishBranchAndPrArguments,
 } as const;
 
@@ -274,6 +282,19 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
       displayName: { type: "string", minLength: 1, maxLength: 300, description: "Optional participant-visible resource title." },
       description: { type: "string", maxLength: 2_000, description: "Optional participant-visible description." },
     }, ["filePath"]),
+  },
+  preview_site: {
+    name: "preview_site",
+    description: "Render a published Rally site in a real browser at a chosen viewport and see the result as an image. Pass the url publish_resource returned. The default viewport is 480 by 900 CSS pixels, about the width of the pane Rally opens a site in, so call it after publishing a site and fix anything that does not read well before you announce the site. Use a wider width to check the desktop layout too.",
+    capability: "terminal.site.preview",
+    mode: "read",
+    idempotency: "safe",
+    timeoutMs: 60_000,
+    inputSchema: objectSchema({
+      url: { type: "string", minLength: 1, maxLength: 4_096, description: "The site url publish_resource returned, optionally with a path." },
+      width: { type: "integer", minimum: 1, description: "Viewport width in CSS pixels. Defaults to 480." },
+      height: { type: "integer", minimum: 1, description: "Viewport height in CSS pixels. Defaults to 900." },
+    }, ["url"]),
   },
   publish_branch_and_pr: {
     name: "publish_branch_and_pr",
