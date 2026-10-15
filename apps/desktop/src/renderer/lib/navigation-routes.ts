@@ -36,9 +36,8 @@ export function homeChannelId(spaceIds: readonly string[], preferred?: string | 
 
 /**
  * The `location.state` a link passes to open its thread, or its breakout,
- * expanded: taking the whole window, with what it covers as its crumbs. The
- * sidebar opens everything this way; a link inside a pane does not, so what it
- * opens comes up beside it.
+ * expanded: taking the whole window, with what it covers as its crumbs. A link
+ * without it opens its pane beside the one it was followed from.
  */
 export const OPEN_EXPANDED = { openExpanded: true } as const;
 
@@ -60,15 +59,15 @@ export function expandRequest(location: { key: string; state: unknown }): string
  * so it drops when that pane closes or another opens, which then opens beside,
  * unless the navigation that opened it asked for it expanded. A request counts
  * once per navigation, so one onto the pane already open expands it again
- * after a Collapse. `request` is that navigation's key, null when it did not
- * ask, for a pane that has to react to each one.
+ * after a Collapse. A level passes `honorsRequest` false for a navigation
+ * whose request is aimed at the level below it.
  */
-export function usePaneExpansion(paneId: string | null): {
+export function usePaneExpansion(paneId: string | null, honorsRequest = true): {
   expanded: boolean;
   setExpanded: (expanded: boolean) => void;
-  request: string | null;
 } {
-  const request = expandRequest(useLocation());
+  const location = useLocation();
+  const request = honorsRequest ? expandRequest(location) : null;
   const [expandedId, setExpandedId] = useState<string | null>(request === null ? null : paneId);
   const [heldFor, setHeldFor] = useState({ paneId, request });
   if (heldFor.paneId !== paneId || heldFor.request !== request) {
@@ -77,7 +76,7 @@ export function usePaneExpansion(paneId: string | null): {
     else if (heldFor.paneId !== paneId) setExpandedId(null);
   }
   const setExpanded = useCallback((expand: boolean): void => setExpandedId(expand ? paneId : null), [paneId]);
-  return { expanded: paneId !== null && expandedId === paneId, setExpanded, request };
+  return { expanded: paneId !== null && expandedId === paneId, setExpanded };
 }
 
 /**

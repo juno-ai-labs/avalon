@@ -145,6 +145,14 @@ component test runner is needed for the same implementations.
 
 ## Changelog
 
+### 2026-10-15 — A meter fills in the text colour, not the brand
+
+**What changed:** `cmp.meter.fill` is `sys.color.text.default` in both themes,
+where it was `sys.color.brand.base`, and Settings' own override to the text
+colour is gone. The product owner asked for a standard theme colour rather than
+the volt brand yellow on the Quota bar. The value sits in each theme file, not
+`base.json`, because a base token may alias only base tokens.
+
 ### 2026-10-13 — Title pill menus never open upward
 
 **What changed:** The title pill's menu passes Radix a collision padding with

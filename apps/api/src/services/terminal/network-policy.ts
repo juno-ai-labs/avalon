@@ -2,7 +2,7 @@ import { regions } from "@rally/contracts/regions";
 import { parse as parseDomain } from "tldts";
 
 export const TERMINAL_NETWORK_MAX_TARGETS = 20;
-export const TERMINAL_NETWORK_MANIFEST_VERSION = "terminal-network-v1";
+export const TERMINAL_NETWORK_MANIFEST_VERSION = "terminal-network-v2";
 
 export const TERMINAL_NETWORK_BASELINE = [
   {
@@ -34,6 +34,14 @@ export const TERMINAL_NETWORK_BASELINE = [
     id: "javascript_packages",
     label: "JavaScript packages",
     domains: ["get.pnpm.io", "registry.npmjs.org"],
+  },
+  {
+    // So an agent can screenshot a site it published, and a sandbox whose
+    // snapshot predates the baked browser can run `playwright install`. The
+    // second Playwright host is the CDN's own fallback mirror.
+    id: "rally_sites_and_browsers",
+    label: "Rally sites and Playwright browsers",
+    domains: ["*.rallyusercontent.com", "cdn.playwright.dev", "playwright.download.prss.microsoft.com"],
   },
 ] as const;
 
@@ -103,6 +111,13 @@ function canonicalDomain(rawValue: string): string {
 export function compileTerminalNetworkPolicy(
   mode: TerminalNetworkMode,
   additions: readonly string[],
+  /**
+   * `stored` describes domains a workspace already holds rather than ones it
+   * is asking for. A baseline that grew can put a saved list past the cap,
+   * and refusing to describe it would lock the admin out of the screen that
+   * removes domains; it reports no slots left instead.
+   */
+  options: { stored?: boolean } = {},
 ): CompiledTerminalNetworkPolicy {
   const baseline = [...new Set(TERMINAL_NETWORK_BASELINE.flatMap((group) => [...group.domains]))].sort();
   const baselineSet = new Set<string>(baseline);
@@ -110,7 +125,7 @@ export function compileTerminalNetworkPolicy(
     .filter((domain) => !baselineSet.has(domain))
     .sort();
   const trustedEffective = [...baseline, ...customDomains].sort();
-  if (trustedEffective.length > TERMINAL_NETWORK_MAX_TARGETS) {
+  if (!options.stored && trustedEffective.length > TERMINAL_NETWORK_MAX_TARGETS) {
     throw new TerminalNetworkPolicyError(
       `Daytona allows ${TERMINAL_NETWORK_MAX_TARGETS} effective domains; remove ${trustedEffective.length - TERMINAL_NETWORK_MAX_TARGETS} workspace domain(s)`,
     );
@@ -121,6 +136,6 @@ export function compileTerminalNetworkPolicy(
     customDomains,
     effectiveDomains: mode === "trusted_only" ? trustedEffective : [],
     reservedSlots: baseline.length,
-    remainingCustomSlots: TERMINAL_NETWORK_MAX_TARGETS - trustedEffective.length,
+    remainingCustomSlots: Math.max(0, TERMINAL_NETWORK_MAX_TARGETS - trustedEffective.length),
   };
 }

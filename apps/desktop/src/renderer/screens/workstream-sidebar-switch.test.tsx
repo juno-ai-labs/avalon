@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -136,9 +136,6 @@ function WorkstreamRouteControls(): React.JSX.Element {
       <button onClick={() => void navigate(`/workstreams/${firstWorkstreamId}?substream=child`)} type="button">
         Reopen breakout
       </button>
-      <button onClick={() => void navigate(`/workstreams/${firstWorkstreamId}?substream=child`, { state: OPEN_EXPANDED })} type="button">
-        Open breakout from the sidebar
-      </button>
     </>
   );
 }
@@ -246,25 +243,6 @@ describe('the right sidebar does not follow a channel switch', () => {
 
     await screen.findByRole('button', { name: 'Breakout menu: Shared child' });
     expect(screen.getAllByRole('textbox')).toHaveLength(2);
-  });
-
-  it('reports its two panes again for a sidebar open, so the Channel stack drops the thread expansion it made for it', async () => {
-    const setThreadUsesTwoPanes = vi.fn();
-    renderScreen(true, undefined, {
-      channelId: 'channel',
-      crumb: { key: 'channel', icon: null, title: 'Outbound', label: 'Open Outbound' },
-      shifted: true,
-      setThreadUsesTwoPanes,
-      expanded: false,
-      setExpanded: vi.fn(),
-    });
-    await screen.findByRole('button', { name: 'Breakout menu: Shared child' });
-    const reports = setThreadUsesTwoPanes.mock.calls.length;
-    expect(setThreadUsesTwoPanes).toHaveBeenLastCalledWith(true);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Open breakout from the sidebar', hidden: true }));
-    await waitFor(() => expect(setThreadUsesTwoPanes.mock.calls.length).toBeGreaterThan(reports));
-    expect(setThreadUsesTwoPanes).toHaveBeenLastCalledWith(true);
   });
 
   it('offers a thread beside its Channel Expand, and Collapse once expanded', async () => {
