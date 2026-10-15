@@ -1265,6 +1265,8 @@ Every rule below was learned from a defect in production or in review, and each 
 
 **Never reach a provider with a credential nobody refreshed.** Enforced structurally: provider-calling entry points take `AuthorizedConnectorConnection`, which only the credential door can mint. *A Granola personal connection became unloadable minutes after it was connected, reporting `plugin_not_authorized` while the connections screen showed it healthy, because `load_plugin` revalidation health-checked it without refreshing first.*
 
+**A refusal marked safe to retry came before any write.** `connectorResourceAccessRefused` tells the host it may run the same call on the run's next connection of that connector, so an adapter builds one only where nothing can have changed: a preflight that runs before the mutation, or a refused read. A refusal of the mutation request itself is never marked, and only an adapter that implements `probeResourceAccess` may build one at all. *A member's personal Google account could not see a Sheet that the Organization's could edit; the agent tried the personal one, got `403`, and asked them to fix a permission they did not need.*
+
 **A health check must not write.** Provider state that needs restoring goes through installation management (or adapter `repair` for a provider without that lifecycle), which only an explicit connection test invokes. *Granola re-enabled its webhook endpoint with a `PATCH` inside `healthCheck`, which reauthorization ran on every plugin activation.*
 
 **An unsigned setup challenge is not a logging channel.** When the delivered
@@ -1498,6 +1500,16 @@ active workspace guest is insufficient after the addressed share is revoked.
 Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
+
+### 2026-10-15: A connection that cannot reach a resource hands the call to one that can
+
+**What changed:** Adapters gain an optional `probeResourceAccess(connection, reference, signal)`, which answers how far one connection reaches a resource named by a URL or provider id (`edit`, `read`, `none`, `unrecognized`) without writing. Google implements it from Drive metadata and reads Docs, Sheets and Drive links. The new core tool `check_resource_access` asks every connection of one connector in the run, in parallel, using only the capabilities the run froze, and names the first plugin that can edit and the first that can read. `executeAuthorizedConnectorTool` now catches a refusal built with `connectorResourceAccessRefused` and runs the same call on the run's other connections of that connector, in run order (attached, the person's own, the Organization's), returning the first success with `servedThrough` on its output. When none serves it, the refusal reported is the first that carries a grant request, with `resourceAuthorizationConnectionId` naming the connection it belongs to, so the Allow editing card asks about the account that can edit rather than the one the model picked. The person's own connections are tried before the Organization's, and once a grant request is in hand the Organization's are not tried at all: one click to authorize the person's account is preferred over an edit recorded in the file's history under the Organization. Google marks its pre-write metadata refusal and its `403`/`404` refusals on Docs, Sheets and Drive (`get_metadata`, `download`, `export`) reads; the marked read keeps its code, message and payload.
+
+**Why:** A person's own Google account and the Organization's are different accounts that see different files, and the model picks one plugin per call. On 2026-10-14 the Thread `Creator content intake` created a Sheet through one account, then tried every write through another, which could not reach it. Each failure was reported to the member as a permission they had to grant.
+
+**Considered and rejected:** Retrying any failed call on another connection, which could land a write twice after an ambiguous failure. Probing every connection before every call, which adds a provider round trip to the common case where the chosen connection works. A per-connection `check_access` tool in each connector plugin, which would make the model call one per account to answer one question.
+
+**Consequences:** The guard against a double write is what the retry keys on, not a timeout or a count: a new adapter that marks a refusal raised after its mutation was sent breaks that guarantee. Fallback skips provider-authored (MCP) tools, whose surface can differ between two accounts. The receipt keeps the connection the model chose; Canva's cleanup reads `connection_id` from receipts, which is why the retry is limited to adapters that opt in.
 
 ### 2026-10-10: Connectors read provider files through the attachment converter
 
