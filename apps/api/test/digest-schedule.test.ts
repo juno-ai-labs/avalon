@@ -1,5 +1,6 @@
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
+import { stableUuid } from "../src/lib/stable-uuid";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext, Env } from "../src/env";
@@ -87,6 +88,8 @@ function seededDatabase(): DatabaseSync {
   const database = preRetirementProductSqliteDatabase();
   databases.push(database);
   database.exec(`
+    -- Migration 0109's column, which a Personal Channel destination reads: a guest has none.
+    ALTER TABLE workspace_members ADD COLUMN access_class TEXT NOT NULL DEFAULT 'member';
     INSERT INTO users (id, google_subject, email, name, timezone, created_at, updated_at)
     VALUES ('${OWNER}', 'google-owner', 'owner@example.com', 'Owner', 'Europe/London', '2026-01-01', '2026-01-01'),
            ('${OTHER}', 'google-other', 'other@example.com', 'Other', 'Europe/London', '2026-01-01', '2026-01-01');
@@ -137,6 +140,7 @@ describe("digest schedule", () => {
     expect(schedule.timezone).toBe("Europe/London");
     expect(schedule.deliveryTargets).toMatchObject([
       { type: "email", connectionId: null, displayName: "owner@example.com" },
+      { type: "personal_channel", displayName: "Personal Channel" },
     ]);
   });
 
@@ -269,6 +273,34 @@ describe("digest schedule", () => {
     ).get()).toEqual({ count: 0 });
   });
 
+  it("freezes the person's own Personal Channel as a destination, and refuses it to a guest", async () => {
+    const { database, objectDatabase, env } = fixture();
+
+    const saved = await new DigestService(env, auth).replace({
+      enabled: true,
+      days: [1],
+      times: [9 * 60],
+      deliveryTargets: [{ type: "personal_channel", connectionId: null }],
+    });
+    expect(saved.deliveryTargets).toEqual([expect.objectContaining({ type: "personal_channel", displayName: "Personal Channel" })]);
+    expect(objectDatabase.prepare(
+      "SELECT connection_id, provider_tenant_id, provider_user_id, email_address FROM digest_delivery_targets",
+    ).get()).toEqual({
+      connection_id: await stableUuid(["personal_channel", WORKSPACE, OWNER]),
+      provider_tenant_id: WORKSPACE,
+      provider_user_id: OWNER,
+      email_address: null,
+    });
+
+    database.prepare("UPDATE workspace_members SET access_class = 'guest' WHERE user_id = ?").run(OWNER);
+    await expect(new DigestService(env, auth).replace({
+      enabled: true,
+      days: [1],
+      times: [9 * 60],
+      deliveryTargets: [{ type: "personal_channel", connectionId: null }],
+    })).rejects.toMatchObject({ status: 422, code: "personal_channel_unavailable" });
+  });
+
   it("recomputes the workspace alarm only after the rows are written", async () => {
     const scheduleCountAtRefresh = vi.fn();
     // The closure runs during the save below, well after `built` initializes.
@@ -317,7 +349,10 @@ describe("digests are on by default", () => {
       days: [1, 2, 3, 4, 5],
       times: [9 * 60],
       timezone: "Europe/London",
-      deliveryTargets: [expect.objectContaining({ type: "email", displayName: "owner@example.com" })],
+      deliveryTargets: [
+        expect.objectContaining({ type: "email", displayName: "owner@example.com" }),
+        expect.objectContaining({ type: "personal_channel", displayName: "Personal Channel" }),
+      ],
     });
     expect(objectDatabase.prepare(
       "SELECT COUNT(*) AS count FROM schedules WHERE digest_schedule_id IS NOT NULL",
@@ -330,7 +365,8 @@ describe("digests are on by default", () => {
 
     expect(await reconcileDigestDefaults(env)).toEqual({ created: 0, derived: 0 });
     expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM digest_schedules").get()).toEqual({ count: 2 });
-    expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM digest_delivery_targets").get()).toEqual({ count: 2 });
+    // An email and a Personal Channel each.
+    expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM digest_delivery_targets").get()).toEqual({ count: 4 });
   });
 
   it("never resurrects a digest somebody switched off", async () => {

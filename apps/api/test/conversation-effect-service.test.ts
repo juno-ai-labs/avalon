@@ -1,5 +1,5 @@
 import "../../../tests/isolated-region";
-import { asAutomationId, asSubstreamId, asWorkspaceId, asWorkstreamId, type WorkstreamId } from "@rally/contracts";
+import { asAutomationId, asSubstreamId, asWorkspaceId, asWorkstreamId, DEFAULT_MEMBER_PREFERENCES, DEFAULT_NOTIFICATION_CHANNELS, type NotificationChannel, type WorkstreamId } from "@rally/contracts";
 import {
   conversationEffectHash,
   isPersonNotificationEffect,
@@ -222,7 +222,7 @@ function hostingWorkstreamParent(
   });
 }
 
-function workspaceSyncNamespace(listable = true) {
+function workspaceSyncNamespace(listable = true, mentionChannels: NotificationChannel[] = ["push", "slack_agent_dm", "email"]) {
   const database = new DatabaseSync(":memory:");
   database.exec("PRAGMA foreign_keys = ON");
   for (const migration of WORKSPACE_DO_SCHEMA_MIGRATIONS) {
@@ -317,6 +317,11 @@ function workspaceSyncNamespace(listable = true) {
         emailAddress: "regional-effects@example.com",
       })),
       canonicalChannelSpace: vi.fn(async () => ({ spaceId: "00000000-0000-7000-8000-0000000000a9" })),
+      // Every channel chosen, so each transport's path runs.
+      memberPreferences: vi.fn(async () => ({
+        ...DEFAULT_MEMBER_PREFERENCES,
+        notify: { ...DEFAULT_NOTIFICATION_CHANNELS, mentions: mentionChannels, added: ["push", "slack_agent_dm", "email"] },
+      })),
     }),
   });
   return {
@@ -520,10 +525,39 @@ describe("a parent's effects on the regional delivery plane", () => {
         notification_intent_id: mention.intentId,
         recipient_user_id: USER_ID,
         outcome: "delivered",
-        reason: "email_fallback_completed",
-        delivery_channel: "email",
+        reason: "chosen_channels_attempted",
+        channels: "push,slack_agent_dm,email",
+        push_enqueued: false,
         slack_outcome: "skipped",
         email_outcome: "skipped",
+      }));
+    } finally {
+      database.close();
+      workspace.database.close();
+    }
+  });
+
+  it("tries no channel the person did not choose: no email stands in for the rest", async () => {
+    const database = seedAuthority();
+    const workspace = workspaceSyncNamespace(true, []);
+    const env = regionalEnv(database, workspace);
+    try {
+      const mention = mentionEffect();
+      await applyWorkstreamRegionalEffect(env, message(mention, {
+        messageId: `notification:${MESSAGE_ID}:${USER_ID}`,
+        partitionKey: `notification:${MESSAGE_ID}:${USER_ID}`,
+        sourceVersion: 3,
+      }));
+      const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+      await expect(processWorkstreamNotificationIntent(env, WORKSPACE_ID, mention.intentId)).resolves.toBe("delivered");
+      expect(info).toHaveBeenCalledWith(expect.objectContaining({
+        event: "workstream_notification_terminal",
+        outcome: "delivered",
+        reason: "no_channel_chosen",
+        channels: "",
+        push_enqueued: false,
+        slack_outcome: "skipped",
+        email_outcome: null,
       }));
     } finally {
       database.close();

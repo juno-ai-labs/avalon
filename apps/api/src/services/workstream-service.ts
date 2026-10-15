@@ -227,10 +227,8 @@ export async function launchWorkstreamHarness(
     telemetrySubjectUserId?: string;
     /** Admit only while this is still the latest participant-facing run. */
     expectedLatestHarnessRunId?: string;
-  } & (
-    | { scheduledWakeupId: string; digestDeliveryId?: never }
-    | { digestDeliveryId: string; scheduledWakeupId?: never }
-  ),
+    scheduledWakeupId: string;
+  },
   publishEvent: typeof publishWorkstreamEvent = publishWorkstreamEvent,
 ): Promise<string> {
   const executionEnv = env;
@@ -292,7 +290,6 @@ export async function launchWorkstreamHarness(
       ? { transcriptFenceMessageId: input.transcriptFenceMessageId }
       : {}),
     ...(input.scheduledWakeupId ? { scheduledWakeupId: input.scheduledWakeupId } : {}),
-    ...(input.digestDeliveryId ? { digestDeliveryId: input.digestDeliveryId } : {}),
     ...(input.telemetryOperationId && input.telemetrySubjectUserId ? {
       telemetryOperationId: input.telemetryOperationId,
       telemetrySubjectUserId: input.telemetrySubjectUserId,
@@ -374,15 +371,9 @@ export async function launchWorkstreamHarness(
 async function stableActivationRunId(input: {
   workspaceId: WorkspaceId;
   workstreamId: WorkstreamId;
-} & (
-  | { scheduledWakeupId: string; digestDeliveryId?: never }
-  | { digestDeliveryId: string; scheduledWakeupId?: never }
-)): Promise<ReturnType<typeof asHarnessRunId>> {
-  const source = input.scheduledWakeupId
-    ? ["scheduled_wakeup", input.scheduledWakeupId]
-    : input.digestDeliveryId
-      ? ["digest_delivery", input.digestDeliveryId]
-      : ["digest_delivery", input.digestDeliveryId];
+  scheduledWakeupId: string;
+}): Promise<ReturnType<typeof asHarnessRunId>> {
+  const source = ["scheduled_wakeup", input.scheduledWakeupId];
   const seed = new TextEncoder().encode(JSON.stringify([
     "rally-persistent-loop-activation-v1",
     input.workspaceId,
