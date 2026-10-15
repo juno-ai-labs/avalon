@@ -239,8 +239,12 @@ describe("Avalon connector connection tools", () => {
     );
     await expect(stateTool!.execute({ connectorId: "slack", scope: "workspace" }, context()))
       .resolves.toMatchObject({ output: { state: "connected" } });
+    // Asked about the personal scope, it still says the Organization's works.
     await expect(stateTool!.execute({ connectorId: "slack", scope: "personal" }, context()))
-      .resolves.toMatchObject({ output: { state: "not_connected" } });
+      .resolves.toMatchObject({ output: {
+        state: "connected",
+        connections: [{ scope: "personal", state: "not_connected" }, { scope: "workspace", state: "connected" }],
+      } });
 
     objectDatabase.prepare(
       `INSERT INTO connector_connections
@@ -277,9 +281,9 @@ describe("Avalon connector connection tools", () => {
         output: {
           connectorId: "google-drive-workspace",
           state: "connected",
-          connections: [{ scope: "personal", state: "connected" }],
+          connections: [{ scope: "personal", state: "connected" }, { scope: "workspace", state: "not_connected" }],
         },
-        summary: "google-drive-workspace: personal connected",
+        summary: "google-drive-workspace: personal connected, workspace not_connected",
       });
 
     objectDatabase.prepare(
@@ -308,7 +312,7 @@ describe("Avalon connector connection tools", () => {
       .resolves.toMatchObject({ output: { state: "connected" } });
   });
 
-  it("checks every scope a connector offers when no scope is named", async () => {
+  it("checks every scope a connector offers, whatever scope is named", async () => {
     // A person whose personal Drive was connected was asked to connect Drive,
     // because the check looked at the workspace scope alone.
     const { env, objectDatabase } = fixture();
@@ -339,6 +343,13 @@ describe("Avalon connector connection tools", () => {
         },
         summary: "google-drive-workspace: personal connected, workspace not_connected",
       });
+    // What two agents asked in production: the workspace scope, by name, while
+    // the person's own Drive worked. The answer must still say so.
+    await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "workspace" }, context()))
+      .resolves.toMatchObject({ output: {
+        state: "connected",
+        connections: [{ scope: "personal", state: "connected" }, { scope: "workspace", state: "not_connected" }],
+      } });
 
     objectDatabase.prepare(
       `INSERT INTO connector_connections

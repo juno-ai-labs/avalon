@@ -132,9 +132,9 @@ are the initial annotated tools.
 
 `get_connector_connection_state` and `show_connector_connection` are
 the user-run-only recovery pair. Both accept only a trusted connector catalog
-id and a `personal`/`workspace` scope; the read's scope is optional, and left
-out it checks every scope the connector offers in one query. It returns each
-checked scope's state, `connected`, `reconnect_required`, or `not_connected`,
+id and a `personal`/`workspace` scope. The read always checks every scope the
+connector offers in one query; a `scope` it is sent is accepted and ignored, so
+older calls still validate. It returns each scope's state, `connected`, `reconnect_required`, or `not_connected`,
 from the caller-visible rows, plus the best of them as `state`; `connected` is
 the last durable state Rally observed, not a provider health check. The presentation tool asks the main desktop feed for a
 person-facing control rather than provider data. That feed resolves the card's
@@ -155,16 +155,22 @@ read. It lists only connectors whose adapter implements `probeResourceAccess`;
 the probe and the retry it pairs with are in
 [`connectors.md`](connectors.md#2026-10-15-a-connection-that-cannot-reach-a-resource-hands-the-call-to-one-that-can).
 
+The catalog id `google-drive-workspace` names Google Workspace, the product,
+and its description says so; it is not a scope.
+
 The model-facing flow is deliberately literal:
 
-1. Call `get_connector_connection_state` with `connectorId` and no `scope`.
+1. Call `get_connector_connection_state` with `connectorId`.
 2. If a connected scope can do the task, continue with it and do not show a
-   card.
+   card. A connected personal connection is enough.
 3. If none can and `reconnect_required` or `not_connected` blocks the task,
    explain the blocker briefly.
 4. Call `show_connector_connection` with the same `connectorId` and the scope
    the task needs, then stop the connector-dependent work for that run. Do not
    claim the connection worked.
+5. Never tell a person to complete a connection prompt unless the card was
+   shown in that same reply, and never tell another agent a connection blocks
+   it unless a tool refused for that reason. A state check is not a refusal.
 
 ### 1. Fail loud, never silently ignore an input
 
@@ -1209,13 +1215,18 @@ future agent tool or plugin, not just this family.
 
 ## Changelog
 
-### 2026-10-15 — The connection check covers every scope unless told otherwise
+### 2026-10-15 — The connection check covers every scope
 
-**What changed:** `get_connector_connection_state` takes `scope` as optional.
-Left out, it reads the caller's personal rows and the Organization's workspace
-rows for that connector in one query and returns a state per scope, plus the
-best of them. Its summary names each scope. The card tool still takes one
-scope.
+**What changed:** `get_connector_connection_state` reads the caller's personal
+rows and the Organization's workspace rows for that connector in one query and
+returns a state per scope, plus the best of them, whatever `scope` it is sent;
+`scope` became optional and is ignored. Its summary names each scope. The card
+tool still takes one scope. `google-drive-workspace`'s description now says the
+word names Google's product. The core prompt, the tool descriptions and the
+Sidekick authoring prompt now say a connected personal connection is enough,
+a state check is not a refusal, a person is never told to complete a prompt no
+card was shown for, and only a refused submission blocks a Sidekick's
+activation.
 
 **Why:** the check read one scope, and the model chose which. In production a
 member whose personal Google Drive had been connected for twelve days was
@@ -1224,8 +1235,16 @@ asked about the workspace scope. The same Thread later asked them to connect a
 workspace Slack they did not need. A person can hold a personal connection while
 the Organization holds a workspace one, and either may be the one a task
 needs, so the read that answers "is this connected" has to look at both.
-Rejected: telling the model to call twice, which leaves the miss to a prompt.
-A future change should keep the default covering every scope.
+A first version honored an explicit `scope` and checked both only when it was
+left out; a second incident the same day showed that was not enough. Two agents
+setting up a Sidekick for a member passed `scope: "workspace"` on every call,
+read the id `google-drive-workspace` as a scope, read the sheet through the
+member's personal connection, and still kept the Sidekick a draft "until the
+workspace Drive connection is authorized", telling the member to complete a
+prompt that was never shown. Rejected: renaming the card id, which saved cards
+in transcripts and the desktop catalog match on; and telling the model to call
+twice, which leaves the miss to a prompt. A future change should keep the check
+covering every scope regardless of input.
 
 ### 2026-09-20 — Give optional scalar arguments an explicit unspecified value
 
