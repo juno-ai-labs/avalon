@@ -102,14 +102,6 @@ export const ConnectorConnectionStateInputSchema = z.strictObject({
   scope: z.enum(ConnectorConnectionCardScopes).optional().describe(
     "Leave out. Every scope this connector offers is checked whatever is sent.",
   ),
-}).superRefine((input, context) => {
-  const supportedScopes: readonly ConnectorConnectionCardScope[] = ConnectorConnectionCardCatalog[input.connectorId].scopes;
-  if (input.scope === undefined || supportedScopes.includes(input.scope)) return;
-  context.addIssue({
-    code: "custom",
-    path: ["scope"],
-    message: `${input.connectorId} does not support a ${input.scope} connection`,
-  });
 });
 export type ConnectorConnectionStateInput = z.infer<typeof ConnectorConnectionStateInputSchema>;
 

@@ -1217,34 +1217,17 @@ future agent tool or plugin, not just this family.
 
 ### 2026-10-15 — The connection check covers every scope
 
-**What changed:** `get_connector_connection_state` reads the caller's personal
-rows and the Organization's workspace rows for that connector in one query and
-returns a state per scope, plus the best of them, whatever `scope` it is sent;
-`scope` became optional and is ignored. Its summary names each scope. The card
-tool still takes one scope. `google-drive-workspace`'s description now says the
-word names Google's product. The core prompt, the tool descriptions and the
-Sidekick authoring prompt now say a connected personal connection is enough,
-a state check is not a refusal, a person is never told to complete a prompt no
-card was shown for, and only a refused submission blocks a Sidekick's
-activation.
+**What changed:** `get_connector_connection_state` reports every scope whatever
+`scope` it is sent, and the prompts say a connected personal connection is
+enough and a state check is not a refusal.
 
-**Why:** the check read one scope, and the model chose which. In production a
-member whose personal Google Drive had been connected for twelve days was
-told Drive was `not_connected` and shown a connect card, because the model
-asked about the workspace scope. The same Thread later asked them to connect a
-workspace Slack they did not need. A person can hold a personal connection while
-the Organization holds a workspace one, and either may be the one a task
-needs, so the read that answers "is this connected" has to look at both.
-A first version honored an explicit `scope` and checked both only when it was
-left out; a second incident the same day showed that was not enough. Two agents
-setting up a Sidekick for a member passed `scope: "workspace"` on every call,
-read the id `google-drive-workspace` as a scope, read the sheet through the
-member's personal connection, and still kept the Sidekick a draft "until the
-workspace Drive connection is authorized", telling the member to complete a
-prompt that was never shown. Rejected: renaming the card id, which saved cards
-in transcripts and the desktop catalog match on; and telling the model to call
-twice, which leaves the miss to a prompt. A future change should keep the check
-covering every scope regardless of input.
+**Why:** on 2026-10-15 two agents setting up a Sidekick read the id
+`google-drive-workspace` as a scope, asked only about `workspace` while the
+member's personal Drive worked, kept the Sidekick a draft, and told the member
+to complete a prompt that was never shown. Rejected: renaming the card id,
+which saved cards in transcripts and the desktop catalog match on; and telling
+the model to call twice, which leaves the miss to a prompt. A future change
+must keep the check covering every scope regardless of input.
 
 ### 2026-09-20 — Give optional scalar arguments an explicit unspecified value
 
