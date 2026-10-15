@@ -11,7 +11,7 @@ import { TitleMenuItem, TitlePillAction, TitlePillHeader, type TitlePillLevel } 
 import { IconCloudDownload, IconPalette, IconPlus } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { ChannelComposer } from '../components/channel-composer';
 import { MarkdownBody } from '../components/workstream-blocks';
@@ -70,7 +70,10 @@ function ChannelStack({ channelId, threadId, workspace }: {
   const { session } = useAppSession();
   const space = useChannel(channelId);
   const [threadUsesTwoPanes, setThreadUsesTwoPanes] = useState(false);
-  const { expanded: held, setExpanded } = usePaneExpansion(threadId);
+  // A request to open a breakout expanded is the breakout's: the thread keeps
+  // whatever it had, beside the Channel or expanded over it.
+  const opensBreakout = new URLSearchParams(useLocation().search).has('substream');
+  const { expanded: held, setExpanded } = usePaneExpansion(threadId, !opensBreakout);
   // A breakout or a panel puts the expansion on hold: the thread and what it
   // opened split the window as they would have, and closing it returns to the
   // thread expanded, as it was.
@@ -306,8 +309,6 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
 
   if (active.data === undefined) return <LoadingState label="Opening channel…" />;
   if (!space) return <EmptyState description="It may have been archived, made private, or you may no longer have access." title="Channel not found" />;
-  // A thread opened from its Channel takes the whole window; Collapse puts it
-  // back beside the Channel.
   const openThread = (threadId: string): void => void navigate(threadRoute(threadId, channelId), { state: OPEN_EXPANDED });
   // Only a member may start a thread in a private Channel; a thread placed
   // there is the Channel's to accept (`canEdit` on the server).

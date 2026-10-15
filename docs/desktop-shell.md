@@ -162,8 +162,8 @@ its threads and messages, and a composer at the foot.
   reading. A hairline with the day's name ("Today",
   "Yesterday", a weekday, then a date; `formatDayLabel`) sits above the first
   thread of each day. Each thread is one button that opens it expanded over
-  the Channel ([`pane-stack.md`](pane-stack.md)): its title, its description, and who started it and when, with the
-  thread's own mark beside them. A row the socket holds is drawn from the
+  the Channel ([`pane-stack.md`](pane-stack.md)): its title, its description,
+  and who started it and when, with the thread's own mark beside them. A row the socket holds is drawn from the
   socket, so its dot and title move live, and a thread started here a moment
   ago shows at once. **Show earlier** loads the next page.
 - **Messages.** A Channel's own messages
