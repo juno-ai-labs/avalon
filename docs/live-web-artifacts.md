@@ -85,9 +85,13 @@ answer for non-Latin branding.
 
 **Looking before announcing.** The model writes a site's markup without
 seeing it, so the skill has it serve the directory in the sandbox, screenshot
-it with Playwright at the panel's width, and look with `view_image` before it
-announces the site. [`terminal-workspaces.md`](terminal-workspaces.md) owns
-the image and the tool.
+it with Playwright at 400px and 1280px, and look with `view_image` before it
+announces the site. A public active site is screenshotted at its published
+URL, since `index.js` does not run under the local server; a protected one
+answers the sandbox with its 401 page, so it gets the local layout check only.
+Where Playwright is missing the model publishes and says it could not check
+the layout. [`terminal-workspaces.md`](terminal-workspaces.md) owns the image
+and the tool.
 
 Assets within a version upload through at most six whole-upload workers. That is
 a conservative per-invocation budget based on Cloudflare's six connections
@@ -350,6 +354,10 @@ is the only place that can forward into it.
   any app surface that can overlap the rail — a dialog, the command palette, a
   lightbox — must collapse the view to nothing while it is open, or artifact
   content paints over it.
+  The same view takes the pointer from anything drawn under it, so the
+  panel's resize target must sit outside the area it covers, or the panel can
+  be resized only from the strip beside its header. Verified visually; no
+  automated guard (`desktop-layout.md` owns the target's placement).
 - **No artifact may register a service worker.** `worker-src 'none'` is written
   out because `default-src 'self'` would permit a same-origin one, and a
   root-scoped service worker is the single thing an artifact can install that
@@ -573,25 +581,27 @@ this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 
 **What changed:** The `building-live-sites` skill tells the model to write
 the base stylesheet for a 400px viewport with `min-width` queries, to
-screenshot the site at the panel's width and look at it before announcing,
-and names the hidden-grid-item trap. On the desktop the right panel's resize
-target now reaches over the conversation instead of into the panel. Panels,
-sites among them, open at an even split, recorded in
-[`desktop-layout.md`](desktop-layout.md).
+screenshot the site at 400px and 1280px and look at it before announcing, and
+names the hidden-grid-item trap. The panel's resize target and the even split
+it opens at are recorded in [`desktop-layout.md`](desktop-layout.md#changelog).
 
 **Why:** A generated market map rendered one word per line in the panel and
 fine in a browser tab. The site's CSS hid its side rail below 900px with
 `display: none` but kept `grid-template-columns: 0 1fr`, so the content fell
 into the zero-wide column. Nothing in Rally was wrong. The skill already said
 "narrow-first"; the model wrote desktop-first anyway and had no way to see the
-result. The resize target sat inside the panel's left edge, where the
-composited site view takes the pointer, so only the strip beside the header
-could be grabbed.
+result.
 
-**Consequences:** The panel's resize target must stay clear of the area the
-native view covers. The screenshot runs in the sandbox, so it follows the
-workspace's network setting; see
-[`terminal-workspaces.md`](terminal-workspaces.md#changelog).
+**Considered and rejected:** Screenshotting in the Worker with Browser
+Rendering. It needs the site published first and a browser binding in each
+region, where the sandbox already has the files.
+
+**Consequences:** A public active site is checked at its published URL, which
+the Trusted-only network baseline reaches through `*.rallyusercontent.com`
+(#1246); a protected site gets the local layout check only. The check-and-fix
+loop has no pass limit; each pass costs two screenshots and a model turn.
+
+Shipped in [#1248](https://github.com/juno-ai-labs/avalon/pull/1248).
 
 ### 2026-10-15 — The rail preview converts CSS pixels through window zoom
 

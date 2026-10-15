@@ -67,9 +67,9 @@ export function RailResizeHandle({
 
   return (
     // The other two handles collapse the panel they hold; this one has a close
-    // control of its own, so its double-click gives back the width the panel
-    // opens at instead. That is the same number `ui-store` starts it on, not a
-    // second opinion about how wide the sidebar ought to be.
+    // control of its own, so its double-click gives back the narrow default
+    // `ui-store` starts on instead. A panel opens wider, at an even split
+    // (`rail-split.ts`); the reset is the way back to a narrow one.
     <DragHint action="Drag to resize" shortcut="Double-click or Enter to reset width" side="left" suppressed={resizing}>
       <div
         aria-label={label}

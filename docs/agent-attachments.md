@@ -41,7 +41,7 @@ and extracted text is labeled separately. See [session import](session-import.md
 | `apps/api/src/services/workstream-resource-inventory.ts` | Renders the bounded current-principal inventory appended to live and replayed compaction checkpoints. |
 | `apps/api/src/services/workstream-attachment-tools.ts` | Implements pageable discovery plus bounded, versioned text reads and local search. |
 | `apps/api/src/services/automation-draft-attachment-tools.ts` | Reuses those operations behind a frozen compiler-request ID set and fresh draft ownership checks. |
-| `apps/api/src/services/attachment-model-content.ts` | Renders manifest-only non-image projection and bounded same-ID current-turn image derivatives. |
+| `apps/api/src/services/attachment-model-content.ts` | Renders manifest-only non-image projection and bounded same-ID current-turn image derivatives; `normalizeModelImageBytes` applies the same format, pixel, edge and byte limits to bytes that are not a resource, for Terminal's `view_image`. |
 | `apps/api/src/services/attachment-tool-receipts.ts` | Atomically binds completed attachment results to current derivative hashes and revalidates replay dependencies. |
 | `apps/api/src/services/integrations.ts` | Current message projection, work-stream resource-tool registration, and authorization-aware receipt replay. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Loads the resource set displayed in the right sidebar under note-visibility rules. |
@@ -455,6 +455,11 @@ Connector-origin relationships are owned by
 [`workstream-origin-attachments.md`](workstream-origin-attachments.md), and the
 generic tool execution/receipt loop is owned by
 [`agent-harness.md`](agent-harness.md).
+
+The image limits here are not attachments' alone. Terminal's `view_image`
+([`terminal-workspaces.md`](terminal-workspaces.md#files-and-commands)) sends a
+sandbox file through `normalizeModelImageBytes`, so a change to the pixel,
+edge or byte limit changes what that tool accepts too.
 
 ## Failure modes and limits
 
