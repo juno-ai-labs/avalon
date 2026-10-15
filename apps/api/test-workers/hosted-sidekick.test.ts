@@ -483,7 +483,8 @@ describe("a hosted Sidekick", () => {
     await execute(first, [{ name: 'load_plugin', arguments: { pluginId: 'rally_sidekicks' } }, { name: 'sidekick_sidekicks_list', arguments: {} }, { name: 'sidekick_attach', arguments: { sidekickId: AUTOMATION_ID } }]);
     const listing = provider.calls.flatMap((call) => call.messages).find((message) => message.role === 'tool' && typeof message.content === 'string' && message.content.includes('workspaceSidekicks'));
     expect(listing?.content).toContain('"canAttach":true');
-    expect(listing?.content).toContain('"canEdit":false');
+    // A room edits no Sidekick here, so its list carries no edit state.
+    expect(listing?.content).not.toContain('canEdit');
     expect(await parent.recommendedSidekickIds({ workspaceId: WORKSPACE_ID, parentId: workstreamId }), JSON.stringify(provider.calls.map((call) => call.messages.filter((message) => message.role === 'tool')))).toEqual([AUTOMATION_ID]);
     for (const agent of [root, sibling]) {
       const prompt = await execute(agent);

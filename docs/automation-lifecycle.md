@@ -274,13 +274,19 @@ a filter.
 `/sidekicks/new` replaces itself with the resulting detail route so Back cannot
 create a second draft. Coordinating conversations use `rally_agents` to discover
 and reuse a suitable Sidekick owned by their workstream, or create a minimal one
-there by default, then send setup instructions to its authoring agent. Those
+there by default, then send setup instructions to its authoring agent. The host
+refuses those instructions from a thread that does not own a thread-owned
+Sidekick ([`agent-communication.md`](agent-communication.md)). Those
 instructions open the authoring conversation and are shown there as its
 **Opening instructions** row
 ([`plugin-activity-rows.md`](plugin-activity-rows.md)). Drafting
 tools are available only in that authoring conversation. The persisted drafting
 plugin id and canonical tool names stay; the model reads the plugin as
-`rally_sidekicks` and its tools under the `sidekick_` prefix. Workstream-owned
+`rally_sidekicks` and its tools under the `sidekick_` prefix. In a room that
+plugin offers only `sidekick_sidekicks_list`, `sidekick_attach` and
+`sidekick_detach`, and its list carries only the organization Sidekicks the room
+can recommend; in an authoring conversation the list is that Sidekick's own
+definition. Workstream-owned
 entries are managed in the library and listed in their own room's Channel menu, beside
 that conversation's loaded attachments.
 
@@ -624,8 +630,8 @@ is false), so a second completion sends no notification, and the Slack
 A room's Sidekick has a **home conversation**: `owning_workstream_id` names the
 Channel and `owning_substream_id` the conversation in it, `"0"` for its Main
 conversation or a Breakout id. Both are on the Sidekick's
-`automation_directory` row. A Sidekick created in a Breakout (a room agent's
-first `submit_draft`, or `create_sidekick`) takes that Breakout as its home; one
+`automation_directory` row. A Sidekick created in a Breakout (with
+`create_sidekick`) takes that Breakout as its home; one
 created by a background agent takes Main, because a background agent's
 conversation is not one anybody reads. The creator must be able to open the
 home: a participant of the Channel for Main, a member of the Breakout
@@ -1049,6 +1055,29 @@ Desktop and browser request management options only when their controls open, no
 on every transcript update.
 
 ## Changelog
+
+### 2026-10-15 — A room no longer drafts Sidekicks, and its Sidekick list says only what it can recommend
+
+**What changed:** `submitDraft` keeps only the authoring conversation's path:
+the room branches that created a room-owned Sidekick on first submission or
+edited one the room owned are gone, since a room's tool list never carried
+`submit_draft`. In a room, `sidekick_sidekicks_list` returns only
+`workspaceSidekicks` with `canAttach` and `attached`, and no longer reads the
+room's owned definitions or reports `canEdit`. The drafting plugin's guidance
+dropped its room sentence and names `sidekick_sidekicks_list` where it means it.
+
+**Why:** Two lists told a room what it could change, by two different rules:
+`canEdit` here, and ownership in the agents plugin's `sidekicks_list`. A room
+changes a Sidekick only by messaging its authoring agent, so one rule now
+decides that, enforced where the message is admitted. The unreachable room
+branches carried the only server-side ownership check, which made it look as if
+the rule were enforced.
+
+**Consequences:** `canEdit` means one thing wherever a model reads it: whether
+this conversation may change that Sidekick. A room that needs a Sidekick's
+definition asks its authoring agent.
+
+Shipped in juno-ai-labs/avalon#1245.
 
 ### 2026-10-06 — A run's loop may act while its row still reads `pending`
 
