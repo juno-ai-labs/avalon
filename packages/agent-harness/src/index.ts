@@ -3675,6 +3675,50 @@ export const AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION = {
   },
 } as const satisfies ToolDefinition;
 
+export const CHECK_RESOURCE_ACCESS_TOOL_NAME = "check_resource_access";
+
+/**
+ * Which of a run's connections can open one resource.
+ *
+ * Built per run because its connector list is the deployment's: only an
+ * adapter that implements `probeResourceAccess` can answer, and naming one
+ * that cannot would invite a call that returns nothing useful.
+ */
+export function checkResourceAccessToolDefinition(
+  connectorTypes: readonly [string, ...string[]],
+): ToolDefinition {
+  return {
+    name: CHECK_RESOURCE_ACCESS_TOOL_NAME,
+    description: [
+      "Check which of this run's connections can open one resource, such as a Google Doc, Sheet or Drive link, before reading or editing it, or after a call on it was refused.",
+      "Every connection of that connector is checked: a person's own and the Organization's can be different accounts that see different files.",
+      "Returns each connection's plugin, scope and access: edit, read, or none, plus the first plugin that can edit and the first that can read.",
+      "editNeedsGrant means the account can edit but Rally needs the one-file Allow editing grant first.",
+      "Load and use the plugin it names. If none has access, say which accounts were checked rather than retrying.",
+    ].join(" "),
+    capability: "connector.resource.access.read",
+    mode: "read",
+    idempotency: "safe",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["connector", "resource"],
+      properties: {
+        connector: {
+          type: "string",
+          enum: [...connectorTypes],
+          description: "The connector that owns the resource.",
+        },
+        resource: {
+          type: "string",
+          minLength: 1,
+          description: "The resource's link exactly as shared, or its provider id.",
+        },
+      },
+    },
+  };
+}
+
 /**
  * Ask Rally's main conversation feed to present one trusted connector card.
  * The model selects only catalog identity and scope; the client owns all copy,
