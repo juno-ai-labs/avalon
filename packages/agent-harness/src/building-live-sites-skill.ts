@@ -188,8 +188,9 @@ that works the first time.
 
    Then call \`view_image\` on the PNG. Fix anything cramped, clipped, or
    one word per line, and check again; take a 1280-wide one too. An
-   \`index.js\` handler does not run under this server, but its
-   \`index.html\` still shows the layout. If \`playwright\` is not
+   \`index.js\` handler does not run under this server, so for an active
+   site publish first and screenshot the url \`publish_resource\`
+   returned instead. If \`playwright\` is not
    installed, say you could not check the layout rather than skipping
    the step silently. The page's
    own UI carries every interaction: never \`alert()\`, \`confirm()\`, or
