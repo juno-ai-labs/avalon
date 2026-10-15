@@ -515,7 +515,15 @@ describe("a room Sidekick's run and the room's agents", () => {
     expect(await detail()).toMatchObject({ name: "Research guide", lifecycle: "active", scope: "workstream", owningWorkstreamId: ROOM_ID });
     expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
     const discovered = await service.sidekicks();
-    expect(discovered.sidekicks.find((item) => item.sidekickId === sidekickId)).toMatchObject({ agentId: created.agentId, scope: "workstream" });
+    expect(discovered.sidekicks.find((item) => item.sidekickId === sidekickId))
+      .toMatchObject({ agentId: created.agentId, scope: "workstream", ownedByThisWorkstream: true });
+    // Another thread sees the same room-scoped Sidekick as not its own, which
+    // is what keeps it from reconfiguring another room's draft.
+    const elsewhere = crypto.randomUUID();
+    const otherRoom = new AgentCommunicationService(TEST_ENV, WorkstreamWorkflowInputSchema.parse({ ...input,
+      parentId: elsewhere, loopId: `workstream:${elsewhere}:substream:0:loop`, harnessRunId: crypto.randomUUID() }));
+    expect((await otherRoom.sidekicks()).sidekicks.find((item) => item.sidekickId === sidekickId))
+      .toMatchObject({ scope: "workstream", ownedByThisWorkstream: false });
     await service.send({ agentId: created.agentId, message: "CONFIGURE_SIDEKICK REVISE: add cost comparison.", attachmentIds: [] },
       { ...context, effectIntentId: crypto.randomUUID() });
     expect((await settledRun(authoring, 2))[1]).toMatchObject({ status: "completed", error_json: null });
@@ -1507,7 +1515,7 @@ describe("a room Sidekick's run and the room's agents", () => {
     await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes(answer)),
       { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
     const sidekicks = await service.sidekicks();
-    expect(sidekicks.sidekicks[0]).toMatchObject({ sidekickId: AUTOMATION_ID, scope: "workstream", owningWorkstreamId: ROOM_ID });
+    expect(sidekicks.sidekicks[0]).toMatchObject({ sidekickId: AUTOMATION_ID, scope: "workstream", ownedByThisWorkstream: true });
     await service.send({ agentId: sidekicks.sidekicks[0]!.agentId, message: "Explain your current configuration.", attachmentIds: [] },
       { ...context, effectIntentId: crypto.randomUUID() });
     const authoring = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, AUTOMATION_ID)));
