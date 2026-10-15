@@ -48,8 +48,10 @@ The reader can also ask for it. A thread beside its Channel, and a breakout
 beside its thread, has **Expand** and **Collapse** in its header; expanded,
 its level draws in `breakout` mode and the pane carries the crumbs as above.
 An expansion is held for the pane it was asked on and dropped when that pane
-closes or another opens, or when it opens a breakout or a panel of its own,
-which then split the window as they would have.
+closes or another opens. A thread's expansion is on hold while the thread has
+a breakout or a panel open: the two split the window as they would have, and
+closing what the thread opened returns to the thread expanded. A breakout's
+expansion ends when the breakout opens a panel.
 
 Navigation asks for it too, through location state (`OPEN_EXPANDED`), which
 both levels read with `usePaneExpansion`. The sidebar's Threads and Activity
@@ -57,7 +59,7 @@ rows ask for it, and so does a Channel opening one of its threads, from a feed
 row or by starting one in its composer: a thread opened from its Channel takes
 the whole window, and Collapse puts it beside the Channel. Other links inside a
 pane don't ask, so a breakout or a panel opened from a thread comes up beside
-it, and that ends the thread's expansion as above.
+it, holding the thread's expansion as above.
 
 Each step is drawn as movement, by `SplitConversationLayout` itself so both
 levels share it. A pane that opens beside another slides in from the right; a
@@ -121,8 +123,8 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
 
 - `apps/desktop/src/renderer/screens/channel.test.tsx` (a thread opens from
   its Channel's feed expanded and collapses beside it, expands over it and
-  collapses back, and a breakout ends the
-  expansion, a thread closed while expanded reopens beside the Channel, and a
+  collapses back, a breakout holds the
+  expansion until it closes, a thread closed while expanded reopens beside the Channel, and a
   sidebar link opens one expanded);
   `workstream-sidebar-switch.test.tsx` (the real header's Expand and Collapse,
   a breakout expanding, collapsing and reopening beside its thread, and one
@@ -141,20 +143,24 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
 
 **What changed:** A thread opened from its Channel's feed, or started from its
 composer, opens expanded over the Channel instead of beside it. A breakout or a
-panel the thread opens still comes up beside the thread.
+panel the thread opens still comes up beside the thread, and now holds the
+thread's expansion rather than ending it, so closing it returns to the thread
+expanded.
 
 **Why:** The product asked that a thread opened from a Channel take the whole
 window, as one opened from the sidebar already did, with the right pane kept
-for what the thread itself opens.
+for what the thread itself opens; and that closing a breakout return to the
+expanded thread, not to the Channel and thread side by side.
 
 **Considered and rejected:** Making expanded the default mode of the Channel
 level. Links inside the thread that open another thread still open it beside
 the Channel, and Collapse has to keep working; asking per navigation, as the
 sidebar does, changes only the two openings the product named.
 
-**Consequences:** The pair (Channel and thread side by side) is now reached by
-Collapse, or by closing a breakout the thread opened, which still ends the
-expansion and returns to the pair.
+**Consequences:** The pair (Channel and thread side by side) is reached by
+Collapse. While the expansion is on hold the thread's context reports it as
+not expanded, so the split thread offers no Collapse. The breakout level keeps
+its own rule: a panel the breakout opens still ends its expansion.
 
 ### 2026-10-13 — The sidebar opens a thread or breakout expanded
 
