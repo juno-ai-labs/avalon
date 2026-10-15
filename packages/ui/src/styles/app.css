@@ -47,6 +47,12 @@
      beside it makes room over the same span because it is measured from the
      same custom property. */
   --sidebar-collapse-motion: 240ms cubic-bezier(.22, 1, .36, 1);
+
+  /* How wide a draggable edge is to the pointer: the navigation sidebar's,
+     the right panel's, and the split-conversation divider's. One number so
+     every edge in the window is equally easy to grab; each places its target
+     around its own line. */
+  --resize-hit-size: 14px;
 }
 
 * {
@@ -1173,9 +1179,9 @@ pre {
 .sidebar-resizer {
   bottom: 0;
   position: absolute;
-  right: -6px;
+  right: calc(var(--resize-hit-size) / -2);
   top: 55px;
-  width: 12px;
+  width: var(--resize-hit-size);
   z-index: 3;
 }
 .sidebar-resizer > span { opacity: 0; }
@@ -4812,7 +4818,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   background: var(--av-sys-color-brand-ink);
   height: 54px;
 }
-.rail-resizer { bottom: 8px; position: fixed; right: calc(var(--rail-slot) + 8px); top: 8px; width: 12px; z-index: 41; }
+.rail-resizer { bottom: 8px; position: fixed; right: calc(var(--rail-slot) + 8px); top: 8px; width: var(--resize-hit-size); z-index: 41; }
 /* A drag has to track the pointer exactly; only closing the rail is animated. */
 .is-resizing-rail { cursor: col-resize !important; user-select: none !important; }
 .is-resizing-rail .workspace-shell { transition: none; }
@@ -6093,7 +6099,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    pointer from anything drawn under it. A target inside the panel's edge was
    grabbable only along the header, a strip a few pixels wide. The divider
    line stays on the panel's edge. */
-.rail-resizer { bottom: 0; justify-content: flex-start; padding-left: 10px; right: calc(var(--rail-slot) - 4px); top: 0; width: 14px; }
+.rail-resizer { bottom: 0; justify-content: flex-start; padding-left: calc(var(--resize-hit-size) - 4px); right: calc(var(--rail-slot) - 4px); top: 0; width: var(--resize-hit-size); }
 .rail-resizer > span {
   align-self: stretch;
   background: color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent);
@@ -8356,10 +8362,10 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .split-conversation-resizer {
   cursor: col-resize;
   flex: none;
-  margin: 0 -4px;
+  margin: 0 calc(var(--resize-hit-size) / -2);
   position: relative;
   touch-action: none;
-  width: 8px;
+  width: var(--resize-hit-size);
   z-index: 4;
 }
 .split-conversation-resizer:hover::after,
@@ -8368,7 +8374,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   background: var(--av-sys-color-accent-tint);
   bottom: var(--panel-divider-inset-bottom);
   content: '';
-  left: 3px;
+  left: calc(var(--resize-hit-size) / 2 - 1px);
   position: absolute;
   top: var(--panel-divider-inset-top);
   width: 2px;

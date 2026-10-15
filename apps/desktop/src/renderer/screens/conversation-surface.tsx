@@ -88,6 +88,7 @@ import { resolveFeedOpenSource, useWorkstreamFeedOpenTelemetry } from '../lib/us
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { ActivityPresence, InferenceDelayNotice, JumpToLatestButton } from '../components/conversation-follow';
+import { sizeRailToEvenSplit } from '../lib/rail-split';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   orderedTranscriptQueryKey,
@@ -1300,8 +1301,14 @@ export function ConversationSurface({
     // item is the point: the expanded view of the old one gives way to it.
     setExpanded(null);
     setPanel(next);
+    // Every attachment and artifact opens at an even split with the
+    // conversation. Only on opening: switching items in a panel already open
+    // keeps the width the person may have dragged it to.
+    const ui = useUiStore.getState();
+    const opening = !(ui.railOpen && ui.railScope === railScopeKey);
     openOwnRail('context');
-  }, [openOwnRail]);
+    if (opening) sizeRailToEvenSplit();
+  }, [openOwnRail, railScopeKey]);
   const resourcePanel = panel?.kind === 'resource' ? panel : null;
   const openAttachment = useCallback((preview: AttachmentPreview): void => {
     openPanel({ kind: 'attachment', preview });
