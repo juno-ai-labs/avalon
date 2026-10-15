@@ -12,6 +12,7 @@ import {
   type EmbeddedBrowserState,
 } from '../common/embedded-browser';
 
+import { clampBounds } from './artifact-viewers';
 import { BrowserScriptRuntime } from './browser-script-runtime';
 import { BrowserScriptDriver } from './browser-script-driver';
 
@@ -80,16 +81,7 @@ function browserPartition(userId: string): string {
 
 function dimensions(bounds: EmbeddedBrowserBounds, window: BrowserWindow): EmbeddedBrowserBounds {
   const [width = 0, height = 0] = window.getContentSize();
-  // Renderer DOM rectangles use CSS pixels. Native views use window points,
-  // which differ when Rally's renderer zoom factor is above or below one.
-  const zoom = window.webContents.getZoomFactor();
-  const x = Math.max(0, Math.min(Math.round(bounds.x * zoom), width));
-  const y = Math.max(0, Math.min(Math.round(bounds.y * zoom), height));
-  return {
-    x, y,
-    width: Math.max(0, Math.min(Math.round(bounds.width * zoom), width - x)),
-    height: Math.max(0, Math.min(Math.round(bounds.height * zoom), height - y)),
-  };
+  return clampBounds(bounds, { width, height }, window.webContents.getZoomFactor());
 }
 
 /**
