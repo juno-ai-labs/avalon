@@ -134,6 +134,8 @@ export const WorkspaceTerminalPolicyCommitRequestSchema = z.strictObject({
   resultingRevision: z.number().int().positive(),
   customDomains: z.array(z.string().min(1)),
   effectiveDomains: z.array(z.string().min(1)),
+  /** The baseline `effectiveDomains` was compiled under, so a read does not upgrade it again. */
+  baselineManifestVersion: z.string().min(1),
   at: TimestampSchema,
 });
 
