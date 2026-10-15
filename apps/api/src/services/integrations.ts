@@ -130,7 +130,7 @@ import {
 } from "@rally/connectors";
 import { z } from "zod";
 import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
-import { AutomationService, createAutomation } from "./automation-service";
+import { AutomationService } from "./automation-service";
 import { WorkstreamService } from "./workstream-service";
 import { ResourceService } from "./resource-service";
 import { DEMO_SEED_PROVIDER_KEY, demoSeedModelRoute, demoSeedProviderFetch } from "./demo-seed-provider";
@@ -1986,24 +1986,24 @@ function createAvalonAutomationsPlugin(
       },
     },
     automationDirectoryPort: {
-      // What this conversation may edit, with the definition an edit starts
-      // from: a room's own automations, or the automation whose conversation
-      // this is. Read as the person the run acts for, so a room's list is the
-      // one that person could open.
+      // A Sidekick's own conversation reads the definition its edit starts
+      // from. A room edits nothing here — it changes a Sidekick by messaging
+      // its authoring agent, and `sidekicks_list` (agents plugin) says which
+      // it may change — so a room reads only its recommendation state.
       listAutomations: async () => {
         if (!authorUserId) throw new Error("sidekick_draft_author_unavailable");
         const workspaceId = asWorkspaceId(input.workspaceId);
-        const options = input.parentKind === "workstream"
-          ? await new WorkstreamService(env, await attachmentAuth()).sidekickRecommendationOptions(
-            input.parentId, input.backgroundAgent ? "0" : input.substreamId ?? "0")
-          : null;
-        const actor = { userId: asUserId(authorUserId), participantOfOwningWorkstream: input.parentKind === "automation" || options?.canManage === true };
-        // One Organization call for every Sidekick this conversation edits:
-        // its own, or each one the Channel owns when the person may manage it.
-        const selection = input.parentKind === "automation" ? { automationIds: [authoredAutomationId] }
-          : options?.canManage ? { channelOwnedBy: input.parentId } : null;
-        const details = selection === null ? [] : await (await hostedParentStub(env, workspaceId))
-          .sidekickReadDetails({ workspaceId, actor, ...selection });
+        if (input.parentKind === "workstream") {
+          const options = await new WorkstreamService(env, await attachmentAuth()).sidekickRecommendationOptions(
+            input.parentId, input.backgroundAgent ? "0" : input.substreamId ?? "0");
+          return { workspaceSidekicks: options.items.map((item) => ({
+            sidekickId: item.id, name: item.name, description: item.description, available: item.available,
+            canAttach: options.canManage, attached: item.attached,
+          })) };
+        }
+        const details: unknown[] = await (await hostedParentStub(env, workspaceId)).sidekickReadDetails({ workspaceId,
+          actor: { userId: asUserId(authorUserId), participantOfOwningWorkstream: true },
+          automationIds: [authoredAutomationId] });
         const sidekicks = details.map((read: unknown) => {
           const detail = AutomationDetailSchema.parse(read);
           return {
@@ -2023,51 +2023,19 @@ function createAvalonAutomationsPlugin(
               : detail.currentDefinition,
           };
         });
-        if (input.parentKind !== "workstream") return { sidekicks };
-        return { sidekicks, workspaceSidekicks: (options?.items ?? []).map((item) => ({
-          sidekickId: item.id, name: item.name, description: item.description, available: item.available,
-          canEdit: false, canAttach: options?.canManage === true, attached: item.attached,
-        })) };
+        return { sidekicks };
       },
     },
     draftMutationPort: {
       submitDraft: async (draft: AutomationDraft, _context, target) => {
         if (!authorUserId) throw new Error("sidekick_draft_author_unavailable");
-        // Where the draft goes. An automation's own conversation edits only
-        // itself. A room edits one it owns when the model names it, and
-        // otherwise creates one on the first submission, owned by the room.
-        let targetId = authoredAutomationId;
-        if (target.automationId !== null) {
-          if (input.parentKind === "automation") {
-            if (target.automationId !== authoredAutomationId) {
-              throw new Error(
-                `This conversation edits only its own Sidekick, ${authoredAutomationId}; pass that id or null`,
-              );
-            }
-          } else {
-            const owned = await (await durableObjectStubForWorkspace(
-              env,
-              env.WORKSPACE_DOS,
-              asWorkspaceId(input.workspaceId),
-              workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)),
-            )).automationOwner({ workspaceId: asWorkspaceId(input.workspaceId), automationId: target.automationId });
-            if (owned.owningWorkstreamId !== input.parentId) {
-              throw new Error("That Sidekick is not one this thread owns; call sidekicks_list for the ones it can change");
-            }
-            targetId = asAutomationId(target.automationId);
-          }
-        } else if (input.parentKind !== "automation") {
-          await createAutomation(env, {
-            workspaceId: input.workspaceId,
-            authorUserId,
-            scope: "workstream",
-            owningWorkstreamId: input.parentId,
-            // Home is the Breakout this was drafted in, or Main. A background
-            // agent is not a Breakout anyone reads, so its drafts live in Main.
-            owningSubstreamId: input.backgroundAgent ? "0" : input.substreamId ?? "0",
-            automationId: authoredAutomationId,
-          });
+        // Only a Sidekick's own conversation has this tool, and it edits only
+        // itself. Which conversations may ask it for a change is decided where
+        // they message it (`AgentCommunicationService.authorizeSidekick`).
+        if (target.automationId !== null && target.automationId !== authoredAutomationId) {
+          throw new Error(`This conversation edits only its own Sidekick, ${authoredAutomationId}; pass that id or null`);
         }
+        const targetId = authoredAutomationId;
         const workspace = await hostedParentStub(env, input.workspaceId);
         const membership = await env.DB.prepare(
           `SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
@@ -2354,7 +2322,7 @@ async function assertAutomationCreatorConnectionAuthorized(
   capability: string,
 ): Promise<Record<string, unknown>> {
   if (frozen.workspaceId !== input.workspaceId || frozen.pluginId !== `connection:${frozen.connectionId}`) {
-    throw new ConnectorError("unauthorized", "Connector is outside this automation-creator scope");
+    throw new ConnectorError("unauthorized", "Connector is outside what this Sidekick may use");
   }
   const rowRead = env.DB.prepare(
     `SELECT id, workspace_id, connector_type, scope, owner_user_id, model_plugin_id,
@@ -2374,7 +2342,7 @@ async function assertAutomationCreatorConnectionAuthorized(
     row.scope !== frozen.scope || String(row.model_plugin_id ?? "") !== frozen.modelPluginId ||
     (row.owner_user_id == null ? null : String(row.owner_user_id)) !== frozen.ownerUserId
   ) {
-    throw new ConnectorError("unauthorized", "Connector is no longer healthy or authorized for automation creation");
+    throw new ConnectorError("unauthorized", "Connector is no longer healthy or authorized for Sidekick setup");
   }
   if (frozen.scope === "personal" && frozen.ownerUserId !== input.userId) {
     throw new ConnectorError("unauthorized", "Personal connector ownership changed");
@@ -4958,7 +4926,7 @@ async function loadRunPromptContext(
       ...(automationContext ? { sidekick: automationContext } : {}),
     }) + (input.backgroundAgent || input.parentKind === "automation"
       ? "\nFor requests from another agent, send results and questions back to that agent. Ask that agent for missing information instead of asking participants. Your final response stays here; it is not forwarded."
-      : "") + "\nContinue existing agents through messages. Before creating a Sidekick, look for a suitable one owned by this workstream. If none fits, create one here by default. Send setup instructions to its authoring agent; that agent drafts the configuration.",
+      : ""),
     additionalMessages,
     memoryContextHash: frozenMemory?.memoryContextHash ?? null,
     memoryContextMs: memoryContextPreparation?.elapsedMs ?? 0,
@@ -6496,7 +6464,7 @@ async function readRunAuthority(
   if (!live || live.lifecycle !== "active"
     || (live.state !== "pending" && live.state !== "running" && live.state !== "needs_input"
       && !continuedAfterFinish(input, live))) {
-    throw new ConnectorError("unauthorized", "This automation run is no longer running");
+    throw new ConnectorError("unauthorized", "This Sidekick run is no longer running");
   }
   const snapshot: RunAuthoritySnapshot = {
     automationRunId: run.runId,

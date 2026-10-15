@@ -66,6 +66,26 @@ export function agentAddressForId(agentId: AgentId): AgentAddress {
   return AgentAddressSchema.parse(parseAddress(agentId));
 }
 
+/**
+ * How a model reads and writes an agent id. A Sidekick's conversations are
+ * stored under the parent kind `automation`, a word left over from before the
+ * rename that a model has no reason to connect to a Sidekick; it reads
+ * `sidekick/…` instead. Storage keeps `automation/…`: the id keys the team
+ * tables and seeds delivery ids, so only the model's side of the tool boundary
+ * is translated.
+ */
+export function modelAgentId(agentId: string): string {
+  return agentId.startsWith("automation/") ? `sidekick/${agentId.slice("automation/".length)}` : agentId;
+}
+
+/**
+ * An agent id a model wrote, back in stored form. Both spellings are accepted
+ * because tool results from before the translation still show `automation/…`.
+ */
+export const ModelAgentIdSchema = z.string()
+  .transform((value) => value.startsWith("sidekick/") ? `automation/${value.slice("sidekick/".length)}` : value)
+  .pipe(AgentIdSchema);
+
 const MessageFields = {
   message: z.string().max(MESSAGE_MAX_CHARACTERS).describe("Tell the recipient what to do or provide your response. Include the context it needs."),
   // Same identifiers, default and bound as SubstreamOpeningMessageSchema.
@@ -88,7 +108,7 @@ export const StartAgentInputSchema = z.strictObject({
 export const StartAgentResultSchema = z.strictObject({ agentId: AgentIdSchema, name: z.string(), next: z.string() });
 export const ListAgentsInputSchema = z.strictObject({});
 export const SendAgentMessageInputSchema = z.strictObject({
-  agentId: AgentIdSchema.describe("Copy the recipient’s agentId from creation or discovery. Do not use a Sidekick ID."),
+  agentId: ModelAgentIdSchema.describe("Copy the recipient’s agentId from creation or discovery. Do not use a Sidekick ID."),
   ...MessageFields,
 }).refine(hasContent, contentError);
 export const ReplyToAgentMessageInputSchema = z.strictObject({
@@ -97,7 +117,7 @@ export const ReplyToAgentMessageInputSchema = z.strictObject({
 }).refine(hasContent, contentError);
 export const AgentMessageResultSchema = z.strictObject({ messageId: IdSchema, next: z.string() });
 export const StopAgentInputSchema = z.strictObject({
-  agentId: AgentIdSchema.describe("Copy the agentId of an agent you own. Its owned descendants also stop."),
+  agentId: ModelAgentIdSchema.describe("Copy the agentId of an agent you own. Its owned descendants also stop."),
 });
 
 export type StartAgentInput = z.infer<typeof StartAgentInputSchema>;
