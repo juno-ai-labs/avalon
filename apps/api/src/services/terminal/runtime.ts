@@ -875,7 +875,7 @@ export function createDaytonaTerminalRuntime(
         throw new TerminalToolError("file_read_failed", "The file size could not be verified. Inspect it with run_command and retry.", { reason: "Inspect the path with ls -l or file, then retry the read." });
       }
       if (size > 10 * 1_048_576) {
-        throw new TerminalToolError("limit_exceeded", `The file is ${size} bytes; read_file supports at most 10485760 bytes. Use a command to extract a smaller range.`, { field: "filePath", expected: "file bytes at most 10485760" });
+        throw new TerminalToolError("limit_exceeded", `The file is ${size} bytes; at most 10485760 bytes can be read. Use a command to write a smaller file, such as a range of the text or a resized image, and read that.`, { field: "filePath", expected: "file bytes at most 10485760" });
       }
       try {
         return await provider.readFile(sandbox.providerSandboxId, path);
@@ -915,7 +915,7 @@ export function createDaytonaTerminalRuntime(
       }
       if (result.exitCode === FILE_TOO_LARGE_EXIT_CODE) {
         const size = Number(result.stdout.trim());
-        throw new TerminalToolError("limit_exceeded", `The file is ${size} bytes; read_file supports at most 10485760 bytes. Use a command to extract a smaller range.`, { field: "filePath", expected: "file bytes at most 10485760" });
+        throw new TerminalToolError("limit_exceeded", `The file is ${size} bytes; at most 10485760 bytes can be read. Use a command to write a smaller file, such as a range of the text or a resized image, and read that.`, { field: "filePath", expected: "file bytes at most 10485760" });
       }
       if (result.exitCode === FILE_LINE_TOO_LARGE_EXIT_CODE) {
         const size = Number(result.stdout.trim());

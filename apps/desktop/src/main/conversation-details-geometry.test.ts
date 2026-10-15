@@ -24,4 +24,24 @@ describe('conversation details geometry', () => {
     expect(opened.addedWidth).toBe(100);
     expect(conversationDetailsGeometry(opened.bounds, area, opened.addedWidth, 0, 600).bounds.width).toBe(1700);
   });
+
+  it('puts the window back where it was when closing undoes the move that made room', () => {
+    const right = { x: 1000, y: 50, width: 700, height: 700 };
+    const opened = conversationDetailsGeometry(right, area, 0, 600, 600);
+    expect(opened.bounds).toEqual({ ...right, x: 500, width: 1300 });
+    const closed = conversationDetailsGeometry(
+      opened.bounds, area, opened.addedWidth, 0, 600, opened.bounds.width, opened.shiftedLeft, opened.bounds.x,
+    );
+    expect(closed.bounds).toEqual(right);
+  });
+
+  it('leaves a window the person moved while the panel was open where they put it', () => {
+    const right = { x: 1000, y: 50, width: 700, height: 700 };
+    const opened = conversationDetailsGeometry(right, area, 0, 600, 600);
+    const moved = { ...opened.bounds, x: 300 };
+    const closed = conversationDetailsGeometry(
+      moved, area, opened.addedWidth, 0, 600, opened.bounds.width, opened.shiftedLeft, opened.bounds.x,
+    );
+    expect(closed.bounds).toEqual({ ...moved, width: 700 });
+  });
 });

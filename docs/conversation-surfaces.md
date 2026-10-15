@@ -502,7 +502,10 @@ right sidebar's handle (`RailResizeHandle`) adds a second line: its
 double-click, and its `Enter` — the hint opens on focus as well as hover, so
 its likeliest reader is one who cannot double-click — restore
 `DEFAULT_RAIL_WIDTH` through the same clamp the drag uses, so a window whose
-derived maximum is under that width resets to the maximum instead. The key is
+derived maximum is under that width resets to the maximum instead. A panel
+opens wider than that, at an even split with the conversation
+([`desktop-layout.md`](desktop-layout.md)); the reset is the way back to a
+narrow one. The key is
 the only keyboard route to that width: the arrows step by a fixed amount.
 
 The route host, not the feed, owns identity transitions. A new work stream

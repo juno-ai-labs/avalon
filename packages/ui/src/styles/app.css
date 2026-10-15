@@ -4814,7 +4814,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   background: var(--av-sys-color-brand-ink);
   height: 54px;
 }
-.rail-resizer { bottom: 8px; position: fixed; right: calc(var(--rail-slot) + 8px); top: 8px; width: var(--resize-hit-size); z-index: 41; }
+.rail-resizer { bottom: 8px; position: fixed; right: calc(var(--rail-slot) + 8px); top: 8px; width: 12px; z-index: 41; }
 /* A drag has to track the pointer exactly; only closing the rail is animated. */
 .is-resizing-rail { cursor: col-resize !important; user-select: none !important; }
 .is-resizing-rail .workspace-shell { transition: none; }
@@ -6090,12 +6090,19 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   width: var(--rail-slot);
 }
 .rail-surface.is-leaving .rail-surface-content { animation: rail-content-close 160ms ease forwards; }
-/* The target reaches mostly over the conversation, not into the panel: a live
-   site composites a native view over the panel's body, which takes the
-   pointer from anything drawn under it. A target inside the panel's edge was
-   grabbable only along the header, a strip a few pixels wide. The divider
-   line stays on the panel's edge. */
-.rail-resizer { bottom: 0; justify-content: flex-start; padding-left: calc(var(--resize-hit-size) - 4px); right: calc(var(--rail-slot) - 4px); top: 0; width: var(--resize-hit-size); }
+/* The target sits inside the panel, reaching only the 2px of the
+   conversation's scrollbar border, so the transcript's scrollbar stays
+   draggable. The divider line stays on the panel's edge. */
+.rail-resizer { bottom: 0; justify-content: flex-start; padding-left: 2px; right: calc(var(--rail-slot) - var(--resize-hit-size) + 2px); top: 0; width: var(--resize-hit-size); }
+/* Except over a live site or a browser page: Electron composites a native
+   view over the panel's body that takes the pointer from anything drawn
+   under it, so a target inside the edge is grabbable only along the header.
+   There the target reaches over the conversation instead, and covers its
+   scrollbar's last few pixels. */
+.rail-resizer:has(+ .rail-surface :is(.site-detail-pane, .embedded-browser-page)) {
+  padding-left: calc(var(--resize-hit-size) - 4px);
+  right: calc(var(--rail-slot) - 4px);
+}
 .rail-resizer > span {
   align-self: stretch;
   background: color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent);
@@ -8358,7 +8365,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .split-conversation-resizer {
   cursor: col-resize;
   flex: none;
-  margin: 0 calc(var(--resize-hit-size) / -2);
+  /* Over the Breakout, not the Channel beside it: 2px reach the Channel's
+     scrollbar border and no further, so its thumb stays draggable. */
+  margin: 0 calc(2px - var(--resize-hit-size)) 0 -2px;
   position: relative;
   touch-action: none;
   width: var(--resize-hit-size);
@@ -8370,7 +8379,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   background: var(--av-sys-color-accent-tint);
   bottom: var(--panel-divider-inset-bottom);
   content: '';
-  left: calc(var(--resize-hit-size) / 2 - 1px);
+  left: 1px;
   position: absolute;
   top: var(--panel-divider-inset-top);
   width: 2px;

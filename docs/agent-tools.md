@@ -916,7 +916,7 @@ price or denied speech request.
 ## Terminal tool contract registry
 
 The deferred `rally:terminal` plugin is the concrete file/command family that
-follows these rules. All nine tools are exposed together after plugin load and
+follows these rules. All ten tools are exposed together after plugin load and
 execute serially against one authority-fenced work-stream workspace. Model-facing
 names are prefixed by Bind as `terminal_<name>`. The runtime retains internal
 hashes and an exclusive mutation lease, but none of these arguments or outputs
@@ -927,7 +927,7 @@ model-actionable drift check. See
 | Tool | Strict input | Successful `output` |
 | --- | --- | --- |
 | `read_file` | `{ filePath: string, offset?: integer >= 1, limit?: integer 1..1000 }` | `{ filePath, content, startLine, endLine, totalLines, truncated, nextOffset? }`; at most 256 KiB. |
-| `view_image` | `{ filePath: string }` | `{ filePath, mimeType, sizeBytes }`, plus the image as a content part the model sees. PNG, JPEG, GIF or WebP (TIFF and HEIF convert); at most 10 MiB, scaled to the model's edge limit. Refusals: `not_found`, `not_an_image`, `image_too_large`, `image_not_convertible`. |
+| `view_image` | `{ filePath: string }` | `{ filePath, sizeBytes, sentAs }`, plus the image as a content part the model sees for that turn (a GIF also gets its storyboard description); `sentAs` is the format the model received, which Images re-encodes. PNG, JPEG, GIF, WebP, TIFF or HEIF; at most 10 MiB read, scaled to the model's edge limit, and at most 8 MiB after conversion. A replay reads the file again. Refusals: `not_found`, `not_an_image`, `image_too_large`, `image_not_convertible`. |
 | `edit_file` | `{ filePath: string, oldString: string, newString: string, replaceAll?: boolean }` | `{ filePath, replacements, additions, deletions }`. `oldString` must match exactly once unless `replaceAll` is intentional. |
 | `write_file` | `{ filePath: string, content: string }` | `{ filePath, created, bytes, additions, deletions }`; this is deliberate complete replacement, not an edit fallback. |
 | `apply_patch` | `{ patch: string }` | `{ files: [{ path, previousPath?, operation, additions, deletions }], additions, deletions }`; `operation` is `created`, `edited`, `renamed`, or `deleted`. |
@@ -989,6 +989,7 @@ Common failures are designed as loop repairs:
 | Code/path | Model-visible recovery |
 | --- | --- |
 | `not_found`, `path_outside_root`, `invalid_path`, `not_text_file` | The refusal echoes the value it refused, names the root that parameter is relative to, and gives the accepted form; act on that rather than guessing another path. Omit `cwd` (or pass `.`) for the workspace root. For `not_found` on publication, write or copy the file beneath `AVALON_RESOURCE_DIR` first. Inspect with `pwd` and `ls -la`/`find`, or inspect binary metadata with `file`. |
+| `not_an_image`, `image_too_large`, `image_not_convertible` | `view_image` only. Check the file's type with `file`; take a smaller screenshot or resize it with a command; or save it as a PNG at most 2048 pixels on its longest side, then view that file. |
 | `match_not_found`, `match_not_unique` | Call `read_file` again, copy exact current text with enough surrounding context, then rebuild the edit; use `replaceAll` only when every match should change. This is the revision-drift recovery. |
 | `patch_does_not_apply`, `patch_invalid` | Re-read every affected file and regenerate the whole context-bearing patch; no partial patch is reported as successful. |
 | `destination_exists` | Choose a new import destination or set `overwrite: true` only after confirming replacement is intended. |

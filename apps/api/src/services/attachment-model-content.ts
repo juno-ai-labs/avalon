@@ -251,8 +251,7 @@ export async function normalizeModelImageBytes(
   const format = detectImageFormat(bytes);
   if (!format) return { ok: false, reason: "not_an_image" };
   const dimensions = nativeSourceDimensions(bytes, format);
-  if (dimensions && (!Number.isSafeInteger(dimensions.width * dimensions.height)
-    || dimensions.width * dimensions.height > MAX_IMAGE_PIXELS)) {
+  if (dimensions && !isSafePixelCount(dimensions.width, dimensions.height)) {
     return { ok: false, reason: "image_too_large" };
   }
   // A truncated GIF or TIFF makes its codec throw rather than return null,
@@ -263,7 +262,11 @@ export async function normalizeModelImageBytes(
   } catch {
     return { ok: false, reason: "image_not_convertible" };
   }
-  return image ? { ok: true, image } : { ok: false, reason: "image_not_convertible" };
+  if (!image) return { ok: false, reason: "image_not_convertible" };
+  // A TIFF is decoded to PNG without the Images downscale, so only its output
+  // says whether it fits.
+  if (!isModelImageSize(image.bytes)) return { ok: false, reason: "image_too_large" };
+  return { ok: true, image };
 }
 
 export function modelImageDataUri(
@@ -312,7 +315,7 @@ async function loadAndCreateModelImage(
   const detected = detectImageFormat(originalBytes);
   if (!detected) return null;
   const normalized = await normalizeImage(originalBytes, detected, options.images, options.documentProcessor);
-  if (!normalized || normalized.bytes.byteLength === 0 || normalized.bytes.byteLength > MAX_MODEL_IMAGE_BYTES) return null;
+  if (!normalized || !isModelImageSize(normalized.bytes)) return null;
   if (normalized.bytes.byteLength > (options.maxBytes ?? MAX_TOTAL_MODEL_IMAGE_BYTES)) return null;
 
   if (options.database && attachment.contentRef) {
@@ -540,10 +543,19 @@ function hasPrefix(bytes: Uint8Array, prefix: number[]): boolean {
   return prefix.every((value, index) => bytes[index] === value);
 }
 
+function isSafePixelCount(width: number, height: number): boolean {
+  return Number.isSafeInteger(width) && Number.isSafeInteger(height) && width > 0 && height > 0
+    && width * height <= MAX_IMAGE_PIXELS;
+}
+
 function assertSafePixelCount(width: number, height: number): void {
-  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0 || width * height > MAX_IMAGE_PIXELS) {
+  if (!isSafePixelCount(width, height)) {
     throw new Error("Image dimensions exceed the safe model-conversion limit");
   }
+}
+
+function isModelImageSize(bytes: Uint8Array): boolean {
+  return bytes.byteLength > 0 && bytes.byteLength <= MAX_MODEL_IMAGE_BYTES;
 }
 
 function exactArrayBuffer(bytes: Uint8Array | Uint8ClampedArray): ArrayBuffer {
