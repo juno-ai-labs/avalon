@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import * as UTIF from "utif2";
 import { ATTACHMENT_TEXT_EXTRACTOR_VERSION } from "../src/services/attachment-derivative-service";
-import { buildAttachmentManifestPart, buildAttachmentModelParts } from "../src/services/attachment-model-content";
+import { buildAttachmentManifestPart, buildAttachmentModelParts, normalizeModelImageBytes } from "../src/services/attachment-model-content";
 import {
   buildGifStoryboard,
   decodeTiffToPng,
@@ -603,3 +603,13 @@ function webpHeader(width: number, height: number): Uint8Array {
 function animatedGif(): Uint8Array {
   return Uint8Array.from(atob("R0lGODlhBAADAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQICgAAACwAAAAABAADAAAICAABCBxIUGBAACH5BAgUAAAALAAAAAAEAAMAgQD/AAAAAAAAAAAAAAgIAAEIHEhQYEAAIfkECB4AAAAsAAAAAAQAAwCBAAD/AAAAAAAAAAAACAgAAQgcSFBgQAA7"), (character) => character.charCodeAt(0));
 }
+
+describe("normalizeModelImageBytes", () => {
+  it("names a codec failure instead of throwing", async () => {
+    // A TIFF header whose first directory points past the end of the file:
+    // the real codec throws on it rather than returning nothing.
+    const truncatedTiff = new Uint8Array([0x49, 0x49, 0x2a, 0x00, 0xff, 0xff, 0x00, 0x00]);
+    await expect(normalizeModelImageBytes(truncatedTiff, { documentProcessor }))
+      .resolves.toEqual({ ok: false, reason: "image_not_convertible" });
+  });
+});
