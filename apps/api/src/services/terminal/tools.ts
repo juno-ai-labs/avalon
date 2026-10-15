@@ -3,6 +3,7 @@ import type { AttachmentKind } from "@rally/contracts";
 import type { z } from "zod";
 
 import { sha256Hex } from "../../lib/crypto";
+import { modelImageDataUri, normalizeModelImageBytes } from "../attachment-model-content";
 
 import {
   TERMINAL_OUTPUT_ROOT,
@@ -16,6 +17,7 @@ const MAX_FILE_BYTES = 10 * 1_048_576;
 const MAX_INLINE_OUTPUT_BYTES = 128 * 1_024;
 
 type ReadFileInput = z.infer<typeof TerminalArgumentSchemas.read_file>;
+type ViewImageInput = z.infer<typeof TerminalArgumentSchemas.view_image>;
 type EditFileInput = z.infer<typeof TerminalArgumentSchemas.edit_file>;
 type WriteFileInput = z.infer<typeof TerminalArgumentSchemas.write_file>;
 type ApplyPatchInput = z.infer<typeof TerminalArgumentSchemas.apply_patch>;
@@ -419,8 +421,19 @@ function summarizeCommand(input: RunCommandInput, output: TerminalCommandOutput)
   return `${output.state === "completed" ? "Completed" : "Finished"} ${label}`;
 }
 
-/** Every Terminal executor that runs through the sandbox runtime; `preview_site` does not. */
-export function createTerminalToolExecutors(runtime: TerminalRuntime): Omit<TerminalToolExecutors, "preview_site"> {
+/** How `view_image` turns file bytes into what a model accepts; the plugin passes the region's Images binding. */
+export type TerminalImageDelivery = typeof normalizeModelImageBytes;
+
+const VIEW_IMAGE_REFUSALS = {
+  not_an_image: "The file is not a PNG, JPEG, GIF, WebP, TIFF, or HEIF image. Use run_command with `file` to check what it is.",
+  image_too_large: "The image has too many pixels to show. Take a smaller screenshot or resize it with a command, then view that file.",
+  image_not_convertible: "The image could not be converted for viewing. Save it as a PNG no larger than 2048 pixels on its longest side and view that file.",
+} as const;
+
+export function createTerminalToolExecutors(
+  runtime: TerminalRuntime,
+  deliverImage: TerminalImageDelivery = normalizeModelImageBytes,
+): TerminalToolExecutors {
   return {
     async read_file(rawInput, context): Promise<HarnessToolResult> {
       const input: ReadFileInput = TerminalArgumentSchemas.read_file.parse(rawInput);
@@ -441,6 +454,30 @@ export function createTerminalToolExecutors(runtime: TerminalRuntime): Omit<Term
           ...page,
         },
         summary: `Read ${filePath} lines ${page.startLine}–${page.endLine}`,
+      };
+    },
+    async view_image(rawInput, context): Promise<HarnessToolResult> {
+      const input: ViewImageInput = TerminalArgumentSchemas.view_image.parse(rawInput);
+      const filePath = safeRelativePath(input.filePath, "filePath");
+      const bytes = await runtime.readFile(context, filePath);
+      if (!bytes) {
+        throw new TerminalToolError(
+          "not_found",
+          "The requested file was not found. Use `run_command` with `pwd` and `ls -la` or `find` to inspect available paths before trying another file.",
+          { reason: "Inspect the terminal workspace root before choosing another path." },
+        );
+      }
+      const delivered = await deliverImage(bytes);
+      if (!delivered.ok) {
+        throw new TerminalToolError(delivered.reason, VIEW_IMAGE_REFUSALS[delivered.reason], { filePath });
+      }
+      return {
+        output: { filePath, mimeType: delivered.image.mimeType, sizeBytes: bytes.byteLength },
+        summary: `Viewed ${filePath}`,
+        contentParts: [{
+          type: "image_url",
+          image_url: { url: modelImageDataUri(delivered.image.bytes, delivered.image.mimeType), detail: "auto" },
+        }],
       };
     },
     async edit_file(rawInput, context): Promise<HarnessToolResult> {

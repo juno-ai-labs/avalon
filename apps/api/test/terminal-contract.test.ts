@@ -17,6 +17,7 @@ const expectedSystemMessage = "You have a Linux sandbox with Bash, Python, JavaS
 const executor = async () => ({ output: {}, summary: "test" });
 const executors = {
   read_file: executor,
+  view_image: executor,
   edit_file: executor,
   write_file: executor,
   apply_patch: executor,
@@ -24,7 +25,6 @@ const executors = {
   checkout_repository: executor,
   import_resource: executor,
   publish_resource: executor,
-  preview_site: executor,
   publish_branch_and_pr: executor,
 } satisfies TerminalToolExecutors;
 
@@ -59,6 +59,7 @@ describe("Terminal plugin contract", () => {
     expect(TERMINAL_TOOL_DEFINITIONS.find((tool) => tool.name === "publish_resource")!.description).toContain(TERMINAL_OUTPUT_ROOT);
     expect(TERMINAL_TOOL_NAMES).toEqual([
       "read_file",
+      "view_image",
       "edit_file",
       "write_file",
       "apply_patch",
@@ -66,7 +67,6 @@ describe("Terminal plugin contract", () => {
       "checkout_repository",
       "import_resource",
       "publish_resource",
-      "preview_site",
       "publish_branch_and_pr",
     ]);
     expect(plugin.tools.map((tool) => ({
@@ -79,6 +79,7 @@ describe("Terminal plugin contract", () => {
       additionalProperties: tool.definition.inputSchema.additionalProperties,
     }))).toEqual([
       { name: "read_file", capability: "terminal.file.read", mode: "read", idempotency: "safe", timeoutMs: 150_000, serial: true, additionalProperties: false },
+      { name: "view_image", capability: "terminal.file.read", mode: "read", idempotency: "safe", timeoutMs: 150_000, serial: true, additionalProperties: false },
       { name: "edit_file", capability: "terminal.file.write", mode: "write", idempotency: "record_before_execute", timeoutMs: 180_000, serial: true, additionalProperties: false },
       { name: "write_file", capability: "terminal.file.write", mode: "write", idempotency: "record_before_execute", timeoutMs: 180_000, serial: true, additionalProperties: false },
       { name: "apply_patch", capability: "terminal.file.write", mode: "write", idempotency: "record_before_execute", timeoutMs: 180_000, serial: true, additionalProperties: false },
@@ -86,7 +87,6 @@ describe("Terminal plugin contract", () => {
       { name: "checkout_repository", capability: "terminal.repository.checkout", mode: "write", idempotency: "record_before_execute", timeoutMs: 300_000, serial: true, additionalProperties: false },
       { name: "import_resource", capability: "terminal.resource.import", mode: "write", idempotency: "record_before_execute", timeoutMs: 240_000, serial: true, additionalProperties: false },
       { name: "publish_resource", capability: "terminal.resource.publish", mode: "write", idempotency: "provider_key", timeoutMs: 240_000, serial: true, additionalProperties: false },
-      { name: "preview_site", capability: "terminal.site.preview", mode: "read", idempotency: "safe", timeoutMs: 60_000, serial: true, additionalProperties: false },
       { name: "publish_branch_and_pr", capability: "terminal.repository.publish", mode: "write", idempotency: "record_before_execute", timeoutMs: 300_000, serial: true, additionalProperties: false },
     ]);
   });
@@ -140,7 +140,7 @@ describe("Terminal plugin contract", () => {
     // Named rather than counted, because the risk runs both ways: a write that
     // quietly gains re-entry is as wrong as one that quietly loses it.
     expect(plugin.tools.filter((tool) => !tool.reenterable).map((tool) => tool.definition.name).sort())
-      .toEqual(["apply_patch", "edit_file", "import_resource", "preview_site", "read_file", "write_file"]);
+      .toEqual(["apply_patch", "edit_file", "import_resource", "read_file", "view_image", "write_file"]);
   });
 
   it("carries a reconciler for the one re-enterable tool that needs one", () => {

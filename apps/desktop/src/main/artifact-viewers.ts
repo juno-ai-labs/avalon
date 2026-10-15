@@ -19,7 +19,7 @@
  *
  * See `docs/live-web-artifacts.md` and `docs/security.md`.
  */
-import { isArtifactUrl } from '@rally/contracts';
+import { parseArtifactHost } from '@rally/contracts';
 import type { Session } from 'electron';
 
 /**
@@ -111,11 +111,32 @@ export function applyGlobalNavigationPolicy(input: {
 }
 
 /**
- * Whether a URL is one this process will load into an artifact surface. The
- * renderer supplies it, so it is checked rather than trusted. Shared with the
- * API, whose site preview refuses the same URLs for the same reason.
+ * Whether a URL is one this process will load into an artifact surface.
+ *
+ * The renderer supplies it, so it is checked here rather than trusted: `https:`
+ * only, and only on the artifact serving domain. A view that would load
+ * anything else is a view that could be pointed at the application's own origin
+ * or at an attacker's, which is the whole capability this function withholds.
+ *
+ * The domain is matched as a suffix on a label boundary rather than by
+ * `includes`, so `rallyusercontent.com.evil.test` is refused.
  */
-export { isArtifactUrl };
+export function isArtifactUrl(candidate: string, servingDomain: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'https:') return false;
+  const host = url.hostname.toLowerCase();
+  const domain = servingDomain.toLowerCase();
+  const suffix = `.${domain}`;
+  if (!host.endsWith(suffix)) return false;
+  const label = host.slice(0, -suffix.length);
+  if (!label || label.includes('.')) return false;
+  return parseArtifactHost(label) !== null;
+}
 
 /**
  * Load an artifact's initial URL without mistaking its bootstrap form POST for

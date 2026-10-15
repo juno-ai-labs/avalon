@@ -36,7 +36,6 @@ exists.
 | `apps/api/src/services/workstream-artifact-data-wiring.ts` | Resolving a reference through the standard visibility loader, and reaching the supervisor through the one supported resolver. |
 | `packages/agent-harness/src/prompts/document-generation.ts` | The standing policy's `# Sites` section: the trigger and the manners, and nothing else. |
 | `packages/agent-harness/src/building-live-sites-skill.ts` | The loadable skill that carries the build craft, scoped to the Terminal plugin. |
-| `apps/api/src/services/terminal/site-preview.ts` | `preview_site`: renders a published site through the `BROWSER` binding at a chosen viewport (480×900 by default) and returns the screenshot to the model. Refuses any URL `isArtifactUrl` does not accept. |
 | `apps/api/src/services/artifact-open-service.ts` | The identity-bearing door into an artifact origin: the open-time visibility check and the fragment-carrying URL it mints. Public reads bypass it and remain anonymous. |
 | `apps/desktop/src/renderer/components/site-resource-detail.tsx` | The site detail: the pane it measures and hands over, the actions it puts in its host's header, and the Data view. |
 | `apps/desktop/src/renderer/components/detail-header-actions.tsx` | How a detail hands its actions to the header of the rail or panel showing it, as data the host draws as its own. Not artifact-specific: it is what keeps this detail's controls out of the page it is showing. |
@@ -84,13 +83,11 @@ The bitmap font transliterates accented Latin text and gives titles with no
 supported glyphs a stable visible site code; an authored card remains the right
 answer for non-Latin branding.
 
-**Seeing what was published.** The model writes a site's markup without ever
-rendering it, so `preview_site` gives it one look before it announces the
-site. It screenshots the live URL through Cloudflare Browser Rendering, the
-same binding link search uses, and hands the image back as a content part.
-It runs outside the sandbox, so it accepts only Rally artifact URLs: anything
-else would be a browser that ignores the workspace's egress setting. A
-protected site renders its gate, which is what a viewer without access sees.
+**Looking before announcing.** The model writes a site's markup without
+seeing it, so the skill has it serve the directory in the sandbox, screenshot
+it with Playwright at the panel's width, and look with `view_image` before it
+announces the site. [`terminal-workspaces.md`](terminal-workspaces.md) owns
+the image and the tool.
 
 Assets within a version upload through at most six whole-upload workers. That is
 a conservative per-invocation budget based on Cloudflare's six connections
@@ -572,34 +569,29 @@ this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 
 ## Changelog
 
-### 2026-10-15 — The model can see its site
+### 2026-10-15 — The skill checks layout by looking, and names the grid trap
 
-**What changed:** A new Terminal tool, `preview_site`, renders a published
-site at a viewport the model picks (480×900 by default) and returns the
-screenshot. The skill now tells the model to write the base stylesheet for a
-400px viewport with `min-width` queries, to call `preview_site` before
-announcing a site, and names the hidden-grid-item trap. On the desktop the
-right panel's resize target now reaches over the conversation instead of into
-the panel. Panels, sites among them, open at an even split; that and the
-shared edge width are recorded in [`desktop-layout.md`](desktop-layout.md). `isArtifactUrl` moved
-from the desktop to `@rally/contracts` so the desktop and the API share it.
+**What changed:** The `building-live-sites` skill tells the model to write
+the base stylesheet for a 400px viewport with `min-width` queries, to
+screenshot the site at the panel's width and look at it before announcing,
+and names the hidden-grid-item trap. On the desktop the right panel's resize
+target now reaches over the conversation instead of into the panel. Panels,
+sites among them, open at an even split, recorded in
+[`desktop-layout.md`](desktop-layout.md).
 
-**Why:** A generated market map rendered one word per line in the pane and
+**Why:** A generated market map rendered one word per line in the panel and
 fine in a browser tab. The site's CSS hid its side rail below 900px with
 `display: none` but kept `grid-template-columns: 0 1fr`, so the content fell
 into the zero-wide column. Nothing in Rally was wrong. The skill already said
 "narrow-first"; the model wrote desktop-first anyway and had no way to see the
-result, and a person's "it looks broken" had nothing to correct against. The
-resize target sat inside the panel's left edge, where the composited site view takes
-the pointer, so only the strip beside the header could be grabbed.
+result. The resize target sat inside the panel's left edge, where the
+composited site view takes the pointer, so only the strip beside the header
+could be grabbed.
 
-Rejected: installing a browser in the sandbox snapshot. It adds a large
-download behind the Trusted-only egress policy and startup cost to every
-sandbox, while the API already holds a renderer.
-
-**Consequences:** `preview_site` must keep refusing non-artifact URLs. The
-renderer runs outside the sandbox and its network policy. The panel's resize
-target must stay clear of the area the native view covers.
+**Consequences:** The panel's resize target must stay clear of the area the
+native view covers. The screenshot runs in the sandbox, so it follows the
+workspace's network setting; see
+[`terminal-workspaces.md`](terminal-workspaces.md#changelog).
 
 ### 2026-10-15 — The rail preview converts CSS pixels through window zoom
 

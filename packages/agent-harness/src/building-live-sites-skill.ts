@@ -174,10 +174,24 @@ that works the first time.
    wide, then a pop-out window, then a browser tab. Write the base
    stylesheet for a 400px-wide viewport and add \`min-width\` media
    queries for wider layouts, never the reverse: a desktop layout with
-   \`max-width\` overrides is the one that breaks in the pane. After
-   publishing, call \`preview_site\` with the url the publish returned and
-   look at the picture; fix anything cramped, clipped, or one word per
-   line, republish, and check again before you announce the site. The page's
+   \`max-width\` overrides is the one that breaks in the pane.
+
+   **Look at it before you announce it.** Serve the directory and take a
+   screenshot at the pane's width, in one \`run_command\`:
+
+   \`\`\`
+   python3 -m http.server 8765 --directory .rally-output/<site> >/dev/null 2>&1 & server=$!
+   sleep 1
+   playwright screenshot --viewport-size "480, 900" http://localhost:8765/ .rally/tmp/site-480.png
+   kill $server
+   \`\`\`
+
+   Then call \`view_image\` on the PNG. Fix anything cramped, clipped, or
+   one word per line, and check again; take a 1280-wide one too. An
+   \`index.js\` handler does not run under this server, but its
+   \`index.html\` still shows the layout. If \`playwright\` is not
+   installed, say you could not check the layout rather than skipping
+   the step silently. The page's
    own UI carries every interaction: never \`alert()\`, \`confirm()\`, or
    \`prompt()\` (build inline messages and confirmations instead), and
    never a Print, Save, or Export button — saving and exporting are the
