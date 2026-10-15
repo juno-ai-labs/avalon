@@ -31,8 +31,10 @@ import { Daytona, Image } from "@daytona/sdk";
 
 import { parseTerminalRegionConfiguration } from "../src/services/terminal/contract";
 import {
+  TERMINAL_PLAYWRIGHT_BROWSERS_PATH,
   TERMINAL_SNAPSHOT_BASE_IMAGE,
   TERMINAL_SNAPSHOT_RESOURCES,
+  terminalPlaywrightImageBuildCommand,
   terminalSnapshotImageBuildCommand,
 } from "../src/services/terminal/snapshot-manifest";
 import { acceptBuiltTerminalSnapshot } from "./terminal-snapshot-acceptance";
@@ -64,9 +66,13 @@ const daytona = new Daytona({
 // each Dockerfile unique; it also reaches every sandbox as an environment
 // variable, so a sandbox can say which build it came from.
 const builtAt = new Date().toISOString();
+// Playwright and its Chromium are an image-only step after the bootstrap: the
+// runtime never installs them, for the reasons on
+// `terminalPlaywrightInstallCommand`. The environment points every sandbox's
+// `playwright` at the browser baked here.
 const image = Image.base(baseImage)
-  .env({ RALLY_TERMINAL_SNAPSHOT_BUILT_AT: builtAt })
-  .runCommands(terminalSnapshotImageBuildCommand());
+  .env({ RALLY_TERMINAL_SNAPSHOT_BUILT_AT: builtAt, PLAYWRIGHT_BROWSERS_PATH: TERMINAL_PLAYWRIGHT_BROWSERS_PATH })
+  .runCommands(terminalSnapshotImageBuildCommand(), terminalPlaywrightImageBuildCommand());
 
 process.stdout.write(
   `Building Terminal snapshot ${configuration.snapshot} from ${baseImage} (built-at ${builtAt}) at ${TERMINAL_SNAPSHOT_RESOURCES.cpu} vCPU / ${TERMINAL_SNAPSHOT_RESOURCES.memory} GiB / ${TERMINAL_SNAPSHOT_RESOURCES.disk} GiB\n`,
