@@ -812,6 +812,8 @@ grant-shaped recovery is something the reader can approve.
 **Consequences:** A grant request splits the plugin row around it — tools
 before the failed write stay one "Used Google", tools after start another.
 
+Shipped in #1238.
+
 ### 2026-10-08 — Custom MCP servers wear the Model Context Protocol mark
 
 **What changed:** A custom MCP server's activity row draws
