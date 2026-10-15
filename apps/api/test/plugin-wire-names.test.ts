@@ -64,11 +64,10 @@ function expandPages(tool: HarnessTool, prefix: string): HarnessTool[] {
 
 const terminalExecutor = async () => ({ output: {}, summary: "test" });
 const terminalExecutors = {
-  read_file: terminalExecutor, edit_file: terminalExecutor, write_file: terminalExecutor,
+  read_file: terminalExecutor, view_image: terminalExecutor, edit_file: terminalExecutor, write_file: terminalExecutor,
   apply_patch: terminalExecutor, run_command: terminalExecutor,
   checkout_repository: terminalExecutor, import_resource: terminalExecutor,
-  publish_resource: terminalExecutor, preview_site: terminalExecutor,
-  publish_branch_and_pr: terminalExecutor,
+  publish_resource: terminalExecutor, publish_branch_and_pr: terminalExecutor,
 } satisfies TerminalToolExecutors;
 
 /**
@@ -186,7 +185,6 @@ describe("plugin wire names", () => {
       "list_resources",
       "list_resources_next",
       "list_wakeups",
-      "preview_site",
       "publish_branch_and_pr",
       "publish_resource",
       "query_artifact_data",
@@ -205,6 +203,7 @@ describe("plugin wire names", () => {
       "start_agent",
       "stop_agent",
       "summarize_resource",
+      "view_image",
       "view_resource",
       "write_file",
     ]);

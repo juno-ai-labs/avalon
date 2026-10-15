@@ -106,7 +106,13 @@ this generation; otherwise it goes through readiness like a write.
 
 Rally creates sandboxes from its own `rally-terminal-1` snapshot: Daytona's
 managed `daytonaio/sandbox:0.9.0` base with SQLite, `gh`, pnpm, and `tsx`
-preinstalled by `terminal:build-snapshot`. On first creation an idempotent
+preinstalled by `terminal:build-snapshot`, plus Playwright with its Chromium
+under `/opt/rally/ms-playwright` (`PLAYWRIGHT_BROWSERS_PATH`). Playwright is
+baked into the image only: the runtime bootstrap never installs it, and it is
+not a per-sandbox probe, because production serves the previous snapshot until
+a rebuild is adopted and a fail-closed probe would refuse every sandbox in
+between. The acceptance gate requires a working screenshot instead, so no
+snapshot without it is adopted. On first creation an idempotent
 compatibility bootstrap creates the owned `/workspace`, installs only missing
 SQLite/`gh`/pnpm/`tsx` capabilities through the compiled Trusted-only apt/npm
 hosts — a no-op against the owned snapshot — and then executes the complete
@@ -120,8 +126,13 @@ model not to install another runtime or manager.
 
 ### Files and commands
 
-The model receives `read_file`, `edit_file`, `write_file`, `apply_patch`, and
-`run_command`. File paths are relative to the workspace root, `/workspace`,
+The model receives `read_file`, `view_image`, `edit_file`, `write_file`,
+`apply_patch`, and `run_command`. `view_image` reads a PNG, JPEG, GIF or WebP
+through the same contained read as `read_file` and returns the picture to the
+model, normalized by the attachment image pipeline
+(`normalizeModelImageBytes`), so a chart or a Playwright screenshot can be
+checked by looking at it. A file it cannot deliver is refused with
+`not_an_image`, `image_too_large` or `image_not_convertible`. File paths are relative to the workspace root, `/workspace`,
 which `cwd` may name as `.` or leave out; `publish_resource` alone resolves its
 path against `$AVALON_RESOURCE_DIR` (`/workspace/.rally-output`). Path syntax
 is validated before provider I/O, and a refusal echoes the value it refused,
@@ -1219,6 +1230,26 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-10-15 — The agent can screenshot a page and look at the picture
+
+**What changed:** The weekly snapshot image now carries Playwright
+(`TERMINAL_PLAYWRIGHT_VERSION`) and its Chromium, and the acceptance gate
+requires a working screenshot. A new read tool, `view_image`, returns an
+image file from the workspace to the model.
+
+**Why:** A generated site rendered one word per line in Rally's narrow
+panel, and the agent had no way to see that. A Cloudflare Browser Rendering
+tool was built first and replaced: it could only see published sites, and
+only from outside the sandbox. Playwright in the sandbox can check a page
+before it is published and follows the workspace's network setting.
+
+**Consequences:** Playwright stays image-only. Installing it from the
+runtime bootstrap would exceed the bootstrap's 120-second budget, and the
+Trusted-only allow list does not reach Playwright's browser download host.
+Making it a per-sandbox probe would refuse every sandbox until a rebuilt
+snapshot is adopted. In Trusted-only workspaces the sandbox cannot reach
+published site URLs, so the site skill screenshots a locally served copy.
 
 ### 2026-10-08 — A failed policy change no longer deletes sandboxes
 
