@@ -22,7 +22,6 @@ describe('ConversationCard', () => {
 
   it('says Open and Needs input, and leaves out a summary it was not given', () => {
     render(<ConversationCard
-      align="start"
       conversation={{ substreamId: 'two', title: 'Rain', needsInput: true }}
       onOpen={vi.fn()}
       open

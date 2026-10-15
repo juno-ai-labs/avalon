@@ -9,14 +9,10 @@ import { resolveWorkstreamAppearance } from './workstream-glyph';
  * One conversation as an entry in a feed: its title and news, an optional
  * summary, a byline the host draws, and the conversation's own mark beside
  * them. The whole entry is the button that opens it. A Channel's feed draws
- * its threads with it, and a thread's feed draws its Breakouts with it.
- *
- * `align` is which side the entry sits on: `end` for a Channel's threads, set
- * to the trailing side as what people started, and `start` for Breakouts,
- * which sit under the leading-side reply they branched from.
+ * its threads with it, and a thread's feed draws its Breakouts with it. Both
+ * sit on the trailing side: a person started them.
  */
-export function ConversationCard({ align = 'end', conversation, meta, onOpen, open, summary }: {
-  align?: 'start' | 'end';
+export function ConversationCard({ conversation, meta, onOpen, open, summary }: {
   conversation: BreakoutMark;
   /** Who started it and when, as the host can name them. */
   meta?: ReactNode;
@@ -33,7 +29,7 @@ export function ConversationCard({ align = 'end', conversation, meta, onOpen, op
   return <button
     aria-label={[conversation.naming ? 'Rally is choosing a name' : conversation.title, news, open && 'Open'].filter(Boolean).join(', ')}
     aria-pressed={open}
-    className={clsx('conversation-card', align === 'start' && 'is-start', open && 'is-open')}
+    className={clsx('conversation-card', open && 'is-open')}
     onClick={onOpen}
     type="button"
   >
