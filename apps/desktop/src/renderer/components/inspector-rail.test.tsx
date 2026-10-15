@@ -933,6 +933,64 @@ describe('resource detail content preview', () => {
     expect(button.querySelector('.tabler-icon-window-maximize')).not.toBeNull();
   });
 
+  // The panel's box comes from layout, which jsdom does not do: the main pane
+  // starts 200px in, and the window is jsdom's 1024px.
+  function mainPane(): HTMLElement {
+    const pane = document.createElement('main');
+    pane.className = 'main-pane';
+    pane.getBoundingClientRect = () => DOMRect.fromRect({ x: 200, width: 824, height: 800 });
+    document.body.append(pane);
+    return pane;
+  }
+
+  function openSite(artifacts: ReturnType<typeof siteArtifacts>): () => void {
+    return render(
+      <Tooltip.Provider>
+        <InspectorRail panel={{ resourceId: site.id, onClose: vi.fn() }} siteArtifacts={artifacts} workstream={{ ...workstream, resources: [site] }} />
+      </Tooltip.Provider>,
+    ).unmount;
+  }
+
+  it('opens a live site as wide as the conversation when the window can grow to fit it', async () => {
+    const pane = mainPane();
+    const screenWidth = vi.spyOn(window.screen, 'availWidth', 'get').mockReturnValue(2_000);
+    try {
+      const artifacts = siteArtifacts();
+      openSite(artifacts);
+      expect(useUiStore.getState().railWidth).toBe(824);
+      await waitFor(() => expect(artifacts.surface.present).toHaveBeenCalled());
+    } finally {
+      screenWidth.mockRestore();
+      pane.remove();
+    }
+  });
+
+  it('splits the window in half when it cannot grow, and keeps a wider width', () => {
+    const pane = mainPane();
+    const screenWidth = vi.spyOn(window.screen, 'availWidth', 'get').mockReturnValue(1_024);
+    try {
+      openSite(siteArtifacts())();
+      expect(useUiStore.getState().railWidth).toBe(412);
+
+      useUiStore.setState({ railWidth: 600 });
+      openSite(siteArtifacts());
+      expect(useUiStore.getState().railWidth).toBe(600);
+    } finally {
+      screenWidth.mockRestore();
+      pane.remove();
+    }
+  });
+
+  it('leaves a document panel at the width it had', () => {
+    const pane = mainPane();
+    try {
+      openDetail(note, vi.fn(async () => new Blob(['# Quarterly plan'], { type: 'text/markdown' })));
+      expect(useUiStore.getState().railWidth).toBe(360);
+    } finally {
+      pane.remove();
+    }
+  });
+
   it('opens a live site panel\'s labels beside its buttons, clear of the page below', async () => {
     // The page is a native view composited under the header that paints above
     // all renderer DOM, so a label hanging down is behind it. Upward does not

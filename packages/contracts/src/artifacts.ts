@@ -275,3 +275,29 @@ export function parseArtifactHost(
     region,
   };
 }
+
+/**
+ * Whether a URL addresses a Rally-hosted artifact: `https:` only, and only on
+ * the artifact serving domain. The desktop loads nothing else into an artifact
+ * surface, and the API's site preview renders nothing else, since either one
+ * pointed elsewhere becomes a browser for any origin.
+ *
+ * The domain is matched as a suffix on a label boundary rather than by
+ * `includes`, so `rallyusercontent.com.evil.test` is refused.
+ */
+export function isArtifactUrl(candidate: string, servingDomain: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:") return false;
+  const host = url.hostname.toLowerCase();
+  const domain = servingDomain.toLowerCase();
+  const suffix = `.${domain}`;
+  if (!host.endsWith(suffix)) return false;
+  const label = host.slice(0, -suffix.length);
+  if (!label || label.includes(".")) return false;
+  return parseArtifactHost(label) !== null;
+}
