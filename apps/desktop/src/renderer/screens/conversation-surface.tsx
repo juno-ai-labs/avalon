@@ -1133,7 +1133,7 @@ export interface ConversationSurfaceProps {
    */
   renderOpeningSidebar?: () => React.ReactNode;
   /**
-   * This Channel's Breakouts, for the chips under each origin message and the
+   * This Channel's Breakouts, for the cards under each origin message and the
    * tick bar down the feed's leading edge. Main only; a Breakout passes none.
    */
   breakouts?: readonly BreakoutMark[] | undefined;
@@ -1850,11 +1850,26 @@ export function ConversationSurface({
   }, [conversationAddress, feedLive, id, loadTranscriptRange, orderedTranscript.data, releaseTranscriptFollow,
     searchSequence, searchTurnId, setSearchParams, transcript, transcriptVirtualizer]);
 
-  // Breakouts placed in this feed: chips under each origin turn, and the tick
-  // bar's order, which follows the turns as they are loaded.
-  const breakoutChips = useMemo(() => breakouts && onOpenBreakout && breakouts.length > 0
-    ? { byTurn: breakoutsByOrigin(breakouts), openSubstreamId: openBreakoutId, onOpen: onOpenBreakout }
-    : undefined, [breakouts, onOpenBreakout, openBreakoutId]);
+  // Breakouts placed in this feed: cards under each origin turn, and the tick
+  // bar's order, which follows the turns as they are loaded. A card's byline
+  // says who started the Breakout and when, as a Channel's thread card does.
+  const breakoutCards = useMemo(() => breakouts && onOpenBreakout && breakouts.length > 0
+    ? {
+      byTurn: breakoutsByOrigin(breakouts),
+      openSubstreamId: openBreakoutId,
+      onOpen: onOpenBreakout,
+      renderMeta: (breakout: BreakoutMark): React.ReactNode => {
+        if (!breakout.createdByUserId || !breakout.createdAt) return null;
+        const author = visibleMembers.find((member) => member.id === breakout.createdByUserId);
+        return <>
+          {author && <Avatar member={author} size="small" title={null} />}
+          <span>{author?.name ?? 'Someone'}</span>
+          <span aria-hidden="true">·</span>
+          <RelativeTime value={breakout.createdAt} />
+        </>;
+      },
+    }
+    : undefined, [breakouts, onOpenBreakout, openBreakoutId, visibleMembers]);
   const tickBreakouts = useMemo(() => breakouts && breakouts.length > 0
     ? orderBreakoutsForTicks(breakouts, transcript.flatMap((message) => message.transcriptTurnId ?? []))
     : [], [breakouts, transcript]);
@@ -3190,7 +3205,7 @@ export function ConversationSurface({
               onAnswerElicitation={answerElicitation}
               onOpenAttachment={openAttachment}
               onStartSubstream={parentKind === 'workstream' && substreamId === '0' ? onStartSubstream : undefined}
-              {...(breakoutChips ? { breakoutChips } : {})}
+              {...(breakoutCards ? { breakoutCards } : {})}
               {...(api ? { onAcceptDraft: (automationId: string) => {
                 acceptProposedAutomation.mutate(automationId);
               } } : {})}

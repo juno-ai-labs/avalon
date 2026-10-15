@@ -149,7 +149,7 @@ describe('MessageFeed', () => {
     expect(screen.getByText(/Rally noted something\./)).toBeInTheDocument();
   });
 
-  it('draws a turn\'s Breakout chips once, after the last row of that turn', () => {
+  it('draws a turn\'s Breakout cards once, after the last row of that turn', () => {
     const onOpen = vi.fn();
     const rows = [
       message({ id: 'question', transcriptTurnId: 'turn-1', text: 'What changed?' }),
@@ -159,13 +159,14 @@ describe('MessageFeed', () => {
       message({ id: 'untracked', text: 'No turn at all.' }),
     ];
     render(<MessageFeed
-      breakoutChips={{
+      breakoutCards={{
         byTurn: new Map([['turn-1', [
           { substreamId: 'b1', title: 'Pricing deep dive', unreadCount: 2 },
           { substreamId: 'b2', title: 'Competitors' },
         ]]]),
         onOpen,
         openSubstreamId: 'b2',
+        renderMeta: (breakout) => `Started by ${breakout.substreamId === 'b1' ? 'Ada' : 'Grace'}`,
       }}
       messages={rows}
       onAnswerElicitation={answer}
@@ -177,13 +178,17 @@ describe('MessageFeed', () => {
       .filter((row) => row.contains(groups[0]!))
       .map((row) => row.dataset.arrivalId);
     expect(owner).toEqual(['answer']);
-    expect(within(groups[0]!).getAllByRole('button').map((chip) => chip.textContent))
-      .toEqual(['Pricing deep dive· 2 new', 'Competitors· Open']);
+    const cards = within(groups[0]!).getAllByRole('button');
+    expect(cards.map((card) => card.getAttribute('aria-label')))
+      .toEqual(['Pricing deep dive, 2 new', 'Competitors, Open']);
+    expect(cards.map((card) => card.textContent))
+      .toEqual(['2 newPricing deep diveStarted by Ada', 'CompetitorsStarted by Grace']);
+    expect(cards.map((card) => card.getAttribute('aria-pressed'))).toEqual(['false', 'true']);
     fireEvent.click(within(groups[0]!).getByRole('button', { name: /Pricing deep dive/u }));
     expect(onOpen).toHaveBeenCalledWith('b1');
   });
 
-  it('draws no chips for a surface without Breakouts', () => {
+  it('draws no Breakout cards for a surface without Breakouts', () => {
     render(<MessageFeed
       messages={[message({ id: 'answer', transcriptTurnId: 'turn-1', text: 'Pricing moved.' })]}
       onAnswerElicitation={answer}
