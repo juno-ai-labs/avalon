@@ -868,6 +868,25 @@ export interface ConnectorAdapter {
   poll?(connection: AuthorizedConnectorConnection, signal: AbortSignal): Promise<ConnectorPollResult>;
   hydrateResource?(connection: AuthorizedConnectorConnection, resource: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
   /**
+   * How far this connection reaches one resource named by a URL or provider
+   * id. Must not write.
+   *
+   * A person can hold a personal connection while the Organization holds a
+   * workspace one, each a different provider account, and only one of them
+   * may see the file in front of them. This is what lets the host answer
+   * "which connection can open this" without trying a write.
+   *
+   * Implementing it is also the adapter's promise that every refusal it
+   * builds with `connectorResourceAccessRefused` is raised before the
+   * provider was asked to change anything, which is what lets the host retry
+   * that call on another connection.
+   */
+  probeResourceAccess?(
+    connection: AuthorizedConnectorConnection,
+    reference: string,
+    signal: AbortSignal,
+  ): Promise<ConnectorResourceAccess>;
+  /**
    * Where the things this connector produces live, so a work stream started
    * from one can link back to it. Omitted by a connector whose activities are
    * already described well enough by `connectorOriginFromActivity`.
@@ -1058,6 +1077,47 @@ export function connectorCapabilityRefused(
       : `The ${providerLabel} connection has not granted ${requested}, and has no usable tool capabilities on this run.`,
     { reason: "capability_not_granted", field: requested, available },
   );
+}
+
+/** What `probeResourceAccess` found for one connection. */
+export type ConnectorResourceAccess =
+  /** The reference is not a resource this connector names. */
+  | { access: "unrecognized" }
+  /**
+   * This connection cannot open it: not shared with its account, deleted, or
+   * the connection lacks the capability. `reason` is a fixed code.
+   */
+  | { access: "none"; resourceId: string; reason: string }
+  | {
+    access: "read" | "edit";
+    resourceId: string;
+    name: string;
+    /** Editable by the account, but Rally needs a one-resource grant first. */
+    editNeedsGrant?: boolean;
+  };
+
+/**
+ * A refusal raised because this connection cannot reach the resource, before
+ * the provider was asked to change anything.
+ *
+ * Only an adapter that implements `probeResourceAccess` may build one, and
+ * only at a point where no effect can have happened: the host reads it as
+ * leave to retry the same call on another connection, and a refusal raised
+ * after a write began would let that write land twice.
+ */
+export function connectorResourceAccessRefused(
+  message: string,
+  details: Record<string, unknown>,
+  code: ConnectorError["code"] = "unsupported_capability",
+): ConnectorError {
+  return new ConnectorError(code, message, { ...details, resourceAccessRefused: true });
+}
+
+export function isConnectorResourceAccessRefusal(error: unknown): error is ConnectorError {
+  if (!(error instanceof ConnectorError)) return false;
+  const details = error.details;
+  return Boolean(details && typeof details === "object"
+    && (details as { resourceAccessRefused?: unknown }).resourceAccessRefused === true);
 }
 
 export class ConnectorError extends Error {

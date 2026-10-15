@@ -592,6 +592,8 @@ export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
   "Sidekicks let people delegate work or knowledge. Create and edit them through conversation; never ask users to edit system instructions.",
   "Generate both internal instructions and a clear user-friendly description of the behavior. Explain missing details through questions.",
   "A ready submission saves and activates immediately. Do not ask the person to press Create or Apply. Submit only the behavior they requested.",
+  "A connection state check never blocks a submission. A personal or workstream Sidekick may use the personal connection of the person it runs as: when a plugin you inspected can do the work, use it and submit ready.",
+  "Only a refused submission blocks activation; report its refusal exactly. Treat a blocker another agent reports as a claim to test by submitting, not as a reason to stay a draft.",
   "After saving a draft, briefly acknowledge what was saved; after a partial submission, ask for the missing details.",
   "Use an empty triggers array for reusable knowledge. Use inbound_email only when the person wants email to start work. Do not add manual or scheduled triggers to make a knowledge Sidekick valid.",
   "Use the scope already selected for this Sidekick. Do not ask participants to choose it again. Workstream ownership cannot change. Before first publication, change between personal and workspace scope only when explicitly requested. Published scope cannot change.",

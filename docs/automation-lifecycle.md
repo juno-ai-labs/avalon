@@ -11,6 +11,10 @@ Substream `0` is the authoring conversation; delegated runs are child substreams
 
 Authoring is conversational. A ready submission saves through `saveDefinition`,
 which checks management authority before recording and publishing a revision.
+The authoring prompt tells the model that only a refused submission blocks
+activation: a connection state check does not, and a personal or work-stream
+Sidekick may use the personal connection of the person it runs as
+([`agent-tools.md`](agent-tools.md#2026-10-15--the-connection-check-covers-every-scope)).
 The model generates internal instructions and a user-friendly description. An
 incomplete submission does not replace the accepted revision. Edits preserve a
 person's pause; an archived owning room still refuses publication.

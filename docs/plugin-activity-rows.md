@@ -319,6 +319,13 @@ plugin picked up again starts a second row under that sentence, because folding
 later work back into a row printed above the sentence would put the feed out of
 order with its own narration.
 
+A row that asks the person to act also ends it and stays a row of its own: a
+connection card, and a plugin call refused with an Allow editing request on its
+tool event (`connectorResourceAuthorizationRequestFromToolEvent` from
+`@rally/contracts`, the same reader the card renders from). Grouping drops a
+row's tool event, so a card folded into a plugin's row cannot draw. The plugin's
+work either side of it becomes two rows.
+
 ### The row itself
 
 `PluginActivityBlock` is `AgentWorkTiming` with the plugin's verbs and its mark
@@ -779,6 +786,28 @@ stack cannot run a real turn, so the way to get a multi-plugin transcript on
 screen is to write a hand-built `WorkstreamTranscriptSnapshot` into the
 renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
+
+### 2026-10-15 — A refused write asking for Allow editing stays a card
+
+**What changed:** `continuesPluginActivityRun` now leaves out a tool row whose
+event carries a `connector_resource_authorization` request, as it already left
+out a connection card, so the row keeps its tool event and
+`ConnectorResourceAuthorizationCard` renders. The request reader moved into
+`@rally/contracts` as `connectorResourceAuthorizationRequestFromToolEvent`, and
+the card and the grouping both call it.
+
+**Why:** every Google Docs and Sheets write is a plugin call, and grouping set
+`toolEvent: undefined` on the plugin row it built, so the card's request was
+gone before the card looked for it. The card has never appeared for a Google
+write. On 2026-10-14 the agent in `Creator content intake` told a member three
+times to press an Allow editing button that was not on screen, then wrote
+instructions for finding it. Rejected: carrying the request on the plugin row,
+which would put a control inside a row that folds into a drawer once the
+answer below it settles.
+
+**What a future change has to respect:** a row that asks the person to act is
+never folded. The card and the grouping must keep reading the request through
+the one function, or a row can be kept out of the fold and still not render.
 
 ### 2026-10-08 — Custom MCP servers wear the Model Context Protocol mark
 

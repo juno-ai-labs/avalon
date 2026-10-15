@@ -4,8 +4,8 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   ConnectorConnectionCardCatalog,
   ConnectorOAuthProviderSchema,
-  ConnectorResourceAuthorizationRequestSchema,
   connectorConnectionCardInputFromToolEvent,
+  connectorResourceAuthorizationRequestFromToolEvent,
   type ConnectorConnectionCardInput,
   type ConnectorResourceAuthorizationRequest,
 } from '@rally/contracts';
@@ -77,13 +77,7 @@ export function connectorConnectionCardInput(message: {
 export function connectorResourceAuthorizationRequest(message: {
   toolEvent?: { output?: unknown; status?: string };
 }): ConnectorResourceAuthorizationRequest | null {
-  if (message.toolEvent?.status !== 'failed') return null;
-  const output = message.toolEvent.output;
-  if (!output || typeof output !== 'object' || Array.isArray(output)) return null;
-  const parsed = ConnectorResourceAuthorizationRequestSchema.safeParse(
-    (output as Record<string, unknown>).recovery,
-  );
-  return parsed.success ? parsed.data : null;
+  return connectorResourceAuthorizationRequestFromToolEvent(message.toolEvent);
 }
 
 export function ConnectorResourceAuthorizationCard({ request, latchedAuthorized = false, onAuthorized }: {

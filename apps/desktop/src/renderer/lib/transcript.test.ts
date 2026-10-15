@@ -1668,6 +1668,38 @@ describe('grouping tool calls by plugin', () => {
     expect(grouped.every((message) => message.toolEvent === undefined)).toBe(true);
   });
 
+  it('keeps a plugin write that asks for Allow editing on its own row, with its request', () => {
+    // Google Sheets writes are plugin calls. Folding the refused one into the
+    // Google row dropped its tool event, so the Allow editing card never drew.
+    const recovery = {
+      kind: 'connector_resource_authorization', provider: 'google',
+      capability: 'sheets.write', operation: 'edit',
+      resource: { id: 'sheet-1', type: 'document', name: 'Creator Content Intake' },
+      connectionId: '9c1f0000-0000-4000-8000-000000000001',
+      parentKind: 'workstream',
+      parentId: '9c1f0000-0000-4000-8000-000000000002',
+      substreamId: '0',
+      failedToolInvocationId: 'workstream:9c1f:substream:0:loop:turn:41:tool:0',
+      continuationId: 'ada810b8-b036-4b2b-af19-cb31cf628fd2',
+    };
+    const refused = toolRow('write', 'connection:one', 'Google Drive', {
+      status: 'failed', output: { recovery },
+    });
+    const grouped = groupPluginToolMessages([
+      toolRow('read', 'connection:one', 'Google Drive'),
+      refused,
+      toolRow('read-again', 'connection:one', 'Google Drive'),
+    ]);
+
+    expect(grouped.map((message) => message.messageType)).toEqual(['plugin_activity', 'tool_event', 'plugin_activity']);
+    expect(grouped[1]!.toolEvent).toEqual(refused.toolEvent);
+    // A refusal with no request is still ordinary plugin work.
+    expect(groupPluginToolMessages([
+      toolRow('read', 'connection:one', 'Google Drive'),
+      toolRow('plain-failure', 'connection:one', 'Google Drive', { status: 'failed' }),
+    ]).map((message) => message.messageType)).toEqual(['plugin_activity']);
+  });
+
   it('carries every contribution\'s spans onto the group it built', () => {
     // The row was spread from the first call, so its own span stands for a
     // fraction of what the row now says. A stretch unioning these has to see

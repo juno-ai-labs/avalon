@@ -4430,6 +4430,26 @@ export const ConnectorResourceAuthorizationRequestSchema = ConnectorResourceAuth
 });
 export type ConnectorResourceAuthorizationRequest = z.infer<typeof ConnectorResourceAuthorizationRequestSchema>;
 
+/**
+ * The Allow editing request a failed durable tool event carries, or null.
+ *
+ * The one reader for it, as `connectorConnectionCardInputFromToolEvent` is for
+ * a connection card: the feed uses it to keep the row out of a plugin's folded
+ * work, and the card uses it to render, so the two cannot disagree about which
+ * rows are cards.
+ */
+export function connectorResourceAuthorizationRequestFromToolEvent(
+  event: { output?: unknown; status?: string } | undefined,
+): ConnectorResourceAuthorizationRequest | null {
+  if (event?.status !== "failed") return null;
+  const output = event.output;
+  if (!output || typeof output !== "object" || Array.isArray(output)) return null;
+  const parsed = ConnectorResourceAuthorizationRequestSchema.safeParse(
+    (output as Record<string, unknown>).recovery,
+  );
+  return parsed.success ? parsed.data : null;
+}
+
 export const ConnectorResourceAuthorizationTargetSchema = z.strictObject({
   parentKind: ConversationParentKindSchema.default("workstream"),
   parentId: IdSchema,
