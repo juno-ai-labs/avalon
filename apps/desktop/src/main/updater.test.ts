@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   initializeAutoUpdate,
   MANUAL_UPDATE_URL,
+  STARTUP_CHECK_DELAY_MS,
   type AutoUpdateDependencies,
   type AutoUpdaterPort,
   type UpdateOutcome,
@@ -21,7 +22,10 @@ class FakeUpdater extends EventEmitter implements AutoUpdaterPort {
   quitAndInstall = vi.fn();
 }
 
-function setup(overrides: Partial<AutoUpdateDependencies> = {}) {
+function setup(
+  overrides: Partial<AutoUpdateDependencies> = {},
+  { runStartupCheck = true }: { runStartupCheck?: boolean } = {},
+) {
   const updater = new FakeUpdater();
   const statuses: DesktopUpdateStatus[] = [];
   const showMessageBox = vi.fn(async () => ({ response: 1, checkboxChecked: false }));
@@ -48,6 +52,12 @@ function setup(overrides: Partial<AutoUpdateDependencies> = {}) {
     scheduleTimeout,
     ...overrides,
   });
+  if (runStartupCheck) {
+    // Most cases start from the first check; fire it and keep `timeouts` for retries.
+    const startup = timeouts.shift();
+    expect(startup?.delayMs).toBe(STARTUP_CHECK_DELAY_MS);
+    startup!.callback();
+  }
   return {
     controller,
     updater,
@@ -84,7 +94,29 @@ describe('desktop auto-update runtime', () => {
     ]);
   });
 
-  it('checks the stable channel immediately and every three hours without allowing downgrades', () => {
+  it('waits ten minutes after launch before the first automatic check', () => {
+    const { updater, statuses, timeouts } = setup({}, { runStartupCheck: false });
+
+    expect(updater.checkForUpdates).not.toHaveBeenCalled();
+    expect(statuses).toEqual([]);
+    expect(timeouts.map((timeout) => timeout.delayMs)).toEqual([600_000]);
+
+    timeouts[0]!.callback();
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce();
+    expect(statuses).toEqual([{ kind: 'checking' }]);
+  });
+
+  it('still checks at once when asked before the startup delay ends', () => {
+    const { controller, updater, timeouts } = setup({}, { runStartupCheck: false });
+
+    controller.checkForUpdates();
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce();
+    // The delayed check finds the manual one in flight and does not start another.
+    timeouts[0]!.callback();
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce();
+  });
+
+  it('checks the stable channel after startup and every three hours without allowing downgrades', () => {
     const { controller, updater, statuses, scheduleInterval, unref } = setup();
 
     expect(controller.enabled).toBe(true);
@@ -96,7 +128,7 @@ describe('desktop auto-update runtime', () => {
     expect(updater.checkForUpdates).toHaveBeenCalledOnce();
     expect(statuses).toEqual([{ kind: 'checking' }]);
     expect(scheduleInterval).toHaveBeenCalledWith(expect.any(Function), 10_800_000);
-    expect(unref).toHaveBeenCalledOnce();
+    expect(unref).toHaveBeenCalledTimes(2);
   });
 
   it('moves to Faster immediately without allowing an older build to install', () => {
@@ -219,7 +251,7 @@ describe('desktop auto-update runtime', () => {
 
   it('does not fetch the staged build again or drop it when a background check fails', async () => {
     let tick!: () => void;
-    const { updater, statuses, showMessageBox, scheduleTimeout } = setup({
+    const { updater, statuses, showMessageBox, timeouts } = setup({
       scheduleInterval: (callback) => { tick = callback; return { unref: () => undefined }; },
     });
     updater.emit('update-available', { version: '1.1.0' });
@@ -238,7 +270,7 @@ describe('desktop auto-update runtime', () => {
 
     expect(statuses.at(-1)).toEqual({ kind: 'downloaded', version: '1.1.0' });
     expect(showMessageBox).not.toHaveBeenCalled();
-    expect(scheduleTimeout).not.toHaveBeenCalled();
+    expect(timeouts).toEqual([]);
   });
 
   it('keeps the staged build when downloading a newer one runs out of retries', async () => {
@@ -405,7 +437,7 @@ describe('desktop auto-update runtime', () => {
     const disabled = setup({
       isPackaged: false,
       showMessageBox: disabledDialog,
-    }).controller;
+    }, { runStartupCheck: false }).controller;
     disabled.checkForUpdates();
     await Promise.resolve();
     expect(disabled.enabled).toBe(false);
@@ -415,7 +447,7 @@ describe('desktop auto-update runtime', () => {
   });
 
   it('retries only failed downloads with bounded exponential backoff', async () => {
-    const { updater, timeouts, scheduleTimeout, showMessageBox, openExternal } = setup();
+    const { updater, timeouts, showMessageBox, openExternal } = setup();
     showMessageBox.mockResolvedValue({ response: 0, checkboxChecked: false });
     updater.emit('update-available', { version: '1.1.0' });
 
@@ -429,7 +461,7 @@ describe('desktop auto-update runtime', () => {
     }
     updater.emit('error', new Error('download failure exhausted'));
 
-    expect(scheduleTimeout).toHaveBeenCalledTimes(5);
+    expect(timeouts).toHaveLength(5);
     expect(updater.downloadUpdate).toHaveBeenCalledTimes(5);
     await vi.waitFor(() => {
       expect(showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
@@ -445,7 +477,7 @@ describe('desktop auto-update runtime', () => {
   });
 
   it('does not retry ordinary check failures or duplicate their dialog', async () => {
-    const { controller, updater, scheduleTimeout, showMessageBox } = setup();
+    const { controller, updater, timeouts, showMessageBox } = setup();
     updater.emit('update-not-available', { version: '1.0.0' });
     updater.checkForUpdates.mockRejectedValueOnce(new Error('feed unavailable'));
 
@@ -458,7 +490,7 @@ describe('desktop auto-update runtime', () => {
     expect(showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
       message: 'Couldn’t check for updates',
     }));
-    expect(scheduleTimeout).not.toHaveBeenCalled();
+    expect(timeouts).toEqual([]);
     expect(updater.downloadUpdate).not.toHaveBeenCalled();
   });
 });
