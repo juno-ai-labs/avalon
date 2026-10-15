@@ -14,7 +14,6 @@ import {
   terminalPackageManagerAcceptanceCommand,
   terminalPlaywrightAcceptanceCommand,
   terminalPlaywrightImageBuildCommand,
-  terminalPlaywrightInstallCommand,
   terminalProbeRunnerCommand,
   terminalSnapshotImageBuildCommand,
   terminalSnapshotProbeCommand,
@@ -225,7 +224,16 @@ describe("Terminal snapshot manifest", () => {
     expect(command).not.toContain("\n");
     const encoded = command.match(/^echo ([A-Za-z0-9+/=]+) \| base64 -d \| bash -l$/u);
     expect(encoded).not.toBeNull();
-    expect(Buffer.from(encoded![1]!, "base64").toString("utf8")).toBe(terminalPlaywrightInstallCommand());
+    // Against literals rather than the helper that produced the line, so an
+    // edit to the install step cannot change both sides of the assertion.
+    const script = Buffer.from(encoded![1]!, "base64").toString("utf8");
+    expect(script.split("\n")).toEqual([
+      "set -euo pipefail",
+      'sudo -n install -d -o "$(id -u)" -g "$(id -g)" -m 755 /opt/rally/ms-playwright',
+      "npm install --global playwright@1.56.1 >/dev/null",
+      'sudo -n env "PATH=$PATH" PLAYWRIGHT_BROWSERS_PATH=/opt/rally/ms-playwright playwright install --with-deps chromium',
+      'sudo -n chown -R "$(id -u):$(id -g)" /opt/rally/ms-playwright',
+    ]);
   });
 
   it("accepts a snapshot only when its playwright writes a real PNG", () => {

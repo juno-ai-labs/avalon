@@ -107,12 +107,9 @@ this generation; otherwise it goes through readiness like a write.
 Rally creates sandboxes from its own `rally-terminal-1` snapshot: Daytona's
 managed `daytonaio/sandbox:0.9.0` base with SQLite, `gh`, pnpm, and `tsx`
 preinstalled by `terminal:build-snapshot`, plus Playwright with its Chromium
-under `/opt/rally/ms-playwright` (`PLAYWRIGHT_BROWSERS_PATH`). Playwright is
-baked into the image only: the runtime bootstrap never installs it, and it is
-not a per-sandbox probe, because production serves the previous snapshot until
-a rebuild is adopted and a fail-closed probe would refuse every sandbox in
-between. The acceptance gate requires a working screenshot instead, so no
-snapshot without it is adopted. On first creation an idempotent
+under `/opt/rally/ms-playwright` (`PLAYWRIGHT_BROWSERS_PATH`), which the
+acceptance gate requires rather than a per-sandbox probe (the changelog entry
+of 2026-10-15 says why). On first creation an idempotent
 compatibility bootstrap creates the owned `/workspace`, installs only missing
 SQLite/`gh`/pnpm/`tsx` capabilities through the compiled Trusted-only apt/npm
 hosts — a no-op against the owned snapshot — and then executes the complete
@@ -318,7 +315,11 @@ baseline version it was compiled under; the first settings read after
 `TERMINAL_NETWORK_MANIFEST_VERSION` changes rewrites a settled policy to the
 current baseline plus its custom domains under a new revision, and each sandbox
 re-applies and reads the list back on its next acquisition through the
-ordinary reconcile path. A policy with a change in flight, a Full internet one,
+ordinary reconcile path. That reconcile stops a running sandbox, so every
+active Terminal in a Trusted-only workspace is stopped once, mid-run, after a
+baseline change deploys, ending any dev server or background process. Only a
+caller on the object's own baseline version moves a policy, so an older
+Worker serving during a deploy cannot roll one back. A policy with a change in flight, a Full internet one,
 and one whose upgraded list would pass the 20-target cap are left as they are;
 an applied change records the baseline version it was compiled under, so the
 next read does not move it again. Settings shows only workspace-approved domains; the managed
@@ -786,7 +787,9 @@ network proxy, or a general GitHub administration surface.
   limits are enforced before R2 publication.
 - Trusted only has 20 effective Daytona targets. The immutable baseline consumes
   fifteen, leaving five for a workspace's own domains; duplicate custom targets
-  do not consume another slot.
+  do not consume another slot. A saved list a larger baseline pushed past the
+  cap still loads in settings, showing no slots left, so the admin can remove
+  domains; only a new list is refused.
 - Git publication allows one fixed branch and convergent PR, bounded changed
   paths, no `.github/workflows/` changes, and no
   protected/default-ref push. Closed or merged convergent PRs are not reopened.
@@ -1253,12 +1256,12 @@ sandbox lets it screenshot a page before publishing, under the workspace's
 own network setting. A Cloudflare Browser Rendering tool was considered and
 dropped: it can only see published sites, from outside the sandbox.
 
-**Consequences:** Playwright stays image-only. Installing it from the
-runtime bootstrap would exceed the bootstrap's 120-second budget, and the
-Trusted-only allow list does not reach Playwright's browser download host.
-Making it a per-sandbox probe would refuse every sandbox until a rebuilt
-snapshot is adopted, so anything that tells the model to use it must handle
-its absence. Before this, a baseline change reached only new workspaces and
+**Consequences:** Playwright stays image-only: installing it from the
+runtime bootstrap would exceed the bootstrap's 120-second budget. Making it a
+per-sandbox probe would refuse every sandbox until a rebuilt snapshot is
+adopted, so anything that tells the model to use it must handle its absence.
+The download hosts let an agent in a sandbox from an older snapshot install
+the browser itself. Before this, a baseline change reached only new workspaces and
 re-saved policies; the version-triggered rewrite is what lets a future baseline
 change reach every workspace. The baseline now uses fifteen of twenty slots; no
 production workspace had a custom domain when it was raised.

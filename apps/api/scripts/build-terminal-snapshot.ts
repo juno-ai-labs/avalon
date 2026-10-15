@@ -66,10 +66,7 @@ const daytona = new Daytona({
 // each Dockerfile unique; it also reaches every sandbox as an environment
 // variable, so a sandbox can say which build it came from.
 const builtAt = new Date().toISOString();
-// Playwright and its Chromium are an image-only step after the bootstrap: the
-// runtime never installs them, for the reasons on
-// `terminalPlaywrightInstallCommand`. The environment points every sandbox's
-// `playwright` at the browser baked here.
+// Playwright is an image-only step; see `TERMINAL_PLAYWRIGHT_VERSION`.
 const image = Image.base(baseImage)
   .env({ RALLY_TERMINAL_SNAPSHOT_BUILT_AT: builtAt, PLAYWRIGHT_BROWSERS_PATH: TERMINAL_PLAYWRIGHT_BROWSERS_PATH })
   .runCommands(terminalSnapshotImageBuildCommand(), terminalPlaywrightImageBuildCommand());

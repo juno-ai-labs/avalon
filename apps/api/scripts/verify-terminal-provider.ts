@@ -118,8 +118,7 @@ try {
   );
 
   await run(terminalSnapshotProbeCommand(), "zero", "snapshot");
-  // Not a per-sandbox probe (see `terminalPlaywrightInstallCommand`), so this
-  // gate is what keeps a snapshot without a working browser from being adopted.
+  // See `TERMINAL_PLAYWRIGHT_VERSION` for why this is a gate, not a probe.
   await run(terminalPlaywrightAcceptanceCommand(), "zero", "playwright-screenshot");
   await run("curl --fail --silent --show-error --max-time 15 https://example.com/ >/dev/null", "zero", "full-internet-public-control");
   await run(`curl --fail --silent --show-error --location --max-redirs 3 --max-time 15 ${shellQuote(redirectUrl.href)} >/dev/null`, "zero", "full-internet-redirect-control");
