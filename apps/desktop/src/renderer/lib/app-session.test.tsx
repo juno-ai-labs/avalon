@@ -1829,7 +1829,7 @@ describe('single-platform desktop identity routing', () => {
       `rallywithai://workspace/global/${targetWorkspaceId}/settings/digest`,
     );
 
-    await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('digest'));
+    await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('notifications'));
     expect(bridge.activateWorkspace).toHaveBeenCalledWith({
       region: 'global',
       workspaceId: targetWorkspaceId,

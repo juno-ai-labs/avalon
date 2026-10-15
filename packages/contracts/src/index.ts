@@ -1910,8 +1910,14 @@ export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
 /** The kinds of Activity row a person chooses channels for, one per row in Settings. */
 export const NotificationKindSchema = z.enum(["mentions", "added", "newThreads", "newBreakouts", "runFinished"]);
 export type NotificationKind = z.infer<typeof NotificationKindSchema>;
-const NotificationChannelListSchema = z.array(NotificationChannelSchema).max(8)
-  .transform((channels) => [...new Set(channels)]);
+/**
+ * Lenient on read: a channel this build does not know (a newer server's, or
+ * one a rollback left stored) is dropped rather than failing the whole record.
+ */
+const NotificationChannelListSchema = z.array(z.string()).transform((channels) => [...new Set(channels.flatMap((channel) => {
+  const known = NotificationChannelSchema.safeParse(channel);
+  return known.success ? [known.data] : [];
+}))]);
 /**
  * How each kind reaches this person. An empty list means it is only in
  * Activity and the daily digest.
