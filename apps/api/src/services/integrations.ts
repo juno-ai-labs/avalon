@@ -6304,7 +6304,17 @@ async function executeAuthorizedConnectorTool(
     // that carries a grant request, so the person still gets the Allow editing
     // card when only another of their connections needs the one-file grant.
     let refusal: ConnectorError = error;
-    for (const candidate of alternates?.() ?? []) {
+    // The person's own connections first. Once a grant request is in hand the
+    // Organization's are not tried: an account that can edit after one click
+    // is preferred over writing as the Organization, whose name would then
+    // stand in the file's history for an edit the person asked for.
+    const candidates = alternates?.() ?? [];
+    const ordered = [
+      ...candidates.filter((candidate) => candidate.scope === "personal"),
+      ...candidates.filter((candidate) => candidate.scope !== "personal"),
+    ];
+    for (const candidate of ordered) {
+      if (candidate.scope === "workspace" && carriesResourceAuthorization(refusal)) break;
       try {
         const result = await executeConnectorToolOnConnection(env, input, candidate, toolName, capability,
           toolInput, signal, providerIdempotencyKey, ownershipGuard, effectIntentId);
