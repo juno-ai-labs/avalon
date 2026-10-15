@@ -19,6 +19,7 @@ describe("Terminal network policy compiler", () => {
       "System packages",
       "Python packages",
       "JavaScript packages",
+      "Rally sites and Playwright browsers",
     ]);
     expect(compiled.customDomains).toEqual(["*.xn--bcher-kva.example", "api.example.com"]);
     expect(compiled.effectiveDomains).toEqual([
@@ -28,6 +29,15 @@ describe("Terminal network policy compiler", () => {
     ].sort());
     expect(compiled.reservedSlots).toBe(new Set(TERMINAL_NETWORK_BASELINE.flatMap((group) => group.domains)).size);
     expect(compiled.remainingCustomSlots).toBe(20 - compiled.effectiveDomains.length);
+  });
+
+  it("describes a saved list the baseline has pushed past the cap, but refuses to accept one", () => {
+    const saved = Array.from({ length: 8 }, (_, index) => `site-${index}.example`);
+    expect(() => compileTerminalNetworkPolicy("trusted_only", saved)).toThrow(TerminalNetworkPolicyError);
+    expect(compileTerminalNetworkPolicy("trusted_only", saved, { stored: true })).toMatchObject({
+      customDomains: saved,
+      remainingCustomSlots: 0,
+    });
   });
 
   it("clears the provider allow-list in Full internet mode without discarding saved additions", () => {

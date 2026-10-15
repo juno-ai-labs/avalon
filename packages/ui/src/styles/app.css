@@ -641,7 +641,7 @@ pre {
   white-space: nowrap;
 }
 
-/* The shared `Meter`: a brand fill on its own track, warning-coloured when the
+/* The shared `Meter`: a text-coloured fill on its own track, warning-coloured when the
    caller says the value is low. The track and both fills are `cmp.meter.*`, so
    a surface that draws a meter never names a colour. */
 .meter { background: var(--av-cmp-meter-track); border-radius: var(--av-sys-size-radius-pill); height: 6px; overflow: hidden; }
@@ -2322,10 +2322,6 @@ pre {
 .settings-pane-heading-count > span { color: var(--av-sys-color-text-muted); font-size: 10.5px; }
 .settings-subsection { margin-top: 30px; }
 
-/* Settings → Organization → Usage. The meter fills in the text colour,
-   near-black in the light appearance and near-white in the dark, rather than
-   the brand accent; the warning fill still wins below the low-quota line. */
-.usage-quota-value .meter { --av-cmp-meter-fill: var(--av-sys-color-text-default); }
 /* The Weekly quota row's value: the meter over how much is left, right-aligned
    like the other rows' values. */
 .usage-quota-value { display: flex; flex-direction: column; gap: 6px; text-align: right; width: 200px; }

@@ -48,12 +48,21 @@ The reader can also ask for it. A thread beside its Channel, and a breakout
 beside its thread, has **Expand** and **Collapse** in its header; expanded,
 its level draws in `breakout` mode and the pane carries the crumbs as above.
 An expansion is held for the pane it was asked on and dropped when that pane
-closes or another opens, or when it opens a breakout or a panel of its own,
-which then split the window as they would have.
+closes or another opens. A thread's expansion is on hold while the thread has
+a breakout or a panel open: the two split the window as they would have, and
+closing what the thread opened returns to the thread expanded. A breakout's
+expansion ends when the breakout opens a panel.
 
-The navigation sidebar asks for it too: its Threads and Activity rows ask
-through location state, which both levels read with `usePaneExpansion`. Links
-inside a pane don't, so what they open comes up beside it.
+Navigation asks for it too, through location state (`OPEN_EXPANDED`), which
+both levels read with `usePaneExpansion`. The sidebar's Threads and Activity
+rows ask for it, and so does a Channel opening one of its threads, from a feed
+row or by starting one in its composer: a thread opened from its Channel takes
+the whole window, and Collapse puts it beside the Channel. Other links inside a
+pane don't ask, so a breakout or a panel opened from a thread comes up beside
+it, holding the thread's expansion as above. A request to open a breakout
+expanded is the breakout's alone: the Channel level ignores a request whose
+route names a `substream`, so the thread keeps what it had, and closing the
+breakout returns to it.
 
 Each step is drawn as movement, by `SplitConversationLayout` itself so both
 levels share it. A pane that opens beside another slides in from the right; a
@@ -115,10 +124,11 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
 
 ## Testing
 
-- `apps/desktop/src/renderer/screens/channel.test.tsx` (a thread opens beside
-  the Channel, expands over it and collapses back, and a breakout ends the
-  expansion, a thread closed while expanded reopens beside the Channel, and a
-  sidebar link opens one expanded);
+- `apps/desktop/src/renderer/screens/channel.test.tsx` (a thread opens from
+  its Channel's feed expanded and collapses beside it, expands over it and
+  collapses back, a breakout holds the expansion until it closes, a sidebar
+  open of a breakout leaves the thread as it was, a thread closed while
+  expanded reopens beside the Channel, and a sidebar link opens one expanded);
   `workstream-sidebar-switch.test.tsx` (the real header's Expand and Collapse,
   a breakout expanding, collapsing and reopening beside its thread, and one
   the sidebar opened starting expanded) and `lib/navigation-routes.test.ts`.
@@ -131,6 +141,34 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
   window under Xvfb, per [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-15 — A Channel opens its threads expanded
+
+**What changed:** A thread opened from its Channel's feed, or started from its
+composer, opens expanded over the Channel instead of beside it. A breakout or a
+panel the thread opens still comes up beside the thread, and now holds the
+thread's expansion rather than ending it, so closing it returns to the thread
+expanded.
+
+**Why:** The product asked that a thread opened from a Channel take the whole
+window, as one opened from the sidebar already did, with the right pane kept
+for what the thread itself opens; and that closing a breakout return to the
+expanded thread, not to the Channel and thread side by side.
+
+**Considered and rejected:** Making expanded the default mode of the Channel
+level. Links inside the thread that open another thread still open it beside
+the Channel, and Collapse has to keep working; asking per navigation, as the
+sidebar does, changes only the two openings the product named.
+
+Once the hold replaced the clear, a sidebar open of a breakout expanded its
+thread too: both levels read the same request, and nothing cleared the
+thread's share any more (the bug 7d44124 had fixed by re-reporting two panes
+on every request). The Channel level now ignores a request whose route names a
+`substream`, which makes that re-report, and the `request` value
+`usePaneExpansion` returned for it, dead; both are removed.
+
+**Consequences:** A level that must not take a request meant for the level
+below passes `honorsRequest` false to `usePaneExpansion`.
 
 ### 2026-10-13 — The sidebar opens a thread or breakout expanded
 

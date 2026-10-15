@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
+import { TERMINAL_NETWORK_MANIFEST_VERSION } from "../src/services/terminal/network-policy";
 import {
   WorkspaceTerminalNetworkModeSchema,
   WorkspaceTerminalNetworkSettingsSchema,
@@ -94,6 +95,7 @@ async function commit(input: {
   claimedRevision: number;
   resultingRevision: number;
   customDomains?: string[];
+  baselineManifestVersion?: string;
 }) {
   return workspace().commitTerminalPolicyApplication({
     workspaceId: WORKSPACE_ID,
@@ -104,6 +106,7 @@ async function commit(input: {
     resultingRevision: input.resultingRevision,
     customDomains: input.customDomains ?? [],
     effectiveDomains: input.customDomains ?? [],
+    baselineManifestVersion: input.baselineManifestVersion ?? "manifest-1",
     at: AT,
   });
 }
@@ -129,6 +132,102 @@ describe("Terminal network policy", () => {
     expect(first.customDomains).toEqual([]);
     // A second read must not start a second revision.
     expect((await settings()).policy.revision).toBe(1);
+  });
+
+  it("moves a policy saved under an older baseline onto the current one, once", async () => {
+    await settings();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO workspace_sandbox_network_domains (workspace_id, domain, created_by_user_id, created_at)
+         VALUES (?, 'custom.example', ?, ?)`,
+        WORKSPACE_ID, ADMIN, AT,
+      );
+    });
+    const read = async () => WorkspaceTerminalNetworkSettingsSchema.parse(await workspace().terminalNetworkSettings({
+      workspaceId: WORKSPACE_ID,
+      baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION,
+      defaultEffectiveDomains: ["cdn.playwright.dev", "registry.npmjs.org"],
+      at: AT,
+    }));
+
+    const upgraded = await read();
+    // A new revision is what makes each sandbox re-apply the list.
+    expect(upgraded.policy).toMatchObject({
+      revision: 2,
+      verificationState: "verified",
+      baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION,
+      effectiveDomains: ["cdn.playwright.dev", "custom.example", "registry.npmjs.org"],
+    });
+    expect((await read()).policy.revision).toBe(2);
+
+    // An older Worker still serving during a deploy must not roll it back.
+    const older = WorkspaceTerminalNetworkSettingsSchema.parse(await workspace().terminalNetworkSettings({
+      workspaceId: WORKSPACE_ID,
+      baselineManifestVersion: "manifest-1",
+      defaultEffectiveDomains: ["registry.npmjs.org"],
+      at: AT,
+    }));
+    expect(older.policy).toMatchObject({
+      revision: 2,
+      baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION,
+      effectiveDomains: ["cdn.playwright.dev", "custom.example", "registry.npmjs.org"],
+    });
+  });
+
+  it("leaves a Full internet policy's empty allow list alone", async () => {
+    await settings();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE workspace_sandbox_network_policies SET mode = 'full_internet', effective_domains_json = '[]'`,
+      );
+    });
+    const read = WorkspaceTerminalNetworkSettingsSchema.parse(await workspace().terminalNetworkSettings({
+      workspaceId: WORKSPACE_ID,
+      baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION,
+      defaultEffectiveDomains: ["cdn.playwright.dev"],
+      at: AT,
+    }));
+    expect(read.policy).toMatchObject({ mode: "full_internet", revision: 1, effectiveDomains: [] });
+  });
+
+  it("does not move a policy whose upgrade would pass Daytona's 20-target cap", async () => {
+    await settings();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      for (let index = 0; index < 20; index += 1) {
+        state.storage.sql.exec(
+          `INSERT INTO workspace_sandbox_network_domains (workspace_id, domain, created_by_user_id, created_at)
+           VALUES (?, ?, ?, ?)`,
+          WORKSPACE_ID, `site-${index}.example`, ADMIN, AT,
+        );
+      }
+    });
+    const read = WorkspaceTerminalNetworkSettingsSchema.parse(await workspace().terminalNetworkSettings({
+      workspaceId: WORKSPACE_ID,
+      baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION,
+      defaultEffectiveDomains: ["registry.npmjs.org"],
+      at: AT,
+    }));
+    expect(read.policy).toMatchObject({ revision: 1, baselineManifestVersion: "manifest-1", effectiveDomains: ["registry.npmjs.org"] });
+  });
+
+  it("records the baseline an applied policy was compiled under, so the next read leaves it alone", async () => {
+    await settings();
+    await preview();
+    const result = await claimed();
+    await commit({
+      mode: "trusted_only",
+      claimedRevision: result.current.revision,
+      resultingRevision: result.current.revision + 1,
+      customDomains: ["registry.npmjs.org"],
+      baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION,
+    });
+    const read = WorkspaceTerminalNetworkSettingsSchema.parse(await workspace().terminalNetworkSettings({
+      workspaceId: WORKSPACE_ID,
+      baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION,
+      defaultEffectiveDomains: ["cdn.playwright.dev", "registry.npmjs.org"],
+      at: AT,
+    }));
+    expect(read.policy).toMatchObject({ revision: 2, baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION });
   });
 
   it("answers the mode without creating anything, for the agent path", async () => {
