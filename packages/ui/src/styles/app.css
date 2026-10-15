@@ -5013,10 +5013,10 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   min-width: 0;
   min-height: 320px;
   display: grid;
-  /* Stretch the framed page to the pane. `place-items: center` was for the
-     Opening/empty placeholders, and it also centered the browser iframe at
-     its 300×150 intrinsic size — a left (and right) gap the site's own CSS
-     could not remove. Placeholders center themselves below. */
+  /* Stretch is the grid default so an in-flow child fills the pane.
+     `place-items: center` was only for Opening/empty placeholders; the
+     framed iframe fills by `position: absolute; inset: 0` below, not by
+     this alignment. Placeholders opt into center with `place-self`. */
   place-items: stretch;
   background: var(--av-sys-color-surface-raised);
   overflow: hidden;
