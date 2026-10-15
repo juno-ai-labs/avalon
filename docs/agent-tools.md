@@ -132,10 +132,11 @@ are the initial annotated tools.
 
 `get_connector_connection_state` and `show_connector_connection` are
 the user-run-only recovery pair. Both accept only a trusted connector catalog
-id and `personal`/`workspace` scope. The read returns `connected`,
-`reconnect_required`, or `not_connected` from the caller-visible WorkspaceDO
-rows; `connected` is the last durable state Rally observed, not a provider
-health check. The presentation tool asks the main desktop feed for a
+id and a `personal`/`workspace` scope. The read always checks every scope the
+connector offers in one query; a `scope` it is sent is accepted and ignored, so
+older calls still validate. It returns each scope's state, `connected`, `reconnect_required`, or `not_connected`,
+from the caller-visible rows, plus the best of them as `state`; `connected` is
+the last durable state Rally observed, not a provider health check. The presentation tool asks the main desktop feed for a
 person-facing control rather than provider data. That feed resolves the card's
 name, mark, copy, capability grant, displayed connection state, and OAuth
 destination; none of those are model-authored. Check state before claiming a
@@ -145,14 +146,31 @@ described as one. Its validated id and scope are also the completed tool fact's
 participant-safe result, so the card remains reconstructible from durable
 history rather than depending on a transient started event.
 
+`check_resource_access` takes a connector and a resource link or id and asks
+every connection of that connector in the run how far it reaches the resource,
+in parallel: `edit`, `read` (with `editNeedsGrant` when Google's one-file grant
+is missing), `none` with a reason code, or `unknown` with a code when the probe
+itself failed. It names the first plugin that can edit and the first that can
+read. It lists only connectors whose adapter implements `probeResourceAccess`;
+the probe and the retry it pairs with are in
+[`connectors.md`](connectors.md#2026-10-15-a-connection-that-cannot-reach-a-resource-hands-the-call-to-one-that-can).
+
+The catalog id `google-drive-workspace` names Google Workspace, the product,
+and its description says so; it is not a scope.
+
 The model-facing flow is deliberately literal:
 
-1. Call `get_connector_connection_state` with `connectorId` and `scope`.
-2. If it returns `connected`, continue the task and do not show a card.
-3. If it returns `reconnect_required` or `not_connected` and that blocks the
-   task, explain the blocker briefly.
-4. Call `show_connector_connection` with the same values, then stop the
-   connector-dependent work for that run. Do not claim the connection worked.
+1. Call `get_connector_connection_state` with `connectorId`.
+2. If a connected scope can do the task, continue with it and do not show a
+   card. A connected personal connection is enough.
+3. If none can and `reconnect_required` or `not_connected` blocks the task,
+   explain the blocker briefly.
+4. Call `show_connector_connection` with the same `connectorId` and the scope
+   the task needs, then stop the connector-dependent work for that run. Do not
+   claim the connection worked.
+5. Never tell a person to complete a connection prompt unless the card was
+   shown in that same reply, and never tell another agent a connection blocks
+   it unless a tool refused for that reason. A state check is not a refusal.
 
 ### 1. Fail loud, never silently ignore an input
 
@@ -1196,6 +1214,20 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-10-15 — The connection check covers every scope
+
+**What changed:** `get_connector_connection_state` reports every scope whatever
+`scope` it is sent, and the prompts say a connected personal connection is
+enough and a state check is not a refusal.
+
+**Why:** on 2026-10-15 two agents setting up a Sidekick read the id
+`google-drive-workspace` as a scope, asked only about `workspace` while the
+member's personal Drive worked, kept the Sidekick a draft, and told the member
+to complete a prompt that was never shown. Rejected: renaming the card id,
+which saved cards in transcripts and the desktop catalog match on; and telling
+the model to call twice, which leaves the miss to a prompt. A future change
+must keep the check covering every scope regardless of input.
 
 ### 2026-09-20 — Give optional scalar arguments an explicit unspecified value
 

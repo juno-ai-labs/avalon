@@ -26,6 +26,7 @@ import {
   assertPrincipalAccess,
   ConnectorError,
   connectorCapabilityRefused,
+  connectorResourceAccessRefused,
   defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
   pollCheckpointedActivityStreams,
@@ -34,6 +35,7 @@ import {
   type ConnectorConnectionContext,
   type ConnectorPollingActivitySource,
   type ConnectorObserver,
+  type ConnectorResourceAccess,
   type ConnectorToolContext,
   type ResolvedConnectorAdapter,
 } from "./types";
@@ -107,6 +109,9 @@ export {
   type ConnectorOriginLocator,
   type ConnectorOriginSource,
   ConnectorError,
+  connectorResourceAccessRefused,
+  isConnectorResourceAccessRefusal,
+  type ConnectorResourceAccess,
   type AuthorizedConnectorConnection,
   defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
@@ -1766,6 +1771,29 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     }
   }
 
+  /**
+   * A read Google refused because this account cannot see the file, marked so
+   * the host can try another connection. Reads only: a refusal on a write
+   * request is not marked, because the guard against a double write is that
+   * nothing marked can have had an effect.
+   */
+  async function withGoogleReadAccess<T>(read: () => Promise<T>): Promise<T> {
+    try {
+      return await read();
+    } catch (error) {
+      if (!(error instanceof ConnectorError) || error.code !== "provider_error") throw error;
+      const status = readNestedNumber(error.details, "error", "code");
+      if (status !== 403 && status !== 404) throw error;
+      // The failure is unchanged apart from the mark: same code, same message,
+      // same provider payload.
+      throw connectorResourceAccessRefused(
+        error.message,
+        error.details && typeof error.details === "object" ? { ...error.details } : {},
+        error.code,
+      );
+    }
+  }
+
   /** The Drive file type behind an id, or null when it cannot be determined. */
   async function googleDriveFileType(
     context: ConnectorToolContext,
@@ -2485,6 +2513,37 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       return pollCheckpointedActivityStreams(pollingActivity, connection, signal);
     },
 
+    async probeResourceAccess(connection, reference, signal): Promise<ConnectorResourceAccess> {
+      const fileId = googleDriveFileIdFromReference(reference);
+      if (!fileId) return { access: "unrecognized" };
+      if (!connection.grantedScopes.some((capability) => GOOGLE_FILE_CAPABILITY_PREFIXES
+        .some((prefix) => capability.startsWith(prefix)))) {
+        return { access: "none", resourceId: fileId, reason: "capability_not_granted" };
+      }
+      const response = await api(connection, googleDriveMetadataUrl(fileId).toString(), { signal }, [403, 404]);
+      if (!response.ok) {
+        return { access: "none", resourceId: fileId, reason: response.status === 404 ? "not_found_or_not_shared" : "provider_refused" };
+      }
+      const metadata = await safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES);
+      if (readBoolean(metadata, "trashed") === true) return { access: "none", resourceId: fileId, reason: "trashed" };
+      const name = readString(metadata, "name") ?? "Untitled file";
+      const mimeType = readString(metadata, "mimeType") ?? "";
+      // Seeing the file's details is not reading it: a connection holding only
+      // `sheets.read` sees a Doc's metadata and has no tool that reads it.
+      const readCapability = GOOGLE_FILE_READ_CAPABILITY[mimeType];
+      const canRead = connection.grantedScopes.includes("drive.read")
+        || Boolean(readCapability && connection.grantedScopes.includes(readCapability));
+      const writeCapability = GOOGLE_FILE_WRITE_CAPABILITY[mimeType];
+      const capabilities = readRecord(metadata, "capabilities");
+      const canEdit = Boolean(writeCapability && connection.grantedScopes.includes(writeCapability)
+        && capabilities && readBoolean(capabilities, "canEdit") === true);
+      if (canEdit && readBoolean(metadata, "isAppAuthorized") === true) return { access: "edit", resourceId: fileId, name };
+      if (!canRead) return { access: "none", resourceId: fileId, reason: "capability_not_granted" };
+      return canEdit
+        ? { access: "read", resourceId: fileId, name, editNeedsGrant: true }
+        : { access: "read", resourceId: fileId, name };
+    },
+
     async hydrateResource(connection, resource, signal) {
       const resourceType = googleResourceField(resource, "resourceType", "resource_type");
       const providerResourceId = googleResourceField(resource, "providerResourceId", "provider_resource_id");
@@ -2961,8 +3020,9 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
       if (name === "docs.read_document") {
         const args = z.strictObject({ documentId: z.string().min(1).max(500) }).parse(rawArgs);
-        const payload = await withGoogleFileFamilyHint(context, args.documentId, "document", () =>
-          readGoogleDocument(api, context.connection, args.documentId, context.signal));
+        const payload = await withGoogleReadAccess(() => withGoogleFileFamilyHint(
+          context, args.documentId, "document",
+          () => readGoogleDocument(api, context.connection, args.documentId, context.signal)));
         return {
           output: boundedToolOutput(sanitizeGoogleDocument(payload)),
           summary: "Read bounded Google Doc content",
@@ -3049,8 +3109,9 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
       if (name === "sheets.read_spreadsheet") {
         const args = z.strictObject({ spreadsheetId: z.string().min(1).max(500) }).parse(rawArgs);
-        const payload = await withGoogleFileFamilyHint(context, args.spreadsheetId, "spreadsheet", () =>
-          readGoogleSpreadsheet(api, context.connection, args.spreadsheetId, context.signal));
+        const payload = await withGoogleReadAccess(() => withGoogleFileFamilyHint(
+          context, args.spreadsheetId, "spreadsheet",
+          () => readGoogleSpreadsheet(api, context.connection, args.spreadsheetId, context.signal)));
         return {
           output: boundedToolOutput(sanitizeGoogleSpreadsheet(payload)),
           summary: "Read Google Sheets metadata",
@@ -3076,9 +3137,10 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           "dateTimeRenderOption",
           args.valueRenderOption === "UNFORMATTED_VALUE" ? "SERIAL_NUMBER" : "FORMATTED_STRING"
         );
-        const payload = await withGoogleFileFamilyHint(context, args.spreadsheetId, "spreadsheet", () =>
-          api(context.connection, url.toString(), { signal: context.signal })
-            .then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)));
+        const payload = await withGoogleReadAccess(() => withGoogleFileFamilyHint(
+          context, args.spreadsheetId, "spreadsheet",
+          () => api(context.connection, url.toString(), { signal: context.signal })
+            .then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES))));
         return {
           output: boundedToolOutput(sanitizeGoogleSheetValues(payload)),
           summary: `Read Google Sheets range ${args.range}`,
@@ -3182,9 +3244,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       if (name === "drive.get_metadata" || name === "drive.download") {
         const args = z.strictObject({ fileId: z.string().min(1).max(500) }).parse(rawArgs);
         const metadataUrl = googleDriveMetadataUrl(args.fileId);
-        const payload = await api(context.connection, metadataUrl.toString(), { signal: context.signal }).then((response) =>
-          safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
-        );
+        const payload = await withGoogleReadAccess(() => api(context.connection, metadataUrl.toString(), { signal: context.signal })
+          .then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)));
         const metadata = sanitizeDriveFile(payload);
         if (name === "drive.get_metadata") {
           return {
@@ -3193,7 +3254,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             providerOperationId: args.fileId
           };
         }
-        const content = await readDriveTextContent(api, context.connection, args.fileId, payload, context.signal, GOOGLE_TOOL_TEXT_BYTES, config.documents);
+        const content = await withGoogleReadAccess(() =>
+          readDriveTextContent(api, context.connection, args.fileId, payload, context.signal, GOOGLE_TOOL_TEXT_BYTES, config.documents));
         return {
           output: boundedToolOutput({ ...metadata, ...content }),
           summary: content.textContent == null ? "Read Drive metadata; binary or large content was omitted" : "Read bounded Drive text content",
@@ -3214,11 +3276,11 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             providerOperationId: args.fileId
           };
         }
-        const response = await api(
+        const response = await withGoogleReadAccess(() => api(
           context.connection,
           `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(args.fileId)}/export?mimeType=${encodeURIComponent(args.mimeType)}`,
           { signal: context.signal }
-        );
+        ));
         const bytes = await readBounded(response, GOOGLE_TOOL_TEXT_BYTES);
         const text = new TextDecoder().decode(bytes);
         return {
@@ -4541,6 +4603,34 @@ type GoogleApiRequester = (
   allowedErrorStatuses?: readonly number[]
 ) => Promise<Response>;
 
+const GOOGLE_FILE_CAPABILITY_PREFIXES = ["drive.", "docs.", "sheets."] as const;
+const GOOGLE_FILE_READ_CAPABILITY: Readonly<Record<string, string>> = {
+  "application/vnd.google-apps.document": "docs.read",
+  "application/vnd.google-apps.spreadsheet": "sheets.read",
+};
+const GOOGLE_FILE_WRITE_CAPABILITY: Readonly<Record<string, string>> = {
+  "application/vnd.google-apps.document": "docs.write",
+  "application/vnd.google-apps.spreadsheet": "sheets.write",
+};
+const GOOGLE_DRIVE_FILE_ID = /^[A-Za-z0-9_-]{10,200}$/u;
+
+/** The Drive file id a Google Docs, Sheets or Drive URL names, or a bare id; null for anything else. */
+export function googleDriveFileIdFromReference(reference: string): string | null {
+  const trimmed = reference.trim();
+  if (GOOGLE_DRIVE_FILE_ID.test(trimmed)) return trimmed;
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" || !/^(docs|drive)\.google\.com$/u.test(url.hostname)) return null;
+  const fromPath = /\/d\/([A-Za-z0-9_-]{10,200})(?:\/|$)/u.exec(url.pathname)?.[1];
+  if (fromPath) return fromPath;
+  const fromQuery = url.searchParams.get("id");
+  return fromQuery && GOOGLE_DRIVE_FILE_ID.test(fromQuery) ? fromQuery : null;
+}
+
 function googleDriveMetadataUrl(fileId: string): URL {
   const url = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`);
   url.searchParams.set("supportsAllDrives", "true");
@@ -4565,8 +4655,8 @@ async function assertGoogleDriveFileWritable(
   expected: (typeof GOOGLE_DRIVE_FILE_TYPES)[number],
   signal: AbortSignal
 ): Promise<void> {
-  const response = await api(connection, googleDriveMetadataUrl(fileId).toString(), { signal }, [404]);
-  if (response.status === 404) throw googleDriveFileNotWritableError(fileId, false, false);
+  const response = await api(connection, googleDriveMetadataUrl(fileId).toString(), { signal }, [403, 404]);
+  if (!response.ok) throw googleDriveFileNotWritableError(fileId, false, false);
   const metadata = await safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES);
   const mimeType = readString(metadata, "mimeType");
   const actual = GOOGLE_DRIVE_FILE_TYPES.find((type) => GOOGLE_DRIVE_FILE_TYPE_MIME[type] === mimeType);
@@ -4593,8 +4683,9 @@ function googleDriveFileNotWritableError(
   name?: string,
   capability?: "docs.write" | "sheets.write",
 ): ConnectorError {
-  return new ConnectorError(
-    "unsupported_capability",
+  // Raised only by the metadata check that runs before any write, so another
+  // connection may safely be tried with the same call.
+  return connectorResourceAccessRefused(
     !isAppAuthorized && canEdit && name && capability
       ? "Rally needs a one-file grant. Ask the user to use the Allow editing button on this failed write, then retry the same edit; do not create a copy or retry before authorization"
       : "Google file cannot be edited through this Rally connection",
