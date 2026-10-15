@@ -305,9 +305,8 @@ is the only place that can forward into it.
   main process to composite a view, so its guest and member shells preview a
   live artifact in an `<iframe>` with
   `sandbox="allow-scripts allow-same-origin allow-forms"`, a constant beside the
-  element in `site-resource-detail.tsx`. The iframe stretches to the pane —
-  centering that grid sits the page at the iframe's 300×150 intrinsic size
-  instead, which is a left gap the site's CSS cannot close.
+  element in `site-resource-detail.tsx`. Absolute `inset: 0` is what sizes that
+  iframe to the pane, not the pane's grid alignment.
   `allow-same-origin` keeps the artifact in *its own* origin on the artifact
   domain, never the app's, which its code redemption needs. The serving Worker's
   `allowBrowserFraming` gives a response carrying the default policy
@@ -567,34 +566,38 @@ this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 
 ### 2026-10-15 — The rail preview fills the pane flush left
 
-**What changed:** The browser host's framed preview stretches to the pane
-instead of sitting at the iframe's intrinsic 300×150 size in the center of it.
-On desktop, the composited `WebContentsView` converts the renderer's
-CSS-pixel rectangle through the window zoom factor before `setBounds`, the
-same conversion the embedded browser already made.
+**What changed:** On desktop, the composited `WebContentsView` converts the
+renderer's CSS-pixel rectangle through the window zoom factor before
+`setBounds`, the same conversion the embedded browser already made. The
+preview pane's grid default is stretch; Opening/empty placeholders opt into
+`place-self: center`. The framed iframe still fills by `position: absolute;
+inset: 0` — that was already true, and it is still what sizes it.
 
 **Why:** A generated site that was flush left in Chrome showed a large blank
 band down the left of Rally's in-app preview, and prompting the model to
-change the page did nothing — the gap was the shell, not the document. The
-pane used `place-items: center` so "Opening…" sat in the middle; that also
-centered the framed page at the iframe's default size. Separately, a Rally
-window whose zoom was not 1 (Cmd+/−, or the development client's common
+change the page did nothing — the gap was the shell, not the document. A
+Rally window whose zoom was not 1 (Cmd+/−, or the development client's common
 non-default factor) placed the native view short of the pane: zoomed out, a
-gap on the left of the rail; zoomed in, overlap into the transcript.
+gap on the left of the rail; zoomed in, overlap into the transcript. An
+earlier reading blamed `place-items: center` for sitting the iframe at 300×150;
+that cannot have been the live layout, because `.site-detail-frame` already
+had explicit `inset: 0` / `width` / `height` 100%. The pane still stopped
+defaulting to center so an in-flow child would fill rather than sit at
+intrinsic size, and so placeholders center themselves instead of the grid.
 
 **Considered and rejected:** Injecting a stylesheet into the artifact to force
 left alignment. The page is already flush in a normal tab; wrapping it would
 fight every layout the model writes and still leave the misplaced native view.
 Teaching the site-authoring skill to avoid `margin: auto` would not have
-moved the iframe.
+moved the native view.
 
 **Consequences:** Placeholders (`Opening…`, the unavailable empty state) still
-center themselves with `place-self`. The framed page must keep
-`justify-self: stretch` / `align-self: stretch` if the pane ever goes back to
-centering its children. Desktop preview bounds must keep using the window
-zoom; dropping the factor reintroduces the gap. The embedded browser's
-conversion is still local to that module — they are the same arithmetic, not
-yet one helper.
+center themselves with `place-self`. Absolute `inset: 0` is what sizes the
+framed page; dropping it, not the grid's `place-items`, is what would sit an
+iframe at 300×150. Desktop preview bounds must keep using the window zoom;
+dropping the factor reintroduces the gap. The embedded browser's conversion
+is still local to that module — they are the same arithmetic, not yet one
+helper.
 
 ### 2026-10-13 — A detail's header actions are data the header draws
 
