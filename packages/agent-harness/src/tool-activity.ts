@@ -201,6 +201,11 @@ const TERMINAL_PROSE: Record<string, ToolProse> = {
     settled: "Read a file",
     failed: "Could not read a file",
   },
+  view_image: {
+    started: "Looking at an image",
+    settled: "Looked at an image",
+    failed: "Could not look at an image",
+  },
   edit_file: {
     started: "Editing a file",
     settled: "Edited a file",
