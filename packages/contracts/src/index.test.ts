@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   readStructuredFailure,
+  connectorResourceAuthorizationRequestFromToolEvent,
   ActivityQueueMessageSchema,
   ActiveStreamCheckpointSchema,
   AnswerElicitationRequestSchema,
@@ -1427,6 +1428,38 @@ describe("boundary contracts", () => {
   });
 });
 
+
+describe("connector resource authorization recovery", () => {
+  const recovery = {
+    kind: "connector_resource_authorization" as const,
+    provider: "google" as const,
+    capability: "sheets.write",
+    operation: "edit" as const,
+    resource: { id: "sheet-1", type: "document", name: "Creator Content Intake" },
+    connectionId: "9c1f0000-0000-4000-8000-000000000001",
+    parentKind: "workstream" as const,
+    parentId: "9c1f0000-0000-4000-8000-000000000002",
+    substreamId: "0" as const,
+    failedToolInvocationId: "sheets-write",
+    continuationId: "9c1f0000-0000-4000-8000-000000000003",
+  };
+
+  it("recovers a grant request only from a failed tool result", () => {
+    expect(connectorResourceAuthorizationRequestFromToolEvent({
+      status: "failed",
+      output: { recovery },
+    })).toEqual(recovery);
+    expect(connectorResourceAuthorizationRequestFromToolEvent({
+      status: "completed",
+      output: { recovery },
+    })).toBeNull();
+    expect(connectorResourceAuthorizationRequestFromToolEvent({
+      status: "failed",
+      output: { recovery: { ...recovery, operation: "delete" } },
+    })).toBeNull();
+    expect(connectorResourceAuthorizationRequestFromToolEvent({ status: "failed" })).toBeNull();
+  });
+});
 
 describe("resource version provenance", () => {
   const revision = {

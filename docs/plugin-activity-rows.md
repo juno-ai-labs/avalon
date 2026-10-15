@@ -76,11 +76,9 @@ duration and no spans, which is a state the accordion is built to expect.
 3. **Grouping.** `groupPluginToolMessages` walks the composed list once. Each
    tool or plugin-activity row resolves to a group through `pluginGroup`; the
    first row of a group becomes the group's row, at that position, and every
-   later row of the same group folds into it and disappears. Two tool rows
-   close the run instead of joining it: a connector connection card, and a
-   failed write whose result carries a resource-authorization recovery. Those
-   are requests the reader has to act on; folding them would leave the agent
-   waiting on a button nobody can see.
+   later row of the same group folds into it and disappears. A connector
+   connection card and a failed write carrying a resource-authorization
+   recovery close the run instead of joining it.
 4. **Collapsing the thinking.** `groupThinkingMessages` walks the result the
    same way, over the same run boundary, and sums a run's thinking rows into
    the first of them. The response's own total is not thinking and is left
@@ -813,9 +811,6 @@ grant-shaped recovery is something the reader can approve.
 
 **Consequences:** A grant request splits the plugin row around it — tools
 before the failed write stay one "Used Google", tools after start another.
-The accordion still swallows only `plugin_activity` and thought, so the card
-stays in the feed when the answer arrives. `withoutAgentWork` already spared
-these rows; grouping is what had been eating them afterwards.
 
 ### 2026-10-08 — Custom MCP servers wear the Model Context Protocol mark
 
