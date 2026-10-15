@@ -23,7 +23,8 @@ a thread or a breakout opens, or who owns the right panel.
 | `packages/ui/src/components/resizable-sidebar.tsx` | `ResizableSidebar`. The shell passes `collapsible={false}`: the edge resizes between `MIN_SIDEBAR_WIDTH` and `MAX_SIDEBAR_WIDTH` and never collapses. |
 | `packages/ui/src/components/title-pill.tsx` | `TitlePill`, `TitlePillHeader` (ancestors left, current centred, trailing right), the menu building blocks, `TitlePillAction` and `TitlePillClose`. |
 | `packages/ui/src/components/conversation-menus.tsx` | `ChannelMenu` and `BreakoutMenu`: everything the deleted Channel sidebar held, as title-pill menus. Also `ConversationRowActions` and `PENDING_SUBSTREAM_DRAFT_ID`. |
-| `packages/ui/src/components/breakout-marks.tsx` | `BreakoutMark`, `breakoutsByOrigin`, `orderBreakoutsForTicks`, `breakoutHasActivity`, `BreakoutChipRow`, `BreakoutTickBar`. |
+| `packages/ui/src/components/breakout-marks.tsx` | `BreakoutMark`, `breakoutsByOrigin`, `orderBreakoutsForTicks`, `breakoutHasActivity`, `BreakoutTickBar`. |
+| `packages/ui/src/components/conversation-card.tsx` | `ConversationCard`: one thread or Breakout as a feed entry. The Channel feed draws its threads with it, and a thread's feed its Breakouts. |
 | `packages/ui/src/components/split-conversation.tsx` | `SplitConversationLayout`, `SplitConversationMode`, `clampBreakoutWidth`. |
 | `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the section switcher (Channels, Threads, Activity), the account menu under it, and the three lists with their Pinned sections, sort, and drag to reorder. |
 | `apps/desktop/src/renderer/screens/channel.tsx` | The Channel screen: its pill and menu, the feed of threads, the composer, and `ChannelStack`, the first two panes of the stack ([`pane-stack.md`](pane-stack.md)). |
@@ -31,7 +32,7 @@ a thread or a breakout opens, or who owns the right panel.
 | `apps/desktop/src/renderer/screens/workstream.tsx` | The thread screen: the thread and breakout panes, both pills, the one-slot rule, breakout creation in the right pane, and the Channel breadcrumb once the thread has shifted left. |
 | `apps/desktop/src/renderer/lib/navigation-routes.ts` | `channelRoute`, `threadRoute`, `homeChannelId`, and the context a thread pane reads its Channel from. |
 | `packages/ui/src/styles/app.css` | The "Single sidebar", "Title pills", "Breakouts in the Channel" and "Split conversation" blocks. |
-| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | One conversation. Draws chips and ticks for Main, owns its right panel by conversation, honours a scroll-to-turn request. |
+| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | One conversation. Draws Breakout cards and ticks for Main, owns its right panel by conversation, honours a scroll-to-turn request. |
 | `apps/desktop/src/renderer/lib/browser-rail-links.ts` | Routes a clicked web link to the pane it was clicked in. |
 | `apps/browser/src/shell.tsx` | The web app: this shell over the browser's cookie session ([`browser-client.md`](browser-client.md#the-shell)). |
 
@@ -289,11 +290,16 @@ Each Breakout row the thread receives carries `originTurnId` and
   fainter the further back (`BreakoutOrigin`). It reads the thread's own
   transcript cache, so it draws only when the origin is loaded there, and only
   above the Breakout's first message, never above a window with earlier pages.
-- **Chips:** `MessageFeed` draws a chip row after the last row of each origin
-  turn. A chip shows the title, "N new" when there is news, and "Open" with an
-  accent ring when it is the open Breakout. While the Breakout's run waits on
-  a question (`harnessStatus` `needs_input`), a red **Needs input** badge takes
-  the place of the news, and the tick and its card say the same.
+- **Cards:** `MessageFeed` draws a `ConversationCard` for each Breakout after
+  the last row of its origin turn, on the trailing side because a person
+  started it: the same entry the Channel feed draws for a thread, with the Breakout's mark, its title, "N
+  new" when there is news, and who started it and when. The open Breakout's
+  card is pressed, its name ends in "Open", and it drops its news, as an open
+  thread's card in the Channel does. The byline waits for the
+  Breakout list to answer, since the rows drawn before it carry stand-in
+  authors and dates. While the Breakout's run waits on a question
+  (`harnessStatus` `needs_input`), a red **Needs input** badge takes the place
+  of the news, and the tick and its card say the same.
 - **Tick bar:** down Main's leading edge, one tick per Breakout, in origin-turn
   order for turns that are loaded and by creation time after them. Colour says
   news and length says open, at the design's sizes: a quiet tick is 11×2 grey,
@@ -401,12 +407,12 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 ## Failure modes and limits
 
 - **No `originTurnId`:** a Breakout made before origins were recorded, or a
-  server older than the field, has no chip. Its tick sorts after the placed
+  server older than the field, has no card. Its tick sorts after the placed
   ones, and it stays reachable from the thread menu.
-- **Origin turn not loaded:** the chip draws once the page holding the turn
+- **Origin turn not loaded:** the card draws once the page holding the turn
   loads. Show in thread waits for it rather than fetching the range.
 - **Breakout list not answered yet:** the thread menu says "Loading
-  breakouts…", and there are no chips or ticks.
+  breakouts…", and there are no cards or ticks.
 - **Display counts:** the thread menu lists six Breakouts before "Show N
   more", and the filter field appears past six. These are display choices, not
   limits.
@@ -425,6 +431,30 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-15 — Breakouts in a thread are cards, like threads in a Channel
+
+**What changed:** The Channel feed's thread entry is now `ConversationCard` in
+`packages/ui`, and a thread's feed draws each Breakout under its origin turn
+with it, on the trailing side as a person started it, in place of
+`BreakoutChipRow`, which is gone.
+A Breakout's card has no summary; its byline names who started it and when.
+The card, not its caller, drops the news on the open conversation, so an open
+Breakout stops saying "New" as an open thread already did.
+`BreakoutMark` gains `createdByUserId` for that byline.
+
+**Why:** The product owner asked for the Channel's thread entry to be one
+component used for Breakouts too. A thread and a Breakout are the same kind
+of thing one level apart, and two drawings of it had already drifted.
+
+**Considered and rejected:** Keeping a list component beside the tick bar in
+`breakout-marks.tsx`: the card reads `breakoutNewsLabel` from that file, so
+the list there made an import cycle. `MessageFeed` maps the cards itself.
+
+**Consequences:** A change to the card reaches both feeds. A Breakout has no
+stored description, so its card has no summary until one exists. The
+Activity list's `breakout_started` row still borrows the `.breakout-chip`
+styles; those rules stay for it.
 
 ### 2026-10-13 — Activity badges draw the real avatar
 
