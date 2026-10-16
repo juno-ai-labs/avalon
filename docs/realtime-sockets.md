@@ -98,13 +98,9 @@ admission is split in two.
    A non-main UUID is not warmed merely because its parent is visible; the
    parent must first have reserved that child.
    The transcription ticket's lifetime is the shared
-   `TRANSCRIPTION_TICKET_LIFETIME_SECONDS` in
-   `@rally/contracts/realtime-transcription`, because the desktop fetches one
-   ahead of a recording, on the microphone's hover or focus, and presents it
-   only while its connection budget still fits inside that life
-   ([`conversation-surfaces.md`](conversation-surfaces.md#dictation-capture-and-connection-startup)
-   has the window); an unused one simply expires, and its `jti` is never
-   consumed.
+   `TRANSCRIPTION_TICKET_LIFETIME_SECONDS`, which the desktop's hover prefetch
+   reads; see
+   [`conversation-surfaces.md`](conversation-surfaces.md#dictation-capture-and-connection-startup).
 2. **Present.** The client opens the socket with the ticket as the second
    protocol: `[rally.ticket.v1, <ticket>]`. Native browser sockets send those
    from the `WebSocket` constructor; Electron's work-stream broker passes the

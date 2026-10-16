@@ -608,9 +608,12 @@ when computer audio is requested), the capture graph, and the socket ticket with
 the transcription socket behind it. The 24 kHz PCM16 worklet's `AudioContext` is
 created inside the press with `sinkId: { type: 'none' }`, so no output device is
 opened, and its module loads while the microphone is still opening; the worklet
-node is not connected to the destination until the inputs attach, so nothing is
-rendered before the first real sample and the context is never suspended or
-resumed. The socket is opened the moment the ticket lands, so the Worker's
+node itself is built only when the inputs attach, because Chromium renders an
+`AudioWorkletNode` with an unconnected output as an automatic-pull node and a
+node built early would fill the backlog with silence for as long as a
+permission prompt stays up. The context is never suspended or resumed, and
+stopping never waits for the module: a stalled fetch must not hold the
+microphone or the socket. The socket is opened the moment the ticket lands, so the Worker's
 upgrade, the WorkspaceDO admission and Azure's session acknowledgement overlap
 the microphone opening rather than follow it. `listening` means local capture is
 running; it does not wait for the ticket or the provider's session
@@ -730,16 +733,12 @@ activation event without losing the warning; later clears replace that retained 
 
 ### 2026-10-16 — Dictation startup overlaps the microphone with everything else
 
-**What changed:** A press now starts the inputs, the capture graph, and the
-ticket-then-socket chain at once; the recording fill waits only on the
-microphone. The worklet's context is created inside the press with
-`sinkId: { type: 'none' }` and is never suspended; the socket opens as soon as
-the ticket lands rather than after local capture starts. The control arms on
-the press (`is-arming`) before it fills on capture (`is-listening`), a level
-ring driven by the worklet's RMS shows that audio is arriving, and hovering or
-focusing the microphone prefetches the ticket through the API client. The
-field follows the transcript's tail once it is at its height limit. A
-device-local `dictation_start` trace records the phases.
+**What changed:** A press starts the inputs, the capture graph and the
+ticket-then-socket chain at once, and the recording fill waits only on the
+microphone. The control arms on the press before it fills on capture, a level
+ring shows audio arriving, the field follows the transcript's tail, hovering
+the microphone prefetches the ticket, and a device-local `dictation_start`
+trace records the phases. The section above has the mechanics.
 
 **Why:** Three independent costs were paid in series. The worklet module fetch
 and the `AudioContext` open ran only after `getUserMedia` resolved; the context
@@ -766,13 +765,17 @@ enumerates its flows and phases, and widening it is its own change.
 
 **Consequences:** A socket can now be open, and its session lease held, while
 the attempt is still `requesting`; cancellation and a denied input must close
-it, and do, through `cleanupAttempt`. The worklet's gains arrive by message
-after construction, because the node exists before the inputs are known. The
-`.is-arming` and `.is-listening` fills are the only rules that paint the
-button in those states, so a composer shape's resting fill must keep excluding
-both. The prefetched-ticket window is derived rather than chosen,
-`TRANSCRIPTION_TICKET_LIFETIME_SECONDS` less the connection budget, so changing
-either moves it.
+it, and do, through `cleanupAttempt`, and the lease is held by the proxy for
+the open socket rather than by its frames
+([`realtime-sockets.md`](realtime-sockets.md#changelog)). The worklet node must
+keep being built at attach and never earlier: review of the first cut built it
+with the graph and reproduced Chromium pulling the unconnected node, which sent
+silence recorded during the permission prompt ahead of the speech. Stopping
+must never wait on the module load. The `.is-arming` and `.is-listening` fills
+are the only rules that paint the button in those states, so a composer
+shape's resting fill must keep excluding both. The prefetched-ticket window is
+derived rather than chosen, `TRANSCRIPTION_TICKET_LIFETIME_SECONDS` less the
+connection budget, so changing either moves it.
 
 Shipped in #1259.
 

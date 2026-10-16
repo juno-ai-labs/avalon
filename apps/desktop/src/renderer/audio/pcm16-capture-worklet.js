@@ -42,13 +42,6 @@ class Pcm16CaptureProcessor extends AudioWorkletProcessor {
         this.port.postMessage({ type: 'flushed' });
         return;
       }
-      // The node is built before the inputs are known, so the mix comes by
-      // message once they are; the constructor options stay as defaults.
-      if (event.data?.type === 'gains') {
-        if (Number.isFinite(event.data.microphoneGain)) this.microphoneGain = event.data.microphoneGain;
-        if (Number.isFinite(event.data.systemGain)) this.systemGain = event.data.systemGain;
-        return;
-      }
       if (event.data?.type !== 'system-audio'
         || !(event.data.buffer instanceof ArrayBuffer)
         || !Number.isFinite(event.data.sampleRate)

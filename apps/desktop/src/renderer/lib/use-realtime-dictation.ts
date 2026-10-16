@@ -253,17 +253,22 @@ async function waitForTranscriptionSession(
  * Builds the capture graph without waiting for an input. The context is
  * created at once, inside the click so no autoplay policy holds it, and the
  * worklet module loads while the microphone is still opening; `attach`
- * connects the inputs once they exist. Until then the worklet node is not
- * connected to the destination, so it is not rendered and no silent frames
- * precede the first real sample. Nothing here suspends or resumes: the
- * context runs from creation, and what reaches the worklet is decided by
- * what is connected to it.
+ * builds the nodes and connects the inputs once they exist. The worklet node
+ * itself is not created until then: Chromium renders an `AudioWorkletNode`
+ * whose output is unconnected as an automatic-pull node, so a node built
+ * early would run against silence and fill the backlog with zeros for as
+ * long as the permission prompt stays up. Nothing here suspends or resumes:
+ * until `attach` the context runs an empty graph.
  *
  * `sinkId: { type: 'none' }` keeps the context off the output device.
  * Nothing in this graph plays, so opening a speaker was a device start the
  * recording never needed, and on a Bluetooth headset a slow one. Engines
  * without the option ignore it; for them the zero-gain path to
  * `destination` is what keeps the graph pulled, which is why it stays.
+ *
+ * `stop` never waits for the module: a stalled fetch must not hold the
+ * microphone or the socket, so teardown closes whatever exists at once and
+ * the `stopped` flag keeps a late `ready` from building anything.
  */
 function createAudioCapture(onAudio: (buffer: ArrayBuffer, level: number) => void): AudioCapture {
   const context = new AudioContext({ sampleRate: 24_000, sinkId: { type: 'none' } });
@@ -277,28 +282,8 @@ function createAudioCapture(onAudio: (buffer: ArrayBuffer, level: number) => voi
   let resolvePause: (() => void) | undefined;
   let resolveResume: (() => void) | undefined;
 
-  const ready = (async (): Promise<void> => {
-    await context.audioWorklet.addModule(new URL('../audio/pcm16-capture-worklet.js?no-inline', import.meta.url));
-    if (stopped) return;
-    inputGain = context.createGain();
-    inputGain.gain.value = 1;
-    node = new AudioWorkletNode(context, 'rally-pcm16-capture', {
-      channelCount: 1,
-      channelCountMode: 'explicit',
-      channelInterpretation: 'speakers',
-    });
-    silence = context.createGain();
-    silence.gain.value = 0;
-    inputGain.connect(node);
-    node.port.onmessage = (event: MessageEvent<{ type?: string; buffer?: ArrayBuffer; level?: number }>) => {
-      if (event.data.type === 'audio' && event.data.buffer) onAudio(event.data.buffer, event.data.level ?? 0);
-      if (event.data.type === 'flushed') resolveFlush?.();
-      if (event.data.type === 'paused') resolvePause?.();
-      if (event.data.type === 'resumed') resolveResume?.();
-    };
-  })();
-  // A failed build surfaces through `attach`, which is the first thing that
-  // waits on it; `stop` only needs it settled.
+  const ready = context.audioWorklet.addModule(new URL('../audio/pcm16-capture-worklet.js?no-inline', import.meta.url));
+  // A failed load surfaces through `attach`, the first thing that waits on it.
   void ready.catch(() => undefined);
 
   const control = (
@@ -326,25 +311,39 @@ function createAudioCapture(onAudio: (buffer: ArrayBuffer, level: number) => voi
     ready,
     async attach(streams, system) {
       await ready;
-      const worklet = node;
-      if (stopped || !worklet || !inputGain || !silence) return;
+      if (stopped) return;
+      inputGain = context.createGain();
+      inputGain.gain.value = 1;
+      // The worklet mixes native Core Audio PCM with the microphone. Leave
+      // headroom only when both sources are active.
+      const worklet = new AudioWorkletNode(context, 'rally-pcm16-capture', {
+        channelCount: 1,
+        channelCountMode: 'explicit',
+        channelInterpretation: 'speakers',
+        processorOptions: {
+          microphoneGain: system ? 0.65 : 1,
+          systemGain: streams.length > 0 ? 0.65 : 1,
+        },
+      });
+      node = worklet;
+      silence = context.createGain();
+      silence.gain.value = 0;
+      worklet.port.onmessage = (event: MessageEvent<{ type?: string; buffer?: ArrayBuffer; level?: number }>) => {
+        if (event.data.type === 'audio' && event.data.buffer) onAudio(event.data.buffer, event.data.level ?? 0);
+        if (event.data.type === 'flushed') resolveFlush?.();
+        if (event.data.type === 'paused') resolvePause?.();
+        if (event.data.type === 'resumed') resolveResume?.();
+      };
       for (const stream of streams) {
         const source = context.createMediaStreamSource(stream);
         source.connect(inputGain);
         sources.push(source);
       }
-      // The worklet mixes native Core Audio PCM with the microphone. Leave
-      // headroom only when both sources are active. The gains travel by
-      // message because the node is built before the inputs are known.
-      worklet.port.postMessage({
-        type: 'gains',
-        microphoneGain: system ? 0.65 : 1,
-        systemGain: streams.length > 0 ? 0.65 : 1,
-      });
       systemAudio = system;
       system?.listen((buffer, sampleRate) => {
         worklet.port.postMessage({ type: 'system-audio', buffer, sampleRate }, [buffer]);
       });
+      inputGain.connect(worklet);
       worklet.connect(silence);
       silence.connect(context.destination);
     },
@@ -365,7 +364,6 @@ function createAudioCapture(onAudio: (buffer: ArrayBuffer, level: number) => voi
     async stop(flush = false) {
       if (stopped) return;
       stopped = true;
-      await ready.catch(() => undefined);
       let failure: unknown;
       let flushTimer: number | undefined;
       try {
@@ -434,8 +432,7 @@ async function cleanupAttempt(attempt: DictationAttempt): Promise<void> {
   if (failure) throw failure;
 }
 
-export type RealtimeDictationApi = Pick<RallyApi, 'getTranscriptionSocketTicket'>
-  & Partial<Pick<RallyApi, 'prefetchTranscriptionSocketTicket'>>;
+export type RealtimeDictationApi = Pick<RallyApi, 'getTranscriptionSocketTicket' | 'prefetchTranscriptionSocketTicket'>;
 
 export function useRealtimeDictation(
   api: RealtimeDictationApi | undefined,
@@ -515,7 +512,9 @@ export function useRealtimeDictation(
     else finalization?.resolve();
     setWarning(undefined);
     if (nextError) setError(nextError);
-    attempt.trace.end({ outcome: nextError ? 'failed' : 'completed' });
+    // `completed` is the drain's to claim; anything else ending the trace
+    // either failed or was stopped before the connection was ready.
+    attempt.trace.end({ outcome: nextError ? 'failed' : 'cancelled' });
     onLevelRef.current?.(0);
     transition(nextState);
     void cleanupAttempt(attempt).catch((cleanupError) => {
@@ -939,7 +938,7 @@ export function useRealtimeDictation(
   }, []);
 
   const prefetch = useCallback((): void => {
-    if (!api?.prefetchTranscriptionSocketTicket || !['idle', 'error'].includes(stateRef.current)) return;
+    if (!api || !['idle', 'error'].includes(stateRef.current)) return;
     api.prefetchTranscriptionSocketTicket(PREFETCHED_TICKET_USABLE_MS);
   }, [api]);
 

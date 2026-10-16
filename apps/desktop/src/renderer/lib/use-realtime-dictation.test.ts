@@ -100,12 +100,19 @@ beforeEach(() => {
   );
 });
 
-function installAudioGraph(options: { acknowledgeFlush?: boolean; flushBuffer?: ArrayBuffer } = {}): {
+function installAudioGraph(options: {
+  acknowledgeFlush?: boolean;
+  flushBuffer?: ArrayBuffer;
+  /** What `addModule` returns; a never-settling promise stands in for a stalled fetch. */
+  moduleLoad?: Promise<void>;
+} = {}): {
   contextCount: () => number;
+  workletNodeCount: () => number;
   // The spies are typed loosely: a test only hands them to `expect`.
   contexts: () => Array<{
     options: AudioContextOptions | undefined;
     audioWorklet: { addModule: unknown };
+    close: unknown;
     createMediaStreamSource: unknown;
     suspend: unknown;
   }>;
@@ -156,7 +163,7 @@ function installAudioGraph(options: { acknowledgeFlush?: boolean; flushBuffer?: 
     }
     state: AudioContextState = 'suspended';
     destination = new FakeAudioNode();
-    audioWorklet = { addModule: vi.fn(async () => undefined) };
+    audioWorklet = { addModule: vi.fn(() => options.moduleLoad ?? Promise.resolve()) };
     close = vi.fn(async () => { this.state = 'closed'; });
     createGain = vi.fn(() => new FakeGainNode());
     createMediaStreamSource = vi.fn(() => new FakeAudioNode());
@@ -167,6 +174,7 @@ function installAudioGraph(options: { acknowledgeFlush?: boolean; flushBuffer?: 
   vi.stubGlobal('AudioWorkletNode', FakeAudioWorkletNode);
   return {
     contextCount: () => createdContexts,
+    workletNodeCount: () => workletNodes.length,
     contexts: () => contexts,
     acknowledgeFlush: () => workletNodes[0]?.port.onmessage?.(new MessageEvent('message', {
       data: { type: 'flushed' },
@@ -238,7 +246,7 @@ describe('realtime dictation transcript', () => {
     const audio = installAudioGraph();
     const onLevel = vi.fn();
     const { result, unmount } = renderHook(() => useRealtimeDictation({
-      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/level'),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/level'),
     }, vi.fn(), { onLevel }));
     act(() => { void result.current.start(); });
     await waitFor(() => expect(result.current.state).toBe('listening'));
@@ -284,7 +292,7 @@ describe('realtime dictation transcript', () => {
     installMediaDevices(vi.fn(async () => mediaStream()));
     const audio = installAudioGraph();
     const { result, unmount } = renderHook(() => useRealtimeDictation({
-      getTranscriptionSocketTicket: () => ticket.promise,
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: () => ticket.promise,
     }, vi.fn()));
     let start!: Promise<void>;
     act(() => { start = result.current.start(); });
@@ -315,7 +323,7 @@ describe('realtime dictation transcript', () => {
     const audio = installAudioGraph({ flushBuffer: new Uint8Array([3, 4]).buffer });
     const onTranscript = vi.fn();
     const { result } = renderHook(() => useRealtimeDictation({
-      getTranscriptionSocketTicket: () => ticket.promise,
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: () => ticket.promise,
     }, onTranscript));
     let start!: Promise<void>;
     act(() => { start = result.current.start(); });
@@ -350,7 +358,7 @@ describe('realtime dictation transcript', () => {
     installMediaDevices(vi.fn(async () => mediaStream()));
     const audio = installAudioGraph();
     const { result } = renderHook(() => useRealtimeDictation({
-      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/large-backlog'),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/large-backlog'),
     }, vi.fn()));
     let start!: Promise<void>;
     await act(async () => { start = result.current.start(); });
@@ -390,7 +398,7 @@ describe('realtime dictation transcript', () => {
     const trackStop = vi.fn();
     installMediaDevices(vi.fn(async () => mediaStream(trackStop)));
     const { result } = renderHook(() => useRealtimeDictation({
-      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/failed-startup-stop'),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/failed-startup-stop'),
     }, vi.fn()));
     let start!: Promise<void>;
     act(() => { start = result.current.start(); });
@@ -409,7 +417,7 @@ describe('realtime dictation transcript', () => {
     vi.useFakeTimers();
     const trackStop = vi.fn();
     const ticket = deferred<SocketTicket>();
-    const api = { getTranscriptionSocketTicket: vi.fn<(signal?: AbortSignal) => Promise<SocketTicket>>(() => ticket.promise) };
+    const api = { prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn<(signal?: AbortSignal) => Promise<SocketTicket>>(() => ticket.promise) };
     installMediaDevices(vi.fn(async () => mediaStream(trackStop)));
     const audio = installAudioGraph();
     const { result, unmount } = renderHook(() => useRealtimeDictation(api, vi.fn()));
@@ -439,7 +447,7 @@ describe('realtime dictation transcript', () => {
     vi.useFakeTimers();
     const ticket = deferred<SocketTicket>();
     installMediaDevices(vi.fn(async () => mediaStream()));
-    const { result } = renderHook(() => useRealtimeDictation({ getTranscriptionSocketTicket: () => ticket.promise }, vi.fn()));
+    const { result } = renderHook(() => useRealtimeDictation({ prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: () => ticket.promise }, vi.fn()));
     let start!: Promise<void>;
     await act(async () => { start = result.current.start(); });
     await act(async () => vi.advanceTimersByTimeAsync(9_000));
@@ -457,7 +465,7 @@ describe('realtime dictation transcript', () => {
     const ticket = deferred<SocketTicket>();
     installMediaDevices(vi.fn(async () => mediaStream()));
     const audio = installAudioGraph();
-    const { result, unmount } = renderHook(() => useRealtimeDictation({ getTranscriptionSocketTicket: () => ticket.promise }, vi.fn()));
+    const { result, unmount } = renderHook(() => useRealtimeDictation({ prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: () => ticket.promise }, vi.fn()));
     let start!: Promise<void>;
     act(() => { start = result.current.start(); });
     await waitFor(() => expect(result.current.state).toBe('listening'));
@@ -482,7 +490,7 @@ describe('realtime dictation transcript', () => {
     installMediaDevices(vi.fn(async () => mediaStream()));
     const audio = installAudioGraph();
     const { result, unmount } = renderHook(() => useRealtimeDictation({
-      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/backlog-pressure'),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/backlog-pressure'),
     }, vi.fn()));
     let start!: Promise<void>;
     await act(async () => { start = result.current.start(); });
@@ -506,7 +514,7 @@ describe('realtime dictation transcript', () => {
     installMediaDevices(vi.fn(async () => mediaStream()));
     const audio = installAudioGraph({ flushBuffer: new Uint8Array([3, 4]).buffer });
     const { result } = renderHook(() => useRealtimeDictation({
-      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/late-native-flush'),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/late-native-flush'),
     }, vi.fn(), { includeSystemAudio: true }));
     let start!: Promise<void>;
     act(() => { start = result.current.start(); });
@@ -536,7 +544,7 @@ describe('realtime dictation transcript', () => {
     const microphoneStop = vi.fn();
     const microphone = deferred<MediaStream>();
     installMediaDevices(vi.fn(() => microphone.promise));
-    const api = { getTranscriptionSocketTicket: vi.fn(() => ticket.promise) };
+    const api = { prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn(() => ticket.promise) };
     const { result } = renderHook(() => useRealtimeDictation(api, vi.fn(), { includeSystemAudio: true }));
 
     let start!: Promise<void>;
@@ -558,7 +566,7 @@ describe('realtime dictation transcript', () => {
     installMediaDevices(vi.fn(async () => mediaStream()));
     const audioGraph = installAudioGraph({ flushBuffer: new ArrayBuffer(480) });
     const api = {
-      getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/native-drain', 'ticket'))),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/native-drain', 'ticket'))),
     };
     const { result } = renderHook(() => useRealtimeDictation(api, vi.fn(), { includeSystemAudio: true }));
 
@@ -597,7 +605,7 @@ describe('realtime dictation transcript', () => {
     installMediaDevices(vi.fn(async () => mediaStream()));
     const audioGraph = installAudioGraph();
     const api = {
-      getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/pause-resume', 'ticket'))),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/pause-resume', 'ticket'))),
     };
     const { result, unmount } = renderHook(() => useRealtimeDictation(api, vi.fn(), { includeSystemAudio: true }));
 
@@ -629,7 +637,7 @@ describe('realtime dictation transcript', () => {
     installMediaDevices(vi.fn(async () => mediaStream(microphoneStop)));
     const audioGraph = installAudioGraph();
     const api = {
-      getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/no-system-audio', 'ticket'))),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/no-system-audio', 'ticket'))),
     };
     const { result, unmount } = renderHook(() => useRealtimeDictation(api, vi.fn(), { includeSystemAudio: true }));
 
@@ -657,7 +665,7 @@ describe('realtime dictation transcript', () => {
     installMediaDevices(vi.fn(async () => mediaStream(microphoneStop)));
     const audioGraph = installAudioGraph();
     const api = {
-      getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/system-audio-denied', 'ticket'))),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/system-audio-denied', 'ticket'))),
     };
     const { result, unmount } = renderHook(() => useRealtimeDictation(api, vi.fn(), { includeSystemAudio: true }));
 
@@ -682,7 +690,7 @@ describe('realtime dictation transcript', () => {
     installMediaDevices(vi.fn(async () => { throw new DOMException('Permission denied', 'NotAllowedError'); }));
     const audioGraph = installAudioGraph();
     const api = {
-      getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/microphone-denied', 'ticket'))),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/microphone-denied', 'ticket'))),
     };
     const { result, unmount } = renderHook(() => useRealtimeDictation(api, vi.fn(), { includeSystemAudio: true }));
 
@@ -707,7 +715,7 @@ describe('realtime dictation transcript', () => {
     systemAudioBridge.start.mockRejectedValue(new Error('Computer audio access is blocked.'));
     installMediaDevices(vi.fn(async () => { throw new DOMException('Permission denied', 'NotAllowedError'); }));
     const api = {
-      getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/all-audio-denied', 'ticket'))),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/all-audio-denied', 'ticket'))),
     };
     const { result } = renderHook(() => useRealtimeDictation(api, vi.fn(), { includeSystemAudio: true }));
 
@@ -725,7 +733,7 @@ describe('realtime dictation transcript', () => {
     installMediaDevices(vi.fn(() => microphone.promise));
     const audio = installAudioGraph();
     const { result, unmount } = renderHook(() => useRealtimeDictation({
-      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/early-socket'),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/early-socket'),
     }, vi.fn()));
     let start!: Promise<void>;
     act(() => { start = result.current.start(); });
@@ -733,6 +741,8 @@ describe('realtime dictation transcript', () => {
     expect(result.current.state).toBe('requesting');
     const context = audio.contexts()[0]!;
     await waitFor(() => expect(context.audioWorklet.addModule).toHaveBeenCalledOnce());
+    // The module loads early; the node that would run against silence does not.
+    expect(audio.workletNodeCount()).toBe(0);
     expect(context.createMediaStreamSource).not.toHaveBeenCalled();
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'session.updated' }) })));
@@ -742,17 +752,38 @@ describe('realtime dictation transcript', () => {
     await act(async () => start);
 
     expect(result.current.state).toBe('listening');
+    expect(audio.workletNodeCount()).toBe(1);
     expect(context.createMediaStreamSource).toHaveBeenCalledOnce();
     act(() => audio.emitAudio(new Uint8Array([1, 2]).buffer));
     expect(JSON.parse(String(socket.send.mock.calls[0]![0])).audio).toBe(btoa(String.fromCharCode(1, 2)));
     unmount();
   });
 
+  it('stops and releases the microphone and socket without waiting for a worklet module that never loads', async () => {
+    const trackStop = vi.fn();
+    installMediaDevices(vi.fn(async () => mediaStream(trackStop)));
+    const audio = installAudioGraph({ moduleLoad: new Promise<void>(() => undefined) });
+    const { result } = renderHook(() => useRealtimeDictation({
+      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/stalled-module'),
+      prefetchTranscriptionSocketTicket: vi.fn(),
+    }, vi.fn()));
+    act(() => { void result.current.start(); });
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    expect(result.current.state).toBe('requesting');
+
+    await act(async () => result.current.stop());
+
+    expect(result.current.state).toBe('idle');
+    await waitFor(() => expect(trackStop).toHaveBeenCalled());
+    expect(audio.contexts()[0]!.close).toHaveBeenCalledOnce();
+    expect(FakeWebSocket.instances[0]!.readyState).toBe(FakeWebSocket.CLOSED);
+  });
+
   it('captures through a context that opens no output device and is never suspended', async () => {
     installMediaDevices(vi.fn(async () => mediaStream()));
     const audio = installAudioGraph();
     const { result, unmount } = renderHook(() => useRealtimeDictation({
-      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/no-sink'),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/no-sink'),
     }, vi.fn()));
     act(() => { void result.current.start(); });
     await waitFor(() => expect(result.current.state).toBe('listening'));
@@ -769,7 +800,7 @@ describe('realtime dictation transcript', () => {
     installMediaDevices(vi.fn(() => microphone.promise));
     installAudioGraph();
     const { result } = renderHook(() => useRealtimeDictation({
-      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/early-failure'),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/early-failure'),
     }, vi.fn()));
     let start!: Promise<void>;
     act(() => { start = result.current.start(); });
@@ -791,7 +822,7 @@ describe('realtime dictation transcript', () => {
     const audioGraph = installAudioGraph();
     const onTranscript = vi.fn();
     const api = {
-      getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/long-running-session', 'ticket'))),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/long-running-session', 'ticket'))),
     };
     const { result, unmount } = renderHook(() => useRealtimeDictation(api, onTranscript));
 
@@ -838,7 +869,7 @@ describe('realtime dictation transcript', () => {
     const audioGraph = installAudioGraph({ flushBuffer: new ArrayBuffer(480) });
     const onTranscript = vi.fn();
     const api = {
-      getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/final-buffer', 'ticket'))),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/final-buffer', 'ticket'))),
     };
     const { result } = renderHook(() => useRealtimeDictation(api, onTranscript));
 
@@ -897,7 +928,7 @@ describe('realtime dictation transcript', () => {
     installMediaDevices(vi.fn(async () => mediaStream(trackStop)));
     installAudioGraph({ acknowledgeFlush: false });
     const api = {
-      getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/missing-flush', 'ticket'))),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/missing-flush', 'ticket'))),
     };
     const { result } = renderHook(() => useRealtimeDictation(api, vi.fn()));
 
@@ -927,7 +958,7 @@ describe('realtime dictation transcript', () => {
     installMediaDevices(vi.fn(async () => mediaStream()));
     const audioGraph = installAudioGraph({ acknowledgeFlush: false });
     const api = {
-      getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/close-during-flush', 'ticket'))),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/close-during-flush', 'ticket'))),
     };
     const { result } = renderHook(() => useRealtimeDictation(api, vi.fn()));
 
@@ -955,7 +986,7 @@ describe('realtime dictation transcript', () => {
     installMediaDevices(vi.fn(async () => mediaStream(trackStop)));
     const audioGraph = installAudioGraph();
     const api = {
-      getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/backpressure', 'ticket'))),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/backpressure', 'ticket'))),
     };
     const { result } = renderHook(() => useRealtimeDictation(api, vi.fn()));
 
@@ -981,7 +1012,7 @@ describe('realtime dictation transcript', () => {
     installMediaDevices(vi.fn(async () => mediaStream(trackStop)));
     installAudioGraph();
     const api = {
-      getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/slow-segment-commit', 'ticket'))),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/slow-segment-commit', 'ticket'))),
     };
     const { result, unmount } = renderHook(() => useRealtimeDictation(api, vi.fn()));
 
@@ -1013,7 +1044,7 @@ describe('realtime dictation transcript', () => {
     installMediaDevices(vi.fn(async () => mediaStream(trackStop)));
     installAudioGraph();
     const api = {
-      getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/handoff-stop', 'ticket'))),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/handoff-stop', 'ticket'))),
     };
     const { result } = renderHook(() => useRealtimeDictation(api, vi.fn()));
 
@@ -1053,7 +1084,7 @@ describe('realtime dictation transcript', () => {
     const getUserMedia = vi.fn(async () => mediaStream());
     installMediaDevices(getUserMedia);
     const api = {
-      getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/default-microphone', 'ticket'))),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/default-microphone', 'ticket'))),
     };
     const { result } = renderHook(() => useRealtimeDictation(api, vi.fn(), {
       useSystemDefaultMicrophone: true,
@@ -1079,7 +1110,7 @@ describe('realtime dictation transcript', () => {
     const secondStream = deferred<MediaStream>();
     const firstTrackStop = vi.fn();
     const api = {
-      getTranscriptionSocketTicket: vi.fn()
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn()
         .mockReturnValueOnce(firstTicket.promise)
         .mockReturnValueOnce(secondTicket.promise),
     };
@@ -1108,7 +1139,7 @@ describe('realtime dictation transcript', () => {
     const trackStop = vi.fn();
     installMediaDevices(vi.fn(async () => mediaStream(trackStop)));
     const api = {
-      getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/setup-close', 'ticket'))),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/setup-close', 'ticket'))),
     };
     const { result } = renderHook(() => useRealtimeDictation(api, vi.fn()));
 
@@ -1126,7 +1157,7 @@ describe('realtime dictation transcript', () => {
   it('does not misattribute a failed socket admission to Azure', async () => {
     installMediaDevices(vi.fn(async () => mediaStream()));
     const api = {
-      getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/setup-error', 'ticket'))),
+      prefetchTranscriptionSocketTicket: vi.fn(), getTranscriptionSocketTicket: vi.fn(async () => (socketTicket('wss://example.test/setup-error', 'ticket'))),
     };
     const { result } = renderHook(() => useRealtimeDictation(api, vi.fn()));
 
