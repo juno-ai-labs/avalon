@@ -5415,9 +5415,18 @@ async function loadHarnessTools(
   // attachments. The only way a Sidekick run reaches a room. A run knows from
   // its definition whether the Sidekick has a home; the configuration
   // conversation does not read one.
-  const conversationsPlugin = createConversationsPlugin(input, conversationToolPorts(env, input),
+  //
+  // A Thread's Main loop merges into one of the thread's Channels, and its
+  // standing line names them: read once as the loop starts. A thread that
+  // cannot merge (private, or in no Channel) is told so by the tool's refusal.
+  const conversationPorts = conversationToolPorts(env, input);
+  const mergeChannels = input.parentKind === "workstream" && (input.substreamId ?? "0") === "0"
+    && input.executionPrincipal.type === "user"
+    ? await conversationPorts.mergeChannels(input.parentId).catch(() => null)
+    : null;
+  const conversationsPlugin = createConversationsPlugin(input, conversationPorts,
     (tool) => expandPages(tool, CONVERSATIONS_WIRE_PREFIX, null),
-    { home: runDefinition ? runDefinition.owningWorkstreamId !== null : null });
+    { home: runDefinition ? runDefinition.owningWorkstreamId !== null : null, mergeChannels });
   // `tools` retains the historical flattened view for API diagnostics and
   // tests. Bind receives stable always-active core plugins plus loadable
   // built-in and credential-scoped plugins.
