@@ -40,7 +40,7 @@ import { moveWithin } from '../lib/personal-order';
 import { compareChannels } from '../lib/sidebar-channel-order';
 import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, MY_THREADS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
-import { latestPinWrite, reportThreadPin, usePinAction, usePinFailure, usePins, usePinWrite, type PinnedThread } from '../lib/pins';
+import { latestPinWrite, reportThreadPin, usePinAction, usePinFailure, usePinnedIds, usePins, usePinWrite, type PinnedThread } from '../lib/pins';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation } from '../lib/telemetry';
 import type { SpaceConversationSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { useUiStore, type SidebarChannelSort, type SidebarSection } from '../lib/ui-store';
@@ -211,11 +211,18 @@ export function NavigationSidebar({
   // Threads: the dock badge's number, every conversation waiting on this
   // reader and every access request waiting on them. Activity: the menu
   // bar's, the access requests and every unread row. Channels: each Channel
-  // with threads this reader has not seen.
+  // with threads this reader has not seen. Pinned: each pinned row whose own
+  // row says it is unread.
   const waiting = attentionItems.length + accessRequests.length;
   const unreadActivity = useUnreadActivityCount() + accessRequests.length;
-  const newChannels = useChannelsWithNews(!guest);
-  const badges: Record<SidebarSection, number> = { pinned: 0, channels: newChannels, threads: waiting, activity: unreadActivity };
+  const channelNews = useChannelsWithNews(!guest);
+  const unreadPinnedThreads = useUnreadPinnedThreadCount();
+  const badges: Record<SidebarSection, number> = {
+    pinned: channelNews.pinned + unreadPinnedThreads,
+    channels: channelNews.all,
+    threads: waiting,
+    activity: unreadActivity,
+  };
   const title = SECTIONS.find((candidate) => candidate.id === section)?.label ?? 'Threads';
   const [creatingChannel, setCreatingChannel] = useState(false);
   const markActivityRead = useMarkActivityRead();
@@ -304,7 +311,7 @@ export function NavigationSidebar({
 }
 
 /** What a section's count says it counts, for its accessible name. */
-const BADGE_NOUNS: Record<SidebarSection, string> = { pinned: 'pinned', channels: 'with new threads', threads: 'waiting', activity: 'unread' };
+const BADGE_NOUNS: Record<SidebarSection, string> = { pinned: 'pinned with news', channels: 'with new threads', threads: 'waiting', activity: 'unread' };
 
 /** A section button's red count; nothing at zero, `99+` past two digits. */
 function RailBadge({ count, section }: { count: number; section: SidebarSection }): React.JSX.Element | null {
@@ -343,18 +350,57 @@ function useUnreadActivityCount(): number {
 
 /**
  * Channels with threads this reader has not seen, as each row says "n new
- * threads". The same stats query the Channels list reads, which the socket's
- * Space snapshot seeds. A guest has no Channels section, so nothing to count.
+ * threads": all of them, and the pinned ones. The same stats query the
+ * Channels list reads, which the socket's Space snapshot seeds. A guest has no
+ * Channels section, so nothing to count.
  */
-function useChannelsWithNews(enabled: boolean): number {
+function useChannelsWithNews(enabled: boolean): { all: number; pinned: number } {
   const { api } = useAppSession();
+  const pinned = usePinnedIds('channel');
   const stats = useQuery<ChannelStats[]>({
     queryKey: CHANNEL_STATS_QUERY_KEY,
     queryFn: ({ signal }) => api!.getChannelStats(signal),
     enabled: enabled && api !== null,
     staleTime: Infinity,
   });
-  return enabled ? (stats.data ?? []).filter((item) => item.hasUnread && item.newThreadCount > 0).length : 0;
+  const news = enabled ? (stats.data ?? []).filter((item) => item.hasUnread && item.newThreadCount > 0) : [];
+  return { all: news.length, pinned: news.filter((item) => pinned.has(item.channelId)).length };
+}
+
+/** This person's threads and breakouts (`GET /navigation/threads`): the Threads tab and the Pinned count share it. */
+function useMyThreads() {
+  const { api } = useAppSession();
+  return useInfiniteQuery({
+    queryKey: MY_THREADS_QUERY_KEY,
+    queryFn: ({ pageParam, signal }) => api!.getMyThreads(pageParam, signal),
+    initialPageParam: null as string | null,
+    getNextPageParam: (page) => page.nextCursor,
+    enabled: Boolean(api),
+  });
+}
+
+/**
+ * Pinned threads and breakouts whose rows read as unread, from the copies
+ * the Pinned list draws: a thread started a moment ago, which the socket
+ * holds before the list is read again, the first page's pinned rows, a loaded
+ * page's row where it has one, and the socket's live thread over each.
+ */
+function useUnreadPinnedThreadCount(): number {
+  const list = useMyThreads();
+  const live = useWorkstreamsQuery();
+  const threads = usePinnedIds('thread');
+  const breakouts = usePinnedIds('breakout');
+  return useMemo(() => {
+    const liveById = new Map((live.data ?? []).map((row) => [row.id, row]));
+    const byId = new Map<string, SpaceConversationSummary>();
+    for (const row of live.data ?? []) if (row.pending) byId.set(row.id, { ...row, kind: 'channel', breakoutOf: null });
+    for (const row of list.data?.pages[0]?.pinned ?? []) byId.set(row.id, row);
+    for (const page of list.data?.pages ?? []) for (const row of page.items) byId.set(row.id, row);
+    return [...threads, ...breakouts].filter((id) => {
+      const row = byId.get(id);
+      return row !== undefined && threadUnread(withLiveThread(row, liveById));
+    }).length;
+  }, [breakouts, list.data, live.data, threads]);
 }
 
 /** The Channel the open route sits under, so a thread opened from a list stays under it. */
@@ -847,13 +893,7 @@ function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefOb
   const pin = usePinAction(api);
   const openChannelId = useOpenChannelId();
   const openThreadId = useOpenThreadId();
-  const list = useInfiniteQuery({
-    queryKey: MY_THREADS_QUERY_KEY,
-    queryFn: ({ pageParam, signal }) => api!.getMyThreads(pageParam, signal),
-    initialPageParam: null as string | null,
-    getNextPageParam: (page) => page.nextCursor,
-    enabled: Boolean(api),
-  });
+  const list = useMyThreads();
   const liveById = useMemo(() => new Map((live.data ?? []).map((row) => [row.id, row])), [live.data]);
   const rows = useMemo(() => {
     const fetched = (list.data?.pages ?? []).flatMap((page) => page.items);

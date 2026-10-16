@@ -55,16 +55,17 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   icon is a two-by-two grid (`ShapeGrid`), clockwise from the top left: a
   Channel, a Thread, a Sidekick's hexagon and a Thread. The hexagon is there for
   kinds still to come; Pinned lists Channels and Threads today.
-  The choice is a device preference (`rally.sidebar-section`). Channels,
-  Threads and Activity each carry a red count (`RailBadge`; nothing at zero,
-  `99+` past two digits). **Threads**: every conversation waiting on this
+  The choice is a device preference (`rally.sidebar-section`). Every section
+  carries a red count (`RailBadge`; nothing at zero, `99+` past two digits). **Threads**: every conversation waiting on this
   person and every access request waiting on them, the same `attentionItems`
   the dock badge counts. **Activity**: the access requests and every unread
   Activity row, the macOS menu bar's number ([`menu-bar.md`](menu-bar.md)),
   read from the same cached feed the tab lists, so Mark all read clears it
   with the dots. **Channels**: each Channel whose row says "n new threads",
   from the same stats the list reads; a guest has no Channels section and no
-  count. Pinned carries none.
+  count. **Pinned**: each pinned Channel with new threads and each pinned
+  thread or breakout whose row reads unread (a mention, never opened, or
+  unread messages), from the copies the Pinned list draws.
 - **One list**, titled with the section's name. Pinned's list is a section per
   kind, **Channels** then **Threads** (threads, then breakouts), each the same
   Pinned part its own tab draws above everything else, reorderable the same
@@ -495,8 +496,8 @@ A site in the right slot showed the problem worst: its three actions crowded
 the header, and the shift that keeps the pill clear of them moved its long
 title off the screen's left edge.
 
-The same change gave the Channels and Activity buttons counts. They carried
-none before, and why was not recorded. On a phone those buttons are the first
+The same change gave the Pinned, Channels and Activity buttons counts. They
+carried none before, and why was not recorded. On a phone those buttons are the first
 thing the sheet shows, and the Activity and Channel rows held red dots that
 nothing pointed to. Each count reads a query the list already holds, so no
 new request backs it: the first Activity page is 250 rows, as the menu bar's

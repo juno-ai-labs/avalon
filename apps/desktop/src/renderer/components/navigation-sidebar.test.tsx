@@ -113,6 +113,7 @@ describe('the navigation sidebar', () => {
     vi.clearAllMocks();
     // The Activity button counts from the feed on every tab, not only Activity's.
     api.getActivity.mockResolvedValue({ nextCursor: null, items: [] });
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [], pinned: [] });
     live.rows = [];
     localStorage.clear();
     useUiStore.getState().setSidebarSection('channels');
@@ -334,6 +335,40 @@ describe('the navigation sidebar', () => {
       client.setQueryData(CHANNEL_STATS_QUERY_KEY, [stats('outbound', { hasUnread: true, newThreadCount: 3 })]);
     }, 0, { person: { ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } } });
     expect(screen.queryByRole('img', { name: /with new threads/u })).toBeNull();
+  });
+
+  it('counts pinned Channels with new threads and unread pinned threads and breakouts on the Pinned button', async () => {
+    api.getMyThreads.mockResolvedValue({
+      nextCursor: null,
+      items: [thread('plan', 'Q4 plan', { hasUnread: true }), thread('notes', 'Notes', { hasUnread: true })],
+      pinned: [
+        thread('plan', 'Q4 plan', { hasUnread: true }),
+        thread('quiet', 'Quiet', { hasUnread: false }),
+        thread('site', 'Make a website', {
+          kind: 'breakout', youAreMentioned: true,
+          breakoutOf: { workstreamId: 'plan', substreamId: 'site', title: 'Q4 plan' },
+        } as Partial<SpaceConversationSummary>),
+      ],
+    });
+    renderSidebar((client) => {
+      client.setQueryData(PINS_QUERY_KEY, [
+        { kind: 'channel', id: 'outbound', parentId: null },
+        { kind: 'channel', id: 'growth', parentId: null },
+        { kind: 'thread', id: 'plan', parentId: null },
+        { kind: 'thread', id: 'quiet', parentId: null },
+        { kind: 'breakout', id: 'site', parentId: 'plan' },
+      ]);
+      client.setQueryData(CHANNEL_STATS_QUERY_KEY, [
+        stats('outbound', { hasUnread: true, newThreadCount: 2 }),
+        stats('growth', { hasUnread: false, newThreadCount: 0 }),
+        // News, but not pinned: Channels counts it and Pinned does not.
+        stats('apple', { hasUnread: true, newThreadCount: 1 }),
+      ]);
+    });
+
+    // Outbound, Q4 plan and the mentioned breakout; not Quiet, Growth, or the unpinned Notes.
+    expect(await screen.findByRole('img', { name: '3 pinned with news' })).toHaveTextContent('3');
+    expect(screen.getByRole('img', { name: '2 with new threads' })).toBeInTheDocument();
   });
 
   it('counts unread Activity on the Activity button from any tab, and clears it on Mark all read', async () => {
