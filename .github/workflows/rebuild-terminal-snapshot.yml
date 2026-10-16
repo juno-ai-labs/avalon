@@ -1,15 +1,16 @@
-# Rebuilds the Rally-owned Terminal snapshot against Daytona's current managed
-# base image, and proves the rebuild with the real-provider acceptance gate.
+# Rebuilds the Rally-owned Terminal snapshot from the Daytona base image pinned
+# as TERMINAL_SNAPSHOT_BASE_IMAGE in snapshot-manifest.ts, and proves the
+# rebuild with the real-provider acceptance gate.
 #
 # Owning a snapshot means Daytona's OS and system-package fixes stop reaching us
-# automatically: we are pinned to whatever their base looked like when we last
-# built. Nothing detects that. The snapshot manifest fails closed when a
-# capability is missing or broken, but a stale-yet-working base passes every
-# probe, so drift is silent — a rotated CA baked into the managed image is the
-# concrete case, where the probe stays green and Git operations start failing.
+# automatically. The snapshot manifest fails closed when a capability is missing
+# or broken, but a stale-yet-working base passes every probe, so drift is silent:
+# a rotated CA baked into the base image is the concrete case, where the probe
+# stays green and Git operations start failing.
 #
-# A weekly rebuild bounds that staleness to a week. It is the condition on which
-# owning the snapshot was judged safe enough; without it, do not adopt one.
+# The pin is a fixed release tag, so this job refreshes only the layers Rally
+# adds. The base moves only when someone bumps the pin; this job does not bound
+# its staleness.
 name: Rebuild Terminal snapshot
 
 on:
