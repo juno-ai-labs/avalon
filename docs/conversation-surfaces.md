@@ -195,6 +195,12 @@ launcher that dressed its field differently made the element a person types
 their first message into the odd one out on a screen already showing the
 conversation it becomes, and it made the hand-off a costume change.
 
+The capsule's plus menu always starts with **Attach files**. A host may add its
+own entries after it through `menuActions` (`ComposerMenuAction`); the composer
+draws each and calls its `onSelect`, and an entry with a `disabledReason` shows
+disabled with that reason as its tooltip. The Channel's composer uses it for
+**Import from Claude or ChatGPT** ([session import](session-import.md)).
+
 The run's Stop action is an icon after Send, sharing the microphone's circular
 neutral background, with a tooltip that explains the
 current action or pending stop. Its mounted, inert-when-hidden slot animates its
