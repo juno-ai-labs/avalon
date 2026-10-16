@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { digestEmailHtml } from "../src/services/digest-email-content";
-import { occurrenceLabel } from "../src/services/digest-delivery-service";
+import { digestHandoffUrl, occurrenceLabel } from "../src/services/digest-delivery-service";
 
 describe("digest email", () => {
   it("renders the body's markdown rather than escaping it into the shell", () => {
@@ -91,6 +91,20 @@ describe("digest email", () => {
     expect(html).toContain("1 update<");
     expect(html).not.toContain("for you");
     expect(html).toContain("Here is what moved");
+  });
+});
+
+describe("digest links", () => {
+  it("open Activity in the recipient's organization through the desktop handoff", () => {
+    const url = digestHandoffUrl(
+      { AVALON_REGION: "global", PUBLIC_WEB_BASE_URL: "https://rallywith.ai/" },
+      "00000000-0000-7000-8000-000000000009",
+      "rallywithai://activity",
+    );
+
+    expect(url).toBe(`https://rallywith.ai/open#target=${encodeURIComponent(
+      "rallywithai://workspace/global/00000000-0000-7000-8000-000000000009/activity",
+    )}`);
   });
 });
 

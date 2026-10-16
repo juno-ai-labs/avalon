@@ -435,7 +435,11 @@ a taller page reproduces the third.
 The structure is: preheader (what a phone shows beside the subject, leading with
 the count that decides whether this gets opened now), wordmark, title and
 occurrence, count pills with the "for you" pill in brand, the body, a primary
-action, and a footer holding only the link to change the schedule. Layout is tables and inline styles only — no flexbox, no
+action, and a footer holding only the link to change the schedule. Both links
+go through the site's `/open` desktop handoff, addressed to the recipient's
+organization (`digestHandoffUrl`): the button to `rallywithai://activity`, which
+opens the main window with the sidebar on Activity, where every row the digest
+listed lives; the footer to `rallywithai://settings/digest`. Layout is tables and inline styles only — no flexbox, no
 grid, nothing a 2007 renderer has to guess at.
 
 A general Markdown library is the wrong tool here: clients ignore most of what
@@ -662,6 +666,8 @@ A dark variant behind `prefers-color-scheme` was not attempted: a `<style>`
 block is stripped by several clients, so it would only reach some readers. The
 palette lives in `email-markdown.ts`, so any future email shares it. The
 workspace name and the AI notice left the shell; the settings link stayed.
+"Open Rally" used to open the bare site root; it now opens Activity through a
+new `activity` deep link, since that is where the listed rows are.
 
 A digest is still unread Activity, but a row past two days old is now one count
 at the bottom instead of a line. Unread rows never expire, so every digest

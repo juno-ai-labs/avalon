@@ -29,6 +29,7 @@ import { RallyApi } from './api';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { accountOnboardingQueryKey } from './account-onboarding-query';
 import { readDevicePreferences } from './device-preferences';
+import { useUiStore } from './ui-store';
 import {
   consumeSurfaceEntrypoint,
   markWorkstreamFeedOpenStarted,
@@ -675,6 +676,17 @@ describe('single-platform desktop identity routing', () => {
 
     await dispatchDeepLink('avalon://settings/workspace');
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('workspace'));
+  });
+
+  it('opens the sidebar on Activity from the digest\'s link', async () => {
+    useUiStore.setState({ sidebarSection: 'channels', sidebarOpen: false });
+    bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
+    renderProvider();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
+
+    await dispatchDeepLink('rallywithai://activity');
+
+    expect(useUiStore.getState()).toMatchObject({ sidebarSection: 'activity', sidebarOpen: true });
   });
 
   it('does not drain a cold-start OAuth callback until runtime endpoints are loaded', async () => {

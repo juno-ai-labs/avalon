@@ -17,7 +17,8 @@ export function classifyDesktopHandoffTarget(value: string | null): {
       ? 'workstream'
       : destination.hostname === 'settings'
         ? 'settings'
-        : destination.hostname === 'automations' ? 'automation' : 'unknown';
+        : destination.hostname === 'automations' ? 'automation'
+        : destination.hostname === 'activity' ? 'activity' : 'unknown';
     return { handoffType, validity: intent && handoffType !== 'unknown' ? 'valid' : 'invalid' };
   } catch {
     return { handoffType: 'unknown', validity: 'invalid' };

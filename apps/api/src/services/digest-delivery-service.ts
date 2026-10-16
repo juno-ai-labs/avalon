@@ -202,8 +202,8 @@ async function deliverToTarget(
         bodyMarkdown: context.bodyMarkdown,
         itemCount: context.itemCount,
         highlightCount: context.highlightCount,
-        appUrl: env.PUBLIC_WEB_BASE_URL,
-        settingsUrl: digestSettingsUrl(env, context.workspaceId),
+        appUrl: digestHandoffUrl(env, context.workspaceId, "rallywithai://activity"),
+        settingsUrl: digestHandoffUrl(env, context.workspaceId, "rallywithai://settings/digest"),
       }),
       text: [digestTitle(context), "", markdownToEmailText(context.bodyMarkdown)].join("\n"),
       idempotencyKey: `avalon-digest/${target.id}/${context.deliveryId}`,
@@ -223,21 +223,21 @@ async function deliverToTarget(
 }
 
 /**
- * Where "change when you get this" goes.
+ * A digest link into the app, in the recipient's organization: the button
+ * opens Activity, and "change when you get this" opens the digest settings.
  *
- * The site serves no page under `/app/settings`, so a URL there would 404 — and
- * this is the link recipients are most likely to click, since the digest is on
- * by default. `/open` is the existing desktop handoff and already allowlists
- * `rallywithai://settings/...`, so it is the page that exists. Built with `new URL`
- * like every other public link in the API, which also survives a trailing slash
- * on the base.
+ * The site serves no page under `/app/settings` or for Activity, so a URL there
+ * would 404. `/open` is the existing desktop handoff and allowlists both deep
+ * links, so it is the page that exists. Built with `new URL` like every other
+ * public link in the API, which also survives a trailing slash on the base.
  */
-export function digestSettingsUrl(
+export function digestHandoffUrl(
   env: Pick<Env, "AVALON_REGION" | "PUBLIC_WEB_BASE_URL">,
   workspaceId: string,
+  deepLink: "rallywithai://activity" | "rallywithai://settings/digest",
 ): string {
   const handoff = new URL("/open", env.PUBLIC_WEB_BASE_URL);
-  const target = addWorkspaceTarget(new URL("rallywithai://settings/digest"), {
+  const target = addWorkspaceTarget(new URL(deepLink), {
     region: env.AVALON_REGION,
     workspaceId,
   });

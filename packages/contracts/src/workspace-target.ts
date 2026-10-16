@@ -81,7 +81,9 @@ export function parseWorkspaceAddressedDeepLink(
   }
   if (url.hostname !== ADDRESS_HOST || url.username || url.password || url.port) return null;
   const segments = url.pathname.split("/").slice(1);
-  if (segments.length < 4) return null;
+  // A destination may be a bare host (`activity`); each host's own parser
+  // decides whether it needs a path.
+  if (segments.length < 3) return null;
   const [region, encodedWorkspaceId, destinationHost, ...destinationPath] = segments;
   const target = { region, workspaceId: encodedWorkspaceId ? uuidFromBase58(encodedWorkspaceId) ?? encodedWorkspaceId : encodedWorkspaceId };
   if (
