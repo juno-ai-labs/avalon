@@ -256,7 +256,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     enabled: multipleWorkspacesEnabled,
   });
   // A support session runs on the impersonator's device, not the person's.
-  useDeviceTimezoneSync(api ?? null, workspace.currentUser.id, !session?.impersonator);
+  useDeviceTimezoneSync(api ?? null, !session?.impersonator);
   const supportWorkspaces = useSupportWorkspaces(session?.impersonator?.id ?? session?.user.id, listSupportWorkspaces);
   const impersonator = session?.impersonator
     ? { id: session.impersonator.id, name: session.impersonator.name, email: session.impersonator.email,

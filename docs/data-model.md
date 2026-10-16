@@ -217,8 +217,8 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
   account's IANA `timezone` and the `timezone_source` that says who put it
   there. `client` means the account follows the device: a desktop sign-in seeds
   it, and the desktop and browser clients report the device's zone through
-  `PUT /workspace/me/device-timezone` at launch and on focus whenever that zone
-  differs from the last one it sent. `user` means somebody fixed a zone in
+  `PUT /workspace/me/device-timezone` at launch and on every focus; the server
+  writes only when the zone moved. `user` means somebody fixed a zone in
   Account → Default timezone, and no report moves it; turning **Set timezone
   automatically** back on sets `client` again. It is one column per region —
   `users` is regional — so it answers for every workspace the person belongs to
@@ -1389,9 +1389,11 @@ sign-in, and the column defaults to `America/Los_Angeles`, so most accounts
 held a zone nobody chose and digests arrived at the wrong local hour. A fixed
 zone still wins over a report, for the reason `assumptions.md` item 22 gives.
 
-**Consequences:** A device reports only when its zone differs from the last
-one it sent, so two devices in different zones each report once after moving;
-the last one wins. A support session never reports.
+**Consequences:** Every launch and focus sends a report, because another
+device may have moved the account since; the device in use wins, and a report
+that changes nothing writes nothing. Personal automations keep the zone they
+were created in: only digests are re-derived when the account moves. A support
+session never reports.
 
 ### 2026-09-21 — Scope Channel pins to Space placements
 
