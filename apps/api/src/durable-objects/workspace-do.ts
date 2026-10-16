@@ -4345,6 +4345,30 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "how each kind of notification reaches each person",
   // Push, email or a connector's surface per kind; see member-preferences.ts.
   statements: WORKSPACE_MEMBER_NOTIFY_PREFERENCES_MIGRATION,
+}, {
+  version: 108,
+  description: "every digest sends at the start of the day at 07:45",
+  // Everyone moves, not only digests still on the old 09:00 default: a stored
+  // 09:00 cannot say whether someone chose it. An evening time is kept, and a
+  // digest with no days gets weekdays. Email and Personal Channel destinations
+  // need the account address and the Space id, which this object cannot
+  // derive, so each digest is marked and the reconciler adds whichever it
+  // lacks and switches it on. The derived `schedules` rows are dropped rather
+  // than rewritten, since their next instant needs the owner's timezone; the
+  // reconciler rebuilds them on the same visit. See docs/digests.md.
+  statements: [
+    `ALTER TABLE digest_schedules ADD COLUMN default_destinations_pending INTEGER NOT NULL DEFAULT 0
+       CHECK (default_destinations_pending IN (0, 1))`,
+    `DELETE FROM digest_schedule_times WHERE minute_of_day < 720`,
+    `INSERT INTO digest_schedule_times (digest_schedule_id, minute_of_day)
+     SELECT id, 465 FROM digest_schedules`,
+    `UPDATE digest_schedules
+        SET day_mask = CASE WHEN day_mask = 0 THEN 62 ELSE day_mask END,
+            default_destinations_pending = 1,
+            version = version + 1,
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+    `DELETE FROM schedules WHERE digest_schedule_id IS NOT NULL`,
+  ],
 }];
 
 function conversationToolEntry(conversation: {

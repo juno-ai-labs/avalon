@@ -299,8 +299,8 @@ names (`renderUnreadDigest`). Nothing unread, nothing sent: the occurrence
 settles as `empty`.
 
 **A digest is on by default**, for people who already exist and for anyone who
-joins later: weekdays at 09:00 in their own timezone, to their email and, for
-anyone who is not a guest, their Personal Channel.
+joins later: weekdays at 07:45 in their own timezone, to their email and, for
+anyone who is not a guest, their Personal Channel (shown as Rally).
 
 **There is no digest timezone.** A digest's times are wall-clock times in its
 owner's own day, and `users.timezone` already says when that is. The derived
@@ -318,7 +318,11 @@ the four that exist today, and repairs a half-written save instead of leaving it
 1. **An active member with no digest gets the default.** Absence is unambiguous —
    switching a digest off keeps its row with `enabled = 0` — so this can never
    resurrect something somebody turned off. A member with no account address is
-   skipped, because the default destination is that address.
+   skipped, because the default destination is that address. The one exception
+   is a digest marked `default_destinations_pending` by WorkspaceDO migration
+   108: the same call adds whichever of email and Personal Channel it lacks,
+   switches it on, and clears the mark. A save clears it too, so the reconciler
+   never overrides a choice made after the migration.
 2. **An enabled digest with days and times but no `schedules` rows gets them.**
    That is the state a fresh default lands in, and the state a save leaves if it
    fails between writing the configuration and deriving the rows.
@@ -637,12 +641,25 @@ device registration, provider delivery and retry receipts.
 
 ## Changelog
 
-### 2026-10-16 — The `digests-enabled` flag is removed
+### 2026-10-16 — The `digests-enabled` flag is removed, and every digest starts the day at 07:45
 
 **What changed:** The `digests-enabled` Flagship flag is gone from the API,
 the client flag contract, Settings, Ace's catalog, and Flagship itself (Ace's
 deploy now retires it). A digest fires on its own `enabled` bit alone, and
 Settings → Notifications always draws the Daily digest group.
+
+The default start-of-day time moves from 09:00 to 07:45, and WorkspaceDO
+migration 108 moves everyone, not only new members: each stored digest's
+morning time becomes 07:45 (an evening time is kept, no days becomes
+weekdays), and each is marked so the reconciler adds the email and Personal
+Channel destinations it lacks and switches it on. Most digests made before
+2026-10-15 had email only. A stored 09:00 could not say whether someone chose
+it, and Settings had been hidden since 2026-08-25, so nobody had a recent
+choice to keep. The derived `schedules` rows are dropped by the migration and
+rebuilt by the reconciler on the same visit, because their next instant needs
+the owner's timezone, which the object cannot compute in SQL; a digest does not
+fire between the object waking and the reconciler reaching that member. Empty
+digests still never send.
 
 **Why:** The flag was the kill switch for the agent-run digest that the
 2026-10-15 rewrite replaced, and it no longer guarded anything worth a switch.

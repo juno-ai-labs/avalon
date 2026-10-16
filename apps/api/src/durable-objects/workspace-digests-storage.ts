@@ -38,6 +38,7 @@ interface DigestScheduleRow extends Record<string, SqlStorageValue> {
   id: string;
   day_mask: number;
   enabled: number;
+  default_destinations_pending: number;
 }
 
 function scheduleRowFor(
@@ -46,7 +47,7 @@ function scheduleRowFor(
   userId: string,
 ): DigestScheduleRow | undefined {
   return storage.sql.exec<DigestScheduleRow>(
-    `SELECT id, day_mask, enabled FROM digest_schedules
+    `SELECT id, day_mask, enabled, default_destinations_pending FROM digest_schedules
       WHERE workspace_id = ? AND user_id = ?`,
     workspaceId,
     userId,
@@ -125,6 +126,7 @@ export function workspaceDigestSettings(
       id: schedule.id,
       dayMask: schedule.day_mask,
       enabled: schedule.enabled === 1,
+      defaultDestinationsPending: schedule.default_destinations_pending === 1,
     },
     times: scheduleTimes(storage, schedule.id),
     nextRunAt: next?.next_run_at ?? null,
@@ -152,7 +154,7 @@ export function replaceWorkspaceDigestSchedule(
       storage.sql.exec(
         `UPDATE digest_schedules
             SET day_mask = ?, enabled = ?, execution_principal_json = ?,
-                version = version + 1, updated_at = ?
+                default_destinations_pending = 0, version = version + 1, updated_at = ?
           WHERE id = ? AND workspace_id = ?`,
         request.dayMask,
         request.enabled ? 1 : 0,
@@ -220,11 +222,56 @@ export function replaceWorkspaceDigestSchedule(
 }
 
 /**
+ * The default destinations, email and the Personal Channel, each added only
+ * where the digest does not already have one of that type.
+ */
+function insertDefaultDestinations(
+  storage: DurableObjectStorage,
+  request: WorkspaceDigestDefaultRequest,
+  scheduleId: string,
+): void {
+  // Frozen against the account address the same way a saved target is, so a
+  // default and a chosen destination behave identically from here on.
+  storage.sql.exec(
+    `INSERT INTO digest_delivery_targets
+       (id, workspace_id, digest_schedule_id, user_id, target_type, connection_id,
+        provider_tenant_id, provider_user_id, email_address, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'email', NULL, NULL, NULL, ?, 'active', ?, ?)
+     ON CONFLICT (digest_schedule_id, target_type) DO NOTHING`,
+    request.targetId,
+    request.workspaceId,
+    scheduleId,
+    request.userId,
+    request.emailAddress,
+    request.at,
+    request.at,
+  );
+  if (!request.personalChannel) return;
+  storage.sql.exec(
+    `INSERT INTO digest_delivery_targets
+       (id, workspace_id, digest_schedule_id, user_id, target_type, connection_id,
+        provider_tenant_id, provider_user_id, email_address, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'personal_channel', ?, ?, ?, NULL, 'active', ?, ?)
+     ON CONFLICT (digest_schedule_id, target_type) DO NOTHING`,
+    request.personalChannel.targetId,
+    request.workspaceId,
+    scheduleId,
+    request.userId,
+    request.personalChannel.spaceId,
+    request.workspaceId,
+    request.userId,
+    request.at,
+    request.at,
+  );
+}
+
+/**
  * Give a member the on-by-default digest, or answer with the one they have.
  *
  * Absence is the only thing that creates: switching a digest off keeps its row
  * with `enabled = 0`, so this can never resurrect something somebody turned
- * off. The routed version was three `ON CONFLICT DO NOTHING` statements whose
+ * off. A digest marked `default_destinations_pending` (migration 108) gains
+ * the default destinations it lacks and is switched on. The routed version was three `ON CONFLICT DO NOTHING` statements whose
  * "did I create it?" answer was a physical write counter; here the existence
  * check and the writes are one transaction and the answer is the branch taken.
  */
@@ -234,13 +281,25 @@ export function ensureDefaultWorkspaceDigestSchedule(
 ): WorkspaceDigestDefaultResult {
   return storage.transactionSync(() => {
     const existing = scheduleRowFor(storage, request.workspaceId, request.userId);
+    if (existing && existing.default_destinations_pending === 1) {
+      insertDefaultDestinations(storage, request, existing.id);
+      storage.sql.exec(
+        `UPDATE digest_schedules
+            SET enabled = 1, default_destinations_pending = 0,
+                version = version + 1, updated_at = ?
+          WHERE id = ?`,
+        request.at,
+        existing.id,
+      );
+    }
     if (existing) {
       return WorkspaceDigestDefaultResultSchema.parse({
         created: false,
         schedule: {
           id: existing.id,
           dayMask: existing.day_mask,
-          enabled: existing.enabled === 1,
+          enabled: existing.enabled === 1 || existing.default_destinations_pending === 1,
+          defaultDestinationsPending: false,
         },
         times: scheduleTimes(storage, existing.id),
       });
@@ -263,41 +322,10 @@ export function ensureDefaultWorkspaceDigestSchedule(
       request.scheduleId,
       request.minuteOfDay,
     );
-    // Frozen against the account address the same way a saved target is, so a
-    // default and a chosen destination behave identically from here on.
-    storage.sql.exec(
-      `INSERT INTO digest_delivery_targets
-         (id, workspace_id, digest_schedule_id, user_id, target_type, connection_id,
-          provider_tenant_id, provider_user_id, email_address, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'email', NULL, NULL, NULL, ?, 'active', ?, ?)`,
-      request.targetId,
-      request.workspaceId,
-      request.scheduleId,
-      request.userId,
-      request.emailAddress,
-      request.at,
-      request.at,
-    );
-    if (request.personalChannel) {
-      storage.sql.exec(
-        `INSERT INTO digest_delivery_targets
-           (id, workspace_id, digest_schedule_id, user_id, target_type, connection_id,
-            provider_tenant_id, provider_user_id, email_address, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'personal_channel', ?, ?, ?, NULL, 'active', ?, ?)`,
-        request.personalChannel.targetId,
-        request.workspaceId,
-        request.scheduleId,
-        request.userId,
-        request.personalChannel.spaceId,
-        request.workspaceId,
-        request.userId,
-        request.at,
-        request.at,
-      );
-    }
+    insertDefaultDestinations(storage, request, request.scheduleId);
     return WorkspaceDigestDefaultResultSchema.parse({
       created: true,
-      schedule: { id: request.scheduleId, dayMask: request.dayMask, enabled: true },
+      schedule: { id: request.scheduleId, dayMask: request.dayMask, enabled: true, defaultDestinationsPending: false },
       times: [request.minuteOfDay],
     });
   });
