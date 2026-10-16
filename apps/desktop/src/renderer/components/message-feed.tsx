@@ -280,15 +280,6 @@ export function MessageFeed({
     });
     return last;
   }, [breakoutCards, messages]);
-  // The newest thing Rally said: the one turn whose breakout action is shown
-  // outright rather than on hover, since it is the likeliest place to branch.
-  const latestReplyId = useMemo(() => {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index]!;
-      if (message.authorType === 'agent' && message.messageType === 'text') return message.id;
-    }
-    return null;
-  }, [messages]);
   const cardsAfter = (message: Message, index: number): React.JSX.Element | null => {
     const turnId = message.transcriptTurnId;
     if (!breakoutCards || !turnId || lastRowOfTurn.get(turnId) !== index) return null;
@@ -326,7 +317,6 @@ export function MessageFeed({
           onStartSubstream={onStartSubstream}
           {...(merge ? { merge } : {})}
           {...(onOpenBreakout ? { onOpenBreakout } : {})}
-          latestReply={message.id === latestReplyId}
           rowDisclosure={rowDisclosure}
           {...(onAcceptDraft ? { onAcceptDraft } : {})}
           acceptingDraftFor={acceptingDraftFor ?? null}
