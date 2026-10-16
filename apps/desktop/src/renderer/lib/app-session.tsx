@@ -13,6 +13,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { AccountOnboarding, OrganizationNameSuggestion, SupportPerson, SupportWorkspace, UpdateAccountOnboarding, WorkspaceDeparture, WorkspaceDepartureOutcome } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
+import { PHONE_LAYOUT_MAX_WIDTH } from '@rally/ui/lib/phone-layout';
 import {
   workspaceTargetsEqual,
   type WorkspaceTarget,
@@ -1091,8 +1092,9 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           markSurfaceEntrypoint(navigation.entrypoint);
           const ui = useUiStore.getState();
           ui.setSidebarSection('activity');
-          // On a narrow window the sidebar is an overlay; open it so the link lands somewhere visible.
-          ui.setSidebarOpen(true);
+          // At phone width the sidebar is a sheet; open it so the link lands
+          // somewhere visible. Wider, an open sheet would leave the main pane inert.
+          if (window.innerWidth <= PHONE_LAYOUT_MAX_WIDTH) ui.setSidebarOpen(true);
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openActivity);
         else if (requireActiveWorkspace('Sign in before opening Activity.')) openActivity();
