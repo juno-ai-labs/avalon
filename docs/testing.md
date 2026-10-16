@@ -424,6 +424,20 @@ beforeEach(async () => {
   left behind, failing with `workstream_create_replay_incomplete` — in CI only,
   where the object is under enough load for it to matter.
 
+  Two more forms of the same gap, each of which failed one CI shard:
+
+  - **A fixture dated in the past is fair game for a sweep.** Deleting an
+    alarm does not stop a handler that is already running, and that handler
+    runs everything due, the expired-draft sweep included. A draft dated weeks
+    ago is "expired" to that sweep, so it can vanish mid-test.
+    `workspace-resources-inventory.test.ts` dates the drafts it is not testing
+    for expiry to now, so no sweep can reach them.
+  - **"Nothing is owed now" must name what may be.** Closing the Space cutover
+    queues the seating pass (`personal_channel_backfill`) due at once, and under
+    load it can still be pending when the object next wakes.
+    `space-bootstrap.test.ts` accepts an alarm due now only when that pass is
+    what is due.
+
   `runDurableObjectAlarm` introduces its own variant of the race when the alarm
   it is meant to force is already overdue: workerd clears the alarm slot for the
   entire duration of a firing invocation — the same platform behavior

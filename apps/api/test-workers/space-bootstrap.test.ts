@@ -231,6 +231,7 @@ async function generalCount(): Promise<number> {
 async function alarmArmedOnWake(): Promise<{
   armed: number | null;
   cutover: { not_before: number; attempts: number };
+  scheduled: Array<{ kind: string; effective_at: number }>;
 }> {
   return runInDurableObject(workspace(), async (instance, state) => {
     await instance.spaceBootstrapStatus({ workspaceId: WORKSPACE_ID });
@@ -239,6 +240,9 @@ async function alarmArmedOnWake(): Promise<{
       cutover: state.storage.sql.exec<{ not_before: number; attempts: number }>(
         "SELECT not_before, attempts FROM space_bootstrap WHERE id = 1",
       ).one(),
+      scheduled: state.storage.sql.exec<{ kind: string; effective_at: number }>(
+        "SELECT kind, MAX(due_at, retry_at) AS effective_at FROM _internal_durable_alarms",
+      ).toArray(),
     };
   });
 }
@@ -554,9 +558,14 @@ describe("the Space cutover", () => {
     await evictDurableObject(workspace());
 
     // A finished cutover contributes no candidate, so the object wakes only for
-    // whatever else it owes — none of which is owed now.
+    // whatever else it owes. Closing the cutover owes one thing at once: the
+    // seating pass (`personal_channel_backfill`), which under load can still
+    // be pending when the object wakes. An alarm due now is that pass, or it
+    // would be the cutover's.
     const after = await alarmArmedOnWake();
-    expect(after.armed === null || after.armed > Date.now() + 1).toBe(true);
+    const seatingPass = after.scheduled.find((row) => row.kind === "personal_channel_backfill");
+    expect(after.armed === null || after.armed > Date.now() + 1
+      || (seatingPass !== undefined && after.armed >= seatingPass.effective_at)).toBe(true);
   });
 
   it("refuses to close while a Channel is still outside every Space", async () => {
