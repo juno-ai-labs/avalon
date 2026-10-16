@@ -28,6 +28,11 @@ export const WorkspaceDigestScheduleSchema = deferredZodSchema(() => z.strictObj
   id: IdSchema,
   dayMask: DayMaskSchema,
   enabled: z.boolean(),
+  /**
+   * Waiting for the reconciler to add the default email and Personal Channel
+   * destinations (WorkspaceDO migration 108). Cleared by that, or by a save.
+   */
+  defaultDestinationsPending: z.boolean(),
 }));
 
 export const WorkspaceDigestSettingsRequestSchema = deferredZodSchema(() => z.strictObject({
@@ -108,7 +113,9 @@ export const WorkspaceDigestDefaultRequestSchema = deferredZodSchema(() => z.str
 /**
  * What exists after the call, created or found. Absence is the only thing that
  * creates: a digest switched off keeps its row with `enabled = 0`, so the
- * default can never resurrect one somebody turned off.
+ * default can never resurrect one somebody turned off. The one exception is a
+ * digest marked `defaultDestinationsPending`: it gains whichever default
+ * destinations it lacks and is switched on.
  */
 export const WorkspaceDigestDefaultResultSchema = deferredZodSchema(() => z.strictObject({
   created: z.boolean(),

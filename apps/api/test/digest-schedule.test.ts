@@ -135,7 +135,7 @@ describe("digest schedule", () => {
 
     expect(schedule.enabled).toBe(true);
     expect(schedule.days).toEqual([1, 2, 3, 4, 5]);
-    expect(schedule.times).toEqual([9 * 60]);
+    expect(schedule.times).toEqual([7 * 60 + 45]);
     // Mirrored from the account, never stored a second time.
     expect(schedule.timezone).toBe("Europe/London");
     expect(schedule.deliveryTargets).toMatchObject([
@@ -347,7 +347,7 @@ describe("digests are on by default", () => {
     expect(await new DigestService(env, auth).get()).toMatchObject({
       enabled: true,
       days: [1, 2, 3, 4, 5],
-      times: [9 * 60],
+      times: [7 * 60 + 45],
       timezone: "Europe/London",
       deliveryTargets: [
         expect.objectContaining({ type: "email", displayName: "owner@example.com" }),
@@ -384,6 +384,40 @@ describe("digests are on by default", () => {
     // Switching off keeps the row with enabled = 0, so absence stays an
     // unambiguous signal that nobody has ever had one.
     expect(await new DigestService(env, auth).get()).toMatchObject({ enabled: false, nextRunAt: null });
+  });
+
+  it("adds the default destinations a migrated digest lacks and switches it on", async () => {
+    const { objectDatabase, env } = fixture();
+    await reconcileDigestDefaults(env);
+    await new DigestService(env, auth).replace({
+      enabled: false,
+      days: [1, 2, 3, 4, 5],
+      times: [7 * 60 + 45],
+      deliveryTargets: [{ type: "email", connectionId: null }],
+    });
+    // What WorkspaceDO migration 108 leaves behind.
+    objectDatabase.exec(`
+      UPDATE digest_schedules SET default_destinations_pending = 1;
+      DELETE FROM schedules WHERE digest_schedule_id IS NOT NULL;
+    `);
+
+    await reconcileDigestDefaults(env);
+
+    expect(await new DigestService(env, auth).get()).toMatchObject({
+      enabled: true,
+      times: [7 * 60 + 45],
+      deliveryTargets: [
+        expect.objectContaining({ type: "email", displayName: "owner@example.com" }),
+        expect.objectContaining({ type: "personal_channel", displayName: "Personal Channel" }),
+      ],
+    });
+    expect(objectDatabase.prepare(
+      "SELECT COUNT(*) AS count FROM schedules WHERE digest_schedule_id IS NOT NULL",
+    ).get()).toEqual({ count: 2 });
+    // Done once: switching it off again afterwards stays off.
+    expect(objectDatabase.prepare(
+      "SELECT COUNT(*) AS count FROM digest_schedules WHERE default_destinations_pending = 1",
+    ).get()).toEqual({ count: 0 });
   });
 
   it("gives a member who joins later one too", async () => {
