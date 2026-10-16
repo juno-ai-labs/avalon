@@ -195,8 +195,8 @@ describe("automation directory", () => {
     const personal = await createAndPublish("personal");
     const shared = await createAndPublish("workspace");
     const owned = await createAndPublish("workstream");
-    expect((await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID })).items.map((item) => item.id).sort()).toEqual([personal, shared, owned].sort());
-    expect((await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID })).items.map((item) => item.id)).toEqual([shared]);
+    expect((await workspaceStub().listSidekickDirectoryForAuthorizedMember({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID })).items.map((item) => item.id).sort()).toEqual([personal, shared, owned].sort());
+    expect((await workspaceStub().listSidekickDirectoryForAuthorizedMember({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID })).items.map((item) => item.id)).toEqual([shared]);
   });
 
   it("lists a Channel's Sidekick to the Channel's participants, not only its author, and not to anyone else", async () => {
@@ -208,9 +208,9 @@ describe("automation directory", () => {
       lifecycle: "active", scope: "workstream", owningWorkstreamId: ROOM_ID, title: "Release notes", description: "",
     });
 
-    expect((await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
+    expect((await workspaceStub().listSidekickDirectoryForAuthorizedMember({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
       .items.map((item) => item.id)).toEqual([automationId]);
-    expect((await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID }))
+    expect((await workspaceStub().listSidekickDirectoryForAuthorizedMember({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID }))
       .items).toEqual([]);
   });
 
@@ -230,7 +230,7 @@ describe("automation directory", () => {
     const thread = { id: ROOM_ID, title: "Release room", appearance: { icon: "rocket", color: "purple" } };
     const author = { userId: AUTHOR_ID, actorRole: "member" as const, participantOfOwningWorkstream: true };
 
-    const library = await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID });
+    const library = await workspaceStub().listSidekickDirectoryForAuthorizedMember({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID });
     expect(Object.fromEntries(library.items.map((item) => [item.id, item.owningThread])))
       .toEqual({ [authored]: thread, [othersId]: thread });
     const detail: AutomationDetail = await workspaceStub().sidekickReadDetail({
@@ -243,7 +243,7 @@ describe("automation directory", () => {
     await runInDurableObject(workspaceStub(), (_instance, state) => {
       state.storage.sql.exec("UPDATE channel_viewers SET is_participant = 0 WHERE workstream_id = ? AND user_id = ?", ROOM_ID, AUTHOR_ID);
     });
-    const after = await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID });
+    const after = await workspaceStub().listSidekickDirectoryForAuthorizedMember({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID });
     expect(after.items.map((item) => ({ id: item.id, owningThread: item.owningThread })))
       .toEqual([{ id: authored, owningThread: null }]);
     const detailAfter: AutomationDetail = await workspaceStub().sidekickReadDetail({
@@ -355,7 +355,7 @@ describe("automation directory", () => {
     expect(JSON.parse((await directoryRow(automationId)).appearance_json ?? "null")).toEqual({ icon: "rocket", color: "purple" });
     const listed = await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID });
     expect(listed.items.map((item) => item.appearance)).toEqual([{ icon: "rocket", color: "purple" }]);
-    const library = await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID });
+    const library = await workspaceStub().listSidekickDirectoryForAuthorizedMember({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID });
     expect(library.items.map((item) => item.appearance)).toEqual([{ icon: "rocket", color: "purple" }]);
   });
 
