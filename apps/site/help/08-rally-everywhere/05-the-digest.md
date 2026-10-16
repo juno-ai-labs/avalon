@@ -44,7 +44,8 @@ as you make them.
 
 1. **Start of day** and **End of day** each have a time and a switch. By
    default the start of day digest is on at 7:45 AM on weekdays, sent to your
-   email and your Personal Channel, and the end of day one is off.
+   email and, unless you are a guest, your Personal Channel. The end of day
+   one is off.
 2. **Send to** picks where it goes. In a narrow window it is one button naming
    what is on, such as **Rally and Email**; click it for a list you can tick.
 3. **Days** is **Weekdays** or **Every day**.
