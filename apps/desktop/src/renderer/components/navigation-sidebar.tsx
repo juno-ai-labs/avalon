@@ -174,6 +174,9 @@ export function NavigationSidebar({
   // it inert at a width that draws no sheet.
   useEffect(() => {
     if (!sidebarOpen) return undefined;
+    // Opened from a pane header, focus fell with the pane as it went inert;
+    // it lands on the close button, where the sheet starts.
+    if (!panel.current?.contains(document.activeElement)) menuToggle.current?.focus();
     const closeOnEscape = (event: KeyboardEvent): void => {
       // A menu or dialog open over the sheet takes this Escape for itself.
       if (event.key !== 'Escape' || document.querySelector('[role="menu"], [role="dialog"]')) return;

@@ -211,26 +211,26 @@ its threads and messages, and a composer at the foot.
 The screen has one header. A pane with a `TitlePillHeader` is that header:
 the app shell provides `PhoneHeaderContext`, and at phone width the header
 leads its crumbs' glass `MarkBridge` with a menu mark that opens the sheet,
-keeps its pill centred, and puts **Search organization** first in its folded
-"⋯" menu ahead of the pane's own actions. `usePhoneLayout`
-(`packages/ui/src/lib/phone-layout.ts`) is the JS side of the 640px
-breakpoint, for what CSS cannot do, such as adding a mark to a bridge. The
-loading skeleton headers draw the menu mark alone (`TitlePillNavigation`), so
-it is there from the first frame. A right-slot panel (a site, a resource, an
-attachment) fills the phone, so its header carries the same, and the panel
-is a `conversation-pane` container: under 460px a long title truncates in
-the middle column instead of the crowding shift carrying it off the left
-edge.
+and puts **Search organization** first in its folded "⋯" menu. Loading
+skeletons draw the mark alone (`TitlePillNavigation`).
+A right-slot panel fills the phone, so its header carries the same. Every
+pane header on a phone takes the narrow pane's columns, so a long title
+truncates in the middle and the crowding shift is off. A window surface in a
+browser tab draws no sidebar, so the app shell provides no context there.
 
 The sidebar is a sheet behind the list's own header: the close button at the
-left, the section's title centred, its actions (New channel, Search) at the
-right. The section switcher is a row of tabs under it, with the account menu
-as a last tab labelled Settings. While the main pane holds a title-pill
-header, the shut sheet keeps no bar and is hidden whole; a screen without one
-(the landing, Sidekicks, Not found) still shows the sheet's header as its top
-bar. The sheet is clipped rather than moved, for the reasons the 2026-10-06
-entry gives. Opening anything from it closes it, as do Escape (which hands
-focus back to whichever button opened it) and widening past 640px; switching
+left, the section's title centred, its actions at the right, the sides never
+narrower than their buttons. The section switcher is a row of tabs under it,
+with the account menu as a last tab labelled Settings. While a visible pane
+header carries the menu mark (`PHONE_NAVIGATION_CONTROL`), the shut sheet
+keeps no bar and is hidden whole. A screen without one (the landing, Not
+found, an access request, a Breakout draft, whose header is collapsed to
+nothing so it hands over to the created Breakout without moving) and the
+browser panel, which draws no mark, keep the sheet's header as their top bar. The sheet is clipped rather than moved,
+for the reasons the 2026-10-06 entry gives. Opening it from a pane header
+moves focus to its close button; closing hands focus back to the opener, or
+to the visible menu mark when the opener is gone (`useSheetOpener`). Opening
+anything from it closes it, as do Escape and widening past 640px; switching
 sections does not navigate, so the sheet stays open on the list just picked.
 
 ### Title pills
@@ -484,27 +484,28 @@ one row and the conversation's crumbs and actions in the other.
 pill and its menu belong to the pane, and the Breakout and right-slot panes
 each have their own; one bar would need to know which pane is in front. A
 separate menu button beside the crumbs instead of a mark in their bridge: the
-product owner asked for one glass group holding both. Hiding the bar on every
-route: the landing and Sidekicks have no pane header, and would lose the only
-way to the navigation.
+product owner asked for one glass group holding both. Hiding the bar whenever
+a title-pill header exists: a hidden pane's header still matches, which left
+a Breakout draft and the browser panel with no way to the navigation, so the
+rule keys on a visible menu mark. Making the right-slot panel a
+`conversation-pane` container to truncate its title: under 460px it also
+re-laid out the desktop panel, which is that wide by default.
 
 A site in the right slot showed the problem worst: its three actions crowded
 the header, and the shift that keeps the pill clear of them moved its long
-title off the screen's left edge. At pane widths under 460px the columns
-already keep the pill clear, so the shift is off there.
+title off the screen's left edge.
 
 The same change gave the Channels and Activity buttons counts. They carried
-none before, and why was not recorded. On a phone those buttons are the first thing the sheet shows, and the
-Activity rows and Channel rows held red dots that nothing pointed to. Each
-count reads a query the list already holds, so no new request backs it: the
-first Activity page is 250 rows, as the menu bar's count is, and exact up to
-that.
+none before, and why was not recorded. On a phone those buttons are the first
+thing the sheet shows, and the Activity and Channel rows held red dots that
+nothing pointed to. Each count reads a query the list already holds, so no
+new request backs it: the first Activity page is 250 rows, as the menu bar's
+count is, and exact up to that.
 
-**Consequences:** Whether the bar shows is a stylesheet decision
-(`:has(> .main-pane .title-pill-header)`), so a new pane header must use the
-`title-pill-header` class or the bar comes back above it. A pane header drawn
-without `TitlePillHeader` or `TitlePillNavigation` has no way to the
-navigation on a phone.
+**Consequences:** Whether the bar shows is a stylesheet decision keyed on
+`.has-phone-navigation`, so a pane header drawn without `TitlePillHeader` or
+`TitlePillNavigation` keeps the bar above it, and a new full-screen panel that
+draws no mark must be excluded from that rule as the browser panel is.
 
 ### 2026-10-16 — A Pinned section in the switcher
 
