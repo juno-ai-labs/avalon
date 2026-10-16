@@ -306,9 +306,9 @@ from; reduced motion turns both off.
 
 ### Breakouts
 
-A Breakout is still created only from a message. Under Rally's newest reply
-the action is a visible line, **Start a breakout from this message**; on every
-other message it is **New breakout** among the actions that appear on hover. Its launch surface opens in the right pane: a second Main surface
+A Breakout is still created only from a message: **New breakout** is the first
+of the actions that appear on hover, on every message, Rally's newest reply
+included, ahead of **Merge**. Its launch surface opens in the right pane: a second Main surface
 with `paneKey="launch"`, so it owns its own panel scope. Once created, the
 route's `?substream=` names it and it opens in the right pane beside Main. The
 route contract is unchanged: deep links, the restored last route and search
@@ -466,6 +466,23 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-16 — New breakout and Merge lead every message's hover row
+
+**What changed:** **New breakout** is the first hover action on every message,
+Rally's newest reply included, and **Merge** follows it. The visible line
+under Rally's newest reply, **Start a breakout from this message**, is gone.
+
+**Why:** Merge-back added a second action that moves work between levels, and
+the product owner asked for both in one place, at the front of the row, with
+the permanent line folded into it.
+
+**Considered and rejected:** Keeping the permanent line beside the hover row,
+which put the same action on screen twice under the newest reply.
+
+**Consequences:** No message has a breakout control outside its hover row. The
+row never wraps (`flex-wrap: nowrap`), so a long row runs under the title
+menu's pop-out instead of breaking. Mechanism: [`conversation-merge.md`](conversation-merge.md).
 
 ### 2026-10-16 — One header at phone width; counts on every section
 

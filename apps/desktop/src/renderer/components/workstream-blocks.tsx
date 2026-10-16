@@ -1720,8 +1720,8 @@ function StartSubstreamButton({ onStart }: { onStart: () => void }): React.JSX.E
 
 /**
  * Merge this message's words back up: a Breakout's into its Thread, a
- * Thread's into one of its Channels. First in the row, because it is the
- * action that finishes a piece of work. The icon is the breakout mark rotated
+ * Thread's into one of its Channels. Second in the row, after New breakout:
+ * the two actions that move work between levels lead it. The icon is the breakout mark rotated
  * 180°: work goes down into a Breakout and comes back up.
  */
 function MergeButton({ merge, text }: { merge: MessageMergeAction; text: string }): React.JSX.Element {
@@ -1811,6 +1811,7 @@ function AssistantMessageActions({ citations, mentions, onMerge, onStartSubstrea
         // as one attempt that did not work.
         onPointerLeave={() => setFailed(null)}
       >
+        {onStartSubstream && <StartSubstreamButton onStart={onStartSubstream} />}
         {hasText && onMerge && <MergeButton merge={onMerge} text={text} />}
         {hasText && (
           <MessageAction description="Copy response" onClick={() => void copyResponse().catch(() => undefined)}><Clipboard size={12} /> Copy</MessageAction>
@@ -1856,7 +1857,6 @@ function AssistantMessageActions({ citations, mentions, onMerge, onStartSubstrea
             <span className="sr-only" role="status">{exportStatusMessage(saving, failed)}</span>
           </>
         )}
-        {onStartSubstream && <StartSubstreamButton onStart={onStartSubstream} />}
       </footer>
     </TipGroup>
   );
@@ -2688,12 +2688,6 @@ interface MessageBlockProps {
   /** Opens a Breakout a merge names. */
   onOpenBreakout?: (breakoutId: string) => void;
   /**
-   * Whether this is the newest thing Rally said in the feed. Its breakout
-   * action is then a visible line under the message rather than one of the
-   * actions that appear on hover.
-   */
-  latestReply?: boolean;
-  /**
    * How this transcript resolves and opens a citation. Absent on a surface
    * without a work stream behind it, which is exactly when every citation in a
    * message degrades to the label text it already carried.
@@ -2733,7 +2727,6 @@ export function MessageBlock({
   onStartSubstream,
   merge,
   onOpenBreakout,
-  latestReply = false,
   citations,
   collapseHeadings = false,
   currentUserId,
@@ -3012,8 +3005,8 @@ export function MessageBlock({
           <footer className="human-message-actions">
             {(mergeAction || startSubstream) && (
               <TipGroup>
-                {mergeAction && message.text && <MergeButton merge={mergeAction} text={message.text} />}
                 {startSubstream && <StartSubstreamButton onStart={startSubstream} />}
+                {mergeAction && message.text && <MergeButton merge={mergeAction} text={message.text} />}
               </TipGroup>
             )}
           </footer>
@@ -3028,16 +3021,11 @@ export function MessageBlock({
             collapseHeadings={collapseHeadings}
             mentions={message.mentions}
             onMerge={mergeAction}
-            onStartSubstream={latestReply ? undefined : startSubstream}
+            onStartSubstream={startSubstream}
             streaming={message.streaming}
             text={message.text ?? ''}
             telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
           />
-          {latestReply && startSubstream && (
-            <button className="message-start-breakout-link" onClick={startSubstream} type="button">
-              <IconCornerDownRight aria-hidden="true" size={13} stroke={1.9} /> Start a breakout from this message
-            </button>
-          )}
 
         </>
       )}
