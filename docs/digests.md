@@ -407,7 +407,7 @@ reader chose. Every colour is a light token from
 `<style>` block — and `color-scheme: light only` is declared three ways so a
 client in dark mode leaves the page as drawn. The look follows the app rather
 than a marketing page: neutral greys, small radii, quiet headings, links in the
-accent hue, a black primary button, and volt only on the wordmark dot and the
+accent hue, a black primary button, and volt only on the
 "for you" pill.
 
 The canvas runs the height of the reading pane rather than stopping at the last
