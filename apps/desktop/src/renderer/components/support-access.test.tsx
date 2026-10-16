@@ -119,7 +119,7 @@ describe('Rally access in the account menu', () => {
 
   it('shows both people on a support session and offers End impersonation instead of Sign out', async () => {
     const props = menu({ activeWorkspace: { ...own, id: acme.id, name: acme.name }, currentUser: bob, impersonator: adam });
-    const trigger = screen.getByRole('button', { name: 'Bob Smith, Acme Robotics, impersonated by Morgan Ellis' });
+    const trigger = screen.getByRole('button', { name: 'Settings, Bob Smith, Acme Robotics, impersonated by Morgan Ellis' });
     // Radix paints initials after a short delay, in case an image arrives, and
     // each avatar keeps its own timer: under load one can paint before the
     // other, so wait for both together.
