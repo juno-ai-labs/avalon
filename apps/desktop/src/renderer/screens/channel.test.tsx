@@ -5,7 +5,7 @@ import { Link, MemoryRouter, parsePath, Route, Routes, useLocation } from 'react
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ChannelStats } from '@rally/contracts';
-import { OPEN_EXPANDED } from '../lib/navigation-routes';
+import { OPEN_EXPANDED, openResourceRequest } from '../lib/navigation-routes';
 import { CHANNEL_STATS_QUERY_KEY } from '../lib/sidebar-list-store';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { ChannelScreen } from './channel';
@@ -19,11 +19,12 @@ const api = vi.hoisted(() => ({
   updateSpacePresentation: vi.fn(),
   updateSpaceAudience: vi.fn(),
   acknowledgeChannelRead: vi.fn(),
+  removeChannelMessage: vi.fn(async () => undefined),
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session: null }) }));
 const spaces = vi.hoisted(() => ({ data: undefined as unknown }));
 vi.mock('../lib/use-space-directories', () => ({ useSpaceDirectories: () => ({ active: spaces, inactive: { data: undefined } }) }));
-vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ data: [] }) }));
+vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ data: [] }), useCachedWorkstreamAppearance: () => undefined }));
 vi.mock('../components/channel-composer', () => ({
   ChannelComposer: ({ threadOpen }: { threadOpen?: boolean }) => <div data-thread-open={String(threadOpen)}>composer</div>,
 }));
@@ -80,7 +81,7 @@ function outboundStats(overrides: Partial<ChannelStats> = {}): ChannelStats {
 
 function Location(): React.JSX.Element {
   const location = useLocation();
-  return <div data-testid="location">{location.pathname}</div>;
+  return <div data-state={JSON.stringify(location.state)} data-testid="location">{location.pathname}</div>;
 }
 
 function renderChannel(path = '/channels/outbound', seed: (client: QueryClient) => void = () => undefined, state: unknown = null) {
@@ -267,6 +268,60 @@ describe('a Channel', () => {
     expect(rows[0]).toHaveTextContent('Rally');
     await waitFor(() => expect(rows[2]).toHaveTextContent('Casey Lane'));
     expect(within(rows[2]!).getByText('Q4', { selector: 'strong' })).toBeInTheDocument();
+  });
+
+  it('draws a thread’s merge with its thread, a quote, its embeds, and Remove for its author', async () => {
+    const mergeId = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a62';
+    api.getWorkspaceMembers.mockResolvedValueOnce([workspace.currentUser] as never);
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 3, items: [
+      { kind: 'message', placedAt: '2026-10-02T03:00:00.000Z', attentionSequenceNumber: 3, message: {
+        id: mergeId,
+        author: { kind: 'member', userId: 'me' },
+        body: 'Shipped. See [Price model](resource://res-1).',
+        merge: {
+          threadId: plan.id,
+          title: 'Q4 plan',
+          summary: 'Plan the quarter\nand more',
+          embeds: [{ id: 'res-1', title: 'Price model', kind: 'document' }],
+        },
+      } },
+      { kind: 'thread', placedAt: '2026-10-02T01:00:00.000Z', attentionSequenceNumber: 1, thread: plan },
+    ] });
+    renderChannel();
+    const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
+    const rows = await feed.findAllByRole('listitem');
+    // The merge is at the bottom, when it was merged.
+    const merge = within(rows[1]!);
+    expect(merge.getByRole('button', { name: 'Q4 plan' })).toBeVisible();
+    expect(merge.getByText('Plan the quarter')).toBeVisible();
+    expect(merge.getByText('Price model')).toBeVisible();
+    await waitFor(() => expect(merge.getByRole('article', { name: 'Q4 plan, merged by Me' })).toHaveTextContent(/merged by\s*Me/u));
+    expect(merge.getByRole('article', { name: 'Q4 plan, merged by Me' })).toHaveClass('merge-message');
+    fireEvent.click(merge.getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(api.removeChannelMessage).toHaveBeenCalledExactlyOnceWith('outbound', mergeId));
+  });
+
+  it('opens an artifact a merge cites, by its alias, in its thread', async () => {
+    api.getWorkspaceMembers.mockResolvedValueOnce([workspace.currentUser] as never);
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 3, items: [
+      { kind: 'message', placedAt: '2026-10-02T03:00:00.000Z', attentionSequenceNumber: 3, message: {
+        id: '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a63',
+        author: { kind: 'member', userId: 'me' },
+        body: 'Shipped. See [Price model](resource://calm-river-quiet-lamp).',
+        merge: {
+          threadId: plan.id,
+          title: 'Q4 plan',
+          summary: null,
+          embeds: [{ id: 'res-1', slug: 'calm-river-quiet-lamp', title: 'Price model', kind: 'document' }],
+        },
+      } },
+    ] });
+    renderChannel();
+    const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
+    fireEvent.click(await feed.findByText('Price model'));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/plan'));
+    expect(openResourceRequest(JSON.parse(screen.getByTestId('location').dataset.state ?? 'null')))
+      .toEqual({ threadId: 'plan', resourceId: 'res-1' });
   });
 
   it('names somebody it cannot look up as someone, not Rally', async () => {
@@ -481,7 +536,9 @@ describe('a Channel', () => {
 
     await waitFor(() => expect(api.updateSpaceAudience).toHaveBeenCalledWith('outbound', { scope: 'personal', participantUserIds: ['jordan'] }));
     await waitFor(() => expect(client.getQueryData<{ items: unknown[] }>(['spaces'])?.items).toEqual([]));
-    expect(screen.getByTestId('location')).not.toHaveTextContent('/channels/outbound');
+    // The navigation away is rendered after the cache write commits, so it is
+    // waited for too: asserting it in the same tick failed under a loaded full run.
+    await waitFor(() => expect(screen.getByTestId('location')).not.toHaveTextContent('/channels/outbound'));
   });
 
   it('closes a leave still being asked when another Channel opens, so it cannot leave that one', async () => {

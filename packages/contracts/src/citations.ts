@@ -557,6 +557,36 @@ export function embeddedResourceCitations(markdown: string): readonly { readonly
 }
 
 /**
+ * Every resource a markdown body cites, without repeats: each chip
+ * (`[T](resource://id)`) and card (`![T](resource://id)`) in the prose, in
+ * document order, then each footnote citation the body references, in order
+ * of first reference. That is every resource the renderer draws as a link. A
+ * link in code or behind an escaped bracket is literal text, and a footnote
+ * nothing references is never drawn, so neither counts. A merge reads this to
+ * know which artifacts it shares; see docs/conversation-merge.md.
+ */
+export function citedResourceIds(markdown: string): string[] {
+  const found: string[] = [];
+  const add = (target: CitationTarget): void => {
+    if (target.scheme === "resource" && !found.includes(target.resourceId)) found.push(target.resourceId);
+  };
+  mapOutsideCode(stripFootnoteDefinitions(markdown), (segment) => {
+    for (const match of segment.matchAll(INLINE_LINK)) {
+      const opener = (match.index ?? 0) + (match[0].startsWith("!") ? 1 : 0);
+      if (isMarkdownEscaped(segment, opener)) continue;
+      add(parseCitationHref(match[2]));
+    }
+    return segment;
+  });
+  const footnotes = citationFootnotes(markdown);
+  for (const identifier of footnotes.referenced) {
+    const citation = footnotes.citations.get(identifier);
+    if (citation) add(citation.target);
+  }
+  return found;
+}
+
+/**
  * The same answer, written for a surface that renders no citations at all.
  *
  * Outbound email and Slack delivery both take agent Markdown and hand it to

@@ -512,10 +512,20 @@ A message is an author (`rally`, or a `member` by user id), a markdown body
 and a time, in `space_messages` (WorkspaceDO migration 104). Nothing in the
 mechanism knows what a message is for.
 
-- **Posting.** `postMessages(spaceId, drafts, postedAt)` writes them in order.
-  A draft may carry a `key`; the message id is then derived from the Channel
-  and the key, so the same key posts once and a retry writes nothing. Without
-  a key every post is new.
+- **Posting.** `postMessage(spaceId, draft, postedAt)` writes one, and
+  `postMessages` maps it over a list. A draft may carry a `key`; the message id
+  is then derived from the Channel and the key, so the same key posts once and
+  a retry writes nothing. Without a key every post is new. Four more options,
+  from migration 109, each generic:
+  - `replace` makes a keyed repost rewrite the body and author and move the
+    message to the bottom (a fresh `posted_at`) instead of writing nothing.
+  - `news` (default true) gives the message the Channel's next attention
+    ordinal, so it lights the dot; see [the read state](#the-channels-read-state).
+  - `sourceWorkstreamId` names a thread the message is about. The feed then
+    shows it only to who can open that thread.
+  - `embeds` stores `[{id, title, kind}]` for the artifacts the body embeds,
+    and `operationId` the operation that last wrote the row, so a retry of the
+    same operation writes nothing and takes no ordinal.
 - **Opening a Channel with messages.** `reserve` takes `messages` and posts
   them in the transaction that makes the Channel, through
   `postStartingMessages`: dated at the Channel's `created_at` so they come
@@ -533,15 +543,21 @@ mechanism knows what a message is for.
 - **In the feed.** `feedPage` reads a Channel's messages under the same seek
   as its placements and merges the two by time, then id, so one order runs
   across both and a cursor ending on either kind resumes correctly. A message
-  is not unread-tracked: it has no sequence number and moves no read state.
-  Whoever may read the feed sees its messages. A desktop before client
+  that is news carries `attentionSequenceNumber`; an opening message and every
+  message before migration 109 carries none. Whoever may read the feed sees
+  its messages, except a message about a thread they cannot open, which the
+  message seek filters with the placement seek's own `mainOpenableSql`
+  through a primary-key join. A desktop before client
   contract 6 (`CHANNEL_MESSAGES_CLIENT_CONTRACT`) parses the feed union
   strictly, so `GET /spaces/:id/feed` leaves message items out for it. The
   desktop draws a message as its author speaking, on the leading side, with
   the renderer a thread's messages use.
 
-Nothing outside WorkspaceDO posts a message yet: there is no route or RPC for
-it. The first feature that needs one adds it over `postMessages`.
+A thread's merged result is the first caller from outside WorkspaceDO
+(`mergeThreadIntoChannel`, `removeChannelMessage`), and a desktop before client
+contract 7 (`CHANNEL_MERGES_CLIENT_CONTRACT`) is served each merge as a plain
+message without `merge` or `attentionSequenceNumber`. That feature is
+[`conversation-merge.md`](conversation-merge.md).
 
 ### The cutover
 
@@ -1263,19 +1279,26 @@ unchanged. Migration 98 (`workspace-channel-read-storage.ts`) adds them:
   source version, which would erase a read position on an unrelated audience
   change. No foreign key, for the reason `space_invitees` gives.
 
-**Only a placement advances the waterline.** Every transition of a membership
+**Channel news advances the waterline: a placement, or a message that is
+news.** The waterline is one counter for news of any kind. `stampChannelNews`
+takes the Channel's next ordinal and reads its member author through it; Rally
+as author reads nobody through. Every transition of a membership
 into `active` — `enterMembershipAtBirth`, `finalizeMembership` (and so
 `addMembership` and an archive's re-home into General), a move's target, a
 restore, an abandoned archive putting its rows back, a legacy `add` intent —
-goes through one private helper, `stampPlacements`, which in the same
-transaction increments the Space's `latest_attention_ordinal` and stamps the new
-value on that membership. An idempotent settle of a row that was already active
+goes through `stampPlacements`, which takes an ordinal per placement in the same
+transaction and stamps it on that membership. `postMessage` takes one for a
+message posted with `news` and stamps it on `space_messages.attention_ordinal`;
+a Channel's opening messages are posted with `news: false`. An idempotent settle of a row that was already active
 takes no ordinal, a re-add after a removal takes a fresh, higher one, and a
 removal never lowers the waterline. The placer's own position rises to the new
 ordinal: your own placement is not news to you. Activity inside a placed thread
 does not move the Channel; the thread carries its own unread state.
 
-**Derivation.** `channelStats` answers `latestAttentionSequenceNumber`,
+**Derivation.** `channelStats` counts fresh rows in two arms, visible
+placements and visible news messages above the reader's position, and takes the
+first unread ordinal across both; `newThreadCount` stays the placements alone.
+It answers `latestAttentionSequenceNumber`,
 `readThroughSequenceNumber`, `firstUnreadSequenceNumber` and `hasUnread` per
 Channel, from `unreadState` in `unread-state.ts` — the one helper
 `directoryWorkstream` and `breakoutConversation` use too. `seen` falls back to
@@ -1780,6 +1803,14 @@ and the drop would otherwise empty them. **Migration 103** queues the one-time
 seating alarm. **Migration 104 adds `space_messages`**: one row per Channel
 message, keyed by `message_id`, with `space_id`, an optional `message_key`,
 `author_kind` (`rally` or `member`), `author_user_id`, `body` and `posted_at`.
+**Migration 109** adds four nullable columns to `space_messages`:
+`source_workstream_id` (the thread a message is about), `attention_ordinal`
+(its place on the waterline, `NULL` for a message that is not news and for
+every row before it, read as zero), `embeds_json` (`[{id, title, kind}]` at
+posting time) and `merge_operation_id` (the operation that last wrote the row).
+It also adds `space_message_operations (message_id, operation_id, created_at)`,
+a receipt for every operation that ever wrote a message, so a late retry of an
+older one writes nothing.
 
 ## Regional impact
 
@@ -1956,6 +1987,35 @@ while Spaces are not open, and closing the cutover queues it again when a
 member is still unseated.
 
 ## Changelog
+
+### 2026-10-16: The Channel waterline counts news of any kind
+
+**What changed:** A Channel message can be news. It takes the Channel's next
+attention ordinal, lights the unread dot for everyone but its author, and
+counts in `channelStats` beside placements. `stampPlacements` became a caller
+of `stampChannelNews`, and `postMessage` gained `replace`, `news`,
+`sourceWorkstreamId`, `embeds` and `operationId` (migration 109).
+
+**Why:** Merge-back puts a thread's result into its Channel as a message, and
+people need to see that it arrived. The earlier rule, only a placement advances
+the waterline, would have left the merge silent. The product owner asked for
+the waterline to be generic enough for the platform messages added a few days
+before, so the counter now knows nothing about what a message is for.
+
+**Considered and rejected:** Storing the merge on the thread's placement row.
+That keeps the merge where the thread was placed, out of time order; a Channel
+must read chronologically, with the merge at the bottom when it was merged.
+A second counter for messages was rejected because the client reads one
+waterline and one read position, and two would need two acknowledgements.
+
+**Consequences:** An opening message passes `news: false`, and rows before
+migration 109 have no ordinal, so no Channel turns unread on deploy. A message
+about a thread is filtered by that thread's openability in both the feed and
+the stats arm; a future message about something else needs its own visibility
+rule in both. `newThreadCount` still counts placements only.
+
+Design: [`docs/PRDs/2026-10-16_merge-back/prd.md`](PRDs/2026-10-16_merge-back/prd.md).
+Mechanism: [`conversation-merge.md`](conversation-merge.md).
 
 ### 2026-10-13: Every member gets General and a Personal Channel
 

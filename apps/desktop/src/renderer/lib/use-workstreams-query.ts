@@ -319,6 +319,21 @@ export function useCachedWorkstreamSummary(workstreamId: string): WorkstreamSumm
 }
 
 /**
+ * The Channels this Channel sits in, as the directory holds them, or
+ * `undefined` when the directory does not list it. The directory is what
+ * placements are kept current in; a detail installed from the conversation's
+ * own object carries none. Never fetches, for the reason above.
+ */
+export function useCachedWorkstreamPlacements(workstreamId: string): readonly string[] | undefined {
+  return useQuery<WorkstreamSummary[] | undefined, Error, readonly string[] | undefined>({
+    queryKey: WORKSTREAMS_QUERY_KEY,
+    queryFn: fetchThroughOwner,
+    enabled: false,
+    select: (rows) => rows?.find((row) => row.id === workstreamId)?.spaceIds,
+  }).data;
+}
+
+/**
  * `existing` followed by whatever in `incoming` is not already in it.
  *
  * A row can arrive twice legitimately: it moved between two page requests, so

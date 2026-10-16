@@ -95,6 +95,7 @@ async function activityContent(env: Env, workspace: WorkspaceStub, message: Push
   const breakout = item.breakout ? item.breakout.title.trim() || UNNAMED_BREAKOUT : null;
   const words = item.kind === "thread_started" ? { title: `${actor} started ${thread}`, body: "" }
     : item.kind === "breakout_started" ? { title: `${actor} started a breakout on ${thread}`, body: breakout ?? "" }
+    : item.kind === "merged" ? mergedWords(actor, thread, breakout, item.mergedInto?.name)
     : { title: `${actor} finished ${breakout ?? thread}`, body: breakout ? `in ${thread}` : "" };
   return {
     outcome: "ready",
@@ -102,8 +103,15 @@ async function activityContent(env: Env, workspace: WorkspaceStub, message: Push
     kind: item.kind as PushNotificationData["kind"],
     ...words,
     workstreamId: item.threadId,
-    substreamId: item.breakout?.substreamId ?? null,
+    // A merge opens where it landed: a breakout's merge is in its thread.
+    substreamId: item.kind === "merged" ? null : item.breakout?.substreamId ?? null,
   };
+}
+
+/** "Maya merged Sequence B into Q3 plan", or "Maya merged Q3 plan into GTM". */
+function mergedWords(actor: string, thread: string, breakout: string | null, channel: string | undefined): { title: string; body: string } {
+  if (breakout !== null) return { title: `${actor} merged ${breakout} into ${thread}`, body: "" };
+  return { title: `${actor} merged ${thread} into ${channel?.trim() || "a channel"}`, body: "" };
 }
 const UNNAMED_THREAD = "Untitled thread";
 const UNNAMED_BREAKOUT = "Untitled breakout";

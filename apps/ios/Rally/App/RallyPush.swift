@@ -31,7 +31,7 @@ enum RallyPush {
 
     /// The `kind` values `PushNotificationDataSchema` admits: every Activity row.
     static let pushKinds: Set<String> = [
-        "mention", "participant_added", "thread_started", "breakout_started", "run_finished",
+        "mention", "participant_added", "thread_started", "breakout_started", "run_finished", "merged",
     ]
 
     /// Same `rally` object desktop parses with `PushNotificationDataSchema`.
