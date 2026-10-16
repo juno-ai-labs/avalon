@@ -255,8 +255,15 @@ id: a Web Notification with the same tag replaces the earlier one rather than
 grouping with it, so a retry replaces itself and two mentions in one channel
 both stay on screen. There is no browser counterpart to APNs `thread-id`
 grouping. A click opens the link's path and query on the worker's own origin,
-never another host, focusing a tab already on that page or navigating an open
-`/app/` tab before opening a new one.
+never another host, in the first of:
+
+1. A tab already on that page, focused.
+2. A tab in the notification's Organization, sent the link. The page routes it
+   by hash (`inPlaceHash`) while its shell is up, and loads it otherwise or
+   when the link names another Organization.
+3. Any `/app/` tab, navigated to the link; the load switches it to the link's
+   Organization.
+4. A new tab.
 
 One VAPID key pair is shared by every region. The browser host is one origin
 with one subscription per browser profile, and a subscription is bound to the
@@ -354,6 +361,24 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-10-16 — A browser notification click routes in place in its own Organization
+
+**What changed:** The service worker carries the notification's Organization
+and, on a click, prefers a tab already in it, posting the link for the page to
+route by hash. A tab in another Organization still loads the link, which
+switches it.
+
+**Why:** With a tab per Organization, a click took the first Rally tab and
+loaded the link there, switching that tab away from its Organization even
+though another tab was already in the right one, and every click reloaded the
+whole app even when no switch was needed.
+
+**What to respect:** The page decides, not the worker: it compares the link
+with its own path and loads the link when they differ, so a wrong guess by the
+worker costs a reload, never a Channel opened in the wrong Organization. The
+listener is installed by the page's first script, not by the shell, so a tab
+still restoring or signed out loads the link rather than dropping it.
 
 ### 2026-10-15 — Each kind goes by push, email or a connector, as the person chose
 

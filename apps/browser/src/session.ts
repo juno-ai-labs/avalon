@@ -42,3 +42,17 @@ export function shellLocation(pathname: string, hash: string): string | null {
   const workspace = /^\/app\/workspaces\/[^/]+\/[^/]+\/?$/u.test(pathname);
   return workspace && !hash ? `${pathname.replace(/\/$/u, "")}#/` : null;
 }
+
+/**
+ * The hash to set when a link opens in the tab already showing its
+ * Organization, so the shell routes in place. Null when the link names another
+ * Organization, or none: the tab then loads the link, which switches to it.
+ */
+export function inPlaceHash(pathname: string, link: string): string | null {
+  let target: URL;
+  try { target = new URL(link, "https://rally.invalid"); } catch { return null; }
+  const next = shellLocation(target.pathname, "");
+  if (!next) return null;
+  const at = next.indexOf("#");
+  return next.slice(0, at) === pathname.replace(/\/$/u, "") ? next.slice(at) : null;
+}
