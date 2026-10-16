@@ -48,7 +48,8 @@ Switching items in a panel already open for the same conversation keeps the
 width the person dragged it to. The split itself is not saved: the width
 stored per conversation is the one last dragged to, and it is what a panel
 restored on relaunch comes back at. Double-click or `Enter` on the panel's
-edge resets it to the narrow 320px default, not to the split.
+edge resets it to the even split it opened at; unlike the opening, the reset is
+the person's own act, so it is saved as the conversation's width like a drag.
 
 Every draggable edge, the sidebar's, the right panel's, and the
 split-conversation divider's, takes the same hit width,
@@ -128,6 +129,8 @@ window's size and position alone. The panel opens at half the main pane. The
 the saved-state step that subtracted the panel's width are gone. Windows
 1180px wide or narrower no longer float the panel over a dimmed conversation:
 it sits beside it at every width above phone layout, and the scrim is gone.
+Double-click or `Enter` on the panel's edge now resets it to the even split
+instead of 320px.
 
 **Why:** Once panels opened at a 50/50 split, the window grew by the
 conversation's whole width on every opening, which moved and resized a window
@@ -136,6 +139,8 @@ desktop. Without that growth the default 1180px window sat on the floating
 side of the old breakpoint, so every panel opened as an overlay; the
 product's call was that overlays read as dated and the panel belongs beside
 the conversation.
+The edge's "reset width" jumped to a 320px nobody had seen since panels began
+opening at the split, so it now returns to the width the panel opened at.
 
 **Considered and rejected:** Keeping growth for the context and browser rails
 while stopping it for artifacts and attachments. The rails share one slot, so
