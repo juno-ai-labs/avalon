@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import { LoaderCircle, Square, UserPlus } from 'lucide-react';
-import { type RefObject, useMemo, useRef, useState } from 'react';
+import { type ReactNode, type RefObject, useMemo, useRef, useState } from 'react';
 import type { MentionIdentity } from '../lib/api';
 import type { RealtimeDictationApi } from '../lib/use-realtime-dictation';
 import {
@@ -78,6 +78,12 @@ interface WorkstreamComposerProps {
    */
   className?: string;
   footerHint?: string;
+  /** See `ComposerInput`: a line over the toolbar, a control among its tools, and the send button's face. */
+  notice?: ReactNode;
+  toolsAccessory?: ReactNode;
+  submitContent?: ReactNode;
+  /** Escape with nothing open to dismiss, for a composer mode the host can leave. */
+  onCancel?: () => void;
   submitLabel?: string;
   autoFocus?: boolean;
   api?: RealtimeDictationApi;
@@ -128,7 +134,8 @@ interface WorkstreamComposerProps {
     /** Invitees the message names, whom the host shares the conversation with before it sends. */
     invitedEmails?: string[],
   ) => Promise<void>;
-  onAttach: (files: FileList | File[]) => void;
+  /** Absent where the message cannot carry files; see `ComposerInput`. */
+  onAttach?: (files: FileList | File[]) => void;
   /** Every edit to the draft, for a host that clears its own notice on one. */
   onDraftChange?: (value: string) => void;
   onOpenAttachment: (preview: AttachmentPreview) => void;
@@ -163,6 +170,10 @@ export function WorkstreamComposer({
   ariaLabel,
   className,
   footerHint,
+  notice,
+  toolsAccessory,
+  submitContent,
+  onCancel,
   submitLabel = 'Send message',
   autoFocus = false,
   api,
@@ -243,12 +254,12 @@ export function WorkstreamComposer({
   );
   const slashMatch = text.match(/^\/([^\s/]*)$/u);
   const commandQuery = slashMatch?.[1]?.toLowerCase() ?? null;
-  const commands = useMemo(
-    () => workstream.harnessStatus === 'running'
-      ? [...BASE_COMMANDS, { id: 'stop', label: 'stop', description: 'Stop the current run' } satisfies ComposerCommand]
-      : BASE_COMMANDS,
-    [workstream.harnessStatus],
-  );
+  const commands = useMemo(() => {
+    const base = onAttach ? BASE_COMMANDS : BASE_COMMANDS.filter((command) => command.id !== 'attach');
+    return workstream.harnessStatus === 'running'
+      ? [...base, { id: 'stop', label: 'stop', description: 'Stop the current run' } satisfies ComposerCommand]
+      : base;
+  }, [onAttach, workstream.harnessStatus]);
   const visibleCommands = commandQuery === null || slashDismissed
     ? []
     : commands.filter((command) => command.label.includes(commandQuery));
@@ -507,9 +518,12 @@ export function WorkstreamComposer({
         {...(className ? { className } : {})}
         error={error}
         {...(footerHint ? { footerHint } : {})}
+        {...(notice ? { notice } : {})}
+        {...(toolsAccessory ? { toolsAccessory } : {})}
+        {...(submitContent ? { submitContent } : {})}
         fileInputRef={fileInputRef}
         layout="message-capsule"
-        onAttach={onAttach}
+        {...(onAttach ? { onAttach } : {})}
         onKeyDown={(event) => {
           if (mentionNavigation.handleKeyDown(event)) return;
           if (event.key === 'Escape' && (mentionQuery !== null || visibleCommands.length > 0)) {
@@ -521,6 +535,9 @@ export function WorkstreamComposer({
             event.preventDefault();
             if (mentionQuery !== null) setMentionQuery(null);
             if (visibleCommands.length > 0) setSlashDismissed(true);
+          } else if (event.key === 'Escape' && onCancel) {
+            event.preventDefault();
+            onCancel();
           }
           if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && visibleCommands[0]) {
             event.preventDefault();

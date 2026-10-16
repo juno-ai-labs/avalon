@@ -26,6 +26,7 @@ import {
   type SpaceReach,
   type ChannelMessage,
   type ChannelMessageAuthor,
+  type MergeEmbed,
   type SpaceScope,
   type SpaceSummary,
 } from "@rally/contracts";
@@ -132,6 +133,24 @@ export interface ChannelMessageDraft {
   author: ChannelMessageAuthor;
   body: string;
   key?: string;
+  /**
+   * With a key: a repost rewrites the body and author and moves the message
+   * to the bottom of the feed (a fresh `posted_at`, and a fresh ordinal when
+   * it is news), rather than writing nothing.
+   */
+  replace?: boolean;
+  /**
+   * Whether posting it is Channel news: it takes an attention ordinal and so
+   * lights the Channel's unread dot for everyone but its author. Defaults to
+   * true; a Channel's opening messages pass false.
+   */
+  news?: boolean;
+  /** The thread the message is about; the feed shows it only to who can open that thread. */
+  sourceWorkstreamId?: string;
+  /** The artifacts the body embeds, as they were when posted. */
+  embeds?: readonly MergeEmbed[];
+  /** The operation that wrote it: a repost with the same id writes nothing. */
+  operationId?: string;
 }
 
 /** One Channel message as the feed reads it. */
@@ -141,6 +160,11 @@ interface ChannelMessageRow extends Record<string, SqlStorageValue> {
   author_user_id: string | null;
   body: string;
   posted_at: number;
+  attention_ordinal: number | null;
+  source_workstream_id: string | null;
+  source_title: string | null;
+  source_description: string | null;
+  embeds_json: string | null;
 }
 
 const SPACE_ICON_FALLBACK = "briefcase";
@@ -590,6 +614,37 @@ export const SPACE_MESSAGES_MIGRATION: readonly string[] = [
     CHECK ((author_kind = 'member') = (author_user_id IS NOT NULL))
   ) STRICT`,
   `CREATE INDEX space_messages_feed_idx ON space_messages(space_id, posted_at, message_id)`,
+];
+
+/**
+ * WorkspaceDO migration 109: a Channel message can be a thread's merged
+ * result, and any Channel message can be Channel news (`docs/conversation-merge.md`).
+ *
+ * `source_workstream_id` is the thread a message is about; the feed shows such
+ * a message only to who can open that thread. `attention_ordinal` is the
+ * message's place on the Channel's one waterline, NULL for a message that is
+ * not news and for every message that predates this, read as zero.
+ * `embeds_json` holds `[{id, title, kind}]` as they were when posted, so the
+ * feed draws artifact cards with no lookup. `merge_operation_id` is the
+ * operation that last wrote the row. `space_message_operations` holds every
+ * operation that ever wrote a message, so a retry of any of them, however
+ * late, writes nothing: one row per merge a person made, which is human-scale.
+ */
+export const SPACE_MESSAGE_MERGES_MIGRATION: readonly string[] = [
+  `ALTER TABLE space_messages ADD COLUMN source_workstream_id TEXT`,
+  `ALTER TABLE space_messages ADD COLUMN attention_ordinal INTEGER CHECK (attention_ordinal IS NULL OR attention_ordinal > 0)`,
+  `ALTER TABLE space_messages ADD COLUMN embeds_json TEXT CHECK (embeds_json IS NULL OR json_valid(embeds_json))`,
+  `ALTER TABLE space_messages ADD COLUMN merge_operation_id TEXT`,
+  `CREATE TABLE space_message_operations (
+    message_id TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (message_id, operation_id)
+  ) STRICT`,
+  // A Breakout merge is a \`merged\` Activity row read from its message's
+  // activity event; this keeps that arm of the feed off a scan of every event.
+  `CREATE INDEX workspace_activity_events_merged_idx ON workspace_activity_events(occurred_at, event_id)
+    WHERE json_extract(metadata_json, '$.mergedFrom.breakoutId') IS NOT NULL`,
 ];
 
 /**
@@ -1144,27 +1199,269 @@ export class WorkspaceSpaceStorage {
 
   /**
    * Post messages in a Channel, at `postedAt`, in order. A keyed draft that
-   * is already there writes nothing. Returns the ids, posted or found.
+   * is already there writes nothing, unless it asks to replace. Returns the
+   * ids, posted or found.
    */
   postMessages(spaceId: string, drafts: readonly ChannelMessageDraft[], postedAt: number): string[] {
-    return drafts.map((draft) => {
-      const messageId = draft.key === undefined
-        ? uuidV7()
-        : stableUuidSync(["space_message", spaceId, draft.key]);
+    return drafts.map((draft) => this.postMessage(spaceId, draft, postedAt).messageId);
+  }
+
+  /**
+   * Post one message in a Channel. `replayed` is true when nothing was
+   * written: a keyed draft already there that does not replace, or a draft
+   * whose `operationId` is the one that last wrote the row. A written news
+   * message takes the Channel's next attention ordinal, and its member author
+   * reads through it.
+   */
+  postMessage(
+    spaceId: string,
+    draft: ChannelMessageDraft,
+    postedAt: number,
+  ): { messageId: string; replayed: boolean } {
+    const messageId = draft.key === undefined
+      ? uuidV7()
+      : stableUuidSync(["space_message", spaceId, draft.key]);
+    // Every operation that ever wrote this message is a receipt, not only the
+    // last: a late retry of an older one must not overwrite a newer write.
+    if (draft.operationId !== undefined && this.storage.sql.exec(
+      "SELECT 1 FROM space_message_operations WHERE message_id = ? AND operation_id = ?",
+      messageId,
+      draft.operationId,
+    ).toArray().length > 0) return { messageId, replayed: true };
+    const authorUserId = draft.author.kind === "member" ? draft.author.userId : null;
+    const written = this.storage.sql.exec<{ message_id: string } & Record<string, SqlStorageValue>>(
+      `INSERT INTO space_messages (
+         message_id, space_id, message_key, author_kind, author_user_id, body, posted_at,
+         source_workstream_id, embeds_json, merge_operation_id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (message_id) DO ${draft.replace === true
+         ? `UPDATE SET
+             author_kind = excluded.author_kind,
+             author_user_id = excluded.author_user_id,
+             body = excluded.body,
+             posted_at = excluded.posted_at,
+             source_workstream_id = excluded.source_workstream_id,
+             embeds_json = excluded.embeds_json,
+             merge_operation_id = excluded.merge_operation_id,
+             attention_ordinal = NULL`
+         : "NOTHING"}
+       RETURNING message_id`,
+      messageId,
+      spaceId,
+      draft.key ?? null,
+      draft.author.kind,
+      authorUserId,
+      draft.body,
+      postedAt,
+      draft.sourceWorkstreamId ?? null,
+      draft.embeds === undefined ? null : JSON.stringify(draft.embeds),
+      draft.operationId ?? null,
+    ).toArray().length === 1;
+    if (!written) return { messageId, replayed: true };
+    if (draft.operationId !== undefined) {
       this.storage.sql.exec(
-        `INSERT INTO space_messages (message_id, space_id, message_key, author_kind, author_user_id, body, posted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (message_id) DO NOTHING`,
+        "INSERT INTO space_message_operations (message_id, operation_id, created_at) VALUES (?, ?, ?)",
         messageId,
-        spaceId,
-        draft.key ?? null,
-        draft.author.kind,
-        draft.author.kind === "member" ? draft.author.userId : null,
-        draft.body,
+        draft.operationId,
         postedAt,
       );
-      return messageId;
+    }
+    if (draft.news !== false) {
+      const ordinal = this.stampChannelNews(spaceId, authorUserId, postedAt);
+      if (ordinal !== null) {
+        this.storage.sql.exec(
+          "UPDATE space_messages SET attention_ordinal = ? WHERE message_id = ?",
+          ordinal,
+          messageId,
+        );
+      }
+    }
+    return { messageId, replayed: false };
+  }
+
+  /**
+   * The titles a Breakout's merge is written with: the Breakout's, frozen
+   * into its byline, and its Thread's, for the result. Empty when the
+   * projection has no row.
+   */
+  breakoutMergeTitles(workstreamId: string, substreamId: string): { breakout: string; thread: string } {
+    const thread = this.storage.sql.exec<{ title: string } & Record<string, SqlStorageValue>>(
+      "SELECT title FROM channels WHERE workstream_id = ?",
+      workstreamId,
+    ).toArray()[0]?.title ?? "";
+    const breakout = !this.breakoutsReady() ? "" : this.storage.sql.exec<{ title: string } & Record<string, SqlStorageValue>>(
+      "SELECT title FROM breakouts WHERE workstream_id = ? AND substream_id = ?",
+      workstreamId,
+      substreamId,
+    ).toArray()[0]?.title ?? "";
+    return { breakout, thread };
+  }
+
+  /**
+   * Where a thread's merge goes, and the Channels it could go to instead.
+   *
+   * The thread's current, unarchived placements in placement order, each with
+   * whether this viewer may post in it (any reach but `through_channel`).
+   * Without `spaceId` the target is the earliest one, the Channel the thread
+   * was started in unless it was taken out. Only an Organization-wide thread
+   * merges into a Channel.
+   */
+  channelMergeTarget(viewer: Viewer, workstreamId: string, spaceId: string | null):
+    | { ok: true; spaceId: string; name: string; channels: Array<{ id: string; name: string }> }
+    | {
+      ok: false;
+      code: "workstream_not_found" | "conversation_archived" | "merge_thread_private" | "merge_channel_not_placed" | "merge_target_not_writable";
+      channels: Array<{ id: string; name: string }>;
+    } {
+    const thread = this.storage.sql.exec<{ scope: string; archived_at: number | null } & Record<string, SqlStorageValue>>(
+      "SELECT scope, archived_at FROM channels WHERE workstream_id = ?",
+      workstreamId,
+    ).toArray()[0];
+    if (thread === undefined) return { ok: false, code: "workstream_not_found", channels: [] };
+    if (thread.archived_at !== null) return { ok: false, code: "conversation_archived", channels: [] };
+    if (thread.scope !== "workspace") return { ok: false, code: "merge_thread_private", channels: [] };
+    const placed = this.storage.sql.exec<{ space_id: string; title: string } & Record<string, SqlStorageValue>>(
+      `SELECT space.space_id, space.title
+         FROM space_channel_memberships membership
+         JOIN spaces space ON space.space_id = membership.space_id
+        WHERE membership.workstream_id = ? AND membership.state = 'active' AND space.archived_at IS NULL
+        ORDER BY membership.joined_at, membership.space_id`,
+      workstreamId,
+    ).toArray().map((row) => {
+      const reach = viewer.accessClass === "member" ? this.reach(viewer, row.space_id, true) : null;
+      return { id: row.space_id, name: row.title, writable: reach !== null && editableReach(reach) };
     });
+    const channels = placed.filter((channel) => channel.writable).map(({ id, name }) => ({ id, name }));
+    const target = spaceId === null ? placed[0] : placed.find((channel) => channel.id === spaceId);
+    if (target === undefined) return { ok: false, code: "merge_channel_not_placed", channels };
+    if (!target.writable) return { ok: false, code: "merge_target_not_writable", channels };
+    return { ok: true, spaceId: target.id, name: target.name, channels };
+  }
+
+  /**
+   * Merge a thread into one of its Channels: the Channel message keyed by the
+   * thread, replaced at the bottom when it is already there. The target is
+   * resolved again inside the transaction, so a placement that moved since
+   * the caller asked is refused rather than written.
+   */
+  mergeThreadIntoChannel(
+    viewer: Viewer,
+    request: {
+      workstreamId: string;
+      spaceId: string | null;
+      body: string;
+      embeds: readonly MergeEmbed[];
+      operationId: string;
+    },
+    now: number,
+  ):
+    | { ok: true; spaceId: string; name: string; messageId: string; replayed: boolean }
+    | Extract<ReturnType<WorkspaceSpaceStorage["channelMergeTarget"]>, { ok: false }> {
+    return this.storage.transactionSync(() => {
+      const target = this.channelMergeTarget(viewer, request.workstreamId, request.spaceId);
+      if (!target.ok) return target;
+      const posted = this.postMessage(target.spaceId, {
+        author: { kind: "member", userId: asUserId(viewer.userId) },
+        body: request.body,
+        key: `merge:${request.workstreamId}`,
+        replace: true,
+        sourceWorkstreamId: request.workstreamId,
+        embeds: request.embeds,
+        operationId: request.operationId,
+      }, now);
+      return { ok: true, spaceId: target.spaceId, name: target.name, ...posted };
+    });
+  }
+
+  /**
+   * The Activity tab's `merged` rows for a thread's merges into Channels:
+   * news merge messages in Channels this viewer may list, about a thread they
+   * may open, by somebody else, newest first after `after`. Shaped as the
+   * feed's keys. The id carries `posted_at`, so a merge replaced later is a
+   * new row (and a new push) rather than the old one moved.
+   */
+  mergeActivityKeys(viewer: Viewer, after: { occurredAt: number; id: string } | null, limit: number): Array<{
+    id: string;
+    kind: "merged";
+    occurred_at: number;
+    actor_user_id: string | null;
+    actor_label: string;
+    thread_id: string;
+    substream_id: string;
+    attention_ordinal: number;
+    merged_channel_id: string;
+    merged_channel_name: string;
+  }> {
+    const spaceIds = this.visibleSpaceIds(viewer);
+    if (spaceIds.length === 0) return [];
+    return this.storage.sql.exec<{
+      id: string;
+      kind: "merged";
+      occurred_at: number;
+      actor_user_id: string | null;
+      actor_label: string;
+      thread_id: string;
+      substream_id: string;
+      attention_ordinal: number;
+      merged_channel_id: string;
+      merged_channel_name: string;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT * FROM (
+         SELECT 'merged:' || m.message_id || ':' || m.posted_at AS id, 'merged' AS kind,
+                m.posted_at AS occurred_at, m.author_user_id AS actor_user_id, '' AS actor_label,
+                m.source_workstream_id AS thread_id, '0' AS substream_id,
+                m.attention_ordinal AS attention_ordinal,
+                m.space_id AS merged_channel_id, space.title AS merged_channel_name
+           FROM space_messages m
+           JOIN spaces space ON space.space_id = m.space_id
+           JOIN channels directory ON directory.workstream_id = m.source_workstream_id
+           LEFT JOIN channel_viewers viewer
+             ON viewer.workstream_id = directory.workstream_id
+            AND viewer.user_id = ?1
+            AND viewer.authority_generation = directory.authority_generation
+          WHERE m.source_workstream_id IS NOT NULL
+            AND m.attention_ordinal IS NOT NULL
+            AND (m.author_user_id IS NULL OR m.author_user_id <> ?1)
+            AND m.space_id IN (SELECT value FROM json_each(?2))
+            AND directory.archived_at IS NULL
+            AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)})
+        WHERE (?3 IS NULL OR occurred_at < ?3 OR (occurred_at = ?3 AND id < ?4))
+        ORDER BY occurred_at DESC, id DESC
+        LIMIT ?5`,
+      viewer.userId,
+      JSON.stringify(spaceIds),
+      after?.occurredAt ?? null,
+      after?.id ?? "",
+      limit,
+    ).toArray();
+  }
+
+  /**
+   * Delete one Channel message. Returns its author and the thread it was
+   * about, so the caller can decide who may, or null when it is not there.
+   * With `allow`, the delete happens only when `allow` says yes.
+   */
+  removeMessage(
+    spaceId: string,
+    messageId: string,
+    allow: (message: { author: ChannelMessageAuthor; sourceWorkstreamId: string | null }) => boolean,
+  ): "removed" | "not_found" | "forbidden" {
+    const row = this.storage.sql.exec<{
+      author_kind: "rally" | "member";
+      author_user_id: string | null;
+      source_workstream_id: string | null;
+    } & Record<string, SqlStorageValue>>(
+      "SELECT author_kind, author_user_id, source_workstream_id FROM space_messages WHERE message_id = ? AND space_id = ?",
+      messageId,
+      spaceId,
+    ).toArray()[0];
+    if (row === undefined) return "not_found";
+    const author: ChannelMessageAuthor = row.author_kind === "member"
+      ? { kind: "member", userId: asUserId(row.author_user_id!) }
+      : { kind: "rally" };
+    if (!allow({ author, sourceWorkstreamId: row.source_workstream_id })) return "forbidden";
+    this.storage.sql.exec("DELETE FROM space_messages WHERE message_id = ?", messageId);
+    return "removed";
   }
 
   /**
@@ -1179,7 +1476,11 @@ export class WorkspaceSpaceStorage {
       "SELECT created_at FROM spaces WHERE space_id = ?", spaceId,
     ).toArray()[0]?.created_at;
     if (madeAt === undefined) return;
-    this.postMessages(spaceId, drafts.map((draft, index) => ({ ...draft, key: draft.key ?? `start:${index}` })), madeAt);
+    this.postMessages(
+      spaceId,
+      drafts.map((draft, index) => ({ ...draft, key: draft.key ?? `start:${index}`, news: false })),
+      madeAt,
+    );
   }
 
   /** Whether this Space is somebody's Personal Channel. */
@@ -2021,7 +2322,7 @@ export class WorkspaceSpaceStorage {
   ): {
     items: Array<
       | { kind: "thread"; workstreamId: string; placedAt: number; attentionOrdinal: number }
-      | { kind: "message"; message: ChannelMessage; placedAt: number }
+      | { kind: "message"; message: ChannelMessage; placedAt: number; attentionOrdinal: number }
     >;
     nextCursor: string | null;
     /** The Channel's latest placement ordinal as this first page was read; null on a later page. */
@@ -2062,16 +2363,32 @@ export class WorkspaceSpaceStorage {
     // The Channel's own messages, under the same seek, merged with the
     // placements by time and then id: one order across both, so a cursor from
     // either kind of row resumes the other correctly.
+    //
+    // A message about a thread (a merge) shows only to who can open that
+    // thread, the placement seek's own predicate, through a primary-key join.
     const messages = this.storage.sql.exec<ChannelMessageRow>(
-      `SELECT message_id, author_kind, author_user_id, body, posted_at FROM space_messages
-        WHERE space_id = ?1
-          AND (?2 IS NULL OR posted_at < ?2 OR (posted_at = ?2 AND message_id > ?3))
-        ORDER BY posted_at DESC, message_id
+      `SELECT m.message_id, m.author_kind, m.author_user_id, m.body, m.posted_at,
+              m.attention_ordinal, m.source_workstream_id, m.embeds_json,
+              directory.title AS source_title, directory.description AS source_description
+         FROM space_messages m
+         LEFT JOIN channels directory
+           ON directory.workstream_id = m.source_workstream_id
+         LEFT JOIN channel_viewers viewer
+           ON viewer.workstream_id = directory.workstream_id
+          AND viewer.user_id = ?5
+          AND viewer.authority_generation = directory.authority_generation
+        WHERE m.space_id = ?1
+          AND (m.source_workstream_id IS NULL
+               OR (directory.workstream_id IS NOT NULL
+                   AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}))
+          AND (?2 IS NULL OR m.posted_at < ?2 OR (m.posted_at = ?2 AND m.message_id > ?3))
+        ORDER BY m.posted_at DESC, m.message_id
         LIMIT ?4`,
       spaceId,
       after?.lastActivityAt ?? null,
       after?.conversationId ?? "",
       SPACE_CHANNEL_PAGE_SIZE + 1,
+      viewer.userId,
     ).toArray();
     const merged = [
       ...rows.map((row) => ({
@@ -2080,6 +2397,7 @@ export class WorkspaceSpaceStorage {
       })),
       ...messages.map((row) => ({
         kind: "message" as const, message: channelMessage(row), placedAt: row.posted_at, id: row.message_id,
+        attentionOrdinal: row.attention_ordinal ?? 0,
       })),
     ].sort((a, b) => b.placedAt - a.placedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const hasMore = merged.length > SPACE_CHANNEL_PAGE_SIZE;
@@ -2098,7 +2416,7 @@ export class WorkspaceSpaceStorage {
       latestAttentionOrdinal,
       items: page.map((item) => item.kind === "thread"
         ? { kind: item.kind, workstreamId: item.workstreamId, placedAt: item.placedAt, attentionOrdinal: item.attentionOrdinal }
-        : { kind: item.kind, message: item.message, placedAt: item.placedAt }),
+        : { kind: item.kind, message: item.message, placedAt: item.placedAt, attentionOrdinal: item.attentionOrdinal }),
       nextCursor: hasMore && last
         ? encodeConversationCursor({
           lastActivityAt: last.placedAt, kind: last.kind === "thread" ? "channel" : "message", conversationId: last.id,
@@ -2314,6 +2632,38 @@ export class WorkspaceSpaceStorage {
           ...chunk,
         ).toArray()) {
           fresh.set(row.space_id, { count: row.count, first: row.first });
+        }
+        // The second arm: Channel messages that are news, above the same
+        // position, under the feed's own message predicate. They light the
+        // dot and can be the first unread row; they are not new threads.
+        for (const row of this.storage.sql.exec<{ space_id: string; first: number } & Record<string, SqlStorageValue>>(
+          `SELECT m.space_id, MIN(m.attention_ordinal) AS first
+             FROM space_messages m
+             JOIN spaces space ON space.space_id = m.space_id
+             LEFT JOIN space_reads reads
+               ON reads.space_id = m.space_id AND reads.user_id = ?1
+             LEFT JOIN channels directory
+               ON directory.workstream_id = m.source_workstream_id
+             LEFT JOIN channel_viewers viewer
+               ON viewer.workstream_id = directory.workstream_id
+              AND viewer.user_id = ?1
+              AND viewer.authority_generation = directory.authority_generation
+            WHERE m.attention_ordinal IS NOT NULL
+              AND m.attention_ordinal
+                  > COALESCE(reads.seen_attention_ordinal, space.unread_tracking_start_ordinal)
+              AND (m.source_workstream_id IS NULL
+                   OR (directory.workstream_id IS NOT NULL
+                       AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}))
+              AND m.space_id IN (${chunk.map(() => "?").join(", ")})
+            GROUP BY m.space_id`,
+          viewer.userId,
+          ...chunk,
+        ).toArray()) {
+          const threads = fresh.get(row.space_id);
+          fresh.set(row.space_id, {
+            count: threads?.count ?? 0,
+            first: threads === undefined ? row.first : Math.min(threads.first, row.first),
+          });
         }
       }
     }
@@ -5194,6 +5544,7 @@ export class WorkspaceSpaceStorage {
    */
   private stampPlacements(spaceId: string, workstreamIds: readonly string[], placerUserId: string, now: number): void {
     if (workstreamIds.length === 0 || !this.readsReady()) return;
+    let latest = 0;
     const ordered = this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
       `SELECT workstream_id FROM space_channel_memberships
         WHERE space_id = ? AND workstream_id IN (SELECT value FROM json_each(?))
@@ -5201,13 +5552,8 @@ export class WorkspaceSpaceStorage {
       spaceId,
       JSON.stringify(workstreamIds),
     ).toArray().map((row) => row.workstream_id);
-    let latest = 0;
     for (const workstreamId of ordered) {
-      latest = this.storage.sql.exec<{ latest_attention_ordinal: number } & Record<string, SqlStorageValue>>(
-        `UPDATE spaces SET latest_attention_ordinal = latest_attention_ordinal + 1
-          WHERE space_id = ? RETURNING latest_attention_ordinal`,
-        spaceId,
-      ).one().latest_attention_ordinal;
+      latest = this.nextAttentionOrdinal(spaceId);
       this.storage.sql.exec(
         `UPDATE space_channel_memberships SET attention_ordinal = ? WHERE space_id = ? AND workstream_id = ?`,
         latest,
@@ -5216,6 +5562,32 @@ export class WorkspaceSpaceStorage {
       );
     }
     if (latest === 0) return;
+    this.readThrough(spaceId, placerUserId, latest, now);
+  }
+
+  /**
+   * One piece of Channel news of any kind: take the Channel's next attention
+   * ordinal and read its author through it, since your own news is not news
+   * to you. Rally as author (`actorUserId` null) reads nobody through. Null on
+   * an object short of migration 98, which has no waterline.
+   */
+  private stampChannelNews(spaceId: string, actorUserId: string | null, now: number): number | null {
+    if (!this.readsReady()) return null;
+    const ordinal = this.nextAttentionOrdinal(spaceId);
+    if (actorUserId !== null) this.readThrough(spaceId, actorUserId, ordinal, now);
+    return ordinal;
+  }
+
+  private nextAttentionOrdinal(spaceId: string): number {
+    return this.storage.sql.exec<{ latest_attention_ordinal: number } & Record<string, SqlStorageValue>>(
+      `UPDATE spaces SET latest_attention_ordinal = latest_attention_ordinal + 1
+        WHERE space_id = ? RETURNING latest_attention_ordinal`,
+      spaceId,
+    ).one().latest_attention_ordinal;
+  }
+
+  /** Raise one person's read position in a Channel to `ordinal`, never lower it. */
+  private readThrough(spaceId: string, userId: string, ordinal: number, now: number): void {
     this.storage.sql.exec(
       `INSERT INTO space_reads (space_id, user_id, seen_attention_ordinal, updated_at)
        VALUES (?1, ?2, ?3, ?4)
@@ -5223,8 +5595,8 @@ export class WorkspaceSpaceStorage {
          seen_attention_ordinal = MAX(COALESCE(space_reads.seen_attention_ordinal, 0), excluded.seen_attention_ordinal),
          updated_at = excluded.updated_at`,
       spaceId,
-      placerUserId,
-      latest,
+      userId,
+      ordinal,
       now,
     );
   }
@@ -5242,6 +5614,14 @@ function channelMessage(row: ChannelMessageRow): ChannelMessage {
     id: row.message_id,
     author: row.author_kind === "member" ? { kind: "member", userId: asUserId(row.author_user_id!) } : { kind: "rally" },
     body: row.body,
+    ...(row.source_workstream_id === null ? {} : {
+      merge: {
+        threadId: asWorkstreamId(row.source_workstream_id),
+        title: row.source_title ?? "",
+        summary: row.source_description === null || row.source_description.trim() === "" ? null : row.source_description,
+        embeds: row.embeds_json === null ? [] : JSON.parse(row.embeds_json) as MergeEmbed[],
+      },
+    }),
   };
 }
 

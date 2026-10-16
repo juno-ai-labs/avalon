@@ -5,6 +5,7 @@ import {
   IconCheck,
   IconCloudDownload,
   IconCornerDownRight,
+  IconCornerUpLeft,
   IconDots,
   IconHexagons,
   IconLink,
@@ -49,6 +50,25 @@ export interface ConversationRowActions {
   onCopyLink?: ((target: ConversationRowTarget) => void) | undefined;
   onRename?: (target: ConversationRowTarget) => void;
   onArchive?: (target: ConversationRowTarget) => void;
+  /**
+   * Merge this conversation's result up: a Breakout into its Thread, a Thread
+   * into one of its Channels. The label names the target ("Merge to thread",
+   * "Merge to GTM"); absent where nothing here can merge.
+   */
+  /** `target` names where it goes, at the row's end: the Thread, or "Channel". */
+  merge?: { label: string; target?: string | undefined; onSelect: () => void } | undefined;
+}
+
+/** The menu row that opens the composer's merge mode; the breakout mark rotated 180°. */
+function MergeRow({ actions }: { actions?: ConversationRowActions | undefined }): React.JSX.Element | null {
+  if (!actions?.merge) return null;
+  // Drawn as the rows under it are, so it reads as one of the menu's rows:
+  // the target where they show their count, and no chevron, since it acts.
+  return <DropdownMenu.Item className="menu-item title-menu-level-row title-menu-merge-row" onSelect={actions.merge.onSelect}>
+    <IconCornerUpLeft aria-hidden="true" size={17} stroke={1.7} />
+    <span className="title-menu-item-copy">{actions.merge.label}</span>
+    {actions.merge.target && <span className="title-menu-level-meta">{actions.merge.target}</span>}
+  </DropdownMenu.Item>;
 }
 
 /** How many Breakouts the Breakouts view lists before "Show N more". */
@@ -515,6 +535,7 @@ export function ChannelMenu({
       {actions?.onCopyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={() => actions.onCopyLink?.(target)} />}
       <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />
     </ActionTiles>
+    <MergeRow actions={actions} />
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(workstream.participants.length, workstream.scope, participantsPending)} view={PEOPLE_VIEW} />
     <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
     <LevelRow icon={<IconCornerDownRight aria-hidden="true" size={17} stroke={1.7} />} label="Breakouts" meta={breakouts?.length} view={BREAKOUTS_VIEW} />
@@ -671,6 +692,7 @@ export function BreakoutMenu({
       {actions?.onCopyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={() => actions.onCopyLink?.(breakout)} />}
       {(appearance || actions?.onSetPublic || actions?.onArchive) && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
     </ActionTiles>
+    <MergeRow actions={actions} />
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(participants.length, scope, participantsPending)} view={PEOPLE_VIEW} />
     <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
   </>;

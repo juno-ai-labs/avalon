@@ -1961,7 +1961,7 @@ describe('MessageBlock action tooltips', () => {
     const row = container.querySelector('.agent-message-actions');
     const controls = [...row!.querySelectorAll('button')];
     expect(controls.map((control) => control.textContent?.trim()))
-      .toEqual(['Copy', 'Speak', 'Image', 'PDF', 'New breakout']);
+      .toEqual(['New breakout', 'Copy', 'Speak', 'Image', 'PDF']);
 
     for (const control of controls) {
       const sentence = control.getAttribute('aria-label');
@@ -2777,10 +2777,11 @@ describe('MessageBlock breakout cutoff', () => {
     const row = container.querySelector('.agent-message-actions');
     expect(row).toContainElement(control);
     expect(container.querySelector('header')).not.toContainElement(control);
-    // Last, after the exports: the row reads copy, keep, then branch. Speak
-    // needs a playback provider this render does not mount.
+    // First, ahead of Merge and the rest: the row reads branch, then the
+    // actions on these words. Speak needs a playback provider this render does
+    // not mount.
     expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
-      .toEqual(['Copy', 'Image', 'PDF', 'New breakout']);
+      .toEqual(['New breakout', 'Copy', 'Image', 'PDF']);
 
     fireEvent.click(control);
 
@@ -2905,5 +2906,77 @@ describe('MessageBlock breakout cutoff', () => {
     expect(screen.getByText('Sidekick')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'New breakout from this message' }));
     expect(onStartSubstream).toHaveBeenCalledExactlyOnceWith('turn-9');
+  });
+});
+
+describe('MessageBlock merge-back', () => {
+  const onMerge = vi.fn();
+
+  beforeEach(() => {
+    onMerge.mockReset();
+    desktopServicesAvailable.mockReturnValue(true);
+  });
+
+  const settledAgentTurn: Message = {
+    ...baseMessage,
+    id: 'message-agent-merge',
+    authorType: 'agent',
+    author: undefined,
+    text: 'Sequence B is ready.',
+    transcriptTurnId: 'turn-12',
+  };
+
+  it('puts Merge after New breakout in Rally’s hover row and hands it the message’s words', () => {
+    const { container } = render(
+      <MessageBlock {...actions} merge={{ label: 'Merge to thread', onMerge }} message={settledAgentTurn} onStartSubstream={vi.fn()} />,
+    );
+    const row = container.querySelector('.agent-message-actions');
+    expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
+      .toEqual(['New breakout', 'Merge to thread', 'Copy', 'Image', 'PDF']);
+    fireEvent.click(screen.getByRole('button', { name: 'Merge to thread' }));
+    expect(onMerge).toHaveBeenCalledExactlyOnceWith('Sequence B is ready.');
+  });
+
+  it('puts Merge after New breakout under a person’s own message too', () => {
+    const { container } = render(
+      <MessageBlock
+        {...actions}
+        merge={{ label: 'Merge to GTM', onMerge }}
+        message={{ ...baseMessage, transcriptTurnId: 'turn-4' }}
+        onStartSubstream={vi.fn()}
+      />,
+    );
+    const row = container.querySelector('.human-message-actions');
+    expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
+      .toEqual(['New breakout', 'Merge to GTM']);
+  });
+
+  it('offers no Merge on a message still being sent', () => {
+    render(<MessageBlock {...actions} merge={{ label: 'Merge to thread', onMerge }}
+      message={{ ...baseMessage, deliveryState: 'sending' }} />);
+    expect(screen.queryByRole('button', { name: 'Merge to thread' })).toBeNull();
+  });
+
+  it('draws a merge as the shared merge block: its Breakout, who merged it, and a link to open it', () => {
+    const onOpenBreakout = vi.fn();
+    render(
+      <MessageBlock
+        {...actions}
+        message={{
+          ...baseMessage,
+          text: 'Approved **Sequence B**.',
+          mergedFrom: { breakoutId: 'breakout-b', title: 'Sequence B', actingAgent: true },
+        }}
+        onOpenBreakout={onOpenBreakout}
+      />,
+    );
+    // The shared merge block, not a person's bubble: the same one a Channel draws.
+    const merge = screen.getByRole('article', { name: 'Sequence B, merged by Adam' });
+    expect(merge).toHaveClass('merge-message');
+    expect(merge).toHaveTextContent(/Sequence B\s*· merged by.*Rally for .*Adam/u);
+    // A merge renders as markdown, which a typed message's verbatim body does not.
+    expect(screen.getByText('Sequence B', { selector: 'strong' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Sequence B' }));
+    expect(onOpenBreakout).toHaveBeenCalledExactlyOnceWith('breakout-b');
   });
 });
