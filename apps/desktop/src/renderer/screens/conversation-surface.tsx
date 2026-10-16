@@ -32,6 +32,7 @@ import {
   type WorkstreamMessageDeliveryState,
   type WorkstreamTranscriptSnapshot,
   type SpaceSummary,
+  type ConversationMergeResult,
   mergeResourceIds,
 } from '@rally/contracts';
 import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
@@ -1295,8 +1296,14 @@ export interface ConversationSurfaceProps {
   onOpenBreakout?: (substreamId: string) => void;
   /** Open the composer's merge mode, empty: the title menu's Merge. A new nonce asks again. */
   mergeRequest?: number | null;
-  /** Bring this turn into view; a new nonce asks again for the same turn. */
-  scrollToTurn?: { turnId: string; nonce: number } | null;
+  /** A merge from this conversation landed: the host opens where it went. */
+  onMerged?: (result: ConversationMergeResult) => void;
+  /**
+   * Bring this turn into view; a new nonce asks again for the same turn.
+   * `arriving` is a turn just written that the feed has yet to receive: the
+   * request waits for it rather than paging back through older messages.
+   */
+  scrollToTurn?: { turnId: string; nonce: number; arriving?: boolean } | null;
   /**
    * A Breakout's origin in its Channel: the turn it started from, and the
    * Channel's name for the card's byline. The messages themselves are read
@@ -1349,6 +1356,7 @@ export function ConversationSurface({
   openBreakoutId = null,
   onOpenBreakout,
   mergeRequest = null,
+  onMerged,
   scrollToTurn = null,
   honorsSearchTarget = true,
   paneKey,
@@ -2149,6 +2157,18 @@ export function ConversationSurface({
   }, [conversationAddress, feedLive, loadTranscriptRange, queryClient, transcriptQueryKey]);
   useEffect(() => {
     if (scrollToTurn === null || handledScrollNonce.current === scrollToTurn.nonce) return;
+    if (scrollToTurn.arriving) {
+      // A turn on its way waits for the feed to deliver it.
+      const index = transcript.findIndex((message) => message.transcriptTurnId === scrollToTurn.turnId);
+      if (index < 0) return;
+      handledScrollNonce.current = scrollToTurn.nonce;
+      // The newest row, as a turn just written usually is, is the end: not
+      // `scrollToIndex`, which aimed at the last row lands short of it while
+      // the rows above are still estimates.
+      if (index === transcript.length - 1) window.requestAnimationFrame(() => scrollTranscriptToEnd({ smooth: true }));
+      else revealTurn(scrollToTurn.turnId);
+      return;
+    }
     if (revealTurn(scrollToTurn.turnId)) {
       handledScrollNonce.current = scrollToTurn.nonce;
       return;
@@ -2161,7 +2181,8 @@ export function ConversationSurface({
       return;
     }
     void loadOlderMessages();
-  }, [loadOlderMessages, loadingOlder, olderMessagesError, orderedTranscript.data, revealTurn, scrollToTurn]);
+  }, [loadOlderMessages, loadingOlder, olderMessagesError, orderedTranscript.data, revealTurn, scrollToTurn,
+    scrollTranscriptToEnd, transcript]);
 
   const nearHistoryEdge = useTranscriptHistory({
     scrollRef: transcriptRef,
@@ -3108,13 +3129,15 @@ export function ConversationSurface({
     const attemptKey = JSON.stringify([text, target]);
     if (mergeAttemptRef.current?.key !== attemptKey) mergeAttemptRef.current = { key: attemptKey, id: crypto.randomUUID() };
     try {
-      await api.mergeConversation(id, { body: text, clientMessageId: mergeAttemptRef.current.id, ...target });
+      const result = await api.mergeConversation(id, { body: text, clientMessageId: mergeAttemptRef.current.id, ...target });
       mergeAttemptRef.current = null;
       const current = mergeNonceRef.current;
       if (current === nonce) setMergeMode(null);
       // Cancelled and not reopened, the draft is these words; reopened, it is
       // the newer merge's.
       if (current === nonce || current === null) void writeDraftText(draftKey, '');
+      // Only the merge still on screen moves the reader; a newer one is theirs.
+      if (current === nonce) onMerged?.(result);
     } catch (error) {
       if (mergeNonceRef.current === nonce) setMergeError(mergeFailureMessage(error));
       // The composer keeps the words when a send throws.
