@@ -34,7 +34,7 @@ export const hiddenInputControlLabelRule = {
   },
 };
 
-/** Every class token spelled literally anywhere in a className value, conditionals included. */
+/** Every class token spelled literally anywhere in a className value, conditionals and helper calls included. */
 function classTokens(node) {
   switch (node?.type) {
     case "Literal":
@@ -49,6 +49,15 @@ function classTokens(node) {
       return [...classTokens(node.consequent), ...classTokens(node.alternate)];
     case "LogicalExpression":
       return [...classTokens(node.left), ...classTokens(node.right)];
+    // clsx('a', on && 'b', ['c'], { d: on }) and any other class-name helper.
+    case "CallExpression":
+      return node.arguments.flatMap(classTokens);
+    case "ArrayExpression":
+      return node.elements.flatMap(classTokens);
+    case "ObjectExpression":
+      return node.properties.flatMap((property) => property.type === "Property" && !property.computed
+        ? property.key.type === "Identifier" ? [property.key.name] : classTokens(property.key)
+        : []);
     default:
       return [];
   }
