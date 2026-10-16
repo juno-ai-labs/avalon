@@ -205,10 +205,14 @@ export function NavigationSidebar({
   const sections = guest ? SECTIONS.filter((candidate) => candidate.id !== 'channels') : SECTIONS;
   const section = guest && chosenSection === 'channels' ? 'threads' : chosenSection;
   const pinFailure = usePinFailure();
-  // The same number as the dock badge: every conversation waiting on this
-  // reader, and every access request waiting on them. The menu bar counts
-  // Activity's unread rows instead.
+  // Threads: the dock badge's number, every conversation waiting on this
+  // reader and every access request waiting on them. Activity: the menu
+  // bar's, the access requests and every unread row. Channels: each Channel
+  // with threads this reader has not seen.
   const waiting = attentionItems.length + accessRequests.length;
+  const unreadActivity = useUnreadActivityCount() + accessRequests.length;
+  const newChannels = useChannelsWithNews(!guest);
+  const badges: Record<SidebarSection, number> = { pinned: 0, channels: newChannels, threads: waiting, activity: unreadActivity };
   const title = SECTIONS.find((candidate) => candidate.id === section)?.label ?? 'Threads';
   const [creatingChannel, setCreatingChannel] = useState(false);
   const markActivityRead = useMarkActivityRead();
@@ -235,11 +239,7 @@ export function NavigationSidebar({
         >
           <span className="navigation-rail-icon">
             {candidate.icon}
-            {candidate.id === 'threads' && waiting > 0 && <span
-              aria-label={`${waiting} waiting`}
-              className={waiting > 99 ? 'navigation-rail-badge is-capped' : 'navigation-rail-badge'}
-              role="img"
-            >{waiting > 99 ? '99+' : waiting}</span>}
+            <RailBadge count={badges[candidate.id]} section={candidate.id} />
           </span>
           <span className="navigation-rail-label">{candidate.label}</span>
         </button>)}
@@ -298,6 +298,60 @@ export function NavigationSidebar({
     {accountSlot && createPortal(accountMenu, accountSlot)}
     {creatingChannel && <NewChannelDialog onClose={() => setCreatingChannel(false)} />}
   </ResizableSidebar>;
+}
+
+/** What a section's count says it counts, for its accessible name. */
+const BADGE_NOUNS: Record<SidebarSection, string> = { pinned: 'pinned', channels: 'with new threads', threads: 'waiting', activity: 'unread' };
+
+/** A section button's red count; nothing at zero, `99+` past two digits. */
+function RailBadge({ count, section }: { count: number; section: SidebarSection }): React.JSX.Element | null {
+  if (count <= 0) return null;
+  return <span
+    aria-label={`${count} ${BADGE_NOUNS[section]}`}
+    className={count > 99 ? 'navigation-rail-badge is-capped' : 'navigation-rail-badge'}
+    role="img"
+  >{count > 99 ? '99+' : count}</span>;
+}
+
+/** The Activity tab's whole feed, whichever filter is shown: the tab and its badge share the one cache entry per filter. */
+function useActivityFeed(only: ActivityFilter | null) {
+  const { api } = useAppSession();
+  return useInfiniteQuery({
+    queryKey: activityQueryKey(only),
+    queryFn: ({ pageParam, signal }) => api!.getActivity(pageParam, only, signal),
+    initialPageParam: null as string | null,
+    getNextPageParam: (page: ActivityPage) => page.nextCursor,
+    enabled: Boolean(api),
+    refetchOnMount: 'always',
+  });
+}
+
+/**
+ * Activity's unread rows, as the menu bar counts them: the first page is 250
+ * rows, so the count is exact up to that. The socket's activity nudge
+ * refetches it, and Mark all read clears it with the dots.
+ */
+function useUnreadActivityCount(): number {
+  const feed = useActivityFeed(null);
+  return useMemo(() => (feed.data?.pages ?? []).reduce(
+    (total, page) => total + page.items.filter((item) => item.unread).length, 0,
+  ), [feed.data]);
+}
+
+/**
+ * Channels with threads this reader has not seen, as each row says "n new
+ * threads". The same stats query the Channels list reads, which the socket's
+ * Space snapshot seeds. A guest has no Channels section, so nothing to count.
+ */
+function useChannelsWithNews(enabled: boolean): number {
+  const { api } = useAppSession();
+  const stats = useQuery<ChannelStats[]>({
+    queryKey: CHANNEL_STATS_QUERY_KEY,
+    queryFn: ({ signal }) => api!.getChannelStats(signal),
+    enabled: enabled && api !== null,
+    staleTime: Infinity,
+  });
+  return enabled ? (stats.data ?? []).filter((item) => item.hasUnread && item.newThreadCount > 0).length : 0;
 }
 
 /** The Channel the open route sits under, so a thread opened from a list stays under it. */
@@ -1331,14 +1385,7 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
       ? <RallyAvatar />
       : <Avatar member={member ?? { id: item.actorUserId, name, email: '', timezone: '' }} title={null} />,
   });
-  const feed = useInfiniteQuery({
-    queryKey: activityQueryKey(only),
-    queryFn: ({ pageParam, signal }) => api!.getActivity(pageParam, only, signal),
-    initialPageParam: null as string | null,
-    getNextPageParam: (page) => page.nextCursor,
-    enabled: Boolean(api),
-    refetchOnMount: 'always',
-  });
+  const feed = useActivityFeed(only);
   const fetched = useMemo(() => (feed.data?.pages ?? []).flatMap((page) => page.items), [feed.data]);
   const items = chip === 'unread' ? fetched.filter((item) => item.unread) : fetched;
   const href = (item: ActivityItem): string => {
