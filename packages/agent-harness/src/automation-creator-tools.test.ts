@@ -151,8 +151,8 @@ describe("the automations plugin", () => {
 
     await expect(toolNamed(plugin.tools, "sidekicks_list").execute({}, toolContext))
       .resolves.toMatchObject({ output: listed });
-    expect(plugin.systemMessage).toContain("start from its current definition");
-    expect(plugin.systemMessage).toContain("with its sidekickId");
+    expect(plugin.systemMessage).toContain("read its current definition with sidekick_sidekicks_list first");
+    expect(plugin.systemMessage).toContain("submit the whole revised draft");
   });
 
   it("hands the named automation to the host beside the draft, and never inside it", async () => {

@@ -515,7 +515,18 @@ describe("a room Sidekick's run and the room's agents", () => {
     expect(await detail()).toMatchObject({ name: "Research guide", lifecycle: "active", scope: "workstream", owningWorkstreamId: ROOM_ID });
     expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
     const discovered = await service.sidekicks();
-    expect(discovered.sidekicks.find((item) => item.sidekickId === sidekickId)).toMatchObject({ agentId: created.agentId, scope: "workstream" });
+    expect(discovered.sidekicks.find((item) => item.sidekickId === sidekickId))
+      .toMatchObject({ agentId: created.agentId, scope: "workstream", ownedByThisWorkstream: true, canEdit: true });
+    // Another thread sees the same room-scoped Sidekick as not its own, and the
+    // host refuses it a change whatever the model makes of that list.
+    const elsewhere = crypto.randomUUID();
+    const otherRoom = new AgentCommunicationService(TEST_ENV, WorkstreamWorkflowInputSchema.parse({ ...input,
+      parentId: elsewhere, loopId: `workstream:${elsewhere}:substream:0:loop`, harnessRunId: crypto.randomUUID() }));
+    expect((await otherRoom.sidekicks()).sidekicks.find((item) => item.sidekickId === sidekickId))
+      .toMatchObject({ scope: "workstream", ownedByThisWorkstream: false, canEdit: false });
+    await expect(otherRoom.send({ agentId: created.agentId, message: "CONFIGURE_SIDEKICK REVISE: take this over.",
+      attachmentIds: [] }, { ...context, workstreamId: elsewhere, effectIntentId: crypto.randomUUID() }))
+      .rejects.toThrow("This Sidekick belongs to another thread");
     await service.send({ agentId: created.agentId, message: "CONFIGURE_SIDEKICK REVISE: add cost comparison.", attachmentIds: [] },
       { ...context, effectIntentId: crypto.randomUUID() });
     expect((await settledRun(authoring, 2))[1]).toMatchObject({ status: "completed", error_json: null });
@@ -525,6 +536,47 @@ describe("a room Sidekick's run and the room's agents", () => {
     const setupCall = provider.calls.find((call) => call.toolNames.some((name) => name.endsWith("submit_draft")));
     expect(JSON.stringify(setupCall?.messages.filter((message) => message.role === "system")))
       .toContain(`This conversation configures Sidekick ${sidekickId}`);
+  });
+
+  it("gives a conversation that acts for no thread no thread's Sidekick to change", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const room = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const roomOwned = await room.createSidekick("workstream", { ...context, effectIntentId: crypto.randomUUID() });
+    const personal = await room.createSidekick("personal", { ...context, effectIntentId: crypto.randomUUID() });
+    const sibling = await room.createSidekick("personal", { ...context, effectIntentId: crypto.randomUUID() });
+    // A personal Sidekick's own conversation: it acts for no thread.
+    const own = new AgentCommunicationService(TEST_ENV, WorkstreamWorkflowInputSchema.parse({ ...input,
+      parentKind: "automation", parentId: personal.sidekickId, loopId: `automation:${personal.sidekickId}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID() }));
+    const listed = (await own.sidekicks()).sidekicks;
+    expect(listed.map((item) => item.sidekickId)).not.toContain(personal.sidekickId);
+    expect(listed.find((item) => item.sidekickId === sibling.sidekickId))
+      .toMatchObject({ scope: "personal", ownedByThisWorkstream: false, canEdit: true });
+    expect(listed.find((item) => item.sidekickId === roomOwned.sidekickId))
+      .toMatchObject({ scope: "workstream", ownedByThisWorkstream: false, canEdit: false });
+  });
+
+  it("admits a guest to a Sidekick's authoring agent only through the guest's grants", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const organizationSidekick = await new AgentCommunicationService(TEST_ENV, input)
+      .createSidekick("workspace", { ...context, effectIntentId: crypto.randomUUID() });
+    // An organization Sidekick admits any member, and no guest grant reaches it.
+    await env.DB.prepare("UPDATE workspace_members SET access_class = 'guest' WHERE workspace_id = ? AND user_id = ?")
+      .bind(WORKSPACE_ID, AUTHOR_ID).run();
+    const guest = new AgentCommunicationService(TEST_ENV, WorkstreamWorkflowInputSchema.parse({ ...input,
+      harnessRunId: crypto.randomUUID() }));
+    await expect(guest.send({ agentId: organizationSidekick.agentId, message: "Change your instructions.", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() })).rejects.toThrow("This Sidekick is unavailable to this execution");
   });
 
   it("keeps a large final response local without creating a parent message", async () => {
@@ -1507,7 +1559,7 @@ describe("a room Sidekick's run and the room's agents", () => {
     await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes(answer)),
       { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
     const sidekicks = await service.sidekicks();
-    expect(sidekicks.sidekicks[0]).toMatchObject({ sidekickId: AUTOMATION_ID, scope: "workstream", owningWorkstreamId: ROOM_ID });
+    expect(sidekicks.sidekicks[0]).toMatchObject({ sidekickId: AUTOMATION_ID, scope: "workstream", ownedByThisWorkstream: true });
     await service.send({ agentId: sidekicks.sidekicks[0]!.agentId, message: "Explain your current configuration.", attachmentIds: [] },
       { ...context, effectIntentId: crypto.randomUUID() });
     const authoring = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, AUTOMATION_ID)));
@@ -1558,7 +1610,8 @@ describe("a room Sidekick's run and the room's agents", () => {
     expect(run).toMatchObject({ status: "completed", error_json: null });
     const asked = provider.calls.find((call) => JSON.stringify(call.messages).includes(request.text));
     expect(asked).toBeDefined();
-    expect(JSON.stringify(asked!.messages)).toContain(senderAgentId);
+    // The model reads a Sidekick's id as `sidekick/…`; storage keeps `automation/…`.
+    expect(JSON.stringify(asked!.messages)).toContain(`Message from agent sidekick/${AUTOMATION_ID}/0.`);
     expect(JSON.stringify(asked!.messages)).toContain(messageId);
     await runInDurableObject(roomConversation(), (_instance, state) => {
       expect(state.storage.sql.exec<{ n: number }>(

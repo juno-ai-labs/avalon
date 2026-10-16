@@ -1732,6 +1732,19 @@ export const AutomationRunStatusSchema = z.enum([
   "pending", "running", "needs_input", "completed", "failed", "stopped",
 ]);
 
+/**
+ * The Thread that owns a `workstream`-scoped Sidekick, as the library and the
+ * detail header name it: its title and the glyph it chose. Sent only to a
+ * reader who is a participant of that Thread, so a Sidekick someone still
+ * reads as its author never reveals a Thread they have left.
+ */
+export const AutomationOwningThreadSchema = z.object({
+  id: IdSchema,
+  title: z.string(),
+  appearance: WorkstreamAppearanceSchema.optional(),
+});
+export type AutomationOwningThread = z.infer<typeof AutomationOwningThreadSchema>;
+
 export const AutomationSummarySchema = z.object({
   loadable: z.boolean().default(false),
   /**
@@ -1747,6 +1760,8 @@ export const AutomationSummarySchema = z.object({
   scope: AutomationScopeSchema,
   /** The room that owns a `workstream`-scoped automation; null for the other two. */
   owningWorkstreamId: IdSchema.nullable().default(null),
+  /** The owning Thread's name and glyph; null for the other scopes and when the reader is not in it. */
+  owningThread: AutomationOwningThreadSchema.nullable().default(null),
   status: z.enum(["draft", "active", "paused"]),
   nextRunAt: TimestampSchema.nullable(),
   lastRunAt: TimestampSchema.nullable(),
@@ -1760,6 +1775,7 @@ export const AutomationSummarySchema = z.object({
 export const WorkstreamAutomationSummarySchema = AutomationSummarySchema.omit({
   scope: true,
   owningWorkstreamId: true,
+  owningThread: true,
 });
 export type WorkstreamAutomationSummary = z.infer<typeof WorkstreamAutomationSummarySchema>;
 

@@ -109,6 +109,11 @@ export interface AutomationSummary {
   scope: AutomationScope;
   /** The room that owns a `workstream`-scoped automation. */
   owningWorkstreamId?: string;
+  /**
+   * That room's name and glyph, when the server named it: only to a reader
+   * who is in it. Absent otherwise, and the label falls back to "Thread".
+   */
+  owningThread?: { id: string; title: string; appearance?: WorkstreamAppearance };
   status: AutomationStatus;
   nextRunAt?: string;
   lastRunAt?: string;
@@ -122,7 +127,7 @@ export interface AutomationSummary {
  * The sidebar summary without its scope and owner: every row in that rail
  * belongs to the work stream showing it.
  */
-export type WorkstreamAutomationSummary = Omit<AutomationSummary, 'scope' | 'owningWorkstreamId'>;
+export type WorkstreamAutomationSummary = Omit<AutomationSummary, 'scope' | 'owningWorkstreamId' | 'owningThread'>;
 
 export interface WorkstreamSummary {
   appearance?: WorkstreamAppearance;

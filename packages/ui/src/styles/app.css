@@ -7244,13 +7244,28 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .sidekick-results-heading h2 { font-size: 18px; font-weight: 500; margin: 0; }
 .sidekick-results-heading > span { font-size: 13px; color: var(--av-sys-color-text-muted); }
 .sidekicks-library-list { list-style: none; padding: 0; margin: 0 -12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 24px; }
-.sidekicks-library-list a { display: flex; align-items: center; gap: 16px; height: 100%; padding: 20px 12px; border-radius: 16px; color: inherit; text-decoration: none; }
-.sidekicks-library-list a:hover { background-image: var(--hover-layer); }
+/* The row is a card whose link is its title, stretched over the card by
+   `::after`. That leaves room for a second control in the row, the owning
+   Thread's button, which sits above the stretched area instead of inside an
+   anchor. */
+.sidekicks-library-list li { position: relative; display: flex; align-items: center; gap: 16px; height: 100%; padding: 20px 12px; border-radius: 16px; }
+.sidekicks-library-list li:hover { background-image: var(--hover-layer); }
+.sidekicks-library-list li:has(.sidekick-list-link:focus-visible) { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
+.sidekick-list-link { color: inherit; text-decoration: none; }
+.sidekick-list-link:focus-visible { outline: none; }
+.sidekick-list-link::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+.sidekick-list-copy .owning-thread-link { position: relative; z-index: 1; }
+/* The owning Thread, named by its glyph and title, in the library row and the
+   Sidekick's header badge. It reads as text until pointed at. */
+.owning-thread-link { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; vertical-align: bottom; cursor: pointer; }
+.owning-thread-link-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.owning-thread-link:hover .owning-thread-link-title { color: var(--av-sys-color-text-default); text-decoration: underline; text-underline-offset: 2px; }
+.automation-header .owning-thread-badge { max-width: 100%; padding: 2px 9px 2px 3px; font-size: var(--av-sys-font-size-meta); }
 .sidekick-list-glyph { width: 56px; height: 56px; flex-shrink: 0; }
 .sidekick-list-copy { flex: 1; min-width: 0; }
 .sidekick-list-copy h3 { font-size: 16px; font-weight: 500; margin: 0 0 5px; overflow-wrap: anywhere; }
 .sidekick-list-copy p { font-size: 14px; color: var(--av-sys-color-text-muted); line-height: 1.5; margin: 0 0 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.sidekick-list-copy small { color: var(--av-sys-color-text-muted); font-size: 12px; }
+.sidekick-list-copy small { display: flex; align-items: center; gap: 4px; min-width: 0; color: var(--av-sys-color-text-muted); font-size: 12px; white-space: nowrap; }
 .sidekick-list-chevron { color: var(--av-sys-color-text-muted); flex-shrink: 0; }
 .sidekick-detail { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; min-width: 0; }
 .sidekick-navigation { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 38px 20px 10px; border-bottom: 1px solid var(--av-sys-color-border-subtle); }
