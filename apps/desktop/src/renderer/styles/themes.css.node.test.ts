@@ -226,6 +226,9 @@ describe('token references', () => {
     // How far a crowded pane header moves its pill left, set by
     // TitlePillHeader from the gap it measured.
     '--title-pill-shift',
+    // The dictation level ring, 0 to 1 from the capture worklet's RMS, written
+    // onto the microphone control by the composer while a recording runs.
+    '--dictation-level',
     '--radix-dropdown-menu-content-available-height', '--radix-dropdown-menu-content-available-width',
     '--radix-select-content-available-height', '--radix-select-content-transform-origin', '--radix-select-trigger-width'];
 

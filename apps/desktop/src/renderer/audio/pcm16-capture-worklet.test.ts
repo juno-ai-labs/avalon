@@ -61,6 +61,18 @@ describe('PCM16 capture worklet', () => {
     expect(pcm[1]).toBeCloseTo(0.1 * 0x7fff, -1);
   });
 
+  it('reports the RMS level of each chunk beside its samples', () => {
+    const processor = new Processor({ processorOptions: { microphoneGain: 1 } });
+    processor.process([[new Float32Array(128).fill(0.5)]], [[new Float32Array(128)]]);
+    processor.port.onmessage?.(new MessageEvent('message', { data: 'flush' }));
+
+    const message = processor.port.postMessage.mock.calls
+      .map(([value]) => value as { level?: number; type?: string })
+      .find((value) => value.type === 'audio');
+    expect(message?.level).toBeCloseTo(0.5);
+    expect(emittedPcm(processor)).toHaveLength(128);
+  });
+
   it('flushes resampled computer-audio samples that have not reached a full chunk', () => {
     const processor = new Processor({ processorOptions: { systemGain: 1 } });
     processor.port.onmessage?.(new MessageEvent('message', {

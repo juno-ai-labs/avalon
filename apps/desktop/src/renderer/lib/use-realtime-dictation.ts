@@ -1,7 +1,12 @@
-import { TRANSCRIPTION_BACKLOG_SEND_INTERVAL_MS, TRANSCRIPTION_MAX_APPEND_BYTES } from '@rally/contracts/realtime-transcription';
+import {
+  TRANSCRIPTION_BACKLOG_SEND_INTERVAL_MS,
+  TRANSCRIPTION_MAX_APPEND_BYTES,
+  TRANSCRIPTION_TICKET_LIFETIME_SECONDS,
+} from '@rally/contracts/realtime-transcription';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RallyApi } from './api';
 import { readDevicePreferences, setDeviceMicrophoneId } from './device-preferences';
+import { type PerfTrace, startPerfTrace } from './perf-trace';
 import { desktopBridge } from './platform';
 
 export type DictationState = 'idle' | 'requesting' | 'listening' | 'paused' | 'transcribing' | 'finalizing' | 'error';
@@ -12,6 +17,10 @@ export interface MicrophoneDevice {
 }
 
 interface AudioCapture {
+  /** Settles once the worklet module is loaded and the graph is built. */
+  ready: Promise<void>;
+  /** Connects the inputs once they exist; audio reaches the worklet from here on. */
+  attach: (streams: MediaStream[], systemAudio: SystemAudioCapture | undefined) => Promise<void>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
   start: () => Promise<void>;
@@ -46,12 +55,20 @@ interface DictationAttempt {
   socket?: WebSocket;
   streams: MediaStream[];
   systemAudio?: SystemAudioCapture;
+  trace: PerfTrace;
   transcript: string;
   completionTimer?: number;
 }
 
 export interface RealtimeDictationOptions {
   includeSystemAudio?: boolean;
+  /**
+   * Receives the meter level of each captured chunk, 0 to 1 from
+   * `meterLevel`, and 0 once capture pauses or ends. Called about ten times
+   * a second while listening, from the worklet's cadence; a host paints it
+   * directly rather than rendering on it.
+   */
+  onLevel?: (level: number) => void;
   useSystemDefaultMicrophone?: boolean;
 }
 
@@ -60,6 +77,12 @@ const AUDIO_CONTROL_TIMEOUT_MS = 2_000;
 // The existing 10-second connection budget now includes ticket acquisition
 // and backlog drain once capture starts; permission prompts do not consume it.
 const CONNECTION_TIMEOUT_MS = 10_000;
+// A ticket fetched on hover is presented only while the whole connection
+// budget still fits inside its life, so a slow upgrade cannot run it out.
+const PREFETCHED_TICKET_USABLE_MS = TRANSCRIPTION_TICKET_LIFETIME_SECONDS * 1_000 - CONNECTION_TIMEOUT_MS;
+// Where the level meter reads zero, in dBFS. Speech under automatic gain
+// control sits around -20, and the suppressed noise floor well under -50.
+const METER_FLOOR_DB = -50;
 const COMPLETION_TIMEOUT_MS = 60_000;
 const MAX_SOCKET_BUFFERED_BYTES = 4 * 1_024 * 1_024;
 
@@ -91,6 +114,13 @@ export function nextLiveTranscript(
   }
   if (event.type === 'response.text.done' && typeof event.text === 'string') return event.text;
   return undefined;
+}
+
+/** The 0 to 1 meter position for a chunk's RMS, on a dB scale above `METER_FLOOR_DB`. */
+export function meterLevel(rms: number): number {
+  if (!(rms > 0)) return 0;
+  const db = 20 * Math.log10(rms);
+  return Math.min(1, Math.max(0, (db - METER_FLOOR_DB) / -METER_FLOOR_DB));
 }
 
 export function isFinalTranscriptionEvent(event: RealtimeTranscriptionEvent): boolean {
@@ -219,106 +249,117 @@ async function waitForTranscriptionSession(
   });
 }
 
-async function createAudioCapture(
-  streams: MediaStream[],
-  systemAudio: SystemAudioCapture | undefined,
-  onAudio: (buffer: ArrayBuffer) => void,
-): Promise<AudioCapture> {
-  const context = new AudioContext({ sampleRate: 24_000 });
+/**
+ * Builds the capture graph without waiting for an input. The context is
+ * created at once, inside the click so no autoplay policy holds it, and the
+ * worklet module loads while the microphone is still opening; `attach`
+ * builds the nodes and connects the inputs once they exist. The worklet node
+ * itself is not created until then: Chromium renders an `AudioWorkletNode`
+ * whose output is unconnected as an automatic-pull node, so a node built
+ * early would run against silence and fill the backlog with zeros for as
+ * long as the permission prompt stays up. Nothing here suspends or resumes:
+ * until `attach` the context runs an empty graph.
+ *
+ * `sinkId: { type: 'none' }` keeps the context off the output device.
+ * Nothing in this graph plays, so opening a speaker was a device start the
+ * recording never needed, and on a Bluetooth headset a slow one. Engines
+ * without the option ignore it; for them the zero-gain path to
+ * `destination` is what keeps the graph pulled, which is why it stays.
+ *
+ * `stop` never waits for the module: a stalled fetch must not hold the
+ * microphone or the socket, so teardown closes whatever exists at once and
+ * the `stopped` flag keeps a late `ready` from building anything.
+ */
+function createAudioCapture(onAudio: (buffer: ArrayBuffer, level: number) => void): AudioCapture {
+  const context = new AudioContext({ sampleRate: 24_000, sinkId: { type: 'none' } });
   const sources: MediaStreamAudioSourceNode[] = [];
   let inputGain: GainNode | undefined;
   let node: AudioWorkletNode | undefined;
   let silence: GainNode | undefined;
-  try {
-    await context.suspend();
-    await context.audioWorklet.addModule(new URL('../audio/pcm16-capture-worklet.js?no-inline', import.meta.url));
-    inputGain = context.createGain();
-    // The worklet mixes native Core Audio PCM with the microphone. Leave
-    // headroom only when both sources are active.
-    inputGain.gain.value = 1;
-    for (const stream of streams) {
-      const source = context.createMediaStreamSource(stream);
-      source.connect(inputGain);
-      sources.push(source);
-    }
-    node = new AudioWorkletNode(context, 'rally-pcm16-capture', {
-      channelCount: 1,
-      channelCountMode: 'explicit',
-      channelInterpretation: 'speakers',
-      processorOptions: {
-        microphoneGain: systemAudio ? 0.65 : 1,
-        systemGain: streams.length > 0 ? 0.65 : 1,
-      },
-    });
-    silence = context.createGain();
-    silence.gain.value = 0;
-    inputGain.connect(node);
-    node.connect(silence);
-    silence.connect(context.destination);
-  } catch (error) {
-    for (const source of sources) {
-      try { source.disconnect(); } catch { /* Already disconnected. */ }
-    }
-    try { inputGain?.disconnect(); } catch { /* Already disconnected. */ }
-    try { node?.disconnect(); } catch { /* Already disconnected. */ }
-    try { silence?.disconnect(); } catch { /* Already disconnected. */ }
-    try { await context.close(); } catch { /* Preserve the setup error. */ }
-    throw error;
-  }
-
+  let systemAudio: SystemAudioCapture | undefined;
   let stopped = false;
   let resolveFlush: (() => void) | undefined;
   let resolvePause: (() => void) | undefined;
   let resolveResume: (() => void) | undefined;
-  node.port.onmessage = (event: MessageEvent<{ type?: string; buffer?: ArrayBuffer }>) => {
-    if (event.data.type === 'audio' && event.data.buffer) onAudio(event.data.buffer);
-    if (event.data.type === 'flushed') resolveFlush?.();
-    if (event.data.type === 'paused') resolvePause?.();
-    if (event.data.type === 'resumed') resolveResume?.();
-  };
-  systemAudio?.listen((buffer, sampleRate) => {
-    node.port.postMessage({ type: 'system-audio', buffer, sampleRate }, [buffer]);
-  });
+
+  const ready = context.audioWorklet.addModule(new URL('../audio/pcm16-capture-worklet.js?no-inline', import.meta.url));
+  // A failed load surfaces through `attach`, the first thing that waits on it.
+  void ready.catch(() => undefined);
+
+  const control = (
+    message: 'pause' | 'resume',
+    settle: (resolve: (() => void) | undefined) => void,
+    timeoutMessage: string,
+  ): Promise<void> => new Promise<void>((resolve, reject) => {
+    const worklet = node;
+    if (!worklet) {
+      resolve();
+      return;
+    }
+    const timer = window.setTimeout(() => reject(new Error(timeoutMessage)), AUDIO_CONTROL_TIMEOUT_MS);
+    settle(() => {
+      window.clearTimeout(timer);
+      resolve();
+    });
+    try { worklet.port.postMessage(message); } catch (error) {
+      window.clearTimeout(timer);
+      reject(error);
+    }
+  }).finally(() => settle(undefined));
 
   return {
+    ready,
+    async attach(streams, system) {
+      await ready;
+      if (stopped) return;
+      inputGain = context.createGain();
+      inputGain.gain.value = 1;
+      // The worklet mixes native Core Audio PCM with the microphone. Leave
+      // headroom only when both sources are active.
+      const worklet = new AudioWorkletNode(context, 'rally-pcm16-capture', {
+        channelCount: 1,
+        channelCountMode: 'explicit',
+        channelInterpretation: 'speakers',
+        processorOptions: {
+          microphoneGain: system ? 0.65 : 1,
+          systemGain: streams.length > 0 ? 0.65 : 1,
+        },
+      });
+      node = worklet;
+      silence = context.createGain();
+      silence.gain.value = 0;
+      worklet.port.onmessage = (event: MessageEvent<{ type?: string; buffer?: ArrayBuffer; level?: number }>) => {
+        if (event.data.type === 'audio' && event.data.buffer) onAudio(event.data.buffer, event.data.level ?? 0);
+        if (event.data.type === 'flushed') resolveFlush?.();
+        if (event.data.type === 'paused') resolvePause?.();
+        if (event.data.type === 'resumed') resolveResume?.();
+      };
+      for (const stream of streams) {
+        const source = context.createMediaStreamSource(stream);
+        source.connect(inputGain);
+        sources.push(source);
+      }
+      systemAudio = system;
+      system?.listen((buffer, sampleRate) => {
+        worklet.port.postMessage({ type: 'system-audio', buffer, sampleRate }, [buffer]);
+      });
+      inputGain.connect(worklet);
+      worklet.connect(silence);
+      silence.connect(context.destination);
+    },
     async pause() {
       if (stopped) return;
-      await new Promise<void>((resolve, reject) => {
-        resolvePause = resolve;
-        const timer = window.setTimeout(
-          () => reject(new Error('Audio capture did not pause in time.')),
-          AUDIO_CONTROL_TIMEOUT_MS,
-        );
-        resolvePause = () => {
-          window.clearTimeout(timer);
-          resolve();
-        };
-        try { node.port.postMessage('pause'); } catch (error) {
-          window.clearTimeout(timer);
-          reject(error);
-        }
-      }).finally(() => { resolvePause = undefined; });
+      await control('pause', (resolve) => { resolvePause = resolve; }, 'Audio capture did not pause in time.');
     },
     async resume() {
       if (stopped) return;
-      await new Promise<void>((resolve, reject) => {
-        resolveResume = resolve;
-        const timer = window.setTimeout(
-          () => reject(new Error('Audio capture did not resume in time.')),
-          AUDIO_CONTROL_TIMEOUT_MS,
-        );
-        resolveResume = () => {
-          window.clearTimeout(timer);
-          resolve();
-        };
-        try { node.port.postMessage('resume'); } catch (error) {
-          window.clearTimeout(timer);
-          reject(error);
-        }
-      }).finally(() => { resolveResume = undefined; });
+      await control('resume', (resolve) => { resolveResume = resolve; }, 'Audio capture did not resume in time.');
     },
     async start() {
-      if (!stopped) await context.resume();
+      // Running already when created inside a user gesture; a context a
+      // browser started suspended under its autoplay policy is resumed here,
+      // inside the same press.
+      if (!stopped && context.state !== 'running') await context.resume();
     },
     async stop(flush = false) {
       if (stopped) return;
@@ -329,14 +370,15 @@ async function createAudioCapture(
         // Core Audio stop is a drain barrier. It resolves only after every
         // native PCM callback has reached this worklet.
         try { await systemAudio?.stop(); } catch (error) { failure = error; }
-        if (flush && context.state === 'running') {
+        const worklet = node;
+        if (flush && worklet && context.state === 'running') {
           await new Promise<void>((resolve, reject) => {
             resolveFlush = resolve;
             flushTimer = window.setTimeout(() => {
               reject(new Error('Audio capture did not acknowledge its final buffered samples.'));
             }, AUDIO_FLUSH_TIMEOUT_MS);
             try {
-              node.port.postMessage('flush');
+              worklet.port.postMessage('flush');
             } catch (error) {
               reject(error);
             }
@@ -347,13 +389,13 @@ async function createAudioCapture(
       } finally {
         systemAudio?.listen(undefined);
         if (flushTimer !== undefined) window.clearTimeout(flushTimer);
-        node.port.onmessage = null;
+        if (node) node.port.onmessage = null;
         for (const source of sources) {
           try { source.disconnect(); } catch (error) { failure ??= error; }
         }
-        try { inputGain.disconnect(); } catch (error) { failure ??= error; }
-        try { node.disconnect(); } catch (error) { failure ??= error; }
-        try { silence.disconnect(); } catch (error) { failure ??= error; }
+        try { inputGain?.disconnect(); } catch (error) { failure ??= error; }
+        try { node?.disconnect(); } catch (error) { failure ??= error; }
+        try { silence?.disconnect(); } catch (error) { failure ??= error; }
         try { await context.close(); } catch (error) { failure ??= error; }
       }
       if (failure) throw failure;
@@ -362,6 +404,7 @@ async function createAudioCapture(
 }
 
 async function cleanupAttempt(attempt: DictationAttempt): Promise<void> {
+  attempt.trace.end({ outcome: 'cancelled' });
   if (attempt.completionTimer !== undefined) {
     window.clearTimeout(attempt.completionTimer);
     attempt.completionTimer = undefined;
@@ -389,8 +432,10 @@ async function cleanupAttempt(attempt: DictationAttempt): Promise<void> {
   if (failure) throw failure;
 }
 
+export type RealtimeDictationApi = Pick<RallyApi, 'getTranscriptionSocketTicket' | 'prefetchTranscriptionSocketTicket'>;
+
 export function useRealtimeDictation(
-  api: Pick<RallyApi, 'getTranscriptionSocketTicket'> | undefined,
+  api: RealtimeDictationApi | undefined,
   onTranscript: (transcript: string) => void,
   options: RealtimeDictationOptions = {},
 ): {
@@ -401,6 +446,8 @@ export function useRealtimeDictation(
   setSelectedDeviceId: (deviceId: string) => void;
   commit: () => Promise<string>;
   pause: () => Promise<void>;
+  /** Fetches the ticket a coming `start` will present; idle otherwise. */
+  prefetch: () => void;
   resume: () => Promise<void>;
   start: () => Promise<void>;
   state: DictationState;
@@ -418,6 +465,8 @@ export function useRealtimeDictation(
   const stateRef = useRef<DictationState>('idle');
   const onTranscriptRef = useRef(onTranscript);
   onTranscriptRef.current = onTranscript;
+  const onLevelRef = useRef(options.onLevel);
+  onLevelRef.current = options.onLevel;
 
   const transition = useCallback((next: DictationState): void => {
     stateRef.current = next;
@@ -463,6 +512,10 @@ export function useRealtimeDictation(
     else finalization?.resolve();
     setWarning(undefined);
     if (nextError) setError(nextError);
+    // `completed` is the drain's to claim; anything else ending the trace
+    // either failed or was stopped before the connection was ready.
+    attempt.trace.end({ outcome: nextError ? 'failed' : 'cancelled' });
+    onLevelRef.current?.(0);
     transition(nextState);
     void cleanupAttempt(attempt).catch((cleanupError) => {
       if (attemptRef.current || nextAttemptIdRef.current !== attempt.id || nextState === 'error') return;
@@ -550,6 +603,7 @@ export function useRealtimeDictation(
     if (!attempt?.capture || stateRef.current !== 'listening') return;
     try {
       await attempt.capture.pause();
+      onLevelRef.current?.(0);
       if (attemptRef.current === attempt) transition('paused');
     } catch (caught) {
       if (attemptRef.current === attempt) finish(attempt, 'error', captureErrorMessage(caught));
@@ -616,6 +670,11 @@ export function useRealtimeDictation(
 
   const start = useCallback(async (): Promise<void> => {
     if (!api || !navigator.mediaDevices?.getUserMedia || !['idle', 'error'].includes(stateRef.current)) return;
+    // Device-local: the flow is not in the telemetry event's schema. The line
+    // is what says which of the parallel branches below was the critical path.
+    const trace = startPerfTrace('dictation_start', { report: false });
+    const startedAt = performance.now();
+    const sinceStartMs = (): number => Math.round((performance.now() - startedAt) * 10) / 10;
     let resolveConnection!: () => void;
     let rejectConnection!: (error: Error) => void;
     const connectionPromise = new Promise<void>((resolve, reject) => {
@@ -629,6 +688,7 @@ export function useRealtimeDictation(
       pendingAudio: [],
       id: nextAttemptIdRef.current + 1,
       streams: [],
+      trace,
       transcript: '',
     };
     nextAttemptIdRef.current = attempt.id;
@@ -660,6 +720,9 @@ export function useRealtimeDictation(
         }
         return stream;
       };
+      // Three things start at once and none waits for another: the inputs,
+      // the capture graph, and the ticket with the socket behind it. The
+      // microphone is the only one the recording indicator has to wait for.
       const streamsPromise = Promise.all([
         navigator.mediaDevices.getUserMedia({
           audio: {
@@ -687,22 +750,6 @@ export function useRealtimeDictation(
             return undefined;
           })] : []),
       ]);
-      const ticketPromise = api.getTranscriptionSocketTicket(attempt.controller.signal);
-      void ticketPromise.catch((caught: unknown) => {
-        if (attemptRef.current === attempt) finish(attempt, 'error', captureErrorMessage(caught));
-      });
-      await streamsPromise;
-      if (attemptRef.current !== attempt) {
-        await cleanupAttempt(attempt);
-        return;
-      }
-      if (attempt.streams.length === 0 && !attempt.systemAudio) {
-        throw new Error([
-          'No audio input is available.',
-          microphoneWarning?.replace(/^Recording computer audio only\.\s*/u, ''),
-          systemAudioWarning?.replace(/^Recording microphone only\.\s*/u, ''),
-        ].filter(Boolean).join(' '));
-      }
       let sessionReady = false;
       const sendAudio = (buffer: ArrayBuffer): void => {
         const socket = attempt.socket;
@@ -717,12 +764,95 @@ export function useRealtimeDictation(
           finish(attempt, 'error', captureErrorMessage(socketError));
         }
       };
-      const capture = await createAudioCapture(attempt.streams, attempt.systemAudio, (buffer) => {
+      const handleSessionEvent = (event: RealtimeTranscriptionEvent): void => {
         if (attemptRef.current !== attempt) return;
+        const pendingCommit = attempt.segmentCommit ?? attempt.finalization;
+        if (event.type === 'input_audio_buffer.committed') {
+          if (pendingCommit && typeof event.item_id === 'string') pendingCommit.itemId = event.item_id;
+          return;
+        }
+        if (
+          typeof event.item_id === 'string'
+          && pendingCommit?.itemId
+          && event.item_id !== pendingCommit.itemId
+        ) return;
+        if (pendingCommit && typeof event.item_id === 'string' && !pendingCommit.itemId) {
+          pendingCommit.itemId = event.item_id;
+        }
+        const nextTranscript = nextLiveTranscript(attempt.transcript, event);
+        if (nextTranscript !== undefined) {
+          attempt.transcript = nextTranscript;
+          onTranscriptRef.current(attempt.transcript);
+          if (isFinalTranscriptionEvent(event)) {
+            if (stateRef.current === 'transcribing' && attempt.segmentCommit) {
+              if (attempt.completionTimer !== undefined) {
+                window.clearTimeout(attempt.completionTimer);
+                attempt.completionTimer = undefined;
+              }
+              const pendingSegment = attempt.segmentCommit;
+              const finalizedTranscript = attempt.transcript;
+              attempt.segmentCommit = undefined;
+              attempt.transcript = '';
+              onTranscriptRef.current('');
+              transition('listening');
+              pendingSegment.resolve(finalizedTranscript);
+            } else if (stateRef.current === 'finalizing' && attempt.finalization) {
+              finish(attempt, 'idle');
+            }
+          }
+        } else if (event.type === 'error' || event.type === 'conversation.item.input_audio_transcription.failed') {
+          finish(attempt, 'error', providerErrorMessage(event));
+        }
+      };
+      const handleUnexpectedClose = (): void => {
+        if (attemptRef.current === attempt) {
+          finish(attempt, 'error', 'The dictation connection closed unexpectedly.');
+        }
+      };
+      // The socket is opened the moment the ticket lands, so the Worker's
+      // upgrade and the provider's acknowledgement overlap the microphone
+      // opening instead of following it. Nothing is sent on it until local
+      // capture is running and the backlog drains below.
+      const ticketPromise = api.getTranscriptionSocketTicket(attempt.controller.signal);
+      const sessionPromise = (async (): Promise<void> => {
+        const ticket = await ticketPromise;
+        if (attemptRef.current !== attempt) return;
+        trace.annotate({ socketTicketMs: sinceStartMs() });
+        const socket = new WebSocket(ticket.url, ticket.protocols);
+        attempt.socket = socket;
+        await waitForTranscriptionSession(socket, handleSessionEvent, handleUnexpectedClose);
+        trace.annotate({ sessionReadyMs: sinceStartMs() });
+      })();
+      // A ticket or handshake failure ends the attempt as soon as it happens
+      // rather than when capture gets round to awaiting it; the await below
+      // then finds the attempt replaced.
+      void sessionPromise.catch((caught: unknown) => {
+        if (attemptRef.current === attempt) finish(attempt, 'error', captureErrorMessage(caught));
+      });
+      const capture = createAudioCapture((buffer, level) => {
+        if (attemptRef.current !== attempt) return;
+        onLevelRef.current?.(meterLevel(level));
         if (sessionReady) sendAudio(buffer);
         else attempt.pendingAudio.push(buffer);
       });
+      // Held from creation, so a cancel during the permission prompt closes
+      // the context the worklet is still loading into.
       attempt.capture = capture;
+      void capture.ready.then(() => trace.annotate({ captureGraphMs: sinceStartMs() }), () => undefined);
+      await streamsPromise;
+      trace.mark('inputs');
+      if (attemptRef.current !== attempt) {
+        await cleanupAttempt(attempt);
+        return;
+      }
+      if (attempt.streams.length === 0 && !attempt.systemAudio) {
+        throw new Error([
+          'No audio input is available.',
+          microphoneWarning?.replace(/^Recording computer audio only\.\s*/u, ''),
+          systemAudioWarning?.replace(/^Recording microphone only\.\s*/u, ''),
+        ].filter(Boolean).join(' '));
+      }
+      await capture.attach(attempt.streams, attempt.systemAudio);
       if (attemptRef.current !== attempt) {
         await cleanupAttempt(attempt);
         return;
@@ -735,69 +865,19 @@ export function useRealtimeDictation(
         await cleanupAttempt(attempt);
         return;
       }
+      trace.mark('capture');
       const captureWarning = [microphoneWarning, systemAudioWarning].filter(Boolean).join(' ');
       if (captureWarning) setWarning(captureWarning);
       transition('listening');
       void refreshDevices();
-      const ticket = await ticketPromise;
+      await sessionPromise;
       if (attemptRef.current !== attempt) {
         await cleanupAttempt(attempt);
         return;
       }
-      const socket = new WebSocket(ticket.url, ticket.protocols);
-      attempt.socket = socket;
-      await waitForTranscriptionSession(
-        socket,
-        (event) => {
-          if (attemptRef.current !== attempt) return;
-          const pendingCommit = attempt.segmentCommit ?? attempt.finalization;
-          if (event.type === 'input_audio_buffer.committed') {
-            if (pendingCommit && typeof event.item_id === 'string') pendingCommit.itemId = event.item_id;
-            return;
-          }
-          if (
-            typeof event.item_id === 'string'
-            && pendingCommit?.itemId
-            && event.item_id !== pendingCommit.itemId
-          ) return;
-          if (pendingCommit && typeof event.item_id === 'string' && !pendingCommit.itemId) {
-            pendingCommit.itemId = event.item_id;
-          }
-          const nextTranscript = nextLiveTranscript(attempt.transcript, event);
-          if (nextTranscript !== undefined) {
-            attempt.transcript = nextTranscript;
-            onTranscriptRef.current(attempt.transcript);
-            if (isFinalTranscriptionEvent(event)) {
-              if (stateRef.current === 'transcribing' && attempt.segmentCommit) {
-                if (attempt.completionTimer !== undefined) {
-                  window.clearTimeout(attempt.completionTimer);
-                  attempt.completionTimer = undefined;
-                }
-                const pendingSegment = attempt.segmentCommit;
-                const finalizedTranscript = attempt.transcript;
-                attempt.segmentCommit = undefined;
-                attempt.transcript = '';
-                onTranscriptRef.current('');
-                transition('listening');
-                pendingSegment.resolve(finalizedTranscript);
-              } else if (stateRef.current === 'finalizing' && attempt.finalization) {
-                finish(attempt, 'idle');
-              }
-            }
-          } else if (event.type === 'error' || event.type === 'conversation.item.input_audio_transcription.failed') {
-            finish(attempt, 'error', providerErrorMessage(event));
-          }
-        },
-        () => {
-          if (attemptRef.current === attempt) {
-            finish(attempt, 'error', 'The dictation connection closed unexpectedly.');
-          }
-        },
-      );
-      if (attemptRef.current !== attempt) {
-        await cleanupAttempt(attempt);
-        return;
-      }
+      trace.mark('session');
+      const socket = attempt.socket;
+      if (!socket) throw new Error('The dictation connection was not opened.');
       // Batch original PCM to catch up without exceeding the proxy frame
       // size or message cadence. Never alter sample rate or discard samples.
       const drainBacklog = (): void => {
@@ -832,6 +912,8 @@ export function useRealtimeDictation(
         sessionReady = true;
         attempt.connection.ready = true;
         attempt.connection.resolve();
+        trace.mark('backlog');
+        trace.end({ outcome: 'completed' });
       };
       drainBacklog();
     } catch (caught) {
@@ -855,6 +937,11 @@ export function useRealtimeDictation(
     if (attempt) void cleanupAttempt(attempt).catch(() => undefined);
   }, []);
 
+  const prefetch = useCallback((): void => {
+    if (!api || !['idle', 'error'].includes(stateRef.current)) return;
+    api.prefetchTranscriptionSocketTicket(PREFETCHED_TICKET_USABLE_MS);
+  }, [api]);
+
   const selectDevice = useCallback((deviceId: string): void => {
     setSelectedDeviceIdState(deviceId);
     setDeviceMicrophoneId(deviceId);
@@ -868,6 +955,7 @@ export function useRealtimeDictation(
     selectedDeviceId,
     setSelectedDeviceId: selectDevice,
     pause,
+    prefetch,
     resume,
     start,
     state,

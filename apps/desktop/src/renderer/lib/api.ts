@@ -671,6 +671,8 @@ export class RallyApi {
     return this.session?.user.id ?? null;
   }
 
+  private prefetchedTranscriptionTicket: { promise: Promise<SocketTicket>; usableUntil: number } | undefined;
+
   /** Access tokens live minutes while the durable refresh credential lives
    * weeks. Without a reactive renewal an expired bearer fails every request
    * with `invalid_session` until the app restarts, because retrying replays
@@ -2374,9 +2376,33 @@ export class RallyApi {
     }
   }
 
+  /**
+   * Fetches a transcription ticket ahead of a recording, so the press that
+   * starts one finds it already in hand. `usableForMs` is the caller's
+   * promise about how soon it will present the ticket: the next
+   * `getTranscriptionSocketTicket` within that window takes this one instead
+   * of requesting another, and after it a fresh request is made, because a
+   * ticket presented near the end of its life fails the upgrade. A ticket is
+   * single-use, so the prefetched one is handed out once. Its failure is
+   * nobody's problem: the consumer falls back to a request of its own.
+   */
+  prefetchTranscriptionSocketTicket(usableForMs: number): void {
+    if (this.prefetchedTranscriptionTicket && Date.now() < this.prefetchedTranscriptionTicket.usableUntil) return;
+    const promise = this.request('/realtime/transcription/socket', { schema: this.socketSchema });
+    void promise.catch(() => undefined);
+    this.prefetchedTranscriptionTicket = { promise, usableUntil: Date.now() + usableForMs };
+  }
+
   async getTranscriptionSocketTicket(signal?: AbortSignal): Promise<SocketTicket> {
     signal?.throwIfAborted();
-    const request = this.request('/realtime/transcription/socket', { schema: this.socketSchema, signal });
+    const prefetched = this.prefetchedTranscriptionTicket;
+    this.prefetchedTranscriptionTicket = undefined;
+    const fresh = (): Promise<SocketTicket> => this.request('/realtime/transcription/socket', { schema: this.socketSchema, signal });
+    // Checked again once the prefetch resolves: a request that waited out a
+    // network recovery can land after the window it was fetched for.
+    const request = prefetched && Date.now() < prefetched.usableUntil
+      ? prefetched.promise.then((ticket) => Date.now() < prefetched.usableUntil ? ticket : fresh(), fresh)
+      : fresh();
     if (!signal) return request;
     // A shared credential renewal can outlive fetch cancellation. Settle this
     // caller immediately without cancelling another caller's credential renewal.

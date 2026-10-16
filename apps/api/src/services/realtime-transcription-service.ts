@@ -292,7 +292,21 @@ export class RealtimeTranscriptionService {
         reason: lastError instanceof Error ? lastError.message : String(lastError),
       });
     };
+    // The lease belongs to the open socket, not to the frames on it. The
+    // desktop opens this socket as soon as its ticket lands, which can be
+    // while the microphone permission prompt is still up, and a paused
+    // recording sends nothing for as long as it is paused; either can outlast
+    // the two-minute lease with no frame to renew it, after which the next
+    // admission's sweep would delete a session that is still live. So the
+    // renewal runs on a timer for as long as the client socket is open, and
+    // stops on every path that releases the session.
+    let leaseTimer: ReturnType<typeof setInterval> | undefined;
+    const stopLeaseRenewal = (): void => {
+      if (leaseTimer !== undefined) clearInterval(leaseTimer);
+      leaseTimer = undefined;
+    };
     const deferRelease = (): void => {
+      stopLeaseRenewal();
       const promise = releaseAndReport();
       try {
         this.defer(promise);
@@ -323,7 +337,20 @@ export class RealtimeTranscriptionService {
       server.accept({ allowHalfOpen: true });
       let frameWindowStartedAt = Date.now();
       let frameCount = 0;
-      let leaseRefreshedAt = frameWindowStartedAt;
+      leaseTimer = setInterval(() => {
+        if (server.readyState !== WebSocket.OPEN) {
+          stopLeaseRenewal();
+          return;
+        }
+        const renewal = renewTranscriptionSession(this.env, claims.workspaceId, sessionId)
+          .catch((error: unknown) => {
+            logError(this.env, "realtime_transcription_session_renewal_failed", {
+              session_id: sessionId,
+              reason: error instanceof Error ? error.message : String(error),
+            });
+          });
+        try { this.defer(renewal); } catch { void renewal; }
+      }, SESSION_LEASE_REFRESH_MS);
 
       const terminateForPolicy = (code: string, message: string): void => {
         sendJson(server, { type: "error", error: { code, message } });
@@ -342,17 +369,6 @@ export class RealtimeTranscriptionService {
         if (frameCount > MAX_CLIENT_FRAMES_PER_SECOND) {
           terminateForPolicy("dictation_frame_rate_limit", "Dictation audio arrived too quickly.");
           return;
-        }
-        if (now - leaseRefreshedAt >= SESSION_LEASE_REFRESH_MS) {
-          leaseRefreshedAt = now;
-          const renewal = renewTranscriptionSession(this.env, claims.workspaceId, sessionId)
-            .catch((error: unknown) => {
-              logError(this.env, "realtime_transcription_session_renewal_failed", {
-                session_id: sessionId,
-                reason: error instanceof Error ? error.message : String(error),
-              });
-            });
-          try { this.defer(renewal); } catch { void renewal; }
         }
 
         const parsed = parseTranscriptionClientEvent(stringMessage(event.data));
@@ -398,6 +414,7 @@ export class RealtimeTranscriptionService {
       }
       return withNegotiatedSubprotocol(request, new Response(null, { status: 101, webSocket: client }));
     } catch (error) {
+      stopLeaseRenewal();
       await releaseAndReport();
       throw error;
     }
