@@ -667,7 +667,9 @@ block is stripped by several clients, so it would only reach some readers. The
 palette lives in `email-markdown.ts`, so any future email shares it. The
 workspace name and the AI notice left the shell; the settings link stayed.
 "Open Rally" used to open the bare site root; it now opens Activity through a
-new `activity` deep link, since that is where the listed rows are.
+new `activity` deep link, since that is where the listed rows are. Desktop
+builds older than that link drop it, so for them the button does nothing until
+they update; the product accepted that gap rather than hold the API change.
 
 A digest is still unread Activity, but a row past two days old is now one count
 at the bottom instead of a line. Unread rows never expire, so every digest

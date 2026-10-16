@@ -195,9 +195,12 @@ export function NavigationSidebar({
   }, [setSidebarOpen, sidebarOpen]);
   // Opening anything closes the sheet, whoever navigated: a row, a search
   // result, a new Channel. Switching sections does not navigate, so the
-  // sheet stays open on the list just picked.
+  // sheet stays open on the list just picked. A navigation that asked for the
+  // sheet (`sheetAfterNavigation`) opens it here instead, once.
   useEffect(() => {
-    setSidebarOpen(false);
+    const { sheetAfterNavigation, setSheetAfterNavigation } = useUiStore.getState();
+    if (sheetAfterNavigation) setSheetAfterNavigation(false);
+    setSidebarOpen(sheetAfterNavigation);
   }, [pathname, setSidebarOpen]);
   const [accountSlot, setAccountSlot] = useState<HTMLDivElement | null>(null);
   const panel = useRef<HTMLElement>(null);

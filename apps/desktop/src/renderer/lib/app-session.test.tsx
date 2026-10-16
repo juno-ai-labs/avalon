@@ -1403,6 +1403,19 @@ describe('single-platform desktop identity routing', () => {
       },
     },
     {
+      name: 'Activity at phone width',
+      url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/activity',
+      width: 390,
+      // The sidebar resets the sheet when the switch remounts it and moves the
+      // route, so the link leaves the opening to that reset.
+      assertDestination: async () => {
+        await waitFor(() => expect(window.location.hash).toBe('#/'));
+        expect(useUiStore.getState()).toMatchObject({
+          sidebarSection: 'activity', sidebarOpen: false, sheetAfterNavigation: true,
+        });
+      },
+    },
+    {
       name: 'Sidekick',
       url: sidekickDeepLink({
         region: 'enterprise',
@@ -1417,7 +1430,11 @@ describe('single-platform desktop identity routing', () => {
       url: `rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/auth/complete?connection=00000000-0000-7000-8000-000000000032&status=connected&attempt=${'a'.repeat(43)}&provider=google`,
       assertDestination: async () => waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections')),
     },
-  ])('activates an addressed $name link from an identity-only session', async ({ url, assertDestination }) => {
+  ])('activates an addressed $name link from an identity-only session', async (testCase) => {
+    const { url, assertDestination } = testCase;
+    const innerWidth = window.innerWidth;
+    if ('width' in testCase) Object.defineProperty(window, 'innerWidth', { configurable: true, value: testCase.width });
+    useUiStore.setState({ sidebarSection: 'channels', sidebarOpen: false, sheetAfterNavigation: false });
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000030';
     bridge.getSession.mockResolvedValueOnce({ ...globalIdentitySession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockResolvedValue({
@@ -1441,6 +1458,7 @@ describe('single-platform desktop identity routing', () => {
     }));
     await assertDestination();
     expect(lastDeepLinkFailure()).toBeNull();
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: innerWidth });
   });
 
   it('serializes addressed resource links in delivery order', async () => {
