@@ -81,7 +81,7 @@ export function digestEmailHtml(content: DigestEmailContent): string {
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:600px">
 
           <tr><td style="padding:0 4px 14px">
-            <p style="margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em;color:${COLOR.ink}"><span style="display:inline-block;width:8px;height:8px;margin-right:7px;border-radius:999px;background:${COLOR.brand};border:1px solid ${COLOR.onBrand};vertical-align:1px"></span>Rally</p>
+            <p style="margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em;color:${COLOR.ink}">Rally</p>
           </td></tr>
 
           <tr><td style="background:${COLOR.surface};border:1px solid ${COLOR.line};border-radius:8px;padding:32px 30px">
