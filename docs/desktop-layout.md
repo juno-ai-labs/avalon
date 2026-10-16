@@ -31,15 +31,11 @@ selected artifact panel is scoped to a thread and Breakout address; its resource
 conversation before the panel is drawn.
 
 Every attachment and artifact opens its panel at an even split with the
-conversation (`openRailAtEvenSplit`, called from `openPanel`). Opening a panel
-widens the window by the panel's width where the screen has room, and closing
-it gives back that width and any distance the window moved left to fit it
-(`conversation-details-geometry.ts`), unless the person moved or resized the
-window in between. So the split is the conversation's present width, capped
-at half of what the screen allows; a maximized window splits in half, and so
-does a browser tab, which cannot resize its window. The conversation is
-measured without the room it keeps for a panel already open beside it, so a
-Breakout taking over its Channel's panel splits against itself alone.
+conversation (`openRailAtEvenSplit`, called from `openPanel`). **No panel
+resizes the window**: the panel and the conversation share the main pane, and
+the split is half of it, in the desktop app and a browser tab alike. A
+Breakout taking over its Channel's panel splits the same pane, the room kept
+for the outgoing panel included.
 
 Switching items in a panel already open for the same conversation keeps the
 width the person dragged it to. The split itself is not saved: the width
@@ -110,12 +106,35 @@ the windows the person left open.
 `workstream-landing.test.tsx` checks route restoration and the landing order;
 `desktop-layout.test.tsx` checks the unused semantic row hook;
 `artifact-window-state.test.ts` checks the local registry and monitor clamp;
-`rail-split.test.ts` checks the width a panel opens at, and
-`conversation-details-geometry.test.ts` the window's growth and its return.
+`rail-split.test.ts` checks the width a panel opens at.
 The desktop acceptance check opens, moves, quits, and relaunches real Electron
 windows, and checks that rail positions and panels return visibly.
 
 ## Changelog
+
+### 2026-10-16 — Opening a panel no longer widens the window
+
+**What changed:** Opening the right panel, for an artifact, an attachment,
+resource details, the context rail or the embedded browser, leaves the
+window's size and position alone. The panel opens at half the main pane. The
+`window:set-conversation-details` IPC, `conversation-details-geometry.ts`, and
+the saved-state step that subtracted the panel's width are gone.
+
+**Why:** Once panels opened at a 50/50 split, the window grew by the
+conversation's whole width on every opening, which moved and resized a window
+the person had placed. Opening something to read should not rearrange the
+desktop.
+
+**Considered and rejected:** Keeping growth for the context and browser rails
+while stopping it for artifacts and attachments. The rails share one slot, so
+whether the window moved would depend on what last took it.
+
+**Consequences:** The window's geometry belongs to the person alone; nothing
+in the renderer can change it. A panel narrows the conversation, so its width
+is half the pane rather than the conversation's present width. Bringing
+growth back means rebuilding the width bookkeeping that saved state relied on
+to avoid storing a panel's width as the person's choice.
+
 
 ### 2026-10-15 — Panels open 50/50, and every edge is equally easy to grab
 

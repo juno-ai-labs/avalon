@@ -1,5 +1,5 @@
 import { startCanvaConnection } from './canva-loopback';
-import { boundsWithoutConversationDetails, clampWindowBounds, readMainWindowState, writeMainWindowState } from './main-window-state';
+import { clampWindowBounds, readMainWindowState, writeMainWindowState } from './main-window-state';
 import { macosMajorVersion } from './macos-version';
 import { EmbeddedBrowser, isEmbeddedBrowserWebContents } from './embedded-browser';
 import { EmbeddedBrowserBoundsSchema, EmbeddedBrowserCommandSchema, type EmbeddedBrowserCommand } from '../common/embedded-browser';
@@ -165,7 +165,6 @@ import {
   type ArtifactLinkHandoff,
   type ArtifactViewHandle,
 } from './artifact-viewers';
-import { conversationDetailsGeometry } from './conversation-details-geometry';
 import { CredentialRefreshRegistry } from './credential-refresh';
 import { DebugSettingsController } from './debug-settings';
 import {
@@ -523,10 +522,6 @@ const rendererCrashRecovery = new RendererCrashRecovery({
   quit: () => app.quit(),
   onError: (error) => logError('rally', 'renderer crash recovery failed', error),
 });
-let conversationDetailsExpansion = 0;
-let conversationDetailsAppliedWidth = 0;
-let conversationDetailsShift = 0;
-let conversationDetailsAppliedX = 0;
 let settingsWindow: BrowserWindow | null = null;
 let sidekicksWindow: BrowserWindow | null = null;
 /** The one window that imports a signed-in Claude or ChatGPT conversation. */
@@ -4151,41 +4146,6 @@ function registerIpc(): void {
       window: BrowserWindow.fromWebContents(event.sender),
     });
   });
-  ipcMain.handle('window:set-conversation-details', (event, rawInput: unknown) => {
-    assertMainWindowIpcSender(event, 'resize for conversation details');
-    if (!rawInput || typeof rawInput !== 'object') throw new Error('Invalid conversation details window request');
-    const input = rawInput as { open?: unknown; width?: unknown };
-    if (typeof input.open !== 'boolean' || typeof input.width !== 'number' || !Number.isFinite(input.width) || input.width < 0) {
-      throw new Error('Invalid conversation details window request');
-    }
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    const bounds = mainWindow.getBounds();
-    if (mainWindow.isMaximized() || mainWindow.isFullScreen()) {
-      // Native window modes belong to the person. Never unmaximize or arm a
-      // delayed restore that could overwrite a later open/close cycle.
-      conversationDetailsExpansion = 0;
-      conversationDetailsShift = 0;
-      return;
-    }
-    if (!input.open && conversationDetailsExpansion === 0) return;
-    const next = conversationDetailsGeometry(
-      bounds,
-      electronScreen.getDisplayMatching(bounds).workArea,
-      conversationDetailsExpansion,
-      input.open ? input.width : 0,
-      mainWindow.getMinimumSize()[0] ?? 0,
-      conversationDetailsAppliedWidth,
-      conversationDetailsShift,
-      conversationDetailsAppliedX,
-    );
-    conversationDetailsExpansion = next.addedWidth;
-    conversationDetailsAppliedWidth = next.bounds.width;
-    conversationDetailsShift = next.shiftedLeft;
-    conversationDetailsAppliedX = next.bounds.x;
-    if (next.bounds.width !== bounds.width || next.bounds.x !== bounds.x) {
-      mainWindow.setBounds(next.bounds, true);
-    }
-  });
   ipcMain.handle('message-export:save', async (event, request: unknown) => {
     assertTrustedIpcSender(event);
     return messageExporter.save(parseMessageExportRequest(request));
@@ -5245,11 +5205,7 @@ async function createMainWindow(): Promise<void> {
     if (!mainWindowReadyToShow || !mainWindow || mainWindow.isDestroyed()) return;
     try {
       writeMainWindowState(userDataDirectory(), {
-        bounds: boundsWithoutConversationDetails(
-          mainWindow.getNormalBounds(),
-          conversationDetailsExpansion,
-          conversationDetailsAppliedWidth,
-        ),
+        bounds: mainWindow.getNormalBounds(),
         maximized: mainWindow.isMaximized(),
       });
     } catch (error) {
@@ -5272,7 +5228,6 @@ async function createMainWindow(): Promise<void> {
     // its own socket the moment it hears there is nothing left to relay.
     workspaceSyncRelay.release();
     rendererReady = false;
-    conversationDetailsExpansion = 0;
     mainWindow = null;
     // A hidden window is still a window, and `window-all-closed` — the only
     // path that quits Rally off macOS — waits for every one of them. Left in

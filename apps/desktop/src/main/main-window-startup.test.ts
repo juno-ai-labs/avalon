@@ -4,7 +4,6 @@ import ts from 'typescript';
 import { expect, it, vi } from 'vitest';
 
 import { macosMajorVersion } from './macos-version';
-import { boundsWithoutConversationDetails } from './main-window-state';
 
 it('defers main-window creation and restores and persists native geometry', async () => {
   const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
@@ -46,8 +45,7 @@ it('defers main-window creation and restores and persists native geometry', asyn
     macosMajorVersion,
     electronScreen: { getPrimaryDisplay: () => ({ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } }), getAllDisplays: () => [] },
     readMainWindowState: () => ({ bounds: { x: 100, y: 50, width: 1180, height: 900 }, maximized: true }),
-    writeMainWindowState: writeState, boundsWithoutConversationDetails,
-    conversationDetailsExpansion: 300, conversationDetailsAppliedWidth: 1480,
+    writeMainWindowState: writeState,
     userDataDirectory: () => '/tmp',
     windowBackgroundColor: () => '#fff', preloadPath: () => '/preload',
     installEditableTextMenu,
@@ -83,7 +81,7 @@ it('defers main-window creation and restores and persists native geometry', asyn
   expect(shown).toHaveBeenCalledTimes(2);
   close();
   expect(writeState).toHaveBeenCalledWith('/tmp', {
-    bounds: { x: 100, y: 50, width: 1180, height: 900 },
+    bounds: { x: 100, y: 50, width: 1480, height: 900 },
     maximized: true,
   });
   const release = source.indexOf('resolveMainWindowStartup();');
