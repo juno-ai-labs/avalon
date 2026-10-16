@@ -53,11 +53,10 @@ import { Avatar, Button, IconButton, InlineError, Modal, RallyAvatar, TitleSkele
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import { RelativeTime } from './relative-time';
 import { ResizableSidebar, SidebarFooterItems, SidebarScroll } from '@rally/ui/components/resizable-sidebar';
+import { PHONE_LAYOUT_MAX_WIDTH } from '@rally/ui/lib/phone-layout';
 import type { ChannelStats, SpaceDirectory } from '@rally/contracts';
 
 const NAVIGATION_SHEET_ID = 'rally-navigation-sheet';
-/** The stylesheet's phone breakpoint: at or under it the sidebar is a sheet. */
-const PHONE_LAYOUT_MAX_WIDTH = 640;
 /**
  * How long a pin's scroll-to-row waits for the list to carry the pin before
  * giving up. Carried over from the sidebar this one replaced.
@@ -169,9 +168,10 @@ export function NavigationSidebar({
   const menuToggle = useRef<HTMLButtonElement>(null);
   const { pathname } = useLocation();
   // The phone sheet. Escape closes it as it would any menu and hands focus
-  // back to the button; widening past the phone layout closes it, so an open
-  // sheet never leaves the conversation behind it inert at a width that draws
-  // no sheet. Both carried over from the sidebar this one replaced.
+  // back to the button (the app shell then moves it on to a pane header's
+  // menu mark, when that is what opened the sheet); widening past the phone
+  // layout closes it, so an open sheet never leaves the conversation behind
+  // it inert at a width that draws no sheet.
   useEffect(() => {
     if (!sidebarOpen) return undefined;
     const closeOnEscape = (event: KeyboardEvent): void => {
