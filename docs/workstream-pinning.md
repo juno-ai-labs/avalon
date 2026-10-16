@@ -74,7 +74,9 @@ The old tables and routes go once the desktops that call them have aged out.
 ### In the sidebar
 
 Each tab's Pinned part lists that tab's kinds in the person's order: Channels
-on the Channels tab, threads then breakouts on the Threads tab. Right-click
+on the Channels tab, threads then breakouts on the Threads tab. The Pinned tab
+draws both of those parts, titled Channels and Threads, and nothing else
+([`desktop-shell.md`](desktop-shell.md#the-sidebar)). Right-click
 **Pin** or **Unpin** on a row, or the title menu's **Pinned in my sidebar**
 switch, writes one pin. A drag inside a Pinned part moves the row under the
 pointer and saves the kind's whole order on drop (`PUT /navigation/pins`). A

@@ -8742,7 +8742,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   }
   .app-shell .navigation-sidebar .navigation-rail-top,
   .app-shell .navigation-sidebar .navigation-rail-spacer { display: none; }
-  /* The account menu reads as a fourth tab: as wide as the others, its avatar
+  /* The account menu reads as one more tab: as wide as the others, its avatar
      the size of their 22px shapes in the same 34px box, a label under it. */
   .app-shell .navigation-sidebar .navigation-rail-account { flex: 0 1 auto; width: 100%; }
   .app-shell .navigation-sidebar .navigation-rail-account .account-trigger {
