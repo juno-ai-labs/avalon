@@ -242,10 +242,7 @@ export function WorkspaceAccountMenu({
           <RailItem
             aria-label={['Settings', currentUser.name, activeWorkspace.name,
               impersonator && `impersonated by ${impersonator.name}`, backgroundAttentionDescription].filter(Boolean).join(', ')}
-            badge={<>
-              {presentation === 'workspace' && backgroundHasAttention && <span aria-hidden="true" className="navigation-rail-dot" />}
-              {impersonator && <span className="navigation-rail-impersonator"><Avatar member={impersonator} size="small" title={`Impersonated by ${impersonator.name}`} /></span>}
-            </>}
+            badge={impersonator && <span className="navigation-rail-impersonator"><Avatar member={impersonator} size="small" title={`Impersonated by ${impersonator.name}`} /></span>}
             icon={<Avatar member={currentUser} size="small" />}
             label="Settings"
           />
