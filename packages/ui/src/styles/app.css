@@ -8971,7 +8971,9 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .merge-message-for { margin: 0 2px; }
 .merge-message-quote { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: 12.5px; gap: 6px; max-width: 520px; min-width: 0; }
 .merge-message-quote > svg { flex: none; }
-.merge-message-quote > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.merge-message-quote > span, .merge-message-quote > button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.merge-message-quote > button { background: transparent; color: inherit; font: inherit; min-width: 0; padding: 0; text-align: start; }
+.merge-message-quote > button:hover { color: var(--av-sys-color-text-default); text-decoration: underline; }
 .merge-message-body { color: var(--av-sys-color-text-default); font-size: 14.5px; line-height: 1.55; overflow-wrap: anywhere; }
 .merge-message-body .markdown-body { color: inherit; font-size: inherit; line-height: inherit; }
 .merge-message-body .markdown-body > :first-child { margin-top: 0; }

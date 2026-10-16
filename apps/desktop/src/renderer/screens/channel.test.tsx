@@ -301,6 +301,28 @@ describe('a Channel', () => {
     await waitFor(() => expect(api.removeChannelMessage).toHaveBeenCalledExactlyOnceWith('outbound', mergeId));
   });
 
+  it('scrolls to a merged thread’s card from the merge’s quote, and leaves the quote plain when the card is not loaded', async () => {
+    // jsdom has no layout, so no scrollIntoView: record which element asked.
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this); };
+    api.getWorkspaceMembers.mockResolvedValueOnce([workspace.currentUser] as never);
+    const mergeOf = (id: string, threadId: string, summary: string) => ({ id, author: { kind: 'member', userId: 'me' }, body: 'Done.', merge: { threadId, title: 'Q4 plan', summary, embeds: [] } });
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 4, items: [
+      { kind: 'message', placedAt: '2026-10-02T04:00:00.000Z', attentionSequenceNumber: 4, message: mergeOf('0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a64', 'older', 'An older thread') },
+      { kind: 'message', placedAt: '2026-10-02T03:00:00.000Z', attentionSequenceNumber: 3, message: mergeOf('0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a65', plan.id, 'Plan the quarter') },
+      { kind: 'thread', placedAt: '2026-10-02T01:00:00.000Z', attentionSequenceNumber: 1, thread: plan },
+    ] });
+    renderChannel();
+    const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
+    fireEvent.click(await feed.findByRole('button', { name: 'Plan the quarter' }));
+    // Oldest first: the thread's card is the first row.
+    expect(scrolled).toEqual([feed.getAllByRole('listitem')[0]]);
+    expect(scrolled[0]).toHaveTextContent('A four-week outbound setup plan.');
+    expect(feed.queryByRole('button', { name: 'An older thread' })).toBeNull();
+    expect(feed.getByText('An older thread')).toBeVisible();
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
+  });
+
   it('opens an artifact a merge cites, by its alias, in its thread', async () => {
     api.getWorkspaceMembers.mockResolvedValueOnce([workspace.currentUser] as never);
     api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 3, items: [
