@@ -100,6 +100,10 @@ export type ChannelStatsList = z.infer<typeof ChannelStatsListSchema>;
  * - `breakout_started`: somebody started a breakout the viewer may list.
  * - `run_finished`: Rally finished its latest run in a thread or breakout the
  *   viewer takes part in.
+ * - `merged`: somebody merged a result up a level: a breakout into its thread
+ *   (`breakout` is the source, frozen at merge time), or a thread into one of
+ *   its Channels (`mergedInto` is the Channel). Served only to builds at
+ *   `CHANNEL_MERGES_CLIENT_CONTRACT` or later; see docs/conversation-merge.md.
  *
  * `breakout` is set when the row is about a breakout rather than its thread.
  * Titles are the conversation's current ones, read when the page is.
@@ -110,6 +114,7 @@ export const ActivityItemKindSchema = z.enum([
   "thread_started",
   "breakout_started",
   "run_finished",
+  "merged",
 ]);
 export type ActivityItemKind = z.infer<typeof ActivityItemKindSchema>;
 
@@ -126,6 +131,8 @@ export const ActivityItemSchema = z.strictObject({
   threadId: WorkstreamIdSchema,
   threadTitle: z.string(),
   breakout: z.strictObject({ substreamId: IdSchema, title: z.string() }).nullable(),
+  /** On a thread's `merged` row: the Channel it merged into. */
+  mergedInto: z.strictObject({ channelId: IdSchema, name: z.string() }).optional(),
   /** The Channels the thread sits in that the viewer may list. */
   channelIds: z.array(IdSchema),
   /** Until Mark all read covers it, or an event settles it; see `ActivityEventSchema`. */

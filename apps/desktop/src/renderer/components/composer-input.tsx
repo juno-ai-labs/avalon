@@ -102,6 +102,12 @@ interface ComposerInputProps {
   error?: string;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   footerHint?: ReactNode;
+  /** A line inside the composer, over its toolbar: what sending will do, for a host that sends somewhere unusual. */
+  notice?: ReactNode;
+  /** A host's own control at the end of the toolbar's tools, such as where a merge goes. */
+  toolsAccessory?: ReactNode;
+  /** What the send button shows in place of its arrow, for a host whose send is not a plain send. */
+  submitContent?: ReactNode;
   /** Main work streams opt into GrokBot's single-row message capsule. */
   layout?: 'toolbar' | 'message-capsule';
   maxHeight?: number;
@@ -138,7 +144,8 @@ interface ComposerInputProps {
    * `choice`; the conversation composer inside either one takes `settled`.
    */
   model?: ComposerModelControl;
-  onAttach: (files: FileList | File[]) => void;
+  /** Absent where the message cannot carry files: no attach control, drop or paste. */
+  onAttach?: (files: FileList | File[]) => void;
   /**
    * The host's own key handling — mention navigation, dismissing a popover,
    * slash commands. It never receives a keydown dispatched during an IME
@@ -251,6 +258,9 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   error,
   fileInputRef,
   footerHint,
+  notice,
+  toolsAccessory,
+  submitContent,
   layout = 'toolbar',
   maxHeight = 180,
   mentionDisabled = false,
@@ -285,10 +295,10 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   const dictationBaseRef = useRef('');
   const microphonePressRef = useRef<{ startedAt: number; startedRecording: boolean } | undefined>(undefined);
   const attachFiles = useCallback((files: FileList | File[]): void => {
-    if (!submitting) onAttach(files);
+    if (!submitting) onAttach?.(files);
   }, [onAttach, submitting]);
   const debugEnabled = useDebugEnabled();
-  const drop = useFileDrop((files) => attachFiles(files), submitting);
+  const drop = useFileDrop((files) => attachFiles(files), submitting || !onAttach);
   // Turning Debug enabled off takes the control away; it has to take the choice
   // with it. A pin left behind in the parent's state would keep pinning every
   // work stream started from this screen with nothing on screen saying so, and
@@ -300,7 +310,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   useEffect(() => {
     if (!debugEnabled && modelOverrideValue !== null) releaseModelOverride?.(null);
   }, [debugEnabled, modelOverrideValue, releaseModelOverride]);
-  const paste = useFilePaste(attachFiles, submitting);
+  const paste = useFilePaste(attachFiles, submitting || !onAttach);
   // An IME's in-flight text never reaches `value`, so the highlight layer steps
   // aside and lets the textarea paint itself until the composition commits.
   const [composing, setComposing] = useState(false);
@@ -699,6 +709,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
             value={value}
           />
         </div>
+        {notice && <div className="composer-notice">{notice}</div>}
         <div className="composer-toolbar">
           <div className="composer-tools">
             {!messageCapsule && (
@@ -706,7 +717,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 <AtSign size={15} />
               </IconButton>
             )}
-            {messageCapsule ? (
+            {!onAttach ? null : messageCapsule ? (
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
                   <IconButton className="composer-action-trigger" disabled={submitting} label="Composer actions">
@@ -838,6 +849,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 )}
               </DropdownMenu.Root>
             )}
+            {toolsAccessory}
           </div>
           {footerHint && <span className="composer-hint">{footerHint}</span>}
           <div className="composer-submit-area">
@@ -853,8 +865,8 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 first-time reader looks for is the one that was missing. Every
                 host already passes `submitDisabled` for an empty draft, so the
                 disabled state is the one it always computed. */}
-            <button aria-label={submitLabel} className="composer-send" disabled={(submitDisabled && !dictationActive) || sendAfterDictation} onClick={() => void submit()} type="button">
-              {submitting || sendAfterDictation ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}
+            <button aria-label={submitLabel} className={clsx('composer-send', submitContent !== undefined && 'has-content')} disabled={(submitDisabled && !dictationActive) || sendAfterDictation} onClick={() => void submit()} type="button">
+              {submitting || sendAfterDictation ? <LoaderCircle className="spin" size={15} /> : submitContent ?? <ArrowUp size={15} />}
             </button>
             {submitAccessory}
           </div>
@@ -863,7 +875,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
       {(error || dictation.error) && (
         <div className="composer-error-slot"><InlineError>{error || dictation.error}</InlineError></div>
       )}
-      <input
+      {onAttach && <input
         className="sr-only"
         disabled={submitting}
         multiple
@@ -874,7 +886,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
         ref={fileInputRef}
         tabIndex={-1}
         type="file"
-      />
+      />}
     </>
   );
 });

@@ -35,6 +35,7 @@ import { createConversationResourceLinks } from "../src/runtime/resource-port";
 import type { AuthContext, Env } from "../src/env";
 import { AgentCommunicationService } from "../src/services/agent-communication-service";
 import { AuthorizationService } from "../src/services/authorization-service";
+import { ConversationMergeService } from "../src/services/conversation-merge-service";
 import { createAutomation } from "../src/services/automation-service";
 import {
   bootstrapConversationChildRuntime,
@@ -642,5 +643,126 @@ describe("a guest", () => {
     // directory's viewer rows, which record no grant.
     expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: GUEST_ID,
       scope, reference: "Nowhere" })).toMatchObject({ ok: false, code: "conversation_not_in_scope", available: [ROOM_ID] });
+  });
+});
+
+describe("a Breakout's merge into its Thread", () => {
+  const SHAREABLE_ID = "00000000-0000-7000-8000-0000000c0af1";
+  const SOMEONE_ELSES_ID = "00000000-0000-7000-8000-0000000c0af2";
+
+  /** The rows the attach path's source check reads, in the Organization's runtime database. */
+  async function seedResources(): Promise<void> {
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name, model_plugin_id,
+         encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json, created_at, updated_at)
+        VALUES ('conn-1', ?, 'google', 'personal', ?, 'Google', 'google-fixture', 'x', 'x', 1, '[]', ?, ?)`,
+      WORKSPACE_ID, COLLEAGUE_ID, NOW, NOW);
+      state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, metadata_json, attachment_status, created_at, updated_at)
+        VALUES (?, ?, 'document', 'rally_artifact', 'Price model', '{}', 'attached', ?, ?)`, SHAREABLE_ID, WORKSPACE_ID, NOW, NOW);
+      state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, connection_id, resource_type, provider, title, metadata_json, attachment_status, created_at, updated_at)
+        VALUES (?, ?, 'conn-1', 'document', 'google', 'Colleague notes', '{}', 'attached', ?, ?)`,
+      SOMEONE_ELSES_ID, WORKSPACE_ID, NOW, NOW);
+    });
+  }
+
+  async function mainState() {
+    return runInDurableObject(conversation(ROOM_ID), (_instance, state) => ({
+      merges: state.storage.sql.exec<{ structured_content_json: string }>(
+        `SELECT structured_content_json FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'merge-%'`,
+      ).toArray().map((row) => JSON.parse(row.structured_content_json) as unknown),
+      links: state.storage.sql.exec<{ resource_id: string }>("SELECT resource_id FROM workstream_resource_links")
+        .toArray().map((row) => row.resource_id),
+      pending: state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM pending_loop_inputs").one().count,
+      runs: state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM runs").one().count,
+    }));
+  }
+
+  it("lands once in Main with the tags the server writes, starting no run in a room of two", async () => {
+    const breakout = await seedBreakout("Sequence B");
+    const service = new ConversationMergeService(TEST_ENV, AUTH);
+    const request = { body: "Sequence B is approved.", clientMessageId: "merge-1", breakoutId: breakout };
+
+    const first = await service.merge(ROOM_ID, request);
+    expect(first).toMatchObject({ mergedInto: { kind: "thread", id: ROOM_ID, title: "Investors" }, replayed: false, sharedResourceIds: [] });
+    expect(await service.merge(ROOM_ID, request)).toEqual({ ...first, replayed: true });
+
+    expect(await mainState()).toEqual({
+      merges: [{ type: "conversation_merge", schemaVersion: 1, mergedFrom: { breakoutId: breakout, title: "Sequence B" },
+        mergedByUserId: AUTHOR_ID, actingAgent: false }],
+      links: [], pending: 0, runs: 0,
+    });
+    await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID));
+    // The merge message's activity event carries the source, so the Thread's
+    // other people see a merged row; its author does not.
+    const merged = async (userId: string) => {
+      const page = await workspace().listActivity({ workspaceId: WORKSPACE_ID, userId, cursor: null, only: null });
+      if (!page.ok) throw new Error(`listActivity refused: ${page.code}`);
+      return page.page.items.filter((item) => item.kind === "merged");
+    };
+    expect(await merged(COLLEAGUE_ID)).toEqual([expect.objectContaining({
+      kind: "merged", actorUserId: AUTHOR_ID, threadId: ROOM_ID, breakout: { substreamId: breakout, title: "Sequence B" },
+    })]);
+    expect(await merged(AUTHOR_ID)).toEqual([]);
+  });
+
+  it("refuses the whole merge when one embed cannot be shared, attaching nothing; then attaches what it embeds", async () => {
+    await seedResources();
+    const breakout = await seedBreakout("Sequence B");
+    const service = new ConversationMergeService(TEST_ENV, AUTH);
+    const body = `See [Price model](resource://${SHAREABLE_ID}) and [notes](resource://${SOMEONE_ELSES_ID}).`;
+
+    await expect(service.merge(ROOM_ID, { body, clientMessageId: "merge-2", breakoutId: breakout }))
+      .rejects.toMatchObject({ code: "merge_resource_not_shareable", details: { field: "body.resources[1]" } });
+    expect(await mainState()).toMatchObject({ merges: [], links: [] });
+
+    const merged = await service.merge(ROOM_ID, {
+      body: `See [Price model](resource://${SHAREABLE_ID}).`, clientMessageId: "merge-3", breakoutId: breakout,
+    });
+    expect(merged.sharedResourceIds).toEqual([SHAREABLE_ID]);
+    expect(await mainState()).toMatchObject({ links: [SHAREABLE_ID] });
+    await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID));
+  });
+
+  it("replays a retry after the Breakout was renamed, keeping the first title", async () => {
+    const breakout = await seedBreakout("Sequence B");
+    const service = new ConversationMergeService(TEST_ENV, AUTH);
+    const request = { body: "Approved.", clientMessageId: "merge-renamed", breakoutId: breakout };
+    const first = await service.merge(ROOM_ID, request);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE breakouts SET title = 'Sequence C' WHERE substream_id = ?", breakout);
+    });
+    expect(await service.merge(ROOM_ID, request)).toEqual({ ...first, replayed: true });
+    expect((await mainState()).merges).toEqual([expect.objectContaining({ mergedFrom: { breakoutId: breakout, title: "Sequence B" } })]);
+  });
+
+  it("shares what the body cites by alias and through a footnote, and refuses an alias that names nothing", async () => {
+    await seedResources();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE resources SET slug = 'calm-river-quiet-lamp' WHERE id = ?", SHAREABLE_ID);
+    });
+    const breakout = await seedBreakout("Sequence B");
+    const service = new ConversationMergeService(TEST_ENV, AUTH);
+
+    await expect(service.merge(ROOM_ID, {
+      body: "See [it](resource://no-such-alias-here).", clientMessageId: "merge-alias-1", breakoutId: breakout,
+    })).rejects.toMatchObject({ code: "merge_resource_not_shareable", details: { field: "body.resources[0]" } });
+
+    const merged = await service.merge(ROOM_ID, {
+      body: "Priced.[^1]\n\n[^1]: [Price model](resource://calm-river-quiet-lamp)",
+      clientMessageId: "merge-alias-2", breakoutId: breakout,
+    });
+    expect(merged.sharedResourceIds).toEqual([SHAREABLE_ID]);
+    expect(await mainState()).toMatchObject({ links: [SHAREABLE_ID] });
+    await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID));
+  });
+
+  it("refuses a Breakout that is not this Thread's", async () => {
+    await expect(new ConversationMergeService(TEST_ENV, AUTH).merge(ROOM_ID, {
+      body: "Done", clientMessageId: "merge-4", breakoutId: "00000000-0000-7000-8000-0000000c0aff",
+    })).rejects.toMatchObject({ code: "conversation_access_denied" });
+    expect(await mainState()).toMatchObject({ merges: [] });
   });
 });

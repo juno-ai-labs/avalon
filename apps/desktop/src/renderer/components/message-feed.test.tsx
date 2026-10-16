@@ -197,7 +197,7 @@ describe('MessageFeed', () => {
     expect(screen.queryByRole('group', { name: 'Breakouts from this message' })).not.toBeInTheDocument();
   });
 
-  it('shows the breakout action outright under Rally\'s newest reply and on hover for the rest', () => {
+  it('offers the breakout action on hover for every message, Rally\'s newest reply included', () => {
     const onStart = vi.fn();
     render(<MessageFeed
       messages={[
@@ -209,17 +209,12 @@ describe('MessageFeed', () => {
       onStartSubstream={onStart}
     />);
 
-    const visible = screen.getAllByRole('button', { name: /Start a breakout from this message/u });
-    expect(visible).toHaveLength(1);
-    const owner = [...document.querySelectorAll<HTMLElement>('[data-arrival-id]')]
-      .find((row) => row.contains(visible[0]!))?.dataset.arrivalId;
-    expect(owner).toBe('newest');
-    fireEvent.click(visible[0]!);
-    expect(onStart).toHaveBeenCalledWith('turn-3');
-    // The older reply and the person's message keep the hover action, and the
-    // newest has no second copy of it.
+    // No line of its own under the newest reply: one hover action per message.
+    expect(screen.queryByRole('button', { name: /Start a breakout from this message/u })).toBeNull();
     const hover = screen.getAllByRole('button', { name: 'New breakout from this message' });
     expect(hover.map((button) => [...document.querySelectorAll<HTMLElement>('[data-arrival-id]')]
-      .find((row) => row.contains(button))?.dataset.arrivalId)).toEqual(['first', 'asked']);
+      .find((row) => row.contains(button))?.dataset.arrivalId)).toEqual(['first', 'asked', 'newest']);
+    fireEvent.click(hover[2]!);
+    expect(onStart).toHaveBeenCalledWith('turn-3');
   });
 });

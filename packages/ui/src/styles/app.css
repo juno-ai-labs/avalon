@@ -8265,26 +8265,6 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
    Cards under the message a Breakout started from (`.conversation-card`), and
    the tick bar down the Channel's leading edge. */
 .breakout-card-list { align-items: flex-end; display: flex; flex-direction: column; gap: 28px; margin: 14px 0 6px; padding: 0 10px; }
-/* Under Rally's newest reply, the breakout action as a quiet line instead of
-   a hover action: the likeliest place to branch, said without a button's weight. */
-.message-start-breakout-link {
-  align-items: center;
-  align-self: flex-start;
-  background: transparent;
-  border: 0;
-  border-radius: var(--av-sys-size-radius-pill);
-  color: var(--av-sys-color-text-muted);
-  cursor: pointer;
-  display: inline-flex;
-  font: inherit;
-  font-size: 13px;
-  gap: 7px;
-  height: 30px;
-  margin-top: 4px;
-  padding: 0 12px 0 10px;
-}
-.message-start-breakout-link > svg { color: var(--av-sys-color-text-muted); flex: none; }
-.message-start-breakout-link:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 .breakout-chip {
   align-items: center;
   background: var(--av-sys-color-surface-raised);
@@ -8914,3 +8894,88 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   padding: 0 16px var(--composer-dock-gap);
   position: relative;
 }
+
+/* Merge-back (docs/conversation-merge.md). The hover rows never wrap: a row
+   wider than its message runs under the title menu's pop-out rather than
+   breaking onto a second line, and New breakout and Merge, first in the row,
+   stay whole. */
+:is(.agent-message-actions, .human-message-actions) { flex-wrap: nowrap; white-space: nowrap; }
+.message-merge { white-space: nowrap; }
+/* A Breakout card whose result is in its Thread. */
+.breakout-merged-chip {
+  align-items: center;
+  color: var(--av-sys-color-success-base);
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 550;
+  gap: 2px;
+  margin-left: 4px;
+}
+/* The composer's merge mode (docs/conversation-merge.md): who will see it,
+   over the toolbar; where it goes, as a pill among the tools; and Merge, a
+   labelled button where Send is. */
+.composer-notice {
+  align-items: center;
+  color: var(--av-sys-color-text-subtle);
+  display: flex;
+  font-size: 12px;
+  gap: 6px;
+  padding: 2px 4px 6px;
+}
+.composer-notice > svg { flex: none; }
+.composer-merge-target {
+  align-items: center;
+  background: var(--av-sys-color-success-fill);
+  border-radius: 999px;
+  color: var(--av-sys-color-success-base);
+  display: inline-flex;
+  font-size: 12.5px;
+  font-weight: 550;
+  gap: 4px;
+  height: 26px;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+.composer-merge-target:hover { filter: brightness(.97); }
+.composer-send.has-content { gap: 5px; font-size: 13px; font-weight: 550; padding: 0 12px; width: auto; }
+/* In the message capsule the merge composer always takes its tall form, as
+   the design draws it: the words across the top, who will see them, then the
+   tools, the hint and Merge on one row. */
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-input-shell { grid-column: 1 / -1; grid-row: 2; }
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer :is(textarea, .composer-highlight) { padding: 11px 16px 4px; }
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-notice { grid-column: 1 / -1; grid-row: 3; padding: 2px 16px 0; }
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer :is(.composer-tools, .composer-submit-area) { align-self: center; grid-row: 4; }
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-tools { justify-content: flex-start; }
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-hint { align-self: center; display: block; font-size: 11.5px; grid-column: 2; grid-row: 4; }
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-send.has-content { border-radius: var(--av-sys-size-radius-pill); width: auto; }
+/* A merged result, the same block in a Thread and in a Channel: on the
+   leading side, a line naming the source, who merged it and when, an optional
+   quote of what the source was asked, then the result. */
+.merge-message { align-self: flex-start; display: flex; flex-direction: column; gap: 8px; max-width: min(600px, 100%); }
+.merge-message-meta { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; flex-wrap: wrap; font-size: 12.5px; gap: 6px; padding-top: 2px; }
+.merge-message-source { align-items: center; display: inline-flex; gap: 5px; }
+.merge-message-source button { background: transparent; color: inherit; font: inherit; padding: 0; }
+.merge-message-source button:hover { color: var(--av-sys-color-text-default); text-decoration: underline; }
+.merge-message-mark {
+  background: var(--av-sys-color-surface-sunken);
+  border-radius: 50%;
+  color: var(--av-sys-color-text-muted);
+  display: grid;
+  flex: none;
+  height: 16px;
+  place-items: center;
+  width: 16px;
+}
+.merge-message-who { align-items: center; display: inline-flex; gap: 4px; }
+.merge-message-who .avatar { height: 16px; width: 16px; }
+.merge-message-for { margin: 0 2px; }
+.merge-message-quote { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: 12.5px; gap: 6px; max-width: 520px; min-width: 0; }
+.merge-message-quote > svg { flex: none; }
+.merge-message-quote > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.merge-message-body { color: var(--av-sys-color-text-default); font-size: 14.5px; line-height: 1.55; overflow-wrap: anywhere; }
+.merge-message-body .markdown-body { color: inherit; font-size: inherit; line-height: inherit; }
+.merge-message-body .markdown-body > :first-child { margin-top: 0; }
+.merge-message-body .markdown-body > :last-child { margin-bottom: 0; }
+.merge-message-actions { display: flex; gap: 8px; }
+.channel-feed-merge-remove { background: transparent; color: var(--av-sys-color-text-subtle); font-size: 12px; padding: 0; }
+.channel-feed-merge-remove:hover { color: var(--av-sys-color-text-default); text-decoration: underline; }

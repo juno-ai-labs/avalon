@@ -623,6 +623,16 @@ export interface Message {
    * name frozen at delivery. The author slot reads it instead of the generic
    * 'Sidekick' label.
    */
+  /**
+   * Set on a Breakout's merged result in its Thread: which Breakout, under
+   * the title frozen at merge time, and whether Rally merged it for the
+   * author. Server-written; see docs/conversation-merge.md.
+   */
+  mergedFrom?: {
+    breakoutId: string;
+    title: string;
+    actingAgent: boolean;
+  };
   automationActivation?: {
     automationId: string;
     automationName: string;

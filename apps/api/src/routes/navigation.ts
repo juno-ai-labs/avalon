@@ -14,6 +14,7 @@ import {
 import { Hono } from "hono";
 import { z } from "zod";
 
+import { clientReadsChannelMerges } from "../lib/client-contract";
 import type { HonoAppEnv } from "../env";
 import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
@@ -69,9 +70,13 @@ navigationRoutes.delete("/pins/:kind/:id", zValidator("param", pinParam), async 
 
 navigationRoutes.get("/activity", zValidator("query", activityQuery), async (c) => {
   const { cursor, only } = c.req.valid("query");
-  return c.json(ActivityPageSchema.parse(
-    await new SpaceService(c.env, getWorkspaceAuth(c)).listActivity(cursor ?? null, only ?? null),
-  ));
+  const page = await new SpaceService(c.env, getWorkspaceAuth(c)).listActivity(cursor ?? null, only ?? null);
+  // A build before merges parses the kind strictly: it is served the page
+  // without its `merged` rows, whose cursor still continues correctly.
+  const merges = clientReadsChannelMerges((name) => c.req.header(name));
+  return c.json(ActivityPageSchema.parse(merges ? page : {
+    ...page, items: page.items.filter((item) => item.kind !== "merged"),
+  }));
 });
 
 navigationRoutes.post("/activity/events", zValidator("json", ActivityEventsRequestSchema), async (c) => {

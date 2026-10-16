@@ -24,7 +24,10 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
    kind not named reads from the push switch in `push_json` (migration 106)
    someone may have turned off before channels existed, then from
    `DEFAULT_NOTIFICATION_CHANNELS` (`storedMemberPreferences`). `push` in the
-   record is derived from the channels, for clients older than them.
+   record is derived from the channels, for clients older than them. A kind
+   newer than the push switches (`merges`) has no switch: it reads from its
+   default until set, and `NotificationChannelsSchema` defaults it so a client
+   reading an older server's record still parses.
 2. **First paint.** The WorkspaceDO's answer to a workspace socket `subscribe`
    carries `viewerPreferences` beside `featureFlags`. The renderer writes it to
    `['member-preferences', workspaceId]`, so the first frame already honours it
