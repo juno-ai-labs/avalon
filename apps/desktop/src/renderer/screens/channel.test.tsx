@@ -344,6 +344,34 @@ describe('a Channel', () => {
     expect(scrollIntoView.mock.contexts[0]).toBe(merge.closest('li'));
   });
 
+  it('waits for a merge the feed has yet to list, then brings it into view once', async () => {
+    const mergeId = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a64';
+    const thread = { kind: 'thread' as const, placedAt: '2026-10-02T01:00:00.000Z', attentionSequenceNumber: 1, thread: plan };
+    api.getChannelFeed.mockResolvedValueOnce({ nextCursor: null, latestAttentionSequenceNumber: 1, items: [thread] });
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 3, items: [
+      { kind: 'message', placedAt: '2026-10-02T03:00:00.000Z', attentionSequenceNumber: 3, message: {
+        id: mergeId,
+        author: { kind: 'member', userId: 'me' },
+        body: 'Landed later.',
+        merge: { threadId: plan.id, title: 'Q4 plan', summary: null, embeds: [] },
+      } },
+      thread,
+    ] });
+    const original = Element.prototype.scrollIntoView;
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    onTestFinished(() => { Element.prototype.scrollIntoView = original; });
+    const { client } = renderChannel('/channels/outbound', undefined, revealChannelMessageState(mergeId));
+    await screen.findByRole('button', { name: 'Q4 plan' });
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    await client.invalidateQueries();
+    const merge = await screen.findByText('Landed later.');
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({ block: 'center' }));
+    expect(scrollIntoView.mock.contexts[0]).toBe(merge.closest('li'));
+    await client.invalidateQueries();
+    expect(scrollIntoView).toHaveBeenCalledOnce();
+  });
+
   it('opens an artifact a merge cites, by its alias, in its thread', async () => {
     api.getWorkspaceMembers.mockResolvedValueOnce([workspace.currentUser] as never);
     api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 3, items: [
