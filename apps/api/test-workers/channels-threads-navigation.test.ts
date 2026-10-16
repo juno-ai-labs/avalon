@@ -1062,6 +1062,11 @@ describe("Channel merges", () => {
     expect(again).toMatchObject({ ok: true, messageId: first.messageId, replayed: false });
     expect((await messages(channelId, OWNER)).map((item) => [item.message.body, item.attentionSequenceNumber]))
       .toEqual([["Shipped, with the follow-ups.", 4]]);
+    // A late retry of the first operation, after the second replaced it, is
+    // still a replay: it does not overwrite the newer merge or take an ordinal.
+    expect(await merge(channelId, "op-1", "Shipped the sequence.")).toMatchObject({ ok: true, replayed: true });
+    expect((await messages(channelId, OWNER)).map((item) => [item.message.body, item.attentionSequenceNumber]))
+      .toEqual([["Shipped, with the follow-ups.", 4]]);
   });
 
   it("given a private thread, or a Channel that does not hold the thread, when it merges, then it is refused and nothing is posted", async () => {
