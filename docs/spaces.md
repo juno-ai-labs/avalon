@@ -1808,6 +1808,9 @@ message, keyed by `message_id`, with `space_id`, an optional `message_key`,
 (its place on the waterline, `NULL` for a message that is not news and for
 every row before it, read as zero), `embeds_json` (`[{id, title, kind}]` at
 posting time) and `merge_operation_id` (the operation that last wrote the row).
+It also adds `space_message_operations (message_id, operation_id, created_at)`,
+a receipt for every operation that ever wrote a message, so a late retry of an
+older one writes nothing.
 
 ## Regional impact
 
