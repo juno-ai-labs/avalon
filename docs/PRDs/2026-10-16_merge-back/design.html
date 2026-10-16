@@ -1,0 +1,1979 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Merge-Back Explorations, 5c</title>
+
+    <style>
+      /* Layout: a gallery of real-scale Channel and Thread cards in the "5c Thread-first, no bubble" language. Threads go out on the right; results come back on the left. */
+      :root {
+        --page: #e9e9e7;
+        --card: #fbfbfa;
+        --white: #ffffff;
+        --ring: #e6e6e4;
+        --rule: #ececea;
+        --fill: #f2f2f0;
+        --fade: rgba(251, 251, 250, 0);
+        --t: #1a1a1a;
+        --t2: #444444;
+        --t3: #6f6f6f;
+        --t4: #8a8a8a;
+        --t5: #9a9a9a;
+        --caret: #999999;
+        --send: #7a7a7a;
+        --tint: #fde8d2;
+        --ink: #b45309;
+        --tint2: #dce9fe;
+        --ink2: #2b58a2;
+        --tint3: #e8e4ff;
+        --ink3: #5f499c;
+        --aj: #84cc16;
+        --aj-ink: #1a2e05;
+        --at: #ecf7dc;
+        --at-ink: #4d7c0f;
+        --sl: #1a1a1a;
+        --sl-ink: #ffffff;
+        --ok: #2f7d55;
+        --ok-wash: #e5f3ea;
+        --warn: #a36a00;
+        --warn-wash: #fbf1dc;
+        --accent: #55689b;
+        --accent-wash: #eef1f8;
+        --bubble: #3b82f6;
+        --shadow:
+          0 0 0 1px rgba(0, 0, 0, 0.08), 0 20px 50px rgba(0, 0, 0, 0.12);
+        --note: #444444;
+        --sans:
+          -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+          Helvetica, system-ui, sans-serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --page: #0b0b0a;
+          --card: #151514;
+          --white: #1e1e1d;
+          --ring: #2b2b29;
+          --rule: #252523;
+          --fill: #262624;
+          --fade: rgba(21, 21, 20, 0);
+          --t: #f2f2f0;
+          --t2: #d6d6d3;
+          --t3: #a5a5a1;
+          --t4: #8c8c88;
+          --t5: #7a7a76;
+          --caret: #77777a;
+          --send: #8a8a86;
+          --tint: #4a2c12;
+          --ink: #fbca93;
+          --tint2: #283d5f;
+          --ink2: #bcd6ff;
+          --tint3: #3e365c;
+          --ink3: #d5ccff;
+          --at: #2c3d1a;
+          --at-ink: #c0e1a3;
+          --sl: #e8e8e6;
+          --sl-ink: #111;
+          --ok: #74c48c;
+          --ok-wash: #15261a;
+          --warn: #dcb45f;
+          --warn-wash: #2a2010;
+          --accent: #9dc0da;
+          --accent-wash: #101820;
+          --shadow:
+            0 0 0 1px rgba(255, 255, 255, 0.07), 0 20px 50px rgba(0, 0, 0, 0.6);
+          --note: #cfcfcb;
+          color-scheme: dark;
+        }
+      }
+      :root[data-theme="dark"] {
+        --page: #0b0b0a;
+        --card: #151514;
+        --white: #1e1e1d;
+        --ring: #2b2b29;
+        --rule: #252523;
+        --fill: #262624;
+        --fade: rgba(21, 21, 20, 0);
+        --t: #f2f2f0;
+        --t2: #d6d6d3;
+        --t3: #a5a5a1;
+        --t4: #8c8c88;
+        --t5: #7a7a76;
+        --caret: #77777a;
+        --send: #8a8a86;
+        --tint: #4a2c12;
+        --ink: #fbca93;
+        --tint2: #283d5f;
+        --ink2: #bcd6ff;
+        --tint3: #3e365c;
+        --ink3: #d5ccff;
+        --at: #2c3d1a;
+        --at-ink: #c0e1a3;
+        --sl: #e8e8e6;
+        --sl-ink: #111;
+        --ok: #74c48c;
+        --ok-wash: #15261a;
+        --warn: #dcb45f;
+        --warn-wash: #2a2010;
+        --accent: #9dc0da;
+        --accent-wash: #101820;
+        --shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.07), 0 20px 50px rgba(0, 0, 0, 0.6);
+        --note: #cfcfcb;
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        background: var(--page);
+        color: var(--t);
+        font: 400 14px/20px var(--sans);
+        -webkit-font-smoothing: antialiased;
+        padding-inline: 20px;
+        padding-block: 40px 80px;
+      }
+      .wrap {
+        max-width: 1640px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 30px;
+      }
+      svg.i {
+        width: 14px;
+        height: 14px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.6;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        flex: none;
+      }
+      .i9 {
+        width: 9px !important;
+        height: 9px !important;
+        stroke-width: 2 !important;
+      }
+      .i12 {
+        width: 12px !important;
+        height: 12px !important;
+      }
+      .i13 {
+        width: 13px !important;
+        height: 13px !important;
+      }
+      .i16 {
+        width: 16px !important;
+        height: 16px !important;
+      }
+      .i20 {
+        width: 20px !important;
+        height: 20px !important;
+      }
+
+      header.top h1 {
+        font: 700 30px/1.15 var(--sans);
+        letter-spacing: -0.02em;
+        margin: 0 0 8px;
+      }
+      header.top p {
+        margin: 0;
+        color: var(--t3);
+        max-width: 74ch;
+        font-size: 15px;
+        line-height: 22px;
+      }
+      header.top a {
+        color: var(--accent);
+      }
+      .sec {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .sec > h2 {
+        font: 700 21px/1.2 var(--sans);
+        letter-spacing: -0.015em;
+        margin: 16px 0 0;
+      }
+      .sec > p.lead {
+        margin: 0;
+        color: var(--t3);
+        max-width: 80ch;
+        font-size: 14.5px;
+        line-height: 21px;
+      }
+      .boards {
+        display: grid;
+        grid-template-columns: repeat(
+          auto-fit,
+          minmax(min(100%, 700px), 780px)
+        );
+        justify-content: start;
+        gap: 26px 28px;
+        align-items: start;
+      }
+      .board {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        min-width: 0;
+      }
+      .label {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .code {
+        font: 700 12px/1 var(--sans);
+        padding: 3px 8px;
+        border-radius: 6px;
+        background: var(--t);
+        color: var(--card);
+      }
+      .lname {
+        font-size: 14px;
+        color: var(--t2);
+      }
+      .rec {
+        font: 600 11px/18px var(--sans);
+        padding: 0 8px;
+        border-radius: 999px;
+        background: var(--ok-wash);
+        color: var(--ok);
+      }
+      .alt {
+        font: 600 11px/18px var(--sans);
+        padding: 0 8px;
+        border-radius: 999px;
+        background: var(--fill);
+        color: var(--t3);
+      }
+      .why {
+        color: var(--note);
+        font-size: 13.5px;
+        line-height: 20px;
+        margin: 0;
+        max-width: 70ch;
+      }
+      .why b {
+        font-weight: 600;
+      }
+      .scroll {
+        overflow-x: auto;
+        border-radius: 16px;
+        padding: 2px;
+      }
+
+      /* the 5c card */
+      .card {
+        background: var(--card);
+        border-radius: 16px;
+        box-shadow: var(--shadow);
+        display: flex;
+        flex-direction: column;
+        min-width: 600px;
+        max-width: 780px;
+        position: relative;
+      }
+      .head {
+        display: flex;
+        justify-content: center;
+        padding: 18px 0 8px;
+      }
+      .head.split {
+        justify-content: space-between;
+        padding: 14px 16px 8px;
+      }
+      .cpill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px 6px 7px;
+        border-radius: 999px;
+        background: var(--white);
+        box-shadow: inset 0 0 0 1px var(--ring);
+        font: 600 14.5px/22px var(--sans);
+        white-space: nowrap;
+      }
+      .cpill .mut {
+        color: var(--t4);
+        font-weight: 400;
+      }
+      .cpill .car {
+        color: var(--t4);
+      }
+      .cpill.anc {
+        background: transparent;
+      }
+      .sq {
+        width: 22px;
+        height: 22px;
+        border-radius: 32%;
+        display: grid;
+        place-items: center;
+        background: var(--tint);
+        color: var(--ink);
+      }
+      .sq.c {
+        border-radius: 50%;
+      }
+      .xb {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        box-shadow: inset 0 0 0 1px var(--ring);
+        color: var(--t2);
+      }
+      .feed {
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        gap: 28px;
+        padding: 20px 44px 24px;
+      }
+      .feed.tight {
+        gap: 22px;
+      }
+
+      .day {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 12px;
+        color: var(--t5);
+      }
+      .day:before,
+      .day:after {
+        content: "";
+        height: 1px;
+        background: var(--rule);
+        flex: 1;
+      }
+
+      /* thread, sent: right */
+      .th {
+        display: flex;
+        align-items: flex-start;
+        justify-content: flex-end;
+        gap: 12px;
+      }
+      .th .c {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 5px;
+        max-width: 460px;
+        text-align: right;
+      }
+      .tt {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font: 650 15.5px/19px var(--sans);
+      }
+      .tt .car {
+        color: var(--caret);
+      }
+      .tp {
+        font-size: 13.5px;
+        line-height: 20.25px;
+        color: var(--t3);
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .tm {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 2px;
+        font-size: 12px;
+        color: var(--t4);
+      }
+      .tile {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: var(--tint);
+        color: var(--ink);
+        margin-top: -8px;
+        flex: none;
+        position: relative;
+      }
+      .tile .tick {
+        position: absolute;
+        right: -3px;
+        bottom: -3px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: var(--ok);
+        color: var(--card);
+        display: grid;
+        place-items: center;
+        box-shadow: 0 0 0 2px var(--card);
+      }
+      .tile.lock {
+        background: var(--fill);
+        color: var(--t4);
+      }
+      .th.folded .tt {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--t2);
+      }
+      .th.folded .tile {
+        width: 28px;
+        height: 28px;
+        margin-top: -4px;
+      }
+
+      .av {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        display: inline-grid;
+        place-items: center;
+        font: 700 8.1px/1 var(--sans);
+        margin-right: 4px;
+        flex: none;
+      }
+      .av.s {
+        width: 16px;
+        height: 16px;
+        font-size: 7.2px;
+      }
+      .av.aj {
+        background: var(--aj);
+        color: var(--aj-ink);
+      }
+      .av.at {
+        background: var(--at);
+        color: var(--at-ink);
+      }
+      .av.sl {
+        background: var(--sl);
+        color: var(--sl-ink);
+      }
+      .av.r {
+        background: #ccff00;
+        color: #141414;
+      }
+
+      /* merge, returned: left */
+      .mg {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-width: 600px;
+      }
+      .mm {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding-top: 2px;
+        font-size: 12.5px;
+        color: var(--t4);
+        flex-wrap: wrap;
+      }
+      .mm .src {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .mm .t16 {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: var(--tint);
+        color: var(--ink);
+      }
+      .mm .t16.b {
+        background: var(--fill);
+        color: var(--t3);
+      }
+      .mm .who {
+        display: inline-flex;
+        align-items: center;
+      }
+      .mq {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        max-width: 520px;
+        font-size: 12.5px;
+        color: var(--t4);
+        min-width: 0;
+      }
+      .mq span {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .mb {
+        font-size: 14.5px;
+        line-height: 22.475px;
+        color: var(--t);
+      }
+      .mb b {
+        font-weight: 700;
+      }
+      .mb p {
+        margin: 0 0 8px;
+      }
+      .mb p:last-child {
+        margin: 0;
+      }
+      .state {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-weight: 600;
+      }
+      .state.done {
+        color: var(--ok);
+      }
+      .state.upd {
+        color: var(--warn);
+      }
+      .state.open {
+        color: var(--t3);
+      }
+      .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+      .doc {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 12px 10px 10px;
+        max-width: 420px;
+        background: var(--white);
+        border-radius: 14px;
+        box-shadow: inset 0 0 0 1px var(--ring);
+      }
+      .doc .ic {
+        width: 40px;
+        height: 48px;
+        border-radius: 8px;
+        background: var(--fill);
+        color: #555;
+        display: grid;
+        place-items: center;
+        flex: none;
+      }
+      .doc .tx {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        flex: 1;
+        min-width: 0;
+      }
+      .doc .tx b {
+        font: 600 14px/17px var(--sans);
+      }
+      .doc .tx span {
+        font-size: 12.5px;
+        color: var(--t4);
+      }
+      .open {
+        font: 500 12.5px/15px var(--sans);
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: var(--fill);
+      }
+      .docs {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .doc.sm {
+        padding: 6px 10px 6px 6px;
+        gap: 9px;
+      }
+      .doc.sm .ic {
+        width: 28px;
+        height: 32px;
+      }
+      .doc.sm .tx b {
+        font-size: 13px;
+      }
+      .lab {
+        display: grid;
+        grid-template-columns: 52px 1fr;
+        gap: 4px 10px;
+        font-size: 13.5px;
+        line-height: 20px;
+        color: var(--t2);
+      }
+      .lab dt {
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--t4);
+        font-weight: 600;
+        padding-top: 1px;
+      }
+      .lab dd {
+        margin: 0;
+      }
+      .fn {
+        display: inline-grid;
+        place-items: center;
+        width: 15px;
+        height: 15px;
+        border-radius: 50%;
+        font: 650 9.5px/1 var(--sans);
+        background: var(--fill);
+        box-shadow: inset 0 0 0 1px var(--ring);
+        color: var(--t3);
+        vertical-align: 1px;
+        margin-left: 2px;
+      }
+      .foot {
+        font-size: 12.5px;
+        color: var(--t4);
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .foot a {
+        color: var(--t2);
+        text-decoration: none;
+        font-weight: 500;
+      }
+      .foot .new {
+        color: var(--warn);
+        font-weight: 600;
+        display: inline-flex;
+        gap: 4px;
+        align-items: center;
+      }
+      .more {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12.5px;
+        color: var(--t3);
+        padding: 5px 10px;
+        border-radius: 999px;
+        background: var(--fill);
+        align-self: flex-start;
+      }
+
+      /* pairing (5c-2) */
+      .pair {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        position: relative;
+      }
+      .pair .mg {
+        padding-left: 16px;
+        border-left: 2px solid var(--ring);
+        margin-left: 6px;
+      }
+
+      /* composer */
+      .dock {
+        padding: 0 28px 22px;
+      }
+      .comp {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        padding: 14px 16px 10px;
+        background: var(--white);
+        border-radius: 18px;
+        box-shadow:
+          inset 0 0 0 1px var(--ring),
+          0 2px 8px rgba(0, 0, 0, 0.03);
+      }
+      .comp .ph {
+        font-size: 14.5px;
+        color: var(--t5);
+      }
+      .comp .val {
+        font-size: 14.5px;
+        line-height: 21px;
+        color: var(--t);
+      }
+      .comp .val b {
+        font-weight: 700;
+      }
+      .ctl {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-size: 12px;
+        color: var(--t4);
+      }
+      .ctl .mode {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        color: #555;
+      }
+      .ctl .mode.on {
+        color: var(--ok);
+        font-weight: 600;
+        background: var(--ok-wash);
+        padding: 3px 8px 3px 6px;
+        border-radius: 999px;
+        gap: 5px;
+      }
+      .ctl .sp {
+        flex: 1;
+      }
+      .ctl .g {
+        color: var(--t2);
+      }
+      .sendb {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: var(--send);
+        color: #fff;
+      }
+      .sendb.go {
+        background: var(--t);
+        color: var(--card);
+        width: auto;
+        padding: 0 12px;
+        border-radius: 999px;
+        gap: 6px;
+        display: inline-flex;
+        align-items: center;
+        font: 600 12.5px/1 var(--sans);
+      }
+      .ghost {
+        opacity: 0.55;
+        position: relative;
+      }
+      .ghosttag {
+        font: 600 10.5px/16px var(--sans);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--t4);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .ghosttag:after {
+        content: "";
+        height: 1px;
+        flex: 1;
+        background: repeating-linear-gradient(
+          90deg,
+          var(--ring) 0 4px,
+          transparent 4px 8px
+        );
+      }
+      .aud {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 12px;
+        color: var(--t3);
+      }
+      .aud.warn {
+        color: var(--warn);
+      }
+      .chipline {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        align-items: center;
+        font-size: 12px;
+        color: var(--t4);
+      }
+      .src-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px 4px 6px;
+        border-radius: 999px;
+        background: var(--fill);
+        color: var(--t2);
+        font-size: 12px;
+      }
+      .src-chip .sw {
+        color: var(--t4);
+      }
+
+      /* popover */
+      .pop {
+        position: absolute;
+        left: 44px;
+        bottom: 186px;
+        width: 330px;
+        background: var(--white);
+        border-radius: 16px;
+        box-shadow:
+          inset 0 0 0 1px var(--ring),
+          0 18px 40px rgba(0, 0, 0, 0.14);
+        padding: 6px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        z-index: 2;
+      }
+      .pop .h {
+        font: 600 11px/1 var(--sans);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--t4);
+        padding: 10px 10px 6px;
+      }
+      .opt {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        padding: 8px 10px;
+        border-radius: 10px;
+      }
+      .opt.on {
+        background: var(--fill);
+      }
+      .opt .oi {
+        width: 28px;
+        height: 28px;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        background: var(--fill);
+        color: var(--t2);
+        flex: none;
+      }
+      .opt.on .oi {
+        background: var(--white);
+        box-shadow: inset 0 0 0 1px var(--ring);
+      }
+      .opt .ot {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+      }
+      .opt .ot b {
+        font: 600 13.5px/18px var(--sans);
+      }
+      .opt .ot span {
+        font-size: 12px;
+        line-height: 16px;
+        color: var(--t4);
+      }
+      .opt .ck {
+        margin-left: auto;
+        color: var(--t);
+        align-self: center;
+      }
+
+      /* thread transcript bits (real app, light) */
+      .tr {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        padding: 16px 40px 20px;
+      }
+      .by {
+        font-size: 12px;
+        color: var(--t4);
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .by b {
+        color: var(--t2);
+        font-weight: 500;
+      }
+      .hum {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 4px;
+      }
+      .bub {
+        max-width: 76%;
+        border-radius: 18px;
+        padding: 8px 12px;
+        color: #fff;
+        font-size: 14px;
+        line-height: 20px;
+        background: var(--bubble);
+      }
+      .ag {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-width: 560px;
+        font-size: 14px;
+        line-height: 20px;
+        color: var(--t);
+      }
+      .bchips {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .bchip {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        height: 30px;
+        padding: 0 12px 0 10px;
+        border-radius: 999px;
+        background: var(--white);
+        box-shadow: inset 0 0 0 1px var(--ring);
+        font-size: 13px;
+        white-space: nowrap;
+      }
+      .bchip b {
+        font-weight: 600;
+      }
+      .bchip .ar {
+        color: var(--t4);
+      }
+      .bchip .m {
+        color: var(--ok);
+        font-weight: 600;
+        display: inline-flex;
+        gap: 3px;
+        align-items: center;
+      }
+      .bchip .n {
+        color: #e5332a;
+        font-weight: 600;
+      }
+      .fadeup {
+        opacity: 0.5;
+      }
+
+      /* entry points */
+      .acts {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        font-size: 11px;
+        color: var(--t4);
+        margin-top: 2px;
+        flex-wrap: nowrap;
+        overflow: visible;
+        padding-left: 5px;
+        margin-left: -5px;
+      }
+      .acts span {
+        display: inline-flex;
+        gap: 4px;
+        align-items: center;
+        flex: none;
+        white-space: nowrap;
+      }
+      .acts .hv {
+        color: var(--t);
+        background: var(--fill);
+        padding: 3px 7px 3px 5px;
+        border-radius: 6px;
+        margin-left: -5px;
+      }
+      .acts .mrg {
+        color: var(--t);
+        font-weight: 600;
+        background: var(--fill);
+        box-shadow: inset 0 0 0 1px var(--ring);
+        padding: 4px 9px 4px 7px;
+        border-radius: 999px;
+        font-size: 11.5px;
+      }
+      .menu {
+        width: 290px;
+        background: var(--white);
+        border-radius: 16px;
+        box-shadow:
+          inset 0 0 0 1px var(--ring),
+          0 18px 40px rgba(0, 0, 0, 0.14);
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .mtiles {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+        margin-bottom: 6px;
+      }
+      .mt {
+        border-radius: 12px;
+        background: var(--fill);
+        height: 58px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        font-size: 11px;
+        color: var(--t2);
+      }
+      .mr {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px;
+        border-radius: 10px;
+        font-size: 13.5px;
+        color: var(--t);
+      }
+      .mr .r {
+        margin-left: auto;
+        color: var(--t4);
+        font-size: 12.5px;
+        display: inline-flex;
+        gap: 4px;
+        align-items: center;
+      }
+      .mr.hot {
+        background: var(--fill);
+        font-weight: 600;
+      }
+      .cursor {
+        position: absolute;
+        width: 14px;
+        height: 14px;
+      }
+      .entry {
+        position: relative;
+        padding: 6px 24px 24px;
+        min-height: 250px;
+      }
+      .pop-r {
+        position: absolute;
+        top: -4px;
+        right: 24px;
+        z-index: 2;
+      }
+      .mlabel {
+        font: 600 10.5px/16px var(--sans);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--t4);
+        margin-bottom: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <defs>
+        <symbol id="bend" viewBox="0 0 24 24">
+          <path
+            stroke-width="1.9"
+            transform="rotate(180 12 12)"
+            d="M6 6v6a3 3 0 0 0 3 3h10l-4 -4m0 8l4 -4"
+          />
+        </symbol>
+        <symbol id="brk" viewBox="0 0 24 24">
+          <path stroke-width="1.9" d="M6 6v6a3 3 0 0 0 3 3h10l-4 -4m0 8l4 -4" />
+        </symbol>
+        <symbol id="car" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" /></symbol>
+        <symbol id="cd" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
+        <symbol id="plane" viewBox="0 0 24 24">
+          <path d="M21 3 3 10l7 3 3 7z" />
+          <path d="m10 13 4-4" />
+        </symbol>
+        <symbol id="env" viewBox="0 0 24 24">
+          <rect x="3" y="5" width="18" height="14" rx="1.5" />
+          <path d="m3 6 9 7 9-7" />
+        </symbol>
+        <symbol id="strat" viewBox="0 0 24 24">
+          <circle cx="6.5" cy="17.5" r="2.5" />
+          <path d="m4 4 5 5M9 4 4 9M15 4l5 5M20 4l-5 5" />
+          <path d="M17 14c0 2-1 4-4 4" />
+        </symbol>
+        <symbol id="rocket" viewBox="0 0 24 24">
+          <path d="M14 4c3 0 6 3 6 6l-7 7-6-6z" />
+          <path d="M7 11 4 12l3 3M13 17l-1 3-3-3" />
+          <circle cx="15" cy="9" r="1.5" />
+        </symbol>
+        <symbol id="chart" viewBox="0 0 24 24">
+          <path d="M4 20V4M4 20h16" />
+          <path d="m7 15 4-4 3 3 5-6" />
+        </symbol>
+        <symbol id="tag" viewBox="0 0 24 24">
+          <path d="M3 12V4h8l9 9-8 8z" />
+          <circle cx="7.5" cy="8" r="1.2" />
+        </symbol>
+        <symbol id="file" viewBox="0 0 24 24">
+          <path d="M6 3h8l5 5v13H6z" />
+          <path d="M14 3v5h5M9 13h7M9 17h7" />
+        </symbol>
+        <symbol id="table" viewBox="0 0 24 24">
+          <rect x="3" y="5" width="18" height="14" rx="1.5" />
+          <path d="M3 10h18M3 15h18M9 5v14" />
+        </symbol>
+        <symbol id="ck" viewBox="0 0 24 24">
+          <path d="m5 12.5 4.5 4.5L19 7.5" />
+        </symbol>
+        <symbol id="lock" viewBox="0 0 24 24">
+          <rect x="5" y="11" width="14" height="10" rx="2" />
+          <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+        </symbol>
+        <symbol id="plus" viewBox="0 0 24 24">
+          <path d="M12 5v14M5 12h14" />
+        </symbol>
+        <symbol id="mic" viewBox="0 0 24 24">
+          <rect x="9" y="3" width="6" height="11" rx="3" />
+          <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+        </symbol>
+        <symbol id="up" viewBox="0 0 24 24">
+          <path d="M12 19V5M6 11l6-6 6 6" />
+        </symbol>
+        <symbol id="x" viewBox="0 0 24 24">
+          <path d="M6 6l12 12M18 6 6 18" />
+        </symbol>
+        <symbol id="clock" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v5l3 2" />
+        </symbol>
+        <symbol id="spark" viewBox="0 0 24 24">
+          <path
+            d="M12 3c.6 4.6 2.4 6.4 7 7-4.6.6-6.4 2.4-7 7-.6-4.6-2.4-6.4-7-7 4.6-.6 6.4-2.4 7-7z"
+          />
+        </symbol>
+        <symbol id="chat" viewBox="0 0 24 24">
+          <path d="M4 5h16v11H9l-5 4z" />
+        </symbol>
+        <symbol id="pen" viewBox="0 0 24 24">
+          <path d="M4 20h4L19 9l-4-4L4 16z" />
+        </symbol>
+        <symbol id="globe" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18" />
+        </symbol>
+        <symbol id="ppl" viewBox="0 0 24 24">
+          <circle cx="9" cy="8" r="3" />
+          <path d="M3 20a6 6 0 0 1 12 0" />
+          <path d="M16 5a3 3 0 0 1 0 6M21 20a6 6 0 0 0-4-5.6" />
+        </symbol>
+        <symbol id="copy" viewBox="0 0 24 24">
+          <rect x="8" y="8" width="12" height="12" rx="2" />
+          <path d="M16 8V5H4v11h4" />
+        </symbol>
+        <symbol id="spk" viewBox="0 0 24 24">
+          <path d="M4 10v4h4l5 4V6L8 10z" />
+          <path d="M16 9a4 4 0 0 1 0 6" />
+        </symbol>
+        <symbol id="img" viewBox="0 0 24 24">
+          <rect x="3" y="5" width="18" height="14" rx="2" />
+          <circle cx="9" cy="10" r="1.5" />
+          <path d="m21 16-5-5-9 8" />
+        </symbol>
+        <symbol id="pdf" viewBox="0 0 24 24">
+          <path d="M6 3h8l5 5v13H6z" />
+          <path d="M14 3v5h5" />
+        </symbol>
+        <symbol id="link" viewBox="0 0 24 24">
+          <path d="M10 14a4 4 0 0 0 6 0l3-3a4 4 0 0 0-6-6l-1 1" />
+          <path d="M14 10a4 4 0 0 0-6 0l-3 3a4 4 0 0 0 6 6l1-1" />
+        </symbol>
+        <symbol id="dots" viewBox="0 0 24 24">
+          <circle cx="6" cy="12" r="1" />
+          <circle cx="12" cy="12" r="1" />
+          <circle cx="18" cy="12" r="1" />
+        </symbol>
+        <symbol id="tgt" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="8" />
+          <circle cx="12" cy="12" r="2" />
+        </symbol>
+      </defs>
+    </svg>
+
+    <div class="wrap">
+      <header class="top">
+        <h1>Merge-back on the new Channel feed</h1>
+        <p>
+          The minimum version, on the <b>5c Thread-first, no bubble</b> Channel
+          feed. One representation everywhere: <i>X merged into Y</i>, with a
+          short piece of markdown that can embed artifacts. In a Thread it is an
+          ordinary message; in a Channel it is a Channel message, arriving at
+          the bottom when it was merged, so both stay in time order. A person
+          merges with the composer, or asks Rally to. Reasoning is in the
+          <a href="prd.md">PRD</a>.
+        </p>
+      </header>
+
+      <section class="sec">
+        <h2>Channel</h2>
+        <div class="boards">
+          <div class="board">
+            <div class="label">
+              <span class="code">5c·1</span
+              ><span class="lname"
+                >Merges arrive at the bottom, when they are merged</span
+              >
+            </div>
+            <div class="scroll">
+              <div class="card">
+                <div class="head">
+                  <span class="cpill"
+                    ><span class="sq"
+                      ><svg class="i i12"><use href="#rocket" /></svg></span
+                    >GTM<svg class="i i12 car"><use href="#cd" /></svg
+                  ></span>
+                </div>
+                <div class="feed">
+                  <div class="day">Thursday</div>
+                  <div class="th">
+                    <div class="c">
+                      <div class="tt">
+                        Cold Outreach<svg class="i i12 car">
+                          <use href="#car" />
+                        </svg>
+                      </div>
+                      <div class="tp">
+                        Pull together three cold-outreach sequences for
+                        seed-stage founders based on this video and our ICP doc.
+                        Keep each under 90 words…
+                      </div>
+                      <div class="tm">
+                        <span class="av at">AT</span>Casey Lane · 4 days ago
+                      </div>
+                    </div>
+                    <span class="tile"
+                      ><svg class="i i20"><use href="#plane" /></svg
+                    ></span>
+                  </div>
+                  <div class="day">Today</div>
+                  <div class="th">
+                    <div class="c">
+                      <div class="tt">
+                        Slack email switching<svg class="i i12 car">
+                          <use href="#car" />
+                        </svg>
+                      </div>
+                      <div class="tp">
+                        How did Slack get over hesitancy over people switching
+                        from email? We are hitting the issue that Rally
+                        (multiplayer AI where multiple humans chat with a single
+                        AI agent…
+                      </div>
+                      <div class="tm">
+                        <span class="av aj">AJ</span>Morgan Ellis · 1 hour ago
+                      </div>
+                    </div>
+                    <span class="tile"
+                      ><svg class="i i20"><use href="#env" /></svg
+                    ></span>
+                  </div>
+                  <div class="mg">
+                    <div class="mm">
+                      <span class="src"
+                        ><span class="t16"
+                          ><svg class="i i9"><use href="#env" /></svg></span
+                        >Slack email switching</span
+                      >· merged by
+                      <span class="who"
+                        ><span class="av s aj">AJ</span>Morgan</span
+                      >· 40 min ago
+                    </div>
+                    <div class="mq">
+                      <svg class="i i13"><use href="#bend" /></svg
+                      ><span
+                        >How did Slack get over hesitancy over people switching
+                        from email? We are hitting…</span
+                      >
+                    </div>
+                    <div class="mb">
+                      <b
+                        >Slack did not win by asking companies to replace
+                        email.</b
+                      >
+                      It won by making a small team's existing, messy
+                      coordination visibly better, without a company-wide
+                      migration or permission.
+                    </div>
+                  </div>
+                  <div class="th">
+                    <div class="c">
+                      <div class="tt">
+                        Competitive brief<svg class="i i12 car">
+                          <use href="#car" />
+                        </svg>
+                      </div>
+                      <div class="tp">
+                        Draft a one-page competitive brief on multiplayer AI
+                        tools: positioning, pricing, and where each one breaks
+                        for teams of 5–20…
+                      </div>
+                      <div class="tm">
+                        <span class="av aj">AJ</span>Morgan Ellis · 2 min ago
+                      </div>
+                    </div>
+                    <span class="tile"
+                      ><svg class="i i20"><use href="#strat" /></svg
+                    ></span>
+                  </div>
+                  <div class="mg">
+                    <div class="mm">
+                      <span class="src"
+                        ><span class="t16"
+                          ><svg class="i i9"><use href="#plane" /></svg></span
+                        >Cold Outreach</span
+                      >· merged by
+                      <span class="who"
+                        ><span class="av s at">AT</span>Alex</span
+                      >· just now
+                    </div>
+                    <div class="mq">
+                      <svg class="i i13"><use href="#bend" /></svg
+                      ><span
+                        >Pull together three cold-outreach sequences for
+                        seed-stage founders based on this…</span
+                      >
+                    </div>
+                    <div class="mb">
+                      After four days of back-and-forth, three sequences are
+                      final. The strongest opens with the founder's own launch
+                      post and asks for a 15-minute teardown rather than a demo.
+                    </div>
+                    <div class="doc">
+                      <span class="ic"
+                        ><svg class="i i20"><use href="#file" /></svg></span
+                      ><span class="tx"
+                        ><b>Outreach sequences</b
+                        ><span>Document · 3 sequences · 1 page</span></span
+                      ><span class="open">Open</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="dock">
+                  <div class="comp">
+                    <div class="ph">Start a thread in GTM</div>
+                    <div class="ctl">
+                      <svg class="i i16 g"><use href="#plus" /></svg
+                      ><span class="mode"
+                        >Default<svg class="i i9"><use href="#cd" /></svg></span
+                      ><span
+                        >Enter to start a thread · Shift+Enter for a new
+                        line</span
+                      ><span class="sp"></span
+                      ><svg class="i i16 g"><use href="#mic" /></svg
+                      ><span class="sendb"
+                        ><svg class="i"><use href="#up" /></svg
+                      ></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              Everything is in time order. Cold Outreach started on Thursday and
+              was merged just now, so its merge is the newest item, at the
+              bottom, far from where the thread started. The merge names its
+              thread and quotes its first line, so it reads on its own; the name
+              opens the thread. Merging again moves it back to the bottom.
+            </p>
+          </div>
+
+          <div class="board">
+            <div class="label">
+              <span class="code">5c·2</span
+              ><span class="lname">A longer result, with two artifacts</span>
+            </div>
+            <div class="scroll">
+              <div class="card">
+                <div class="head">
+                  <span class="cpill"
+                    ><span
+                      class="sq"
+                      style="background: var(--tint2); color: var(--ink2)"
+                      ><svg class="i i12"><use href="#tag" /></svg></span
+                    >Pricing<svg class="i i12 car"><use href="#cd" /></svg
+                  ></span>
+                </div>
+                <div class="feed">
+                  <div class="mg">
+                    <div class="mm">
+                      <span class="src"
+                        ><span
+                          class="t16"
+                          style="background: var(--tint2); color: var(--ink2)"
+                          ><svg class="i i9"><use href="#tag" /></svg></span
+                        >Annual plan pricing</span
+                      >· merged by
+                      <span class="who"
+                        ><span class="av s sl">PS</span>Priya</span
+                      >· yesterday
+                    </div>
+                    <div class="mq">
+                      <svg class="i i13"><use href="#bend" /></svg
+                      ><span
+                        >What should the annual plan cost, and do we keep a
+                        Starter tier?</span
+                      >
+                    </div>
+                    <div class="mb">
+                      <b
+                        >Annual plan at $96 a seat; monthly stays $15; no
+                        Starter tier.</b
+                      >
+                      It sits within 5% of the two closest competitors and keeps
+                      the 38% annual discount sales asked for. Still open:
+                      whether SSO is included on Team.
+                    </div>
+                    <div class="docs">
+                      <div class="doc sm">
+                        <span class="ic"
+                          ><svg class="i i16"><use href="#file" /></svg></span
+                        ><span class="tx"><b>Pricing PRD</b></span
+                        ><span class="open">Open</span>
+                      </div>
+                      <div class="doc sm">
+                        <span class="ic"
+                          ><svg class="i i16"><use href="#table" /></svg></span
+                        ><span class="tx"><b>Price model</b></span
+                        ><span class="open">Open</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              Still just markdown: a bold first sentence that states the result,
+              a few sentences, two <code>resource://</code> embeds. An open
+              question is a sentence, not a status.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="sec">
+        <h2>Thread</h2>
+        <div class="boards">
+          <div class="board">
+            <div class="label">
+              <span class="code">5c·3</span
+              ><span class="lname"
+                >A Breakout's merge is a message in the thread</span
+              >
+            </div>
+            <div class="scroll">
+              <div class="card">
+                <div class="head split">
+                  <span class="cpill anc"
+                    ><span class="sq"
+                      ><svg class="i i12"><use href="#rocket" /></svg></span
+                    >GTM</span
+                  ><span class="cpill"
+                    ><span class="sq c"
+                      ><svg class="i i12"><use href="#plane" /></svg></span
+                    >Cold Outreach<svg class="i i12 car">
+                      <use href="#cd" /></svg></span
+                  ><span class="xb"
+                    ><svg class="i"><use href="#x" /></svg
+                  ></span>
+                </div>
+                <div class="tr">
+                  <div class="ag fadeup">
+                    <div class="by"><b>Rally</b> Thursday</div>
+                    <div>
+                      Here are three directions. I can draft each sequence in a
+                      breakout so this thread stays readable.
+                    </div>
+                    <div class="bchips">
+                      <span class="bchip"
+                        ><svg class="i ar"><use href="#brk" /></svg
+                        ><b>Sequence B</b
+                        ><span class="m"
+                          ><svg class="i i12"><use href="#ck" /></svg
+                          >Merged</span
+                        ></span
+                      ><span class="bchip"
+                        ><svg class="i ar"><use href="#brk" /></svg
+                        ><b>Sequence C</b><span class="n">· 2 new</span></span
+                      >
+                    </div>
+                  </div>
+                  <div class="hum">
+                    <div class="by">3 hours ago · <b>Samantha Lee</b></div>
+                    <div
+                      class="bub"
+                      style="background: var(--sl); color: var(--sl-ink)"
+                    >
+                      Can B lead with the teardown offer instead?
+                    </div>
+                  </div>
+                  <div class="mg">
+                    <div class="mm">
+                      <span class="src"
+                        ><span class="t16 b"
+                          ><svg class="i i9"><use href="#brk" /></svg></span
+                        >Sequence B</span
+                      >· merged by
+                      <span class="who"
+                        ><span class="av s at">AT</span>Alex</span
+                      >· 10 min ago
+                    </div>
+                    <div class="mb">
+                      <b>Sequence B now opens with the teardown offer.</b> Four
+                      emails, each under 90 words; the second cites the
+                      founder's launch post.
+                    </div>
+                    <div class="doc">
+                      <span class="ic"
+                        ><svg class="i i20"><use href="#file" /></svg></span
+                      ><span class="tx"
+                        ><b>Sequence B</b><span>Document · 4 emails</span></span
+                      ><span class="open">Open</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="dock" style="padding-bottom: 18px">
+                  <div class="comp">
+                    <div class="ph">Message Cold Outreach</div>
+                    <div class="ctl">
+                      <svg class="i i16 g"><use href="#plus" /></svg
+                      ><span class="sp"></span
+                      ><svg class="i i16 g"><use href="#mic" /></svg
+                      ><span class="sendb"
+                        ><svg class="i"><use href="#up" /></svg
+                      ></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              An ordinary message, posted where the conversation is now, tagged
+              with the Breakout it came from. The "Sequence B" link opens the
+              Breakout. The chip up top shows <b>Merged</b>, so finished
+              side-work is visible at a glance. Unread and mentions work as for
+              any message.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="sec">
+        <h2>Making the merge</h2>
+        <div class="boards">
+          <div class="board">
+            <div class="label">
+              <span class="code">5c·4</span
+              ><span class="lname">Where the Merge button is</span>
+            </div>
+            <div class="scroll">
+              <div class="card">
+                <div class="head split">
+                  <span class="cpill anc"
+                    ><span class="sq c"
+                      ><svg class="i i12"><use href="#plane" /></svg></span
+                    >Cold Outreach</span
+                  ><span
+                    class="cpill"
+                    style="box-shadow: inset 0 0 0 1.5px var(--t3)"
+                    ><span
+                      class="sq c"
+                      style="background: var(--fill); color: var(--t3)"
+                      ><svg class="i i12"><use href="#brk" /></svg></span
+                    >Sequence B <span class="mut">14 replies</span
+                    ><svg class="i i12 car"><use href="#cd" /></svg></span
+                  ><span class="xb"
+                    ><svg class="i"><use href="#x" /></svg
+                  ></span>
+                </div>
+                <div class="entry">
+                  <div>
+                    <div class="tr" style="padding: 0">
+                      <div class="ag">
+                        <div class="by"><b>Rally</b> 25 min ago</div>
+                        <div>
+                          <b>Sequence B now opens with the teardown offer.</b>
+                          Four emails, each under 90 words; the second cites the
+                          founder's launch post.
+                        </div>
+                        <div class="doc sm" style="max-width: 260px">
+                          <span class="ic"
+                            ><svg class="i i16"><use href="#file" /></svg></span
+                          ><span class="tx"><b>Sequence B</b></span
+                          ><span class="open">Open</span>
+                        </div>
+                        <div class="acts">
+                          <span class="hv"
+                            ><svg class="i i13"><use href="#bend" /></svg>Merge
+                            to thread</span
+                          ><span
+                            ><svg class="i i13"><use href="#copy" /></svg
+                            >Copy</span
+                          ><span
+                            ><svg class="i i13"><use href="#spk" /></svg
+                            >Speak</span
+                          ><span
+                            ><svg class="i i13"><use href="#img" /></svg
+                            >Image</span
+                          ><span
+                            ><svg class="i i13"><use href="#pdf" /></svg
+                            >PDF</span
+                          >
+                        </div>
+                      </div>
+                      <div class="hum fadeup" style="margin-top: 44px">
+                        <div class="by">20 min ago · <b>Alex</b></div>
+                        <div class="bub">
+                          Where did the 38% reply rate come from?
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="pop-r">
+                    <div class="menu">
+                      <div class="mtiles">
+                        <div class="mt">
+                          <svg class="i i16"><use href="#ppl" /></svg>Add people
+                        </div>
+                        <div class="mt">
+                          <svg class="i i16"><use href="#pen" /></svg>Rename
+                        </div>
+                        <div class="mt">
+                          <svg class="i i16"><use href="#link" /></svg>Copy link
+                        </div>
+                        <div class="mt">
+                          <svg class="i i16"><use href="#dots" /></svg>More
+                        </div>
+                      </div>
+                      <div class="mr hot">
+                        <svg class="i i16"><use href="#bend" /></svg>Merge to
+                        thread<span class="r">Cold Outreach</span>
+                      </div>
+                      <div class="mr">
+                        <svg class="i i16"><use href="#ppl" /></svg>People<span
+                          class="r"
+                          >2 · Private<svg class="i i12">
+                            <use href="#car" /></svg
+                        ></span>
+                      </div>
+                      <div class="mr">
+                        <svg class="i i16"><use href="#spark" /></svg
+                        >Sidekicks<span class="r"
+                          >None yet<svg class="i i12"><use href="#car" /></svg
+                        ></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              <b>Merge to thread</b> is the first of the buttons that appear
+              when you hover a message, before Copy, Speak, Image and PDF (shown
+              hovered, with the title menu open over it). It opens the composer
+              filled with that message (5c·6). The same button is the first row
+              of the Breakout's title menu, where it opens the composer empty.
+              In a Thread, both places read <b>Merge to GTM</b> and merge into
+              its Channel (5c·5).
+            </p>
+          </div>
+
+          <div class="board">
+            <div class="label">
+              <span class="code">5c·5</span
+              ><span class="lname"
+                >The same button on a thread merges into its Channel</span
+              >
+            </div>
+            <div class="scroll">
+              <div class="card">
+                <div class="head split">
+                  <span class="cpill anc"
+                    ><span class="sq"
+                      ><svg class="i i12"><use href="#rocket" /></svg></span
+                    >GTM</span
+                  ><span
+                    class="cpill"
+                    style="box-shadow: inset 0 0 0 1.5px var(--t3)"
+                    ><span class="sq c"
+                      ><svg class="i i12"><use href="#plane" /></svg></span
+                    >Cold Outreach<svg class="i i12 car">
+                      <use href="#cd" /></svg></span
+                  ><span class="xb"
+                    ><svg class="i"><use href="#x" /></svg
+                  ></span>
+                </div>
+                <div class="entry">
+                  <div>
+                    <div class="tr" style="padding: 0">
+                      <div class="ag">
+                        <div class="by"><b>Rally</b> 12 min ago</div>
+                        <div>
+                          <b
+                            >After four days of back-and-forth, three sequences
+                            are final.</b
+                          >
+                          The strongest opens with the founder's own launch post
+                          and asks for a teardown, not a demo.
+                        </div>
+                        <div class="acts">
+                          <span class="hv"
+                            ><svg class="i i13"><use href="#bend" /></svg>Merge
+                            to GTM</span
+                          ><span
+                            ><svg class="i i13"><use href="#copy" /></svg
+                            >Copy</span
+                          ><span
+                            ><svg class="i i13"><use href="#spk" /></svg
+                            >Speak</span
+                          ><span
+                            ><svg class="i i13"><use href="#img" /></svg
+                            >Image</span
+                          ><span
+                            ><svg class="i i13"><use href="#pdf" /></svg
+                            >PDF</span
+                          >
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="pop-r">
+                    <div class="menu">
+                      <div class="mtiles">
+                        <div class="mt">
+                          <svg class="i i16"><use href="#ppl" /></svg>Add people
+                        </div>
+                        <div class="mt">
+                          <svg class="i i16"><use href="#pen" /></svg>Rename
+                        </div>
+                        <div class="mt">
+                          <svg class="i i16"><use href="#link" /></svg>Copy link
+                        </div>
+                        <div class="mt">
+                          <svg class="i i16"><use href="#dots" /></svg>More
+                        </div>
+                      </div>
+                      <div class="mr hot">
+                        <svg class="i i16"><use href="#bend" /></svg>Merge to
+                        GTM<span class="r">Channel</span>
+                      </div>
+                      <div class="mr">
+                        <svg class="i i16"><use href="#ppl" /></svg>People<span
+                          class="r"
+                          >6<svg class="i i12"><use href="#car" /></svg
+                        ></span>
+                      </div>
+                      <div class="mr">
+                        <svg class="i i16"><use href="#brk" /></svg
+                        >Breakouts<span class="r"
+                          >3<svg class="i i12"><use href="#car" /></svg
+                        ></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              Same two places, one level up: <b>Merge to GTM</b> is the first
+              hover button on a thread message, and a row in the thread's title
+              menu. On a private thread the button is not shown, since only
+              Organization-wide threads merge into a Channel in this version.
+            </p>
+          </div>
+
+          <div class="board">
+            <div class="label">
+              <span class="code">5c·6</span
+              ><span class="lname">The composer in Merge mode</span>
+            </div>
+            <div class="scroll">
+              <div class="card">
+                <div class="head split">
+                  <span class="cpill anc"
+                    ><span class="sq c"
+                      ><svg class="i i12"><use href="#plane" /></svg></span
+                    >Cold Outreach</span
+                  ><span class="cpill"
+                    ><span
+                      class="sq c"
+                      style="background: var(--fill); color: var(--t3)"
+                      ><svg class="i i12"><use href="#brk" /></svg></span
+                    >Sequence B <span class="mut">14 replies</span
+                    ><svg class="i i12 car"><use href="#cd" /></svg></span
+                  ><span class="xb"
+                    ><svg class="i"><use href="#x" /></svg
+                  ></span>
+                </div>
+                <div class="tr fadeup">
+                  <div class="ag">
+                    <div class="by"><b>Rally</b> 25 min ago</div>
+                    <div>
+                      Sequence B now opens with the teardown offer. Four emails,
+                      each under 90 words…
+                    </div>
+                  </div>
+                  <div class="hum">
+                    <div class="by">20 min ago · <b>Alex</b></div>
+                    <div class="bub">
+                      Where did the 38% reply rate come from?
+                    </div>
+                  </div>
+                  <div class="ag">
+                    <div class="by"><b>Rally</b> 19 min ago</div>
+                    <div>
+                      It's from Lemlist's 2025 benchmark for founder-led
+                      outreach under 90 words.
+                    </div>
+                  </div>
+                </div>
+                <div class="dock" style="padding-bottom: 18px">
+                  <div class="comp">
+                    <div class="val">
+                      <b>Sequence B now opens with the teardown offer.</b> Four
+                      emails, each under 90 words; the second cites the
+                      founder's launch post.
+                    </div>
+                    <div class="doc sm" style="max-width: 280px">
+                      <span class="ic"
+                        ><svg class="i i16"><use href="#file" /></svg></span
+                      ><span class="tx"><b>Sequence B</b></span>
+                    </div>
+                    <div class="aud">
+                      <svg class="i"><use href="#ppl" /></svg>The 6 people in
+                      Cold Outreach will see this and can open Sequence B.
+                    </div>
+                    <div class="ctl">
+                      <svg class="i i16 g"><use href="#plus" /></svg
+                      ><span class="mode on"
+                        ><svg class="i i12"><use href="#bend" /></svg>Merge to
+                        thread<svg class="i i9"><use href="#cd" /></svg></span
+                      ><span>Enter to merge · Esc to cancel</span
+                      ><span class="sp"></span
+                      ><span class="sendb go"
+                        ><svg class="i i12"><use href="#bend" /></svg
+                        >Merge</span
+                      >
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              Alex pressed <b>Merge to thread</b> on the 25-minute-old message,
+              not the last one, so the composer opened with that message's text
+              and its document. Alex edits it like any message; one line says
+              who will see it. Merging into a Channel from a thread is the same
+              composer with "Merge to GTM". A <b>Summarize</b> button is phase
+              2.
+            </p>
+          </div>
+
+          <div class="board">
+            <div class="label">
+              <span class="code">5c·7</span
+              ><span class="lname">Rally merges when asked</span>
+            </div>
+            <div class="scroll">
+              <div class="card">
+                <div class="head split">
+                  <span class="cpill anc"
+                    ><span class="sq c"
+                      ><svg class="i i12"><use href="#plane" /></svg></span
+                    >Cold Outreach</span
+                  ><span class="cpill"
+                    ><span
+                      class="sq c"
+                      style="background: var(--fill); color: var(--t3)"
+                      ><svg class="i i12"><use href="#brk" /></svg></span
+                    >Sequence B <span class="mut">17 replies</span
+                    ><svg class="i i12 car"><use href="#cd" /></svg></span
+                  ><span class="xb"
+                    ><svg class="i"><use href="#x" /></svg
+                  ></span>
+                </div>
+                <div class="tr">
+                  <div class="hum fadeup">
+                    <div class="by">Yesterday · <b>Alex</b></div>
+                    <div class="bub">
+                      Once Samantha approves, merge B back into the thread.
+                    </div>
+                  </div>
+                  <div class="hum">
+                    <div class="by">5 min ago · <b>Samantha Lee</b></div>
+                    <div
+                      class="bub"
+                      style="background: var(--sl); color: var(--sl-ink)"
+                    >
+                      Approved. Ship it.
+                    </div>
+                  </div>
+                  <div class="ag">
+                    <div class="by"><b>Rally</b> 4 min ago</div>
+                    <div class="by" style="color: var(--t4)">
+                      <svg class="i i12"><use href="#bend" /></svg>Merged into
+                      Cold Outreach
+                    </div>
+                    <div>
+                      Merged Sequence B into <b>Cold Outreach</b> with the
+                      document, as Alex asked.
+                    </div>
+                  </div>
+                </div>
+                <div style="padding: 0 40px 22px">
+                  <div class="ghosttag" style="margin-bottom: 12px">
+                    In Cold Outreach
+                  </div>
+                  <div class="mg">
+                    <div class="mm">
+                      <span class="src"
+                        ><span class="t16 b"
+                          ><svg class="i i9"><use href="#brk" /></svg></span
+                        >Sequence B</span
+                      >· merged by
+                      <span class="who"><span class="av s r">R</span>Rally</span
+                      >for
+                      <span class="who" style="margin-left: 2px"
+                        ><span class="av s at">AT</span>Alex</span
+                      >· 4 min ago
+                    </div>
+                    <div class="mb">
+                      <b>Sequence B is approved and final.</b> It opens with the
+                      teardown offer; four emails, each under 90 words.
+                    </div>
+                    <div class="doc sm" style="max-width: 280px">
+                      <span class="ic"
+                        ><svg class="i i16"><use href="#file" /></svg></span
+                      ><span class="tx"><b>Sequence B</b></span
+                      ><span class="open">Open</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              Alex asked yesterday; Rally merged when Samantha approved. The
+              tool run shows as one activity line, the same way other tools do,
+              and Rally's reply says where the merge went. In the thread it is
+              the same merge message, with the byline "merged by Rally for
+              Alex". No confirmation dialog: the instruction was the approval.
+            </p>
+          </div>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>
