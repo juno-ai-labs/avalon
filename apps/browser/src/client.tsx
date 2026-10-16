@@ -8,6 +8,7 @@ import { cookieClientSession } from "./session";
 import { createRoot } from "react-dom/client";
 import { BrowserBoot, BrowserEntry } from "./entry";
 import { ConnectionComplete } from "./connection-complete";
+import { installNotificationOpen } from "./notification-open";
 import "./styles.css";
 import '@rally/ui/styles/app.css';
 // The signed-in application is a separate loading boundary; email entry must
@@ -19,6 +20,7 @@ function BrowserCollaboration({ region, session, onSignOut, onRevalidate }: { re
   return <Suspense fallback={<BrowserBoot />}><BrowserShell region={region as Region} session={collaborationSession} onSignOut={onSignOut} onRevalidate={onRevalidate} /></Suspense>;
 }
 
+installNotificationOpen();
 installTheme();
 watchSystemAppearance();
 
