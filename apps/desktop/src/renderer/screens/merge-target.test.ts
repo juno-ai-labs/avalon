@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { asSpaceId, type SpaceSummary } from '@rally/contracts';
 
-import { mergeLabel, mergeTargetFor } from './conversation-surface';
+import { mergeAudience, mergeLabel, mergeTargetFor } from './conversation-surface';
 
 type MergeInput = Parameters<typeof mergeTargetFor>[0];
 const GTM = '00000000-0000-7000-8000-0000000000a1';
@@ -40,5 +40,22 @@ describe('where a conversation merges', () => {
     })).toBeNull();
     expect(mergeTargetFor({ parentKind: 'workstream', substreamId: 'b1', guest: true, thread, spaces: [] }))
       .toEqual({ kind: 'thread', threadTitle: 'Launch' });
+  });
+});
+
+describe('who a merge reaches, as the composer says it', () => {
+  it('counts a thread’s people and names what it embeds', () => {
+    const thread = { kind: 'thread', threadTitle: 'Cold Outreach' } as const;
+    expect(mergeAudience(thread, null, 6, ['Sequence B'])).toBe('The 6 people in Cold Outreach will see this and can open Sequence B.');
+    expect(mergeAudience(thread, null, 1, [])).toBe('The 1 person in Cold Outreach will see this.');
+    expect(mergeAudience(thread, null, null, ['A', 'B', 'C'])).toBe('Everyone in Cold Outreach will see this and can open 3 artifacts.');
+  });
+
+  it('says when a private Channel’s merge shares its artifacts wider than the Channel', () => {
+    const target: Parameters<typeof mergeAudience>[0] = { kind: 'channel', channels: [] };
+    expect(mergeAudience(target, { name: 'GTM', scope: 'workspace' }, null, ['Deck', 'Model']))
+      .toBe('Everyone in GTM will see this and can open Deck and Model.');
+    expect(mergeAudience(target, { name: 'Board', scope: 'personal' }, null, ['Deck']))
+      .toBe('People in Board will see this. Everyone in your organization can open Deck.');
   });
 });
