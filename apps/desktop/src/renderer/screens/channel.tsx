@@ -3,12 +3,14 @@ import type { ChannelMessage, ChannelStats, ChannelStatsList, SpaceSummary, Work
 import { AppearancePicker, AppearanceSubmenu } from '@rally/ui/components/appearance-picker';
 import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { ConversationCard } from '@rally/ui/components/conversation-card';
+import { MergeMessage } from '@rally/ui/components/merge-message';
+import { resolveWorkstreamAppearance } from '@rally/ui/components/workstream-glyph';
 import { ChannelContainerMenu } from '@rally/ui/components/conversation-menus';
 import type { SidekickRow } from '@rally/ui/components/sidekick-section';
 import { ChannelGlyph, spaceMark } from '@rally/ui/components/space-icon';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { TitleMenuItem, TitlePillAction, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { IconCloudDownload, IconCornerUpLeft, IconPalette, IconPlus } from '@tabler/icons-react';
+import { IconCloudDownload, IconPalette, IconPlus } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -37,7 +39,7 @@ import { EmailMentionContext, emailMentionDirectory, NO_INVITEES, useWorkspaceIn
 import type { AutomationSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
-import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
+import { useCachedWorkstreamAppearance, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { RemoveParticipantDialog } from './conversation-surface';
 import { WorkstreamScreen } from './workstream';
 import type { SpaceDirectory } from '@rally/contracts';
@@ -529,30 +531,30 @@ function MergeCard({ author, channelId, currentUser, members, merge, message, on
     }
   };
   const quote = merge.summary?.split('\n').find((line) => line.trim() !== '')?.trim();
+  const appearance = useCachedWorkstreamAppearance(merge.threadId);
+  const { Icon, tint, ink } = resolveWorkstreamAppearance(merge.threadId, appearance);
+  const merger = author?.name ?? 'Someone';
   return <li className="channel-feed-item is-message is-merge">
-    <div className="channel-feed-message">
-      {author ? <Avatar member={author} title={null} /> : <RallyAvatar />}
-      <div className="channel-feed-message-body">
-        <button className="channel-feed-merge-source" onClick={() => onOpenThread(merge.threadId)} type="button">
-          <IconCornerUpLeft aria-hidden="true" size={12} stroke={1.9} />
-          <span>{merge.title || 'A thread'}</span>
-        </button>
-        {quote && <blockquote className="channel-feed-merge-quote">{quote}</blockquote>}
-        <div className="channel-feed-message-text">
-          <MarkdownBody citations={citations} mentions={body.mentions}>{body.text}</MarkdownBody>
-        </div>
-        <span className="channel-feed-meta">
-          <span>merged by {author?.name ?? 'Someone'}</span>
-          <span aria-hidden="true">·</span>
-          <RelativeTime value={placedAt} />
-          {removable && <>
-            <span aria-hidden="true">·</span>
-            <button className="channel-feed-merge-remove" disabled={removing} onClick={() => void remove()} type="button">Remove</button>
-          </>}
-        </span>
+    <MergeMessage
+      actions={<>
+        {removable && <footer className="merge-message-actions">
+          <button className="channel-feed-merge-remove" disabled={removing} onClick={() => void remove()} type="button">Remove</button>
+        </footer>}
         {failure && <InlineError>{failure}</InlineError>}
-      </div>
-    </div>
+      </>}
+      label={`${merge.title || 'A thread'}, merged by ${merger}`}
+      mergedBy={<>{author && <Avatar member={author} size="small" title={null} />}{merger}</>}
+      quote={quote}
+      source={{
+        mark: <Icon size={10} strokeWidth={2} />,
+        tint: { background: tint, ink },
+        title: merge.title || 'A thread',
+        onOpen: () => onOpenThread(merge.threadId),
+      }}
+      time={<RelativeTime value={placedAt} />}
+    >
+      <MarkdownBody citations={citations} mentions={body.mentions}>{body.text}</MarkdownBody>
+    </MergeMessage>
   </li>;
 }
 
