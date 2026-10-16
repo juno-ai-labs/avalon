@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { BrowserSessionSchema } from "@rally/contracts/browser-session";
 import { uuidToBase58 } from "@rally/contracts/uuid-base58";
-import { cookieClientSession, shellLocation } from "../src/session";
+import { cookieClientSession, inPlaceHash, shellLocation } from "../src/session";
 
 const metadata = BrowserSessionSchema.parse({
   user: { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "Guest", email: "guest@example.test", avatarUrl: null, timezone: "UTC", createdAt: "2026-09-17T00:00:00.000Z" },
@@ -52,4 +52,16 @@ it("routes an invitation's addressed Channel and Breakout paths into the shell",
   expect(shellLocation(channel, "")).toBe(`/app/workspaces/global/${workspaceId}#/workstreams/${workstreamId}`);
   expect(shellLocation(`${channel}/substreams/${substreamId}`, ""))
     .toBe(`/app/workspaces/global/${workspaceId}#/workstreams/${workstreamId}?substream=${substreamId}`);
+});
+
+it("routes a notification link in place only in the tab's own Organization", () => {
+  const workspaceId = metadata.workspace!.id;
+  const other = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+  const spaceId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const workstreamId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const link = `https://app.rallywith.ai/app/global/${uuidToBase58(workspaceId)}/s/${uuidToBase58(spaceId)}/c/${uuidToBase58(workstreamId)}`;
+  expect(inPlaceHash(`/app/workspaces/global/${workspaceId}`, link)).toBe(`#/workstreams/${workstreamId}?space=${spaceId}`);
+  expect(inPlaceHash(`/app/workspaces/global/${workspaceId}/`, link)).toBe(`#/workstreams/${workstreamId}?space=${spaceId}`);
+  expect(inPlaceHash(`/app/workspaces/global/${other}`, link)).toBeNull();
+  expect(inPlaceHash(`/app/workspaces/global/${workspaceId}`, "https://app.rallywith.ai/")).toBeNull();
 });
