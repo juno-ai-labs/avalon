@@ -24,7 +24,7 @@ export function MergeMessage({ actions, children, className, id, label, mergedBy
   mergedBy: ReactNode;
   /** The source's first line, when the host has one. */
   quote?: string | null | undefined;
-  /** Shows where the quote came from, when the host can: the line becomes a link. */
+  /** Shows where the quote came from, when the host can: the line becomes a button. */
   onQuote?: (() => void) | undefined;
   source: {
     /** The source's own mark: a Breakout's or the Thread's. */
