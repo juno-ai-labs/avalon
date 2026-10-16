@@ -19,7 +19,6 @@ describe('useClientFeatureFlags', () => {
       suggestedWorkEnabled: true,
       multipleWorkspacesEnabled: true,
       liveArtifactsEnabled: true,
-      digestsEnabled: true,
       pushNotificationsEnabled: false,
     }));
     const { Wrapper } = wrapper();

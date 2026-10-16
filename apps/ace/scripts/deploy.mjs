@@ -145,14 +145,11 @@ await Promise.all([
   retireFlag('agent-model-activity-structured'),
   retireFlag('agent-model-addressing-classifier'),
   retireFlag('agent-model-hypersight'),
+  retireFlag('digests-enabled'),
 ]);
 await Promise.all([
   ensureFlag('suggested-work-enabled', 'True shows Suggested Work surfaces in Electron; false hides them without changing API availability.'),
   ensureFlag('multiple-workspaces-enabled', 'True shows workspace switching, invitations, creation, and background attention in Electron; false hides them without changing API availability.'),
-  // Defaults ON, not off like every other managed flag: a digest already
-  // sends by default for every existing person, so provisioning this flag
-  // must not be the thing that silently stops delivery. See docs/digests.md#the-run.
-  ensureFlag('digests-enabled', 'True sends scheduled digests as configured; false stops delivery for whoever the rule reaches and hides the Digest settings section in Electron for them, without touching their saved schedule, destinations, or cursor.', 'on'),
   ensureFlag('push-notifications-enabled', 'True enables Apple push delivery and the desktop Notifications setting for everyone from launch; false pauses push for the targeted users.', 'on'),
   ensureFlag('live-artifacts-enabled', 'True shows live-artifact surfaces in Electron — the rail site detail and preview, the data view, and the artifact window; false hides them. An artifact URL somebody already holds keeps working either way, because its authorization is structural rather than flagged.'),
   ensureModelFlag('agent-model-workstream', 'Runs the main participant-visible work stream and the structured attachment-summary pass: reasons over transcripts, calls tools, and streams answers.', 'openai/gpt-6.1-sol', ['google/gemini-3.8-flash']),

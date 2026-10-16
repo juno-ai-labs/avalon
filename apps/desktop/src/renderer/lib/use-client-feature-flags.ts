@@ -11,10 +11,7 @@ export const DEFAULT_CLIENT_FEATURE_FLAGS: ClientFeatureFlags = ClientFeatureFla
 
 /**
  * Every field here moves only after a schema-valid server answer, each toward
- * its own schema default rather than uniformly toward off: most begin off and
- * are a rollout a person is opted into, but `digestsEnabled` begins on, the
- * same fail-open direction `resolveDigestsEnabled` resolves it in server-side
- * (see `client-feature-flags.ts`). The workspace socket writes the same cache
+ * its own schema default. The workspace socket writes the same cache
  * key on connect and on live change; this HTTP read covers the short interval
  * before that socket is subscribed.
  */

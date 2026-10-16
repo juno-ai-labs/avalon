@@ -24,7 +24,6 @@ import {
 import { stableUuid } from "../src/lib/stable-uuid";
 import { fireDigestSchedule } from "../src/services/digest-run-service";
 import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
-import { createTestEnv } from "../test/helpers/cloudflare-test";
 import { hostedParentStub } from "./helpers/hosted-parent";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000d0001");
@@ -37,8 +36,6 @@ const scheduleId = "00000000-0000-4000-8000-0000000d00c0";
 const plannedFor = "2026-10-15T16:00:00.000Z";
 
 const organization = () => hostedParentStub(env, workspaceId);
-const flags = createTestEnv({ FLAGS: { getBooleanDetails: async () => ({ value: true, reason: "TARGETING_MATCH" }) } }).FLAGS!;
-const digestEnv = () => ({ ...env, FLAGS: flags });
 
 let messageSeq = 0;
 function envelope(effect: ConversationEffect): ConversationEffectEnvelope {
@@ -155,7 +152,7 @@ describe("the daily digest", () => {
   it("given a thread someone started that the member has not read, then the digest lists it, worded as the sidebar words it", async () => {
     await startThread("Q3 plan");
 
-    expect(await fireDigestSchedule(digestEnv(), { scheduleId, workspaceId, plannedFor }))
+    expect(await fireDigestSchedule(env, { scheduleId, workspaceId, plannedFor }))
       .toMatchObject({ sent: true, itemCount: 1 });
     const kept = await occurrence();
     expect(kept).toMatchObject({ status: "delivered", event_count: 1 });
@@ -166,16 +163,16 @@ describe("the daily digest", () => {
     await startThread("Q3 plan");
     await organization().markActivitySeen({ workspaceId, userId: member, seenThrough: Date.now() + 1_000 });
 
-    expect(await fireDigestSchedule(digestEnv(), { scheduleId, workspaceId, plannedFor }))
+    expect(await fireDigestSchedule(env, { scheduleId, workspaceId, plannedFor }))
       .toEqual({ sent: false, reason: "empty" });
     expect(await occurrence()).toMatchObject({ status: "empty", event_count: 0, summary_markdown: null });
   });
 
   it("given an occurrence already sent, when its alarm fires again, then nothing is sent twice", async () => {
     await startThread("Q3 plan");
-    await fireDigestSchedule(digestEnv(), { scheduleId, workspaceId, plannedFor });
+    await fireDigestSchedule(env, { scheduleId, workspaceId, plannedFor });
 
-    expect(await fireDigestSchedule(digestEnv(), { scheduleId, workspaceId, plannedFor }))
+    expect(await fireDigestSchedule(env, { scheduleId, workspaceId, plannedFor }))
       .toEqual({ sent: false, reason: "already_settled" });
   });
 
@@ -191,7 +188,7 @@ describe("the daily digest", () => {
       deliveryId, workspaceId, scheduleId, member, plannedFor);
     });
 
-    expect(await fireDigestSchedule(digestEnv(), { scheduleId, workspaceId, plannedFor }))
+    expect(await fireDigestSchedule(env, { scheduleId, workspaceId, plannedFor }))
       .toEqual({ sent: true, deliveryId, itemCount: 2 });
     expect(await occurrence()).toMatchObject({ status: "delivered", event_count: 2, summary_markdown: "Kept from the first attempt." });
   });

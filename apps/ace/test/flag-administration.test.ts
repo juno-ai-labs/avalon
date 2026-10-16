@@ -33,7 +33,7 @@ describe('FlagAdministration', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({
       success: true,
       result: [
-        { key: 'digests-enabled', enabled: true, default_variation: 'on', rules: [] },
+        { key: 'push-notifications-enabled', enabled: true, default_variation: 'on', rules: [] },
         { key: 'agent-model-workstream', variations: {} },
       ],
     }));
@@ -42,12 +42,12 @@ describe('FlagAdministration', () => {
 
     expect(result.ok).toBe(true);
     const flags = result.ok ? result.value : [];
-    expect(flags.find((flag) => flag.key === 'digests-enabled')).toEqual({
-      key: 'digests-enabled',
-      label: 'Digests Enabled',
+    expect(flags.find((flag) => flag.key === 'push-notifications-enabled')).toEqual({
+      key: 'push-notifications-enabled',
+      label: 'Push Notifications Enabled',
       description: expect.any(String),
       defaultVariation: 'on',
-      flag: { key: 'digests-enabled', enabled: true, default_variation: 'on', rules: [] },
+      flag: { key: 'push-notifications-enabled', enabled: true, default_variation: 'on', rules: [] },
     });
     expect(flags.find((flag) => flag.key === 'suggested-work-enabled')?.flag).toBeNull();
     expect(flags.map((flag) => flag.key)).not.toContain('agent-model-workstream');

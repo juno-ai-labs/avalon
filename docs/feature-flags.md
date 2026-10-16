@@ -11,21 +11,17 @@ own section](#a-conversations-own-model) below.
 
 ## Where the code lives
 
-Three modules read the binding, one per kind, and **nothing else calls
+Two modules read the binding, one per kind, and **nothing else calls
 `env.FLAGS` directly**:
 
 | Module | Owns | Fails |
 | --- | --- | --- |
 | `apps/api/src/services/agent-model-flags.ts` | One flag per model-using agent, and the pin that overrides one | **Open** — to the Worker variables, because an agent still has to run |
 | `apps/api/src/services/client-feature-flags.ts` | The features the desktop polls | **Closed** — to off, because a client feature has nothing it must do |
-| `apps/api/src/services/digest-flags.ts` | The `digests-enabled` kill switch | **Open** — to enabled, because a digest already sends by default and an outage must not silently stop it |
 
 Failure direction is the reason these are separate modules rather than one
 resolver with a parameter. A client feature that fell back the way a model flag
-does would ship an unreleased feature on the first Flagship outage; a digest kill switch that failed
-closed would turn every digest off on the first Flagship hiccup, which is a
-product regression triggered by infrastructure rather than a decision anybody
-made. Because the pin lives with the model flags, every answer to "which model
+does would ship an unreleased feature on the first Flagship outage. Because the pin lives with the model flags, every answer to "which model
 does this run use" still comes from one file.
 
 `apps/api/src/services/flag-targeting-attributes.ts` is the companion all of them
@@ -496,29 +492,22 @@ behave:
 | `developer-settings` | boolean | `false` | Whether Application → Developer exists on this device |
 | `suggested-work-enabled` | boolean | `false` | Whether Electron shows Suggested Work surfaces |
 | `live-artifacts-enabled` | boolean | `false` | Whether Electron shows live-artifact surfaces — the rail's site detail and preview pane, the Data view, and the artifact window. Presentation only: an artifact's authorization is structural, so a URL somebody already holds keeps working through its session checks whether or not this is on. See [`live-web-artifacts.md`](live-web-artifacts.md) |
-| `digests-enabled` | boolean | `true` | Whether Electron shows the Daily digest group in Settings → Notifications, resolved through `digest-flags.ts`, the same function that gates delivery; see [`digests.md`](digests.md#an-occurrence) |
 | `multiple-workspaces-enabled` | boolean | `false` | Whether Electron shows workspace switching, invitations, creation, and background attention |
 
 `GET /feature-flags` serves them all as one object — `{ "developerSettings":
 false,
-"suggestedWorkEnabled": false,
-"digestsEnabled": true, "multipleWorkspacesEnabled": false }` — resolved for the
+"suggestedWorkEnabled": false, "multipleWorkspacesEnabled": false }` — resolved for the
 signed-in person. It answers under *identity* auth rather than workspace auth:
 eligibility belongs to the account, and a device that has not chosen an
 workspace yet still has to be told the feature is off rather than read a
-403 as an outage. `digestsEnabled` is the exception to "not chosen yet reads
-as off": with no workspace to evaluate against, it reads `true`, the same gap
-every other absence in this flag's evaluation resolves to.
+403 as an outage.
 
-The fields are not all the same kind of answer, and the response schema says
-so. Six of the seven Boolean features default to off; `digestsEnabled` is the
-one exception, for the same reason it is discussed on its own below.
 The managed product Boolean names deliberately end in **Enabled**, as do their
 camel-case response fields. `true` therefore always means the surface may be
 shown and `false` means it is hidden; no caller has to infer whether a bare name
 means disabled, hidden, or selected.
 
-The managed product Booleans other than digests are presentation-only. Only
+The managed product Booleans are presentation-only. Only
 Electron consumes them to show or hide product surfaces; the API routes and
 underlying product capabilities do not evaluate them. They are rollout
 controls for discovery and visibility, not authorization, entitlements, or
@@ -528,16 +517,6 @@ remains available. The same rule applies to workspace-template,
 and multiple-workspace operations. Turning the
 multiple-workspaces flag off hides the account-menu affordances; it does not
 collapse memberships or discard stored workspace credentials.
-
-**`digestsEnabled` breaks that pattern on purpose.** As a client field it is
-presentation-only exactly like the other six — Electron shows or hides the
-Daily digest group in Settings → Notifications, nothing else changes. But the Flagship flag behind it,
-`digests-enabled`, is not merely a rollout control: `fireDigestSchedule`
-reads the identical flag to decide whether to actually send. A hidden
-Suggested Work surface sits above a live API; a hidden Daily digest group sits
-above delivery that has genuinely stopped. This is one evaluation read from
-two places, not a presentation flag that happens to share a name with a
-kill switch elsewhere.
 
 The Developer section is for Juno staff, and **that is a Flagship targeting
 rule, not a condition in the Worker** — see [the rule the flag is provisioned
@@ -629,13 +608,12 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
 
 ## Invariants
 
-- **Nothing calls `env.FLAGS` outside the three resolvers.** They exist as
+- **Nothing calls `env.FLAGS` outside the two resolvers.** They exist as
   separate modules because they fail in opposite directions; a shared resolver
   with a parameter is one place for that direction to be chosen wrongly.
-- **Model flags fail open, client feature flags fail closed, and the digest kill switch fails open too.**
+- **Model flags fail open, client feature flags fail closed.**
   A client feature that failed open would ship an unreleased feature on the
-  first Flagship outage; a digest kill switch that failed closed
-  would stop every digest on the first Flagship hiccup.
+  first Flagship outage.
 - **A route plan is one flag value, never two flags.** A variation change is
   atomic, so an agent can never serve a new default model against the previous
   generation's fallbacks.
@@ -791,7 +769,6 @@ correctly provisioned flag.
 | `apps/api/test/agent-model-flags.test.ts` | Each resolver's failure direction, unresolved cases, and zod rejection. |
 | `apps/api/test/agent-model-override.test.ts` | Pin precedence, the closed id set validated on write and read, and the three run-creation paths that must copy the column. |
 | `apps/api/test/client-feature-flags.test.ts` | That everything but an explicit `true` resolves to off, and that the cadence is clamped to `CONTROL_TOWER_REFRESH_SECONDS`. |
-| `apps/api/test/digest-flags.test.ts` | That everything but an explicit `false` resolves to enabled — the one resolver in this table that fails toward `true`. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Initial private values and per-user live re-evaluation over a real hibernating WebSocket. |
 | `apps/ace/test` | Safe rule vocabulary and Flagship limits, signed-site failure behavior, key-only notification, and cross-region Queue fan-out. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | Initial and live full-contract replacement in the feature-flag cache. |
@@ -837,20 +814,15 @@ identical. Staging a rollout per region does not need a second app either:
 Ace automatically ensures all seven `agent-model-*` JSON flags plus
 `meeting-recording-enabled`, `suggested-work-enabled`,
 `multiple-workspaces-enabled`,
-`live-artifacts-enabled`, `push-notifications-enabled`, and `digests-enabled` exist on every
+`live-artifacts-enabled`, and `push-notifications-enabled` exist on every
 merge-to-main deployment. It seeds model flags from the checked-in Worker
 defaults and does not overwrite an existing definition. Every product flag
 defaults off except `push-notifications-enabled`, which defaults **on** for
-everyone from launch, and `digests-enabled`, which defaults **on** — a digest already sends by default
-for every existing person, so provisioning it must not be the thing that
-silently stops delivery; see [`digests.md`](digests.md#an-occurrence). Once created,
+everyone from launch. Once created,
 edit product flags and each model flag's current default route through Ace
 rather than the Flagship dashboard: Flagship's
 documented API has no outbound change webhook, so only Ace performs the Queue
-fan-out that wakes connected clients — including for `digests-enabled`, whose
-save now reaches a client the same way the presentation flags' do, serving
-`digestsEnabled` in the `GET /feature-flags` response the way any other field
-here is served. [`ace.md`](ace.md) owns that release and recovery path.
+fan-out that wakes connected clients. [`ace.md`](ace.md) owns that release and recovery path.
 
 To provision the app in a fresh account:
 
@@ -942,17 +914,6 @@ pnpm exec wrangler flagship flags update <APP_ID> developer-settings \
 Withdrawing the section from everyone is `set … -V off`, which overrides every
 rule, and `wrangler flagship flags changelog <APP_ID> developer-settings` is the
 audit trail for who had it when.
-
-To stop every digest, use Ace to set `digests-enabled` to off, or reach it
-directly with `wrangler flagship flags set <APP_ID> digests-enabled -V off`. To
-stop delivery for one cohort while everyone else keeps sending, add a rule
-that serves `off` to that cohort and leave the default at `on` — the inverse
-of how `developer-settings` reaches staff — either in Ace's editor or with
-`wrangler flagship flags update <APP_ID> digests-enabled --add-rule "serve=off; when=workspaceOwnerEmailDomain equals example.com"`.
-`wrangler flagship flags changelog <APP_ID> digests-enabled` is the audit trail
-for who turned digests off and when regardless of which surface made the
-change. See [`digests.md`](digests.md#an-occurrence) for why this flag exists and
-why it fails open rather than closed.
 
 ### Changing an agent's models
 
