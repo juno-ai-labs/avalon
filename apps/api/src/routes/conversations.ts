@@ -4,6 +4,7 @@ import { requireSendableMessageLength, zValidator } from "../middleware/validati
 import {
   AcknowledgeWorkstreamReadRequestSchema,
   AgentModelOverrideSchema,
+  ConversationMergeChannelsSchema,
   ConversationMergeRequestSchema,
   ConversationMergeResultSchema,
   CreateMessageRequestSchema,
@@ -89,6 +90,18 @@ conversationRoutes.delete("/:parentId/substreams/:substreamId/resources/:resourc
   await client.detachResource(resourceId);
   return c.body(null,204);
 });
+/**
+ * The Channels this thread can merge into for this person, earliest placement
+ * first: the order the client offers them in, so its default is the server's
+ * (docs/conversation-merge.md).
+ */
+conversationRoutes.get("/:parentId/merge-channels",
+  zValidator("param", parentParam),
+  async (c) => {
+    const channels = await new ConversationMergeService(c.env, getWorkspaceAuth(c))
+      .writableChannels(c.req.valid("param").parentId);
+    return c.json(ConversationMergeChannelsSchema.parse({ channels }));
+  });
 /**
  * Merge-back (docs/conversation-merge.md). With `breakoutId`, that Breakout's
  * result goes into this Thread's Main as a message that wakes no agent;
