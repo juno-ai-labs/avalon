@@ -177,7 +177,8 @@ async function unreadActivity(env: Env, workspaceId: string, userId: string): Pr
  * read, so without this every digest repeats everything the person has not
  * opened; past the window it is only counted. The number is the team's choice.
  */
-const LISTED_FOR_MS = 2 * 24 * 60 * 60 * 1000;
+const LISTED_FOR_DAYS = 2;
+const LISTED_FOR_MS = LISTED_FOR_DAYS * 24 * 60 * 60 * 1000;
 
 /** Unread rows within the window of the occurrence, and how many fell outside it. */
 export function splitByAge(
@@ -245,7 +246,7 @@ export async function renderUnreadDigest(
     sections.push([`## ${section.heading}`, ...lines].join("\n"));
   }
   const count = items.length;
-  const older = olderCount ? [`${olderCount} more older than 2 days.`] : [];
+  const older = olderCount ? [`${olderCount} more older than ${LISTED_FOR_DAYS} days.`] : [];
   return [`${count} unread item${count === 1 ? "" : "s"} in your Activity.`, ...sections, ...older].join("\n\n");
 }
 

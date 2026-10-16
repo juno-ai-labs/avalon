@@ -41,6 +41,7 @@ import { escapeHtml } from "./resend";
 export const COLOR = {
   canvas: "#f3f3f3",
   surface: "#fcfcfc",
+  /** The theme's sunken surface, not its raised one: pills and code must stand off the card. */
   surfaceRaised: "#f3f3f3",
   line: "#e5e5e5",
   lineSoft: "#f0f0f0",

@@ -405,10 +405,7 @@ app's light theme, because a mail client cannot report which appearance the
 reader chose. Every colour is a light token from
 `packages/ui/src/styles/themes.css`, written inline — a mail client will strip a
 `<style>` block — and `color-scheme: light only` is declared three ways so a
-client in dark mode leaves the page as drawn. The look follows the app rather
-than a marketing page: neutral greys, small radii, quiet headings, links in the
-accent hue, a black primary button, and volt only on the
-"for you" pill.
+client in dark mode leaves the page as drawn.
 
 The canvas runs the height of the reading pane rather than stopping at the last
 line, so a short digest does not end in a hard edge with the client's own white
