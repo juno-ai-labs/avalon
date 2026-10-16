@@ -170,6 +170,7 @@ Each refusal is a typed failure with a stable `code`, a model-visible sentence
 | post | `invalid_arguments` (no home, `conversation` left out) | `field`, `expected` |
 | merge | `invalid_arguments` (empty `body`, an undeclared key, `channel` in a Breakout) | `field`, `expected` |
 | merge | `merge_channel_not_placed` | `field`, `available` (Channel names) |
+| merge | `conversation_ambiguous` (two of the thread's Channels share the name) | `field`, `available` (their ids) |
 | merge | `merge_thread_private`, `merge_target_not_writable` | none |
 | merge | `merge_resource_not_shareable` | `field` (`body.resources[i]`) |
 | merge | `conversation_archived`, `conversation_access_denied` | `resourceId` |

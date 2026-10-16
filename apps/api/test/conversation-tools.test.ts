@@ -249,6 +249,18 @@ describe("conversation_merge", () => {
     expect(ports.merged).toHaveLength(1);
   });
 
+  it("refuses a Channel name two of the thread's Channels share, naming their ids, and takes an id", async () => {
+    const ports = new Ports();
+    ports.channels = [{ id: SPACE_ID, name: "GTM" }, { id: OTHER_SPACE_ID, name: "gtm" }];
+    const merge = tools(loop(), ports).get("conversation_merge")!;
+    const refused = await merge.execute({ body: "Shipped", channel: "GTM" }, context("receipt-5")).catch((error: unknown) => error);
+    expect(refused).toMatchObject({ code: "conversation_ambiguous", details: { field: "channel", available: [SPACE_ID, OTHER_SPACE_ID] },
+      message: "Several of this thread's Channels have that name. Pass one of the ids in `available` as `channel`." });
+    expect(ports.merged).toEqual([]);
+    await merge.execute({ body: "Shipped", channel: OTHER_SPACE_ID }, context("receipt-6"));
+    expect(ports.merged).toMatchObject([{ channelId: OTHER_SPACE_ID }]);
+  });
+
   it("turns each merge refusal into the design's sentence, with only allowlisted details", async () => {
     const cases: Array<[ApiError, Record<string, unknown> | undefined, string]> = [
       [new ApiError(409, "merge_thread_private", "x"), undefined,
