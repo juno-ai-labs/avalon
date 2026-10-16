@@ -1,5 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
+import type { UserTimezone } from '@rally/contracts';
 
 import type { RallyApi } from './api';
 
@@ -17,35 +18,40 @@ export function deviceTimezone(): string | null {
 /**
  * Tells the server which zone this device is in, at launch and whenever the
  * window regains focus, so a person who follows their device (Settings →
- * Account → Set timezone automatically) has digests and automations in the
- * day they are actually in. The server ignores it for a fixed zone.
+ * Account → Set timezone automatically) has digests in the day they are
+ * actually in. The server ignores it for a fixed zone, and writes nothing
+ * when the zone has not moved.
  *
- * Sent only when the zone differs from the last one this device sent for this
- * person, so an ordinary launch costs no request. A failed send is retried on
- * the next focus because nothing is remembered until it lands.
+ * Sent every time rather than only when this device's zone changes: another
+ * device may have moved the account since, and the device in use is the one
+ * that should win. The request is fire-and-forget, off every rendering path.
  */
 export function useDeviceTimezoneSync(
   api: Pick<RallyApi, 'reportDeviceTimezone'> | null,
-  userId: string,
   enabled: boolean,
 ): void {
   const queryClient = useQueryClient();
   useEffect(() => {
     if (!api || !enabled) return;
-    const key = `rally.device-timezone.${userId}`;
+    // An account switch clears the cache and remounts this; a report that
+    // lands after that belongs to the previous account.
+    let active = true;
     const report = () => {
       const zone = deviceTimezone();
       if (!zone) return;
-      let last: string | null = null;
-      try { last = window.localStorage.getItem(key); } catch { /* storage unavailable: send */ }
-      if (last === zone) return;
       void api.reportDeviceTimezone(zone).then((state) => {
-        try { window.localStorage.setItem(key, zone); } catch { /* sent again next focus */ }
+        if (!active) return;
+        const before = queryClient.getQueryData<UserTimezone>(MY_TIMEZONE_QUERY_KEY);
         queryClient.setQueryData(MY_TIMEZONE_QUERY_KEY, state);
+        // The digest names the zone it runs in.
+        if (before?.timezone !== state.timezone) void queryClient.invalidateQueries({ queryKey: ['digest-schedule'] });
       }, () => undefined);
     };
     report();
     window.addEventListener('focus', report);
-    return () => window.removeEventListener('focus', report);
-  }, [api, enabled, queryClient, userId]);
+    return () => {
+      active = false;
+      window.removeEventListener('focus', report);
+    };
+  }, [api, enabled, queryClient]);
 }

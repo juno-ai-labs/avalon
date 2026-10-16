@@ -670,7 +670,10 @@ export function WorkspaceSettingsScreen({
     queryKey: MY_TIMEZONE_QUERY_KEY,
     queryFn: ({ signal }) => api!.getMyTimezone(signal),
     enabled: Boolean(api) && !guest,
-    staleTime: 15_000,
+    // The desktop Settings window is mounted hidden, with its own cache, and
+    // the main window's device report can move the zone meanwhile: re-read
+    // whenever it is brought forward.
+    refetchOnWindowFocus: 'always',
   });
   const userTimezone = myTimezone.data?.timezone ?? workspace.currentUser.timezone;
   const timezoneOptions = useMemo(
