@@ -23,6 +23,7 @@ import {
   WorkstreamWorkflowInputSchema,
   workstreamParticipantPreview,
   DemoSeedSchema,
+  ConversationMergeV1Schema,
   type Elicitation,
   type Message,
   type ResourceRelationshipType,
@@ -176,6 +177,13 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
    * sends can carry one.
    */
   seed: DemoSeedSchema.optional(),
+  /**
+   * Present when the message is a Breakout's merged result, written by the
+   * merge service after it checked the Breakout is this Thread's and the
+   * person can read it. Like `seed`, it reaches the object only over its
+   * internal RPC: the message route's request schema has no such field.
+   */
+  merge: ConversationMergeV1Schema.optional(),
 }).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0, {
   message: "A message must include text or an attachment",
 });
@@ -3223,6 +3231,119 @@ export class WorkstreamObjectProductService {
     return outcome;
   }
 
+  /**
+   * Attach several resources at once, all or none: every one passes
+   * {@link attachResource}'s source checks before any link is written, then
+   * every link is written in one commit. A merge's embeds take this path, so a
+   * refused embed refuses the merge before anything is shared
+   * (docs/conversation-merge.md).
+   *
+   * A refusal names the position that failed, never the resource. `linked`
+   * lists the ids this call newly linked; `resources` describes each in the
+   * order asked, for a merge's stored embeds.
+   */
+  async attachResources(auth: AuthContext, resourceIds: readonly string[]): Promise<
+    | {
+      ok: true;
+      linked: string[];
+      resources: Array<{ id: string; title: string; kind: string }>;
+      /** The newly linked resources as the rail reads them, for its live event. */
+      attached: WorkstreamResource[];
+    }
+    | { ok: false; index: number; code: "resource_not_found" | "resource_access_denied" | "attachment_draft_requires_message" }
+  > {
+    await this.authorize(auth);
+    const ids = [...new Set(resourceIds)];
+    if (ids.length === 0) return { ok: true, linked: [], resources: [], attached: [] };
+    const rows = new Map<string, Record<string, unknown>>();
+    for (const resourceId of ids) {
+      // One keyed read each: an embed list is a handful of links in one
+      // message, and the reads are the same statement `attachResource` runs.
+      const row = await this.workspaceDatabase(auth.workspaceId).prepare(
+        `SELECT resource.*, connection.scope AS connection_scope,
+                connection.owner_user_id
+           FROM resources resource
+           LEFT JOIN connector_connections connection ON connection.id = resource.connection_id
+          WHERE resource.id = ? AND resource.workspace_id = ?`,
+      ).bind(resourceId, auth.workspaceId).first<Record<string, unknown>>();
+      if (row) rows.set(resourceId, row);
+    }
+    const access = auth.role === null ? createAccessContext(this.env, auth) : null;
+    for (const [index, resourceId] of ids.entries()) {
+      const resource = rows.get(resourceId);
+      if (!resource) return { ok: false, index, code: "resource_not_found" };
+      if (access) {
+        const decision = await access.check({ kind: "resource", workspaceId: auth.workspaceId, resourceId });
+        // Unavailable is not a refusal: it throws, so the merge can be retried.
+        if (decision.status === "unavailable") requireAuthorizedRead(decision);
+        if (decision.status !== "allowed") return { ok: false, index, code: "resource_access_denied" };
+      }
+      if (resource.connection_scope === "personal" && resource.owner_user_id !== auth.userId) {
+        return { ok: false, index, code: "resource_access_denied" };
+      }
+      if (resource.provider === "avalon_upload" && resource.attachment_status !== "attached") {
+        return { ok: false, index, code: "attachment_draft_requires_message" };
+      }
+    }
+    this.locallyAuthorizedRoot(auth);
+    const present = new Set(this.storage.sql.exec<{ resource_id: string } & Record<string, SqlStorageValue>>(
+      "SELECT resource_id FROM workstream_resource_links WHERE resource_id IN (SELECT value FROM json_each(?))",
+      JSON.stringify(ids),
+    ).toArray().map((row) => row.resource_id));
+    const linked = ids.filter((id) => !present.has(id));
+    if (linked.length > 0) {
+      const now = Date.now();
+      await this.objectStore.commitWithRegionalEffects(
+        (sql) => {
+          for (const resourceId of linked) {
+            const resource = rows.get(resourceId)!;
+            const descriptor = {
+              id: resourceId,
+              connectionId: resource.connection_id == null ? null : String(resource.connection_id),
+              type: String(resource.resource_type),
+              provider: String(resource.provider),
+              providerResourceId: resource.provider_resource_id == null ? null : String(resource.provider_resource_id),
+              title: String(resource.title),
+              mimeType: resource.mime_type == null ? null : String(resource.mime_type),
+              contentRef: resource.content_ref == null ? null : String(resource.content_ref),
+              canonicalUrl: resource.canonical_url == null ? null : String(resource.canonical_url),
+              metadata: parseJson(String(resource.metadata_json ?? "{}"), {}),
+            };
+            sql.exec(
+              `INSERT INTO workstream_resource_links
+                 (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+                  resource_json, attached_at, updated_at)
+               VALUES (?, ?, 0, 'attachment', ?, ?, ?)
+               ON CONFLICT(resource_id) DO NOTHING`,
+              resourceId, auth.userId, JSON.stringify(descriptor), now, now,
+            );
+          }
+          sql.exec(
+            `INSERT INTO resource_inventory_revision(id, revision, updated_at) VALUES (1, 1, ?)
+             ON CONFLICT(id) DO UPDATE SET revision = revision + 1, updated_at = excluded.updated_at`,
+            now,
+          );
+        },
+        () => [{ partitionKey: "common", effect: this.commonEffect(this.root()) }],
+      );
+    }
+    const attached: WorkstreamResource[] = [];
+    for (const resourceId of linked) {
+      const resource = await this.readBackAttachedResource(auth.userId, resourceId);
+      if (resource) attached.push(resource);
+    }
+    return {
+      ok: true,
+      linked,
+      attached,
+      resources: ids.map((id) => ({
+        id,
+        title: String(rows.get(id)!.title).slice(0, 500),
+        kind: String(rows.get(id)!.resource_type).slice(0, 100),
+      })),
+    };
+  }
+
   async attachResource(auth: AuthContext, resourceId: string): Promise<WorkstreamResource> {
     await this.authorize(auth);
     const resource = await this.workspaceDatabase(auth.workspaceId).prepare(
@@ -4636,7 +4757,11 @@ export class WorkstreamObjectProductService {
       .flatMap((mention) => mention.type === "connector" && mention.connectorType
         ? [mention.connectorType] : []);
     let shouldInvoke = Boolean(input.forcedHarnessOrigin) || participantCount <= 1 || attachmentRows.length > 0;
-    if (input.seed) {
+    if (input.merge) {
+      // A merge is a result posted for the thread's readers, never a request
+      // to Rally: it starts no run, whatever the room's size.
+      shouldInvoke = false;
+    } else if (input.seed) {
       // A seed action states its addressing outcome instead of being classified.
       // A scripted assistant turn means this message starts a run; `null` means
       // it starts none — whatever the room's size or the message's attachments
@@ -4690,7 +4815,7 @@ export class WorkstreamObjectProductService {
       clientMessageId: input.clientMessageId,
       messageType: "text",
       text: prepared.text,
-      structuredContentJson: null,
+      structuredContentJson: input.merge ? JSON.stringify(input.merge) : null,
       externalActorJson: null,
       producedByRunId: null,
       messageSequenceNumber: root.next_sequence_number,
@@ -4732,7 +4857,7 @@ export class WorkstreamObjectProductService {
         },
         messageType: "text",
         text: prepared.text,
-        structuredContent: null,
+        structuredContent: input.merge ?? null,
         mentions: prepared.mentions.map((mention) => ({
           type: mention.type,
           userId: mention.userId,

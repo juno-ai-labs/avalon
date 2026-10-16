@@ -4,6 +4,8 @@ import { requireSendableMessageLength, zValidator } from "../middleware/validati
 import {
   AcknowledgeWorkstreamReadRequestSchema,
   AgentModelOverrideSchema,
+  ConversationMergeRequestSchema,
+  ConversationMergeResultSchema,
   CreateMessageRequestSchema,
   IdSchema,
   UpdateWorkstreamRequestSchema,
@@ -19,6 +21,7 @@ import { requestDeferral } from "../lib/defer";
 import { workspaceRealtimeInvalidation } from "../middleware/workspace-realtime";
 import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { requestFlowSpan } from "../observability/tracing";
+import { ConversationMergeService } from "../services/conversation-merge-service";
 import { ConversationService } from "../services/conversation-service";
 import { WorkstreamService } from "../services/workstream-service";
 import { ConversationAccessDecisionResultSchema, ConversationAccessPreviewSchema, ConversationAccessRequestResultSchema, SidekickAttachmentsSchema, SidekickRecommendationOptionsSchema } from "@rally/contracts";
@@ -65,6 +68,7 @@ export const conversationRoutes = new Hono<HonoAppEnv>();
 // Report an oversized opening before session work, as workstream creation does.
 // This guard only rejects; every accepted body still passes workspace auth.
 conversationRoutes.post("/:parentId/substreams/confirm", requireSendableMessageLength("opening.text"));
+conversationRoutes.post("/:parentId/merge", requireSendableMessageLength("body"));
 conversationRoutes.use("*",requireWorkspaceAuth);
 conversationRoutes.use("*",workspaceRealtimeInvalidation);
 // Exact-conversation recovery works independently of Main and sibling feeds.
@@ -85,6 +89,22 @@ conversationRoutes.delete("/:parentId/substreams/:substreamId/resources/:resourc
   await client.detachResource(resourceId);
   return c.body(null,204);
 });
+/**
+ * Merge-back (docs/conversation-merge.md). With `breakoutId`, that Breakout's
+ * result goes into this Thread's Main as a message that wakes no agent;
+ * without it, this Thread's result goes into one of its Channels. The server
+ * writes every tag; the body's `resource://` embeds become readable by the
+ * merge's audience. A retry with the same `clientMessageId` writes nothing.
+ */
+conversationRoutes.post("/:parentId/merge",
+  zValidator("param", parentParam),
+  zValidator("json", ConversationMergeRequestSchema),
+  async (c) => {
+    const result = ConversationMergeResultSchema.parse(
+      await new ConversationMergeService(c.env, getWorkspaceAuth(c)).merge(c.req.valid("param").parentId, c.req.valid("json")),
+    );
+    return c.json(result, result.replayed ? 200 : 201);
+  });
 /**
  * Ordinary message admission for an authenticated client that does not hold a
  * conversation socket. Rally's conversation screen keeps using its admitted

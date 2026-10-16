@@ -34,6 +34,7 @@ import { conversationObjectName, workspaceDOName } from "../durable-objects/name
 import {
   WorkspaceActivityResultSchema,
   WorkspaceChannelFeedResultSchema,
+  WorkspaceChannelMessageRemoveResultSchema,
   WorkspaceChannelStatsResultSchema,
   WorkspaceSpaceReadResultSchema,
   WorkspaceMyThreadsResultSchema,
@@ -231,6 +232,21 @@ export class SpaceService {
     }));
     if (!result.ok) throw spaceRefusal(result.code, "");
     return result.page;
+  }
+
+  /**
+   * Remove one Channel message, a merge's **Remove**: the author's own, or any
+   * for an Organization owner or admin. The attachments a merge made stay.
+   */
+  async removeMessage(spaceId: SpaceId, messageId: string): Promise<void> {
+    const result = WorkspaceChannelMessageRemoveResultSchema.parse(await (await this.workspace()).removeChannelMessage({
+      auth: this.actor(), spaceId, messageId,
+    }));
+    if (result.ok) return;
+    if (result.code === "channel_message_not_found") {
+      throw new ApiError(404, result.code, "That message is no longer in this channel");
+    }
+    throw spaceRefusal(result.code, "");
   }
 
   /** The Threads tab: what this person takes part in or pinned, newest activity first. */

@@ -31,6 +31,34 @@ export const ConversationMergeRequestSchema = z.strictObject({
 });
 export type ConversationMergeRequest = z.infer<typeof ConversationMergeRequestSchema>;
 
+/**
+ * Why a merge was refused. The route answers each with its HTTP status; the
+ * `conversation_merge` tool answers each with the sentence in
+ * docs/PRDs/2026-10-16_merge-back/agent-behavior.md.
+ */
+export const ConversationMergeErrorCodeSchema = z.enum([
+  /** The named Channel does not hold this thread now. */
+  "merge_channel_not_placed",
+  /** Only an Organization-wide thread merges into a Channel. */
+  "merge_thread_private",
+  /** The person cannot post in the target. */
+  "merge_target_not_writable",
+  /** An embedded resource fails the attach path's source check. */
+  "merge_resource_not_shareable",
+  /** The source or the target is archived. */
+  "conversation_archived",
+  /** The person cannot read the source, or the Breakout is not this Thread's. */
+  "conversation_access_denied",
+]);
+export type ConversationMergeErrorCode = z.infer<typeof ConversationMergeErrorCodeSchema>;
+
+/** A Channel a thread can merge into: one of its current placements the person may post in. */
+export const ConversationMergeChannelSchema = z.strictObject({
+  id: z.string().min(1),
+  name: z.string(),
+});
+export type ConversationMergeChannel = z.infer<typeof ConversationMergeChannelSchema>;
+
 /** Where a merge landed. */
 export const ConversationMergeTargetSchema = z.strictObject({
   kind: z.enum(["thread", "channel"]),
