@@ -8904,39 +8904,50 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 /* A Breakout card whose result is in its Thread. */
 .breakout-merged-chip {
   align-items: center;
-  background: var(--av-sys-color-surface-sunken);
-  border-radius: 999px;
-  color: var(--av-sys-color-text-muted);
+  color: var(--av-sys-color-success-base);
   display: inline-flex;
-  font-size: 11px;
-  gap: 3px;
+  font-size: 12px;
+  font-weight: 550;
+  gap: 2px;
   margin-left: 4px;
-  padding: 1px 7px;
 }
-/* The composer's merge mode: what it merges into, the Channel picker for a
-   thread in several, Cancel, and who will see it. */
-.composer-merge-bar {
+/* The composer's merge mode (docs/conversation-merge.md): who will see it,
+   over the toolbar; where it goes, as a pill among the tools; and Merge, a
+   labelled button where Send is. */
+.composer-notice {
   align-items: center;
-  /* The dock floats over the transcript, so the bar carries the composer's own
-     surface: without it the message behind shows through. */
-  background: var(--av-cmp-composer-background);
-  border: var(--av-cmp-composer-border-width) solid var(--av-cmp-composer-border-color);
-  border-radius: 14px;
-  box-shadow: var(--av-cmp-composer-shadow);
-  color: var(--av-sys-color-text-default);
+  color: var(--av-sys-color-text-subtle);
   display: flex;
-  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 6px;
+  padding: 2px 4px 6px;
+}
+.composer-notice > svg { flex: none; }
+.composer-merge-target {
+  align-items: center;
+  background: var(--av-sys-color-success-fill);
+  border-radius: 999px;
+  color: var(--av-sys-color-success-base);
+  display: inline-flex;
   font-size: 12.5px;
   font-weight: 550;
-  gap: 4px 8px;
-  padding: 8px 12px;
-  pointer-events: auto;
+  gap: 4px;
+  height: 26px;
+  padding: 0 9px;
+  white-space: nowrap;
 }
-.composer-merge-bar > svg { color: var(--av-sys-color-text-muted); flex: none; }
-.composer-merge-bar select { background: transparent; border: 1px solid var(--av-ref-color-line-2); border-radius: 6px; color: inherit; font: inherit; padding: 1px 4px; }
-.composer-merge-cancel { background: transparent; color: var(--av-sys-color-text-muted); font-size: 12px; margin-left: auto; padding: 2px 6px; }
-.composer-merge-cancel:hover { color: var(--av-sys-color-text-default); }
-.composer-merge-audience { color: var(--av-sys-color-text-subtle); flex-basis: 100%; font-size: 11.5px; font-weight: 400; }
+.composer-merge-target:hover { filter: brightness(.97); }
+.composer-send.has-content { gap: 5px; font-size: 13px; font-weight: 550; padding: 0 12px; width: auto; }
+/* In the message capsule the merge composer always takes its tall form, as
+   the design draws it: the words across the top, who will see them, then the
+   tools, the hint and Merge on one row. */
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-input-shell { grid-column: 1 / -1; grid-row: 2; }
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer :is(textarea, .composer-highlight) { padding: 11px 16px 4px; }
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-notice { grid-column: 1 / -1; grid-row: 3; padding: 2px 16px 0; }
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer :is(.composer-tools, .composer-submit-area) { align-self: center; grid-row: 4; }
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-tools { justify-content: flex-start; }
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-hint { align-self: center; display: block; font-size: 11.5px; grid-column: 2; grid-row: 4; }
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-send.has-content { border-radius: var(--av-sys-size-radius-pill); width: auto; }
 /* A merged result, the same block in a Thread and in a Channel: on the
    leading side, a line naming the source, who merged it and when, an optional
    quote of what the source was asked, then the result. */
@@ -8957,6 +8968,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 }
 .merge-message-who { align-items: center; display: inline-flex; gap: 4px; }
 .merge-message-who .avatar { height: 16px; width: 16px; }
+.merge-message-for { margin: 0 2px; }
 .merge-message-quote { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: 12.5px; gap: 6px; max-width: 520px; min-width: 0; }
 .merge-message-quote > svg { flex: none; }
 .merge-message-quote > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

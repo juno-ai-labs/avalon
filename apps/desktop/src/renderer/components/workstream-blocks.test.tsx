@@ -2973,7 +2973,7 @@ describe('MessageBlock merge-back', () => {
     // The shared merge block, not a person's bubble: the same one a Channel draws.
     const merge = screen.getByRole('article', { name: 'Sequence B, merged by Adam' });
     expect(merge).toHaveClass('merge-message');
-    expect(merge).toHaveTextContent(/Sequence B\s*· merged by\s*Rally for Adam/u);
+    expect(merge).toHaveTextContent(/Sequence B\s*· merged by.*Rally for .*Adam/u);
     // A merge renders as markdown, which a typed message's verbatim body does not.
     expect(screen.getByText('Sequence B', { selector: 'strong' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Sequence B' }));

@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import { LoaderCircle, Square, UserPlus } from 'lucide-react';
-import { type RefObject, useMemo, useRef, useState } from 'react';
+import { type ReactNode, type RefObject, useMemo, useRef, useState } from 'react';
 import type { MentionIdentity } from '../lib/api';
 import type { RealtimeDictationApi } from '../lib/use-realtime-dictation';
 import {
@@ -78,6 +78,12 @@ interface WorkstreamComposerProps {
    */
   className?: string;
   footerHint?: string;
+  /** See `ComposerInput`: a line over the toolbar, a control among its tools, and the send button's face. */
+  notice?: ReactNode;
+  toolsAccessory?: ReactNode;
+  submitContent?: ReactNode;
+  /** Escape with nothing open to dismiss, for a composer mode the host can leave. */
+  onCancel?: () => void;
   submitLabel?: string;
   autoFocus?: boolean;
   api?: RealtimeDictationApi;
@@ -164,6 +170,10 @@ export function WorkstreamComposer({
   ariaLabel,
   className,
   footerHint,
+  notice,
+  toolsAccessory,
+  submitContent,
+  onCancel,
   submitLabel = 'Send message',
   autoFocus = false,
   api,
@@ -508,6 +518,9 @@ export function WorkstreamComposer({
         {...(className ? { className } : {})}
         error={error}
         {...(footerHint ? { footerHint } : {})}
+        {...(notice ? { notice } : {})}
+        {...(toolsAccessory ? { toolsAccessory } : {})}
+        {...(submitContent ? { submitContent } : {})}
         fileInputRef={fileInputRef}
         layout="message-capsule"
         {...(onAttach ? { onAttach } : {})}
@@ -522,6 +535,9 @@ export function WorkstreamComposer({
             event.preventDefault();
             if (mentionQuery !== null) setMentionQuery(null);
             if (visibleCommands.length > 0) setSlashDismissed(true);
+          } else if (event.key === 'Escape' && onCancel) {
+            event.preventDefault();
+            onCancel();
           }
           if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && visibleCommands[0]) {
             event.preventDefault();

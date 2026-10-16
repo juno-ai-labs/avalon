@@ -145,9 +145,20 @@ opens where it landed: the thread, or the Channel.
 Main into its Channels when it is Organization-wide, the reader is a member,
 and the Channel is in their directory. "Merge to thread" or "Merge to <first
 Channel>" is the second hover action on every settled text message, after
-**New breakout**, and a row in the title menu. Either opens the composer's merge mode with its own draft key
-(`…:merge`), prefilled with the message's words (empty from the menu), a
-Channel picker for a thread in several, Cancel, and an audience line. Merge
+**New breakout**, and a row in the title menu that names the target at its
+end (the Thread, or "Channel"). Either opens the composer's merge mode with
+its own draft key (`…:merge`), prefilled with the message's words (empty from
+the menu). As the design's 5c·6 draws it, merge mode is the composer itself,
+in its tall form, not a bar over it:
+- an audience line naming who will see it and the artifacts the draft cites
+  ("The 6 people in Cold Outreach will see this and can open Sequence B");
+- a green target pill among the tools, whose menu picks a thread's Channel
+  and cancels;
+- "Enter to merge · Esc to cancel", and a labelled **Merge** button.
+
+These are generic `ComposerInput` slots (`notice`, `toolsAccessory`,
+`submitContent`) plus `WorkstreamComposer`'s `onCancel`, so another composer
+mode can use them. Merge
 keeps one `clientMessageId` for the same words and target until it succeeds,
 so a send whose response was lost is retried as a replay; new words or a new
 target are a new merge. A merge that finishes after its composer was cancelled

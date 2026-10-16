@@ -32,6 +32,7 @@ import {
   type WorkstreamMessageDeliveryState,
   type WorkstreamTranscriptSnapshot,
   type SpaceSummary,
+  mergeResourceIds,
 } from '@rally/contracts';
 import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
 import type { SubstreamInitialContext } from '@rally/contracts/substream-creation';
@@ -43,7 +44,7 @@ import { ApiError, type MentionIdentity } from '../lib/api';
 import { useChannelRail } from '../lib/channel-rails';
 import { writeDraftText } from '../lib/draft-cache';
 import type { PendingAttachment } from '../lib/use-file-attachments';
-import { IconCornerUpLeft } from '@tabler/icons-react';
+import { IconCheck, IconChevronDown, IconCornerUpLeft, IconUsers } from '@tabler/icons-react';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useBrowserRailLinks } from '../lib/browser-rail-links';
@@ -1157,14 +1158,83 @@ export function mergeLabel(target: MergeTarget): string {
 }
 
 /** The merge composer's audience line: who will see it, and who can open what it embeds. */
-function mergeAudience(target: MergeTarget, channel: { name: string; scope: SpaceSummary['scope'] } | null): string {
+/**
+ * The merge composer's audience line: who will see it, and who can open what
+ * it embeds, named when the conversation knows them. A thread's merge into a
+ * Channel that is not Organization-wide is the one case where the second
+ * audience is wider than the first, so it says so.
+ */
+export function mergeAudience(
+  target: MergeTarget,
+  channel: { name: string; scope: SpaceSummary['scope'] } | null,
+  people: number | null,
+  artifacts: readonly string[],
+): string {
+  const named = artifacts.length === 0 ? null
+    : artifacts.length <= 2 ? artifacts.join(' and ')
+      : `${artifacts.length} artifacts`;
   if (target.kind === 'thread') {
-    return `Visible to everyone in ${target.threadTitle || 'the thread'}, who can also open the artifacts it embeds.`;
+    const title = target.threadTitle || 'the thread';
+    const who = people === null ? `Everyone in ${title}` : people === 1 ? `The 1 person in ${title}` : `The ${people} people in ${title}`;
+    return named ? `${who} will see this and can open ${named}.` : `${who} will see this.`;
   }
   if (!channel) return '';
-  return channel.scope === 'workspace'
-    ? `Visible in ${channel.name}.`
-    : `Visible in ${channel.name}. Everyone in your organization can open the artifacts it embeds.`;
+  if (channel.scope === 'workspace') {
+    return named ? `Everyone in ${channel.name} will see this and can open ${named}.` : `Everyone in ${channel.name} will see this.`;
+  }
+  return named
+    ? `People in ${channel.name} will see this. Everyone in your organization can open ${named}.`
+    : `People in ${channel.name} will see this.`;
+}
+
+/** The titles of the artifacts a merge draft cites, as this conversation knows them. */
+function mergeArtifactTitles(draft: string, resources: readonly Pick<WorkstreamResource, 'id' | 'slug' | 'title'>[]): string[] {
+  const byToken = new Map(resources.flatMap((resource) => [
+    [resource.id, resource.title] as const,
+    ...(resource.slug ? [[resource.slug, resource.title] as const] : []),
+  ]));
+  return [...new Set(mergeResourceIds(draft).flatMap((token) => {
+    const title = byToken.get(token);
+    return title ? [title] : [];
+  }))];
+}
+
+/**
+ * Where the merge goes, in the composer's toolbar: the target as a pill, and
+ * its menu, which picks among a thread's Channels and cancels the merge.
+ */
+function MergeTargetPill({ channelId, label, onCancel, onPick, target }: {
+  channelId: string | null;
+  label: string;
+  onCancel: () => void;
+  onPick: (channelId: string) => void;
+  target: MergeTarget;
+}): React.JSX.Element {
+  return <DropdownMenu.Root>
+    <DropdownMenu.Trigger asChild>
+      <button aria-label={`${label}, change`} className="composer-merge-target" type="button">
+        <IconCornerUpLeft aria-hidden="true" size={13} stroke={1.9} />
+        <span>{label}</span>
+        <IconChevronDown aria-hidden="true" size={12} stroke={2} />
+      </button>
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Portal>
+      <DropdownMenu.Content align="start" className="menu-content" side="top" sideOffset={8}>
+        {target.kind === 'channel' && target.channels.length > 1 && <>
+          <DropdownMenu.RadioGroup onValueChange={onPick} value={channelId ?? undefined}>
+            {target.channels.map((channel) => (
+              <DropdownMenu.RadioItem className="menu-item" key={channel.id} value={channel.id}>
+                <span>Merge to {channel.name}</span>
+                <DropdownMenu.ItemIndicator asChild><IconCheck aria-hidden="true" size={15} stroke={2} /></DropdownMenu.ItemIndicator>
+              </DropdownMenu.RadioItem>
+            ))}
+          </DropdownMenu.RadioGroup>
+          <DropdownMenu.Separator className="menu-separator" />
+        </>}
+        <DropdownMenu.Item className="menu-item" onSelect={onCancel}>Cancel merge</DropdownMenu.Item>
+      </DropdownMenu.Content>
+    </DropdownMenu.Portal>
+  </DropdownMenu.Root>;
 }
 
 function mergeFailureMessage(error: unknown): string {
@@ -1349,6 +1419,8 @@ export function ConversationSurface({
   // thread merges into, picked from its Channels; a Breakout merges into its
   // Thread and names none.
   const [mergeMode, setMergeMode] = useState<{ nonce: number; channelId: string | null } | null>(null);
+  // The merge draft as it is typed, for the audience line's artifact names.
+  const [mergeDraft, setMergeDraft] = useState('');
   const [mergeError, setMergeError] = useState<string | undefined>();
   const [merging, setMerging] = useState(false);
   // One operation id per merge until it succeeds: a send whose response was
@@ -1979,7 +2051,7 @@ export function ConversationSurface({
       onOpen: onOpenBreakout,
       renderMeta: (breakout: BreakoutMark): React.ReactNode => {
         const merged = mergedBreakoutIds.has(breakout.substreamId)
-          ? <span className="breakout-merged-chip"><IconCornerUpLeft aria-hidden="true" size={11} stroke={1.9} /> Merged</span>
+          ? <span className="breakout-merged-chip"><IconCheck aria-hidden="true" size={12} stroke={2} />Merged</span>
           : null;
         if (!breakout.createdByUserId || !breakout.createdAt) return merged;
         const author = visibleMembers.find((member) => member.id === breakout.createdByUserId);
@@ -3005,6 +3077,7 @@ export function ConversationSurface({
     : null;
   const mergeDraftKey = `${workstreamDraftKey(workspaceRegion, workspaceId, id, substreamId)}:merge`;
   const startMerge = merge ? (text: string): void => {
+    setMergeDraft(text);
     void writeDraftText(mergeDraftKey, text).then(() => {
       setMergeError(undefined);
       setMergeMode({ nonce: Date.now(), channelId: merge.kind === 'channel' ? merge.channels[0]!.id : null });
@@ -3430,27 +3503,10 @@ export function ConversationSurface({
             || stopAcknowledgement.runId !== null)
             && <RunStopAcknowledgement settled={stopAcknowledgement.runId !== null} />}
           {mergeMode && merge ? <>
-            <div className="composer-merge-bar" role="group" aria-label="Merge">
-              <IconCornerUpLeft aria-hidden="true" size={14} stroke={1.9} />
-              {merge.kind === 'thread' ? <span>Merging to {merge.threadTitle || 'the thread'}</span> : merge.channels.length > 1 ? (
-                <label>
-                  Merging to{' '}
-                  <select
-                    onChange={(event) => setMergeMode({ ...mergeMode, channelId: event.target.value })}
-                    value={mergeChannel?.id}
-                  >
-                    {merge.channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
-                  </select>
-                </label>
-              ) : <span>Merging to {mergeChannel?.name}</span>}
-              <button className="composer-merge-cancel" onClick={() => setMergeMode(null)} type="button">Cancel</button>
-              {/* The audience line: in the bar rather than the composer's hint,
-                  which the message capsule hides. */}
-              <span className="composer-merge-audience">{mergeAudience(merge, mergeChannel)}</span>
-            </div>
             <WorkstreamComposer
               api={api ?? undefined}
               ariaLabel="Merge message"
+              className="is-merge-composer"
               attachments={NO_PENDING_ATTACHMENTS}
               autoFocus
               draftKey={mergeDraftKey}
@@ -3461,13 +3517,34 @@ export function ConversationSurface({
               onOpenAttachment={openAttachment}
               onRemoveAttachment={() => undefined}
               onRetryAttachment={() => undefined}
+              notice={<><IconUsers aria-hidden="true" size={14} stroke={1.8} />{mergeAudience(
+                merge,
+                mergeChannel,
+                merge.kind === 'thread' && workstreamContext?.id === id ? workstreamContext.participants.length : null,
+                // A Breakout's words can cite what its Thread holds, so both are read.
+                mergeArtifactTitles(mergeDraft, [
+                  ...displayedDetail.resources,
+                  ...(workstreamContext?.id === id ? workstreamContext.resources : []),
+                ]),
+              )}</>}
+              onCancel={() => setMergeMode(null)}
+              onDraftChange={setMergeDraft}
               onSend={(text, mentions, confirmedParticipantUserIds) => submitMerge(text, mentions, confirmedParticipantUserIds)}
               onStop={async () => {
                 await stop.mutateAsync();
               }}
               placeholder="Write what the readers should know…"
               sending={merging}
+              footerHint="Enter to merge · Esc to cancel"
+              submitContent={<><IconCornerUpLeft aria-hidden="true" size={14} stroke={2} /><span>Merge</span></>}
               submitLabel="Merge"
+              toolsAccessory={<MergeTargetPill
+                channelId={mergeChannel?.id ?? null}
+                label={merge.kind === 'thread' ? 'Merge to thread' : `Merge to ${mergeChannel?.name ?? ''}`}
+                onCancel={() => setMergeMode(null)}
+                onPick={(channelId) => setMergeMode({ ...mergeMode, channelId })}
+                target={merge}
+              />}
               substreamId={substreamId}
               uploading={false}
               workstream={displayedDetail}

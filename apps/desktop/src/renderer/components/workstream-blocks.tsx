@@ -111,7 +111,7 @@ import {
 } from './markdown-citations';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
 import { MergeMessage } from '@rally/ui/components/merge-message';
-import { Avatar, Button, ConnectorMark, InlineError, RallyMark, Tip, TipGroup } from './primitives';
+import { Avatar, Button, ConnectorMark, InlineError, RallyAvatar, RallyMark, Tip, TipGroup } from './primitives';
 import { RelativeTime } from './relative-time';
 import { useSpeechPlayback } from './speech-playback';
 
@@ -2915,8 +2915,10 @@ export function MessageBlock({
         id={`message-${message.id}`}
         label={`${mergedFrom.title || 'A breakout'}, merged by ${humanAuthorName}`}
         mergedBy={<>
+          {/* Rally merged on this person's request: both, Rally first. */}
+          {mergedFrom.actingAgent && <><RallyAvatar size="small" />Rally<span className="merge-message-for"> for </span></>}
           {author && <Avatar member={{ id: author.id, name: author.name, email: author.email ?? '', timezone: author.timezone ?? 'UTC', ...(author.avatarUrl ? { avatarUrl: author.avatarUrl } : {}) }} size="small" title={null} />}
-          {mergedFrom.actingAgent ? `Rally for ${humanAuthorName}` : humanAuthorName}
+          {humanAuthorName}
         </>}
         source={{
           mark: <IconCornerDownRight size={10} stroke={2} />,
