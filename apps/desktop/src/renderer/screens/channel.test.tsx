@@ -372,6 +372,30 @@ describe('a Channel', () => {
     expect(scrollIntoView).toHaveBeenCalledOnce();
   });
 
+  it('waits for a repeat merge to move to the bottom before bringing it into view', async () => {
+    const mergeId = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a65';
+    const merge = (placedAt: string, attentionSequenceNumber: number) => ({ kind: 'message' as const, placedAt, attentionSequenceNumber, message: {
+      id: mergeId,
+      author: { kind: 'member' as const, userId: 'me' },
+      body: 'Merged again.',
+      merge: { threadId: plan.id, title: 'Q4 plan', summary: null, embeds: [] },
+    } });
+    const thread = { kind: 'thread' as const, placedAt: '2026-10-02T02:00:00.000Z', attentionSequenceNumber: 2, thread: plan };
+    // The first merge, cached above a newer thread; the repeat moves it to the bottom.
+    api.getChannelFeed.mockResolvedValueOnce({ nextCursor: null, latestAttentionSequenceNumber: 2, items: [thread, merge('2026-10-02T01:00:00.000Z', 1)] });
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 3, items: [merge('2026-10-02T03:00:00.000Z', 3), thread] });
+    const original = Element.prototype.scrollIntoView;
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    onTestFinished(() => { Element.prototype.scrollIntoView = original; });
+    const { client } = renderChannel('/channels/outbound', undefined, revealChannelMessageState(mergeId));
+    await screen.findByText('Merged again.');
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    await client.invalidateQueries();
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({ block: 'center' }));
+    expect(scrollIntoView.mock.contexts[0]).toBe(screen.getByText('Merged again.').closest('li'));
+  });
+
   it('opens an artifact a merge cites, by its alias, in its thread', async () => {
     api.getWorkspaceMembers.mockResolvedValueOnce([workspace.currentUser] as never);
     api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 3, items: [

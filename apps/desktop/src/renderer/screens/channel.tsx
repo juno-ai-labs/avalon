@@ -315,13 +315,16 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
     // `space` too: the feed element first mounts when the Channel list arrives,
     // which may be after the rows were already in hand.
   }, [channelId, earlierPages, rows, space]);
-  // A navigation onto a message (a merge just made) brings it into view once
-  // the feed lists it, once per navigation.
+  // A navigation onto the message just posted (a merge) brings it into view
+  // once the feed lists it as its newest row, once per navigation. Newest, not
+  // merely listed: a repeat merge keeps its message id and moves to the
+  // bottom, and the cached feed still holds it where it was.
   const location = useLocation();
   const revealMessageId = revealChannelMessageRequest(location.state);
   const revealedFor = useRef<string | null>(null);
   useLayoutEffect(() => {
     if (!revealMessageId || revealedFor.current === location.key) return;
+    if (rows[0] === undefined || feedRowId(rows[0]) !== revealMessageId) return;
     const target = feedScroll.current?.querySelector(`[data-message-id="${CSS.escape(revealMessageId)}"]`);
     if (!target) return;
     revealedFor.current = location.key;
