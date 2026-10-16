@@ -3904,8 +3904,11 @@ export class WorkstreamObjectProductService {
     const title = truncateUtf16Safe(root.title, 500);
 
     for (const delivery of deliveryEffects) {
+      // The canonical view, not `participant_transcript_turns`: the turn
+      // table has no structured content, and reading it there threw here and
+      // stopped every queued message's delivery.
       const turn = first(this.storage.sql.exec<{ message_type: string; structured_content_json: string | null }>(
-        `SELECT message_type, structured_content_json FROM participant_transcript_turns WHERE turn_id = ?`,
+        `SELECT message_type, structured_content_json FROM canonical_conversation_turn_details WHERE id = ? LIMIT 1`,
         delivery.turnId,
       ));
       const messageType = turn?.message_type;
