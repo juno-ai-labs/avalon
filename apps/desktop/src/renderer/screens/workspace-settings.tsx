@@ -78,6 +78,7 @@ import type {
   WorkspaceInvitation,
   WorkstreamConnection,
 } from '../lib/types';
+import { deviceTimezone, MY_TIMEZONE_QUERY_KEY } from '../lib/device-timezone';
 
 type SettingsSection = DesktopSettingsSection;
 type ConnectionFilter = 'all' | 'connected' | 'not_connected';
@@ -625,7 +626,6 @@ export function WorkspaceSettingsScreen({
   const [role, setRole] = useState<'admin' | 'member'>('member');
   const [createdUrl, setCreatedUrl] = useState<string | null>(null);
   const [createdDelivery, setCreatedDelivery] = useState<'sent' | 'skipped' | null>(null);
-  const [userTimezone, setUserTimezone] = useState(workspace.currentUser.timezone);
   const [workspaceTimezone, setWorkspaceTimezone] = useState(workspace.timezone);
   const [terminalMode, setTerminalMode] = useState<'trusted_only' | 'full_internet'>('trusted_only');
   const [terminalDomains, setTerminalDomains] = useState('');
@@ -664,8 +664,20 @@ export function WorkspaceSettingsScreen({
   );
   const [customMcpToolPolicy, setCustomMcpToolPolicy] = useState<CustomMcpToolPolicy>('all_tools');
   const [leaveConfirmationOpen, setLeaveConfirmationOpen] = useState(false);
+  // The account's zone and whether it follows the device. Read here rather
+  // than from the session, which holds whatever sign-in last wrote.
+  const myTimezone = useQuery({
+    queryKey: MY_TIMEZONE_QUERY_KEY,
+    queryFn: ({ signal }) => api!.getMyTimezone(signal),
+    enabled: Boolean(api) && !guest,
+    // The desktop Settings window is mounted hidden, with its own cache, and
+    // the main window's device report can move the zone meanwhile: re-read
+    // whenever it is brought forward.
+    refetchOnWindowFocus: 'always',
+  });
+  const userTimezone = myTimezone.data?.timezone ?? workspace.currentUser.timezone;
   const timezoneOptions = useMemo(
-    () => [...new Set([...supportedTimezones, userTimezone, workspaceTimezone])].sort(),
+    () => [...new Set([...supportedTimezones, userTimezone, workspaceTimezone, deviceTimezone() ?? userTimezone])].sort(),
     [userTimezone, workspaceTimezone],
   );
   const isAdmin = workspace.currentUser.role === 'owner' || workspace.currentUser.role === 'admin';
@@ -998,9 +1010,19 @@ export function WorkspaceSettingsScreen({
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workspace-invitations'] }),
   });
   const updateUserTimezone = useMutation({
-    mutationFn: (timezone: string) => api!.updateMyTimezone(timezone),
-    onSuccess: (user) => setUserTimezone(user.timezone),
+    mutationFn: (choice: { timezone: string; followDevice: boolean }) =>
+      api!.updateMyTimezone(choice.timezone, choice.followDevice),
+    // Read back rather than written from the response, so a failed save never
+    // leaves the controls showing a choice the server does not hold; the
+    // digest names the zone too.
+    onSettled: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: MY_TIMEZONE_QUERY_KEY }),
+      queryClient.invalidateQueries({ queryKey: ['digest-schedule'] }),
+    ]),
   });
+  // While a save is in flight, the controls show where it is going.
+  const pendingTimezone = updateUserTimezone.isPending ? updateUserTimezone.variables : undefined;
+  const timezoneFollowsDevice = pendingTimezone?.followDevice ?? myTimezone.data?.followsDevice === true;
   const updateWorkspaceTimezone = useMutation({
     mutationFn: (timezone: string) => api!.updateWorkspace({ timezone }),
     onSuccess: (updated) => setWorkspaceTimezone(updated.timezone),
@@ -1481,17 +1503,26 @@ export function WorkspaceSettingsScreen({
                 {!guest && <>
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Preferences</h2></div>
                 <div className="settings-list-card">
+                  {/* Waits for the read: on or off is unknown until then. Off
+                      fixes the zone the account is in now. */}
+                  <SettingToggle setting={settings.personalTimezoneAutomatic}
+                    checked={timezoneFollowsDevice}
+                    disabled={updateUserTimezone.isPending || !myTimezone.data}
+                    onChange={(event) => updateUserTimezone.mutate(event.currentTarget.checked
+                      ? { timezone: deviceTimezone() ?? userTimezone, followDevice: true }
+                      : { timezone: userTimezone, followDevice: false })}
+                    role="switch" />
                   <label className="settings-preference-row">
                     <SettingCopy setting={settings.personalTimezone} />
                     <DropdownSelect
                       ariaLabel="Personal default timezone"
-                      disabled={updateUserTimezone.isPending}
-                      onValueChange={(timezone) => {
-                        setUserTimezone(timezone);
-                        updateUserTimezone.mutate(timezone);
-                      }}
+                      // Usable even if the read fails, falling back to the
+                      // session's zone, as before the switch existed.
+                      disabled={updateUserTimezone.isPending || timezoneFollowsDevice}
+                      onValueChange={(timezone) => updateUserTimezone.mutate({ timezone, followDevice: false })}
                       options={timezoneOptions.map((timezone) => ({ label: timezone, value: timezone }))}
-                      value={userTimezone}
+                      // The server's zone, which another device may have moved.
+                      value={pendingTimezone?.timezone ?? userTimezone}
                       variant="secondary"
                     />
                   </label>

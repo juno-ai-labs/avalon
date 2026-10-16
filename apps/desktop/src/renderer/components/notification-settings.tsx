@@ -189,6 +189,8 @@ export function DailyDigestSettings({ api, connections, onEditTimezone }: {
     queryKey: ['digest-schedule'],
     queryFn: ({ signal }) => api.getDigestSchedule(signal),
     staleTime: 15_000,
+    // Names the account's zone, which a device report elsewhere can move.
+    refetchOnWindowFocus: true,
   });
   const save = useMutation({
     // One at a time, in the order made: each save replaces the whole schedule.

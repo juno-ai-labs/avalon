@@ -44,6 +44,7 @@ import { NavigationSidebar } from './navigation-sidebar';
 import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import { OrganizationUsageMenuItem } from './organization-usage';
 import { WorkspaceAccountMenu } from './workspace-account-menu';
+import { useDeviceTimezoneSync } from '../lib/device-timezone';
 
 interface AppShellProps extends PropsWithChildren {
   workspace: Workspace;
@@ -254,6 +255,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     queryFn: getOnboardingState,
     enabled: multipleWorkspacesEnabled,
   });
+  // A support session runs on the impersonator's device, not the person's.
+  useDeviceTimezoneSync(api ?? null, !session?.impersonator);
   const supportWorkspaces = useSupportWorkspaces(session?.impersonator?.id ?? session?.user.id, listSupportWorkspaces);
   const impersonator = session?.impersonator
     ? { id: session.impersonator.id, name: session.impersonator.name, email: session.impersonator.email,
