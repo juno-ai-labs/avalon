@@ -177,6 +177,7 @@ const SECTIONS: ReadonlyArray<{ kinds: readonly ActivityItemKind[]; heading: str
   { kinds: ["thread_started"], heading: "New threads" },
   { kinds: ["breakout_started"], heading: "New breakouts" },
   { kinds: ["run_finished"], heading: "Rally finished" },
+  { kinds: ["merged"], heading: "Merges" },
 ];
 const UNNAMED_THREAD = "Untitled thread";
 const UNNAMED_BREAKOUT = "Untitled breakout";
@@ -204,7 +205,8 @@ export async function renderUnreadDigest(env: Env, workspaceId: string, items: r
         region: env.AVALON_REGION,
         workspaceId,
         workstreamId: item.threadId,
-        ...(item.breakout ? { substreamId: item.breakout.substreamId } : {}),
+        // A merge links where it landed: a breakout's merge is in its thread.
+        ...(item.breakout && item.kind !== "merged" ? { substreamId: item.breakout.substreamId } : {}),
       });
       const actor = escapeMarkdown(item.actorUserId === null ? item.actorLabel : names.get(item.actorUserId) ?? "Someone");
       const thread = `[${escapeMarkdown(item.threadTitle.trim() || UNNAMED_THREAD)}](${url})`;
@@ -215,6 +217,9 @@ export async function renderUnreadDigest(env: Env, workspaceId: string, items: r
         case "thread_started": return `- ${actor} started ${thread}`;
         case "breakout_started": return `- ${actor} started ${breakout ?? thread} on ${escapeMarkdown(item.threadTitle.trim() || UNNAMED_THREAD)}`;
         case "run_finished": return `- ${actor} finished ${breakout ?? thread}`;
+        case "merged": return item.breakout
+          ? `- ${actor} merged ${escapeMarkdown(item.breakout.title.trim() || UNNAMED_BREAKOUT)} into ${thread}`
+          : `- ${actor} merged ${thread} into ${escapeMarkdown(item.mergedInto?.name.trim() || "a channel")}`;
       }
     }));
     sections.push([`## ${section.heading}`, ...lines].join("\n"));

@@ -1089,6 +1089,22 @@ describe("Channel merges", () => {
     expect(await messages(channelId, OWNER)).toHaveLength(1);
   });
 
+  it("given a merge, when each person reads Activity, then the member sees a merged row naming the Channel and its author does not", async () => {
+    const channelId = await channelWithThreads();
+    const merged = await merge(channelId, "op-1");
+    if (!merged.ok) throw new Error("merge refused");
+
+    expect((await activity(MEMBER)).items.filter((item) => item.kind === "merged")).toEqual([expect.objectContaining({
+      kind: "merged", actorUserId: OWNER, threadId: OPEN_THREAD, threadTitle: "Cold outreach", breakout: null,
+      mergedInto: { channelId, name: "Outbound" }, unread: true,
+    })]);
+    expect((await activity(OWNER)).items.filter((item) => item.kind === "merged")).toEqual([]);
+    // Reading the Channel through the merge settles the row.
+    await workspace().recordActivityEvents({ workspaceId: WORKSPACE_ID, userId: MEMBER,
+      events: [{ kind: "read", subject: { kind: "channel", channelId }, through: 3 }] });
+    expect((await activity(MEMBER)).items.find((item) => item.kind === "merged")?.unread).toBe(false);
+  });
+
   it("given a merge, when a member who is not its author removes it, then it stays; when its author does, then it is gone", async () => {
     const channelId = await channelWithThreads();
     const merged = await merge(channelId, "op-1");

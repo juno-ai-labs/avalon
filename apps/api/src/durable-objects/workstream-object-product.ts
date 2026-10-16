@@ -24,6 +24,7 @@ import {
   workstreamParticipantPreview,
   DemoSeedSchema,
   ConversationMergeV1Schema,
+  type ConversationMergeV1,
   type Elicitation,
   type Message,
   type ResourceRelationshipType,
@@ -3894,10 +3895,21 @@ export class WorkstreamObjectProductService {
     const title = truncateUtf16Safe(root.title, 500);
 
     for (const delivery of deliveryEffects) {
-      const messageType = first(this.storage.sql.exec<{ message_type: string }>(
-        `SELECT message_type FROM participant_transcript_turns WHERE turn_id = ?`,
+      const turn = first(this.storage.sql.exec<{ message_type: string; structured_content_json: string | null }>(
+        `SELECT message_type, structured_content_json FROM participant_transcript_turns WHERE turn_id = ?`,
         delivery.turnId,
-      ))?.message_type;
+      ));
+      const messageType = turn?.message_type;
+      // A merge that queued behind input carries its tag here, as one written
+      // at once does, so it is a `merged` Activity row either way.
+      const merge = (() => {
+        try {
+          const parsed = ConversationMergeV1Schema.safeParse(JSON.parse(turn?.structured_content_json ?? "null"));
+          return parsed.success ? parsed.data : undefined;
+        } catch {
+          return undefined;
+        }
+      })();
       // Elicitation answers historically advance the transcript/directory but
       // do not create a blank digest activity or a notification. Their typed
       // structured payload remains in the canonical turn itself.
@@ -3930,7 +3942,11 @@ export class WorkstreamObjectProductService {
           sourceKind: "workstream_message",
           sourceId: delivery.turnId,
           dedupeKey: `message:${delivery.turnId}`,
-          metadata: { substreamId: this.externalSubstreamId(), attentionOrdinal: delivery.attentionOrdinal },
+          metadata: {
+            substreamId: this.externalSubstreamId(),
+            attentionOrdinal: delivery.attentionOrdinal,
+            ...mergeActivityMetadata(merge),
+          },
           targets: activityTargets(
             delivery.affectedUserIds,
             delivery.authorUserId === null ? [] : delivery.mentionedUserIds,
@@ -5225,7 +5241,12 @@ export class WorkstreamObjectProductService {
             sourceKind: "workstream_message",
             sourceId: messageId,
             dedupeKey: `message:${messageId}`,
-            metadata: { substreamId: this.externalSubstreamId(), attentionOrdinal: write.attentionOrdinal },
+            metadata: {
+              substreamId: this.externalSubstreamId(),
+              attentionOrdinal: write.attentionOrdinal,
+              // What makes the message a `merged` Activity row.
+              ...mergeActivityMetadata(input.merge),
+            },
             targets: activityTargets(affectedUsers, personIds, auth.userId),
           },
         };
@@ -6084,4 +6105,14 @@ function attachmentMetadataSize(metadataJson: unknown): number {
   } catch {
     return 0;
   }
+}
+
+/**
+ * A Breakout merge's activity-event metadata: the source the `merged`
+ * Activity row names, frozen at merge time, as the message's own tag is.
+ * Empty for any other message. The feed reads `mergedFrom.breakoutId` through
+ * a partial index (WorkspaceDO migration 108).
+ */
+function mergeActivityMetadata(merge: ConversationMergeV1 | undefined): { mergedFrom?: { breakoutId: string; title: string } } {
+  return merge ? { mergedFrom: { breakoutId: merge.mergedFrom.breakoutId, title: merge.mergedFrom.title } } : {};
 }

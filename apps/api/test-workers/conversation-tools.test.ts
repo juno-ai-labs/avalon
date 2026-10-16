@@ -695,6 +695,17 @@ describe("a Breakout's merge into its Thread", () => {
       links: [], pending: 0, runs: 0,
     });
     await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID));
+    // The merge message's activity event carries the source, so the Thread's
+    // other people see a merged row; its author does not.
+    const merged = async (userId: string) => {
+      const page = await workspace().listActivity({ workspaceId: WORKSPACE_ID, userId, cursor: null, only: null });
+      if (!page.ok) throw new Error(`listActivity refused: ${page.code}`);
+      return page.page.items.filter((item) => item.kind === "merged");
+    };
+    expect(await merged(COLLEAGUE_ID)).toEqual([expect.objectContaining({
+      kind: "merged", actorUserId: AUTHOR_ID, threadId: ROOM_ID, breakout: { substreamId: breakout, title: "Sequence B" },
+    })]);
+    expect(await merged(AUTHOR_ID)).toEqual([]);
   });
 
   it("refuses the whole merge when one embed cannot be shared, attaching nothing; then attaches what it embeds", async () => {

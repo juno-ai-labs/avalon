@@ -633,6 +633,10 @@ export const SPACE_MESSAGE_MERGES_MIGRATION: readonly string[] = [
   `ALTER TABLE space_messages ADD COLUMN attention_ordinal INTEGER CHECK (attention_ordinal IS NULL OR attention_ordinal > 0)`,
   `ALTER TABLE space_messages ADD COLUMN embeds_json TEXT CHECK (embeds_json IS NULL OR json_valid(embeds_json))`,
   `ALTER TABLE space_messages ADD COLUMN merge_operation_id TEXT`,
+  // A Breakout merge is a \`merged\` Activity row read from its message's
+  // activity event; this keeps that arm of the feed off a scan of every event.
+  `CREATE INDEX workspace_activity_events_merged_idx ON workspace_activity_events(occurred_at, event_id)
+    WHERE json_extract(metadata_json, '$.mergedFrom.breakoutId') IS NOT NULL`,
 ];
 
 /**
@@ -1351,6 +1355,69 @@ export class WorkspaceSpaceStorage {
       }, now);
       return { ok: true, spaceId: target.spaceId, name: target.name, ...posted };
     });
+  }
+
+  /**
+   * The Activity tab's `merged` rows for a thread's merges into Channels:
+   * news merge messages in Channels this viewer may list, about a thread they
+   * may open, by somebody else, newest first after `after`. Shaped as the
+   * feed's keys. The id carries `posted_at`, so a merge replaced later is a
+   * new row (and a new push) rather than the old one moved.
+   */
+  mergeActivityKeys(viewer: Viewer, after: { occurredAt: number; id: string } | null, limit: number): Array<{
+    id: string;
+    kind: "merged";
+    occurred_at: number;
+    actor_user_id: string | null;
+    actor_label: string;
+    thread_id: string;
+    substream_id: string;
+    attention_ordinal: number;
+    merged_channel_id: string;
+    merged_channel_name: string;
+  }> {
+    const spaceIds = this.visibleSpaceIds(viewer);
+    if (spaceIds.length === 0) return [];
+    return this.storage.sql.exec<{
+      id: string;
+      kind: "merged";
+      occurred_at: number;
+      actor_user_id: string | null;
+      actor_label: string;
+      thread_id: string;
+      substream_id: string;
+      attention_ordinal: number;
+      merged_channel_id: string;
+      merged_channel_name: string;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT * FROM (
+         SELECT 'merged:' || m.message_id || ':' || m.posted_at AS id, 'merged' AS kind,
+                m.posted_at AS occurred_at, m.author_user_id AS actor_user_id, '' AS actor_label,
+                m.source_workstream_id AS thread_id, '0' AS substream_id,
+                m.attention_ordinal AS attention_ordinal,
+                m.space_id AS merged_channel_id, space.title AS merged_channel_name
+           FROM space_messages m
+           JOIN spaces space ON space.space_id = m.space_id
+           JOIN channels directory ON directory.workstream_id = m.source_workstream_id
+           LEFT JOIN channel_viewers viewer
+             ON viewer.workstream_id = directory.workstream_id
+            AND viewer.user_id = ?1
+            AND viewer.authority_generation = directory.authority_generation
+          WHERE m.source_workstream_id IS NOT NULL
+            AND m.attention_ordinal IS NOT NULL
+            AND (m.author_user_id IS NULL OR m.author_user_id <> ?1)
+            AND m.space_id IN (SELECT value FROM json_each(?2))
+            AND directory.archived_at IS NULL
+            AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)})
+        WHERE (?3 IS NULL OR occurred_at < ?3 OR (occurred_at = ?3 AND id < ?4))
+        ORDER BY occurred_at DESC, id DESC
+        LIMIT ?5`,
+      viewer.userId,
+      JSON.stringify(spaceIds),
+      after?.occurredAt ?? null,
+      after?.id ?? "",
+      limit,
+    ).toArray();
   }
 
   /**

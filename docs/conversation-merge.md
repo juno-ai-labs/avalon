@@ -101,6 +101,16 @@ message item's `attentionSequenceNumber` go only to builds at
 `CHANNEL_MERGES_CLIENT_CONTRACT` (7) or later. An older build is served each
 merge as a plain message from the person who merged.
 
+### Activity and push
+
+Every merge somebody else made is a `merged` row in the Activity tab
+([`digests.md`](digests.md#the-activity-tab)) and is pushed, emailed or sent to
+Slack per the **Merges** choice ([`push-notifications.md`](push-notifications.md#activity-rows)).
+A breakout's merge is read from its message's activity event, which carries
+`metadata.mergedFrom` on both write paths (written at once, and queued behind
+input); a thread's merge into a Channel is read from `space_messages`. Each
+opens where it landed: the thread, or the Channel.
+
 ### The client
 
 `mergeTargetFor` decides what can merge: a Breakout into its Thread; a Thread's

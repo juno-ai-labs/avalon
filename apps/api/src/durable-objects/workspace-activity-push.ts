@@ -11,7 +11,7 @@ import type { Viewer } from "./listing-rules";
  */
 
 /** The kinds this path pushes, in the push payload's words; `added` and `mentioned` have their own. */
-export const ACTIVITY_PUSH_KINDS = ["thread_started", "breakout_started", "run_finished"] as const satisfies readonly ActivityItemKind[];
+export const ACTIVITY_PUSH_KINDS = ["thread_started", "breakout_started", "run_finished", "merged"] as const satisfies readonly ActivityItemKind[];
 
 const PUSHED_KINDS: ReadonlySet<ActivityItemKind> = new Set(ACTIVITY_PUSH_KINDS);
 
@@ -22,18 +22,23 @@ const STARTS: ReadonlySet<ActivityItemKind> = new Set(["thread_started", "breako
  * `finish` are the conversation's own; `joined` is one person newly able to
  * see it, which can make its start a row for them after the start itself was
  * decided (a viewer row lands in its own message, and may land after).
+ * `merge` is one merge into or out of the thread, named by its row id: a
+ * breakout's merge into it, or its own merge into a Channel.
  */
 export interface ActivityPushSubject {
   threadId: string;
-  /** Null for the thread itself. */
+  /** Null for the thread itself; always null on `merge`. */
   substreamId: string | null;
-  kind: "start" | "finish" | "joined";
+  kind: "start" | "finish" | "joined" | "merge";
   /** The person, on `joined` only. */
   userId?: string | undefined;
+  /** The Activity row, on `merge` only. */
+  itemId?: string | undefined;
 }
 
 /** The kinds of row a subject can push. A join pushes the start alone. */
 function subjectKinds(subject: ActivityPushSubject): ReadonlySet<ActivityItemKind> {
+  if (subject.kind === "merge") return new Set(["merged"]);
   return subject.kind === "finish" ? new Set(["run_finished"]) : STARTS;
 }
 
@@ -80,7 +85,8 @@ export class WorkspaceActivityPushes {
   }
 
   /**
-   * Who could be told about these subjects. A start reaches everyone when its
+   * Who could be told about these subjects. A start, and a merge (asked of
+   * the thread), reaches everyone when its
    * conversation is Organization-wide (the feed then decides, per person, what
    * they may list), else the people its viewer rows name; a finish reaches
    * only its participants, the only people the feed shows one to; a join
@@ -94,7 +100,7 @@ export class WorkspaceActivityPushes {
         if (subject.userId) userIds.add(subject.userId);
         continue;
       }
-      if (subject.kind === "start") {
+      if (subject.kind === "start" || subject.kind === "merge") {
         const row = subject.substreamId === null
           ? this.storage.sql.exec<{ scope: string } & Record<string, SqlStorageValue>>(
             `SELECT scope FROM channels WHERE workstream_id = ?`, subject.threadId,
@@ -142,14 +148,18 @@ export class WorkspaceActivityPushes {
     onScreen: ReadonlySet<string>,
   ): ActivityItem[] {
     const wanted = new Map<string, Set<ActivityItemKind>>();
+    // A merge is matched by its own row, not by its conversation: a breakout's
+    // merge row names the breakout, though it is about the thread.
+    const merges = new Set(subjects.flatMap((subject) => (subject.kind === "merge" && subject.itemId ? [subject.itemId] : [])));
     for (const subject of subjects) {
+      if (subject.kind === "merge") continue;
       if (subject.kind === "joined" && subject.userId !== viewer.userId) continue;
       const key = conversationKey(subject.threadId, subject.substreamId);
       const kinds = wanted.get(key) ?? new Set<ActivityItemKind>();
       for (const kind of subjectKinds(subject)) kinds.add(kind);
       wanted.set(key, kinds);
     }
-    if (wanted.size === 0) return [];
+    if (wanted.size === 0 && merges.size === 0) return [];
     const page = this.feed.page(viewer, null);
     if (page === "invalid_cursor") return [];
     const origin = this.storage.sql.exec<{ started_at: number }>(
@@ -158,7 +168,7 @@ export class WorkspaceActivityPushes {
     const added = addedConversations(page.items);
     const candidates = page.items.filter((item) => (
       item.unread
-      && wanted.get(itemConversation(item))?.has(item.kind) === true
+      && (item.kind === "merged" ? merges.has(item.id) : wanted.get(itemConversation(item))?.has(item.kind) === true)
       && Date.parse(item.occurredAt) >= origin
       && !onScreen.has(item.threadId)
       && !(STARTS.has(item.kind) && added.has(itemConversation(item)))
