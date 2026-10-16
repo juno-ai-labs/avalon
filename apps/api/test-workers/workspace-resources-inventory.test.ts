@@ -56,7 +56,11 @@ async function createDraft(input: {
     contentSha256: "a".repeat(64),
     metadataJson: '{"size":5}',
     uploadedByUserId: input.uploadedByUserId ?? UPLOADER,
-    at: input.at ?? AT,
+    // Today, not the fixture date. A draft dated `AT` is already past the
+    // 24-hour expiry, so an expired-draft sweep from an alarm that was already
+    // running when `disarm` ran could reap it mid-test. A case about expiry
+    // passes its own old date.
+    at: input.at ?? new Date().toISOString(),
   });
   return { resourceId, outcome };
 }

@@ -252,8 +252,8 @@ workstream-owned entries, including drafts. `GET /sidekicks` uses
 `WorkspaceDO.listSidekickDirectoryForAuthorizedMember`: the request's session
 authentication already joined the caller's active member row, so the object
 applies only the per-row scope filter and does not read `workspace_members`
-again. `listSidekickDirectory`, which does check membership itself, remains for
-a caller that has not. The old `/automations` listing remains a compatibility
+again. Every caller has proved membership before it asks, so there is no
+variant that checks it. The old `/automations` listing remains a compatibility
 adapter. Directory membership never grants access to an owner.
 
 A Thread-owned row carries `owningThread`, the Thread's id, title and chosen
@@ -1068,6 +1068,26 @@ Desktop and browser request management options only when their controls open, no
 on every transcript update.
 
 ## Changelog
+
+### 2026-10-16 — The membership-checking Sidekick directory read is gone
+
+**What changed:** `WorkspaceDO.listSidekickDirectory` is deleted. This
+supersedes the 2026-09-28 entry's advice that a caller unable to vouch for
+membership "uses `listSidekickDirectory`": no such variant exists now, and the
+Bind `verify_membership` path that entry cites was removed in
+juno-ai-labs/avalon#1245.
+
+**Why:** Its last production caller, the agents plugin's `sidekicks_list`,
+moved to `listSidekickDirectoryForAuthorizedMember`, which the library route
+already used. Only tests still called it, so they exercised a path production
+never takes.
+
+**Consequences:** Every caller of the directory read must prove active
+membership before it asks: the route through session authentication, the
+agents plugin through Bind's per-command check. A new caller that cannot must
+check membership itself rather than restore a second entry point.
+
+Shipped in juno-ai-labs/avalon#1251.
 
 ### 2026-10-15 — A room changes Sidekicks only through their authoring agent, and a thread-owned Sidekick names its thread
 
