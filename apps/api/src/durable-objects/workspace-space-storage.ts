@@ -617,7 +617,7 @@ export const SPACE_MESSAGES_MIGRATION: readonly string[] = [
 ];
 
 /**
- * WorkspaceDO migration 108: a Channel message can be a thread's merged
+ * WorkspaceDO migration 109: a Channel message can be a thread's merged
  * result, and any Channel message can be Channel news (`docs/conversation-merge.md`).
  *
  * `source_workstream_id` is the thread a message is about; the feed shows such

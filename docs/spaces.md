@@ -516,7 +516,7 @@ mechanism knows what a message is for.
   `postMessages` maps it over a list. A draft may carry a `key`; the message id
   is then derived from the Channel and the key, so the same key posts once and
   a retry writes nothing. Without a key every post is new. Four more options,
-  from migration 108, each generic:
+  from migration 109, each generic:
   - `replace` makes a keyed repost rewrite the body and author and move the
     message to the bottom (a fresh `posted_at`) instead of writing nothing.
   - `news` (default true) gives the message the Channel's next attention
@@ -544,7 +544,7 @@ mechanism knows what a message is for.
   as its placements and merges the two by time, then id, so one order runs
   across both and a cursor ending on either kind resumes correctly. A message
   that is news carries `attentionSequenceNumber`; an opening message and every
-  message before migration 108 carries none. Whoever may read the feed sees
+  message before migration 109 carries none. Whoever may read the feed sees
   its messages, except a message about a thread they cannot open, which the
   message seek filters with the placement seek's own `mainOpenableSql`
   through a primary-key join. A desktop before client
@@ -1803,7 +1803,7 @@ and the drop would otherwise empty them. **Migration 103** queues the one-time
 seating alarm. **Migration 104 adds `space_messages`**: one row per Channel
 message, keyed by `message_id`, with `space_id`, an optional `message_key`,
 `author_kind` (`rally` or `member`), `author_user_id`, `body` and `posted_at`.
-**Migration 108** adds four nullable columns to `space_messages`:
+**Migration 109** adds four nullable columns to `space_messages`:
 `source_workstream_id` (the thread a message is about), `attention_ordinal`
 (its place on the waterline, `NULL` for a message that is not news and for
 every row before it, read as zero), `embeds_json` (`[{id, title, kind}]` at
@@ -1994,7 +1994,7 @@ member is still unseated.
 attention ordinal, lights the unread dot for everyone but its author, and
 counts in `channelStats` beside placements. `stampPlacements` became a caller
 of `stampChannelNews`, and `postMessage` gained `replace`, `news`,
-`sourceWorkstreamId`, `embeds` and `operationId` (migration 108).
+`sourceWorkstreamId`, `embeds` and `operationId` (migration 109).
 
 **Why:** Merge-back puts a thread's result into its Channel as a message, and
 people need to see that it arrived. The earlier rule, only a placement advances
@@ -2009,7 +2009,7 @@ A second counter for messages was rejected because the client reads one
 waterline and one read position, and two would need two acknowledgements.
 
 **Consequences:** An opening message passes `news: false`, and rows before
-migration 108 have no ordinal, so no Channel turns unread on deploy. A message
+migration 109 have no ordinal, so no Channel turns unread on deploy. A message
 about a thread is filtered by that thread's openability in both the feed and
 the stats arm; a future message about something else needs its own visibility
 rule in both. `newThreadCount` still counts placements only.
