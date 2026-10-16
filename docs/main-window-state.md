@@ -32,9 +32,7 @@ prior record.
   rectangle as the user's size would make unmaximize return to a screen-sized
   window.
 - **Only the person sizes the window.** Opening a panel does not resize it
-  (see [`desktop-layout.md`](desktop-layout.md)). A future change that has Rally
-  resize it must remove its own addition before saving, or each open/close cycle
-  stores that width as the person's choice.
+  (see [`desktop-layout.md`](desktop-layout.md)).
 - **A window that never became ready cannot replace saved state.** Its default
   or partial geometry would overwrite the last usable placement after a failed
   renderer load.
