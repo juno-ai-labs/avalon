@@ -2393,7 +2393,8 @@ pre {
 .workspace-settings-screen .settings-member-row small { font-size: 12px; }
 
 .settings-toggle { cursor: pointer; display: inline-flex; position: relative; }
-.settings-toggle input { height: 1px; opacity: 0; position: absolute; width: 1px; }
+/* The input covers the drawn switch, so a click on it lands with or without a <label>. */
+.settings-toggle input { cursor: inherit; height: 100%; inset: 0; margin: 0; opacity: 0; position: absolute; width: 100%; z-index: 1; }
 .settings-toggle > span {
   background: var(--av-cmp-toggle-track);
   border-radius: var(--av-sys-size-radius-pill);
@@ -4840,7 +4841,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .resource-row:has(.rail-card-main:focus-visible) { box-shadow: inset 0 0 0 1px var(--av-sys-color-focus-default); }
 .resource-row-chevron { flex: none; }
 .watch-toggle { align-items: center; color: var(--av-sys-color-text-muted); display: flex; flex: 0 1 auto; gap: 6px; max-width: 40%; min-width: 0; padding: 3px 4px; position: relative; }
-.watch-toggle input { opacity: 0; position: absolute; }
+.watch-toggle input { cursor: inherit; height: 100%; inset: 0; margin: 0; opacity: 0; position: absolute; width: 100%; }
 .watch-toggle:has(input:focus-visible) { border-radius: var(--av-sys-size-radius-xs); box-shadow: inset 0 0 0 1px var(--av-sys-color-focus-quiet); }
 .watch-toggle:has(input:disabled) { cursor: not-allowed; opacity: .52; }
 .watch-toggle > span { background: var(--av-cmp-toggle-track); border-radius: var(--av-sys-size-radius-pill); flex: none; height: 12px; position: relative; width: 21px; }
