@@ -301,7 +301,7 @@ describe('a Channel', () => {
     await waitFor(() => expect(api.removeChannelMessage).toHaveBeenCalledExactlyOnceWith('outbound', mergeId));
   });
 
-  it('scrolls to a merged thread’s card from the merge’s quote, and leaves the quote plain when the card is not loaded', async () => {
+  it('scrolls to a merged thread’s card from the merge’s quote, and opens the thread when the card is not loaded', async () => {
     // jsdom has no layout, so no scrollIntoView: record which element asked.
     const scrolled: Element[] = [];
     Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this); };
@@ -318,8 +318,9 @@ describe('a Channel', () => {
     // Oldest first: the thread's card is the first row.
     expect(scrolled).toEqual([feed.getAllByRole('listitem')[0]]);
     expect(scrolled[0]).toHaveTextContent('A four-week outbound setup plan.');
-    expect(feed.queryByRole('button', { name: 'An older thread' })).toBeNull();
-    expect(feed.getByText('An older thread')).toBeVisible();
+    fireEvent.click(feed.getByRole('button', { name: 'An older thread' }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/older'));
+    expect(scrolled).toHaveLength(1);
     delete (Element.prototype as Partial<Element>).scrollIntoView;
   });
 
