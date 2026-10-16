@@ -302,9 +302,7 @@ describe('a Channel', () => {
   });
 
   it('scrolls to a merged thread’s card from the merge’s quote, and opens the thread when the card is not loaded', async () => {
-    // jsdom has no layout, so no scrollIntoView: record which element asked.
-    const scrolled: Element[] = [];
-    Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this); };
+    const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView');
     api.getWorkspaceMembers.mockResolvedValueOnce([workspace.currentUser] as never);
     const mergeOf = (id: string, threadId: string, summary: string) => ({ id, author: { kind: 'member', userId: 'me' }, body: 'Done.', merge: { threadId, title: 'Q4 plan', summary, embeds: [] } });
     api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 4, items: [
@@ -316,12 +314,11 @@ describe('a Channel', () => {
     const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
     fireEvent.click(await feed.findByRole('button', { name: 'Plan the quarter' }));
     // Oldest first: the thread's card is the first row.
-    expect(scrolled).toEqual([feed.getAllByRole('listitem')[0]]);
-    expect(scrolled[0]).toHaveTextContent('A four-week outbound setup plan.');
+    expect(scrollIntoView.mock.contexts).toEqual([feed.getAllByRole('listitem')[0]]);
+    expect(scrollIntoView.mock.contexts[0]).toHaveTextContent('A four-week outbound setup plan.');
     fireEvent.click(feed.getByRole('button', { name: 'An older thread' }));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/older'));
-    expect(scrolled).toHaveLength(1);
-    delete (Element.prototype as Partial<Element>).scrollIntoView;
+    expect(scrollIntoView).toHaveBeenCalledOnce();
   });
 
   it('opens an artifact a merge cites, by its alias, in its thread', async () => {
