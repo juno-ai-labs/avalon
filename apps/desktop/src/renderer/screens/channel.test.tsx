@@ -5,7 +5,7 @@ import { Link, MemoryRouter, parsePath, Route, Routes, useLocation } from 'react
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ChannelStats } from '@rally/contracts';
-import { OPEN_EXPANDED } from '../lib/navigation-routes';
+import { OPEN_EXPANDED, openResourceRequest } from '../lib/navigation-routes';
 import { CHANNEL_STATS_QUERY_KEY } from '../lib/sidebar-list-store';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { ChannelScreen } from './channel';
@@ -81,7 +81,7 @@ function outboundStats(overrides: Partial<ChannelStats> = {}): ChannelStats {
 
 function Location(): React.JSX.Element {
   const location = useLocation();
-  return <div data-testid="location">{location.pathname}</div>;
+  return <div data-state={JSON.stringify(location.state)} data-testid="location">{location.pathname}</div>;
 }
 
 function renderChannel(path = '/channels/outbound', seed: (client: QueryClient) => void = () => undefined, state: unknown = null) {
@@ -298,6 +298,29 @@ describe('a Channel', () => {
     await waitFor(() => expect(merge.getByText('merged by Me')).toBeVisible());
     fireEvent.click(merge.getByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(api.removeChannelMessage).toHaveBeenCalledExactlyOnceWith('outbound', mergeId));
+  });
+
+  it('opens an artifact a merge cites, by its alias, in its thread', async () => {
+    api.getWorkspaceMembers.mockResolvedValueOnce([workspace.currentUser] as never);
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 3, items: [
+      { kind: 'message', placedAt: '2026-10-02T03:00:00.000Z', attentionSequenceNumber: 3, message: {
+        id: '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a63',
+        author: { kind: 'member', userId: 'me' },
+        body: 'Shipped. See [Price model](resource://calm-river-quiet-lamp).',
+        merge: {
+          threadId: plan.id,
+          title: 'Q4 plan',
+          summary: null,
+          embeds: [{ id: 'res-1', slug: 'calm-river-quiet-lamp', title: 'Price model', kind: 'document' }],
+        },
+      } },
+    ] });
+    renderChannel();
+    const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
+    fireEvent.click(await feed.findByText('Price model'));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/plan'));
+    expect(openResourceRequest(JSON.parse(screen.getByTestId('location').dataset.state ?? 'null')))
+      .toEqual({ threadId: 'plan', resourceId: 'res-1' });
   });
 
   it('names somebody it cannot look up as someone, not Rally', async () => {

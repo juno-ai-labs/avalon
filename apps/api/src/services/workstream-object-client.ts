@@ -59,7 +59,7 @@ const AttachedResourcesSchema = z.union([
   z.strictObject({
     ok: z.literal(true),
     linked: z.array(z.string()),
-    resources: z.array(z.strictObject({ id: z.string(), title: z.string(), kind: z.string() })),
+    resources: z.array(z.strictObject({ id: z.string(), slug: z.string().optional(), title: z.string(), kind: z.string() })),
   }),
   z.strictObject({
     ok: z.literal(false),
@@ -376,7 +376,7 @@ export class WorkstreamObjectClient {
    * `WorkstreamObjectProduct.attachResources`. A refusal names the position.
    */
   async attachResources(resourceIds: readonly string[]): Promise<
-    | { ok: true; linked: string[]; resources: Array<{ id: string; title: string; kind: string }> }
+    | { ok: true; linked: string[]; resources: Array<{ id: string; slug?: string | undefined; title: string; kind: string }> }
     | { ok: false; index: number; code: "resource_not_found" | "resource_access_denied" | "attachment_draft_requires_message" }
   > {
     return AttachedResourcesSchema.parse(await this.request({ operation: "attach_resources", resourceIds: [...resourceIds] }));

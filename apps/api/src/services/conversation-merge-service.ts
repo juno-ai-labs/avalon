@@ -121,6 +121,8 @@ export class ConversationMergeService {
         throw refusalFor(error, "merge_target_not_writable");
       }),
     ]);
+    // Only a Thread's Breakouts merge; a Sidekick's run has nowhere to go.
+    if (source.kind !== "workstream") throw new ConversationMergeRefusal("conversation_access_denied");
     if (source.archived) throw new ConversationMergeRefusal("conversation_archived");
     const titles = await (await this.workspace()).breakoutMergeTitles({
       workspaceId: this.auth.workspaceId, workstreamId: threadId, substreamId: breakoutId,
@@ -136,8 +138,8 @@ export class ConversationMergeService {
     const receipt = await main.createMergeMessage({
       text: request.body,
       clientMessageId: request.clientMessageId,
-      mentions: [],
-      confirmedParticipantUserIds: [],
+      mentions: request.mentions ?? [],
+      confirmedParticipantUserIds: request.confirmedParticipantUserIds ?? [],
       attachmentIds: [],
       merge,
     });
