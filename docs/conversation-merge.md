@@ -8,9 +8,12 @@ artifacts as `resource://` links. Whoever can see the merge can open every
 artifact it embeds.
 
 The design and its reasoning are in
-[`PRDs/2026-10-16_merge-back/prd.md`](PRDs/2026-10-16_merge-back/prd.md); the
-agent tool's contract is
-[`PRDs/2026-10-16_merge-back/agent-behavior.md`](PRDs/2026-10-16_merge-back/agent-behavior.md).
+[`PRDs/2026-10-16_merge-back/prd.md`](PRDs/2026-10-16_merge-back/prd.md). The
+agent tool, `conversation_merge`, is simpler than its first contract
+([`agent-behavior.md`](PRDs/2026-10-16_merge-back/agent-behavior.md)): it takes
+the words alone and merges into every parent, a Breakout into its Thread and a
+Thread into every Channel it is in; [`conversation-tools.md`](conversation-tools.md)
+holds it.
 
 ## Where the code lives
 
