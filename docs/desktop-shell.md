@@ -449,9 +449,9 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 **What changed:** The switcher gains **Pinned**, first, whose list is every
 pin grouped by kind: Channels, then Threads. Its icon is `ShapeGrid`, four
 outlines in a two-by-two grid, and `ShapeOutline` learns the Sidekick hexagon.
-`ChannelsSection` and `ThreadsSection` take `pinnedOnly`, which draws only
-their Pinned part, titled with the kind; the Pinned tab runs one list motion
-over both instead of each running its own.
+`ChannelsSection` and `ThreadsSection` take the Pinned tab's shared list
+motion, and given it draw only their Pinned part, titled with the kind, with
+placeholders while its rows are read.
 
 **Why:** Pins were split across two tabs, so reaching a pinned Channel and a
 pinned thread meant switching between them. More pinnable kinds are coming,
@@ -463,11 +463,14 @@ one empty state per kind, so a fix to either tab reaches Pinned too.
 
 **Consequences:** A new pinnable kind adds its section to `PinnedPanel` and,
 once it has one, its shape to the grid. Two list motions over one scroll box
-would each animate every row, so a section drawn inside `PinnedPanel` must
-pass `pinnedOnly`. A desktop link opened while Pinned is showing scrolls to the
-row if it is pinned and does not page through the Threads list for it. Unpinning on Pinned takes the row off the tab, so the
-pin reveal hands focus to the row that was beside it, or to the Pinned button
-when none is left, rather than leaving it on the page body.
+would each animate every row, so a section drawn inside `PinnedPanel` takes
+the tab's `useListMotionPass` and runs it on its own commits: a drag preview
+re-renders only its section, so a pass run by the tab alone would miss it
+([`list-motion.md`](list-motion.md)). A desktop link opened while Pinned is
+showing scrolls to the row if it is pinned and does not page through the
+Threads list for it. Unpinning on Pinned takes the row off the tab, so the pin
+reveal hands focus to the row that was beside it, or to the Pinned button when
+none is left, rather than leaving it on the page body.
 
 ### 2026-10-15 — Breakouts in a thread are cards, like threads in a Channel
 
