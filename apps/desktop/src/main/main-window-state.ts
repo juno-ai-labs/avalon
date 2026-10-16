@@ -57,17 +57,6 @@ export function restoreMainWindowState(
   };
 }
 
-/** Drop only the width Rally added for the transient details rail. */
-export function boundsWithoutConversationDetails(
-  bounds: WindowBounds,
-  addedWidth: number,
-  appliedWidth: number,
-): WindowBounds {
-  return addedWidth > 0 && bounds.width === appliedWidth
-    ? { ...bounds, width: bounds.width - addedWidth }
-    : bounds;
-}
-
 export function readMainWindowState(
   directory: string,
   displays: readonly WindowDisplay[],

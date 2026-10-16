@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 
 import {
-  boundsWithoutConversationDetails,
   readMainWindowState,
   restoreMainWindowState,
   writeMainWindowState,
@@ -54,10 +53,4 @@ it('uses native minimum dimensions when a display is too small to contain them',
     bounds: { x: 100, y: 50, width: 860, height: 640 },
     maximized: false,
   });
-});
-
-it('removes only an unchanged temporary details-rail expansion', () => {
-  const expanded = { x: 100, y: 50, width: 1480, height: 900 };
-  expect(boundsWithoutConversationDetails(expanded, 300, 1480)).toEqual({ ...expanded, width: 1180 });
-  expect(boundsWithoutConversationDetails({ ...expanded, width: 1530 }, 300, 1480)).toEqual({ ...expanded, width: 1530 });
 });

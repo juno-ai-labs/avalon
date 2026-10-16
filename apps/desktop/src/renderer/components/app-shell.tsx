@@ -207,18 +207,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const spacesEnabled = spacesEnabledForSession(session);
   // The main pane keeps room for a sidebar that is still fading out.
   const showShellRail = railOpen || railLeaving;
-  const expandForShellRail = railOpen;
-  useEffect(() => {
-    void desktopBridge().setConversationDetailsOpen({
-      // A leaving rail remains laid out for its short cross-fade, but no longer
-      // owns window geometry. This preserves the true pre-panel bounds.
-      open: expandForShellRail,
-      width: railWidth,
-    }).catch(() => undefined);
-  }, [expandForShellRail, railWidth]);
-  useEffect(() => () => {
-    void desktopBridge().setConversationDetailsOpen({ open: false, width: 0 }).catch(() => undefined);
-  }, []);
   // Nothing here loads the sidebar. Subscribing to the workspace socket is
   // answered with the whole of it — the first page of work streams, the
   // Sidekicks and the notes — and WorkspaceDO pushes each list again whenever
