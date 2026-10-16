@@ -203,13 +203,26 @@ its threads and messages, and a composer at the foot.
 
 ### At phone width
 
-The sidebar becomes a sheet behind the list's own header, which is the top
-bar with the menu button; the section switcher is a row of tabs under it, with
-the account menu as a last tab labelled Settings. The
-sheet is clipped rather than moved, for the reasons the 2026-10-06 entry gives.
-Opening anything from it closes it, as do Escape and widening past 640px;
-switching sections does not navigate, so the sheet stays open on the list just
-picked.
+The screen has one header. A pane with a `TitlePillHeader` is that header:
+the app shell provides `PhoneHeaderContext`, and at phone width the header
+leads its crumbs' glass `MarkBridge` with a menu mark that opens the sheet,
+keeps its pill centred, and puts **Search organization** first in its folded
+"⋯" menu ahead of the pane's own actions. `usePhoneLayout`
+(`packages/ui/src/lib/phone-layout.ts`) is the JS side of the 640px
+breakpoint, for what CSS cannot do, such as adding a mark to a bridge. The
+loading skeleton headers draw the menu mark alone (`TitlePillNavigation`), so
+it is there from the first frame.
+
+The sidebar is a sheet behind the list's own header: the close button at the
+left, the section's title centred, its actions (New channel, Search) at the
+right. The section switcher is a row of tabs under it, with the account menu
+as a last tab labelled Settings. While the main pane holds a title-pill
+header, the shut sheet keeps no bar and is hidden whole; a screen without one
+(the landing, Sidekicks, Not found) still shows the sheet's header as its top
+bar. The sheet is clipped rather than moved, for the reasons the 2026-10-06
+entry gives. Opening anything from it closes it, as do Escape (which hands
+focus back to whichever button opened it) and widening past 640px; switching
+sections does not navigate, so the sheet stays open on the list just picked.
 
 ### Title pills
 
@@ -443,6 +456,34 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-16 — One header at phone width
+
+**What changed:** At phone width a pane's title-pill header is the screen's
+only header. It carries the menu mark, fused into the front of its crumbs'
+`MarkBridge`, and Search in its "⋯" menu, through `PhoneHeaderContext`. The
+sheet's own header now shows only while the sheet is open (close, centred
+title, actions), unless the screen has no title-pill header to stand in for
+it. `PHONE_LAYOUT_MAX_WIDTH` moved to `packages/ui/src/lib/phone-layout.ts`
+beside `usePhoneLayout`.
+
+**Why:** The product owner asked for one header on a phone. The sheet's bar
+and the pane's pill row stacked 120px of chrome, with the menu and Search in
+one row and the conversation's crumbs and actions in the other.
+
+**Considered and rejected:** Moving the pane's pill into the sheet's bar. The
+pill and its menu belong to the pane, and the Breakout and right-slot panes
+each have their own; one bar would need to know which pane is in front. A
+separate menu button beside the crumbs instead of a mark in their bridge: the
+product owner asked for one glass group holding both. Hiding the bar on every
+route: the landing and Sidekicks have no pane header, and would lose the only
+way to the navigation.
+
+**Consequences:** Whether the bar shows is a stylesheet decision
+(`:has(> .main-pane .title-pill-header)`), so a new pane header must use the
+`title-pill-header` class or the bar comes back above it. A pane header drawn
+without `TitlePillHeader` or `TitlePillNavigation` has no way to the
+navigation on a phone.
 
 ### 2026-10-16 — A Pinned section in the switcher
 

@@ -7742,6 +7742,14 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
     z-index: 70;
   }
   .app-shell .single-sidebar.is-mobile-open { clip-path: inset(0); }
+  /* A pane with its own header is the screen's only header: it opens the
+     sheet (`PhoneHeaderContext`), so the shut sheet keeps no bar and is
+     hidden whole once it has closed. A screen without one keeps the bar. */
+  .app-shell:has(> .main-pane .title-pill-header) { --phone-top-bar-height: 0px; }
+  .app-shell:has(> .main-pane .title-pill-header) .navigation-sidebar:not(.is-mobile-open) > .navigation-body {
+    transition: visibility 0s linear var(--phone-sheet-duration);
+    visibility: hidden;
+  }
   .app-shell .single-sidebar > .sidebar-top-bar {
     border-bottom: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
     flex-basis: var(--phone-top-bar-height);
@@ -8720,7 +8728,18 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
      as a row of tabs under it. */
   .app-shell .navigation-sidebar > .navigation-body { flex-direction: column; opacity: 1; transform: none; visibility: visible; }
   .app-shell .navigation-sidebar .navigation-panel { display: contents; }
-  .app-shell .navigation-sidebar .navigation-panel-header { height: var(--phone-top-bar-height); order: -2; padding: 0 12px; }
+  /* Its menu button, title and actions are the pane header's thirds: the
+     title centred whatever sits either side of it. */
+  .app-shell .navigation-sidebar .navigation-panel-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    height: 56px;
+    order: -2;
+    padding: 0 12px;
+  }
+  .app-shell .navigation-sidebar .sidebar-menu-toggle { justify-self: start; }
+  .app-shell .navigation-sidebar .navigation-panel-title { overflow: hidden; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+  .app-shell .navigation-sidebar .navigation-panel-actions { justify-self: end; }
   /* Round like the menu button opposite and the pane headers' controls. */
   .app-shell .navigation-sidebar .navigation-panel-actions { gap: 8px; }
   .app-shell .navigation-sidebar .navigation-panel-actions > .icon-button {
