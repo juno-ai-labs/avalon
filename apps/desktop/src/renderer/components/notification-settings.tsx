@@ -253,7 +253,7 @@ export function DailyDigestSettings({ api, connections, onEditTimezone }: {
                 >
                   {choices.map((choice) => <option key={choice} value={choice}>{minutesToLabel(choice)}</option>)}
                 </select>
-                <span className="settings-toggle">
+                <label className="settings-toggle">
                   <input
                     aria-label={`${slot.setting.label} digest`}
                     checked={time !== null}
@@ -262,7 +262,7 @@ export function DailyDigestSettings({ api, connections, onEditTimezone }: {
                     type="checkbox"
                   />
                   <span aria-hidden="true" />
-                </span>
+                </label>
               </span>
             </div>
           );
