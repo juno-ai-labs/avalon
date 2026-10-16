@@ -1,0 +1,1408 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rally Merge-Back</title>
+    <style>
+      /* Layout: one reading column, wide tables scroll inside their own frame. Tokens mirror Rally's renderer palette. */
+      :root {
+        --bg: #fcfcfc;
+        --surface: #f3f3f3;
+        --raised: #fcfcfc;
+        --line: #e5e5e5;
+        --line-strong: #d9d9d9;
+        --fg: #141414;
+        --fg-2: #3d3d3d;
+        --fg-3: #696969;
+        --accent: #55689b;
+        --accent-soft: #eef1f8;
+        --ok: #2f7d55;
+        --ok-soft: #e3f1e8;
+        --warn: #8a6508;
+        --warn-soft: #fbf3e0;
+        --bad: #c3453f;
+        --code: #eeeeee;
+        --sans:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        --serif:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --bg: #070707;
+          --surface: #111111;
+          --raised: #1b1b1b;
+          --line: #202020;
+          --line-strong: #2c2c2c;
+          --fg: #fcfcfc;
+          --fg-2: #e4e4e4;
+          --fg-3: #a3a3a3;
+          --accent: #9dc0da;
+          --accent-soft: #101820;
+          --ok: #74c48c;
+          --ok-soft: #14261a;
+          --warn: #dcb45f;
+          --warn-soft: #2a2010;
+          --bad: #cc7a6a;
+          --code: #1b1b1b;
+          color-scheme: dark;
+        }
+      }
+      :root[data-theme="dark"] {
+        --bg: #070707;
+        --surface: #111111;
+        --raised: #1b1b1b;
+        --line: #202020;
+        --line-strong: #2c2c2c;
+        --fg: #fcfcfc;
+        --fg-2: #e4e4e4;
+        --fg-3: #a3a3a3;
+        --accent: #9dc0da;
+        --accent-soft: #101820;
+        --ok: #74c48c;
+        --ok-soft: #14261a;
+        --warn: #dcb45f;
+        --warn-soft: #2a2010;
+        --bad: #cc7a6a;
+        --code: #1b1b1b;
+        color-scheme: dark;
+      }
+      body {
+        background: var(--bg);
+        color: var(--fg);
+        font: 420 15px/1.6 var(--sans);
+        -webkit-font-smoothing: antialiased;
+        padding-inline: 20px;
+        padding-block: 40px 80px;
+      }
+      main {
+        max-width: 760px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      h1 {
+        font: 700 36px/1.1 var(--serif);
+        letter-spacing: -0.02em;
+        margin: 0 0 8px;
+        text-wrap: balance;
+      }
+      h2 {
+        font: 650 22px/1.25 var(--serif);
+        letter-spacing: -0.01em;
+        margin: 48px 0 6px;
+        padding-top: 18px;
+        border-top: 1px solid var(--line);
+        text-wrap: balance;
+      }
+      h3 {
+        font: 600 16px/1.3 var(--sans);
+        margin: 26px 0 4px;
+      }
+      p,
+      li {
+        color: var(--fg);
+      }
+      p {
+        margin: 6px 0;
+      }
+      ul,
+      ol {
+        margin: 6px 0;
+        padding-left: 22px;
+      }
+      li {
+        margin: 3px 0;
+      }
+      .lede {
+        font-size: 18px;
+        color: var(--fg-2);
+        margin: 0 0 10px;
+      }
+      .meta {
+        font-size: 13px;
+        color: var(--fg-3);
+      }
+      .eyebrow {
+        font: 600 11px/1 var(--sans);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--fg-3);
+        margin-top: 30px;
+      }
+      code {
+        font: 13px var(--mono);
+        background: var(--code);
+        padding: 1px 5px;
+        border-radius: 4px;
+      }
+      pre {
+        font: 12.5px/1.55 var(--mono);
+        background: var(--code);
+        padding: 14px 16px;
+        border-radius: 8px;
+        overflow-x: auto;
+        margin: 10px 0;
+      }
+      .tbl {
+        overflow-x: auto;
+        margin: 10px 0;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 13.5px;
+        line-height: 1.45;
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 9px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        font-weight: 600;
+        color: var(--fg-2);
+        background: var(--surface);
+        font-size: 12px;
+        letter-spacing: 0.02em;
+      }
+      tr:last-child td {
+        border-bottom: 0;
+      }
+      td:first-child {
+        font-weight: 600;
+        min-width: 150px;
+      }
+      .rec {
+        border: 1px solid var(--line-strong);
+        background: var(--surface);
+        border-radius: 10px;
+        padding: 16px 18px;
+        margin: 12px 0;
+      }
+      .rec b.k {
+        display: block;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--accent);
+        margin-bottom: 4px;
+      }
+      .pill {
+        display: inline-block;
+        font-size: 11.5px;
+        font-weight: 600;
+        padding: 1px 8px;
+        border-radius: 99px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        white-space: nowrap;
+      }
+      .pill.ok {
+        background: var(--ok-soft);
+        color: var(--ok);
+      }
+      .pill.warn {
+        background: var(--warn-soft);
+        color: var(--warn);
+      }
+      .grid2 {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 10px;
+        margin: 10px 0;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px 16px;
+        background: var(--raised);
+        min-width: 0;
+      }
+      .card h4 {
+        margin: 0 0 4px;
+        font-size: 14.5px;
+      }
+      .card p {
+        font-size: 13.5px;
+        color: var(--fg-2);
+        margin: 4px 0;
+      }
+      .toc {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 14px;
+        font-size: 13.5px;
+        margin: 8px 0 0;
+      }
+      .toc a {
+        color: var(--fg-2);
+        text-decoration: none;
+        border-bottom: 1px solid var(--line-strong);
+      }
+      .toc a:hover {
+        color: var(--accent);
+      }
+      a {
+        color: var(--accent);
+      }
+      .flow {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 6px 12px;
+        font-size: 14px;
+        margin: 10px 0;
+      }
+      .flow .n {
+        font: 600 12px/22px var(--mono);
+        color: var(--fg-3);
+      }
+      .num {
+        font-variant-numeric: tabular-nums;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      role="note"
+      style="
+        max-width: 760px;
+        margin: 0 auto 24px;
+        padding: 10px 14px;
+        border-radius: 10px;
+        background: #fbf1dc;
+        color: #3d2a00;
+        font:
+          14px/20px -apple-system,
+          BlinkMacSystemFont,
+          &quot;Segoe UI&quot;,
+          system-ui,
+          sans-serif;
+      "
+    >
+      Exploration, kept for the record. The first design document, with the
+      Outcome model these mockups were drawn for. The current design is
+      <a href="../prd.md" style="color: #3d2a00; font-weight: 600">prd.md</a>
+      and
+      <a href="../design.html" style="color: #3d2a00; font-weight: 600"
+        >design.html</a
+      >.
+    </div>
+    <main>
+      <div class="meta">
+        Design exploration · 2026-10-12 · Companion:
+        <a href="first-set-mockups.html">UI explorations</a>
+      </div>
+      <h1>Merging work back up</h1>
+      <p class="lede">
+        How a Breakout hands its result to its Thread, and a Thread hands its
+        result to its Channel, without copying the conversation.
+      </p>
+      <nav class="toc">
+        <a href="#summary">Summary</a><a href="#what">What a merge is</a
+        ><a href="#prior">Prior art</a><a href="#edges">Edge cases</a
+        ><a href="#strategies">Merge strategies</a
+        ><a href="#length">Length budgets</a><a href="#ux">UX by level</a
+        ><a href="#arch">Architecture</a><a href="#phases">Phasing</a
+        ><a href="#open">Open questions</a>
+      </nav>
+
+      <h2 id="summary">Summary</h2>
+      <ul>
+        <li>
+          <b>One primitive: the Outcome.</b> A small, typed record a person (or
+          Rally, when asked) posts from a source conversation into its parent.
+          It has a one-line headline, a short optional body, links to artifacts,
+          pointers to source messages, a status, and a link back. Every merge
+          strategy produces this same object; only how its fields get filled
+          differs.
+        </li>
+        <li>
+          <b>Five ways to fill it</b>, offered in one composer: pick a message,
+          pick an artifact, let Rally draft a decision record, ask Rally to
+          write a wrap-up inside the source, or write it yourself. Rally
+          preselects the best guess, so the common case is one click.
+        </li>
+        <li>
+          <b>Never a transcript copy.</b> Text is capped per level. Anything
+          longer becomes or stays an artifact, and the Outcome links to it.
+          Artifacts merge as live links, not snapshots.
+        </li>
+        <li>
+          <b>One hop at a time.</b> Breakout to Thread, Thread to Channel. A
+          Thread's Outcome can cite its Breakouts' Outcomes, so summaries
+          compose upward from small inputs.
+        </li>
+        <li>
+          <b>Re-merge updates in place.</b> A second merge from the same source
+          becomes revision 2 of the same Outcome, not a second post. The card
+          shows when the source has moved on since.
+        </li>
+        <li>
+          <b>Exposure is explicit.</b> The composer says who will newly see this
+          before you post. Merging is the one deliberate way private work
+          becomes visible, and it can be removed from the parent but not unseen.
+        </li>
+      </ul>
+
+      <h2 id="what">What a merge is, and what it is not</h2>
+      <p>
+        A merge moves the <em>resolution</em> up a level. The source
+        conversation stays where it is, whole and reachable. The parent gains
+        one small item that says what was decided or made, who made it, and
+        where to look for the detail.
+      </p>
+      <div class="grid2">
+        <div class="card">
+          <h4>It is</h4>
+          <p>
+            A handoff written for the parent's readers. Short, specific, linked.
+            The equivalent of a squash commit message, not the commit history.
+          </p>
+        </div>
+        <div class="card">
+          <h4>It is not</h4>
+          <p>
+            Moving messages, forwarding a transcript, or reprinting a long
+            answer. Not a notification about activity either: activity already
+            has Activity.
+          </p>
+        </div>
+      </div>
+      <p>
+        The navigation PRD already promises this: "When a thread is done, its
+        result goes back to the channel, where the next person finds it." Today
+        nothing carries that result. The Channel feed shows each thread's AI
+        description, which tracks what the thread is <em>about</em>, never what
+        it <em>concluded</em>.
+      </p>
+
+      <h2 id="prior">Prior art worth taking</h2>
+      <div class="tbl">
+        <table>
+          <tr>
+            <th>Product</th>
+            <th>What it does</th>
+            <th>What we take</th>
+          </tr>
+          <tr>
+            <td>Linear</td>
+            <td>
+              Resolve a comment thread by choosing one reply as the resolution;
+              the rest collapse.
+            </td>
+            <td>Picking a message is a pointer, not a copy.</td>
+          </tr>
+          <tr>
+            <td>Slack</td>
+            <td>
+              "Also send to #channel", at compose time or later from the message
+              menu.
+            </td>
+            <td>
+              Promotion is per item, opt-in, and can happen after the fact.
+            </td>
+          </tr>
+          <tr>
+            <td>Mattermost spec</td>
+            <td>
+              The channel copy's Delete becomes "Remove from channel"; the
+              thread reply stays.
+            </td>
+            <td>Un-merge is separate from deleting the source.</td>
+          </tr>
+          <tr>
+            <td>GitHub squash merge</td>
+            <td>
+              Merge carries a prefilled, editable message; history stays on the
+              branch.
+            </td>
+            <td>
+              The AI draft is a draft the person edits, never posted blind.
+            </td>
+          </tr>
+          <tr>
+            <td>Figma branches</td>
+            <td>
+              Review and merge with a description; the branch is archived but
+              reachable.
+            </td>
+            <td>Optional "Merge and archive" for the source.</td>
+          </tr>
+          <tr>
+            <td>Zulip</td>
+            <td>
+              Resolve a topic: ✔ prefix, a small bot notice, unresolve soon
+              after deletes the notice.
+            </td>
+            <td>
+              A state mark on the source, a tiny event in the parent, undo that
+              leaves no trace.
+            </td>
+          </tr>
+          <tr>
+            <td>Claude Code subagents</td>
+            <td>Only the subagent's final report returns to the caller.</td>
+            <td>
+              A Breakout returns a report written for its parent, not its
+              transcript.
+            </td>
+          </tr>
+          <tr>
+            <td>Loom</td>
+            <td>
+              Generated title, summary, chapters linked to timestamps; all
+              editable.
+            </td>
+            <td>
+              Three tiers: headline in the feed, body on expand, citations back
+              to source.
+            </td>
+          </tr>
+          <tr>
+            <td>Microsoft Loop</td>
+            <td>One live component embedded in many places.</td>
+            <td>
+              Artifacts merge as live references with a "since merge" signal.
+            </td>
+          </tr>
+        </table>
+      </div>
+      <p>
+        From research: dialogue summaries are unfaithful often enough to matter
+        (over 35% in one human study; LLM judges catch this poorly), and the
+        typical failure is stating an agreement that was only implied. Readers
+        rarely click sources. Both point the same way:
+        <b>a person confirms every AI-drafted Outcome</b>, claims cite source
+        messages, and short is safer than long. Group-chat studies favour typed
+        outcomes (decision, action, question) over free prose. Context collapse
+        research is a reminder that a Breakout was written for a small audience,
+        so the Outcome should be newly written for the wider one rather than
+        quoted raw.
+      </p>
+
+      <h2 id="edges">Edge cases</h2>
+      <h3>Choosing what to merge</h3>
+      <div class="tbl">
+        <table>
+          <tr>
+            <th>Case</th>
+            <th>What goes wrong</th>
+            <th>Handling</th>
+          </tr>
+          <tr>
+            <td>Last message is Q&amp;A</td>
+            <td>
+              Someone asked "how did you get 38%?" after the draft. The last
+              message is the explanation, not the result.
+            </td>
+            <td>
+              Never default to "last message". Rally ranks candidates (see
+              <a href="#default">smart default</a>) and skips short replies that
+              follow a long answer.
+            </td>
+          </tr>
+          <tr>
+            <td>Small follow-up edits</td>
+            <td>
+              A long answer, then "change Q3 to Q4" and "drop the second table".
+              No single message holds the final text.
+            </td>
+            <td>
+              If an artifact exists, its latest version is the answer. If not,
+              offer <b>Consolidate</b>: Rally rewrites the long message with the
+              later edits applied, and the person checks the diff.
+            </td>
+          </tr>
+          <tr>
+            <td>Several artifacts</td>
+            <td>A draft, a revised draft, a data sheet, a scratch file.</td>
+            <td>
+              List every artifact the source generated, newest version first,
+              with drafts superseded by a later version grayed out. Allow
+              several; preselect the most recently edited deliverable.
+            </td>
+          </tr>
+          <tr>
+            <td>Decision spread over many turns</td>
+            <td>
+              The answer was agreed across a dozen turns over three days. No
+              message says it.
+            </td>
+            <td>
+              <b>Decision record</b>: Rally drafts Decision, Why, Open
+              questions, each line citing the turns it rests on.
+            </td>
+          </tr>
+          <tr>
+            <td>No resolution</td>
+            <td>Exploration that went nowhere, or work paused.</td>
+            <td>
+              Status <span class="pill warn">Open</span> or
+              <span class="pill">Update</span> instead of
+              <span class="pill ok">Done</span>. Or archive without merging;
+              nothing forces a merge.
+            </td>
+          </tr>
+          <tr>
+            <td>Rich content</td>
+            <td>The picked message has a table, an image, code.</td>
+            <td>
+              The card shows the first block that fits the budget and a "Show
+              more". Tables over the budget become a CSV or doc artifact on
+              merge.
+            </td>
+          </tr>
+          <tr>
+            <td>Mentions inside merged text</td>
+            <td>The text mentions someone who is not in the parent.</td>
+            <td>
+              Mention chips render, but merging does not notify people outside
+              the parent's audience. The composer flags it.
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <h3>Size</h3>
+      <div class="tbl">
+        <table>
+          <tr>
+            <th>Case</th>
+            <th>Handling</th>
+          </tr>
+          <tr>
+            <td>Picked message is long</td>
+            <td>
+              The card shows the headline plus the first lines that fit; the
+              full message is one click away in the source (if the reader can
+              open it) or in the expanded card. Over the hard budget, the
+              composer offers <b>Save as doc and link it</b>.
+            </td>
+          </tr>
+          <tr>
+            <td>AI draft runs long</td>
+            <td>
+              The draft is generated against the level's budget, and the
+              composer shows a live count against it. The budget is advisory up
+              to the hard cap.
+            </td>
+          </tr>
+          <tr>
+            <td>Channel feed skimmability</td>
+            <td>
+              The Channel card collapses to one headline line plus status and
+              chips. Body only on expand.
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <h3>Audience and privacy</h3>
+      <div class="tbl">
+        <table>
+          <tr>
+            <th>Case</th>
+            <th>Handling</th>
+          </tr>
+          <tr>
+            <td>Private Breakout to its Thread</td>
+            <td>
+              The merged text and linked artifacts become visible to the
+              Thread's whole audience. The composer names that audience
+              ("Visible to 6 people in this thread" / "Visible to everyone in
+              Acme") before Post. The Breakout itself stays private; source
+              citations show as "in a private breakout" to people outside it.
+            </td>
+          </tr>
+          <tr>
+            <td>Breakout member who is not in the Thread</td>
+            <td>
+              Breakout members can include people who cannot read the Thread.
+              Only someone who can post in the parent may merge. Others see
+              <b>Ask to merge</b>, which drafts the Outcome and @mentions a
+              breakout member who can.
+            </td>
+          </tr>
+          <tr>
+            <td>Private Thread into an Organization-wide Channel</td>
+            <td>
+              Today a private thread is a locked row that reveals nothing.
+              Merging is the deliberate exception: the Outcome card is visible
+              to Channel readers, while the thread chip stays "Request access".
+              The composer says so plainly. Artifacts need their own share
+              choice (see next row).
+            </td>
+          </tr>
+          <tr>
+            <td>Artifacts in a wider audience</td>
+            <td>
+              For a Thread target, merging links the artifact into the Thread
+              with the existing <code>Attach to thread</code> path, which grants
+              the Thread's readers. A Channel has no conversation to link to, so
+              a Channel merge needs a decision: either the artifact is shared to
+              the Organization (or the Channel's members) through its own share
+              setting, or an active Outcome becomes a new source of readers. The
+              second is a new access source, and
+              <code>space-access-sources.md</code> records why those are costly;
+              the first is recommended. The composer lists each artifact with
+              its new audience either way.
+            </td>
+          </tr>
+          <tr>
+            <td>AI draft leaks candid remarks</td>
+            <td>
+              The summarizer reads only the source, writes for the parent's
+              audience (instructed to drop asides, personal remarks and
+              unverified claims), and the person confirms. Citations can only
+              point inside the source.
+            </td>
+          </tr>
+          <tr>
+            <td>Thread in several Channels</td>
+            <td>
+              Default target is the Channel it was started from; the composer
+              lets you add the others. One Outcome, several placements, like
+              threads today.
+            </td>
+          </tr>
+          <tr>
+            <td>Guests</td>
+            <td>
+              Guests in the parent see the Outcome. A guest's Channel feed lists
+              only threads they may open, so a Channel Outcome reaches a guest
+              only if they can open its thread.
+            </td>
+          </tr>
+          <tr>
+            <td>Undo</td>
+            <td>
+              "Remove from thread/channel" hides the card and its feed item and
+              leaves the source untouched. Removal soon after posting deletes
+              the event entirely, as Zulip does. Anyone who already read it has
+              read it; the composer copy does not promise otherwise.
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <h3>Lifecycle</h3>
+      <div class="tbl">
+        <table>
+          <tr>
+            <th>Case</th>
+            <th>Handling</th>
+          </tr>
+          <tr>
+            <td>More work after a merge</td>
+            <td>
+              The source keeps a merge waterline (the last turn included). The
+              parent card shows "4 new messages in the breakout since merge" to
+              people who can open it. <b>Update merge</b> in the source makes
+              revision 2.
+            </td>
+          </tr>
+          <tr>
+            <td>Re-merge</td>
+            <td>
+              Same Outcome, new revision. The card updates in place with
+              "Updated 2h ago · v2" and a version list. The parent gets a small
+              "updated" line, not a second card. Unread is bumped only when
+              headline or status changed.
+            </td>
+          </tr>
+          <tr>
+            <td>Artifact edited after merge</td>
+            <td>
+              Artifacts are live links, so readers see the latest. The card
+              marks "Edited since merge" and keeps the merged version one click
+              away.
+            </td>
+          </tr>
+          <tr>
+            <td>Source archived</td>
+            <td>
+              The card stays; its back-link opens the archived source read-only.
+              <b>Merge and archive</b> does both in one step for finished work.
+            </td>
+          </tr>
+          <tr>
+            <td>Artifact deleted or access revoked</td>
+            <td>
+              The chip renders as unavailable; the headline and body still
+              stand, because they were written into the Outcome.
+            </td>
+          </tr>
+          <tr>
+            <td>Two people merge at once</td>
+            <td>
+              The second post becomes revision 2 and the composer warns "Maya
+              merged this 1 min ago. Update hers?" before posting.
+            </td>
+          </tr>
+          <tr>
+            <td>Several Breakouts, one Thread</td>
+            <td>
+              Each Breakout has its own Outcome under its origin chip. A later
+              Thread merge can use those Outcomes as sources, and its card says
+              "Includes 3 breakouts".
+            </td>
+          </tr>
+          <tr>
+            <td>Skipping a level</td>
+            <td>
+              No Breakout to Channel. It would bypass the Thread's readers and
+              make the hierarchy two things. A Thread merge built from Breakout
+              Outcomes covers the need.
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <h3>Agents and context</h3>
+      <div class="tbl">
+        <table>
+          <tr>
+            <th>Case</th>
+            <th>Handling</th>
+          </tr>
+          <tr>
+            <td>Does the Thread's agent see it?</td>
+            <td>
+              Yes. The Outcome lands in the Thread's transcript as a turn the
+              agent reads ("Outcome merged from breakout Draft PRD: …"), so
+              later questions in the Thread use it. It does not wake the agent,
+              matching <code>conversation_post</code>.
+            </td>
+          </tr>
+          <tr>
+            <td>Later Breakouts</td>
+            <td>
+              A new Breakout's frozen capture keeps only text and activation
+              turns today. Outcomes must be added to that list, or a Breakout
+              started later will not know about earlier results.
+            </td>
+          </tr>
+          <tr>
+            <td>Rally merges on request</td>
+            <td>
+              "When the draft is approved, merge it back" is a person's
+              instruction. Rally gets a <code>merge_outcome</code> tool scoped
+              to its own parent; per product policy, it runs without a
+              confirmation dialog. The card shows "Merged by Rally for Maya".
+            </td>
+          </tr>
+          <tr>
+            <td>Rally suggests a merge</td>
+            <td>
+              When a Breakout goes quiet after a deliverable, the source shows a
+              quiet "Ready to merge?" chip with the draft prefilled. No
+              unprompted posting into the parent.
+            </td>
+          </tr>
+          <tr>
+            <td>Sidekick runs</td>
+            <td>
+              Already post results with <code>conversation_post</code>. They can
+              adopt the Outcome shape later so their results look the same; not
+              needed first.
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <h3>Feed, unread and notifications</h3>
+      <div class="tbl">
+        <table>
+          <tr>
+            <th>Case</th>
+            <th>Handling</th>
+          </tr>
+          <tr>
+            <td>Thread unread</td>
+            <td>
+              An Outcome is a message in the Thread, so it is unread for the
+              Thread's people like any message.
+            </td>
+          </tr>
+          <tr>
+            <td>Channel unread</td>
+            <td>
+              Today only a placement moves a Channel's dot. An Outcome is the
+              Channel's own news in the same way, so it should stamp the
+              waterline. Activity inside threads still does not.
+            </td>
+          </tr>
+          <tr>
+            <td>Activity</td>
+            <td>
+              New Activity arm: "Maya merged an outcome into Q4 Pricing".
+              Audience is the parent's readers; for a Breakout merge, the
+              source's people are not notified twice.
+            </td>
+          </tr>
+          <tr>
+            <td>Digests</td>
+            <td>
+              Outcomes are the most digest-worthy thing Rally produces. A digest
+              can lead with them.
+            </td>
+          </tr>
+          <tr>
+            <td>Ordering in the Channel feed</td>
+            <td>
+              The Outcome appears as a new item at the time of merge (newest,
+              near the composer). The thread's own row gets a Done mark and its
+              summary line switches to the Outcome headline.
+            </td>
+          </tr>
+          <tr>
+            <td>Older clients and iOS</td>
+            <td>
+              Old desktops parse feed kinds and message types strictly. The
+              Thread turn uses an existing message type with typed structured
+              content and a plain fallback text; the Channel feed kind is opt-in
+              by query flag, as <code>originTurnId</code> was.
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <h2 id="strategies">Merge strategies</h2>
+      <p>
+        Merging varies along six independent dimensions. Each strategy below is
+        a set of choices along them, not a separate feature.
+      </p>
+      <div class="tbl">
+        <table>
+          <tr>
+            <th>Dimension</th>
+            <th>Options</th>
+            <th>Recommended default</th>
+          </tr>
+          <tr>
+            <td>Source of content</td>
+            <td>
+              Picked message · Artifact · Decision record (AI) · Wrap-up turn
+              (AI, in source) · Written by hand
+            </td>
+            <td>Smart default picks one; all five in the composer</td>
+          </tr>
+          <tr>
+            <td>Shape in parent</td>
+            <td>
+              Pointer (one line) · Card (headline + body) · Embed (artifact
+              preview) · Inline (full text)
+            </td>
+            <td>Card. Inline only for short text under budget</td>
+          </tr>
+          <tr>
+            <td>Freshness</td>
+            <td>Snapshot · Live</td>
+            <td>
+              Text is a snapshot; artifacts are live with a "since merge" mark
+            </td>
+          </tr>
+          <tr>
+            <td>Who starts it</td>
+            <td>
+              Person · Rally on request · Rally suggests · Automatic on archive
+            </td>
+            <td>Person or Rally on request. Never automatic</td>
+          </tr>
+          <tr>
+            <td>Review</td>
+            <td>Post directly · Propose for a parent member to accept</td>
+            <td>
+              Post directly. Propose only when the merger cannot post in the
+              parent
+            </td>
+          </tr>
+          <tr>
+            <td>Repeat merges</td>
+            <td>New post · Revise in place</td>
+            <td>Revise in place</td>
+          </tr>
+        </table>
+      </div>
+
+      <h3>Five strategies</h3>
+      <div class="grid2">
+        <div class="card">
+          <h4>1 · Pointer</h4>
+          <p>
+            Pick one message. The card quotes its first lines and links to it.
+            Cheapest, no AI. Best when one answer really is the result, which is
+            common for short Breakouts.
+          </p>
+        </div>
+        <div class="card">
+          <h4>2 · Deliverable</h4>
+          <p>
+            Pick one or more artifacts. Headline is the artifact title plus a
+            one-line note. Best for drafts, PRDs, decks: the artifact already
+            absorbed every edit, so "the last message is wrong" stops mattering.
+          </p>
+        </div>
+        <div class="card">
+          <h4>3 · Decision record</h4>
+          <p>
+            Rally drafts Decision · Why · Open, each line citing the turns it
+            came from. Best when the result is a choice made across many turns.
+            Always human-confirmed.
+          </p>
+        </div>
+        <div class="card">
+          <h4>4 · Wrap-up turn</h4>
+          <p>
+            "Wrap this up for the thread": Rally writes the handoff as a normal
+            turn inside the source, where the person can say "shorter" or "add
+            the risk" and iterate by chat. Then merge that turn as a Pointer.
+            Reuses the conversation as the editor.
+          </p>
+        </div>
+        <div class="card">
+          <h4>5 · Status update</h4>
+          <p>
+            For long-running Threads: an Outcome with status Update, revised
+            weekly. The Channel shows the latest, with history. Same object,
+            used as a living status line.
+          </p>
+        </div>
+        <div class="card">
+          <h4>Written by hand</h4>
+          <p>
+            Always available. Fills the same fields. Also how anyone fixes an AI
+            draft before posting.
+          </p>
+        </div>
+      </div>
+
+      <h3 id="default">Smart default</h3>
+      <p>
+        The composer opens with a preselected choice, so most merges are one
+        click. Rules, in order:
+      </p>
+      <ol>
+        <li>
+          If the source generated an artifact that was edited in its last
+          stretch of work, preselect <b>Deliverable</b> with the newest version.
+        </li>
+        <li>
+          Else, if one agent message is long, structured, and followed only by
+          short turns (questions, small edits), preselect <b>Pointer</b> to it;
+          if those later turns asked for changes, offer <b>Consolidate</b>.
+        </li>
+        <li>
+          Else, if the source has more than a few turns from more than one
+          person, preselect <b>Decision record</b>.
+        </li>
+        <li>
+          Else, preselect the last substantial agent message as a Pointer.
+        </li>
+      </ol>
+      <p>
+        Rules 1, 2 and 4 are cheap heuristics over turn metadata. Rule 3 costs
+        one model call and only runs when chosen. A later version can replace
+        the rules with a single classifier call (the repo's JEV pattern) if the
+        heuristics guess wrong often.
+      </p>
+
+      <h2 id="length">Length budgets</h2>
+      <p>
+        These are product numbers, for the team to set. The figures below are
+        starting points to react to, not decisions.
+      </p>
+      <div class="tbl">
+        <table>
+          <tr>
+            <th>Level</th>
+            <th>Headline</th>
+            <th>Body shown collapsed</th>
+            <th>Body hard cap</th>
+            <th>Over the cap</th>
+          </tr>
+          <tr>
+            <td>Breakout → Thread</td>
+            <td class="num">1 line (~90 chars)</td>
+            <td class="num">~4 lines</td>
+            <td class="num">~250 words</td>
+            <td>Save as doc, link it</td>
+          </tr>
+          <tr>
+            <td>Thread → Channel</td>
+            <td class="num">1 line (~90 chars)</td>
+            <td class="num">0 lines (headline + chips)</td>
+            <td class="num">~120 words on expand</td>
+            <td>Link the thread's artifact or doc</td>
+          </tr>
+        </table>
+      </div>
+      <p>
+        The Channel is tighter than the Thread because a Channel is browsed,
+        while a Thread is read. A Channel headline must state the result itself
+        ("Ship annual plan at $96/seat; monthly unchanged"), not name the work
+        ("Pricing summary"). The draft prompt enforces this, and the composer
+        greys the Post button while the headline is empty.
+      </p>
+
+      <h2 id="ux">UX by level</h2>
+      <h3>In the source (Breakout or Thread)</h3>
+      <ul>
+        <li>
+          <b>Entry points.</b> "Merge to thread" in the Breakout's title pill
+          menu; "Merge this" on any agent message's action row (preselects that
+          message); "Merge to thread" on an artifact's menu, next to the
+          existing "Attach to thread"; and the "Ready to merge?" suggestion
+          chip.
+        </li>
+        <li>
+          <b>Composer.</b> Opens as a sheet over the source pane, not a modal
+          over the window, so the source stays readable beside it. Top: the five
+          strategy tabs with the default selected. Middle: the live preview of
+          the card exactly as the parent will show it. Bottom: audience line,
+          status (Done / Update / Open), "Archive breakout after merging", Post.
+        </li>
+        <li>
+          <b>After posting.</b> The source shows a thin "Merged into Q4 Pricing
+          · v1 · 2:14 PM" marker after the last included turn. Turns after it
+          count as "since merge".
+        </li>
+      </ul>
+      <h3>In the Thread</h3>
+      <ul>
+        <li>
+          The Outcome lands where the transcript is at the moment of merge, as a
+          turn: byline "Morgan merged from ↳ Comparison table", then a card in the
+          same sunken style as the Breakout's origin card: status mark,
+          headline, body (collapsed), artifact chips, and "Open breakout · 23
+          messages". It is attributed to the person who merged, not to Rally.
+          Placing it in time order is what the append-only transcript does
+          anyway, and it is where people catching up are already reading.
+        </li>
+        <li>
+          The Breakout chip under the origin message gains a check and "Merged",
+          and clicking the check scrolls to the Outcome. A reader scanning chips
+          can tell finished side-work from open side-work. (The UI explorations
+          also show the alternative: the card drawn under the origin message.)
+        </li>
+      </ul>
+      <h3>In the Channel</h3>
+      <ul>
+        <li>
+          A merged Thread's feed row changes from "what it is about" to "what it
+          concluded": the Outcome headline replaces the description, with a Done
+          mark, and one artifact chip beside the thread chip.
+        </li>
+        <li>
+          A new Outcome item also enters the feed at merge time, so people who
+          check the bottom of the feed see new results without scanning older
+          rows.
+        </li>
+        <li>
+          A newcomer to a busy Channel reads it as a list of results. Open work
+          reads as descriptions; finished work reads as conclusions.
+        </li>
+      </ul>
+
+      <h2 id="arch">Technical architecture</h2>
+      <h3>Where it lives</h3>
+      <p>
+        The Channel has no transcript and runs no inference, and Threads and
+        Breakouts are already hosted inside <code>WorkspaceDO</code> as parents.
+        So <b>WorkspaceDO owns the Outcome record</b> for both levels: it
+        already owns listing rules, the Channel feed, resource links, and
+        Activity. The Thread transcript and the Channel feed are projections of
+        that one record. This keeps one authority for who may see an Outcome,
+        and avoids a second answer that can disagree with the first.
+      </p>
+      <pre>
+-- WorkspaceDO SQLite (sketch)
+CREATE TABLE outcomes (
+  outcome_id        TEXT PRIMARY KEY,
+  source_kind       TEXT NOT NULL CHECK (source_kind IN ('breakout','thread')),
+  source_id         TEXT NOT NULL,        -- breakout or thread id
+  target_kind       TEXT NOT NULL CHECK (target_kind IN ('thread','channel')),
+  target_id         TEXT NOT NULL,        -- thread id or space id
+  state             TEXT NOT NULL CHECK (state IN ('active','removed')),
+  current_revision  INTEGER NOT NULL,
+  created_by_user_id TEXT NOT NULL,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  UNIQUE (source_kind, source_id, target_kind, target_id)  -- re-merge = new revision
+);
+CREATE TABLE outcome_revisions (
+  outcome_id TEXT NOT NULL, revision INTEGER NOT NULL,
+  headline TEXT NOT NULL, body_md TEXT,
+  status TEXT NOT NULL CHECK (status IN ('done','update','open')),
+  strategy TEXT NOT NULL,               -- pointer|deliverable|decision|wrapup|written
+  source_through_turn_id TEXT NOT NULL, -- the merge waterline
+  author_user_id TEXT NOT NULL, acting_agent INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (outcome_id, revision)
+);
+CREATE TABLE outcome_refs (               -- artifacts, source turns, child outcomes
+  outcome_id TEXT NOT NULL, revision INTEGER NOT NULL,
+  ref_kind TEXT NOT NULL CHECK (ref_kind IN ('resource','turn','outcome')),
+  ref_id TEXT NOT NULL, resource_version INTEGER, position INTEGER NOT NULL,
+  PRIMARY KEY (outcome_id, revision, ref_kind, ref_id)
+);</pre
+      >
+
+      <h3>Write path</h3>
+      <div class="flow">
+        <span class="n">1</span
+        ><span
+          ><code>POST /conversations/:parentId/outcomes</code> with source,
+          target, fields, refs and an idempotency key. A Thread to Channel merge
+          addresses the Thread's parent and names the Space.</span
+        >
+        <span class="n">2</span
+        ><span
+          >WorkspaceDO, in one transaction: check the author can read the source
+          and post in the target; check every turn ref belongs to the source and
+          every resource ref is linked to it; insert or revise the Outcome; for
+          a Thread target, insert resource links (the same rows
+          <code>Attach to thread</code> writes); for a Channel target, apply the
+          artifact share chosen in the composer; stamp the Channel waterline for
+          a Channel target; write the Activity event; queue the transcript
+          projection.</span
+        >
+        <span class="n">3</span
+        ><span
+          >The projection leg appends one turn to the Thread's Main
+          <code>SubstreamAgent</code> through the
+          <code>appendConversationPost</code> path, keyed by
+          <code>outcomeId:revision</code> so a retry is a no-op. It does not
+          wake the agent.</span
+        >
+        <span class="n">4</span
+        ><span
+          >Sockets push the new turn to Thread readers and the feed item to
+          Channel readers, the way placements and turns travel today.</span
+        >
+      </div>
+      <p>
+        The client draws the card optimistically from the request the moment
+        Post is pressed, the same hand-off the new-thread composer uses, so
+        merging feels instant.
+      </p>
+
+      <h3>Contracts and compatibility</h3>
+      <ul>
+        <li>
+          <code>OutcomeV1Schema</code> in <code>@rally/contracts</code>: id,
+          revision, headline, body, status, strategy, refs, source summary
+          (kind, id, title, message count, people), author, acting agent.
+        </li>
+        <li>
+          The Thread turn uses the existing <code>system</code> message type
+          with
+          <code
+            >structuredContent: { kind: "outcome", outcome: OutcomeV1 }</code
+          >
+          and plain fallback text ("Maya merged: &lt;headline&gt;"). A new
+          <code>messageType</code> value would break strict parsers in released
+          desktops; this follows the <code>AutomationDraftProposedV1</code> card
+          pattern.
+        </li>
+        <li>
+          <code>ChannelFeedItemSchema</code> gains a third kind,
+          <code>outcome</code>, returned only when the client asks with
+          <code>?kinds=outcome</code>. The <code>thread</code> kind gains an
+          optional <code>latestOutcome</code> summary (headline, status,
+          revision) under the same flag.
+        </li>
+        <li>
+          Rejections name their field through <code>describeZodIssues</code>; a
+          refused merge says which ref was outside the source.
+        </li>
+      </ul>
+
+      <h3>Drafting with a model</h3>
+      <ul>
+        <li>
+          <code>POST …/outcomes/draft</code> returns a draft and stores nothing.
+          It runs <code>runStructuredInference</code> with a new model role,
+          <code>outcome_draft</code>, and a JSON schema: headline, body, status,
+          decision, reasons, open questions, and turn citations.
+        </li>
+        <li>
+          Input is <code>readableMessagesBefore</code> of the source (what was
+          said, no tool cards), plus the titles and latest versions of its
+          artifacts, plus any child Outcomes. For a Thread, child Outcomes are
+          passed in place of the Breakouts' transcripts, so a Thread summary
+          reads small inputs and never needs the full tree.
+        </li>
+        <li>
+          Citations are validated server side: a cited turn id outside the
+          source drops the claim's citation and marks the line unsupported in
+          the composer.
+        </li>
+        <li>
+          Model: the cheap, fast class already used for Breakout handoff
+          summaries, through the Flagship model flag for the new role. Metered
+          as its own usage activity.
+        </li>
+        <li>
+          Latency: the request starts when the composer opens (or when the menu
+          item is hovered), and the composer shows the non-AI choices
+          immediately, so nobody waits on the model unless they picked Decision
+          record.
+        </li>
+        <li>
+          Consolidate (apply later edits to an earlier long message) is the same
+          endpoint with a different instruction and returns text plus a diff.
+        </li>
+        <li>
+          Wrap-up turn is not a new endpoint: it is a normal prompt to the
+          source's agent, using a skill that knows the Outcome shape and the
+          target's budget.
+        </li>
+      </ul>
+
+      <h3>Agent tool</h3>
+      <p>
+        Extend the <code>rally:conversations</code> plugin with
+        <code>merge_outcome(headline, body?, status, artifacts?, turns?)</code>.
+        Scope comes from the loop input in <code>conversationToolAccess</code>:
+        a Breakout loop may merge only to its Thread, a Thread loop only to that
+        Thread's Channels. The author is the person whose turn the run is
+        serving; admission re-checks that person can post in the target. This
+        closes the open question in <code>conversation-tools.md</code> about a
+        Breakout posting to Main without letting a non-member post through the
+        agent.
+      </p>
+
+      <h3>Reads and staleness</h3>
+      <ul>
+        <li>
+          Breakout directory rows gain <code>latest_outcome_id</code> and
+          <code>outcome_through_turn_id</code>. "N new since merge" is the
+          source's latest turn compared with that waterline, read from data the
+          chips already carry.
+        </li>
+        <li>
+          "Edited since merge" compares
+          <code>outcome_refs.resource_version</code> with the resource's
+          <code>current_version</code>.
+        </li>
+        <li>
+          Remove: <code>PATCH …/outcomes/:id {state:"removed"}</code>. The
+          projection turn re-renders as "Outcome removed by Maya"; the feed item
+          drops. The resource links stay, since someone may already rely on
+          them; removing them is a separate action.
+        </li>
+        <li>
+          Breakout capture recipe: add outcome turns to the kept types, which is
+          a new recipe revision.
+        </li>
+      </ul>
+
+      <h3>What this reuses</h3>
+      <div class="tbl">
+        <table>
+          <tr>
+            <th>Need</th>
+            <th>Existing piece</th>
+          </tr>
+          <tr>
+            <td>Post into a conversation without waking it</td>
+            <td><code>appendConversationPost</code></td>
+          </tr>
+          <tr>
+            <td>Give parent readers an artifact</td>
+            <td>
+              <code>POST /conversations/:parentId/resources</code> (Attach to
+              thread)
+            </td>
+          </tr>
+          <tr>
+            <td>One-shot structured model call</td>
+            <td><code>runStructuredInference</code></td>
+          </tr>
+          <tr>
+            <td>Readable transcript for summarizing</td>
+            <td><code>readableMessagesBefore</code></td>
+          </tr>
+          <tr>
+            <td>Card rendered from a system row</td>
+            <td>
+              <code>DraftProposedCard</code> pattern in
+              <code>workstream-blocks.tsx</code>
+            </td>
+          </tr>
+          <tr>
+            <td>Under-origin placement in the Thread</td>
+            <td><code>BreakoutChipRow</code>, <code>originTurnId</code></td>
+          </tr>
+          <tr>
+            <td>Channel news and unread</td>
+            <td><code>stampPlacements</code>, Channel read state</td>
+          </tr>
+          <tr>
+            <td>Activity and digests</td>
+            <td><code>workspace_activity_events</code></td>
+          </tr>
+        </table>
+      </div>
+
+      <h2 id="phases">Phasing</h2>
+      <ol>
+        <li>
+          <b>Breakout → Thread, no AI.</b> Outcome tables, Pointer, Deliverable
+          and Written, the Thread card under the origin chip, Remove, and the
+          agent tool. Proves the primitive.
+        </li>
+        <li>
+          <b>Drafting.</b> Decision record, Consolidate, Wrap-up skill, smart
+          default.
+        </li>
+        <li>
+          <b>Thread → Channel.</b> Feed kind, row state change, Channel
+          waterline, Activity arm, child Outcomes as summary input.
+        </li>
+        <li>
+          <b>Lifecycle.</b> Revisions in place, "since merge" marks, Merge and
+          archive, Ready to merge suggestion, digests.
+        </li>
+      </ol>
+
+      <h2 id="open">Open questions for the team</h2>
+      <ul>
+        <li>
+          <b>Name.</b> "Merge" fits the founder's model and engineers, but our
+          users are recruiters and operators. Alternatives: "Bring back", "Share
+          result", "Hand back". Recommendation: keep <em>Merge</em> as the verb
+          in menus and call the posted object an <em>Outcome</em>; test with two
+          customers.
+        </li>
+        <li>
+          <b>Channel unread.</b> Does an Outcome move the Channel dot?
+          Recommended yes; it is the Channel's own news, like a placement.
+        </li>
+        <li>
+          <b>Private Thread into a public Channel.</b> Allow it with the
+          explicit exposure line, or require the thread be public first?
+          Recommended allow; merging is the controlled way to share a result
+          without opening the whole thread.
+        </li>
+        <li><b>Length budgets.</b> Numbers above are placeholders.</li>
+        <li>
+          <b>Who may remove an Outcome.</b> The author and Organization admins?
+          Or anyone who can post in the parent?
+        </li>
+        <li>
+          <b>iOS.</b> Renders the fallback text until it gains the card. Fine
+          for a prototype platform?
+        </li>
+      </ul>
+    </main>
+  </body>
+</html>
