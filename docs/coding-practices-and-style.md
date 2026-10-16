@@ -119,22 +119,10 @@ switch to Zod Mini or to return raw Zod errors directly to users.
 
 ## A control that hides its input is a label
 
-Some controls hide their real `<input>` in the stylesheet and draw a sibling in
-its place: `.settings-toggle` and `.watch-toggle` keep the input 1px wide and
-transparent, and the switch a person sees is a `<span>`. A click on that span
-reaches the input only through a `<label>`, so the element carrying the class
-must be a `<label>` or sit inside one. `SettingToggle` wraps its whole row in a
-label; a bare switch is the label itself.
-
-`rally/hidden-input-control-label` enforces this over `.tsx` source in `apps/`
-and `packages/`. The class list lives in `eslint.config.mjs`, because which
-classes hide their input is the stylesheet's decision; add a class there when a
-new control draws over its input the same way. The rule reads class names
-spelled literally, including inside template literals, conditionals, and the
-arguments of `clsx` or any other helper call (strings, array items, object keys), and
-looks for a `<label>` ancestor only within the same JSX tree, so a control
-whose label comes from a parent component needs restructuring or the label
-moved in.
+`.settings-toggle` and `.watch-toggle` hide their real `<input>` and draw a
+`<span>` in its place, so the element carrying the class must be a `<label>` or
+sit inside one. `rally/hidden-input-control-label` enforces this; its class list
+is in `eslint.config.mjs`.
 
 ## Testing
 

@@ -39,12 +39,10 @@ function classTokens(node) {
   switch (node?.type) {
     case "Literal":
       return typeof node.value === "string" ? node.value.split(/\s+/u) : [];
-    case "TemplateElement":
-      return node.value.cooked?.split(/\s+/u) ?? [];
     case "JSXExpressionContainer":
       return classTokens(node.expression);
     case "TemplateLiteral":
-      return [...node.quasis, ...node.expressions].flatMap(classTokens);
+      return templateTokens(node);
     case "ConditionalExpression":
       return [...classTokens(node.consequent), ...classTokens(node.alternate)];
     case "LogicalExpression":
@@ -61,6 +59,24 @@ function classTokens(node) {
     default:
       return [];
   }
+}
+
+/**
+ * A template's text tokens and its interpolations' tokens, keeping only those
+ * that whitespace or the template's ends cut off whole: `settings-${x}` and
+ * `${x}-hint` name neither half.
+ */
+function templateTokens(node) {
+  const text = node.quasis.map((quasi) => quasi.value.cooked ?? "");
+  const tokens = text.join("\0").split(/\s+/u).filter((token) => !token.includes("\0"));
+  node.expressions.forEach((expression, index) => {
+    const before = text[index];
+    const after = text[index + 1];
+    if ((before === "" || /\s$/u.test(before)) && (after === "" || /^\s/u.test(after))) {
+      tokens.push(...classTokens(expression));
+    }
+  });
+  return tokens;
 }
 
 /** The element itself or any JSX ancestor in the same tree is a `<label>`. */
