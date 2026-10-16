@@ -26,9 +26,11 @@ export function openRailAtEvenSplit(scope: string, open: () => void): void {
  * Opening a panel never resizes the window, so the panel and the conversation
  * share the main pane: the even split is half of it. That includes the room
  * the pane keeps for a panel already open beside it, which a Breakout taking
- * over its Channel's panel inherits.
+ * over its Channel's panel inherits. The pane's box includes that room, so this
+ * reads the same with the panel open, which is how the panel edge's reset
+ * returns to it.
  */
-function evenSplitWidth(): number | null {
+export function evenSplitWidth(): number | null {
   const pane = document.querySelector<HTMLElement>('.main-pane');
   if (!pane) return null;
   return Math.round((window.innerWidth - pane.getBoundingClientRect().left) / 2);
