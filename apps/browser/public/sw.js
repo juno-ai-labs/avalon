@@ -22,6 +22,13 @@ function localUrl(canonical) {
   return local.href;
 }
 
+// The path a tab shows while in the notification's Organization, as the shell
+// writes it: /app/workspaces/<region>/<workspaceId>.
+function workspacePath(rally) {
+  if (!rally || typeof rally.region !== "string" || typeof rally.workspaceId !== "string") return null;
+  return `/app/workspaces/${encodeURIComponent(rally.region)}/${encodeURIComponent(rally.workspaceId)}`;
+}
+
 // Controls the tabs already open, so a click can navigate one of them.
 self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
@@ -33,19 +40,31 @@ self.addEventListener("push", (event) => {
   event.waitUntil(self.registration.showNotification(message.title, {
     body: typeof message.body === "string" ? message.body : "",
     tag: typeof message.tag === "string" ? message.tag : undefined,
-    data: { url: localUrl(message.rally && message.rally.url) },
+    data: { url: localUrl(message.rally && message.rally.url), workspacePath: workspacePath(message.rally) },
   }));
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const url = (event.notification.data && event.notification.data.url) || localUrl("/");
+  const data = event.notification.data || {};
+  const url = data.url || localUrl("/");
   event.waitUntil((async () => {
     const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     const exact = windows.find((client) => client.url === url);
     if (exact) return exact.focus();
-    // Reuse a Rally tab on this host rather than opening another.
-    const app = windows.find((client) => new URL(client.url).pathname.startsWith("/app/"));
+    // A tab already in the notification's Organization routes in place: the
+    // page compares the link with its own Organization (`inPlaceHash` in
+    // src/session.ts) and loads it instead when they differ.
+    const path = (client) => new URL(client.url).pathname.replace(/\/$/u, "");
+    const same = data.workspacePath && windows.find((client) => path(client) === data.workspacePath);
+    if (same) {
+      const focused = await same.focus();
+      focused.postMessage({ type: "rally:open", url });
+      return focused;
+    }
+    // Otherwise reuse a Rally tab on this host: loading the link switches it
+    // to the link's Organization.
+    const app = windows.find((client) => path(client).startsWith("/app/"));
     if (app) {
       try {
         const focused = await app.focus();
