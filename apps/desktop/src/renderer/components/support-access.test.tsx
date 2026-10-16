@@ -120,9 +120,13 @@ describe('Rally access in the account menu', () => {
   it('shows both people on a support session and offers End impersonation instead of Sign out', async () => {
     const props = menu({ activeWorkspace: { ...own, id: acme.id, name: acme.name }, currentUser: bob, impersonator: adam });
     const trigger = screen.getByRole('button', { name: 'Bob Smith, Acme Robotics, impersonated by Morgan Ellis' });
-    // Radix paints initials after a short delay, in case an image arrives.
-    await waitFor(() => expect(trigger).toHaveTextContent('BS'));
-    expect(trigger).toHaveTextContent('ME');
+    // Radix paints initials after a short delay, in case an image arrives, and
+    // each avatar keeps its own timer: under load one can paint before the
+    // other, so wait for both together.
+    await waitFor(() => {
+      expect(trigger).toHaveTextContent('BS');
+      expect(trigger).toHaveTextContent('ME');
+    });
     openMenu(/Bob Smith/u);
     expect(screen.queryByRole('menuitem', { name: /Sign out/u })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('menuitem', { name: /End impersonation/u }));

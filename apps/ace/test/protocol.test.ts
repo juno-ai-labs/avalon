@@ -100,7 +100,6 @@ describe('Ace managed flag protocol', () => {
     expect(MANAGED_FLAGS.map((flag) => flag.key)).toEqual([
       'suggested-work-enabled',
       'multiple-workspaces-enabled',
-      'digests-enabled',
       'push-notifications-enabled',
       'live-artifacts-enabled',
     ]);

@@ -53,7 +53,7 @@ identity-provider settings. Ace therefore follows the same employee rule while
 keeping a distinct audience.
 
 `GET /api/flags` reads `meeting-recording-enabled`, `suggested-work-enabled`,
-`multiple-workspaces-enabled`, and `digests-enabled`. The editor exposes enabled/paused state, default Boolean
+and `multiple-workspaces-enabled`. The editor exposes enabled/paused state, default Boolean
 value, ordered first-match rules, all eleven operators, nested AND/OR groups,
 and sticky percentage rollouts. A rule is reordered by dragging its handle
 onto another or, from that same handle, ArrowUp/ArrowDown. A person search
@@ -230,11 +230,6 @@ overlap.
   `true` has one unambiguous meaning in Flagship, Ace, logs, and client code.
 - The product features default to false in the shared client schema. No network
   response, stale cache, missing field, Flagship error, or older API enables one.
-  `digests-enabled` is the one field in that schema that defaults **true**
-  instead: it is provisioned **on**, because a digest already sends by default
-  for every existing person, and Electron reads it to decide whether to show
-  the Daily digest group in Settings → Notifications. See
-  [`digests.md`](digests.md#an-occurrence).
 - The account-wide and regional Queue messages never carry a flag value. Values
   are user-specific and are evaluated in the owning WorkspaceDO after Flagship
   propagation; carrying one value would leak one audience's answer to another.
@@ -395,6 +390,21 @@ When a save succeeds but clients do not change, inspect in order:
 Shared DB runtime sources and package exports are deployment inputs alongside
 contracts. Grant-only fixes therefore rebuild Ace; DB migration/test-only changes
 do not publish a new Ace bundle.
+
+### 2026-10-16 — Ace stops managing `digests-enabled`
+
+**What changed:** `digests-enabled` left `MANAGED_FLAGS`, and the deploy
+retires it instead of ensuring it. Every managed product flag now defaults the
+way its catalog row says, with no digest exception.
+
+**Why:** It was the kill switch for the agent-run digest the 2026-10-15
+rewrite replaced, and its live default had drifted to `off`, hiding the Daily
+digest settings and stopping delivery for everyone. See
+[`digests.md`](digests.md) for the full entry.
+
+**Consequences:** A flag removed from the catalog must also move to a
+`retireFlag` call in the same change, or the key stays in Flagship where a
+stale value can still be served.
 
 ### 2026-10-02 — Edit reasoning with the model route
 

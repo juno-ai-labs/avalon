@@ -121,9 +121,12 @@ export function NotificationChannelSettings({ api, workspaceId, connections, pus
 }
 
 const NOON = 12 * 60;
-const MORNING_TIMES = [7 * 60, 7.5 * 60, 8 * 60, 8.5 * 60, 9 * 60, 9.5 * 60, 10 * 60, 10.5 * 60, 11 * 60];
-const EVENING_TIMES = [15 * 60, 15.5 * 60, 16 * 60, 16.5 * 60, 17 * 60, 17.5 * 60, 18 * 60, 18.5 * 60, 19 * 60, 20 * 60];
-const DEFAULT_MORNING = 9 * 60;
+/** Every 15 minutes from `from` through `through`, both minutes of the day. */
+const quarterHours = (from: number, through: number) =>
+  Array.from({ length: (through - from) / 15 + 1 }, (_, index) => from + index * 15);
+const MORNING_TIMES = quarterHours(7.5 * 60, 9.5 * 60);
+const EVENING_TIMES = quarterHours(16.5 * 60, 18.5 * 60);
+const DEFAULT_MORNING = 7.75 * 60;
 const DEFAULT_EVENING = 17.5 * 60;
 const WEEKDAYS = [1, 2, 3, 4, 5];
 const EVERY_DAY = [0, 1, 2, 3, 4, 5, 6];
