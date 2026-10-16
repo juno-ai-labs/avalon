@@ -183,7 +183,9 @@ A merge that lands takes the reader to it. `ConversationSurface` reports the
 result through `onMerged`, and the thread screen acts on it: a Breakout's merge
 closes the Breakout and scrolls its Thread to the new message (`scrollToTurn`
 with `arriving`, which waits for the socket to deliver the turn instead of
-paging back, and scrolls to the end when the turn is the newest row); a
+paging back, and is left off for a replayed merge, which writes nothing new
+for the socket to deliver; any request whose turn is the newest row scrolls
+to the end); a
 Thread's merge opens the Channel it landed in with
 `revealChannelMessageState`, and the feed scrolls to that message once it is
 listed. Only the merge whose composer is still open moves the reader.

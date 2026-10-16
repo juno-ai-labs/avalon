@@ -2157,22 +2157,20 @@ export function ConversationSurface({
   }, [conversationAddress, feedLive, loadTranscriptRange, queryClient, transcriptQueryKey]);
   useEffect(() => {
     if (scrollToTurn === null || handledScrollNonce.current === scrollToTurn.nonce) return;
-    if (scrollToTurn.arriving) {
-      // A turn on its way waits for the feed to deliver it.
-      const index = transcript.findIndex((message) => message.transcriptTurnId === scrollToTurn.turnId);
-      if (index < 0) return;
+    // The newest row, as a turn just written usually is, is the end: not
+    // `scrollToIndex`, which aimed at the last row lands short of it while
+    // the rows above are still estimates.
+    if (transcript.at(-1)?.transcriptTurnId === scrollToTurn.turnId) {
       handledScrollNonce.current = scrollToTurn.nonce;
-      // The newest row, as a turn just written usually is, is the end: not
-      // `scrollToIndex`, which aimed at the last row lands short of it while
-      // the rows above are still estimates.
-      if (index === transcript.length - 1) window.requestAnimationFrame(() => scrollTranscriptToEnd({ smooth: true }));
-      else revealTurn(scrollToTurn.turnId);
+      window.requestAnimationFrame(() => scrollTranscriptToEnd({ smooth: true }));
       return;
     }
     if (revealTurn(scrollToTurn.turnId)) {
       handledScrollNonce.current = scrollToTurn.nonce;
       return;
     }
+    // A turn on its way waits for the feed to deliver it.
+    if (scrollToTurn.arriving) return;
     // An origin older than the loaded pages: page back toward it. Each page
     // re-runs this, and reaching the oldest page ends the search.
     if (loadingOlder || olderMessagesError || !orderedTranscript.data) return;

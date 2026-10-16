@@ -733,7 +733,9 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     }
     if (!mainVisible) return;
     openThreadAlone();
-    setScrollToTurn((current) => ({ turnId: result.messageId, nonce: (current?.nonce ?? 0) + 1, arriving: true }));
+    // A replay wrote nothing, so no socket event will bring the turn: it is
+    // searched for like any other.
+    setScrollToTurn((current) => ({ turnId: result.messageId, nonce: (current?.nonce ?? 0) + 1, arriving: !result.replayed }));
   };
   const openBreakout = (substreamId: string): void => {
     // A panel the Channel has open would hide the Breakout being asked for.
