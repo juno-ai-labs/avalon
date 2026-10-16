@@ -1090,14 +1090,18 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         const openActivity = (): void => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
-          // A changed organization parked the pane on `/opening`; Activity
-          // names no route, so land where the app would.
-          if (window.location.hash === '#/opening') window.location.hash = '/';
           const ui = useUiStore.getState();
           ui.setSidebarSection('activity');
           // At phone width the sidebar is a sheet; open it so the link lands
           // somewhere visible. Wider, an open sheet would leave the main pane inert.
-          if (window.innerWidth <= PHONE_LAYOUT_MAX_WIDTH) ui.setSidebarOpen(true);
+          const phone = window.innerWidth <= PHONE_LAYOUT_MAX_WIDTH;
+          // A changed organization parked the pane on `/opening`; Activity
+          // names no route, so land where the app would. The sidebar resets
+          // the sheet on that navigation, so ask it to open the sheet then.
+          if (window.location.hash === '#/opening') {
+            if (phone) ui.setSheetAfterNavigation(true);
+            window.location.hash = '/';
+          } else if (phone) ui.setSidebarOpen(true);
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openActivity);
         else if (requireActiveWorkspace('Sign in before opening Activity.')) openActivity();
