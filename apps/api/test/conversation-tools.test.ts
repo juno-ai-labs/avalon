@@ -116,7 +116,9 @@ class Ports implements ConversationToolPorts {
   /** As the merge service does: a key it has seen answers with what it wrote. */
   merge = async (request: Parameters<ConversationToolPorts["merge"]>[0]) => {
     if (this.mergeRefusal) throw this.mergeRefusal;
-    const replayed = this.merged.some((earlier) => earlier.clientMessageId === request.clientMessageId);
+    // A receipt is per target, as each conversation or Channel keeps its own.
+    const replayed = this.merged.some((earlier) => earlier.clientMessageId === request.clientMessageId
+      && earlier.channelId === request.channelId);
     if (!replayed) this.merged.push(request);
     return {
       mergedInto: request.breakoutId
@@ -127,7 +129,7 @@ class Ports implements ConversationToolPorts {
       sharedResourceIds: [],
     };
   };
-  mergeChannels = async () => ({ channels: this.channels, defaultName: "GTM" });
+  mergeChannels = async () => this.channels;
 }
 
 let issued = 0;
@@ -183,43 +185,34 @@ describe("which loops get the conversation tools", () => {
 
 describe("conversation_merge", () => {
   const breakoutLine = "When a person asks you to merge, merge it back, or send the result to the thread, call conversation_merge once with a short message for the thread's readers. Merge only when a person asked; never on your own judgement.";
-  const channelLine = "When a person asks you to merge, merge it back, or send the result to the channel, call conversation_merge once with a short message for the channel's readers. Merge only when a person asked; never on your own judgement.";
+  const channelsLine = "When a person asks you to merge, merge it back, or send the result to its Channels, call conversation_merge once with a short message for their readers. Merge only when a person asked; never on your own judgement.";
 
-  it("is a write keyed by the host, with each loop's own arguments", () => {
-    const breakout = tools(breakoutLoop()).get("conversation_merge")!.definition;
-    const thread = tools(loop()).get("conversation_merge")!.definition;
-    for (const definition of [breakout, thread]) {
+  it("is a write keyed by the host, taking the words alone in every loop", () => {
+    for (const definition of [tools(breakoutLoop()).get("conversation_merge")!.definition, tools(loop()).get("conversation_merge")!.definition]) {
       expect([definition.capability, definition.mode, definition.idempotency])
         .toEqual(["rally.conversation.merge", "write", "provider_key"]);
+      const shape = definition.inputSchema as { properties: Record<string, unknown>; required?: string[]; additionalProperties: boolean };
+      expect(Object.keys(shape.properties)).toEqual(["body"]);
+      expect(shape.required).toEqual(["body"]);
+      expect(shape.additionalProperties).toBe(false);
     }
-    const shape = (definition: typeof breakout) => definition.inputSchema as {
-      properties: Record<string, unknown>; required?: string[]; additionalProperties: boolean;
-    };
-    expect(Object.keys(shape(breakout).properties)).toEqual(["body"]);
-    expect(Object.keys(shape(thread).properties)).toEqual(["body", "channel"]);
-    expect(shape(breakout).required).toEqual(["body"]);
-    expect(shape(thread).required).toEqual(["body"]);
-    expect(shape(breakout).additionalProperties).toBe(false);
   });
 
-  it("refuses a channel in a Breakout loop, and an empty body, as invalid arguments naming the field", async () => {
+  it("refuses an empty body, or any other field, as invalid arguments naming the field", async () => {
     const ports = new Ports();
-    const merge = tools(breakoutLoop(), ports).get("conversation_merge")!;
-    for (const [raw, field] of [[{ body: "Done", channel: "GTM" }, "channel"], [{ body: "Done", reason: "x" }, "arguments"], [{ body: " " }, "body"]] as const) {
+    const merge = tools(loop(), ports).get("conversation_merge")!;
+    for (const [raw, field] of [[{ body: "Done", channel: "GTM" }, "arguments"], [{ body: " " }, "body"]] as const) {
       const error = await merge.execute(raw, context("receipt-0")).catch((caught: unknown) => caught);
       expect(error).toMatchObject({ code: "invalid_arguments",
-        message: "The merge needs a non-empty `body` and no other fields except `channel` in a thread. Fix the arguments and call once more." });
-      expect((error as ConversationToolError).details?.field).toBe(field);
+        message: "The merge needs a non-empty `body` and no other fields. Fix the arguments and call once more." });
+      expect((error as ConversationToolError).details).toEqual({ field, expected: "{ body }" });
     }
     expect(ports.merged).toEqual([]);
   });
 
-  it("pins its system lines, naming a Thread's Channels and its default", () => {
+  it("pins its system lines", () => {
     expect(createConversationsPlugin(breakoutLoop(), new Ports(), expand)!.systemMessage).toContain(breakoutLine);
-    const thread = createConversationsPlugin(loop(), new Ports(), expand, {
-      home: null, mergeChannels: { channels: [{ id: SPACE_ID, name: "GTM" }, { id: OTHER_SPACE_ID, name: "Pricing" }], defaultName: "GTM" },
-    })!.systemMessage;
-    expect(thread).toBe(`${channelLine} This thread's Channels: GTM, Pricing. Without \`channel\`, a merge goes to GTM.`);
+    expect(createConversationsPlugin(loop(), new Ports(), expand)!.systemMessage).toBe(channelsLine);
     expect(createConversationsPlugin(configLoop(), new Ports(), expand)!.systemMessage).not.toContain("conversation_merge");
   });
 
@@ -227,41 +220,37 @@ describe("conversation_merge", () => {
     const ports = new Ports();
     const merge = tools(breakoutLoop(), ports).get("conversation_merge")!;
     const first = await merge.execute({ body: "Sequence B is approved" }, context("receipt-1"));
-    expect(first.output).toEqual({ mergedInto: { kind: "thread", id: CHANNEL_ID, title: "Cold Outreach" },
-      messageId: "merged-1", replayed: false, sharedResourceIds: [] });
+    expect(first.output).toEqual({ merges: [{ mergedInto: { kind: "thread", id: CHANNEL_ID, title: "Cold Outreach" },
+      messageId: "merged-1", replayed: false, sharedResourceIds: [] }] });
     expect(ports.merged).toEqual([{ threadId: CHANNEL_ID, body: "Sequence B is approved", breakoutId: BREAKOUT_ID,
       clientMessageId: `conversation-merge:${HARNESS_RUN_ID}:receipt-1` }]);
     const again = await merge.execute({ body: "Sequence B is approved" }, context("receipt-1"));
-    expect(again.output).toMatchObject({ replayed: true });
+    expect(again.output).toMatchObject({ merges: [{ replayed: true }] });
     expect(ports.merged).toHaveLength(1);
   });
 
-  it("resolves a Channel by name without case, and refuses one that does not hold the thread", async () => {
+  it("merges a Thread into every Channel it is in, with no choice to make", async () => {
     const ports = new Ports();
-    const merge = tools(loop(), ports).get("conversation_merge")!;
-    await merge.execute({ body: "Shipped", channel: "pricing" }, context("receipt-2"));
-    expect(ports.merged[0]).toEqual({ threadId: CHANNEL_ID, body: "Shipped", channelId: OTHER_SPACE_ID,
-      clientMessageId: `conversation-merge:${HARNESS_RUN_ID}:receipt-2` });
-    const refused = await merge.execute({ body: "Shipped", channel: "Design" }, context("receipt-3")).catch((error: unknown) => error);
-    expect(refused).toBeInstanceOf(ConversationToolError);
-    expect(refused).toMatchObject({ code: "merge_channel_not_placed", details: { field: "channel", available: ["GTM", "Pricing"] },
-      message: "That Channel does not hold this thread. Use one of the Channels in `available`, or leave `channel` out for the default." });
-    expect(ports.merged).toHaveLength(1);
+    const merged = await tools(loop(), ports).get("conversation_merge")!.execute({ body: "Shipped" }, context("receipt-2"));
+    const key = `conversation-merge:${HARNESS_RUN_ID}:receipt-2`;
+    expect(ports.merged).toEqual([
+      { threadId: CHANNEL_ID, body: "Shipped", channelId: SPACE_ID, clientMessageId: key },
+      { threadId: CHANNEL_ID, body: "Shipped", channelId: OTHER_SPACE_ID, clientMessageId: key },
+    ]);
+    expect(merged.summary).toBe("Merged into GTM, Pricing");
   });
 
-  it("refuses a Channel name two of the thread's Channels share, naming their ids, and takes an id", async () => {
+  it("refuses a Thread in no Channel its person can post in, merging nothing", async () => {
     const ports = new Ports();
-    ports.channels = [{ id: SPACE_ID, name: "GTM" }, { id: OTHER_SPACE_ID, name: "gtm" }];
-    const merge = tools(loop(), ports).get("conversation_merge")!;
-    const refused = await merge.execute({ body: "Shipped", channel: "GTM" }, context("receipt-5")).catch((error: unknown) => error);
-    expect(refused).toMatchObject({ code: "conversation_ambiguous", details: { field: "channel", available: [SPACE_ID, OTHER_SPACE_ID] },
-      message: "Several of this thread's Channels have that name. Pass one of the ids in `available` as `channel`." });
+    ports.channels = [];
+    const error = await tools(loop(), ports).get("conversation_merge")!.execute({ body: "Shipped" }, context("receipt-3"))
+      .catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "merge_target_not_writable",
+      message: "The person you are working for cannot post there, so the merge was not made. Tell them; do not retry." });
     expect(ports.merged).toEqual([]);
-    await merge.execute({ body: "Shipped", channel: OTHER_SPACE_ID }, context("receipt-6"));
-    expect(ports.merged).toMatchObject([{ channelId: OTHER_SPACE_ID }]);
   });
 
-  it("turns each merge refusal into the design's sentence, with only allowlisted details", async () => {
+  it("turns each merge refusal into its sentence, with only allowlisted details", async () => {
     const cases: Array<[ApiError, Record<string, unknown> | undefined, string]> = [
       [new ApiError(409, "merge_thread_private", "x"), undefined,
         "Only an Organization-wide thread can merge into a Channel. Tell the person; do not retry."],

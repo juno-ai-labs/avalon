@@ -89,6 +89,22 @@ export class ConversationMergeService {
     return { id: target.spaceId, name: target.name, channels: target.channels };
   }
 
+  /**
+   * Every Channel this thread is in that this person may post in, possibly
+   * none: what the agent tool merges into. A thread that cannot merge at all
+   * (private, archived, gone) is refused as the route refuses it.
+   */
+  async writableChannels(threadId: string): Promise<ConversationMergeChannel[]> {
+    const target = await (await this.workspace()).channelMergeTarget({
+      auth: this.actor(), workstreamId: asWorkstreamId(threadId), spaceId: null,
+    });
+    if (target.ok) return target.channels;
+    // No placement, or a default the person cannot post in: the others are
+    // still theirs to merge into.
+    if (target.code === "merge_channel_not_placed" || target.code === "merge_target_not_writable") return target.channels;
+    throw channelRefusal(target.code, target.channels);
+  }
+
   private async mergeIntoThread(
     threadId: string,
     breakoutId: string,
