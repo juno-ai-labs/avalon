@@ -8631,17 +8631,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).toArray().map((row) => row.automation_id);
   }
 
-  /** Library discovery is an index; the owning object authorizes content reads. */
-  async listSidekickDirectory(input: unknown): Promise<{ items: AutomationSummary[] }> {
-    await this.initialized;
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }).parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this workspace's Sidekicks");
-    }
-    return this.listSidekickDirectoryForAuthorizedMember(request);
-  }
-
   /**
    * For a caller that already proved active membership: Bind for its command,
    * and `AutomationService.listSidekicks` for an authenticated request. Scope
