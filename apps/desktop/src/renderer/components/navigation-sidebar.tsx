@@ -26,7 +26,6 @@ import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@
 import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { createPortal } from 'react-dom';
 import { Link, matchPath, useLocation, useNavigate } from 'react-router-dom';
 
 import type { AttentionItem } from '../lib/attention-items';
@@ -51,6 +50,7 @@ import { openWorkstreamId } from '../lib/workstream-landing';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { Avatar, Button, IconButton, InlineError, Modal, RallyAvatar, TitleSkeleton, Tip } from './primitives';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
+import { RailItem } from './rail-item';
 import { RelativeTime } from './relative-time';
 import { ResizableSidebar, SidebarFooterItems, SidebarScroll } from '@rally/ui/components/resizable-sidebar';
 import { PHONE_LAYOUT_MAX_WIDTH } from '@rally/ui/lib/phone-layout';
@@ -199,7 +199,6 @@ export function NavigationSidebar({
   useEffect(() => {
     setSidebarOpen(false);
   }, [pathname, setSidebarOpen]);
-  const [accountSlot, setAccountSlot] = useState<HTMLDivElement | null>(null);
   const panel = useRef<HTMLElement>(null);
   const scroll = useRef<HTMLElement | null>(null);
   const guest = workspace.currentUser.accessClass === 'guest';
@@ -240,21 +239,17 @@ export function NavigationSidebar({
     <div className="navigation-body">
       <nav aria-label="Sections" className="navigation-rail">
         <div className="navigation-rail-top window-drag" />
-        {sections.map((candidate) => <button
+        {sections.map((candidate) => <RailItem
+          active={candidate.id === section}
           aria-current={candidate.id === section ? 'page' : undefined}
-          className={clsx('navigation-rail-button window-no-drag', candidate.id === section && 'is-active')}
+          badge={<RailBadge count={badges[candidate.id]} section={candidate.id} />}
+          icon={candidate.icon}
           key={candidate.id}
+          label={candidate.label}
           onClick={() => setSection(candidate.id)}
-          type="button"
-        >
-          <span className="navigation-rail-icon">
-            {candidate.icon}
-            <RailBadge count={badges[candidate.id]} section={candidate.id} />
-          </span>
-          <span className="navigation-rail-label">{candidate.label}</span>
-        </button>)}
+        />)}
         <div className="navigation-rail-spacer" />
-        <div className="sidebar-account-slot navigation-rail-account" ref={setAccountSlot} />
+        {accountMenu}
       </nav>
       <div className="navigation-panel">
         <header className="navigation-panel-header window-drag">
@@ -305,7 +300,6 @@ export function NavigationSidebar({
         {footerItems && <SidebarFooterItems>{footerItems}</SidebarFooterItems>}
       </div>
     </div>
-    {accountSlot && createPortal(accountMenu, accountSlot)}
     {creatingChannel && <NewChannelDialog onClose={() => setCreatingChannel(false)} />}
   </ResizableSidebar>;
 }
