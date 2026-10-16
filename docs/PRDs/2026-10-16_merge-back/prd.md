@@ -9,6 +9,11 @@
 > [Spaces](../../spaces.md), [conversation tools](../../conversation-tools.md),
 > [authorization](../../authorization.md),
 > [markdown rendering](../../markdown-rendering.md).
+>
+> Earlier explorations, kept for the record and superseded by this PRD and the
+> design file: [the first design document](explorations/first-draft-design-doc.html),
+> [the first mockup set](explorations/first-set-mockups.html), and
+> [the full 5c set](explorations/5c-full-set.html).
 
 ## Summary
 
