@@ -20,7 +20,7 @@ import type { WorkstreamMessageDeliveryMode } from '../lib/use-workstream-socket
 import { BackgroundAgentActivity } from './background-agent-activity';
 import { STOPPING_LABEL } from './agent-work-timing';
 import type { AttachmentPreview } from './attachments';
-import { ComposerInput, type ComposerModelControl } from './composer-input';
+import { ComposerInput, type ComposerMenuAction, type ComposerModelControl } from './composer-input';
 import { Avatar, Button, IconButton, Modal, RallyAvatar } from './primitives';
 
 /**
@@ -84,6 +84,8 @@ interface WorkstreamComposerProps {
   submitContent?: ReactNode;
   /** Escape with nothing open to dismiss, for a composer mode the host can leave. */
   onCancel?: () => void;
+  /** Host entries for the "+" menu, after Attach files. */
+  menuActions?: readonly ComposerMenuAction[];
   submitLabel?: string;
   autoFocus?: boolean;
   api?: RealtimeDictationApi;
@@ -174,6 +176,7 @@ export function WorkstreamComposer({
   toolsAccessory,
   submitContent,
   onCancel,
+  menuActions,
   submitLabel = 'Send message',
   autoFocus = false,
   api,
@@ -524,6 +527,7 @@ export function WorkstreamComposer({
         fileInputRef={fileInputRef}
         layout="message-capsule"
         {...(onAttach ? { onAttach } : {})}
+        {...(menuActions ? { menuActions } : {})}
         onKeyDown={(event) => {
           if (mentionNavigation.handleKeyDown(event)) return;
           if (event.key === 'Escape' && (mentionQuery !== null || visibleCommands.length > 0)) {
