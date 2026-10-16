@@ -8,8 +8,8 @@ import { escapeHtml } from "./resend";
  * appearance, and a mail client cannot report which one the reader chose. Every
  * colour is the app's own token, written inline — a mail client will strip a
  * `<style>` block — and the page declares `light only` so a client with a dark
- * mode leaves it as the app draws it. The canvas is also asked to fill the reading pane rather than
- * stop at the last line — see `digestEmailHtml`.
+ * mode leaves it as the app draws it. The canvas is also asked to fill the
+ * reading pane rather than stop at the last line — see `digestEmailHtml`.
  *
  * The body it wraps is model-authored Markdown, rendered by the shared
  * `email-markdown` renderer that every Rally email uses.
