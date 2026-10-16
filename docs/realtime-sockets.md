@@ -151,7 +151,12 @@ admission is split in two.
    Dictation consumes its `jti` and reserves a session lease in the owning
    WorkspaceDO — one serialized transaction, so two simultaneous upgrades
    cannot both pass the per-user/per-workspace concurrency caps — before
-   opening Azure.
+   opening Azure. The proxy renews that two-minute lease every 60 seconds on
+   a timer for as long as the client socket is open, whatever travels on it:
+   the desktop opens the socket while the microphone may still be being
+   granted, and a paused recording sends nothing, so a renewal that rode on
+   frames would let the next admission's sweep expire a session that is still
+   live. The timer stops on every path that releases the session.
 5. **Negotiate.** If the client offered the sentinel, the accepted 101 answers
    with it. Chromium fails a handshake whose subprotocol offer went unanswered,
    so the answer is required — and it is always the sentinel, never the ticket.
@@ -1005,6 +1010,32 @@ what that leaves exposed.
 Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
 
 ## Changelog
+
+### 2026-10-16 — The dictation lease is held by the open socket, not by its frames
+
+**What changed:** The proxy renews a dictation session's WorkspaceDO lease on
+a 60-second timer for as long as the client socket is open. Renewal used to
+ride on client frames, once per 60 seconds of them.
+
+**Why:** The desktop now opens the socket as soon as its ticket lands, which
+can be while the microphone permission prompt is still up (the
+[`conversation-surfaces.md`](conversation-surfaces.md#changelog) entry of the
+same date), and a paused recording has always sent nothing. Either can outlast
+the two-minute lease with no frame to renew it, after which the next
+admission's sweep deletes the session row; the socket keeps proxying, because
+a failed renewal is deliberately not fatal, so the recording runs outside the
+per-user and per-workspace caps. Found in review of #1259.
+
+**Considered and rejected:** Delaying admission until the input resolves,
+which gives back the overlap the client change exists for. Making a failed
+renewal close the socket, which would let a WorkspaceDO that was briefly
+unreachable end a live recording.
+
+**Consequences:** A live socket holds its lease for as long as it is open,
+whatever travels on it; the frame handler no longer touches the lease, and the
+timer is cleared on every path that releases the session.
+
+Shipped in #1259.
 
 ### 2026-10-03 — A guest's workspace socket carries no member directory
 
