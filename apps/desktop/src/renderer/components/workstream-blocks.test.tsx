@@ -2907,3 +2907,72 @@ describe('MessageBlock breakout cutoff', () => {
     expect(onStartSubstream).toHaveBeenCalledExactlyOnceWith('turn-9');
   });
 });
+
+describe('MessageBlock merge-back', () => {
+  const onMerge = vi.fn();
+
+  beforeEach(() => {
+    onMerge.mockReset();
+    desktopServicesAvailable.mockReturnValue(true);
+  });
+
+  const settledAgentTurn: Message = {
+    ...baseMessage,
+    id: 'message-agent-merge',
+    authorType: 'agent',
+    author: undefined,
+    text: 'Sequence B is ready.',
+    transcriptTurnId: 'turn-12',
+  };
+
+  it('puts Merge first in Rally’s hover row and hands it the message’s words', () => {
+    const { container } = render(
+      <MessageBlock {...actions} merge={{ label: 'Merge to thread', onMerge }} message={settledAgentTurn} onStartSubstream={vi.fn()} />,
+    );
+    const row = container.querySelector('.agent-message-actions');
+    expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
+      .toEqual(['Merge to thread', 'Copy', 'Image', 'PDF', 'New breakout']);
+    fireEvent.click(screen.getByRole('button', { name: 'Merge to thread' }));
+    expect(onMerge).toHaveBeenCalledExactlyOnceWith('Sequence B is ready.');
+  });
+
+  it('puts Merge first under a person’s own message too', () => {
+    const { container } = render(
+      <MessageBlock
+        {...actions}
+        merge={{ label: 'Merge to GTM', onMerge }}
+        message={{ ...baseMessage, transcriptTurnId: 'turn-4' }}
+        onStartSubstream={vi.fn()}
+      />,
+    );
+    const row = container.querySelector('.human-message-actions');
+    expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
+      .toEqual(['Merge to GTM', 'New breakout']);
+  });
+
+  it('offers no Merge on a message still being sent', () => {
+    render(<MessageBlock {...actions} merge={{ label: 'Merge to thread', onMerge }}
+      message={{ ...baseMessage, deliveryState: 'sending' }} />);
+    expect(screen.queryByRole('button', { name: 'Merge to thread' })).toBeNull();
+  });
+
+  it('names the Breakout a merge came from and who merged it, and opens it', () => {
+    const onOpenBreakout = vi.fn();
+    render(
+      <MessageBlock
+        {...actions}
+        message={{
+          ...baseMessage,
+          text: 'Approved **Sequence B**.',
+          mergedFrom: { breakoutId: 'breakout-b', title: 'Sequence B', actingAgent: true },
+        }}
+        onOpenBreakout={onOpenBreakout}
+      />,
+    );
+    expect(screen.getByText('merged by Rally for Adam')).toBeVisible();
+    // A merge renders as markdown, which a typed message's verbatim body does not.
+    expect(screen.getByText('Sequence B', { selector: 'strong' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Sequence B' }));
+    expect(onOpenBreakout).toHaveBeenCalledExactlyOnceWith('breakout-b');
+  });
+});
