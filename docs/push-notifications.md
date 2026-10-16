@@ -119,7 +119,7 @@ when a native notification response arrives during asynchronous app startup.
 Everything the Activity tab lists can be a push, an email or a Slack message.
 `added` and `mentioned` go through their notification intents above, whose
 processor sends each channel the person chose. `thread_started`,
-`breakout_started` and `run_finished` are read by the feed from the directory
+`breakout_started`, `run_finished` and `merged` are read by the feed from the directory
 rather than from an event ([`digests.md`](digests.md#the-activity-tab)), and
 `workspace-activity-push.ts` queues one message per chosen channel.
 
@@ -181,7 +181,7 @@ page deep when a push is read back sends nothing.
 
 ## What each person chooses
 
-Settings → Notifications → **Notify me about** holds, for each of the five
+Settings → Notifications → **Notify me about** holds, for each of the six
 kinds, the channels it goes by: `push`, `email`, and any connector surface the
 person can be reached on (`userDelivery`, such as Slack). How they are stored
 and how a save merges them is [`member-preferences.md`](member-preferences.md).
@@ -361,6 +361,29 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-10-16 — Merges push
+
+**What changed:** A `merged` Activity row pushes, and goes by email or Slack,
+under its own Settings row, **Merges** (`merges`, push by default). A breakout's
+merge is pushed when its message's event reaches WorkspaceDO; a thread's merge
+into a Channel when `mergeThreadIntoChannel` writes it. Both name the exact row
+(`ActivityPushSubject.kind: "merge"`, `itemId`), and its audience is the
+thread's, as a start's is. It reads "Maya merged Sequence B into Q3 plan" or
+"Maya merged Q3 plan into GTM" and opens the thread.
+
+**Why:** The product owner asked for merges to reach people as starts and
+finishes do.
+
+**Considered and rejected:** Matching a merge by its conversation, as a start
+is: a breakout's merge row names the breakout though it is about the thread,
+so it would never match. And folding merges into an existing preference: none
+of the five describes them, and a new kind costs one row.
+
+**Consequences:** `merges` has no legacy push switch, so an older client never
+shows or saves it, and it reads from its default until set. A Channel merge's
+row id carries its `posted_at`, so a replaced merge pushes again. iOS taps
+route `merged`; an older iPhone build opens nothing for it.
 
 ### 2026-10-16 — A browser notification click routes in place in its own Organization
 

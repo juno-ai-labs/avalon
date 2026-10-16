@@ -310,6 +310,53 @@ describe("sending an Activity row's push", () => {
   });
 });
 
+describe("a breakout merged into its thread", () => {
+  const mergeEventId = "00000000-0000-7000-8000-0000000a0e01";
+
+  /** The merge message's activity event, as the thread's conversation writes it. */
+  function mergeEvent(): ConversationEffect {
+    const messageId = "00000000-0000-7000-8000-0000000a0e02";
+    return {
+      kind: "activity_event",
+      eventId: mergeEventId,
+      eventType: "workstream_message_created",
+      subjectSequenceNumber: 5,
+      actorType: "user",
+      actorUserId: owner,
+      actorLabel: "Maya",
+      title: "Q3 plan",
+      body: "Sequence B is approved.",
+      canonicalUrl: null,
+      digestible: true,
+      occurredAt: new Date().toISOString(),
+      sourceKind: "workstream_message",
+      sourceId: messageId,
+      dedupeKey: `message:${messageId}`,
+      metadata: { substreamId: "0", attentionOrdinal: 5, mergedFrom: { breakoutId: breakout, title: "Sequence B" } },
+      targets: [],
+    } as ConversationEffect;
+  }
+
+  it("given a merge message in an Organization-wide thread, then every other member with a device is pushed it once, worded as the sidebar row", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
+    const before = await pushed();
+    await publish(asSubstreamId("0"), [mergeEvent()]);
+    await publish(asSubstreamId("0"), [{ ...common("Q3 plan"), preview: "later traffic" }]);
+
+    const merges = (await pushed()).filter((row) => !before.some((earlier) => earlier.item_id === row.item_id && earlier.user_id === row.user_id));
+    expect(merges).toEqual([{ user_id: member, item_id: `merged:${mergeEventId}` }]);
+
+    const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+    expect(await deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: member, activityItemId: `merged:${mergeEventId}` }, send)).toBe(true);
+    const calls = (send as { mock: { calls: unknown[][] } }).mock.calls;
+    const apns = JSON.parse((calls[0]![2] as PushPayloads).apns) as { aps: { alert: { title: string } }; rally: { kind: string; url: string } };
+    expect(apns.aps.alert.title).toBe("Maya merged Sequence B into Q3 plan");
+    expect(apns.rally.kind).toBe("merged");
+    expect(apns.rally.url).toContain(`/workstreams/${thread}`);
+    expect(apns.rally.url).not.toContain(breakout);
+  });
+});
+
 describe("how each person chose to hear about each kind", () => {
   const choose = (userId: UserId, notify: Partial<NotificationChannels>) =>
     organization().saveMemberPreferences({ workspaceId, userId, preferences: { notify } });

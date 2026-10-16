@@ -1338,6 +1338,7 @@ const ACTIVITY_VERBS: Record<ActivityItem['kind'], string> = {
   thread_started: 'started',
   breakout_started: 'started a breakout on',
   run_finished: 'finished',
+  merged: 'merged',
 };
 
 /** The Activity tab's chips; see `docs/digests.md#the-activity-tab`. */
@@ -1432,8 +1433,12 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
   const fetched = useMemo(() => (feed.data?.pages ?? []).flatMap((page) => page.items), [feed.data]);
   const items = chip === 'unread' ? fetched.filter((item) => item.unread) : fetched;
   const href = (item: ActivityItem): string => {
+    // A merge opens where it landed: the Channel, or the thread a breakout
+    // merged into.
+    if (item.kind === 'merged' && item.mergedInto) return channelRoute(item.mergedInto.channelId);
     const parent = live.data?.find((candidate) => candidate.id === item.threadId);
-    return threadRoute(item.threadId, homeChannelId(parent?.spaceIds ?? item.channelIds), item.breakout?.substreamId);
+    return threadRoute(item.threadId, homeChannelId(parent?.spaceIds ?? item.channelIds),
+      item.kind === 'merged' ? undefined : item.breakout?.substreamId);
   };
   // New activity pushes the rows under it down, and a request arriving or
   // answered slides in or out, rather than the list jumping.
@@ -1504,7 +1509,10 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
           <span className="activity-row-body">
             <span className="activity-row-text">
               <strong>{name}</strong> {ACTIVITY_VERBS[item.kind]}{' '}
-              <strong>{item.breakout && item.kind !== 'breakout_started' ? item.breakout.title : item.threadTitle}</strong>
+              {item.kind === 'merged' ? <>
+                <strong>{item.breakout ? item.breakout.title : item.threadTitle}</strong> into{' '}
+                <strong>{item.breakout ? item.threadTitle : item.mergedInto?.name ?? 'a channel'}</strong>
+              </> : <strong>{item.breakout && item.kind !== 'breakout_started' ? item.breakout.title : item.threadTitle}</strong>}
             </span>
             {item.kind === 'breakout_started' && item.breakout && <span className="breakout-chip activity-chip">
               <IconCornerDownRight aria-hidden="true" className="breakout-chip-icon" size={13} stroke={1.9} />

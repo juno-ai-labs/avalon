@@ -81,6 +81,9 @@ export interface ActivityWaterline {
  *   before (an Organization-wide thread read before anyone added you, or an
  *   earlier membership) does not count.
  * - **breakout_started**: opening the breakout.
+ * - **merged**: reading the merge, or failing that opening where it landed:
+ *   the thread for a breakout's merge, the Channel for a thread's (whose
+ *   waterline the merge's message took an ordinal on).
  * - **thread_started**: opening the thread, or reading a Channel it was
  *   placed in past that placement.
  * - **run_finished**: opening the conversation after the run finished, which
@@ -99,6 +102,7 @@ export const ACTIVITY_CLEAR_RULES: Readonly<Record<ActivityItemKind, ActivityCle
     ],
   },
   run_finished: { read: "conversation", through: "opened", since: "occurred" },
+  merged: { read: "conversation", through: ["message", "opened"] },
 };
 
 /** Whether a rule reads a role anywhere in it: what decides whether that role is worth binding. */
