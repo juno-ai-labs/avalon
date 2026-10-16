@@ -1066,6 +1066,19 @@ hiding the Notifications section.
 
 ## Changelog
 
+### 2026-10-16 — The digest kill switch and its fail-open resolver are removed
+
+**What changed:** `digest-flags.ts` and the `digestsEnabled` client field are
+gone, so two modules read `env.FLAGS`, and every client feature flag fails
+closed with no exception.
+
+**Why:** The flag guarded the agent-run digest that the 2026-10-15 rewrite
+replaced, and its live default had drifted to `off`, silently hiding the Daily
+digest settings and stopping delivery. See [`digests.md`](digests.md).
+
+**Consequences:** A future flag that must fail open belongs in a module of its
+own, as this one did; do not revive `digests-enabled` for a new purpose.
+
 ### 2026-10-05 — Naming defaults to GPT-5.6 Terra
 
 **What changed:** `OPENROUTER_CLASSIFIER_MODEL`, the default route for

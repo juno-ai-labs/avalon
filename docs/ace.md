@@ -391,6 +391,21 @@ Shared DB runtime sources and package exports are deployment inputs alongside
 contracts. Grant-only fixes therefore rebuild Ace; DB migration/test-only changes
 do not publish a new Ace bundle.
 
+### 2026-10-16 — Ace stops managing `digests-enabled`
+
+**What changed:** `digests-enabled` left `MANAGED_FLAGS`, and the deploy
+retires it instead of ensuring it. Every managed product flag now defaults the
+way its catalog row says, with no digest exception.
+
+**Why:** It was the kill switch for the agent-run digest the 2026-10-15
+rewrite replaced, and its live default had drifted to `off`, hiding the Daily
+digest settings and stopping delivery for everyone. See
+[`digests.md`](digests.md) for the full entry.
+
+**Consequences:** A flag removed from the catalog must also move to a
+`retireFlag` call in the same change, or the key stays in Flagship where a
+stale value can still be served.
+
 ### 2026-10-02 — Edit reasoning with the model route
 
 The Models editor reads and saves optional reasoning effort alongside model
