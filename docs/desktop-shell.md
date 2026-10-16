@@ -52,9 +52,9 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   its name, and the account menu at the bottom, labelled Settings. Every
   entry, the account menu's trigger included, is one `RailItem`: a 34px tile
   around a 22px shape, so they share size, hover and the active tint, which a
-  menu's trigger also takes while its menu is open. The outlines are what each list holds: a Channel is a squircle
-  and a Thread is a circle, as their rows draw them, and Activity, which holds
-  neither, is a triangle. Pinned holds every kind that can be pinned, so it
+  menu's trigger also takes while its menu is open. The outlines are what each
+  list holds: a Channel is a squircle and a Thread is a circle, as their rows
+  draw them, and Activity, which holds neither, is a triangle. Pinned holds every kind that can be pinned, so it
   takes the Tabler pin a row's pin button draws, at the outlines' 1.8 stroke.
   The choice is a device preference (`rally.sidebar-section`). Every section
   carries a red count (`RailBadge`; nothing at zero, `99+` past two digits). **Threads**: every conversation waiting on this
@@ -472,8 +472,7 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 
 **What changed:** The account menu's trigger in the section switcher is a
 `RailItem`, the same component the four sections draw, labelled Settings at
-every width. The other-Organization attention dot and a support session's
-staff avatar sit on the tile's corners.
+every width. A support session's staff avatar sits on the tile's corner.
 
 **Why:** The trigger was the footer's `AccountTrigger` (avatar, name, chevron)
 squeezed into the rail by CSS that hid its copy and resized its avatar, so it

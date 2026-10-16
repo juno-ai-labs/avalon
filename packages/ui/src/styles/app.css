@@ -8476,7 +8476,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 }
 .navigation-rail-button:hover .navigation-rail-icon { background: var(--av-sys-color-state-hover); }
 .navigation-rail-button.is-active { font-weight: 600; }
-.navigation-rail-button.is-active .navigation-rail-icon { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
+/* A menu's trigger reads as selected while its menu is open. */
+.navigation-rail-button.is-active .navigation-rail-icon,
+.navigation-rail-button[data-state="open"] .navigation-rail-icon { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
 .navigation-rail-badge {
   background: var(--av-sys-color-workstream-news);
   border: 2px solid var(--av-cmp-sidebar-background-solid);
@@ -8494,19 +8496,6 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 }
 .navigation-rail-spacer { flex: 1; }
 .navigation-rail-icon > .avatar { font-size: 10px; height: 22px; width: 22px; }
-/* A menu's trigger reads as selected while its menu is open. */
-.navigation-rail-button[data-state="open"] .navigation-rail-icon { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
-/* Unread activity in another Organization: a dot where a count would sit. */
-.navigation-rail-dot {
-  background: var(--av-sys-color-workstream-unread);
-  border: 2px solid var(--av-cmp-sidebar-background-solid);
-  border-radius: 999px;
-  height: 10px;
-  position: absolute;
-  right: -3px;
-  top: -3px;
-  width: 10px;
-}
 /* A support session: the staff member acting, over the corner of the person acted as. */
 .navigation-rail-impersonator { bottom: -4px; display: flex; position: absolute; right: -4px; }
 .navigation-rail-impersonator .avatar { border: 2px solid var(--av-cmp-sidebar-background-solid); height: 16px; width: 16px; }
