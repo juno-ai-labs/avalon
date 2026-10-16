@@ -95,7 +95,8 @@ export type ComposerModelControl =
 
 /**
  * A host's own entry in the message capsule's "+" menu, listed after Attach
- * files. The composer draws it and calls `onSelect`; what it does belongs to
+ * files when the host takes attachments. The menu shows whenever it has an
+ * entry, so a host without attachments can still offer these. The composer draws it and calls `onSelect`; what it does belongs to
  * the host, so a surface can offer an action that only makes sense there.
  */
 export interface ComposerMenuAction {
@@ -738,7 +739,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 <AtSign size={15} />
               </IconButton>
             )}
-            {!onAttach ? null : messageCapsule ? (
+            {messageCapsule ? (onAttach || menuActions.length > 0) && (
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
                   <IconButton className="composer-action-trigger" disabled={submitting} label="Composer actions">
@@ -753,20 +754,30 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                     side="top"
                     sideOffset={8}
                   >
-                    <DropdownMenu.Item
-                      className="menu-item composer-action-menu-item"
-                      onSelect={() => fileInputRef.current?.click()}
-                    >
-                      <Paperclip aria-hidden="true" />
-                      <span>Attach files</span>
-                    </DropdownMenu.Item>
+                    {onAttach && (
+                      <DropdownMenu.Item
+                        className="menu-item composer-action-menu-item"
+                        onSelect={() => fileInputRef.current?.click()}
+                      >
+                        <Paperclip aria-hidden="true" />
+                        <span>Attach files</span>
+                      </DropdownMenu.Item>
+                    )}
                     {menuActions.map((action) => {
+                      const disabled = action.disabledReason !== undefined;
+                      // Disabled by hand rather than with Radix's `disabled`, which
+                      // drops the item from arrow-key focus and so leaves a keyboard
+                      // never reaching the tooltip that says why.
                       const item = (
                         <DropdownMenu.Item
+                          aria-disabled={disabled || undefined}
                           className="menu-item composer-action-menu-item"
-                          disabled={action.disabledReason !== undefined}
+                          data-disabled={disabled ? '' : undefined}
                           key={action.label}
-                          onSelect={action.onSelect}
+                          onSelect={(event) => {
+                            if (disabled) event.preventDefault();
+                            else action.onSelect();
+                          }}
                         >
                           {action.icon}
                           <span>{action.label}</span>
@@ -779,7 +790,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
-            ) : (
+            ) : onAttach && (
               <IconButton disabled={submitting} label="Attach a file" onClick={() => fileInputRef.current?.click()}>
                 {uploading ? <LoaderCircle className="spin" size={15} /> : <Plus size={16} />}
               </IconButton>
