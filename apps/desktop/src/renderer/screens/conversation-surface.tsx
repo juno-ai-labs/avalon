@@ -108,6 +108,7 @@ import {
 import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { WORKSTREAMS_QUERY_KEY, useCachedWorkstreamPlacements } from '../lib/use-workstreams-query';
+import { useMergeChannelOrder } from '../lib/use-merge-channel-order';
 import { evictCachedWorkstream, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import {
   SubstreamLaunchSurface,
@@ -1135,6 +1136,8 @@ export function mergeTargetFor(input: {
   thread: Pick<WorkstreamDetail, 'title' | 'scope' | 'spaceIds'> | null | undefined;
   /** The thread's placements from the directory, which wins over the detail's when present. */
   placements?: readonly string[] | undefined;
+  /** The server's order, earliest placement first; its first is the default. Absent until read. */
+  order?: readonly string[] | undefined;
   spaces: readonly Pick<SpaceSummary, 'id' | 'name' | 'scope' | 'reach'>[];
 }): MergeTarget | null {
   if (input.parentKind !== 'workstream' || !input.thread) return null;
@@ -1149,6 +1152,11 @@ export function mergeTargetFor(input: {
       ? [{ id: space.id as string, name: space.name, scope: space.scope }]
       : [];
   });
+  if (input.order) {
+    // A Channel the server has not listed yet keeps its place after the ones it has.
+    const rank = (id: string): number => { const at = input.order!.indexOf(id); return at < 0 ? input.order!.length : at; };
+    channels.sort((a, b) => rank(a.id) - rank(b.id));
+  }
   return channels.length > 0 ? { kind: 'channel', channels } : null;
 }
 
@@ -1642,6 +1650,9 @@ export function ConversationSurface({
     orderedTranscript.data,
   );
   const routedDetail = payloadBelongsToRoute ? workstream.data : undefined;
+  // Only an Organization-wide thread's Main merges into a Channel; nothing else asks.
+  const mergeChannelOrder = useMergeChannelOrder(api, id,
+    parentKind === 'workstream' && substreamId === '0' && !guest && routedDetail?.scope === 'workspace');
   const feedSource = useQuery<WorkstreamFeedSource | null>({
     queryKey: workstreamFeedSourceQueryKey(id, substreamId),
     queryFn: async () => null,
@@ -3070,6 +3081,7 @@ export function ConversationSurface({
     guest,
     thread: substreamId === '0' ? displayedDetail : workstreamContext?.id === id ? workstreamContext : null,
     placements: threadPlacements,
+    order: mergeChannelOrder,
     spaces: activeSpaces?.items ?? [],
   });
   const mergeChannel = merge?.kind === 'channel'

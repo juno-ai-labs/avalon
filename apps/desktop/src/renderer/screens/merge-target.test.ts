@@ -33,6 +33,18 @@ describe('where a conversation merges', () => {
     })).toEqual({ kind: 'channel', channels: [{ id: BOARD, name: 'Board', scope: 'workspace' }] });
   });
 
+  it('leads with the server’s default, earliest placement first, once it has read it', () => {
+    const target = mergeTargetFor({
+      parentKind: 'workstream', substreamId: '0', guest: false, thread, order: [BOARD, GTM],
+      spaces: [space(GTM, 'GTM', 'organization'), space(BOARD, 'Board', 'participant')],
+    });
+    expect(target).toEqual({ kind: 'channel', channels: [
+      { id: BOARD, name: 'Board', scope: 'workspace' },
+      { id: GTM, name: 'GTM', scope: 'workspace' },
+    ] });
+    expect(mergeLabel(target!)).toBe('Merge to Board');
+  });
+
   it('offers nothing when every Channel is read-only to the reader, and a Breakout its Thread', () => {
     expect(mergeTargetFor({
       parentKind: 'workstream', substreamId: '0', guest: false, thread,

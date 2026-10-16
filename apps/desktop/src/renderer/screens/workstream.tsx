@@ -33,6 +33,7 @@ import { Button, InlineError, Modal, TitleSkeleton } from '../components/primiti
 import { SessionImportUpdateDialog, importedSourceUpdatable } from '../components/session-import-update-dialog';
 
 import { useCachedWorkstreamAppearance, useCachedWorkstreamSummary } from '../lib/use-workstreams-query';
+import { useMergeChannelOrder } from '../lib/use-merge-channel-order';
 import { launchedSubstreamDetail, optimisticOpeningTranscript } from '../lib/launched-conversation';
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import { holdCachedWorkstreamArchive, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
@@ -730,11 +731,13 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     selectSubstream(substreamId);
   };
 
+  // The same read the thread's pane makes, so the menu names the same default.
+  const mergeChannelOrder = useMergeChannelOrder(api, id, !guest && parent.data?.scope === 'workspace');
   // The title menu's Merge opens the composer's merge mode in that pane.
   const [mergeRequest, setMergeRequest] = useState<{ substreamId: string; nonce: number } | null>(null);
   const threadMerge = mergeTargetFor({
     parentKind: 'workstream', substreamId: '0', guest, thread: parent.data, placements: row?.spaceIds,
-    spaces: activeSpaces?.items ?? [],
+    order: mergeChannelOrder, spaces: activeSpaces?.items ?? [],
   });
   const mainActions = (conversationScoped ? mainVisible : parent.data) ? {
     merge: threadMerge ? {

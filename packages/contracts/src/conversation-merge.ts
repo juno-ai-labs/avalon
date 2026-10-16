@@ -67,6 +67,16 @@ export const ConversationMergeChannelSchema = z.strictObject({
 });
 export type ConversationMergeChannel = z.infer<typeof ConversationMergeChannelSchema>;
 
+/**
+ * `GET /conversations/:parentId/merge-channels`: the Channels this thread can
+ * merge into for this person, earliest placement first, so the first is the
+ * default the server would choose.
+ */
+export const ConversationMergeChannelsSchema = z.strictObject({
+  channels: z.array(ConversationMergeChannelSchema),
+});
+export type ConversationMergeChannels = z.infer<typeof ConversationMergeChannelsSchema>;
+
 /** Where a merge landed. */
 export const ConversationMergeTargetSchema = z.strictObject({
   kind: z.enum(["thread", "channel"]),
