@@ -23,7 +23,7 @@ holds it.
 | `apps/api/src/routes/conversations.ts` | `POST /conversations/:parentId/merge`, and `GET …/merge-channels` (the Channels this person can merge into, earliest placement first). |
 | `apps/api/src/services/conversation-merge-service.ts` | The one admission and write order both the route and the tool use: check, attach, post. `ConversationMergeRefusal` carries the code. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | `attachResources` (all or none) and the `merge` input on `createMessageWithAuthority`, which starts no run. |
-| `apps/api/src/durable-objects/workspace-space-storage.ts` | `channelMergeTarget`, `mergeThreadIntoChannel`, `postMessage` with replace, news and operation id, `stampChannelNews`, `removeMessage`, `breakoutMergeTitles`. Migration 108 (`SPACE_MESSAGE_MERGES_MIGRATION`). |
+| `apps/api/src/durable-objects/workspace-space-storage.ts` | `channelMergeTarget`, `mergeThreadIntoChannel`, `postMessage` with replace, news and operation id, `stampChannelNews`, `removeMessage`, `breakoutMergeTitles`. Migration 109 (`SPACE_MESSAGE_MERGES_MIGRATION`). |
 | `apps/api/src/durable-objects/workspace-do.ts` | The RPCs: `channelMergeTarget`, `mergeThreadIntoChannel`, `removeChannelMessage`, `breakoutMergeTitles`. |
 | `apps/api/src/routes/spaces.ts` | The feed's contract-7 stripping, and `DELETE /spaces/:id/messages/:messageId` (Remove). |
 | `apps/api/src/services/conversation-tools.ts` | `conversation_merge`; see [`conversation-tools.md`](conversation-tools.md). |
@@ -245,15 +245,15 @@ admission's own insert flag. The body's limit is the send path's
   atomic embeds, embeds cited by alias and by footnote, a foreign Breakout. Resources are seeded in the WorkspaceDO's own `resources` and
   `connector_connections`, which is the runtime database the attach check reads.
 - `apps/api/test-workers/space-routes.test.ts`: contract 7 versus 6 on the feed.
-- `apps/api/test-workers/space-message-merges-migration.test.ts`: migration 108
-  over a populated 107.
+- `apps/api/test-workers/space-message-merges-migration.test.ts`: migration 109
+  over a populated 108.
 - `apps/api/test/conversation-tools.test.ts` (Node): the tool.
 - Renderer: `workstream-blocks.test.tsx` "MessageBlock merge-back",
   `screens/channel.test.tsx` (the merge card), `title-pill-menu.test.tsx`.
 
 ## Data model
 
-WorkspaceDO migration 108 adds `source_workstream_id`, `attention_ordinal`,
+WorkspaceDO migration 109 adds `source_workstream_id`, `attention_ordinal`,
 `embeds_json` and `merge_operation_id` to `space_messages`, and
 `space_message_operations`, one receipt per operation that wrote a message; see
 [`spaces.md`](spaces.md#data-model). A Thread merge stores nothing new: its tags

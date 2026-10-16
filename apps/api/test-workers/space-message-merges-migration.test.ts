@@ -1,7 +1,7 @@
 /**
- * WorkspaceDO migration 108 (`space_messages` gains a source thread, an
+ * WorkspaceDO migration 109 (`space_messages` gains a source thread, an
  * attention ordinal, embeds and an operation id), upgraded the way a deployed
- * Organization is: populated at 107 and committed in its own event, then woken
+ * Organization is: populated at 108 and committed in its own event, then woken
  * with every migration. A message posted before it stays as it was and is not
  * news, so nobody's Channel turns unread on deploy.
  */
@@ -15,13 +15,13 @@ import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace
 const SPACE = "00000000-0000-7000-8000-0000000108a1";
 const MESSAGE = "00000000-0000-7000-8000-0000000108a2";
 
-describe("migration 108", () => {
-  it("upgrades a populated Organization at 107, keeping each Channel message and taking none of them as news", async () => {
-    const stub = env.MIGRATION_PROBE_DO!.getByName("space-message-merges-v107");
+describe("migration 109", () => {
+  it("upgrades a populated Organization at 108, keeping each Channel message and taking none of them as news", async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName("space-message-merges-v108");
     await stub.ping();
     await runInDurableObject(stub, (_instance, state) => {
-      const before = WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 107);
-      expect(before.at(-1)?.version).toBe(107);
+      const before = WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 108);
+      expect(before.at(-1)?.version).toBe(108);
       applyDurableObjectSqliteMigrations({
         storage: state.storage, migrations: before, component: "workspace_do", workerVersionId: "before-merges", now: 1,
       });
