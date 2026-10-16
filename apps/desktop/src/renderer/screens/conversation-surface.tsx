@@ -88,6 +88,7 @@ import { resolveFeedOpenSource, useWorkstreamFeedOpenTelemetry } from '../lib/us
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { ActivityPresence, InferenceDelayNotice, JumpToLatestButton } from '../components/conversation-follow';
+import { openRailAtEvenSplit } from '../lib/rail-split';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   orderedTranscriptQueryKey,
@@ -1300,8 +1301,9 @@ export function ConversationSurface({
     // item is the point: the expanded view of the old one gives way to it.
     setExpanded(null);
     setPanel(next);
-    openOwnRail('context');
-  }, [openOwnRail]);
+    // Every attachment and artifact opens at an even split with the conversation.
+    openRailAtEvenSplit(railScopeKey, () => openOwnRail('context'));
+  }, [openOwnRail, railScopeKey]);
   const resourcePanel = panel?.kind === 'resource' ? panel : null;
   const openAttachment = useCallback((preview: AttachmentPreview): void => {
     openPanel({ kind: 'attachment', preview });

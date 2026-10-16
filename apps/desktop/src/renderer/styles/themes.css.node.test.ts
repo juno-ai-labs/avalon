@@ -133,6 +133,9 @@ describe('token references', () => {
     // a theme's palette. It is stated once in `app.css` so both sidebars spend
     // the same figure.
     '--sidebar-collapse-motion',
+    // How wide every draggable edge is to the pointer: the sidebar's, the right
+    // panel's and the split divider's. Shell geometry, the same in every theme.
+    '--resize-hit-size',
     // The navigation's own two: the interval its contents spend travelling
     // between its layouts, which is the collapse motion unless a drag has
     // turned it off, and the number that travels over it so the component

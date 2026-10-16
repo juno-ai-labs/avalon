@@ -320,6 +320,9 @@ with its actions, an attachment, a citation's file, or a prior version. None of
 these opens as a modal. The panel's header is a pane header: the item's title
 pill, its actions in the pill's menu, and the round close button. At phone
 width (640px and under) the panel takes the whole width, with no resize edge.
+Above it, an attachment or artifact opens the panel at an even split with the
+conversation, and a browser tab splits its window in half;
+[`desktop-layout.md`](desktop-layout.md) owns the width and its resize edge.
 `ConversationSurface` scopes the panel to the
 conversation that opened it: `railScope` is the parent id for Main and
 `parentId:substreamId` for a Breakout, with `#launch` for the launch surface. A

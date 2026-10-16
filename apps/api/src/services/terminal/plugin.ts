@@ -286,7 +286,10 @@ export async function createAvalonTerminalPlugin(
     undefined,
     instructions,
   );
-  const executors = createTerminalToolExecutors(runtime);
+  const executors = createTerminalToolExecutors(runtime, {
+    images: env.IMAGES,
+    documentProcessor: env.DOCUMENT_PROCESSOR,
+  });
   const observedExecutors = Object.fromEntries(TERMINAL_TOOL_NAMES.map((name) => [
     name,
     async (toolInput: unknown, context: Parameters<TerminalToolExecutors[typeof name]>[1]) => {

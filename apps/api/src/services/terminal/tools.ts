@@ -3,6 +3,12 @@ import type { AttachmentKind } from "@rally/contracts";
 import type { z } from "zod";
 
 import { sha256Hex } from "../../lib/crypto";
+import {
+  modelImageDataUri,
+  normalizeModelImageBytes,
+  type AttachmentModelContentOptions,
+} from "../attachment-model-content";
+import { describeGifModelMetadata } from "../gif-metadata";
 
 import {
   TERMINAL_OUTPUT_ROOT,
@@ -16,6 +22,7 @@ const MAX_FILE_BYTES = 10 * 1_048_576;
 const MAX_INLINE_OUTPUT_BYTES = 128 * 1_024;
 
 type ReadFileInput = z.infer<typeof TerminalArgumentSchemas.read_file>;
+type ViewImageInput = z.infer<typeof TerminalArgumentSchemas.view_image>;
 type EditFileInput = z.infer<typeof TerminalArgumentSchemas.edit_file>;
 type WriteFileInput = z.infer<typeof TerminalArgumentSchemas.write_file>;
 type ApplyPatchInput = z.infer<typeof TerminalArgumentSchemas.apply_patch>;
@@ -337,7 +344,7 @@ function decodeText(bytes: Uint8Array, filePath: string): string {
   } catch {
     throw new TerminalToolError(
       "not_text_file",
-      "This is not a regular UTF-8 text file. Use `run_command` with `file` or `ls -l` for metadata, or use resource tools for binary bytes.",
+      "This is not a regular UTF-8 text file. Use `run_command` with `file` or `ls -l` for metadata, or use resource tools for binary bytes. To look at an image, use `view_image`.",
       { reason: `Use run_command to inspect ${filePath} without reading binary bytes into the model.` },
     );
   }
@@ -419,7 +426,21 @@ function summarizeCommand(input: RunCommandInput, output: TerminalCommandOutput)
   return `${output.state === "completed" ? "Completed" : "Finished"} ${label}`;
 }
 
-export function createTerminalToolExecutors(runtime: TerminalRuntime): TerminalToolExecutors {
+const VIEW_IMAGE_REFUSALS = {
+  not_an_image: "The file is not a PNG, JPEG, GIF, WebP, TIFF, or HEIF image. Use run_command with `file` to check what it is.",
+  image_too_large: "The image is too large to show. Take a smaller screenshot or resize it with a command, then view that file.",
+  image_not_convertible: "The image could not be converted for viewing. Save it as a PNG no larger than 2048 pixels on its longest side and view that file.",
+} as const;
+
+/**
+ * `images` is the region's bindings for scaling an image to what a model
+ * accepts. Required so the plugin cannot drop them: without Images, a
+ * screenshot wider than the model's edge is refused rather than scaled.
+ */
+export function createTerminalToolExecutors(
+  runtime: TerminalRuntime,
+  images: Pick<AttachmentModelContentOptions, "images" | "documentProcessor">,
+): TerminalToolExecutors {
   return {
     async read_file(rawInput, context): Promise<HarnessToolResult> {
       const input: ReadFileInput = TerminalArgumentSchemas.read_file.parse(rawInput);
@@ -440,6 +461,34 @@ export function createTerminalToolExecutors(runtime: TerminalRuntime): TerminalT
           ...page,
         },
         summary: `Read ${filePath} lines ${page.startLine}–${page.endLine}`,
+      };
+    },
+    async view_image(rawInput, context): Promise<HarnessToolResult> {
+      const input: ViewImageInput = TerminalArgumentSchemas.view_image.parse(rawInput);
+      const filePath = safeRelativePath(input.filePath, "filePath");
+      const bytes = await runtime.readFile(context, filePath);
+      if (!bytes) {
+        throw new TerminalToolError(
+          "not_found",
+          "The requested file was not found. Use `run_command` with `pwd` and `ls -la` or `find` to inspect available paths before trying another file.",
+          { reason: "Inspect the terminal workspace root before choosing another path." },
+        );
+      }
+      const delivered = await normalizeModelImageBytes(bytes, images);
+      if (!delivered.ok) {
+        throw new TerminalToolError(delivered.reason, VIEW_IMAGE_REFUSALS[delivered.reason], { filePath });
+      }
+      const { image } = delivered;
+      return {
+        // `sentAs` is what the model received, which Images re-encodes, not
+        // the file's own format.
+        output: { filePath, sizeBytes: bytes.byteLength, sentAs: image.mimeType },
+        summary: `Viewed ${filePath}`,
+        contentParts: [
+          // A GIF arrives as a storyboard of frames; say so, as an attachment does.
+          ...(image.metadata ? [{ type: "text" as const, text: describeGifModelMetadata(filePath, image.metadata) }] : []),
+          { type: "image_url", image_url: { url: modelImageDataUri(image.bytes, image.mimeType), detail: "auto" } },
+        ],
       };
     },
     async edit_file(rawInput, context): Promise<HarnessToolResult> {
