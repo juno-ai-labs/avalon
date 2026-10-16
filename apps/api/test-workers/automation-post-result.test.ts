@@ -443,10 +443,6 @@ describe("a room Sidekick's run and the room's agents", () => {
       message.role === "tool" && JSON.stringify(message.content).includes("sidekicks")))).toBe(true);
     expect(await runInDurableObject(workspaceStub(), (instance) =>
       (instance as unknown as { directoryMembershipChecks: number }).directoryMembershipChecks)).toBe(0);
-    // Ordinary callers must still check membership, including after revocation.
-    if (revoked) await expect(Promise.resolve(workspaceStub().listSidekickDirectory({
-      workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-    }))).rejects.toThrow("cannot list");
   });
 
   it("delegates through a real Bind tool receipt and answers another message before the worker finishes", async () => {

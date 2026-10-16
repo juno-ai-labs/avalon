@@ -2042,7 +2042,7 @@ function DraftProposedCard({
               onClick={() => onAccept?.(detail.automationId)}
               type="button"
             >
-              {accepting ? 'Creating…' : 'Create this automation'}
+              {accepting ? 'Creating…' : 'Create this Sidekick'}
             </button>
           ) : (
             <p className="system-message-text"><small>Still being drafted.</small></p>
@@ -2052,7 +2052,7 @@ function DraftProposedCard({
               router link: the app routes by hash, and the card renders on
               surfaces with no router of their own. */}
           <a className="system-message-toggle automation-draft-link" href={`#/automations/${detail.automationId}`}>
-            Open automation
+            Open Sidekick
           </a>
         </div>
       </div>
@@ -2830,7 +2830,7 @@ export function MessageBlock({
   // delivery. A row whose structured content did not parse keeps the generic
   // label rather than showing a blank author.
   const automationName = message.automationActivation?.automationName;
-  const automationAuthor = automationName ?? 'Automation';
+  const automationAuthor = automationName ?? 'Sidekick';
   if (!automation && (message.authorType === 'system' || message.messageType === 'system')) {
     return <SystemMessageBlock disclosure={rowDisclosure} message={message} />;
   }
