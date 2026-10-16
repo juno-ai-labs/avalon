@@ -26,6 +26,12 @@ test("finds the class inside a template literal or a conditional", () => {
   assert.equal(lint("<span className={wide && 'settings-toggle'} />;").length, 1);
 });
 
+test("reads a template's classes across interpolations, not its fragments", () => {
+  assert.deepEqual(lint("<span className={`settings-toggle${'-hint'}`} />;"), []);
+  assert.deepEqual(lint("<span className={`${hint ? 'settings-toggle' : 'watch-toggle'}-hint`} />;"), []);
+  assert.equal(lint("<span className={`settings-toggle ${extra}`} />;").length, 1);
+});
+
 test("finds the class passed through clsx, as a string, an array item, or an object key", () => {
   assert.equal(lint("<span className={clsx('row', on && 'settings-toggle')} />;").length, 1);
   assert.equal(lint("<span className={clsx(['settings-toggle'])} />;").length, 1);
