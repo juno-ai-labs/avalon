@@ -17,7 +17,7 @@ export function deviceTimezone(): string | null {
 /**
  * Tells the server which zone this device is in, at launch and whenever the
  * window regains focus, so a person who follows their device (Settings →
- * Account → Default timezone → Automatic) has digests and automations in the
+ * Account → Set timezone automatically) has digests and automations in the
  * day they are actually in. The server ignores it for a fixed zone.
  *
  * Sent only when the zone differs from the last one this device sent for this

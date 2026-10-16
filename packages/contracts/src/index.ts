@@ -1871,7 +1871,7 @@ export const RefreshTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{20,500}$/u);
 export const RefreshRequestSchema = z.object({ refreshToken: RefreshTokenSchema });
 /**
  * A person choosing their timezone in Settings. `followDevice` true means
- * "Automatic": the account follows whichever device reports its zone, and
+ * Set timezone automatically: the account follows whichever device reports its zone, and
  * `timezone` is this device's zone. Absent or false fixes it to `timezone`.
  */
 export const UpdateUserTimezoneRequestSchema = z.object({
