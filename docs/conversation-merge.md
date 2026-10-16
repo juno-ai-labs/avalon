@@ -113,8 +113,8 @@ person's own words go out on the trailing side. It is drawn as the design's
   own tint.
 - **A quote line,** in a Channel only, of the thread's first line. It links
   to the thread's card in the same feed and scrolls to it; when that card is
-  on a page not yet loaded, the quote is plain text rather than a link that
-  has to fetch pages first.
+  on a page not yet loaded, it opens the thread instead of fetching pages
+  until the card turns up.
 - **The body,** as markdown with its embeds.
 - **The host's actions** under it: the hover row in a Thread, Remove in a
   Channel.
