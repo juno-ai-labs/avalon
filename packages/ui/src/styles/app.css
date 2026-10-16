@@ -389,7 +389,9 @@ pre {
   color: var(--av-sys-color-text-subtle);
   display: inline-flex;
   justify-content: center;
-  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+  /* `box-shadow` is here for the one button that draws a ring, the dictation
+     level; it costs nothing on the buttons that never get a shadow. */
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 100ms linear;
 }
 
 .button {
@@ -4648,7 +4650,20 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    it belongs here rather than in each composer shape: the shapes below own
    what the button looks like at rest, this rule owns what it looks like while
    it is recording, and neither restates the other. */
-.microphone-control.is-listening .dictation-button { background: var(--av-sys-color-danger-base); color: var(--av-sys-color-danger-on); }
+.microphone-control.is-listening .dictation-button {
+  background: var(--av-sys-color-danger-base);
+  color: var(--av-sys-color-danger-on);
+  /* The level ring: `--dictation-level` is 0 to 1 from the capture worklet's
+     RMS, written onto `.microphone-control` by the composer ten times a
+     second; `.icon-button`'s transition carries it between writes. */
+  box-shadow: 0 0 0 calc(var(--dictation-level, 0) * 6px) color-mix(in srgb, var(--av-sys-color-danger-base) 35%, transparent);
+}
+/* Arming: the press is answered at once, before the microphone has opened.
+   The wash and the danger glyph say a recording is coming without claiming
+   it has begun; the full fill above stays reserved for capture that is
+   running, so no word spoken into this state is one the person was told was
+   heard. */
+.microphone-control.is-arming .dictation-button { background: var(--av-sys-color-danger-wash); color: var(--av-sys-color-danger-base); }
 .microphone-menu { max-width: min(430px, calc(100vw - 24px)); min-width: 300px; }
 .microphone-menu .menu-label { color: var(--av-sys-color-text-muted); font-size: 11px; }
 .microphone-menu-item { justify-content: space-between; min-height: 34px; }
@@ -6622,9 +6637,10 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 }
 
 /* Geometry is unconditional; the resting paint below is not. Both capsule
-   fills exclude `.is-listening` so the recording fill wins by being the only
-   rule painting the button, rather than by out-specifying two selectors that
-   describe a shape and have no business knowing about a state. */
+   fills exclude `.is-listening` and `.is-arming` so the recording and arming
+   fills win by being the only rule painting the button, rather than by
+   out-specifying two selectors that describe a shape and have no business
+   knowing about a state. */
 .has-message-capsule .is-message-capsule :is(.composer-send, .microphone-control .dictation-button) {
   border-radius: 50%;
   height: 28px;
@@ -6647,7 +6663,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    had selected it. Recording speaks with the danger token; at rest the button
    is chrome, in both appearances — the tokens resolve per theme, so there is
    no dark rule restating this one. */
-.has-message-capsule .is-message-capsule .microphone-control:not(.is-listening) .dictation-button {
+.has-message-capsule .is-message-capsule .microphone-control:not(.is-listening):not(.is-arming) .dictation-button {
   background: var(--av-cmp-control-background-quiet);
   color: var(--av-sys-color-text-muted);
 }

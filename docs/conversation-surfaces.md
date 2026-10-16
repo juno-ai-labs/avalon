@@ -602,11 +602,58 @@ owns the seed, the card, and what waits on the live frame.
 ## Dictation capture and connection startup
 
 `lib/use-realtime-dictation.ts` owns microphone capture for the shared composer
-and also serves meeting recording. It requests audio permission and a socket
-ticket concurrently, then starts the 24 kHz PCM16 worklet as soon as the requested
-inputs are available. `listening` means local capture is running; it does not
-wait for the ticket or the provider's session acknowledgement. OS permission,
-device startup, and worklet loading remain prerequisites for capture.
+and also serves meeting recording. A press starts three things at once and none
+of them waits for another: the audio inputs (`getUserMedia`, plus the native tap
+when computer audio is requested), the capture graph, and the socket ticket with
+the transcription socket behind it. The 24 kHz PCM16 worklet's `AudioContext` is
+created inside the press with `sinkId: { type: 'none' }`, so no output device is
+opened, and its module loads while the microphone is still opening; the worklet
+node itself is built only when the inputs attach, because Chromium renders an
+`AudioWorkletNode` with an unconnected output as an automatic-pull node and a
+node built early would fill the backlog with silence for as long as a
+permission prompt stays up. The context is never suspended or resumed, and
+stopping never waits for the module: a stalled fetch must not hold the
+microphone or the socket. The socket is opened the moment the ticket lands, so the Worker's
+upgrade, the WorkspaceDO admission and Azure's session acknowledgement overlap
+the microphone opening rather than follow it. `listening` means local capture is
+running; it does not wait for the ticket or the provider's session
+acknowledgement, and the microphone is the only thing it waits for. OS
+permission and device startup remain prerequisites for capture.
+
+The press itself is answered before any of that. The microphone control takes
+`is-arming` while the hook is `requesting` (the danger wash, with the glyph in
+danger ink) and `is-listening` once capture runs (the full danger fill). The two
+are kept apart deliberately: the fill means capture is running, and a word
+spoken into the arming state is one the person was never told was heard. While
+listening, the worklet reports each chunk's RMS beside its samples and the hook
+maps it to a 0 to 1 meter position (`meterLevel`: a dB scale whose floor,
+-50 dBFS, is where suppressed room noise sits, with speech under automatic gain
+control reading around 0.6); the composer writes it onto the control as
+`--dictation-level`, outside React, and the stylesheet draws it as a ring
+around the button.
+
+The transcript lands in the same field a person types into, and the field
+treats it the way it treats typing: it grows with the text up to the composer's
+height limit and scrolls past it. The browser only keeps a caret in view, never
+a value it was handed, so each transcript update also asks the field to show
+its tail once it has taken its new height, on the render that carries the new
+value and again a frame later when the capsule's height animation has settled;
+the mention highlight layer follows the same scroll. The newest words are
+therefore always the ones on screen while dictation runs.
+
+A pointer or focus reaching the microphone calls `prefetch`, which asks the API
+client for a ticket ahead of the press (`prefetchTranscriptionSocketTicket`).
+The client hands that ticket to the next `getTranscriptionSocketTicket` once,
+and only while the hook's whole 10-second connection budget still fits inside
+the ticket's `TRANSCRIPTION_TICKET_LIFETIME_SECONDS` life; a prefetch that
+failed falls back to a fresh request, and an unused ticket simply expires.
+
+Each attempt records a device-local `dictation_start` performance trace through
+`perf-trace.ts`: `inputs`, `capture`, `session` and `backlog` are the waits the
+recording passed through in series, and `captureGraphMs`, `socketTicketMs` and
+`sessionReadyMs` say when each parallel branch finished, so the line names the
+critical path. It prints through `logDebug` and is not reported to telemetry;
+[`performance-tracing.md`](performance-tracing.md#the-desktop-half) has why.
 
 Each attempt retains worklet frames in memory until the provider acknowledges
 its session configuration. It then combines adjacent frames into messages that fit the shared 256,000-character
@@ -683,6 +730,54 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-10-16 — Dictation startup overlaps the microphone with everything else
+
+**What changed:** A press starts the inputs, the capture graph and the
+ticket-then-socket chain at once, and the recording fill waits only on the
+microphone. The control arms on the press before it fills on capture, a level
+ring shows audio arriving, the field follows the transcript's tail, hovering
+the microphone prefetches the ticket, and a device-local `dictation_start`
+trace records the phases. The section above has the mechanics.
+
+**Why:** Three independent costs were paid in series. The worklet module fetch
+and the `AudioContext` open ran only after `getUserMedia` resolved; the context
+opened an output device nothing played through, then stopped and restarted it
+around the module load; and the socket, with the Worker upgrade, the
+WorkspaceDO admission and Azure's acknowledgement behind it, began only once
+`listening` had been reached. None of that had to wait for the microphone,
+which is the one step that does. The spinner shown during `requesting` read as
+loading rather than as a press acknowledged, and nothing on the control said
+audio was arriving once it was. A transcript longer than the field's height
+limit also wrote its newest words below the fold: the field grew and then
+scrolled, but a value set from outside never moves a textarea's scroll.
+
+**Considered and rejected:** Holding one warm `AudioContext` and worklet per
+renderer across recordings. It removes the graph build from the press
+entirely, but the build now overlaps the microphone open and only shows when
+that open is faster than a module fetch; the trace will say whether that
+happens, and the singleton can follow it. Pre-opening the transcription socket
+on hover, so the handshake too would be done by the press: every hover would
+reserve a session lease and an Azure connection. Showing the recording fill on
+the press: it would promise capture that was not running. Reporting
+`dictation_start` to telemetry: the `renderer_perf_flow` event's schema
+enumerates its flows and phases, and widening it is its own change.
+
+**Consequences:** A socket can now be open, and its session lease held, while
+the attempt is still `requesting`; cancellation and a denied input must close
+it, and do, through `cleanupAttempt`, and the lease is held by the proxy for
+the open socket rather than by its frames
+([`realtime-sockets.md`](realtime-sockets.md#changelog)). The worklet node must
+keep being built at attach and never earlier: review of the first cut built it
+with the graph and reproduced Chromium pulling the unconnected node, which sent
+silence recorded during the permission prompt ahead of the speech. Stopping
+must never wait on the module load. The `.is-arming` and `.is-listening` fills
+are the only rules that paint the button in those states, so a composer
+shape's resting fill must keep excluding both. The prefetched-ticket window is
+derived rather than chosen, `TRANSCRIPTION_TICKET_LIFETIME_SECONDS` less the
+connection budget, so changing either moves it.
+
+Shipped in #1259.
 
 ### 2026-10-13 — The capsule keys on a host class
 
