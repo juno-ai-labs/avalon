@@ -36,7 +36,9 @@ interface UiState {
   openRail: (variant?: RailVariant) => void;
   closeRail: () => void;
   setRailVariant: (variant: RailVariant) => void;
-  setRailWidth: (width: number) => void;
+  // `remember: false` sizes this opening only, leaving the width the person
+  // last dragged to as what a restored panel comes back at.
+  setRailWidth: (width: number, options?: { remember?: boolean }) => void;
   inspect: (inspector: RailInspector | null) => void;
   // A panel that has lost the slot is still on screen for its fade, so the
   // shell has to keep laying out against it; dropping the room it occupies
@@ -146,9 +148,9 @@ export const useUiStore = create<UiState>((set, get) => ({
   // under the fade would be the last thing seen of it.
   closeRail: () => set({ railOpen: false }),
   setRailVariant: (railVariant) => set({ railVariant, inspector: null }),
-  setRailWidth: (width) => {
+  setRailWidth: (width, { remember = true } = {}) => {
     const railWidth = clampRailWidth(width);
-    saveRailWidth(RAIL_WIDTH_STORAGE_PREFIX, get().railScope, railWidth);
+    if (remember) saveRailWidth(RAIL_WIDTH_STORAGE_PREFIX, get().railScope, railWidth);
     set({ railWidth });
   },
   inspect: (inspector) => set({ inspector }),

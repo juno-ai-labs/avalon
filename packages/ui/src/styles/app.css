@@ -47,6 +47,12 @@
      beside it makes room over the same span because it is measured from the
      same custom property. */
   --sidebar-collapse-motion: 240ms cubic-bezier(.22, 1, .36, 1);
+
+  /* How wide a draggable edge is to the pointer: the navigation sidebar's,
+     the right panel's, and the split-conversation divider's. One number so
+     every edge in the window is equally easy to grab; each places its target
+     around its own line. */
+  --resize-hit-size: 14px;
 }
 
 * {
@@ -1173,9 +1179,9 @@ pre {
 .sidebar-resizer {
   bottom: 0;
   position: absolute;
-  right: -6px;
+  right: calc(var(--resize-hit-size) / -2);
   top: 55px;
-  width: 12px;
+  width: var(--resize-hit-size);
   z-index: 3;
 }
 .sidebar-resizer > span { opacity: 0; }
@@ -6084,7 +6090,19 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   width: var(--rail-slot);
 }
 .rail-surface.is-leaving .rail-surface-content { animation: rail-content-close 160ms ease forwards; }
-.rail-resizer { bottom: 0; justify-content: flex-start; right: calc(var(--rail-slot) - 10px); top: 0; width: 10px; }
+/* The target sits inside the panel, reaching only the 2px of the
+   conversation's scrollbar border, so the transcript's scrollbar stays
+   draggable. The divider line stays on the panel's edge. */
+.rail-resizer { bottom: 0; justify-content: flex-start; padding-left: 2px; right: calc(var(--rail-slot) - var(--resize-hit-size) + 2px); top: 0; width: var(--resize-hit-size); }
+/* Except over a live site or a browser page: Electron composites a native
+   view over the panel's body that takes the pointer from anything drawn
+   under it, so a target inside the edge is grabbable only along the header.
+   There the target reaches over the conversation instead, and covers its
+   scrollbar's last few pixels. */
+.rail-resizer:has(+ .rail-surface :is(.site-detail-pane, .embedded-browser-page)) {
+  padding-left: calc(var(--resize-hit-size) - 4px);
+  right: calc(var(--rail-slot) - 4px);
+}
 .rail-resizer > span {
   align-self: stretch;
   background: color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent);
@@ -8347,10 +8365,12 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .split-conversation-resizer {
   cursor: col-resize;
   flex: none;
-  margin: 0 -4px;
+  /* Over the Breakout, not the Channel beside it: 2px reach the Channel's
+     scrollbar border and no further, so its thumb stays draggable. */
+  margin: 0 calc(2px - var(--resize-hit-size)) 0 -2px;
   position: relative;
   touch-action: none;
-  width: 8px;
+  width: var(--resize-hit-size);
   z-index: 4;
 }
 .split-conversation-resizer:hover::after,
@@ -8359,7 +8379,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   background: var(--av-sys-color-accent-tint);
   bottom: var(--panel-divider-inset-bottom);
   content: '';
-  left: 3px;
+  left: 1px;
   position: absolute;
   top: var(--panel-divider-inset-top);
   width: 2px;

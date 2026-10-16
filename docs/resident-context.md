@@ -142,7 +142,8 @@ including the exception this subsystem introduces
   reported the same way and changes nothing about the read; the next read
   records again.
 - A mutation never waits for its instructions. They arrive through the read an
-  edit starts with, which the Terminal prompt requires, or through `read_file`;
+  edit starts with, which the Terminal prompt requires, or through `read_file`
+  or `view_image`;
   a whole-file write, a patch, a command or an import beneath a file no read
   has touched proceeds without them, and the next read delivers them. The
   `instructions_pending` refusal that held a mutation until then was removed on
