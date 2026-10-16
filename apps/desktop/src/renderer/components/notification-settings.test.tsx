@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { DigestSchedule } from '../lib/types';
-import { draftFromSchedule, minutesToLabel, scheduleFromDraft } from './notification-settings';
+import { DailyDigestSettings, draftFromSchedule, minutesToLabel, scheduleFromDraft } from './notification-settings';
 
 const stored = (patch: Partial<DigestSchedule>): DigestSchedule => ({
   id: '00000000-0000-4000-8000-000000000001',
@@ -36,5 +38,23 @@ describe('the daily digest slots', () => {
 
   it('labels a time of day as the menu shows it', () => {
     expect([minutesToLabel(9 * 60), minutesToLabel(17.5 * 60), minutesToLabel(12 * 60)]).toEqual(['9:00 AM', '5:30 PM', 'Noon']);
+  });
+});
+
+describe('the daily digest switches', () => {
+  it('switches a slot off from a click on the drawn switch, not only on the hidden input', async () => {
+    const schedule = stored({ times: [9 * 60, 17.5 * 60] });
+    const api = {
+      getDigestSchedule: vi.fn().mockResolvedValue(schedule),
+      updateDigestSchedule: vi.fn().mockResolvedValue({ ...schedule, times: [17.5 * 60] }),
+    };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}>
+      <DailyDigestSettings api={api} connections={[]} onEditTimezone={() => undefined} />
+    </QueryClientProvider>);
+    const morning = await screen.findByRole('switch', { name: 'Start of day digest' });
+    // The input is a 1px invisible box; what a person clicks is the track drawn beside it.
+    fireEvent.click(morning.nextElementSibling!);
+    await waitFor(() => expect(api.updateDigestSchedule).toHaveBeenCalledWith(expect.objectContaining({ times: [17.5 * 60] })));
   });
 });
