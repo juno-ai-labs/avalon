@@ -509,15 +509,17 @@ function pinnedPosition(index: number, count: number): string {
 
 /**
  * Scrolls to a row a pin or unpin moved, once the list shows the move, and
- * focuses it if the move left focus nowhere. Call before `useListMotion`,
- * whose first frame draws the row back at its old slot.
+ * focuses it if the move left focus nowhere. Where the move took the row off
+ * the tab, as unpinning does on Pinned, focus goes to the row that was beside
+ * it, or to the tab's own button when none is left. Call before
+ * `useListMotion`, whose first frame draws the row back at its old slot.
  */
 function usePinReveal(
   scroll: RefObject<HTMLElement | null>,
   motionKeyOf: (id: string) => string,
   pinnedIds: ReadonlySet<string>,
 ): (id: string, pinned: boolean) => void {
-  const [reveal, setReveal] = useState<{ id: string; pinned: boolean } | null>(null);
+  const [reveal, setReveal] = useState<{ id: string; pinned: boolean; neighbour: string | null } | null>(null);
   useEffect(() => {
     if (reveal === null) return undefined;
     const timer = setTimeout(() => setReveal(null), REVEAL_DEADLINE_MS);
@@ -531,9 +533,18 @@ function usePinReveal(
       block: 'nearest',
       behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
     });
-    if (document.activeElement === null || document.activeElement === document.body) row?.focus({ preventScroll: true });
+    if (document.activeElement !== null && document.activeElement !== document.body) return;
+    const neighbour = reveal.neighbour === null ? null : scroll.current?.querySelector<HTMLElement>(`[data-motion-key="${reveal.neighbour}"]`);
+    const sectionButton = scroll.current?.closest('.navigation-sidebar')?.querySelector<HTMLElement>('.navigation-rail-button[aria-current="page"]');
+    (row ?? neighbour ?? sectionButton)?.focus({ preventScroll: true });
   });
-  return useCallback((id, pinned) => setReveal({ id, pinned }), []);
+  return useCallback((id, pinned) => {
+    // The row beside it, read now, while the row is still drawn.
+    const rows = [...scroll.current?.querySelectorAll<HTMLElement>('[data-motion-key]:not([data-motion-key^="heading:"])') ?? []];
+    const index = rows.findIndex((candidate) => candidate.dataset.motionKey === motionKeyOf(id));
+    const neighbour = index < 0 ? null : (rows[index + 1] ?? rows[index - 1])?.dataset.motionKey ?? null;
+    setReveal({ id, pinned, neighbour });
+  }, [motionKeyOf, scroll]);
 }
 
 /**

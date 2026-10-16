@@ -26,7 +26,7 @@ a thread or a breakout opens, or who owns the right panel.
 | `packages/ui/src/components/breakout-marks.tsx` | `BreakoutMark`, `breakoutsByOrigin`, `orderBreakoutsForTicks`, `breakoutHasActivity`, `BreakoutTickBar`. |
 | `packages/ui/src/components/conversation-card.tsx` | `ConversationCard`: one thread or Breakout as a feed entry. The Channel feed draws its threads with it, and a thread's feed its Breakouts. |
 | `packages/ui/src/components/split-conversation.tsx` | `SplitConversationLayout`, `SplitConversationMode`, `clampBreakoutWidth`. |
-| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the section switcher (Channels, Threads, Activity), the account menu under it, and the three lists with their Pinned sections, sort, and drag to reorder. |
+| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the section switcher (Pinned, Channels, Threads, Activity), the account menu under it, and the lists with their Pinned sections, sort, and drag to reorder. |
 | `apps/desktop/src/renderer/screens/channel.tsx` | The Channel screen: its pill and menu, the feed of threads, the composer, and `ChannelStack`, the first two panes of the stack ([`pane-stack.md`](pane-stack.md)). |
 | `apps/desktop/src/renderer/components/channel-composer.tsx` | Starting a thread from a Channel. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | The thread screen: the thread and breakout panes, both pills, the one-slot rule, breakout creation in the right pane, and the Channel breadcrumb once the thread has shifted left. |
@@ -70,7 +70,7 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   person moves between the lists. Pinned and Threads have no section action: a
   thread starts from a Channel's composer.
 
-Every row in the three lists is one layout (`RowLayout`): an `IdentityTile`
+Every row in the lists is one layout (`RowLayout`): an `IdentityTile`
 (`packages/ui/src/components/identity-tile.tsx`), a name with a time, and a
 second line with the unread dot at its end. A tile is a shape in the object's
 pastel pair with its glyph, and can carry small badges on its corner, each in
@@ -148,7 +148,7 @@ moves the read time to the newest row held and clears every held dot at once
 A row opened from any list opens the thread under one of its Channels — the
 one already open when it sits there — expanded over it, so a Channel is always
 one step back ([`pane-stack.md`](pane-stack.md)).
-Every row in the three lists is a link, so a modified click opens it
+Every row in the lists is a link, so a modified click opens it
 elsewhere (a new tab, in the web app). Each list draws placeholder rows until
 its first page arrives. A guest has no Channels section, per the navigation
 PRD; a guest whose stored section is Channels sees Threads.
@@ -465,7 +465,9 @@ one empty state per kind, so a fix to either tab reaches Pinned too.
 once it has one, its shape to the grid. Two list motions over one scroll box
 would each animate every row, so a section drawn inside `PinnedPanel` must
 pass `pinnedOnly`. A desktop link opened while Pinned is showing scrolls to the
-row if it is pinned and does not page through the Threads list for it.
+row if it is pinned and does not page through the Threads list for it. Unpinning on Pinned takes the row off the tab, so the
+pin reveal hands focus to the row that was beside it, or to the Pinned button
+when none is left, rather than leaving it on the page body.
 
 ### 2026-10-15 — Breakouts in a thread are cards, like threads in a Channel
 
