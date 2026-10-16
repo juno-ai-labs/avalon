@@ -252,8 +252,8 @@ workstream-owned entries, including drafts. `GET /sidekicks` uses
 `WorkspaceDO.listSidekickDirectoryForAuthorizedMember`: the request's session
 authentication already joined the caller's active member row, so the object
 applies only the per-row scope filter and does not read `workspace_members`
-again. `listSidekickDirectory`, which does check membership itself, remains for
-a caller that has not. The old `/automations` listing remains a compatibility
+again. Every caller has proved membership before it asks, so there is no
+variant that checks it. The old `/automations` listing remains a compatibility
 adapter. Directory membership never grants access to an owner.
 
 A Thread-owned row carries `owningThread`, the Thread's id, title and chosen
