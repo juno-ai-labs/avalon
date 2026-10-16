@@ -111,6 +111,8 @@ function renderSidebar(seed: (client: QueryClient) => void, waiting = 0, { route
 describe('the navigation sidebar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The Activity button counts from the feed on every tab, not only Activity's.
+    api.getActivity.mockResolvedValue({ nextCursor: null, items: [] });
     live.rows = [];
     localStorage.clear();
     useUiStore.getState().setSidebarSection('channels');
@@ -288,7 +290,7 @@ describe('the navigation sidebar', () => {
   it('closes the phone sheet when a Channel is opened from it, and keeps it open across sections', () => {
     renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
     fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Activity' }));
+    fireEvent.click(screen.getByRole('button', { name: /Activity$/u }));
     fireEvent.click(screen.getByRole('button', { name: 'Channels' }));
     expect(screen.getByRole('button', { name: 'Close navigation' })).toHaveAttribute('aria-expanded', 'true');
 
@@ -311,6 +313,43 @@ describe('the navigation sidebar', () => {
   it('counts what is waiting on the Threads button', () => {
     renderSidebar(() => undefined, 3);
     expect(screen.getByRole('img', { name: '3 waiting' })).toHaveTextContent('3');
+  });
+
+  it('counts the Channels with threads this person has not seen on the Channels button', () => {
+    renderSidebar((client) => {
+      client.setQueryData(CHANNEL_STATS_QUERY_KEY, [
+        stats('outbound', { hasUnread: true, newThreadCount: 3 }),
+        stats('growth', { hasUnread: true, newThreadCount: 1 }),
+        // Read past its news: the optimistic acknowledgement clears `hasUnread` first.
+        stats('apple', { hasUnread: false, newThreadCount: 2 }),
+        // Unread for a reply, not a new thread: the row says nothing new either.
+        stats('kiwi', { hasUnread: true, newThreadCount: 0 }),
+      ]);
+    });
+    expect(screen.getByRole('img', { name: '2 with new threads' })).toHaveTextContent('2');
+  });
+
+  it('gives a guest, who has no Channels section, no Channels count', () => {
+    renderSidebar((client) => {
+      client.setQueryData(CHANNEL_STATS_QUERY_KEY, [stats('outbound', { hasUnread: true, newThreadCount: 3 })]);
+    }, 0, { person: { ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } } });
+    expect(screen.queryByRole('img', { name: /with new threads/u })).toBeNull();
+  });
+
+  it('counts unread Activity on the Activity button from any tab, and clears it on Mark all read', async () => {
+    const at = new Date().toISOString();
+    const row = (id: string, unread: boolean) => ({
+      id, kind: 'added', occurredAt: at, actorUserId: 'maya', actorLabel: 'Maya K',
+      threadId: 'plan', threadTitle: id, breakout: null, channelIds: [], unread,
+    });
+    api.getActivity.mockResolvedValue({ nextCursor: null, items: [row('one', true), row('two', true), row('three', false)] });
+    renderSidebar(() => undefined);
+
+    expect(await screen.findByRole('img', { name: '2 unread' })).toHaveTextContent('2');
+
+    fireEvent.click(screen.getByRole('button', { name: /Activity$/u }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Mark all read' }));
+    await waitFor(() => expect(screen.queryByRole('img', { name: /unread$/u })).toBeNull());
   });
 
   it('lists the person’s threads and breakouts, and opens a breakout beside its thread under that thread’s Channel', async () => {
@@ -516,7 +555,7 @@ describe('the navigation sidebar', () => {
       await new Promise((resolve) => setTimeout(resolve, 400));
 
       fireEvent.click(screen.getByRole('button', { name: 'Threads' }));
-      fireEvent.click(screen.getByRole('button', { name: 'Activity' }));
+      fireEvent.click(screen.getByRole('button', { name: /Activity$/u }));
       fireEvent.click(await screen.findByRole('button', { name: 'Unread' }));
       const today = within(await screen.findByRole('region', { name: 'Today' }));
       expect(today.getByRole('link')).toHaveTextContent('Fresh');
