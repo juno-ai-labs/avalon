@@ -47,20 +47,27 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
 - **The section switcher**, a 76px rail under the macOS window controls,
   which the main window centers over it per macOS version (the width is
   `--navigation-rail-width`; change it and the light position together):
-  **Channels**, **Threads** and **Activity**, each an outline over its name,
-  and the account menu at the bottom (its trigger shows only the avatar here).
-  The outlines are what each list holds: a Channel is a squircle and a Thread
-  is a circle, as their rows draw them, and Activity, which holds neither, is
-  a triangle.
+  **Pinned**, **Channels**, **Threads** and **Activity**, each an outline over
+  its name, and the account menu at the bottom (its trigger shows only the
+  avatar here). The outlines are what each list holds: a Channel is a squircle
+  and a Thread is a circle, as their rows draw them, and Activity, which holds
+  neither, is a triangle. Pinned holds every kind that can be pinned, so its
+  icon is a two-by-two grid (`ShapeGrid`), clockwise from the top left: a
+  Channel, a Thread, a Sidekick's hexagon and a Thread. The hexagon is there for
+  kinds still to come; Pinned lists Channels and Threads today.
   The choice is a device preference (`rally.sidebar-section`). **Threads**
   carries a red count: every conversation waiting on this person and every
   access request waiting on them, the same `attentionItems` the dock badge
   counts. The macOS menu bar counts Activity's unread rows instead
-  ([`menu-bar.md`](menu-bar.md)). Channels and Activity carry no badge.
-- **One list**, titled with the section's name, with **Restart to update**
+  ([`menu-bar.md`](menu-bar.md)). Pinned, Channels and Activity carry no badge.
+- **One list**, titled with the section's name. Pinned's list is a section per
+  kind, **Channels** then **Threads** (threads, then breakouts), each the same
+  Pinned part its own tab draws above everything else, reorderable the same
+  way, with nothing unpinned beside it. A guest gets no Channels section there
+  either. Each list has **Restart to update**
   when one is downloaded, **New channel** on Channels or **Mark all read** on
   Activity, and **Search organization** last, so it holds its place as the
-  person moves between the three lists. Threads has no section action: a
+  person moves between the lists. Pinned and Threads have no section action: a
   thread starts from a Channel's composer.
 
 Every row in the three lists is one layout (`RowLayout`): an `IdentityTile`
@@ -436,6 +443,29 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-16 — A Pinned section in the switcher
+
+**What changed:** The switcher gains **Pinned**, first, whose list is every
+pin grouped by kind: Channels, then Threads. Its icon is `ShapeGrid`, four
+outlines in a two-by-two grid, and `ShapeOutline` learns the Sidekick hexagon.
+`ChannelsSection` and `ThreadsSection` take `pinnedOnly`, which draws only
+their Pinned part, titled with the kind; the Pinned tab runs one list motion
+over both instead of each running its own.
+
+**Why:** Pins were split across two tabs, so reaching a pinned Channel and a
+pinned thread meant switching between them. More pinnable kinds are coming,
+and each would add another tab to check.
+
+**Considered and rejected:** A separate pinned list component. Reusing each
+tab's own Pinned part keeps one drawing of a pinned row, one reorder path and
+one empty state per kind, so a fix to either tab reaches Pinned too.
+
+**Consequences:** A new pinnable kind adds its section to `PinnedPanel` and,
+once it has one, its shape to the grid. Two list motions over one scroll box
+would each animate every row, so a section drawn inside `PinnedPanel` must
+pass `pinnedOnly`. A desktop link opened while Pinned is showing scrolls to the
+row if it is pinned and does not page through the Threads list for it.
 
 ### 2026-10-15 — Breakouts in a thread are cards, like threads in a Channel
 

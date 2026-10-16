@@ -1,6 +1,6 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import type { ActivityFilter, ActivityItem, ActivityPage, ConversationAccessRequestItem, PinKind, SpaceSummary, WorkstreamAppearance } from '@rally/contracts';
-import { IdentityTile, ShapeOutline, type TileBadge } from '@rally/ui/components/identity-tile';
+import { IdentityTile, ShapeGrid, ShapeOutline, type TileBadge } from '@rally/ui/components/identity-tile';
 import { resolveWorkstreamAppearance, WORKSTREAM_ICON_COMPONENTS } from '@rally/ui/components/workstream-glyph';
 import { markColors } from '@rally/ui/lib/project-palette';
 import {
@@ -67,9 +67,12 @@ const REVEAL_DEADLINE_MS = 2_000;
 /**
  * Each section's button is the outline of what its list holds: a Channel is a
  * squircle and a Thread a circle, as their rows draw them. Activity holds
- * neither, so it takes the triangle no object uses.
+ * neither, so it takes the triangle no object uses. Pinned holds every kind
+ * that can be pinned, so it is a grid of them, a Sidekick's hexagon included
+ * for the kinds still to come.
  */
 const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNode }> = [
+  { id: 'pinned', label: 'Pinned', icon: <ShapeGrid shapes={['squircle', 'circle', 'hexagon', 'circle']} /> },
   { id: 'channels', label: 'Channels', icon: <ShapeOutline shape="squircle" /> },
   { id: 'threads', label: 'Threads', icon: <ShapeOutline shape="circle" /> },
   { id: 'activity', label: 'Activity', icon: <ShapeOutline shape="triangle" /> },
@@ -127,7 +130,7 @@ export function compareChannelRows(
 export type AccessDecision = 'approve' | 'decline';
 
 /**
- * The sidebar: a section switcher (Channels, Threads, Activity) beside one
+ * The sidebar: a section switcher (Pinned, Channels, Threads, Activity) beside one
  * list. One list column with a tab switcher, never stacked hierarchy rails —
  * the reason the 2026-10-01 change removed three of them still holds
  * (`docs/desktop-shell.md`). Shared by the Mac app and the browser.
@@ -276,6 +279,7 @@ export function NavigationSidebar({
         </header>
         <SidebarScroll className="navigation-panel-scroll" scrollRef={scroll}>
           {pinFailure && <InlineError>{pinFailure}</InlineError>}
+          {section === 'pinned' && <PinnedPanel guest={guest} scroll={scroll} />}
           {section === 'threads' && <ThreadsSection scroll={scroll} />}
           {section === 'channels' && <ChannelsSection scroll={scroll} />}
           {section === 'activity' && <ActivitySection
@@ -470,12 +474,15 @@ function usePinDrop(pinnedIds: ReadonlySet<string>, orderOf: (kind: PinKind) => 
  * accent while a row is being dragged. The whole section, heading included,
  * is the drop target, so a release in a gap between rows still counts.
  */
-function PinnedSection({ children, count, drop, label, noun, reorderable, target }: {
+function PinnedSection({ children, count, drop, heading = 'Pinned', label, noun, pinnedOnly = false, reorderable, target }: {
   children: ReactNode;
   count: number;
   drop: PinDrop | null;
+  heading?: string;
   label: string;
   noun: string;
+  /** In the Pinned tab, where no unpinned row sits beside it to be moved in. */
+  pinnedOnly?: boolean;
   /** Whether any one kind holds two or more pins; each kind reorders on its own. */
   reorderable: boolean;
   target: React.HTMLAttributes<HTMLElement>;
@@ -485,11 +492,11 @@ function PinnedSection({ children, count, drop, label, noun, reorderable, target
   // place (`pinnedPosition`). As a per-row description it would be repeated
   // before every title.
   return <section aria-describedby={reorderable ? hint : undefined} aria-label={label} className="navigation-section" {...target}>
-    <SectionHeading motionKey="pinned" trailing={<PinnedMark reorderable={reorderable} />}>Pinned</SectionHeading>
+    <SectionHeading motionKey={pinnedOnly ? `pinned:${noun}` : 'pinned'} trailing={<PinnedMark reorderable={reorderable} />}>{heading}</SectionHeading>
     {reorderable && <p className="sr-only" id={hint}>Hold Alt and press the up or down arrow to move a pinned {noun}.</p>}
     {count === 0 && drop?.index == null && <div className={clsx('pinned-empty-drop-surface', drop && 'is-armed')}>
       <IconPin aria-hidden="true" size={15} stroke={1.7} />
-      <span>Move a {noun} here to pin it</span>
+      <span>{pinnedOnly ? `Pin a ${noun} to keep it here` : `Move a ${noun} here to pin it`}</span>
     </div>}
     {children}
   </section>;
@@ -720,12 +727,29 @@ function withLiveThread(
   };
 }
 
+/** A list motion with nothing to watch, for a section whose tab runs one over several. */
+const NO_CONTAINER: RefObject<HTMLElement | null> = { current: null };
+
+/**
+ * The Pinned tab: what this person pinned, a section per kind, each the same
+ * Pinned list its own tab draws above everything else, so a pin made or
+ * moved in one is the same pin in the other. A guest has no Channels section
+ * here either. One list motion runs over both, after their pin reveals.
+ */
+function PinnedPanel({ guest, scroll }: { guest: boolean; scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
+  useListMotion(scroll);
+  return <>
+    {!guest && <ChannelsSection pinnedOnly scroll={scroll} />}
+    <ThreadsSection pinnedOnly scroll={scroll} />
+  </>;
+}
+
 /**
  * The Threads tab: what this person pinned, then every thread and breakout
  * they take part in. The list is the server's (`GET /navigation/threads`); a
  * thread the socket holds is drawn from the socket, so its dot moves live.
  */
-function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
+function ThreadsSection({ pinnedOnly = false, scroll }: { pinnedOnly?: boolean; scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
   const { api } = useAppSession();
   const sort = useUiStore((state) => state.threadSort);
   const setSort = useUiStore((state) => state.setThreadSort);
@@ -792,7 +816,8 @@ function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): 
       return;
     }
     if (!list.isSuccess || list.isFetchingNextPage) return;
-    if (!list.hasNextPage) {
+    // The Pinned tab draws no pages past the pins, so there is nothing to load.
+    if (pinnedOnly || !list.hasNextPage) {
       consumeDeepLinkWorkstreamNavigation(deepLink.revision);
       return;
     }
@@ -803,7 +828,8 @@ function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): 
   });
   // A row that changes place, a pin or a re-sort, travels there. A row keeps
   // its motion key between Pinned and the list, so a pin is one row moving.
-  useListMotion(scroll);
+  // The Pinned tab runs one motion over both its sections instead.
+  useListMotion(pinnedOnly ? NO_CONTAINER : scroll);
   const href = (row: SpaceConversationSummary): string => {
     if (row.kind === 'breakout' && row.breakoutOf) {
       const parent = live.data?.find((candidate) => candidate.id === row.breakoutOf!.workstreamId);
@@ -847,15 +873,17 @@ function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): 
     <PinnedSection
       count={pinned.size}
       drop={drop}
+      heading={pinnedOnly ? 'Threads' : undefined}
       label="Pinned threads"
       noun="thread"
+      pinnedOnly={pinnedOnly}
       reorderable={threadPins.length > 1 || breakoutPins.length > 1}
       target={pinDrop.targetProps}
     >
       {pinnedRows('thread', threadDrag, 0)}
       {pinnedRows('breakout', breakoutDrag, threadDrag.order.length)}
     </PinnedSection>
-    <section aria-busy={list.isPending || undefined} aria-label="All threads" className="navigation-section">
+    {!pinnedOnly && <section aria-busy={list.isPending || undefined} aria-label="All threads" className="navigation-section">
       <SectionHeading motionKey="threads" trailing={<SortButton onChange={setSort} sort={sort} sorts={THREAD_SORTS} />}>All threads</SectionHeading>
       {list.isPending && rows.length === 0 && <SidebarSkeletonRows count={6} hint />}
       {unpinned.map((row) => renderRow(
@@ -865,7 +893,8 @@ function ThreadsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): 
       {list.isSuccess && rows.length === 0 && <p className="navigation-empty">Threads you start or are added to appear here.</p>}
       {list.hasNextPage && <button className="navigation-more" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()} type="button">Show more</button>}
       {list.isError && <InlineError>Your threads couldn’t be loaded.</InlineError>}
-    </section>
+    </section>}
+    {pinnedOnly && list.isError && <InlineError>Your threads couldn’t be loaded.</InlineError>}
   </>;
 }
 
@@ -995,7 +1024,7 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
  * it open, and says how many, in red beside a bold name, with a dot.
  */
 /** Members only: a guest has no Channels section. */
-function ChannelsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
+function ChannelsSection({ pinnedOnly = false, scroll }: { pinnedOnly?: boolean; scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
   const { active } = useSpaceDirectories();
   const { api } = useAppSession();
   // The socket's Space snapshot seeds this; a placement nudge marks it stale
@@ -1022,7 +1051,7 @@ function ChannelsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }):
   const rest = channels.filter((space) => !pinned.has(space.id) && !(drop?.landed && drop.id === space.id))
     .sort(compareChannelRows(sort, statsById, openChannelId));
   const revealPin = usePinReveal(scroll, (id) => `channel:${id}`, pinned);
-  useListMotion(scroll);
+  useListMotion(pinnedOnly ? NO_CONTAINER : scroll);
   const row = (
     space: SpaceSummary,
     rowDrag?: PinnedRowProps,
@@ -1045,7 +1074,16 @@ function ChannelsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }):
     stats={statsById.get(space.id)}
   />;
   return <>
-    <PinnedSection count={channelPins.length} drop={drop} label="Pinned channels" noun="channel" reorderable={channelPins.length > 1} target={pinDrop.targetProps}>
+    <PinnedSection
+      count={channelPins.length}
+      drop={drop}
+      heading={pinnedOnly ? 'Channels' : undefined}
+      label="Pinned channels"
+      noun="channel"
+      pinnedOnly={pinnedOnly}
+      reorderable={channelPins.length > 1}
+      target={pinDrop.targetProps}
+    >
       {withPinDrop('channel', drag.order, drop).map((id) => {
         const space = byId.get(id);
         if (!space) return null;
@@ -1054,12 +1092,12 @@ function ChannelsSection({ scroll }: { scroll: RefObject<HTMLElement | null> }):
         return row(space, drag.rowProps(id, index), drag.moves(id, index), false, pinnedPosition(index, drag.order.length));
       })}
     </PinnedSection>
-    <section aria-busy={active.data === undefined || undefined} aria-label="All channels" className="navigation-section">
+    {!pinnedOnly && <section aria-busy={active.data === undefined || undefined} aria-label="All channels" className="navigation-section">
       <SectionHeading motionKey="channels" trailing={<SortButton onChange={setSort} sort={sort} sorts={CHANNEL_SORTS} />}>All channels</SectionHeading>
       {active.data === undefined && <SidebarSkeletonRows count={5} hint />}
       {rest.map((space) => row(space, pinDrop.sourceProps('channel', space.id)))}
       {active.data !== undefined && channels.length === 0 && <p className="navigation-empty">No channels yet.</p>}
-    </section>
+    </section>}
   </>;
 }
 
