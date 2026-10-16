@@ -75,8 +75,8 @@ export function openResourceRequest(state: unknown): { threadId: string; resourc
 }
 
 /**
- * A navigation that opens a Channel onto one of its messages: the feed brings
- * that message into view once it is listed.
+ * A navigation that opens a Channel onto the message just posted there: the
+ * feed brings it into view once it is the newest row.
  */
 export function revealChannelMessageState(messageId: string): { revealMessageId: string } {
   return { revealMessageId: messageId };
