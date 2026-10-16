@@ -1,6 +1,6 @@
 import { promoteWorkspaceGuest } from "./workspace-relationship-service";
 import type { Region } from "@rally/contracts/regions";
-import { MemberPreferencesSchema, PersonalPresentationSchema, type MemberPreferencesUpdate } from '@rally/contracts';
+import { MemberPreferencesSchema, PersonalPresentationSchema, type MemberPreferencesUpdate, type UserTimezone } from '@rally/contracts';
 import {
   AssignableMemberRoleSchema,
   asUserId,
@@ -461,31 +461,16 @@ export class WorkspaceService {
     return { personalSystemPrompt };
   }
 
-  async updateMyTimezone(timezone: string) {
-    // `timezone_source` is what stops the next sign-in writing the machine's
-    // zone back over this choice.
+  async updateMyTimezone(timezone: string, followDevice = false) {
+    // `timezone_source` says whether a device report may move this zone:
+    // 'client' follows the device, 'user' is fixed by hand. See
+    // `reportDeviceTimezone`.
     await this.env.DB.prepare(
-      "UPDATE users SET timezone = ?, timezone_source = 'user', updated_at = ? WHERE id = ?",
+      "UPDATE users SET timezone = ?, timezone_source = ?, updated_at = ? WHERE id = ?",
     )
-      .bind(timezone, nowIso(), this.auth.userId)
+      .bind(timezone, followDevice ? "client" : "user", nowIso(), this.auth.userId)
       .run();
-    // A digest's times are wall-clock times in this person's day, so moving
-    // timezone moves every occurrence — in every workspace they belong to, since
-    // this is one column for the whole account. The configuration is unchanged;
-    // the instants it resolves to are not, and those live in derived `schedules`
-    // rows the workspace alarm reads.
-    await rebuildDigestSchedulesForTimezone(this.env, {
-      userId: this.auth.userId,
-      timezone,
-    }).catch((error: unknown) => {
-      // The preference itself is saved, and the cron reconciler rebuilds any
-      // derived row whose timezone disagrees with the account. Failing the
-      // request here would lose the preference to fix a thing that self-heals.
-      logWarn(this.env, "digest_schedule_rederive_failed", {
-        workspace_id: this.auth.workspaceId,
-        reason: error instanceof Error ? error.message : "unknown",
-      });
-    });
+    await rederiveDigestsForTimezone(this.env, this.auth.userId, timezone);
     const row = await this.env.DB.prepare(
       "SELECT id, email, name, avatar_url, timezone, created_at FROM users WHERE id = ?",
     ).bind(this.auth.userId).first<Record<string, unknown>>();
@@ -1262,4 +1247,46 @@ export async function previewInvitation(env: Env, token: string): Promise<Worksp
     role: invitation.role,
     expiresAt: invitation.expiresAt,
   };
+}
+
+/**
+ * A digest's times are wall-clock times in its owner's day, so moving timezone
+ * moves every occurrence — in every workspace they belong to, since this is one
+ * column for the whole account. The configuration is unchanged; the instants it
+ * resolves to are not, and those live in derived `schedules` rows the workspace
+ * alarm reads.
+ */
+async function rederiveDigestsForTimezone(env: Env, userId: string, timezone: string): Promise<void> {
+  await rebuildDigestSchedulesForTimezone(env, { userId, timezone }).catch((error: unknown) => {
+    // The timezone itself is saved, and the cron reconciler rebuilds any
+    // derived row whose timezone disagrees with the account. Failing the
+    // request here would lose the timezone to fix a thing that self-heals.
+    logWarn(env, "digest_schedule_rederive_failed", {
+      user_id: userId,
+      reason: error instanceof Error ? error.message : "unknown",
+    });
+  });
+}
+
+/** The account's timezone, and whether it follows the device. */
+export async function readUserTimezone(env: Env, userId: string): Promise<UserTimezone> {
+  const row = await env.DB.prepare("SELECT timezone, timezone_source FROM users WHERE id = ?")
+    .bind(userId).first<{ timezone: string; timezone_source: string }>();
+  if (!row) throw new ApiError(404, "user_not_found", "User not found");
+  return { timezone: row.timezone, followsDevice: row.timezone_source === "client" };
+}
+
+/**
+ * A client saying which zone its device is in. Applied only while the account
+ * follows the device and only when the zone actually moved, so a fixed choice
+ * is never overwritten and a report that changes nothing writes nothing.
+ */
+export async function reportDeviceTimezone(env: Env, userId: string, timezone: string): Promise<UserTimezone> {
+  const moved = await env.DB.prepare(
+    `UPDATE users SET timezone = ?, updated_at = ?
+      WHERE id = ? AND timezone_source = 'client' AND timezone <> ?
+      RETURNING id`,
+  ).bind(timezone, nowIso(), userId, timezone).first<{ id: string }>();
+  if (moved) await rederiveDigestsForTimezone(env, userId, timezone);
+  return readUserTimezone(env, userId);
 }

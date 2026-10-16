@@ -24,6 +24,7 @@ import { WebPushConfigurationSchema, type RegisterPushDeviceRequest } from "@ral
 import { AccountOnboardingSchema, OrganizationNameSuggestionSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type OrganizationNameSuggestion, type UpdateAccountOnboarding } from "@rally/contracts";
 import { ConversationAccessDecisionResultSchema, ConversationAccessPreviewSchema, ConversationAccessRequestResultSchema, type ConversationAccessDecisionResult, type ConversationAccessPreview } from "@rally/contracts";
 import { SupportAccessSchema, type SupportAccess } from "@rally/contracts";
+import { UserTimezoneSchema, type UserTimezone } from "@rally/contracts";
 
 type SessionImportRun = z.infer<typeof SessionImportRunSchema>;
 import {
@@ -924,10 +925,19 @@ export class RallyApi {
     return result.personalSystemPrompt;
   }
 
-  async updateMyTimezone(timezone: string): Promise<WorkspaceMember> {
+  getMyTimezone(signal?: AbortSignal): Promise<UserTimezone> {
+    return this.request('/workspace/me/timezone', { schema: UserTimezoneSchema, signal });
+  }
+
+  /** This device's zone; the account takes it only while it follows the device. */
+  reportDeviceTimezone(timezone: string): Promise<UserTimezone> {
+    return this.request('/workspace/me/device-timezone', { method: 'PUT', body: { timezone }, schema: UserTimezoneSchema });
+  }
+
+  async updateMyTimezone(timezone: string, followDevice = false): Promise<WorkspaceMember> {
     const user = await this.request('/workspace/me', {
       method: 'PATCH',
-      body: { timezone },
+      body: { timezone, followDevice },
       schema: z.object({
         id: z.string(), email: z.string(), name: z.string(), avatarUrl: z.string().nullable(),
         timezone: z.string(), createdAt: z.string(),

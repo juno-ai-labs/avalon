@@ -1485,8 +1485,12 @@ audit, and telemetry remain valid D1 writers.
   `timezone_source` is still `client` and never writes over one somebody chose in settings;
   a client that sends no zone leaves the account alone, because there is no server-side default.
 
-- Owners and admins may change the workspace timezone. Every user may change their personal
-  timezone, which records `timezone_source = 'user'` and stops sign-in reseeding it.
+- Desktop and browser clients report the device's zone while the account follows it; see
+  `users` in [data-model.md](data-model.md#identity-and-tenancy).
+
+- Owners and admins may change the workspace timezone. Every user may fix their personal
+  timezone, which records `timezone_source = 'user'` and stops sign-in and device reports
+  moving it; turning on Set timezone automatically sets `client` again.
 
 - Calendar automation precedence is explicit trigger timezone, then the automation **author's**
   timezone for personal scope, then the workspace timezone — resolved at acceptance, inside the

@@ -215,9 +215,12 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
 
 - `users` stores provider-independent identity and display information, plus the
   account's IANA `timezone` and the `timezone_source` that says who put it
-  there. `client` means a desktop sign-in seeded it from the machine and a
-  later sign-in may seed it again; `user` means somebody chose it in settings,
-  and sign-in leaves it alone from then on. It is one column per region —
+  there. `client` means the account follows the device: a desktop sign-in seeds
+  it, and the desktop and browser clients report the device's zone through
+  `PUT /workspace/me/device-timezone` at launch and on every focus; the server
+  writes only when the zone moved. `user` means somebody fixed a zone in
+  Account → Default timezone, and no report moves it; turning **Set timezone
+  automatically** back on sets `client` again. It is one column per region —
   `users` is regional — so it answers for every workspace the person belongs to
   in that region, and a second region's row keeps its own. `syncRegionalProfile`
   deliberately syncs `email`, `name`, and `avatar_url` and not `timezone`, so a
@@ -1372,6 +1375,25 @@ inactive legacy tables after deploying the Worker that no longer reaps them.
 The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
+
+### 2026-10-16 — The account timezone follows the device by default
+
+**What changed:** The desktop and browser clients now report the device's
+zone, not only a desktop Google sign-in, so an account on `client` stays in the
+zone its person is actually in; digests are re-derived when it moves. Account
+gained a **Set timezone automatically** switch above Default timezone, which
+returns a fixed account to `client`.
+
+**Why:** Email and browser sign-in never sent a zone, sessions renew without a
+sign-in, and the column defaults to `America/Los_Angeles`, so most accounts
+held a zone nobody chose and digests arrived at the wrong local hour. A fixed
+zone still wins over a report, for the reason `assumptions.md` item 22 gives.
+
+**Consequences:** Every launch and focus sends a report, because another
+device may have moved the account since; the device in use wins, and a report
+that changes nothing writes nothing. Personal automations keep the zone they
+were created in: only digests are re-derived when the account moves. A support
+session never reports.
 
 ### 2026-09-21 — Scope Channel pins to Space placements
 
