@@ -5,7 +5,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject
 import type { AttachmentPreview } from './attachments';
 import type { CitationContext } from './markdown-citations';
 import type { Message } from '../lib/types';
-import { MessageBlock, type RowDisclosure } from './workstream-blocks';
+import { MessageBlock, type MessageMergeAction, type RowDisclosure } from './workstream-blocks';
 
 /**
  * The ordered feed both conversation surfaces render.
@@ -45,6 +45,10 @@ interface MessageFeedProps {
   onAnswerElicitation: (elicitationId: string, answer: string | string[] | null, customResponse?: string) => Promise<void>;
   onOpenAttachment?: (preview: AttachmentPreview) => void;
   onStartSubstream?: (throughTurnId: string) => void;
+  /** The host's Merge action on settled messages; see `MessageBlock`. */
+  merge?: MessageMergeAction;
+  /** Opens a Breakout a merge names. */
+  onOpenBreakout?: (breakoutId: string) => void;
   /**
    * The Breakouts started from each turn, drawn as cards under the last row of
    * that turn. Absent on a surface that has no Breakouts of its own.
@@ -183,6 +187,8 @@ export function MessageFeed({
   onAnswerElicitation,
   onOpenAttachment,
   onStartSubstream,
+  merge,
+  onOpenBreakout,
   breakoutCards,
   onAcceptDraft,
   acceptingDraftFor,
@@ -274,15 +280,6 @@ export function MessageFeed({
     });
     return last;
   }, [breakoutCards, messages]);
-  // The newest thing Rally said: the one turn whose breakout action is shown
-  // outright rather than on hover, since it is the likeliest place to branch.
-  const latestReplyId = useMemo(() => {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index]!;
-      if (message.authorType === 'agent' && message.messageType === 'text') return message.id;
-    }
-    return null;
-  }, [messages]);
   const cardsAfter = (message: Message, index: number): React.JSX.Element | null => {
     const turnId = message.transcriptTurnId;
     if (!breakoutCards || !turnId || lastRowOfTurn.get(turnId) !== index) return null;
@@ -318,7 +315,8 @@ export function MessageFeed({
           onAnswerElicitation={onAnswerElicitation}
           onOpenAttachment={onOpenAttachment}
           onStartSubstream={onStartSubstream}
-          latestReply={message.id === latestReplyId}
+          {...(merge ? { merge } : {})}
+          {...(onOpenBreakout ? { onOpenBreakout } : {})}
           rowDisclosure={rowDisclosure}
           {...(onAcceptDraft ? { onAcceptDraft } : {})}
           acceptingDraftFor={acceptingDraftFor ?? null}

@@ -73,6 +73,22 @@ describe('menu bar content', () => {
     }]);
   });
 
+  it('opens a breakout\'s merge on the thread it merged into, and a thread\'s merge names its Channel', () => {
+    const content = menuBarContent(quietDirectory, activity([
+      activityItem('m1', {
+        kind: 'merged', actorLabel: 'Maya', threadTitle: 'Pricing',
+        breakout: { substreamId: breakout.substreamId, title: 'Discount call' },
+      }),
+      activityItem('m2', { kind: 'merged', actorLabel: 'Maya', threadTitle: 'Pricing', breakout: null,
+        mergedInto: { channelId: '00000000-0000-7000-8000-0000000000c1', name: 'GTM' } }),
+    ]));
+
+    expect(content.attention.map(({ key, substreamId, title, detail }) => ({ key, substreamId, title, detail }))).toEqual([
+      { key: 'm1', substreamId: null, title: 'Pricing', detail: 'Maya merged Discount call into it' },
+      { key: 'm2', substreamId: null, title: 'Pricing', detail: 'Maya merged it into GTM' },
+    ]);
+  });
+
   it('is not whole until Activity has been read once', () => {
     expect(menuBarContent(quietDirectory, { items: [], complete: false }).attentionComplete).toBe(false);
   });

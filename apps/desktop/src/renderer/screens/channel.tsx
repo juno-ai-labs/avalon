@@ -3,6 +3,8 @@ import type { ChannelMessage, ChannelStats, ChannelStatsList, SpaceSummary, Work
 import { AppearancePicker, AppearanceSubmenu } from '@rally/ui/components/appearance-picker';
 import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { ConversationCard } from '@rally/ui/components/conversation-card';
+import { MergeMessage } from '@rally/ui/components/merge-message';
+import { resolveWorkstreamAppearance } from '@rally/ui/components/workstream-glyph';
 import { ChannelContainerMenu } from '@rally/ui/components/conversation-menus';
 import type { SidekickRow } from '@rally/ui/components/sidekick-section';
 import { ChannelGlyph, spaceMark } from '@rally/ui/components/space-icon';
@@ -15,13 +17,15 @@ import { Route, Routes, useLocation, useNavigate, useParams } from 'react-router
 
 import { ChannelComposer } from '../components/channel-composer';
 import { MarkdownBody } from '../components/workstream-blocks';
+import type { CitationContext } from '../components/markdown-citations';
+import { openLink } from '../lib/browser-rail-links';
 import { Avatar, Button, EmptyState, InlineError, LoadingState, Modal, RallyAvatar } from '../components/primitives';
 import { RelativeTime } from '../components/relative-time';
 import { reportActivityEvent } from '../lib/activity-events';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { copySpaceLink } from '../lib/copy-workstream-link';
-import { ChannelPaneContextValue, OPEN_EXPANDED, channelRoute, threadRoute, usePaneExpansion, type ChannelPaneContext } from '../lib/navigation-routes';
+import { ChannelPaneContextValue, OPEN_EXPANDED, channelRoute, openThreadResourceState, threadRoute, usePaneExpansion, type ChannelPaneContext } from '../lib/navigation-routes';
 import { PaneVisibility } from '../lib/pane-visibility';
 import { useNow } from '../lib/clock';
 import { formatDayLabel } from '../lib/format';
@@ -35,7 +39,7 @@ import { EmailMentionContext, emailMentionDirectory, NO_INVITEES, useWorkspaceIn
 import type { AutomationSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
-import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
+import { useCachedWorkstreamAppearance, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { RemoveParticipantDialog } from './conversation-surface';
 import { WorkstreamScreen } from './workstream';
 import type { SpaceDirectory } from '@rally/contracts';
@@ -213,7 +217,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
   // it, and acknowledging only what is listed would leave the dot standing.
   const newestLoadedSequence = useMemo(() => Math.max(0, ...(feed.data?.pages ?? [])
     .flatMap((page) => [
-      ...page.items.map((item) => item.kind === 'message' ? 0 : item.attentionSequenceNumber),
+      ...page.items.map((item) => item.attentionSequenceNumber ?? 0),
       page.latestAttentionSequenceNumber ?? 0,
     ])), [feed.data]);
   // Subscribed rather than read once, so stats arriving after the feed (or a
@@ -309,7 +313,9 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
 
   if (active.data === undefined) return <LoadingState label="Opening channel…" />;
   if (!space) return <EmptyState description="It may have been archived, made private, or you may no longer have access." title="Channel not found" />;
-  const openThread = (threadId: string): void => void navigate(threadRoute(threadId, channelId), { state: OPEN_EXPANDED });
+  const openThread = (threadId: string, resourceId?: string): void => void navigate(threadRoute(threadId, channelId), {
+    state: resourceId ? openThreadResourceState(threadId, resourceId) : OPEN_EXPANDED,
+  });
   // Only a member may start a thread in a private Channel; a thread placed
   // there is the Channel's to accept (`canEdit` on the server).
   const canStart = workspace.currentUser.accessClass !== 'guest' && space.reach !== 'through_channel';
@@ -344,13 +350,25 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
               placedAt={row.placedAt}
               thread={row.thread}
             />
-            : <MessageCard
-              author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
-              key={row.message.id}
-              members={members.data ?? NO_MEMBERS}
-              message={row.message}
-              placedAt={row.placedAt}
-            />;
+            : row.message.merge
+              ? <MergeCard
+                author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
+                channelId={channelId}
+                currentUser={workspace.currentUser}
+                key={row.message.id}
+                members={members.data ?? NO_MEMBERS}
+                merge={row.message.merge}
+                message={row.message}
+                onOpenThread={openThread}
+                placedAt={row.placedAt}
+              />
+              : <MessageCard
+                author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
+                key={row.message.id}
+                members={members.data ?? NO_MEMBERS}
+                message={row.message}
+                placedAt={row.placedAt}
+              />;
           const previous = ordered[index - 1];
           if (previous && new Date(previous.placedAt).toDateString() === day) return [card];
           return [<DaySeparator key={`day:${feedRowId(row)}`} placedAt={row.placedAt} />, card];
@@ -455,6 +473,88 @@ function MessageCard({ author, members, message, placedAt }: {
         </span>
       </div>
     </div>
+  </li>;
+}
+
+/**
+ * A thread's merged result, on the left at the bottom of the feed when it was
+ * merged, so the Channel reads in time order (docs/conversation-merge.md). It
+ * names its thread, and that name opens it; it quotes the thread's summary;
+ * its body renders as markdown with the artifacts it embeds as cards, drawn
+ * from the titles stored with the merge. An artifact opens in its thread,
+ * where it is attached and so readable by everyone who sees this.
+ */
+function MergeCard({ author, channelId, currentUser, members, merge, message, onOpenThread, placedAt }: {
+  author: WorkspaceMember | undefined;
+  channelId: string;
+  currentUser: WorkspaceMember;
+  members: readonly WorkspaceMember[];
+  merge: NonNullable<ChannelMessage['merge']>;
+  message: ChannelMessage;
+  onOpenThread: (threadId: string, resourceId?: string) => void;
+  placedAt: string;
+}): React.JSX.Element {
+  const { api } = useAppSession();
+  const queryClient = useQueryClient();
+  const [removing, setRemoving] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const body = useMemo(() => typedMentionRendering(message.body, members), [members, message.body]);
+  const citations = useMemo<CitationContext>(() => {
+    const embeds = new Map(merge.embeds.flatMap((embed) => [[embed.id, embed] as const, ...(embed.slug ? [[embed.slug, embed] as const] : [])]));
+    return {
+      resolve: (resourceId) => {
+        const embed = embeds.get(resourceId);
+        return embed ? { id: embed.id, title: embed.title, resourceType: embed.kind } : undefined;
+      },
+      open: (target) => {
+        if (target.scheme === 'external') void openLink(target.url);
+        if (target.scheme !== 'resource') return;
+        // The artifact is attached to the thread, so it opens there, by its id
+        // whichever spelling the body cited it by.
+        onOpenThread(merge.threadId, embeds.get(target.resourceId)?.id);
+      },
+    };
+  }, [merge.embeds, merge.threadId, onOpenThread]);
+  const removable = message.author.kind === 'member'
+    && (message.author.userId === currentUser.id || currentUser.role === 'owner' || currentUser.role === 'admin');
+  const remove = async (): Promise<void> => {
+    if (!api) return;
+    setRemoving(true);
+    setFailure(null);
+    try {
+      await api.removeChannelMessage(channelId, message.id);
+      await queryClient.invalidateQueries({ queryKey: channelFeedQueryKey(channelId) });
+    } catch {
+      setFailure('The merge couldn’t be removed. Try again.');
+    } finally {
+      setRemoving(false);
+    }
+  };
+  const quote = merge.summary?.split('\n').find((line) => line.trim() !== '')?.trim();
+  const appearance = useCachedWorkstreamAppearance(merge.threadId);
+  const { Icon, tint, ink } = resolveWorkstreamAppearance(merge.threadId, appearance);
+  const merger = author?.name ?? 'Someone';
+  return <li className="channel-feed-item is-message is-merge">
+    <MergeMessage
+      actions={<>
+        {removable && <footer className="merge-message-actions">
+          <button className="channel-feed-merge-remove" disabled={removing} onClick={() => void remove()} type="button">Remove</button>
+        </footer>}
+        {failure && <InlineError>{failure}</InlineError>}
+      </>}
+      label={`${merge.title || 'A thread'}, merged by ${merger}`}
+      mergedBy={<>{author && <Avatar member={author} size="small" title={null} />}{merger}</>}
+      quote={quote}
+      source={{
+        mark: <Icon size={10} strokeWidth={2} />,
+        tint: { background: tint, ink },
+        title: merge.title || 'A thread',
+        onOpen: () => onOpenThread(merge.threadId),
+      }}
+      time={<RelativeTime value={placedAt} />}
+    >
+      <MarkdownBody citations={citations} mentions={body.mentions}>{body.text}</MarkdownBody>
+    </MergeMessage>
   </li>;
 }
 

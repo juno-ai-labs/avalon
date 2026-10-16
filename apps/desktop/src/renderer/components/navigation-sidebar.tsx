@@ -1,6 +1,6 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import type { ActivityFilter, ActivityItem, ActivityPage, ConversationAccessRequestItem, PinKind, SpaceSummary, WorkstreamAppearance } from '@rally/contracts';
-import { IdentityTile, ShapeGrid, ShapeOutline, type TileBadge } from '@rally/ui/components/identity-tile';
+import { IdentityTile, ShapeOutline, type TileBadge } from '@rally/ui/components/identity-tile';
 import { resolveWorkstreamAppearance, WORKSTREAM_ICON_COMPONENTS } from '@rally/ui/components/workstream-glyph';
 import { markColors } from '@rally/ui/lib/project-palette';
 import {
@@ -67,11 +67,11 @@ const REVEAL_DEADLINE_MS = 2_000;
  * Each section's button is the outline of what its list holds: a Channel is a
  * squircle and a Thread a circle, as their rows draw them. Activity holds
  * neither, so it takes the triangle no object uses. Pinned holds every kind
- * that can be pinned, so it is a grid of them, a Sidekick's hexagon included
- * for the kinds still to come.
+ * that can be pinned, so it takes the pin a row's pin button draws, at the
+ * outlines' stroke.
  */
 const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNode }> = [
-  { id: 'pinned', label: 'Pinned', icon: <ShapeGrid shapes={['squircle', 'circle', 'hexagon', 'circle']} /> },
+  { id: 'pinned', label: 'Pinned', icon: <IconPin aria-hidden="true" size={22} stroke={1.8} /> },
   { id: 'channels', label: 'Channels', icon: <ShapeOutline shape="squircle" /> },
   { id: 'threads', label: 'Threads', icon: <ShapeOutline shape="circle" /> },
   { id: 'activity', label: 'Activity', icon: <ShapeOutline shape="triangle" /> },
@@ -1341,6 +1341,7 @@ const ACTIVITY_VERBS: Record<ActivityItem['kind'], string> = {
   thread_started: 'started',
   breakout_started: 'started a breakout on',
   run_finished: 'finished',
+  merged: 'merged',
 };
 
 /** The Activity tab's chips; see `docs/digests.md#the-activity-tab`. */
@@ -1435,8 +1436,12 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
   const fetched = useMemo(() => (feed.data?.pages ?? []).flatMap((page) => page.items), [feed.data]);
   const items = chip === 'unread' ? fetched.filter((item) => item.unread) : fetched;
   const href = (item: ActivityItem): string => {
+    // A merge opens where it landed: the Channel, or the thread a breakout
+    // merged into.
+    if (item.kind === 'merged' && item.mergedInto) return channelRoute(item.mergedInto.channelId);
     const parent = live.data?.find((candidate) => candidate.id === item.threadId);
-    return threadRoute(item.threadId, homeChannelId(parent?.spaceIds ?? item.channelIds), item.breakout?.substreamId);
+    return threadRoute(item.threadId, homeChannelId(parent?.spaceIds ?? item.channelIds),
+      item.kind === 'merged' ? undefined : item.breakout?.substreamId);
   };
   // New activity pushes the rows under it down, and a request arriving or
   // answered slides in or out, rather than the list jumping.
@@ -1507,7 +1512,10 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
           <span className="activity-row-body">
             <span className="activity-row-text">
               <strong>{name}</strong> {ACTIVITY_VERBS[item.kind]}{' '}
-              <strong>{item.breakout && item.kind !== 'breakout_started' ? item.breakout.title : item.threadTitle}</strong>
+              {item.kind === 'merged' ? <>
+                <strong>{item.breakout ? item.breakout.title : item.threadTitle}</strong> into{' '}
+                <strong>{item.breakout ? item.threadTitle : item.mergedInto?.name ?? 'a channel'}</strong>
+              </> : <strong>{item.breakout && item.kind !== 'breakout_started' ? item.breakout.title : item.threadTitle}</strong>}
             </span>
             {item.kind === 'breakout_started' && item.breakout && <span className="breakout-chip activity-chip">
               <IconCornerDownRight aria-hidden="true" className="breakout-chip-icon" size={13} stroke={1.9} />

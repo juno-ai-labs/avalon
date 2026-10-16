@@ -24,19 +24,23 @@ function activityDetail(item: ActivityItem): string {
     case 'thread_started': return actor ? `${actor} started it` : 'New thread';
     case 'breakout_started': return actor ? `${actor} started it` : 'New breakout';
     case 'run_finished': return actor ? `${actor} finished` : 'Finished';
+    case 'merged': return item.breakout
+      ? `${actor || 'Someone'} merged ${item.breakout.title} into it`
+      : `${actor || 'Someone'} merged it into ${item.mergedInto?.name ?? 'a channel'}`;
   }
 }
 
 /** One unread Activity row as a menu row, opening where the tab's row opens. */
 function attentionRow(item: ActivityItem): MenuBarAttentionRow {
   const detail = activityDetail(item);
-  const title = item.breakout?.title ?? item.threadTitle;
+  const title = item.kind === 'merged' ? item.threadTitle : item.breakout?.title ?? item.threadTitle;
   return {
     key: item.id,
     workstreamId: item.threadId,
-    substreamId: item.breakout?.substreamId ?? null,
+    // A breakout's merge is about the thread it landed in.
+    substreamId: item.kind === 'merged' ? null : item.breakout?.substreamId ?? null,
     title: title.trim().length > 0 ? title : UNNAMED_WORKSTREAM_LABEL,
-    detail: item.breakout ? `${detail} in ${item.threadTitle}` : detail,
+    detail: item.breakout && item.kind !== 'merged' ? `${detail} in ${item.threadTitle}` : detail,
   };
 }
 

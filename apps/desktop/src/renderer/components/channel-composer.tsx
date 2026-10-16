@@ -1,4 +1,5 @@
 import { asSubstreamId, asWorkspaceId, asWorkstreamId, MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, type SpaceColorKey } from '@rally/contracts';
+import { IconCloudDownload } from '@tabler/icons-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useContext, useMemo, useRef, useState } from 'react';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
@@ -19,6 +20,7 @@ import { EmailMentionContext, emailMentionDirectory, NO_INVITEES, useWorkspaceIn
 import { addPendingWorkstream, confirmPendingWorkstream, discardPendingWorkstream } from '../lib/workstreams-cache';
 import { AttachmentLightbox } from './attachment-lightbox';
 import type { AttachmentPreview } from './attachments';
+import type { ComposerMenuAction } from './composer-input';
 import { type ComposerConversation, WorkstreamComposer } from './workstream-composer';
 
 interface CreateThreadInput {
@@ -267,6 +269,17 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
     });
   }, [attachmentDraft.ready, channelColor, channelId, channelScope, create, modelOverride, navigate, queryClient, workspace.currentUser.id]);
 
+  // The same import the Channel header offers, beside the other ways to bring
+  // something into a new thread. Only the Mac app has the embedded browser it
+  // runs in; the browser shows it disabled, saying so.
+  const openBrowserImport = typeof window === 'undefined' ? undefined : window.rally?.openBrowserImport;
+  const menuActions: ComposerMenuAction[] = [{
+    ...(openBrowserImport ? {} : { disabledReason: 'Importing needs the Rally Mac app' }),
+    icon: <IconCloudDownload aria-hidden="true" />,
+    label: 'Import from Claude or ChatGPT',
+    onSelect: () => void openBrowserImport?.({ spaces: [{ id: channelId, name: channelName }], spaceLocked: true }),
+  }];
+
   const pendingThread: ComposerConversation = {
     scope: channelScope,
     harnessStatus: 'completed',
@@ -287,6 +300,7 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
           fileInputRef={fileInputRef}
           members={members.data ?? []}
           invitees={visibleInvitees}
+          menuActions={menuActions}
           model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
           onAttach={attachmentDraft.addFiles}
           onDraftChange={() => setTooLong(false)}

@@ -51,10 +51,8 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   its name, and the account menu at the bottom (its trigger shows only the
   avatar here). The outlines are what each list holds: a Channel is a squircle
   and a Thread is a circle, as their rows draw them, and Activity, which holds
-  neither, is a triangle. Pinned holds every kind that can be pinned, so its
-  icon is a two-by-two grid (`ShapeGrid`), clockwise from the top left: a
-  Channel, a Thread, a Sidekick's hexagon and a Thread. The hexagon is there for
-  kinds still to come; Pinned lists Channels and Threads today.
+  neither, is a triangle. Pinned holds every kind that can be pinned, so it
+  takes the Tabler pin a row's pin button draws, at the outlines' 1.8 stroke.
   The choice is a device preference (`rally.sidebar-section`). Every section
   carries a red count (`RailBadge`; nothing at zero, `99+` past two digits). **Threads**: every conversation waiting on this
   person and every access request waiting on them, the same `attentionItems`
@@ -309,9 +307,9 @@ from; reduced motion turns both off.
 
 ### Breakouts
 
-A Breakout is still created only from a message. Under Rally's newest reply
-the action is a visible line, **Start a breakout from this message**; on every
-other message it is **New breakout** among the actions that appear on hover. Its launch surface opens in the right pane: a second Main surface
+A Breakout is still created only from a message: **New breakout** is the first
+of the actions that appear on hover, on every message, Rally's newest reply
+included, ahead of **Merge**. Its launch surface opens in the right pane: a second Main surface
 with `paneKey="launch"`, so it owns its own panel scope. Once created, the
 route's `?substream=` names it and it opens in the right pane beside Main. The
 route contract is unchanged: deep links, the restored last route and search
@@ -487,6 +485,39 @@ which would break "opening anything closes the sheet".
 **Consequences:** The reset is still the only place the sheet's state changes
 on navigation. Set the request only at phone width: an open sheet makes the
 pane inert (the 2026-10-06 entry, "The sidebar is a top bar and sheet").
+
+### 2026-10-16 — Pinned's rail icon is the pin
+
+**What changed:** The Pinned section's icon is `IconPin` at 22px and a 1.8
+stroke, replacing `ShapeGrid`. `ShapeGrid` and the hexagon outline it alone
+used are gone from `identity-tile.tsx`.
+
+**Why:** The grid did not sit with its neighbours. It spanned 2.4 to 21.6 of the
+24-unit grid against the outlines' 3.6 keyline, and its 1.2 stroke made four
+thin shapes that read as grey texture beside single 1.8 outlines. A tuned grid,
+a squircle-and-circle pair, a nested squircle, a diamond and a star were drawn
+and compared; the product owner chose the pin because it names the section
+and matches the control that fills it. It breaks the rule that each section's
+icon is the outline of what it holds, so a later section should not take that
+as precedent: the pin is an exception for a list defined by an action, not by
+a kind.
+
+### 2026-10-16 — New breakout and Merge lead every message's hover row
+
+**What changed:** **New breakout** is the first hover action on every message,
+Rally's newest reply included, and **Merge** follows it. The visible line
+under Rally's newest reply, **Start a breakout from this message**, is gone.
+
+**Why:** Merge-back added a second action that moves work between levels, and
+the product owner asked for both in one place, at the front of the row, with
+the permanent line folded into it.
+
+**Considered and rejected:** Keeping the permanent line beside the hover row,
+which put the same action on screen twice under the newest reply.
+
+**Consequences:** No message has a breakout control outside its hover row. The
+row never wraps (`flex-wrap: nowrap`), so a long row runs under the title
+menu's pop-out instead of breaking. Mechanism: [`conversation-merge.md`](conversation-merge.md).
 
 ### 2026-10-16 — One header at phone width; counts on every section
 

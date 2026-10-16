@@ -22,6 +22,7 @@ import {
  */
 class TranscriptionAdmissions {
   private readonly live = new Set<string>();
+  renewals = 0;
 
   binding(): Env["WORKSPACE_DOS"] {
     const stub = {
@@ -32,10 +33,13 @@ class TranscriptionAdmissions {
       releaseTranscriptionSession: async (input: { sessionId: string }) => {
         this.live.delete(input.sessionId);
       },
-      renewTranscriptionSession: async (input: { sessionId: string }) => ({
-        renewed: this.live.has(input.sessionId),
-        expiresAtSeconds: this.live.has(input.sessionId) ? 1_800_000_180 : null,
-      }),
+      renewTranscriptionSession: async (input: { sessionId: string }) => {
+        this.renewals += 1;
+        return {
+          renewed: this.live.has(input.sessionId),
+          expiresAtSeconds: this.live.has(input.sessionId) ? 1_800_000_180 : null,
+        };
+      },
     };
     const binding: Env["WORKSPACE_DOS"] = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
       idFromName: () => createTestDurableObjectId("workspace-id"),
@@ -226,6 +230,29 @@ describe("realtime transcription proxy", () => {
     });
     expect(server.closes).toContainEqual({ code: 1008, reason: "Dictation audio arrived too quickly." });
     expect(upstream.closes).toContainEqual({ code: 1008, reason: "Dictation audio arrived too quickly." });
+    expect(database.activeSessions()).toBe(0);
+  });
+
+  it("renews the session lease on a timer while the socket is open, with no frames on it", async () => {
+    vi.useFakeTimers();
+    const database = new TranscriptionAdmissions();
+    const upstream = new FakeSocket();
+    const { pairs } = installSocketRuntime(upstream);
+    const environment = env(database);
+    const ticket = await issueTranscriptionSocketTicket(environment, auth);
+
+    await new RealtimeTranscriptionService(environment).upgrade(ticket, request());
+    // A socket opened while the microphone prompt is still up, or a paused
+    // recording, carries nothing: the lease still has to outlive both.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(database.renewals).toBe(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(database.renewals).toBe(2);
+
+    pairs[0]!.server.emit("close", { code: 1000, reason: "Dictation complete" });
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+
+    expect(database.renewals).toBe(2);
     expect(database.activeSessions()).toBe(0);
   });
 
