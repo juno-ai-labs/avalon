@@ -20,6 +20,7 @@ import { reconcileWebPush } from '../../desktop/src/renderer/lib/web-push';
 import { createQueryClient } from '../../desktop/src/renderer/lib/query-client';
 import { useWindowActivationTracking } from '../../desktop/src/renderer/lib/window-activation';
 import { NEW_SIDEKICK_TARGET } from '../../desktop/src/common/sidekicks';
+import { setShellMounted } from './notification-open';
 import { shellLocation } from './session';
 import { BrowserApiError, browserRequest } from './transport';
 
@@ -64,6 +65,8 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
   // A support session never registers this browser for the person's
   // notifications (`docs/impersonation.md`); the API refuses it as well.
   useEffect(() => { if (!session.impersonator) void reconcileWebPush(api).catch(() => undefined); }, [api, session.impersonator]);
+  // A notification click routes in place only while this is mounted.
+  useEffect(() => { setShellMounted(true); return () => setShellMounted(false); }, []);
   const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
   const [resourceAuthorizationAttempts, setResourceAuthorizationAttempts] = useState<Readonly<Record<string, PendingConnectorOAuth>>>({});
   const setResourceAuthorizationAttempt = useCallback((key: string, attempt: PendingConnectorOAuth | null) => {
