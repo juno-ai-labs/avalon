@@ -739,6 +739,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const mainActions = (conversationScoped ? mainVisible : parent.data) ? {
     merge: threadMerge ? {
       label: mergeLabel(threadMerge),
+      target: threadMerge.kind === 'channel' && threadMerge.channels.length > 1 ? `${threadMerge.channels.length} Channels` : 'Channel',
       onSelect: () => setMergeRequest({ substreamId: '0', nonce: Date.now() }),
     } : undefined,
     isPublic: parent.data?.scope === 'workspace',
@@ -753,6 +754,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     // which a reader scoped to the Breakout alone does not.
     merge: openBreakoutId && !conversationScoped && parent.data ? {
       label: 'Merge to thread',
+      target: parent.data.title,
       onSelect: () => setMergeRequest({ substreamId: openBreakoutId, nonce: Date.now() }),
     } : undefined,
     onCopyLink: session?.workspace ? copyRowLink : undefined,

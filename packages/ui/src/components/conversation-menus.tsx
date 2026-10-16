@@ -55,15 +55,20 @@ export interface ConversationRowActions {
    * into one of its Channels. The label names the target ("Merge to thread",
    * "Merge to GTM"); absent where nothing here can merge.
    */
-  merge?: { label: string; onSelect: () => void } | undefined;
+  /** `target` names where it goes, at the row's end: the Thread, or "Channel". */
+  merge?: { label: string; target?: string | undefined; onSelect: () => void } | undefined;
 }
 
 /** The menu row that opens the composer's merge mode; the breakout mark rotated 180°. */
 function MergeRow({ actions }: { actions?: ConversationRowActions | undefined }): React.JSX.Element | null {
   if (!actions?.merge) return null;
-  return <TitleMenuItem icon={<IconCornerUpLeft aria-hidden="true" size={16} stroke={1.9} />} onSelect={actions.merge.onSelect}>
-    {actions.merge.label}
-  </TitleMenuItem>;
+  // Drawn as the rows under it are, so it reads as one of the menu's rows:
+  // the target where they show their count, and no chevron, since it acts.
+  return <DropdownMenu.Item className="menu-item title-menu-level-row title-menu-merge-row" onSelect={actions.merge.onSelect}>
+    <IconCornerUpLeft aria-hidden="true" size={17} stroke={1.7} />
+    <span className="title-menu-item-copy">{actions.merge.label}</span>
+    {actions.merge.target && <span className="title-menu-level-meta">{actions.merge.target}</span>}
+  </DropdownMenu.Item>;
 }
 
 /** How many Breakouts the Breakouts view lists before "Show N more". */

@@ -102,6 +102,12 @@ interface ComposerInputProps {
   error?: string;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   footerHint?: ReactNode;
+  /** A line inside the composer, over its toolbar: what sending will do, for a host that sends somewhere unusual. */
+  notice?: ReactNode;
+  /** A host's own control at the end of the toolbar's tools, such as where a merge goes. */
+  toolsAccessory?: ReactNode;
+  /** What the send button shows in place of its arrow, for a host whose send is not a plain send. */
+  submitContent?: ReactNode;
   /** Main work streams opt into GrokBot's single-row message capsule. */
   layout?: 'toolbar' | 'message-capsule';
   maxHeight?: number;
@@ -252,6 +258,9 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   error,
   fileInputRef,
   footerHint,
+  notice,
+  toolsAccessory,
+  submitContent,
   layout = 'toolbar',
   maxHeight = 180,
   mentionDisabled = false,
@@ -700,6 +709,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
             value={value}
           />
         </div>
+        {notice && <div className="composer-notice">{notice}</div>}
         <div className="composer-toolbar">
           <div className="composer-tools">
             {!messageCapsule && (
@@ -839,6 +849,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 )}
               </DropdownMenu.Root>
             )}
+            {toolsAccessory}
           </div>
           {footerHint && <span className="composer-hint">{footerHint}</span>}
           <div className="composer-submit-area">
@@ -854,8 +865,8 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 first-time reader looks for is the one that was missing. Every
                 host already passes `submitDisabled` for an empty draft, so the
                 disabled state is the one it always computed. */}
-            <button aria-label={submitLabel} className="composer-send" disabled={(submitDisabled && !dictationActive) || sendAfterDictation} onClick={() => void submit()} type="button">
-              {submitting || sendAfterDictation ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}
+            <button aria-label={submitLabel} className={clsx('composer-send', submitContent !== undefined && 'has-content')} disabled={(submitDisabled && !dictationActive) || sendAfterDictation} onClick={() => void submit()} type="button">
+              {submitting || sendAfterDictation ? <LoaderCircle className="spin" size={15} /> : submitContent ?? <ArrowUp size={15} />}
             </button>
             {submitAccessory}
           </div>
