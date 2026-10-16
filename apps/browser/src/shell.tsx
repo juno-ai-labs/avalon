@@ -20,7 +20,8 @@ import { reconcileWebPush } from '../../desktop/src/renderer/lib/web-push';
 import { createQueryClient } from '../../desktop/src/renderer/lib/query-client';
 import { useWindowActivationTracking } from '../../desktop/src/renderer/lib/window-activation';
 import { NEW_SIDEKICK_TARGET } from '../../desktop/src/common/sidekicks';
-import { inPlaceHash, shellLocation } from './session';
+import { setShellMounted } from './notification-open';
+import { shellLocation } from './session';
 import { BrowserApiError, browserRequest } from './transport';
 
 const MAC_APP_ONLY = 'Available in the Mac app.';
@@ -64,21 +65,8 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
   // A support session never registers this browser for the person's
   // notifications (`docs/impersonation.md`); the API refuses it as well.
   useEffect(() => { if (!session.impersonator) void reconcileWebPush(api).catch(() => undefined); }, [api, session.impersonator]);
-  // A notification click on this tab (`public/sw.js`). A link in this
-  // Organization routes in place; one in another loads, which switches to it.
-  useEffect(() => {
-    if (!('serviceWorker' in navigator)) return;
-    const open = (event: MessageEvent<unknown>) => {
-      const data = event.data;
-      if (!data || typeof data !== 'object' || !('type' in data) || data.type !== 'rally:open'
-        || !('url' in data) || typeof data.url !== 'string') return;
-      const hash = inPlaceHash(location.pathname, data.url);
-      if (hash) location.hash = hash;
-      else location.assign(data.url);
-    };
-    navigator.serviceWorker.addEventListener('message', open);
-    return () => navigator.serviceWorker.removeEventListener('message', open);
-  }, []);
+  // A notification click routes in place only while this is mounted.
+  useEffect(() => { setShellMounted(true); return () => setShellMounted(false); }, []);
   const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
   const [resourceAuthorizationAttempts, setResourceAuthorizationAttempts] = useState<Readonly<Record<string, PendingConnectorOAuth>>>({});
   const setResourceAuthorizationAttempt = useCallback((key: string, attempt: PendingConnectorOAuth | null) => {

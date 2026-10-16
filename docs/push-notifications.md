@@ -258,7 +258,8 @@ grouping. A click opens the link's path and query on the worker's own origin,
 never another host. It focuses a tab already on that page; else a tab already in
 the notification's Organization, which the worker posts the link to and the
 page routes in place (`inPlaceHash`), loading it instead if the page finds the
-link names another Organization; else it navigates an open `/app/` tab, whose
+link names another Organization or its shell is not up yet (session restoring,
+shell loading, signed out); else it navigates an open `/app/` tab, whose
 load switches it to the link's Organization; else it opens a new one. The Mac
 app gets the same check from the deep-link handler: a link in the active
 Organization opens in place, and any other activates that Organization first.
@@ -374,7 +375,9 @@ whole app even when no switch was needed.
 
 **What to respect:** The page decides, not the worker: it compares the link
 with its own path and loads the link when they differ, so a wrong guess by the
-worker costs a reload, never a Channel opened in the wrong Organization. A page
+worker costs a reload, never a Channel opened in the wrong Organization. The
+listener is installed by the page's first script, not by the shell, so a tab
+still restoring or signed out loads the link rather than dropping it. A page
 loaded before this change has no listener, so a click on such a tab only
 focuses it until it reloads.
 
