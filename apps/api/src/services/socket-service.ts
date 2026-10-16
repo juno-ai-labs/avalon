@@ -1,4 +1,5 @@
 import { isConfiguredRegion } from "@rally/contracts/regions";
+import { TRANSCRIPTION_TICKET_LIFETIME_SECONDS } from "@rally/contracts/realtime-transcription";
 import type { Region } from "@rally/contracts/regions";
 import { RALLY_HEADERS, rallyHeaderAliases, readRallyHeader } from "@rally/contracts/http-headers";
 import { jwtVerify, SignJWT } from "jose";
@@ -360,7 +361,7 @@ export async function issueTranscriptionSocketTicket(env: Env, auth: AuthContext
     .setIssuer("avalon-api")
     .setAudience("avalon-transcription-socket")
     .setIssuedAt(now)
-    .setExpirationTime(now + 60)
+    .setExpirationTime(now + TRANSCRIPTION_TICKET_LIFETIME_SECONDS)
     .sign(signingKey(env));
 }
 

@@ -998,3 +998,140 @@ describe("Activity settled by the app's events", () => {
     expect(await started()).toEqual([false]);
   });
 });
+
+describe("Channel merges", () => {
+  async function stats(userId: UserId, channelId: SpaceId) {
+    const result = await workspace().listChannelStats({ workspaceId: WORKSPACE_ID, userId });
+    if (!result.ok) throw new Error(`listChannelStats refused: ${result.code}`);
+    const row = result.stats.find((entry) => entry.channelId === channelId);
+    if (!row) throw new Error("Channel not listed");
+    return { latest: row.latestAttentionSequenceNumber, readThrough: row.readThroughSequenceNumber,
+      firstUnread: row.firstUnreadSequenceNumber, hasUnread: row.hasUnread, newThreads: row.newThreadCount };
+  }
+
+  const auth = (userId: UserId) => ({
+    sessionId: `merge-${userId}`, userId, workspaceId: WORKSPACE_ID, region: "global" as const,
+    role: userId === OWNER ? "owner" as const : "member" as const,
+  });
+
+  async function merge(channelId: SpaceId | null, operationId: string, body = "Shipped the sequence.") {
+    return workspace().mergeThreadIntoChannel({
+      auth: auth(OWNER), workstreamId: OPEN_THREAD, spaceId: channelId, body, operationId,
+      embeds: [{ id: "resource-1", title: "Price model", kind: "document" }],
+    });
+  }
+
+  async function messages(channelId: SpaceId, userId: UserId) {
+    const result = await workspace().listChannelFeed({ workspaceId: WORKSPACE_ID, userId, spaceId: channelId, cursor: null });
+    if (!result.ok) throw new Error(`listChannelFeed refused: ${result.code}`);
+    return result.page.items.flatMap((item) => (item.kind === "message" ? [item] : []));
+  }
+
+  it("given a thread placed in two Channels, when its merge Channels are read, then the earliest placement comes first, whatever the ids", async () => {
+    // Reserved first, so its id sorts first; placed second.
+    const board = await reserveChannel("Board");
+    const outbound = await channelWithThreads();
+    await place(board, OPEN_THREAD);
+
+    const target = await workspace().channelMergeTarget({ auth: auth(OWNER), workstreamId: OPEN_THREAD, spaceId: null });
+    expect(target).toMatchObject({ ok: true, spaceId: outbound, name: "Outbound" });
+    expect(target.channels).toEqual([{ id: outbound, name: "Outbound" }, { id: board, name: "Board" }]);
+  });
+
+  it("given a member read through the placements, when the owner merges a thread, then it is the newest item, names its thread, and is news to the member alone", async () => {
+    const channelId = await channelWithThreads();
+    await workspace().acknowledgeSpaceRead({ workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId, readThroughSequenceNumber: 2 });
+
+    expect(await merge(null, "op-1")).toMatchObject({ ok: true, spaceId: channelId, name: "Outbound", replayed: false });
+
+    const feedItems = (await workspace().listChannelFeed({ workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId, cursor: null }));
+    if (!feedItems.ok) throw new Error("feed refused");
+    expect(feedItems.page.items[0]).toMatchObject({
+      kind: "message",
+      attentionSequenceNumber: 3,
+      message: {
+        author: { kind: "member", userId: OWNER },
+        body: "Shipped the sequence.",
+        merge: { threadId: OPEN_THREAD, title: "Cold outreach", summary: "Cold outreach summary",
+          embeds: [{ id: "resource-1", title: "Price model", kind: "document" }] },
+      },
+    });
+    expect(await stats(MEMBER, channelId)).toEqual({ latest: 3, readThrough: 2, firstUnread: 3, hasUnread: true, newThreads: 0 });
+    expect(await stats(OWNER, channelId)).toMatchObject({ latest: 3, readThrough: 3, hasUnread: false });
+  });
+
+  it("given a merge, when the same operation retries, then nothing moves, and when the thread merges again, then the one merge is replaced at the bottom", async () => {
+    const channelId = await channelWithThreads();
+    const first = await merge(channelId, "op-1");
+    if (!first.ok) throw new Error("merge refused");
+
+    expect(await merge(channelId, "op-1", "A retry's words")).toEqual({ ...first, replayed: true });
+    expect((await messages(channelId, OWNER)).map((item) => [item.message.body, item.attentionSequenceNumber]))
+      .toEqual([["Shipped the sequence.", 3]]);
+
+    const again = await merge(channelId, "op-2", "Shipped, with the follow-ups.");
+    expect(again).toMatchObject({ ok: true, messageId: first.messageId, replayed: false });
+    expect((await messages(channelId, OWNER)).map((item) => [item.message.body, item.attentionSequenceNumber]))
+      .toEqual([["Shipped, with the follow-ups.", 4]]);
+    // A late retry of the first operation, after the second replaced it, is
+    // still a replay: it does not overwrite the newer merge or take an ordinal.
+    expect(await merge(channelId, "op-1", "Shipped the sequence.")).toMatchObject({ ok: true, replayed: true });
+    expect((await messages(channelId, OWNER)).map((item) => [item.message.body, item.attentionSequenceNumber]))
+      .toEqual([["Shipped, with the follow-ups.", 4]]);
+  });
+
+  it("given a private thread, or a Channel that does not hold the thread, when it merges, then it is refused and nothing is posted", async () => {
+    const channelId = await channelWithThreads();
+    const elsewhere = await reserveChannel("Elsewhere");
+
+    expect(await workspace().mergeThreadIntoChannel({
+      auth: auth(OWNER), workstreamId: PRIVATE_THREAD, spaceId: null, body: "Done", operationId: "op-p", embeds: [],
+    })).toEqual({ ok: false, code: "merge_thread_private", channels: [] });
+    expect(await merge(elsewhere, "op-e")).toEqual({
+      ok: false, code: "merge_channel_not_placed", channels: [{ id: channelId, name: "Outbound" }],
+    });
+    expect(await messages(channelId, OWNER)).toEqual([]);
+    expect(await messages(elsewhere, OWNER)).toEqual([]);
+  });
+
+  it("given a merge whose thread was made private since, when a member who cannot open it reads the Channel, then the merge is not shown and not news", async () => {
+    const channelId = await channelWithThreads();
+    await workspace().acknowledgeSpaceRead({ workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId, readThroughSequenceNumber: 2 });
+    await merge(channelId, "op-1");
+    await publish(OPEN_THREAD, [threadEffect("Cold outreach", { scope: "personal" }), viewerEffect(OWNER)], undefined, 2);
+
+    expect(await messages(channelId, MEMBER)).toEqual([]);
+    expect(await stats(MEMBER, channelId)).toMatchObject({ hasUnread: false, firstUnread: null });
+    expect(await messages(channelId, OWNER)).toHaveLength(1);
+  });
+
+  it("given a merge, when each person reads Activity, then the member sees a merged row naming the Channel and its author does not", async () => {
+    const channelId = await channelWithThreads();
+    const merged = await merge(channelId, "op-1");
+    if (!merged.ok) throw new Error("merge refused");
+
+    expect((await activity(MEMBER)).items.filter((item) => item.kind === "merged")).toEqual([expect.objectContaining({
+      kind: "merged", actorUserId: OWNER, threadId: OPEN_THREAD, threadTitle: "Cold outreach", breakout: null,
+      mergedInto: { channelId, name: "Outbound" }, unread: true,
+    })]);
+    expect((await activity(OWNER)).items.filter((item) => item.kind === "merged")).toEqual([]);
+    // Reading the Channel through the merge settles the row.
+    await workspace().recordActivityEvents({ workspaceId: WORKSPACE_ID, userId: MEMBER,
+      events: [{ kind: "read", subject: { kind: "channel", channelId }, through: 3 }] });
+    expect((await activity(MEMBER)).items.find((item) => item.kind === "merged")?.unread).toBe(false);
+  });
+
+  it("given a merge, when a member who is not its author removes it, then it stays; when its author does, then it is gone", async () => {
+    const channelId = await channelWithThreads();
+    const merged = await merge(channelId, "op-1");
+    if (!merged.ok) throw new Error("merge refused");
+    const remove = (userId: UserId) => workspace().removeChannelMessage({
+      auth: auth(userId), spaceId: channelId, messageId: merged.messageId,
+    });
+
+    expect(await remove(MEMBER)).toEqual({ ok: false, code: "space_access_denied" });
+    expect(await messages(channelId, OWNER)).toHaveLength(1);
+    expect(await remove(OWNER)).toEqual({ ok: true });
+    expect(await messages(channelId, OWNER)).toEqual([]);
+  });
+});

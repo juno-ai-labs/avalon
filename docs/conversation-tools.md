@@ -32,12 +32,14 @@ attachments are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 
 | Loop | Scope | Tools | Acts as |
 | --- | --- | --- | --- |
-| Breakout (`parentKind: workstream`, substream not `"0"`) | Its own conversation and its Channel's Main | list, read | The person it works for, admitted to Main by the Breakout |
+| Breakout (`parentKind: workstream`, substream not `"0"`) | Its own conversation and its Channel's Main | list, read, merge | The person it works for, admitted to Main by the Breakout |
+| Thread Main (`parentKind: workstream`, substream `"0"`) | Its own thread, for merge | merge | The person it works for |
 | Sidekick configuration (`parentKind: automation`, substream `"0"`, no run) | The Sidekick's home and attachments | list, read, post, attach | The person talking to it |
 | Sidekick run (`automationRun` present) | The Sidekick's home and attachments | list, read, post | The run-as user |
 
-A Channel's Main loop gets no plugin: the only conversation it would reach is
-the one it is in. Neither does a loop under workspace authority, nor a run
+A Thread's Main loop gets `merge` alone: the only conversation it would list
+or read is the one it is in. A loop under workspace authority gets nothing, nor
+a run
 child woken without its `automationRun`. The plugin is `preload: true` and
 `explicit: true`, and loading it reads nothing: the first tool call is the
 first read.
@@ -86,6 +88,20 @@ it.
 - **attach** takes `conversation` and returns
   `{ conversationId, kind, title, alreadyAttached }`. It writes one
   `sidekick_conversation_attachments` row per Sidekick and conversation.
+- **merge** (`conversation_merge`) takes `body` alone, in every loop, and
+  merges into every parent with nothing to choose: a Breakout into its
+  Thread's Main, a Thread into every Channel it is in that the person can post
+  in. It returns `{ merges: [...] }`, one merge route result per target. It
+  calls `ConversationMergeService`, the Merge button's own service, as the
+  person the loop serves, under the `connector` principal after reading their
+  active membership. The key is `conversation-merge:<harnessRunId>:<receiptId>`,
+  passed as each merge's `clientMessageId`; each target keeps its own receipt,
+  so a call that failed part way finishes on its retry. A Breakout's merge into
+  its Thread carries `actingAgent: true` and reads "merged by Rally for
+  <person>". The Merge button still offers one Channel at a time; the PRD's
+  `channel` argument and its Channel-naming system line were dropped for the
+  tool ([`PRDs/2026-10-16_merge-back/agent-behavior.md`](PRDs/2026-10-16_merge-back/agent-behavior.md)
+  records the first contract). The mechanism is [`conversation-merge.md`](conversation-merge.md).
 
 ### Admission
 
@@ -153,6 +169,10 @@ Each refusal is a typed failure with a stable `code`, a model-visible sentence
 | read, post, attach | `conversation_archived` | `resourceId` |
 | read, post, attach | `conversation_access_denied` | `resourceId` |
 | post | `invalid_arguments` (no home, `conversation` left out) | `field`, `expected` |
+| merge | `invalid_arguments` (empty `body`, or any other field) | `field`, `expected` |
+| merge | `merge_thread_private`, `merge_target_not_writable` (no Channel the person can post in) | none |
+| merge | `merge_resource_not_shareable` | `field` (`body.resources[i]`) |
+| merge | `conversation_archived`, `conversation_access_denied` | `resourceId` |
 | read_next, list_next | the wrapper's page codes, per [`tool-pagination.md`](tool-pagination.md) | as there |
 
 `available` is cut to the shared failure-detail bound,
@@ -177,7 +197,9 @@ whole rather than splitting it.
   system-message lines (a run's final-message instruction among them), a
   homeless Sidekick's required `conversation`, each refusal's sentence and
   details, the post key and its replay, the read budget and its cut, the
-  continuation, and link parsing.
+  continuation, and link parsing; for `merge`, which loop gets it, its one
+  argument, the pinned lines, the key and its replay, a Thread merging into
+  each of its Channels, and each refusal's sentence.
   WorkspaceDO and the target are a typed double there; everything they decide
   is proved on workerd.
 - `apps/api/test/sidekick-conversation-storage.test.ts` (Node, the object
@@ -192,7 +214,10 @@ whole rather than splitting it.
   by the Breakout's grant rather than the Channel's; and a room member outside
   the home Breakout refused by the three sites that narrow to it.
   A Breakout member outside its Channel: listed Main and admitted to it from the
-  Breakout's scope, and refused it from the Channel's own.
+  Breakout's scope, and refused it from the Channel's own. A Breakout's merge
+  into its Thread (the service the tool calls): once in Main with the
+  server-written tags and no run in a room of two, refused whole when one embed
+  cannot be shared, and refused for a Breakout that is not the Thread's.
 - `apps/api/test-workers/external-bindings-mucker-flow.test.ts` (workerd): the
   whole flow, a continued run's forward landing in the home Breakout.
 - `apps/api/test-workers/automation-post-result.test.ts` (workerd): a real run,
@@ -216,6 +241,33 @@ is published to the target's audience; the person who attached that
 conversation chose that audience.
 
 ## Changelog
+
+### 2026-10-16 — Breakout and Thread Main loops can merge their result up
+
+**What changed:** A Breakout loop gets `conversation_merge` beside list and
+read, merging into its Thread's Main; a Thread's Main loop, which had no
+conversation tools, gets `conversation_merge` alone, merging into every
+Channel the thread is in. The tool takes the words alone.
+
+**Why:** People ask Rally to "merge this back once Samantha approves". The
+Merge button covers the person doing it themselves, and the product owner
+asked for the agent path back after an earlier draft of the design cut it.
+
+**Considered and rejected:** A merge tool that takes a target from the model,
+including the PRD's optional `channel`: the product owner asked for the tool to
+stay simple and merge into all parents, and a named Channel brought ambiguity
+(two Channels can share a name) for a choice the person rarely needs.
+The target is host-derived from the loop, as every scope here is, so a model
+cannot post somewhere the person did not open. A Breakout loop posting to Main
+through `conversation_post` was rejected: it carries no merge tags and the
+Thread's readers could not tell a result from a note.
+
+**Consequences:** `conversationToolAccess` now returns a scope for a Thread's
+Main loop, so anything that assumed "Main gets nothing" must read the tool
+list instead. The tool runs as the person through a server-built `connector`
+principal; a loop whose person has left is refused as `conversation_access_denied`.
+
+Design: [`PRDs/2026-10-16_merge-back/agent-behavior.md`](PRDs/2026-10-16_merge-back/agent-behavior.md).
 
 ### 2026-10-08 — A Breakout reads its Channel whoever is in it
 

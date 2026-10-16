@@ -6,6 +6,11 @@ import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepart
 import {
   ActivityPageSchema,
   ChannelFeedItemSchema,
+  ConversationMergeChannelsSchema,
+  ConversationMergeResultSchema,
+  type ConversationMergeChannels,
+  type ConversationMergeRequest,
+  type ConversationMergeResult,
   ChannelFeedPageSchema,
   type ChannelMessage,
   MyThreadsPageSchema,
@@ -670,6 +675,8 @@ export class RallyApi {
   get viewerUserId(): string | null {
     return this.session?.user.id ?? null;
   }
+
+  private prefetchedTranscriptionTicket: { promise: Promise<SocketTicket>; usableUntil: number } | undefined;
 
   /** Access tokens live minutes while the durable refresh credential lives
    * weeks. Without a reactive renewal an expired bearer fails every request
@@ -1506,7 +1513,14 @@ export class RallyApi {
     return {
       items: page.items.flatMap((item): ChannelFeedPageView['items'] => {
         if (!('placedAt' in item)) return [];
-        if (item.kind === 'message') return [{ kind: 'message', placedAt: item.placedAt, message: item.message }];
+        if (item.kind === 'message') {
+          return [{
+            kind: 'message',
+            placedAt: item.placedAt,
+            message: item.message,
+            ...(item.attentionSequenceNumber === undefined ? {} : { attentionSequenceNumber: item.attentionSequenceNumber }),
+          }];
+        }
         if (item.kind !== 'thread') return [];
         return [{
           kind: 'thread',
@@ -2104,6 +2118,40 @@ export class RallyApi {
     return { items: page.items.map(mapResource), nextCursor: page.nextCursor, ...(page.complete !== undefined ? { complete: page.complete } : {}) };
   }
 
+  /**
+   * Merge-back (docs/conversation-merge.md): with `breakoutId`, that Breakout's
+   * result into this Thread; without it, this Thread's result into one of its
+   * Channels. A retry with the same `clientMessageId` writes nothing again.
+   */
+  /** The Channels this thread can merge into, earliest placement first. */
+  async mergeChannels(threadId: string): Promise<ConversationMergeChannels> {
+    return this.request(`/conversations/${encodeURIComponent(threadId)}/merge-channels`, {
+      schema: ConversationMergeChannelsSchema,
+    });
+  }
+
+  async mergeConversation(
+    threadId: string,
+    { mentions: selected, ...request }: Omit<ConversationMergeRequest, 'mentions'> & { mentions?: MentionIdentity[] },
+  ): Promise<ConversationMergeResult> {
+    // A Breakout merge keeps its mentions, resolved the way a message's are.
+    const mentions = request.breakoutId !== undefined && (request.body.includes('@') || (selected?.length ?? 0) > 0)
+      ? await this.messageMentionPayload(request.body, selected)
+      : [];
+    return this.request(`/conversations/${encodeURIComponent(threadId)}/merge`, {
+      method: 'POST',
+      body: { ...request, ...(mentions.length > 0 ? { mentions } : {}) },
+      schema: ConversationMergeResultSchema,
+    });
+  }
+
+  /** Remove a Channel message: a merge's Remove, by its author or an admin. */
+  async removeChannelMessage(channelId: string, messageId: string): Promise<void> {
+    await this.requestVoid(`/spaces/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}`, {
+      method: 'DELETE',
+    });
+  }
+
   async attachResource(parentId: string, resourceId: string): Promise<WorkstreamDetail> {
     await this.request(`/conversations/${encodeURIComponent(parentId)}/resources`, {
       method: 'POST',
@@ -2374,9 +2422,33 @@ export class RallyApi {
     }
   }
 
+  /**
+   * Fetches a transcription ticket ahead of a recording, so the press that
+   * starts one finds it already in hand. `usableForMs` is the caller's
+   * promise about how soon it will present the ticket: the next
+   * `getTranscriptionSocketTicket` within that window takes this one instead
+   * of requesting another, and after it a fresh request is made, because a
+   * ticket presented near the end of its life fails the upgrade. A ticket is
+   * single-use, so the prefetched one is handed out once. Its failure is
+   * nobody's problem: the consumer falls back to a request of its own.
+   */
+  prefetchTranscriptionSocketTicket(usableForMs: number): void {
+    if (this.prefetchedTranscriptionTicket && Date.now() < this.prefetchedTranscriptionTicket.usableUntil) return;
+    const promise = this.request('/realtime/transcription/socket', { schema: this.socketSchema });
+    void promise.catch(() => undefined);
+    this.prefetchedTranscriptionTicket = { promise, usableUntil: Date.now() + usableForMs };
+  }
+
   async getTranscriptionSocketTicket(signal?: AbortSignal): Promise<SocketTicket> {
     signal?.throwIfAborted();
-    const request = this.request('/realtime/transcription/socket', { schema: this.socketSchema, signal });
+    const prefetched = this.prefetchedTranscriptionTicket;
+    this.prefetchedTranscriptionTicket = undefined;
+    const fresh = (): Promise<SocketTicket> => this.request('/realtime/transcription/socket', { schema: this.socketSchema, signal });
+    // Checked again once the prefetch resolves: a request that waited out a
+    // network recovery can land after the window it was fetched for.
+    const request = prefetched && Date.now() < prefetched.usableUntil
+      ? prefetched.promise.then((ticket) => Date.now() < prefetched.usableUntil ? ticket : fresh(), fresh)
+      : fresh();
     if (!signal) return request;
     // A shared credential renewal can outlive fetch cancellation. Settle this
     // caller immediately without cancelling another caller's credential renewal.
@@ -2739,7 +2811,7 @@ export class RallyApi {
 export interface ChannelFeedPageView {
   items: Array<
     | { kind: 'thread'; placedAt: string; attentionSequenceNumber: number; thread: WorkstreamSummary }
-    | { kind: 'message'; placedAt: string; message: ChannelMessage }
+    | { kind: 'message'; placedAt: string; message: ChannelMessage; attentionSequenceNumber?: number }
   >;
   nextCursor: string | null;
   /** The Channel's latest attention sequence number as the first page was read; null on a later page. */

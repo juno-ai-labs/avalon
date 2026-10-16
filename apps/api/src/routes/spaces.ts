@@ -1,6 +1,7 @@
 import {
   AcknowledgeChannelReadRequestSchema,
   ChannelFeedPageSchema,
+  type ChannelFeedPage,
   ChannelStatsSchema,
   CreateSpaceRequestSchema,
   MoveChannelBetweenSpacesRequestSchema,
@@ -21,7 +22,7 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 
 import type { HonoAppEnv } from "../env";
-import { clientReadsChannelMessages, clientReadsIndividualSpaces } from "../lib/client-contract";
+import { clientReadsChannelMerges, clientReadsChannelMessages, clientReadsIndividualSpaces } from "../lib/client-contract";
 import { requestDeferral } from "../lib/defer";
 import { getAuth, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
@@ -92,7 +93,8 @@ spaceReadRoutes.get(
 /**
  * A Channel's feed: the threads placed in it and Rally's messages, newest
  * first; see `ChannelFeedItemSchema`. A desktop that predates messages is
- * served the feed without them, since it parses the union strictly.
+ * served the feed without them, and one that predates merges is served each
+ * merge as a plain message, since it parses the union strictly.
  */
 spaceReadRoutes.get(
   "/:id/feed",
@@ -104,9 +106,20 @@ spaceReadRoutes.get(
       c.req.valid("param").id,
       c.req.valid("query").cursor ?? null,
     );
-    const messages = clientReadsChannelMessages((name) => c.req.header(name));
-    return c.json(ChannelFeedPageSchema.parse(messages ? page : {
-      ...page, items: page.items.filter((item) => item.kind !== "message"),
+    const header = (name: string) => c.req.header(name);
+    const messages = clientReadsChannelMessages(header);
+    const merges = clientReadsChannelMerges(header);
+    return c.json(ChannelFeedPageSchema.parse({
+      ...page,
+      items: page.items.flatMap((item): ChannelFeedPage["items"] => {
+        if (item.kind !== "message") return [item];
+        if (!messages) return [];
+        if (merges) return [item];
+        // An older build parses both strictly: a merge reaches it as a plain
+        // message from the person who merged.
+        const message = { id: item.message.id, author: item.message.author, body: item.message.body };
+        return [{ kind: item.kind, placedAt: item.placedAt, message }];
+      }),
     }));
   },
 );
@@ -202,6 +215,16 @@ spaceRoutes.delete(
       c.req.valid("param").workstreamId,
     ),
   ))),
+);
+
+/** Remove one Channel message: a merge's **Remove**, by its author or an admin. */
+spaceRoutes.delete(
+  "/:id/messages/:messageId",
+  zValidator("param", z.strictObject({ id: SpaceIdSchema, messageId: z.string().uuid() })),
+  async (c) => {
+    await new SpaceService(c.env, getAuth(c)).removeMessage(c.req.valid("param").id, c.req.valid("param").messageId);
+    return c.body(null, 204);
+  },
 );
 
 spaceRoutes.post(

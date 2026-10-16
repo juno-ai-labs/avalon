@@ -1,4 +1,5 @@
 import {
+  CHANNEL_MERGES_CLIENT_CONTRACT,
   CHANNEL_MESSAGES_CLIENT_CONTRACT,
   GUEST_WORKSPACES_CLIENT_CONTRACT,
   INDIVIDUAL_SPACE_CLIENT_CONTRACT,
@@ -104,6 +105,11 @@ export function clientReadsIndividualSpaces(header: ClientRequestHeaders): boole
 /** Whether this client reads a Channel feed item of kind `message`; the same rule. */
 export function clientReadsChannelMessages(header: ClientRequestHeaders): boolean {
   return clientReads(header, CHANNEL_MESSAGES_CLIENT_CONTRACT);
+}
+
+/** Whether this client reads a Channel message's `merge` and a message item's ordinal; the same rule. */
+export function clientReadsChannelMerges(header: ClientRequestHeaders): boolean {
+  return clientReads(header, CHANNEL_MERGES_CLIENT_CONTRACT);
 }
 
 function clientReads(header: ClientRequestHeaders, contract: number): boolean {

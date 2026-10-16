@@ -389,7 +389,9 @@ pre {
   color: var(--av-sys-color-text-subtle);
   display: inline-flex;
   justify-content: center;
-  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+  /* `box-shadow` is here for the one button that draws a ring, the dictation
+     level; it costs nothing on the buttons that never get a shadow. */
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 100ms linear;
 }
 
 .button {
@@ -1963,24 +1965,11 @@ pre {
 .eyebrow { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); font-weight: 400; letter-spacing: normal; margin: 0; }
 
 .onboarding-field { display: grid; gap: 7px; margin-top: 28px; }
-.onboarding-field > span:first-child,
-.region-question { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
+.onboarding-field > span:first-child { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 .onboarding-input-wrap { align-items: center; background: var(--av-sys-color-surface-default); border: 1px solid var(--av-ref-color-line-2); border-radius: var(--av-cmp-control-radius); color: var(--av-ref-color-neutral-9); display: flex; gap: 10px; min-height: 46px; padding: 0 13px; }
 .onboarding-input-wrap:focus-within { border-color: var(--av-ref-color-line-6); box-shadow: var(--av-sys-focus-ring-quiet); }
 .onboarding-input-wrap input { background: transparent; border: 0; color: var(--av-sys-color-text-default); flex: 1; font-size: 13px; outline: 0; padding: 0; }
 .onboarding-input-wrap input::placeholder { color: var(--av-ref-color-neutral-8); }
-.region-question { margin: 24px 0 -20px; }
-
-.region-options { border: 0; display: grid; gap: 8px; margin: 30px 0 16px; padding: 0; }
-.region-option { align-items: center; background: var(--av-sys-color-surface-default); border: 1px solid var(--av-ref-color-line-2); border-radius: var(--av-cmp-control-radius); display: flex; gap: 12px; min-height: 72px; padding: 12px 14px; transition: border-color 140ms, background 140ms; }
-.region-option:has(input:checked) { background: var(--av-sys-color-surface-subtle); border-color: var(--av-sys-color-text-default); }
-.region-option input { opacity: 0; position: absolute; }
-.region-icon { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-subtle); display: flex; height: 37px; justify-content: center; width: 37px; }
-.region-option-copy { display: flex; flex: 1; flex-direction: column; }
-.region-option-copy strong { font-size: 13px; }
-.region-option-copy span { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
-.region-check { color: var(--av-sys-color-text-default); }
-.region-note { color: var(--av-ref-color-neutral-9); font-size: var(--av-cmp-control-font-size); line-height: 1.45; }
 .onboarding-continue { margin-top: 20px; width: 100%; }
 
 .signin-shell { overflow-y: auto; }
@@ -1992,8 +1981,6 @@ pre {
 .signin-button { margin-top: 14px; width: 100%; min-height: 48px; border-radius: 26px; font-size: 14px; gap: 10px; }
 .signin-button .connector-mark { width: 18px; height: 18px; color: inherit; }
 .signin-button + .signin-button { margin-top: 10px; font-size: 12px; min-height: 40px; }
-.signin-region-question { margin-top: 24px !important; text-align: left; }
-.signin-card .region-options { text-align: left; }
 .workspace-setup-shell { overflow-y: auto; }
 .workspace-setup-card { width: min(420px, 100%); padding: 24px 0; text-align: center; }
 .workspace-setup-card .onboarding-copy h1 { font-size: 34px; font-weight: 600; letter-spacing: -.04em; margin: 0 0 14px; }
@@ -2004,11 +1991,6 @@ pre {
 .signin-card .onboarding-input-wrap { border-radius: 14px; min-height: 48px; }
 .workspace-setup-card .onboarding-input-wrap input,
 .signin-card .onboarding-input-wrap input { min-width: 0; font-size: 14px; }
-.workspace-setup-card .region-question { text-align: left; }
-.workspace-setup-card .region-options { text-align: left; margin-bottom: 12px; }
-.workspace-setup-card .region-option { border-radius: 14px; }
-.workspace-setup-card .region-option:focus-within { box-shadow: var(--av-sys-focus-ring-quiet); }
-.workspace-setup-card .region-note { text-align: left; font-size: 12px; line-height: 1.6; }
 .workspace-setup-card .onboarding-continue { border-radius: 26px; min-height: 48px; font-size: 14px; margin-top: 22px; }
 .workspace-setup-card .signed-in-identity { margin-top: 22px !important; overflow-wrap: anywhere; }
 .workspace-setup-card .onboarding-signout { margin-top: 8px; }
@@ -2411,7 +2393,8 @@ pre {
 .workspace-settings-screen .settings-member-row small { font-size: 12px; }
 
 .settings-toggle { cursor: pointer; display: inline-flex; position: relative; }
-.settings-toggle input { height: 1px; opacity: 0; position: absolute; width: 1px; }
+/* The input covers the drawn switch, so a click on it lands with or without a <label>. */
+.settings-toggle input { cursor: inherit; height: 100%; inset: 0; margin: 0; opacity: 0; position: absolute; width: 100%; z-index: 1; }
 .settings-toggle > span {
   background: var(--av-cmp-toggle-track);
   border-radius: var(--av-sys-size-radius-pill);
@@ -3273,24 +3256,14 @@ pre {
 .onboarding-items > button.is-complete .onboarding-check { background: var(--av-sys-color-brand-base); border-color: var(--av-sys-color-brand-base); }
 .onboarding-items > button.is-complete strong { color: var(--av-sys-color-text-muted); text-decoration: line-through; }
 .onboarding-items > button.is-complete small { opacity: 0.68; }
-.member-picker-list,
 .member-action-list { display: grid; gap: 4px; }
-.member-picker-row,
 .member-action-row { align-items: center; background: transparent; border-radius: var(--av-cmp-control-radius); display: flex; gap: 10px; min-height: 48px; padding: 7px 9px; position: relative; text-align: left; width: 100%; }
-.member-picker-row:hover,
 .member-action-row:hover { background-image: var(--hover-layer); }
-.member-picker-row > input { opacity: 0; position: absolute; }
-.member-picker-row > span:not(.avatar):not(.member-checkbox):not(.resource-picker-icon),
 .member-action-row > span:not(.avatar):not(.badge) { display: flex; flex: 1; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
-.member-picker-row strong,
 .member-action-list strong { font-size: var(--av-cmp-control-font-size); font-weight: 500; }
-.member-picker-row small,
 .member-action-list small { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 .member-action-row > .icon-button,
 .member-action-row > .badge { flex: 0 0 auto; }
-.member-checkbox { border: 1px solid var(--av-ref-color-line-5); border-radius: var(--av-sys-size-radius-xs); flex: 0 0 16px; height: 16px; width: 16px; }
-.member-picker-row:has(input:focus-visible) .member-checkbox { outline: 2px solid var(--av-sys-color-focus-quiet); outline-offset: 2px; }
-.member-picker-row:has(input:checked) .member-checkbox { background: var(--av-sys-color-accent-base); border-color: var(--av-sys-color-accent-base); box-shadow: inset 0 0 0 3px var(--av-ref-color-neutral-1); }
 
 .resource-picker { display: grid; gap: 11px; }
 .resource-search { align-items: center; background: var(--av-sys-color-surface-default); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-muted); display: flex; gap: 8px; min-height: 38px; padding: 0 10px; }
@@ -4648,7 +4621,20 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    it belongs here rather than in each composer shape: the shapes below own
    what the button looks like at rest, this rule owns what it looks like while
    it is recording, and neither restates the other. */
-.microphone-control.is-listening .dictation-button { background: var(--av-sys-color-danger-base); color: var(--av-sys-color-danger-on); }
+.microphone-control.is-listening .dictation-button {
+  background: var(--av-sys-color-danger-base);
+  color: var(--av-sys-color-danger-on);
+  /* The level ring: `--dictation-level` is 0 to 1 from the capture worklet's
+     RMS, written onto `.microphone-control` by the composer ten times a
+     second; `.icon-button`'s transition carries it between writes. */
+  box-shadow: 0 0 0 calc(var(--dictation-level, 0) * 6px) color-mix(in srgb, var(--av-sys-color-danger-base) 35%, transparent);
+}
+/* Arming: the press is answered at once, before the microphone has opened.
+   The wash and the danger glyph say a recording is coming without claiming
+   it has begun; the full fill above stays reserved for capture that is
+   running, so no word spoken into this state is one the person was told was
+   heard. */
+.microphone-control.is-arming .dictation-button { background: var(--av-sys-color-danger-wash); color: var(--av-sys-color-danger-base); }
 .microphone-menu { max-width: min(430px, calc(100vw - 24px)); min-width: 300px; }
 .microphone-menu .menu-label { color: var(--av-sys-color-text-muted); font-size: 11px; }
 .microphone-menu-item { justify-content: space-between; min-height: 34px; }
@@ -4730,7 +4716,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .mention-popover > button.is-invited strong,
 .mention-confirm-person.is-invited strong,
 .member-action-row.is-invited strong,
-.member-picker-row.is-invited strong,
 .title-menu-person.is-invited .title-menu-person-name,
 .new-channel-popover-row.is-invited .new-channel-popover-name { color: var(--av-sys-color-text-muted); font-style: italic; }
 .mention-confirm-person { align-items: center; display: flex; gap: 10px; }
@@ -4856,7 +4841,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .resource-row:has(.rail-card-main:focus-visible) { box-shadow: inset 0 0 0 1px var(--av-sys-color-focus-default); }
 .resource-row-chevron { flex: none; }
 .watch-toggle { align-items: center; color: var(--av-sys-color-text-muted); display: flex; flex: 0 1 auto; gap: 6px; max-width: 40%; min-width: 0; padding: 3px 4px; position: relative; }
-.watch-toggle input { opacity: 0; position: absolute; }
+.watch-toggle input { cursor: inherit; height: 100%; inset: 0; margin: 0; opacity: 0; position: absolute; width: 100%; }
 .watch-toggle:has(input:focus-visible) { border-radius: var(--av-sys-size-radius-xs); box-shadow: inset 0 0 0 1px var(--av-sys-color-focus-quiet); }
 .watch-toggle:has(input:disabled) { cursor: not-allowed; opacity: .52; }
 .watch-toggle > span { background: var(--av-cmp-toggle-track); border-radius: var(--av-sys-size-radius-pill); flex: none; height: 12px; position: relative; width: 21px; }
@@ -6622,9 +6607,10 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 }
 
 /* Geometry is unconditional; the resting paint below is not. Both capsule
-   fills exclude `.is-listening` so the recording fill wins by being the only
-   rule painting the button, rather than by out-specifying two selectors that
-   describe a shape and have no business knowing about a state. */
+   fills exclude `.is-listening` and `.is-arming` so the recording and arming
+   fills win by being the only rule painting the button, rather than by
+   out-specifying two selectors that describe a shape and have no business
+   knowing about a state. */
 .has-message-capsule .is-message-capsule :is(.composer-send, .microphone-control .dictation-button) {
   border-radius: 50%;
   height: 28px;
@@ -6647,7 +6633,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    had selected it. Recording speaks with the danger token; at rest the button
    is chrome, in both appearances — the tokens resolve per theme, so there is
    no dark rule restating this one. */
-.has-message-capsule .is-message-capsule .microphone-control:not(.is-listening) .dictation-button {
+.has-message-capsule .is-message-capsule .microphone-control:not(.is-listening):not(.is-arming) .dictation-button {
   background: var(--av-cmp-control-background-quiet);
   color: var(--av-sys-color-text-muted);
 }
@@ -6664,7 +6650,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   box-sizing: border-box;
   min-width: 200px;
   padding: 6px;
-  width: 200px;
+  width: max-content;
 }
 
 .composer-action-menu-item.menu-item {
@@ -8249,26 +8235,6 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
    Cards under the message a Breakout started from (`.conversation-card`), and
    the tick bar down the Channel's leading edge. */
 .breakout-card-list { align-items: flex-end; display: flex; flex-direction: column; gap: 28px; margin: 14px 0 6px; padding: 0 10px; }
-/* Under Rally's newest reply, the breakout action as a quiet line instead of
-   a hover action: the likeliest place to branch, said without a button's weight. */
-.message-start-breakout-link {
-  align-items: center;
-  align-self: flex-start;
-  background: transparent;
-  border: 0;
-  border-radius: var(--av-sys-size-radius-pill);
-  color: var(--av-sys-color-text-muted);
-  cursor: pointer;
-  display: inline-flex;
-  font: inherit;
-  font-size: 13px;
-  gap: 7px;
-  height: 30px;
-  margin-top: 4px;
-  padding: 0 12px 0 10px;
-}
-.message-start-breakout-link > svg { color: var(--av-sys-color-text-muted); flex: none; }
-.message-start-breakout-link:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 .breakout-chip {
   align-items: center;
   background: var(--av-sys-color-surface-raised);
@@ -8898,3 +8864,88 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   padding: 0 16px var(--composer-dock-gap);
   position: relative;
 }
+
+/* Merge-back (docs/conversation-merge.md). The hover rows never wrap: a row
+   wider than its message runs under the title menu's pop-out rather than
+   breaking onto a second line, and New breakout and Merge, first in the row,
+   stay whole. */
+:is(.agent-message-actions, .human-message-actions) { flex-wrap: nowrap; white-space: nowrap; }
+.message-merge { white-space: nowrap; }
+/* A Breakout card whose result is in its Thread. */
+.breakout-merged-chip {
+  align-items: center;
+  color: var(--av-sys-color-success-base);
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 550;
+  gap: 2px;
+  margin-left: 4px;
+}
+/* The composer's merge mode (docs/conversation-merge.md): who will see it,
+   over the toolbar; where it goes, as a pill among the tools; and Merge, a
+   labelled button where Send is. */
+.composer-notice {
+  align-items: center;
+  color: var(--av-sys-color-text-subtle);
+  display: flex;
+  font-size: 12px;
+  gap: 6px;
+  padding: 2px 4px 6px;
+}
+.composer-notice > svg { flex: none; }
+.composer-merge-target {
+  align-items: center;
+  background: var(--av-sys-color-success-fill);
+  border-radius: 999px;
+  color: var(--av-sys-color-success-base);
+  display: inline-flex;
+  font-size: 12.5px;
+  font-weight: 550;
+  gap: 4px;
+  height: 26px;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+.composer-merge-target:hover { filter: brightness(.97); }
+.composer-send.has-content { gap: 5px; font-size: 13px; font-weight: 550; padding: 0 12px; width: auto; }
+/* In the message capsule the merge composer always takes its tall form, as
+   the design draws it: the words across the top, who will see them, then the
+   tools, the hint and Merge on one row. */
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-input-shell { grid-column: 1 / -1; grid-row: 2; }
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer :is(textarea, .composer-highlight) { padding: 11px 16px 4px; }
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-notice { grid-column: 1 / -1; grid-row: 3; padding: 2px 16px 0; }
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer :is(.composer-tools, .composer-submit-area) { align-self: center; grid-row: 4; }
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-tools { justify-content: flex-start; }
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-hint { align-self: center; display: block; font-size: 11.5px; grid-column: 2; grid-row: 4; }
+.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-send.has-content { border-radius: var(--av-sys-size-radius-pill); width: auto; }
+/* A merged result, the same block in a Thread and in a Channel: on the
+   leading side, a line naming the source, who merged it and when, an optional
+   quote of what the source was asked, then the result. */
+.merge-message { align-self: flex-start; display: flex; flex-direction: column; gap: 8px; max-width: min(600px, 100%); }
+.merge-message-meta { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; flex-wrap: wrap; font-size: 12.5px; gap: 6px; padding-top: 2px; }
+.merge-message-source { align-items: center; display: inline-flex; gap: 5px; }
+.merge-message-source button { background: transparent; color: inherit; font: inherit; padding: 0; }
+.merge-message-source button:hover { color: var(--av-sys-color-text-default); text-decoration: underline; }
+.merge-message-mark {
+  background: var(--av-sys-color-surface-sunken);
+  border-radius: 50%;
+  color: var(--av-sys-color-text-muted);
+  display: grid;
+  flex: none;
+  height: 16px;
+  place-items: center;
+  width: 16px;
+}
+.merge-message-who { align-items: center; display: inline-flex; gap: 4px; }
+.merge-message-who .avatar { height: 16px; width: 16px; }
+.merge-message-for { margin: 0 2px; }
+.merge-message-quote { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: 12.5px; gap: 6px; max-width: 520px; min-width: 0; }
+.merge-message-quote > svg { flex: none; }
+.merge-message-quote > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.merge-message-body { color: var(--av-sys-color-text-default); font-size: 14.5px; line-height: 1.55; overflow-wrap: anywhere; }
+.merge-message-body .markdown-body { color: inherit; font-size: inherit; line-height: inherit; }
+.merge-message-body .markdown-body > :first-child { margin-top: 0; }
+.merge-message-body .markdown-body > :last-child { margin-bottom: 0; }
+.merge-message-actions { display: flex; gap: 8px; }
+.channel-feed-merge-remove { background: transparent; color: var(--av-sys-color-text-subtle); font-size: 12px; padding: 0; }
+.channel-feed-merge-remove:hover { color: var(--av-sys-color-text-default); text-decoration: underline; }

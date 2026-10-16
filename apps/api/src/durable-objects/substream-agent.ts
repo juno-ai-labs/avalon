@@ -6,6 +6,7 @@ import { ParticipantAuthorityTransferStorage, ParticipantProjectionSchema, Parti
   type ParticipantTransferRequest, type ParticipantProjection } from "./participant-authority-transfer";
 import { workstreamImportHash } from "./workstream-import-hash";
 import { PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
+import { MergeResourceTokenSchema } from "@rally/contracts";
 import { AGENT_HANDOFF_TOOL_NAMES, AgentCommunicationService } from "../services/agent-communication-service";
 import { RegionSchema } from "@rally/contracts/regions";
 import { agentIdForAddress, AgentExchangeSchema } from "@rally/contracts";
@@ -502,6 +503,7 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   productOperation({ operation: z.literal("remove_participant"), userId: IdSchema,
     operationId: IdSchema.optional() }),
   productOperation({ operation: z.literal("attach_resource"), resourceId: IdSchema }),
+  productOperation({ operation: z.literal("attach_resources"), resourceIds: z.array(MergeResourceTokenSchema) }),
   productOperation({ operation: z.literal("detach_resource"), resourceId: IdSchema }),
   productOperation({ operation: z.literal("answer_elicitation"),
     elicitationId: IdSchema, input: AnswerElicitationRequestSchema,
@@ -3511,7 +3513,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         return jsonResponse(await this.product.markUnread(current));
       }
       if (request.operation === "create_message") {
-        return jsonResponse(await this.admitMessage(sender, request.input, span));
+        const { replayed, ...receipt } = await this.admitMessage(sender, request.input, span);
+        // Only a merge is told whether it replayed: the receipt is a strict
+        // client shape, and the merge service is the one caller that asks.
+        return jsonResponse(request.input.merge ? { ...receipt, replayed } : receipt);
       }
       if (request.operation === "import_source_get") {
         return jsonResponse({ source: await this.product.importedSessionSource(current) });
@@ -3574,6 +3579,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           });
         }
         return jsonResponse({ ok: true });
+      }
+      if (request.operation === "attach_resources") {
+        const result = await this.product.attachResources(current, request.resourceIds);
+        if (result.ok) {
+          for (const resource of result.attached) {
+            await this.publishLocalProductEvent(identity, { type: "resource_attached", resource });
+          }
+        }
+        return jsonResponse(result.ok ? { ok: true, linked: result.linked, resources: result.resources } : result);
       }
       if (request.operation === "attach_resource") {
         const resource = await this.product.attachResource(current, request.resourceId);
@@ -6590,7 +6604,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     input: WorkstreamObjectCreateMessageInput,
     span: FlowSpan,
     admittedSocket = false,
-  ): Promise<WorkstreamMessageAdmissionReceipt> {
+  ): Promise<WorkstreamMessageAdmissionReceipt & { replayed: boolean }> {
     const result = await span.step("workstream.room.product.create_message", () =>
       admittedSocket
         ? this.product.createMessageForAdmittedSocket(auth, input)
@@ -6614,7 +6628,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     if (result.inserted) await this.flushSemanticRealtimeOutboxBestEffort();
     span.setAttributes({ "rally.message.deduplicated": !result.inserted });
-    return { turn: result.turn, deliveryState: result.deliveryState };
+    return { turn: result.turn, deliveryState: result.deliveryState, replayed: !result.inserted };
   }
 
   /**

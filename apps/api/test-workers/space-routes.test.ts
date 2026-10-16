@@ -1098,6 +1098,47 @@ describe("the navigation routes", () => {
     expect(await request(path, MEMBER_AUTH, undefined, "GET", "5")).toMatchObject({ status: 200, body: { items: [] } });
   });
 
+  it("serves a thread's merge to a build that reads merges, and the same words as a plain message to one that does not", async () => {
+    const opened = await workspace().openGeneralSpace({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId("00000000-0000-7000-8000-00000000d2a5"),
+    });
+    if (!opened.ok || "absent" in opened) throw new Error("openGeneralSpace refused");
+    const threadId = "00000000-0000-7000-8000-00000000d2a6";
+    await workspace().reserveChild({
+      workspaceId: WORKSPACE_ID, parentId: threadId, substreamId: asSubstreamId("0"), kind: "main",
+      createdByUserId: OWNER, authorityGeneration: 1,
+      directory: { title: "Launch plan", description: "", scope: "workspace", systemKind: null, emailAddress: null,
+        titleStatus: "settled", createdAt: "2026-10-16T00:00:00.000Z" },
+    });
+    await runInDurableObject(workspace(), (instance) => {
+      (instance as unknown as { spaceStorage(): { postMessage(spaceId: string, draft: unknown, postedAt: number): unknown } })
+        .spaceStorage().postMessage(opened.space.id, {
+          author: { kind: "member", userId: OWNER }, body: "Shipped.", key: `merge:${threadId}`, replace: true,
+          sourceWorkstreamId: threadId, embeds: [], operationId: "op-1",
+        }, Date.now());
+    });
+    const path = `/spaces/${opened.space.id}/feed`;
+    const merged = (body: unknown) => (body as { items: Array<{ kind: string; message?: Record<string, unknown> }> }).items
+      .flatMap((item) => (item.message?.body === "Shipped." ? [item] : []));
+    const current = await request(path, MEMBER_AUTH, undefined, "GET", "7");
+    expect(merged(current.body)).toEqual([expect.objectContaining({
+      attentionSequenceNumber: expect.any(Number),
+      message: expect.objectContaining({ merge: { threadId, title: "Launch plan", summary: null, embeds: [] } }),
+    })]);
+    const older = await request(path, MEMBER_AUTH, undefined, "GET", "6");
+    expect(merged(older.body)).toEqual([{
+      kind: "message", placedAt: expect.any(String),
+      message: { id: expect.any(String), author: { kind: "member", userId: OWNER }, body: "Shipped." },
+    }]);
+    // Activity: a merged row for a build that reads merges, none for one that does not.
+    const activityRows = async (contract: string) => ((await request("/navigation/activity", MEMBER_AUTH, undefined, "GET", contract))
+      .body as { items: Array<{ kind: string; mergedInto?: unknown }> }).items.filter((item) => item.kind === "merged");
+    expect(await activityRows("7")).toEqual([expect.objectContaining({
+      kind: "merged", threadId, mergedInto: { channelId: opened.space.id, name: opened.space.name },
+    })]);
+    expect(await activityRows("6")).toEqual([]);
+  });
+
   it("answers nobody who is not signed in", async () => {
     const response = await app.request("/navigation/threads", {}, routeEnv(), createExecutionContext());
     expect(response.status).toBe(401);

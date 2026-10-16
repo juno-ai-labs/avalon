@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   citationFootnotes,
   citationScheme,
+  citedResourceIds,
   connectorMentionHref,
   connectorTypeFromEmbedHref,
   connectorTypeFromMentionHref,
@@ -833,5 +834,30 @@ describe("citationScheme", () => {
     // The two used to disagree here too, because the parser validated a UUID it
     // then threw away. One question, one answer.
     expect(citationScheme("person:someone")).toBe(parseCitationHref("person:someone").scheme);
+  });
+});
+
+describe("citedResourceIds", () => {
+  it("names chips, cards and referenced footnote citations once each, in order", () => {
+    expect(citedResourceIds([
+      "See ![Deck](resource://deck) and [Notes](resource://notes).",
+      "A claim.[^1] Another.[^2] Again.[^1]",
+      "",
+      "[^1]: [Model](resource://model)",
+      "[^2]: [Deck](resource://deck)",
+    ].join("\n"))).toEqual(["deck", "notes", "model"]);
+  });
+
+  it("skips escaped links, code, and footnotes nothing references; an escaped bang is still a chip", () => {
+    expect(citedResourceIds([
+      "\\[Private](resource://private) and \\![Chip](resource://still-a-chip)",
+      "`[Span](resource://span)`",
+      "",
+      "```",
+      "[Fence](resource://fence)",
+      "```",
+      "",
+      "[^unused]: [Orphan](resource://orphan)",
+    ].join("\n"))).toEqual(["still-a-chip"]);
   });
 });
