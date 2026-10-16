@@ -30,8 +30,8 @@ choreography takes, or before adding motion to another list.
 | Path | Responsibility |
 | --- | --- |
 | [`apps/desktop/src/renderer/lib/list-motion.ts`](../apps/desktop/src/renderer/lib/list-motion.ts) | The arithmetic, pure over measured positions: `planListMotion` decides which rows moved and which were displaced, `exitKeyframes` and `enterKeyframes` are the two halves a removed and an inserted row play, `moverKeyframes` composes them for a row that did both, `shifterKeyframes` is what a displaced row plays, `LIST_MOTION` holds every duration, stagger, and easing, and `layoutRowAt` answers which row is laid out under a pointer while rows are in motion. Owns no timer. |
-| [`apps/desktop/src/renderer/components/navigation-sidebar.tsx`](../apps/desktop/src/renderer/components/navigation-sidebar.tsx) | Each tab (Threads, Channels, Activity) attaches the hook to the shared scroll box, so a tab's first render plays nothing and switching tabs is never read as a move. Rows are keyed `thread:`, `channel:`, `activity:` and `request:` with their id; a pinned row and its list row are never drawn together, so a pin is one row moving between sections without a scope. Every section heading is a held row. A thread still starting and a request to join are marked `data-motion-insert`. A Pinned drag holds the dragged row and resolves its target through `layoutRowAt`. |
-| [`apps/desktop/src/renderer/lib/use-list-motion.ts`](../apps/desktop/src/renderer/lib/use-list-motion.ts) | `useListMotion(containerRef, layoutKey?, layoutSettling?)`: measures the rows after every commit, plans against the positions it last saw, and plays the plan through the Web Animations API; plays a marked row's entrance, its exit on a stand-in, and honors `data-motion-move` when the product action identifies a mover whose old and new boxes coincide. Owns the interruption handling. |
+| [`apps/desktop/src/renderer/components/navigation-sidebar.tsx`](../apps/desktop/src/renderer/components/navigation-sidebar.tsx) | Each tab (Pinned, Threads, Channels, Activity) attaches the hook to the shared scroll box, so a tab's first render plays nothing and switching tabs is never read as a move. Rows are keyed `thread:`, `channel:`, `activity:` and `request:` with their id; a pinned row and its list row are never drawn together, so a pin is one row moving between sections without a scope. Every section heading is a held row. A thread still starting and a request to join are marked `data-motion-insert`. A Pinned drag holds the dragged row and resolves its target through `layoutRowAt`. The Pinned tab draws two sections that each re-render alone, so it owns one `useListMotionPass` and each section runs it. |
+| [`apps/desktop/src/renderer/lib/use-list-motion.ts`](../apps/desktop/src/renderer/lib/use-list-motion.ts) | `useListMotion(containerRef, layoutKey?, layoutSettling?)`: measures the rows after every commit, plans against the positions it last saw, and plays the plan through the Web Animations API; plays a marked row's entrance, its exit on a stand-in, and honors `data-motion-move` when the product action identifies a mover whose old and new boxes coincide. Owns the interruption handling. `useListMotionPass` is the same pass handed back instead of run, for a list drawn by several components that each re-render alone: each runs it from a layout effect, and a second run in one commit plays nothing. |
 
 ### The contract a list makes
 
@@ -395,6 +395,26 @@ row (a pin from its right-click menu, say), then pause every animation with
 each one.
 
 ## Changelog
+
+### 2026-10-16 — One pass, run by every part of a list
+
+**What changed:** `useListMotionPass` returns the pass `useListMotion` runs,
+and `useListMotion` is now that pass run from its own layout effect. The
+sidebar's Pinned tab owns one and both of its sections run it.
+
+**Why:** The Pinned tab draws the Channels and Threads sections in one scroll
+box. A hook in each would animate every row twice; one hook in the tab missed
+every commit only a section made, such as a drag preview, so the rows jumped.
+
+**Considered and rejected:** A per-commit guard so the pass runs once. A
+layout effect that sets state commits again before any microtask, so the
+guard skipped real commits; a second run in one commit already plays nothing,
+since it finds every row where the first left it.
+
+**Consequences:** The 2026-10-12 rule still holds for each part: state that
+changes a part's rows must live in a component that runs the pass. A part's
+first effects run before an ancestor's ref is attached, so a list mounted with
+its scroll box measures from its second commit.
 
 ### 2026-10-12 — The new sidebar's tabs move their rows again
 
