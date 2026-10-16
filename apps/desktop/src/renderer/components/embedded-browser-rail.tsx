@@ -33,7 +33,7 @@ export function EmbeddedBrowserRail({
 
   return (
     <RailSurface className="embedded-browser-rail" label="Browser" leaving={leaving} onClose={onClose}
-      onResize={onResize} resizeLabel="Resize browser" scrimLabel="Close browser" surfaceRef={surfaceRef} width={width}>
+      onResize={onResize} resizeLabel="Resize browser" surfaceRef={surfaceRef} width={width}>
       <div className="embedded-browser-controls">
         <div className="embedded-browser-chrome window-no-drag">
           <EmbeddedBrowserTabs command={command} onCloseLast={onClose} onNewTab={() => void command({ action: 'open' }).then(() => focusAddress(addressRef))} state={state} />

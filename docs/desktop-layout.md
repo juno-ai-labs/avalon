@@ -37,6 +37,13 @@ the split is half of it, in the desktop app and a browser tab alike. A
 Breakout taking over its Channel's panel splits the same pane, the room kept
 for the outgoing panel included.
 
+**The panel never floats over the conversation.** At any width above the phone
+layout (641px and up) the main pane gives up the panel's width and the panel
+sits beside it; there is no dimming layer to click away. At phone width the
+panel is a full-width sheet. The panel's width is still capped by
+`--rail-max-slot`, which keeps `--conversation-min-width` for the
+conversation where the window allows.
+
 Switching items in a panel already open for the same conversation keeps the
 width the person dragged it to. The split itself is not saved: the width
 stored per conversation is the one last dragged to, and it is what a panel
@@ -118,12 +125,17 @@ windows, and checks that rail positions and panels return visibly.
 resource details, the context rail or the embedded browser, leaves the
 window's size and position alone. The panel opens at half the main pane. The
 `window:set-conversation-details` IPC, `conversation-details-geometry.ts`, and
-the saved-state step that subtracted the panel's width are gone.
+the saved-state step that subtracted the panel's width are gone. Windows
+1180px wide or narrower no longer float the panel over a dimmed conversation:
+it sits beside it at every width above phone layout, and the scrim is gone.
 
 **Why:** Once panels opened at a 50/50 split, the window grew by the
 conversation's whole width on every opening, which moved and resized a window
 the person had placed. Opening something to read should not rearrange the
-desktop.
+desktop. Without that growth the default 1180px window sat on the floating
+side of the old breakpoint, so every panel opened as an overlay; the
+product's call was that overlays read as dated and the panel belongs beside
+the conversation.
 
 **Considered and rejected:** Keeping growth for the context and browser rails
 while stopping it for artifacts and attachments. The rails share one slot, so
