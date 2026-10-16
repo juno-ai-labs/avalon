@@ -24,6 +24,8 @@ export type DesktopDeepLinkIntent =
   /** The menu bar's request row: open the main window on this request's approve-or-decline dialog. */
   | ({ kind: "access-request"; requestId: string } & Targeted)
   | ({ kind: "settings"; section: "workspace" | "connections" | "digest" } & Targeted)
+  /** The main window with the sidebar showing Activity: where the digest's button lands. */
+  | ({ kind: "activity" } & Targeted)
   | ({ kind: "new-automation" } & Targeted)
   | { kind: "sidekick"; sidekickId: string; target: WorkspaceTarget }
   | ({ kind: "slack-link"; token: string } & Targeted)
@@ -198,6 +200,9 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
     return (section === "workspace" || section === "connections" || section === "digest") && !url.search
       ? { kind: "settings", section, target }
       : null;
+  }
+  if (url.hostname === "activity") {
+    return (url.pathname === "" || url.pathname === "/") && !url.search ? { kind: "activity", target } : null;
   }
   if (url.hostname === "automations" && url.pathname === "/new") {
     return !url.search ? { kind: "new-automation", target } : null;

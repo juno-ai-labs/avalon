@@ -43,6 +43,7 @@ import {
 import { desktopBridge, type DesktopWorkspaceOnboardingState } from './platform';
 import { abandonPendingWorkstreamFeedOpen, markSurfaceEntrypoint, reportJavascriptError } from './telemetry';
 import type { Region } from './types';
+import { useUiStore } from './ui-store';
 import { invalidateCachedWorkstreamDetails } from './workstreams-cache';
 
 const connectorProviderNames = {
@@ -1082,6 +1083,19 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openSettings);
         else await openSettings();
+        return;
+      }
+      if (intent.kind === 'activity') {
+        const openActivity = (): void => {
+          setDeepLinkError(null);
+          markSurfaceEntrypoint(navigation.entrypoint);
+          const ui = useUiStore.getState();
+          ui.setSidebarSection('activity');
+          // On a narrow window the sidebar is an overlay; open it so the link lands somewhere visible.
+          ui.setSidebarOpen(true);
+        };
+        if (intent.target) await runInDeepLinkWorkspace(intent.target, openActivity);
+        else if (requireActiveWorkspace('Sign in before opening Activity.')) openActivity();
         return;
       }
       if (intent.kind === 'new-automation') {
