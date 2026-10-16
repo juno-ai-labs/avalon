@@ -593,9 +593,6 @@
     "sys.elevation.shadow.rail": {
       "$type": "shadow"
     },
-    "sys.elevation.shadow.rail-strong": {
-      "$type": "shadow"
-    },
     "sys.elevation.shadow.drawer": {
       "$type": "shadow"
     },

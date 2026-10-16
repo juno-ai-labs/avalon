@@ -154,7 +154,6 @@
     "sys.elevation.shadow.md": "0 18px 60px rgba(0, 0, 0, 0.62)",
     "sys.elevation.shadow.lg": "0 30px 90px rgba(0, 0, 0, 0.7)",
     "sys.elevation.shadow.rail": "-10px 0 44px rgba(0, 0, 0, 0.5)",
-    "sys.elevation.shadow.rail-strong": "-16px 0 60px rgba(0, 0, 0, 0.66)",
     "sys.elevation.shadow.drawer": "16px 0 56px rgba(0, 0, 0, 0.6)",
     "sys.focus.ring.default": "0 0 0 2px {sys.color.focus.default}",
     "sys.focus.ring.quiet": "0 0 0 1px {sys.color.focus.quiet}",

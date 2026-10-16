@@ -951,5 +951,5 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       </Modal>
     </>
   );
-  return <RailSurface className={props.panel ? 'inspector-rail resource-panel' : 'inspector-rail'} dropTarget={props.dropTarget} label={props.panel ? `Resource: ${headerTitle}` : inspector ? 'Inspector detail' : railTitle[railVariant]} leaving={props.leaving} onClose={closeRail} onResize={setRailWidth} resizeLabel="Resize inspector" scrimLabel="Close inspector" width={railWidth}>{content}</RailSurface>;
+  return <RailSurface className={props.panel ? 'inspector-rail resource-panel' : 'inspector-rail'} dropTarget={props.dropTarget} label={props.panel ? `Resource: ${headerTitle}` : inspector ? 'Inspector detail' : railTitle[railVariant]} leaving={props.leaving} onClose={closeRail} onResize={setRailWidth} resizeLabel="Resize inspector" width={railWidth}>{content}</RailSurface>;
 }
