@@ -252,7 +252,6 @@ export function DailyDigestSettings({ api, connections, onEditTimezone }: {
                 >
                   {choices.map((choice) => <option key={choice} value={choice}>{minutesToLabel(choice)}</option>)}
                 </select>
-                {/* A label, so a click on the drawn switch reaches the hidden input. */}
                 <label className="settings-toggle">
                   <input
                     aria-label={`${slot.setting.label} digest`}

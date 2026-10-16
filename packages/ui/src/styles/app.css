@@ -1965,7 +1965,7 @@ pre {
 .eyebrow { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); font-weight: 400; letter-spacing: normal; margin: 0; }
 
 .onboarding-field { display: grid; gap: 7px; margin-top: 28px; }
-.onboarding-field > span:first-child,
+.onboarding-field > span:first-child { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 .onboarding-input-wrap { align-items: center; background: var(--av-sys-color-surface-default); border: 1px solid var(--av-ref-color-line-2); border-radius: var(--av-cmp-control-radius); color: var(--av-ref-color-neutral-9); display: flex; gap: 10px; min-height: 46px; padding: 0 13px; }
 .onboarding-input-wrap:focus-within { border-color: var(--av-ref-color-line-6); box-shadow: var(--av-sys-focus-ring-quiet); }
 .onboarding-input-wrap input { background: transparent; border: 0; color: var(--av-sys-color-text-default); flex: 1; font-size: 13px; outline: 0; padding: 0; }

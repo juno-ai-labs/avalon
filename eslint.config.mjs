@@ -122,9 +122,7 @@ export default tseslint.config(
     },
   },
   {
-    // These classes hide their real input in packages/ui/src/styles/app.css and
-    // draw a sibling in its place; only a <label> forwards a click on that
-    // sibling to the input. Add a class here when its stylesheet does the same.
+    // Classes whose stylesheet hides the real input; add one when a new control does.
     files: ["apps/**/src/**/*.tsx", "packages/**/src/**/*.tsx"],
     rules: {
       "rally/hidden-input-control-label": ["error", { classNames: ["settings-toggle", "watch-toggle"] }],
