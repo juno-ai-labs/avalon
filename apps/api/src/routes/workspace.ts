@@ -14,12 +14,15 @@ import {
   MemberPreferencesUpdateSchema,
   PersonalSystemPromptSchema,
   UpdateUserTimezoneRequestSchema,
+  DeviceTimezoneRequestSchema,
+  UserTimezoneSchema,
   UpdateWorkspaceMemberRoleRequestSchema,
   UpdateWorkspaceRequestSchema,
   WorkspaceInvitationSchema,
   WorkspaceInviteeSchema,
   WorkspaceAttentionSchema,
   WorkspaceMemberSchema,
+  UserSchema,
   WorkspaceSchema,
   TerminalWorkspaceSettingsSchema,
   TerminalNetworkPolicyPreviewSchema,
@@ -34,7 +37,7 @@ import { clientReadsIndividualSpaces, requireCurrentClientContract } from "../li
 import { requestDeferral } from "../lib/defer";
 import { getAuth, getWorkspaceAuth } from "../middleware/auth";
 import { SpaceService } from "../services/space-service";
-import { WorkspaceService } from "../services/workspace-service";
+import { readUserTimezone, reportDeviceTimezone, WorkspaceService } from "../services/workspace-service";
 import { SupportAccessService } from "../services/support-access";
 import { workspaceAttention } from "../services/workspace-attention-service";
 import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
@@ -99,6 +102,16 @@ async function withTerminalSettingsService<T>(
  * identity layer beside the socket ticket, for the same reason: the one shell
  * both mount reads it before anything else.
  */
+/**
+ * A client reporting its device's zone, for members and guests alike: both
+ * receive digests in their own day. Mounted beside the profile for the same
+ * reason. See `reportDeviceTimezone`.
+ */
+export const deviceTimezoneRoutes = new Hono<HonoAppEnv>();
+deviceTimezoneRoutes.put("/", zValidator("json", DeviceTimezoneRequestSchema), async (c) =>
+  c.json(UserTimezoneSchema.parse(
+    await reportDeviceTimezone(c.env, getWorkspaceAuth(c).userId, c.req.valid("json").timezone))));
+
 export async function workspaceProfile(c: Context<HonoAppEnv>) {
   return c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getWorkspaceAuth(c)).getWorkspace()));
 }
@@ -131,10 +144,15 @@ workspaceRoutes.put("/support-access", async (c) =>
   c.json(SupportAccessSchema.parse(await new SupportAccessService(c.env, getAuth(c)).grant())));
 workspaceRoutes.delete("/support-access", async (c) =>
   c.json(SupportAccessSchema.parse(await new SupportAccessService(c.env, getAuth(c)).revoke())));
-workspaceRoutes.patch("/me", zValidator("json", UpdateUserTimezoneRequestSchema), async (c) =>
-  c.json(WorkspaceMemberSchema.parse(
-    await new WorkspaceService(c.env, getAuth(c)).updateMyTimezone(c.req.valid("json").timezone))),
-);
+workspaceRoutes.patch("/me", zValidator("json", UpdateUserTimezoneRequestSchema), async (c) => {
+  const { timezone, followDevice } = c.req.valid("json");
+  // The person's user record, not a membership: parsing it as a membership
+  // failed every save with a 500 after the write had already landed.
+  return c.json(UserSchema.parse(
+    await new WorkspaceService(c.env, getAuth(c)).updateMyTimezone(timezone, followDevice === true)));
+});
+workspaceRoutes.get("/me/timezone", async (c) =>
+  c.json(UserTimezoneSchema.parse(await readUserTimezone(c.env, getAuth(c).userId))));
 // Under `/me` and apart from the member record: other members read that record,
 // and only its author may read this.
 workspaceRoutes.get("/me/system-prompt", async (c) =>

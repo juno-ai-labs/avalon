@@ -1869,7 +1869,23 @@ export const ConnectorOAuthAttemptSchema = z.object({
 });
 export const RefreshTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{20,500}$/u);
 export const RefreshRequestSchema = z.object({ refreshToken: RefreshTokenSchema });
-export const UpdateUserTimezoneRequestSchema = z.object({ timezone: IanaTimezoneSchema });
+/**
+ * A person choosing their timezone in Settings. `followDevice` true means
+ * "Automatic": the account follows whichever device reports its zone, and
+ * `timezone` is this device's zone. Absent or false fixes it to `timezone`.
+ */
+export const UpdateUserTimezoneRequestSchema = z.object({
+  timezone: IanaTimezoneSchema,
+  followDevice: z.boolean().optional(),
+});
+/** A client reporting the zone its device is in; applied only while the account follows the device. */
+export const DeviceTimezoneRequestSchema = z.object({ timezone: IanaTimezoneSchema });
+/** The account's timezone and whether it follows the device or was fixed by hand. */
+export const UserTimezoneSchema = z.object({
+  timezone: IanaTimezoneSchema,
+  followsDevice: z.boolean(),
+});
+export type UserTimezone = z.infer<typeof UserTimezoneSchema>;
 /** A member's personal system prompt for one Organization; empty means none. */
 export const PersonalSystemPromptSchema = z.strictObject({ personalSystemPrompt: z.string() });
 export type PersonalSystemPrompt = z.infer<typeof PersonalSystemPromptSchema>;
