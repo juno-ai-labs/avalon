@@ -41,7 +41,8 @@ import { AttachmentLightbox } from './attachment-lightbox';
 import type { AttachmentPreview } from './attachments';
 import { SearchModal, type SearchPlace } from './search-modal';
 import { NavigationSidebar } from './navigation-sidebar';
-import { PhoneHeaderContext, type PhoneHeader } from '@rally/ui/components/title-pill';
+import { PHONE_NAVIGATION_CONTROL, PhoneHeaderContext, type PhoneHeader } from '@rally/ui/components/title-pill';
+import { useSheetOpener } from '../lib/sheet-opener';
 import { IconSearch } from '@tabler/icons-react';
 import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import { OrganizationUsageMenuItem } from './organization-usage';
@@ -189,21 +190,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const navigationSheetOpen = useUiStore((state) => state.sidebarOpen);
   const setNavigationSheetOpen = useUiStore((state) => state.setSidebarOpen);
   // At phone width a pane's header is the only one on screen, so it opens the
-  // sheet and carries the search the sheet's own header offers. The opener is
-  // read before the pane turns inert, which drops its focus, and gets focus
-  // back when the sheet closes.
-  const navigationOpener = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    if (navigationSheetOpen) return;
-    const opener = navigationOpener.current;
-    navigationOpener.current = null;
-    if (opener?.isConnected) opener.focus();
-  }, [navigationSheetOpen]);
+  // sheet and carries the search the sheet's own header offers. A window
+  // surface in a browser tab draws no sidebar, so there is no sheet to open.
+  const openNavigation = useSheetOpener(navigationSheetOpen, setNavigationSheetOpen, PHONE_NAVIGATION_CONTROL);
+  const windowSurface = host === 'browser' && isWindowSurfaceRoute(location.pathname);
   const phoneHeader = useMemo<PhoneHeader>(() => ({
-    openNavigation: () => {
-      navigationOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      setNavigationSheetOpen(true);
-    },
+    openNavigation,
     actions: [{
       key: 'search',
       label: 'Search organization',
@@ -211,7 +203,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       disabled: !api,
       onSelect: () => setSearchOpen(true),
     }],
-  }), [api, setNavigationSheetOpen]);
+  }), [api, openNavigation]);
   const spacesEnabled = spacesEnabledForSession(session);
   // The main pane keeps room for a sidebar that is still fading out.
   const showShellRail = railOpen || railLeaving;
@@ -560,7 +552,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           {switchingWorkspace ? `Opening ${switchingWorkspace.name}…` : ''}
         </span>
         <main className="main-pane" inert={navigationSheetOpen}>
-          <PhoneHeaderContext value={phoneHeader}>{children}</PhoneHeaderContext>
+          <PhoneHeaderContext value={windowSurface ? null : phoneHeader}>{children}</PhoneHeaderContext>
         </main>
       </div>
       {api && <SearchModal key={`${workspace.id}:${workspace.currentUser.id}`} workspaceId={`${workspace.id}:${workspace.currentUser.id}`}

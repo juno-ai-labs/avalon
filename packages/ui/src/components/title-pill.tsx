@@ -339,6 +339,13 @@ export interface PhoneHeader {
 
 export const PhoneHeaderContext = createContext<PhoneHeader | null>(null);
 
+/**
+ * The menu mark a visible pane header draws, for whatever has to find it: the
+ * stylesheet drops the sheet's own bar while one is on screen, and focus
+ * returns to it when the sheet closes.
+ */
+export const PHONE_NAVIGATION_CONTROL = '.main-pane .has-phone-navigation:not([hidden] *) button';
+
 const NAVIGATION_MARK: IdentityMark = {
   shape: 'circle',
   icon: Menu,
@@ -362,7 +369,7 @@ function navigationMark(header: PhoneHeader): MarkBridgeItem {
  */
 export function TitlePillNavigation(): React.JSX.Element | null {
   const header = usePhoneHeader();
-  return header ? <MarkBridge className="title-pill-bridge window-no-drag" items={[navigationMark(header)]} /> : null;
+  return header ? <MarkBridge className="title-pill-bridge has-phone-navigation window-no-drag" items={[navigationMark(header)]} /> : null;
 }
 
 /**
@@ -402,14 +409,14 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
     style={shift ? { '--title-pill-shift': `${shift}px` } as React.CSSProperties : undefined}
   >
     <div className="title-pill-ancestors">
-      {!bridged && lead.length > 0 ? <MarkBridge className="title-pill-bridge window-no-drag" items={lead} /> : null}
+      {!bridged && lead.length > 0 ? <MarkBridge className="title-pill-bridge has-phone-navigation window-no-drag" items={lead} /> : null}
       {bridged ? null : ancestors.map((level) => <span className="title-pill-ancestor window-no-drag" key={level.key}>
         <TitlePill level={level} variant="ancestor" />
       </span>)}
       {/* The nearest crumb keeps its name, which a bare mark does not say. A
           phone has no room for it and the stylesheet hides it there; the
           shape is measured from the name, so it closes back to a circle. */}
-      {bridged ? <MarkBridge className="title-pill-bridge window-no-drag" items={[...lead, ...bridge]} labelLast /> : null}
+      {bridged ? <MarkBridge className={clsx('title-pill-bridge window-no-drag', lead.length > 0 && 'has-phone-navigation')} items={[...lead, ...bridge]} labelLast /> : null}
     </div>
     <div className="title-pill-current window-no-drag" ref={currentRef}><TitlePill level={current} /></div>
     <div className="title-pill-trailing" ref={trailingRef}>{trailing || shownActions?.length
