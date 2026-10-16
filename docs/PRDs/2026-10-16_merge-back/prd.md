@@ -79,6 +79,11 @@ merge is always a draft the person edits before posting.
 
 - The same composer mode, from the thread's hover actions (**Merge to GTM**)
   and its title menu.
+- **Which Channel.** A thread can sit in several Channels and has no stored
+  home. The target defaults to the thread's earliest current placement (the
+  Channel it was started in, unless it was taken out of it), and the button
+  names it. A thread in more than one Channel turns the button's label into a
+  menu of its Channels. One merge goes to one Channel.
 - In the Channel feed the thread goes out on the right when it starts. Its
   merge comes back on the left at the bottom of the feed, when it is merged, so
   the Channel reads in time order. The merge names its thread and quotes its
@@ -182,9 +187,16 @@ news** of any kind, not a placement feature:
   raises nobody). `stampPlacements` calls it per placement as now;
   `postMessages` calls it per message and writes the ordinal to
   `space_messages.attention_ordinal`.
-- `channelStats`, `space_reads`, acknowledgement and the feed's
-  `latestAttentionSequenceNumber` are unchanged: they already read one counter
-  and do not care what advanced it.
+- `channelStats` gains a second arm. Today it counts a Channel's fresh items
+  from `space_channel_memberships` alone and reports `hasUnread` only when a
+  visible placement is above the reader's position, so a stamped message on its
+  own would not light the dot. It now also counts visible `space_messages`
+  above the position (a merge message is visible when its source thread is
+  openable, the same check the feed uses) and takes the first unread ordinal
+  across both arms.
+- `space_reads`, acknowledgement and the feed's `latestAttentionSequenceNumber`
+  are unchanged: they already read the one counter and do not care what
+  advanced it.
 - Opening messages posted with a new Channel (`postStartingMessages`) take no
   ordinal, and existing messages stay `NULL`, reported as zero, which is how
   migration 98 treated rows that predate it. So nobody's General turns unread on
@@ -227,11 +239,16 @@ see the merge, and adds no new access source.
   filters merge messages with the same openable-thread check it already applies
   to thread items. That keeps the rule exact: seeing the merge means you can
   open the thread, so you can open what is attached to it.
-- **Order and failure.** Attach first, then post. Attaching is idempotent, so a
-  retry after a failed post repeats nothing. If any attach is refused (for
-  example, a personal-connection resource the merger does not own), the merge is
-  refused and the code names the field that failed (`body.resources[2]`), never
-  the resource's content.
+- **Order and failure.** Check every resource first, then attach them all,
+  then post. The check is the attach path's own source check, run without
+  writing, so a refusal (for example, a personal-connection resource the merger
+  does not own) refuses the whole merge before anything is shared, and the code
+  names the field that failed (`body.resources[2]`), never the resource's
+  content. Attaching is idempotent, so a retry after a failed post repeats
+  nothing. If the post fails for good after the attaches, the resources stay
+  readable by the target's readers with no merge beside them. That is the same
+  reach the merger already has with Attach to thread, to the same people, so
+  it is accepted rather than rolled back.
 - **Rendering in a Channel.** A `resource://` embed only resolves against the
   loaded conversation's resource set, and a Channel feed has none. So a merge
   message in the feed carries the metadata (title, kind, id) of each embedded
@@ -244,15 +261,23 @@ see the merge, and adds no new access source.
 
 ### Agent tool: `conversation_merge`
 
-- One argument, `body` (markdown, may embed `resource://` links). No target
-  argument: a Breakout loop always merges into its Thread, and a Thread's Main
-  loop into its home Channel.
+- `body` (markdown, may embed `resource://` links), and for a Thread's Main
+  loop an optional `channel`. A Breakout loop always merges into its Thread. A
+  Thread's Main loop merges into the default Channel described under
+  [Which Channel](#thread--channel), or the one `channel` names among the
+  thread's current Channels; any other value is refused as
+  `merge_channel_not_placed`, naming the field.
 - Added to `rally:conversations`. `conversationToolAccess` gains `merge` on the
   Breakout arm (today `list`, `read`) and a new Thread Main arm that returns
   `merge` alone (today that loop gets no conversation tools).
 - It calls the same server write as the Merge button, as the person the run
-  serves (`actingUserId`), with `actingAgent: true` in the message's
-  `structuredContent` for the byline. One write path, one access check.
+  serves (`actingUserId`). One write path, one access check.
+- **Attribution.** Into a Thread, the message carries `actingAgent: true` in its
+  `structuredContent`, and the byline reads "merged by Rally for Alex". A
+  Channel message has no structured content, and a merge there is authored by
+  the person who asked, so the Channel shows "merged by Alex". The Thread keeps
+  the record that Rally did the work. Adding a column for it is listed under
+  [Not now](#not-now).
 - That check answers the open question in
   [`conversation-tools.md`](../../conversation-tools.md) about a Breakout agent
   posting to Main: admission re-checks that the acting person can post in the
@@ -299,6 +324,7 @@ Cut until someone asks. Nothing above blocks adding any of them later.
 - "Ask to merge" for people who can't post in the target.
 - Merging one thread into several Channels.
 - A new Activity row type.
+- Marking a Channel merge as made by Rally.
 - Statuses, update streams, citations, versions, "new since merge" markers,
   length guides.
 
