@@ -295,9 +295,12 @@ it. At each occurrence the scheduler reads the person's first Activity page
 (`listActivity`, the same read the sidebar makes), keeps the rows that are
 `unread`, and lists them under one `##` section per kind, in the order Settings
 lists the kinds, each worded as the sidebar words it and linked to what it
-names (`renderUnreadDigest`). A row is listed only while it is less than two
-days older than the occurrence (`splitByAge`); older unread rows are counted in
-one closing line, "N more older than 2 days.", rather than listed again. Nothing
+names (`renderUnreadDigest`). A row is listed while it is less than two days
+older than the occurrence, or newer than the last delivered digest, whichever
+reaches further back (`splitByAge`); older unread rows are counted in one
+closing line, "N more older than 2 days.", rather than listed again. The second
+bound is for gaps longer than two days, such as a weekday schedule's Monday: a
+row from Friday after Friday's digest has not been listed yet, so it is. Nothing
 unread inside the window, nothing sent: the occurrence settles as `empty`, even
 when older rows remain.
 
@@ -671,8 +674,10 @@ at the bottom instead of a line. Unread rows never expire, so every digest
 repeated everything a person had not opened, twice a day. Marking rows read on
 send was rejected: the digest would then change what Activity shows. Tracking
 which rows each digest already listed was rejected as more state than the
-problem needs. The age is measured from the occurrence, not the clock, so a
-retried occurrence splits the same way. Two days was the product's call; a
+problem needs, but the window always reaches back to the last delivered digest,
+read from `digest_deliveries`, so a weekend or a weekly schedule never hides a
+row that no digest has listed. The age is measured from the occurrence, not the
+clock, so a retried occurrence splits the same way. Two days was the product's call; a
 digest with only older rows sends nothing, so the count never arrives alone.
 
 ### 2026-10-16 — The `digests-enabled` flag is removed, and every digest starts the day at 07:45

@@ -147,6 +147,8 @@ export const WorkspaceDigestReplaceRowsRequestSchema = deferredZodSchema(() => z
 export const WorkspaceDigestFireScheduleRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   scheduleId: IdSchema,
+  /** The occurrence being fired, so `lastDeliveredFor` is the one before it. */
+  plannedFor: z.string().min(1),
 }));
 
 export const WorkspaceDigestFireScheduleSchema = deferredZodSchema(() => z.strictObject({
@@ -155,6 +157,8 @@ export const WorkspaceDigestFireScheduleSchema = deferredZodSchema(() => z.stric
     userId: IdSchema,
     enabled: z.boolean(),
     executionPrincipalJson: z.string(),
+    /** The latest delivered occurrence before this one, if any. */
+    lastDeliveredFor: z.string().nullable(),
   }).nullable(),
 }));
 

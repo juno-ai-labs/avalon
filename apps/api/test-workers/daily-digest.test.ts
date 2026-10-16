@@ -106,7 +106,7 @@ async function startThread(title: string, parentId = thread): Promise<void> {
 async function occurrence(): Promise<{ status: string; event_count: number; summary_markdown: string | null } | undefined> {
   return runInDurableObject(organization(), (_instance, state) => state.storage.sql.exec<{
     status: string; event_count: number; summary_markdown: string | null;
-  }>(`SELECT status, event_count, summary_markdown FROM digest_deliveries WHERE digest_schedule_id = ?`, scheduleId).toArray()[0]);
+  }>(`SELECT status, event_count, summary_markdown FROM digest_deliveries WHERE digest_schedule_id = ? AND planned_for = ?`, scheduleId, plannedFor).toArray()[0]);
 }
 
 beforeEach(async () => {
@@ -190,6 +190,27 @@ describe("the daily digest", () => {
       .toMatchObject({ sent: true, itemCount: 1 });
     const kept = await occurrence();
     expect(kept!.summary_markdown).toMatch(/^1 unread item in your Activity\.\n\n## New threads\n- Maya started \[Q3 plan\]\([^)]+\)\n\n1 more older than 2 days\.$/u);
+  });
+
+  it("given a gap since the last delivered digest longer than two days, then a row no digest has listed yet is still listed", async () => {
+    // A weekday schedule's Monday: the last digest went out Friday morning, and
+    // the row arrived after it, more than two days before Monday's.
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO digest_deliveries
+        (id, workspace_id, digest_schedule_id, user_id, planned_for, cursor_through, event_count, highlight_count,
+         status, summary_markdown, created_at, updated_at)
+        VALUES ('00000000-0000-4000-8000-0000000d00d1', ?, ?, ?, ?, 0, 1, 0, 'delivered', 'Friday.', '2026-01-01', '2026-01-01')`,
+      workspaceId, scheduleId, member, new Date(Date.parse(plannedFor) - 4 * DAY_MS).toISOString());
+    });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse(plannedFor) - 3 * DAY_MS);
+    await startThread("Q3 plan");
+    vi.useRealTimers();
+
+    expect(await fireDigestSchedule(env, { scheduleId, workspaceId, plannedFor }))
+      .toMatchObject({ sent: true, itemCount: 1 });
+    expect((await occurrence())!.summary_markdown)
+      .toMatch(/^1 unread item in your Activity\.\n\n## New threads\n- Maya started \[Q3 plan\]\([^)]+\)$/u);
   });
 
   it("given only unread rows older than two days, then nothing is sent and the occurrence is settled as empty", async () => {

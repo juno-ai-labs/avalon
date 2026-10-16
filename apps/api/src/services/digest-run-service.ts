@@ -69,6 +69,7 @@ export async function fireDigestSchedule(
   const digest = WorkspaceDigestFireScheduleSchema.parse(await workspace.digestScheduleForFire({
     workspaceId: input.workspaceId,
     scheduleId: input.scheduleId,
+    plannedFor: input.plannedFor,
   })).schedule;
   const identity = digest ? await workspaceRegionalDatabase(env).prepare(
     `SELECT u.timezone, u.name AS user_name, w.name AS workspace_name
@@ -98,8 +99,12 @@ export async function fireDigestSchedule(
 
   let delivery = existing;
   if (!delivery) {
-    const { items, olderCount } = splitByAge(await unreadActivity(env, input.workspaceId, digest.userId), input.plannedFor);
-    // Only rows older than the window left: they were in earlier digests, so
+    const { items, olderCount } = splitByAge(
+      await unreadActivity(env, input.workspaceId, digest.userId),
+      input.plannedFor,
+      digest.lastDeliveredFor,
+    );
+    // Only rows older than the window left: earlier digests listed them, so
     // this occurrence has nothing new and sends nothing.
     const markdown = items.length ? await renderUnreadDigest(env, input.workspaceId, items, olderCount) : null;
     const claimed = WorkspaceDigestClaimResultSchema.parse(await workspace.claimDigestDelivery({
@@ -176,6 +181,9 @@ async function unreadActivity(env: Env, workspaceId: string, userId: string): Pr
  * How long an unread row keeps being listed. A row stays unread until it is
  * read, so without this every digest repeats everything the person has not
  * opened; past the window it is only counted. The number is the team's choice.
+ * The window always reaches back to the last delivered digest too, so a gap
+ * longer than this (a weekend, a weekly schedule) never hides a row that no
+ * digest has listed yet.
  */
 const LISTED_FOR_DAYS = 2;
 const LISTED_FOR_MS = LISTED_FOR_DAYS * 24 * 60 * 60 * 1000;
@@ -184,9 +192,11 @@ const LISTED_FOR_MS = LISTED_FOR_DAYS * 24 * 60 * 60 * 1000;
 export function splitByAge(
   items: readonly ActivityItem[],
   plannedFor: string,
+  lastDeliveredFor: string | null,
 ): { items: ActivityItem[]; olderCount: number } {
   // Measured from the occurrence, not the clock, so a retry reaches the same split.
-  const cutoff = Date.parse(plannedFor) - LISTED_FOR_MS;
+  const window = Date.parse(plannedFor) - LISTED_FOR_MS;
+  const cutoff = lastDeliveredFor === null ? window : Math.min(window, Date.parse(lastDeliveredFor));
   const recent = items.filter((item) => Date.parse(item.occurredAt) >= cutoff);
   return { items: recent, olderCount: items.length - recent.length };
 }
