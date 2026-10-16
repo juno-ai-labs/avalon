@@ -55,6 +55,19 @@ const BootPayloadSchema = z.object({
   workstream: WorkstreamDetailSchema,
   transcript: WorkstreamTranscriptSnapshotSchema,
 });
+const AttachedResourcesSchema = z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    linked: z.array(z.string()),
+    resources: z.array(z.strictObject({ id: z.string(), title: z.string(), kind: z.string() })),
+  }),
+  z.strictObject({
+    ok: z.literal(false),
+    index: z.number().int().nonnegative(),
+    code: z.enum(["resource_not_found", "resource_access_denied", "attachment_draft_requires_message"]),
+  }),
+]);
+
 const CreatedMessageSchema = WorkstreamMessageAdmissionReceiptSchema;
 const AnsweredElicitationSchema = z.strictObject({
   elicitation: ElicitationSchema.optional(),
@@ -303,6 +316,19 @@ export class WorkstreamObjectClient {
     return CreatedMessageSchema.parse(await this.request({ operation: "create_message", input }));
   }
 
+  /**
+   * Append a Breakout's merged result to this Main conversation: the message
+   * route's admission with the server-written `merge` tag, which starts no
+   * run. `replayed` is true when this `clientMessageId` was already admitted.
+   */
+  async createMergeMessage(
+    input: WorkstreamObjectCreateMessageInput & { merge: NonNullable<WorkstreamObjectCreateMessageInput["merge"]> },
+  ): Promise<WorkstreamMessageAdmissionReceipt & { replayed: boolean }> {
+    return CreatedMessageSchema.extend({ replayed: z.boolean() }).parse(
+      await this.request({ operation: "create_message", input }),
+    );
+  }
+
   async importedSessionSource(): Promise<{ provider: "chatgpt" | "claude" | "claude_code"; sessionId: string; url: string | null } | null> {
     return z.strictObject({ source: z.strictObject({ provider: z.enum(["chatgpt", "claude", "claude_code"]),
       sessionId: z.string(), url: z.string().nullable() }).nullable() }).parse(
@@ -343,6 +369,17 @@ export class WorkstreamObjectClient {
 
   async attachResource(resourceId: string): Promise<WorkstreamResource> {
     return WorkstreamResourceSchema.parse(await this.request({ operation: "attach_resource", resourceId }));
+  }
+
+  /**
+   * Attach several resources all or none, every check before any write; see
+   * `WorkstreamObjectProduct.attachResources`. A refusal names the position.
+   */
+  async attachResources(resourceIds: readonly string[]): Promise<
+    | { ok: true; linked: string[]; resources: Array<{ id: string; title: string; kind: string }> }
+    | { ok: false; index: number; code: "resource_not_found" | "resource_access_denied" | "attachment_draft_requires_message" }
+  > {
+    return AttachedResourcesSchema.parse(await this.request({ operation: "attach_resources", resourceIds: [...resourceIds] }));
   }
 
   async detachResource(resourceId: string): Promise<void> {

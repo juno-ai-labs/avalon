@@ -712,6 +712,17 @@ import {
   WorkspaceChannelReservationRequestSchema,
   WorkspaceChannelReservationResultSchema,
   WorkspaceSpaceChannelChangeRequestSchema,
+  WorkspaceChannelMergeRequestSchema,
+  WorkspaceChannelMergeResultSchema,
+  WorkspaceChannelMergeTargetRequestSchema,
+  WorkspaceChannelMergeTargetResultSchema,
+  WorkspaceChannelMessageRemoveRequestSchema,
+  type WorkspaceChannelMergeRequest,
+  type WorkspaceChannelMergeResult,
+  type WorkspaceChannelMergeTargetRequest,
+  type WorkspaceChannelMergeTargetResult,
+  type WorkspaceChannelMessageRemoveRequest,
+  type WorkspaceChannelMessageRemoveResult,
   WorkspaceGeneralPlacementRequestSchema,
   WorkspaceSpaceIntentResumeRequestSchema,
   type SpaceChannelRefusal,
@@ -775,6 +786,7 @@ import {
   SPACE_PUBLIC_ONLY_MIGRATION,
   SPACE_INDIVIDUAL_SCOPE_MIGRATION,
   SPACE_MESSAGES_MIGRATION,
+  SPACE_MESSAGE_MERGES_MIGRATION,
   SPACE_INVITEES_MIGRATION,
   WorkspaceSpaceStorage,
   type WorkspaceSpaceIntentClaim,
@@ -4369,6 +4381,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
     `DELETE FROM schedules WHERE digest_schedule_id IS NOT NULL`,
   ],
+}, {
+  version: 109,
+  description: "a Channel message can be a thread's merged result and Channel news",
+  // See SPACE_MESSAGE_MERGES_MIGRATION and docs/conversation-merge.md.
+  statements: SPACE_MESSAGE_MERGES_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -9705,7 +9722,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // Checked by the result schema below.
         items: page.items.flatMap((item): unknown[] => {
           const placedAt = iso(item.placedAt);
-          if (item.kind === "message") return [{ kind: "message", placedAt, message: item.message }];
+          if (item.kind === "message") {
+            return [{
+              kind: "message",
+              placedAt,
+              message: item.message,
+              // Zero for a message that is not news, as a placement before migration 98.
+              ...(item.attentionOrdinal > 0 ? { attentionSequenceNumber: item.attentionOrdinal } : {}),
+            }];
+          }
           // A row the directory no longer resolves is dropped, as on every Space page.
           const thread = threads.get(item.workstreamId);
           if (!thread) return [];
@@ -10356,6 +10381,88 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       };
     }
     return this.addChannelToSpace(request.auth.workspaceId, request.auth.userId, request.spaceId, request.workstreamId);
+  }
+
+  /**
+   * The Breakout's and its Thread's titles for a merge. The caller has
+   * already authorized the person on both; this reads the projection only.
+   */
+  async breakoutMergeTitles(input: {
+    workspaceId: string;
+    workstreamId: string;
+    substreamId: string;
+  }): Promise<{ breakout: string; thread: string }> {
+    await this.initialized;
+    const request = parseRpcInput(z.strictObject({
+      workspaceId: WorkspaceIdSchema,
+      workstreamId: WorkstreamIdSchema,
+      substreamId: SubstreamIdSchema,
+    }), input, "breakout_merge_titles");
+    this.assertWorkspace(request.workspaceId);
+    return this.spaceStorage().breakoutMergeTitles(request.workstreamId, request.substreamId);
+  }
+
+  /**
+   * Where this thread's merge would go for this person, and the Channels they
+   * could pick instead; see `WorkspaceSpaceStorage.channelMergeTarget`. The
+   * merge service asks it before attaching anything.
+   */
+  async channelMergeTarget(input: WorkspaceChannelMergeTargetRequest): Promise<WorkspaceChannelMergeTargetResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceChannelMergeTargetRequestSchema, input, "channel_merge_target");
+    this.assertWorkspace(request.auth.workspaceId);
+    if (!await this.activeSpaceMember(request.auth.workspaceId, request.auth.userId)) {
+      return { ok: false, code: "space_access_denied", channels: [] };
+    }
+    return WorkspaceChannelMergeTargetResultSchema.parse(
+      this.spaceStorage().channelMergeTarget(member(request.auth.userId), request.workstreamId, request.spaceId),
+    );
+  }
+
+  /**
+   * Merge a thread into one of its Channels (docs/conversation-merge.md): one
+   * Channel message keyed by the thread, at the bottom of the feed, and news
+   * on the Channel's waterline. A replay of the same operation writes nothing
+   * and publishes nothing.
+   */
+  async mergeThreadIntoChannel(input: WorkspaceChannelMergeRequest): Promise<WorkspaceChannelMergeResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceChannelMergeRequestSchema, input, "merge_thread_into_channel");
+    this.assertWorkspace(request.auth.workspaceId);
+    if (!await this.activeSpaceMember(request.auth.workspaceId, request.auth.userId)) {
+      return { ok: false, code: "space_access_denied", channels: [] };
+    }
+    const result = this.spaceStorage().mergeThreadIntoChannel(member(request.auth.userId), {
+      workstreamId: request.workstreamId,
+      spaceId: request.spaceId,
+      body: request.body,
+      embeds: request.embeds,
+      operationId: request.operationId,
+    }, Date.now());
+    if (result.ok && !result.replayed) this.publishSpaceConversationsChanged({ spaceIds: [result.spaceId] });
+    return WorkspaceChannelMergeResultSchema.parse(result);
+  }
+
+  /**
+   * Delete one Channel message: its author's, or any for an Organization
+   * owner or admin. A Channel merge's **Remove**; the attachments it made stay.
+   */
+  async removeChannelMessage(input: WorkspaceChannelMessageRemoveRequest): Promise<WorkspaceChannelMessageRemoveResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceChannelMessageRemoveRequestSchema, input, "remove_channel_message");
+    this.assertWorkspace(request.auth.workspaceId);
+    if (!await this.activeSpaceMember(request.auth.workspaceId, request.auth.userId)) {
+      return { ok: false, code: "space_access_denied" };
+    }
+    const storage = this.spaceStorage();
+    if (storage.reach(member(request.auth.userId), request.spaceId) === null) return { ok: false, code: "space_not_found" };
+    const admin = request.auth.role === "owner" || request.auth.role === "admin";
+    const removed = storage.removeMessage(request.spaceId, request.messageId, ({ author }) =>
+      admin || (author.kind === "member" && author.userId === request.auth.userId));
+    if (removed === "not_found") return { ok: false, code: "channel_message_not_found" };
+    if (removed === "forbidden") return { ok: false, code: "space_access_denied" };
+    this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
+    return { ok: true };
   }
 
   /** Take a Channel out of a Space that is not its last: one transaction. */
