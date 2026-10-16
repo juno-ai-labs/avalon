@@ -211,7 +211,11 @@ keeps its pill centred, and puts **Search organization** first in its folded
 (`packages/ui/src/lib/phone-layout.ts`) is the JS side of the 640px
 breakpoint, for what CSS cannot do, such as adding a mark to a bridge. The
 loading skeleton headers draw the menu mark alone (`TitlePillNavigation`), so
-it is there from the first frame.
+it is there from the first frame. A right-slot panel (a site, a resource, an
+attachment) fills the phone, so its header carries the same, and the panel
+is a `conversation-pane` container: under 460px a long title truncates in
+the middle column instead of the crowding shift carrying it off the left
+edge.
 
 The sidebar is a sheet behind the list's own header: the close button at the
 left, the section's title centred, its actions (New channel, Search) at the
@@ -478,6 +482,11 @@ separate menu button beside the crumbs instead of a mark in their bridge: the
 product owner asked for one glass group holding both. Hiding the bar on every
 route: the landing and Sidekicks have no pane header, and would lose the only
 way to the navigation.
+
+A site in the right slot showed the problem worst: its three actions crowded
+the header, and the shift that keeps the pill clear of them moved its long
+title off the screen's left edge. At pane widths under 460px the columns
+already keep the pill clear, so the shift is off there.
 
 **Consequences:** Whether the bar shows is a stylesheet decision
 (`:has(> .main-pane .title-pill-header)`), so a new pane header must use the
