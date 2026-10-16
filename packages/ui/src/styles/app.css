@@ -8930,13 +8930,20 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
    thread in several, Cancel, and who will see it. */
 .composer-merge-bar {
   align-items: center;
+  /* The dock floats over the transcript, so the bar carries the composer's own
+     surface: without it the message behind shows through. */
+  background: var(--av-cmp-composer-background);
+  border: var(--av-cmp-composer-border-width) solid var(--av-cmp-composer-border-color);
+  border-radius: 14px;
+  box-shadow: var(--av-cmp-composer-shadow);
   color: var(--av-sys-color-text-default);
   display: flex;
   flex-wrap: wrap;
   font-size: 12.5px;
   font-weight: 550;
   gap: 4px 8px;
-  padding: 0 4px;
+  padding: 8px 12px;
+  pointer-events: auto;
 }
 .composer-merge-bar > svg { color: var(--av-sys-color-text-muted); flex: none; }
 .composer-merge-bar select { background: transparent; border: 1px solid var(--av-ref-color-line-2); border-radius: 6px; color: inherit; font: inherit; padding: 1px 4px; }
