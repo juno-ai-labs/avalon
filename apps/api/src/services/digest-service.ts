@@ -171,10 +171,10 @@ export async function rebuildDigestSchedulesForTimezone(
     .map((workspaceId) => refreshWorkspaceSchedule(env, workspaceId)));
 }
 
-/** What a person gets before they have chosen anything: weekdays at 09:00, by email. */
+/** What a person gets before they have chosen anything: weekdays at 07:45, by email. */
 const DEFAULT_DAYS = [1, 2, 3, 4, 5];
 const PERSONAL_CHANNEL_NAME = "Personal Channel";
-const DEFAULT_MINUTE_OF_DAY = 9 * 60;
+const DEFAULT_MINUTE_OF_DAY = 7 * 60 + 45;
 /** Bounded so one cron tick cannot spend its whole budget on a large workspace. */
 const RECONCILE_LIMIT = 200;
 
@@ -258,7 +258,9 @@ export async function reconcileDigestDefaults(env: Env): Promise<{
     }
     let digest = settings.schedule;
     let times = settings.times;
-    if (!digest) {
+    // Absent, or marked by WorkspaceDO migration 108 to gain the default
+    // destinations it lacks: the same call does both.
+    if (!digest || digest.defaultDestinationsPending) {
       if (!member.email?.trim()) continue;
       const ensured = WorkspaceDigestDefaultResultSchema.parse(
         await workspace.ensureDefaultDigestSchedule({
