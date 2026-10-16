@@ -1090,6 +1090,9 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         const openActivity = (): void => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
+          // A changed organization parked the pane on `/opening`; Activity
+          // names no route, so land where the app would.
+          if (window.location.hash === '#/opening') window.location.hash = '/';
           const ui = useUiStore.getState();
           ui.setSidebarSection('activity');
           // At phone width the sidebar is a sheet; open it so the link lands

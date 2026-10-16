@@ -1393,6 +1393,16 @@ describe('single-platform desktop identity routing', () => {
       assertDestination: async () => expect(window.location.hash).toBe('#/'),
     },
     {
+      name: 'Activity',
+      url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/activity',
+      // A changed organization parks the pane on `/opening`; Activity names no
+      // route of its own, so it must leave for the default landing.
+      assertDestination: async () => {
+        await waitFor(() => expect(window.location.hash).toBe('#/'));
+        expect(useUiStore.getState().sidebarSection).toBe('activity');
+      },
+    },
+    {
       name: 'Sidekick',
       url: sidekickDeepLink({
         region: 'enterprise',
