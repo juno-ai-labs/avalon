@@ -459,17 +459,6 @@ export const ClientFeatureFlagsSchema = z.object({
    * through its session checks whether or not this is on.
    */
   liveArtifactsEnabled: z.boolean().default(false),
-  /**
-   * Whether the Digest settings section may be shown in Electron for this
-   * person. Defaults **true**, the opposite of every other Boolean above: a
-   * digest already sends by default for every existing person, so hiding the
-   * section is the exception a `digests-enabled` rule opts someone into, not
-   * the default state an outage has to reproduce. Resolved by the same
-   * `resolveDigestsEnabled` the scheduler checks before firing — one
-   * evaluation, reused, never a second "is it off for the workspace" check
-   * combined with this one in application code.
-   */
-  digestsEnabled: z.boolean().default(true),
   pushNotificationsEnabled: z.boolean().default(false),
 });
 
@@ -477,7 +466,6 @@ export const ClientFeatureFlagsSchema = z.object({
 export const ProductFeatureFlagKeySchema = z.enum([
   "suggested-work-enabled",
   "multiple-workspaces-enabled",
-  "digests-enabled",
   "push-notifications-enabled",
   "live-artifacts-enabled",
 ]);

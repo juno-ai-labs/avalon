@@ -53,7 +53,7 @@ identity-provider settings. Ace therefore follows the same employee rule while
 keeping a distinct audience.
 
 `GET /api/flags` reads `meeting-recording-enabled`, `suggested-work-enabled`,
-`multiple-workspaces-enabled`, and `digests-enabled`. The editor exposes enabled/paused state, default Boolean
+and `multiple-workspaces-enabled`. The editor exposes enabled/paused state, default Boolean
 value, ordered first-match rules, all eleven operators, nested AND/OR groups,
 and sticky percentage rollouts. A rule is reordered by dragging its handle
 onto another or, from that same handle, ArrowUp/ArrowDown. A person search
@@ -230,11 +230,6 @@ overlap.
   `true` has one unambiguous meaning in Flagship, Ace, logs, and client code.
 - The product features default to false in the shared client schema. No network
   response, stale cache, missing field, Flagship error, or older API enables one.
-  `digests-enabled` is the one field in that schema that defaults **true**
-  instead: it is provisioned **on**, because a digest already sends by default
-  for every existing person, and Electron reads it to decide whether to show
-  the Daily digest group in Settings → Notifications. See
-  [`digests.md`](digests.md#an-occurrence).
 - The account-wide and regional Queue messages never carry a flag value. Values
   are user-specific and are evaluated in the owning WorkspaceDO after Flagship
   propagation; carrying one value would leak one audience's answer to another.
