@@ -2957,7 +2957,7 @@ describe('MessageBlock merge-back', () => {
     expect(screen.queryByRole('button', { name: 'Merge to thread' })).toBeNull();
   });
 
-  it('names the Breakout a merge came from and who merged it, and opens it', () => {
+  it('draws a merge as the shared merge block: its Breakout, who merged it, and a link to open it', () => {
     const onOpenBreakout = vi.fn();
     render(
       <MessageBlock
@@ -2970,7 +2970,10 @@ describe('MessageBlock merge-back', () => {
         onOpenBreakout={onOpenBreakout}
       />,
     );
-    expect(screen.getByText('merged by Rally for Adam')).toBeVisible();
+    // The shared merge block, not a person's bubble: the same one a Channel draws.
+    const merge = screen.getByRole('article', { name: 'Sequence B, merged by Adam' });
+    expect(merge).toHaveClass('merge-message');
+    expect(merge).toHaveTextContent(/Sequence B\s*· merged by\s*Rally for Adam/u);
     // A merge renders as markdown, which a typed message's verbatim body does not.
     expect(screen.getByText('Sequence B', { selector: 'strong' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Sequence B' }));

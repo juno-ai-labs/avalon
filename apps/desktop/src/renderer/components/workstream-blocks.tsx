@@ -110,7 +110,9 @@ import {
   type CitationRender,
 } from './markdown-citations';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
-import { Button, ConnectorMark, InlineError, RallyMark, Tip, TipGroup } from './primitives';
+import { MergeMessage } from '@rally/ui/components/merge-message';
+import { Avatar, Button, ConnectorMark, InlineError, RallyMark, Tip, TipGroup } from './primitives';
+import { RelativeTime } from './relative-time';
 import { useSpeechPlayback } from './speech-playback';
 
 /**
@@ -2660,27 +2662,6 @@ export function ElicitationPanel({
   );
 }
 
-/**
- * The line over a Breakout's merged result: which Breakout, and who merged
- * it ("merged by Rally for Alex" when Rally did, on Alex's request). The
- * source keeps the unrotated breakout mark, and its name opens it.
- */
-function MergedFromLine({ author, mergedFrom, onOpen }: {
-  author: string;
-  mergedFrom: NonNullable<Message['mergedFrom']>;
-  onOpen?: () => void;
-}): React.JSX.Element {
-  const title = mergedFrom.title || 'A breakout';
-  return (
-    <p className="message-merged-from">
-      <IconCornerDownRight aria-hidden="true" size={12} stroke={1.9} />
-      {onOpen ? <button onClick={onOpen} type="button">{title}</button> : <span>{title}</span>}
-      <span aria-hidden="true"> · </span>
-      <span>merged by {mergedFrom.actingAgent ? `Rally for ${author}` : author}</span>
-    </p>
-  );
-}
-
 interface MessageBlockProps {
   onStartSubstream?: (throughTurnId: string) => void;
   /** The host's Merge action, offered on every settled text message; absent where nothing can merge. */
@@ -2916,13 +2897,46 @@ export function MessageBlock({
   const mergeAction = merge && message.text && message.messageType === 'text'
     && !message.streaming && !message.deliveryState ? merge : undefined;
   const mergedFrom = message.mergedFrom;
-  const mergeMeta = mergedFrom ? (
-    <MergedFromLine
-      author={humanAuthorName}
-      mergedFrom={mergedFrom}
-      {...(onOpenBreakout ? { onOpen: () => onOpenBreakout(mergedFrom.breakoutId) } : {})}
-    />
-  ) : null;
+  if (mergedFrom && message.text) {
+    // A merged result reads as one, on the leading side, in the same block a
+    // Channel draws a thread's merge with; see `MergeMessage`.
+    const author = message.author;
+    return (
+      <MergeMessage
+        actions={(mergeAction || startSubstream) ? (
+          <footer className="agent-message-actions">
+            <TipGroup>
+              {startSubstream && <StartSubstreamButton onStart={startSubstream} />}
+              {mergeAction && <MergeButton merge={mergeAction} text={message.text} />}
+            </TipGroup>
+          </footer>
+        ) : undefined}
+        className="message-block"
+        id={`message-${message.id}`}
+        label={`${mergedFrom.title || 'A breakout'}, merged by ${humanAuthorName}`}
+        mergedBy={<>
+          {author && <Avatar member={{ id: author.id, name: author.name, email: author.email ?? '', timezone: author.timezone ?? 'UTC', ...(author.avatarUrl ? { avatarUrl: author.avatarUrl } : {}) }} size="small" title={null} />}
+          {mergedFrom.actingAgent ? `Rally for ${humanAuthorName}` : humanAuthorName}
+        </>}
+        source={{
+          mark: <IconCornerDownRight size={10} stroke={2} />,
+          title: mergedFrom.title || 'A breakout',
+          onOpen: onOpenBreakout ? () => onOpenBreakout(mergedFrom.breakoutId) : undefined,
+        }}
+        time={<RelativeTime value={message.createdAt} />}
+      >
+        {/* A merge is written to be read as a result: its markdown and its
+            `resource://` embeds render, which a typed message's verbatim
+            body does not. */}
+        <MarkdownBody
+          citations={citations}
+          mentions={message.mentions}
+          speechKind="message"
+          telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
+        >{message.text}</MarkdownBody>
+      </MergeMessage>
+    );
+  }
   const article = (
     <article
       aria-label={sending ? 'Sending message' : pending && pendingLabel
@@ -2961,29 +2975,16 @@ export function MessageBlock({
       </MessageByline>
       {human ? (
         <div className="human-message-content">
-          {mergeMeta}
           {message.text ? (
             <HumanMessageBubble disclosure={rowDisclosure} messageId={message.id} text={message.text}>
-              {mergedFrom ? (
-                // A merge is written to be read as a result: its markdown and
-                // its `resource://` embeds render, which a typed message's
-                // verbatim body does not.
-                <MarkdownBody
-                  citations={citations}
-                  mentions={message.mentions}
-                  speechKind="message"
-                  telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
-                >{message.text}</MarkdownBody>
-              ) : (
-                <MarkdownBody
-                  mentions={message.mentions}
-                  preserveLineBreaks
-                  rallyMentions
-                  speechKind="message"
-                  telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
-                  verbatim
-                >{message.text}</MarkdownBody>
-              )}
+              <MarkdownBody
+                mentions={message.mentions}
+                preserveLineBreaks
+                rallyMentions
+                speechKind="message"
+                telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
+                verbatim
+              >{message.text}</MarkdownBody>
             </HumanMessageBubble>
           ) : null}
           {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (

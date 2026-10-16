@@ -24,7 +24,7 @@ const api = vi.hoisted(() => ({
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session: null }) }));
 const spaces = vi.hoisted(() => ({ data: undefined as unknown }));
 vi.mock('../lib/use-space-directories', () => ({ useSpaceDirectories: () => ({ active: spaces, inactive: { data: undefined } }) }));
-vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ data: [] }) }));
+vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ data: [] }), useCachedWorkstreamAppearance: () => undefined }));
 vi.mock('../components/channel-composer', () => ({
   ChannelComposer: ({ threadOpen }: { threadOpen?: boolean }) => <div data-thread-open={String(threadOpen)}>composer</div>,
 }));
@@ -295,7 +295,8 @@ describe('a Channel', () => {
     expect(merge.getByRole('button', { name: 'Q4 plan' })).toBeVisible();
     expect(merge.getByText('Plan the quarter')).toBeVisible();
     expect(merge.getByText('Price model')).toBeVisible();
-    await waitFor(() => expect(merge.getByText('merged by Me')).toBeVisible());
+    await waitFor(() => expect(merge.getByRole('article', { name: 'Q4 plan, merged by Me' })).toHaveTextContent(/merged by\s*Me/u));
+    expect(merge.getByRole('article', { name: 'Q4 plan, merged by Me' })).toHaveClass('merge-message');
     fireEvent.click(merge.getByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(api.removeChannelMessage).toHaveBeenCalledExactlyOnceWith('outbound', mergeId));
   });
