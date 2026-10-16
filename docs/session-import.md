@@ -38,8 +38,9 @@ import starts a new thread there. The same item sits in the plus menu of the
 Channel's composer, beside **Attach files**. Only the desktop host has that
 browser: the header button appears only there, and in the browser the plus-menu
 item shows disabled with a tooltip saying it needs the Mac app. Both appear only
-to someone who may start a thread in that Channel; a guest never sees them. The person opens a conversation in the window — their own,
-signed in, or a shared link — and clicks Import. A sheet asks for a thread
+to someone who may start a thread in that Channel; a guest never sees them.
+The person opens a conversation in the window — their own, signed in, or a
+shared link — and clicks Import. A sheet asks for a thread
 name, prefilled with the tab's title, and shows the Channel without letting it
 change. Names stop at the server's 180-character limit. The entered name is
 the settled thread title. Once the thread opens, a background pass picks its
@@ -432,8 +433,6 @@ these variations are still required to establish it.
 **Why:** The plus menu is where a person looks for ways to bring something into a new thread, and an import is one. The header button alone sat away from the place the thread is started.
 
 **Considered and rejected:** Hiding the item in the browser, as the header button is. A menu entry that exists on one platform and silently not on another reads as missing; showing it disabled says why.
-
-**Consequences:** The composer gained a generic `menuActions` slot (see [conversation surfaces](conversation-surfaces.md)), so another host entry needs no change to the composer.
 
 ### 2026-10-13 — Import moves from the sidebar to the Channel header
 
