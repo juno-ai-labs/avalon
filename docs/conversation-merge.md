@@ -75,8 +75,9 @@ The route, without `breakoutId`:
 3. **Post.** `mergeThreadIntoChannel` resolves the target again inside its
    transaction and calls `postMessage` with key `merge:<threadId>`,
    `replace: true`, `sourceWorkstreamId`, `embeds` and the request's
-   `clientMessageId` as `operationId`. A matching operation id answers
-   `replayed: true` and writes nothing. Otherwise the row is written or
+   `clientMessageId` as `operationId`. Any operation that already wrote this
+   message (`space_message_operations`) answers `replayed: true` and writes
+   nothing, however late it arrives. Otherwise the row is written or
    rewritten with a fresh `posted_at`, so it moves to the bottom of the feed,
    and takes the Channel's next attention ordinal. The WorkspaceDO then
    publishes `spaceIds: [channel]`, which refetches the feed and the stats.
@@ -203,7 +204,8 @@ admission's own insert flag. The body's limit is the send path's
 ## Data model
 
 WorkspaceDO migration 108 adds `source_workstream_id`, `attention_ordinal`,
-`embeds_json` and `merge_operation_id` to `space_messages`; see
+`embeds_json` and `merge_operation_id` to `space_messages`, and
+`space_message_operations`, one receipt per operation that wrote a message; see
 [`spaces.md`](spaces.md#data-model). A Thread merge stores nothing new: its tags
 are the message's `structured_content_json`.
 
@@ -238,10 +240,10 @@ gives the same guarantee for free.
 
 **Consequences:** The waterline counts messages now ([`spaces.md`](spaces.md)).
 A merge's `clientMessageId` is its operation id, so a client must not reuse one
-across different words. A Channel row remembers only the operation that last
-wrote it, so a stale retry of an older operation arriving after a newer one
-overwrites it: last write wins, accepted because a client retries only the
-attempt it is still waiting on. A future message about a thread must keep the
+across different words. Every operation that wrote a Channel merge is kept in
+`space_message_operations`, so a late retry of an older one is a replay rather
+than an overwrite of a newer merge; that table grows by one row per merge a
+person makes. A future message about a thread must keep the
 openable-thread filter in both the feed and the stats arm.
 
 Design: [`PRDs/2026-10-16_merge-back/prd.md`](PRDs/2026-10-16_merge-back/prd.md).
