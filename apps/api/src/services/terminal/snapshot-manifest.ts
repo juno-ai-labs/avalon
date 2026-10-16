@@ -16,7 +16,7 @@ export interface TerminalSnapshotProbe {
  * variable nobody sees move; `TERMINAL_SNAPSHOT_BASE_IMAGE` in the environment
  * overrides it for a one-off build.
  */
-export const TERMINAL_SNAPSHOT_BASE_IMAGE = "daytonaio/sandbox:0.9.0";
+export const TERMINAL_SNAPSHOT_BASE_IMAGE = "daytonaio/sandbox:0.10.0";
 
 export interface TerminalSnapshotResources {
   /** Cores. */
