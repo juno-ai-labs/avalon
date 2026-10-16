@@ -14,7 +14,6 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { RallyApi } from '../lib/api';
 import {
   AGENT_MODEL_GROUPS,
   UNPINNED_AGENT_MODEL,
@@ -36,7 +35,7 @@ import {
 } from '../lib/markdown-lists';
 import { normalizeMentionLabels, splitMentionHighlights } from '../lib/mention-highlight';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
-import { appendDictationTranscript, useRealtimeDictation } from '../lib/use-realtime-dictation';
+import { appendDictationTranscript, type RealtimeDictationApi, useRealtimeDictation } from '../lib/use-realtime-dictation';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useFilePaste } from '../lib/use-file-paste';
 import type { PendingAttachment } from '../lib/use-file-attachments';
@@ -95,7 +94,7 @@ export type ComposerModelControl =
   };
 
 interface ComposerInputProps {
-  api?: Pick<RallyApi, 'getTranscriptionSocketTicket'>;
+  api?: RealtimeDictationApi;
   ariaLabel: string;
   attachments: PendingAttachment[];
   autoFocus?: boolean;
@@ -385,9 +384,14 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
     observer.observe(composer);
     return () => observer.disconnect();
   }, [resizeTextarea]);
+  // The level ring is painted straight onto the control: ten writes a second
+  // through React would re-render the whole composer for a box-shadow.
+  const microphoneControlRef = useRef<HTMLDivElement>(null);
   const dictation = useRealtimeDictation(api, (transcript) => {
     onValueChange(appendDictationTranscript(dictationBaseRef.current, transcript));
     requestAnimationFrame(() => resizeTextarea());
+  }, {
+    onLevel: (level) => microphoneControlRef.current?.style.setProperty('--dictation-level', level.toFixed(3)),
   });
   const dictationActive = !['idle', 'error'].includes(dictation.state);
   // Dictation owns the text while it is running: the transcript is written into
@@ -552,6 +556,11 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
         };
         toggleDictation();
       }}
+      // A pointer or focus reaching the button is the best signal a press is
+      // coming: the ticket it will need is requested now, so the socket can
+      // open the moment capture starts.
+      onFocus={() => dictation.prefetch()}
+      onPointerEnter={() => dictation.prefetch()}
       onPointerUp={() => {
         const press = microphonePressRef.current;
         microphonePressRef.current = undefined;
@@ -560,10 +569,17 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
         }
       }}
     >
-      {dictation.state === 'requesting' || dictation.state === 'transcribing' || dictation.state === 'finalizing'
+      {dictation.state === 'transcribing' || dictation.state === 'finalizing'
         ? <LoaderCircle className="spin" size={15} />
         : <Mic size={15} />}
     </IconButton>
+  );
+  // `is-arming` answers the press before the microphone has opened;
+  // `is-listening` is reserved for capture that is running.
+  const microphoneControlClassName = clsx(
+    'microphone-control',
+    dictation.state === 'requesting' && 'is-arming',
+    dictation.state === 'listening' && 'is-listening',
   );
 
   return (
@@ -694,7 +710,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
               </IconButton>
             )}
             {!messageCapsule && (
-              <div className={clsx('microphone-control', dictation.state === 'listening' && 'is-listening')}>
+              <div className={microphoneControlClassName} ref={microphoneControlRef}>
                 {dictationButton('Click or hold to dictate')}
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger asChild>
@@ -799,7 +815,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
           {footerHint && <span className="composer-hint">{footerHint}</span>}
           <div className="composer-submit-area">
             {messageCapsule && (
-              <div className={clsx('microphone-control', dictation.state === 'listening' && 'is-listening')}>
+              <div className={microphoneControlClassName} ref={microphoneControlRef}>
                 {dictationButton('Start voice input')}
               </div>
             )}

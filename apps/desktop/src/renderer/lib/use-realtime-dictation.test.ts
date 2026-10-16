@@ -7,6 +7,7 @@ import type { SocketTicket } from './types';
 import {
   appendDictationTranscript,
   isFinalTranscriptionEvent,
+  meterLevel,
   nextLiveTranscript,
   useRealtimeDictation,
 } from './use-realtime-dictation';
@@ -101,11 +102,19 @@ beforeEach(() => {
 
 function installAudioGraph(options: { acknowledgeFlush?: boolean; flushBuffer?: ArrayBuffer } = {}): {
   contextCount: () => number;
-  emitAudio: (buffer: ArrayBuffer) => void;
+  // The spies are typed loosely: a test only hands them to `expect`.
+  contexts: () => Array<{
+    options: AudioContextOptions | undefined;
+    audioWorklet: { addModule: unknown };
+    createMediaStreamSource: unknown;
+    suspend: unknown;
+  }>;
+  emitAudio: (buffer: ArrayBuffer, level?: number) => void;
   acknowledgeFlush: () => void;
   systemAudioMessages: () => unknown[];
 } {
   let createdContexts = 0;
+  const contexts: FakeAudioContext[] = [];
   const workletNodes: FakeAudioWorkletNode[] = [];
   class FakeAudioNode {
     readonly connect = vi.fn(() => this);
@@ -141,8 +150,9 @@ function installAudioGraph(options: { acknowledgeFlush?: boolean; flushBuffer?: 
     };
   }
   class FakeAudioContext {
-    constructor() {
+    constructor(readonly options: AudioContextOptions | undefined) {
       createdContexts += 1;
+      contexts.push(this);
     }
     state: AudioContextState = 'suspended';
     destination = new FakeAudioNode();
@@ -157,11 +167,12 @@ function installAudioGraph(options: { acknowledgeFlush?: boolean; flushBuffer?: 
   vi.stubGlobal('AudioWorkletNode', FakeAudioWorkletNode);
   return {
     contextCount: () => createdContexts,
+    contexts: () => contexts,
     acknowledgeFlush: () => workletNodes[0]?.port.onmessage?.(new MessageEvent('message', {
       data: { type: 'flushed' },
     })),
-    emitAudio: (buffer) => workletNodes[0]?.port.onmessage?.(new MessageEvent('message', {
-      data: { buffer, type: 'audio' },
+    emitAudio: (buffer, level = 0) => workletNodes[0]?.port.onmessage?.(new MessageEvent('message', {
+      data: { buffer, level, type: 'audio' },
     })),
     systemAudioMessages: () => workletNodes[0]?.port.postMessage.mock.calls
       .map(([message]) => message)
@@ -213,6 +224,48 @@ describe('realtime dictation transcript', () => {
       type: 'conversation.item.input_audio_transcription.completed',
       transcript: 'final',
     })).toBe(true);
+  });
+
+  it('places silence at the meter floor and full scale at the top', () => {
+    expect(meterLevel(0)).toBe(0);
+    expect(meterLevel(0.001)).toBe(0);
+    expect(meterLevel(0.1)).toBeCloseTo(0.6);
+    expect(meterLevel(1)).toBe(1);
+  });
+
+  it('reports a meter level for each captured chunk and zero once capture pauses', async () => {
+    installMediaDevices(vi.fn(async () => mediaStream()));
+    const audio = installAudioGraph();
+    const onLevel = vi.fn();
+    const { result, unmount } = renderHook(() => useRealtimeDictation({
+      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/level'),
+    }, vi.fn(), { onLevel }));
+    act(() => { void result.current.start(); });
+    await waitFor(() => expect(result.current.state).toBe('listening'));
+
+    act(() => audio.emitAudio(new Uint8Array([1, 2]).buffer, 0.1));
+    expect(onLevel.mock.lastCall?.[0]).toBeCloseTo(0.6);
+    await act(async () => result.current.pause());
+    expect(onLevel).toHaveBeenLastCalledWith(0);
+    unmount();
+  });
+
+  it('asks the API for a ticket ahead of a press only while idle, with the window the connection budget leaves', async () => {
+    installMediaDevices(vi.fn(async () => mediaStream()));
+    installAudioGraph();
+    const api = {
+      getTranscriptionSocketTicket: vi.fn(async () => socketTicket('wss://example.test/prefetch')),
+      prefetchTranscriptionSocketTicket: vi.fn(),
+    };
+    const { result, unmount } = renderHook(() => useRealtimeDictation(api, vi.fn()));
+
+    act(() => result.current.prefetch());
+    expect(api.prefetchTranscriptionSocketTicket).toHaveBeenCalledWith(50_000);
+    act(() => { void result.current.start(); });
+    await waitFor(() => expect(result.current.state).toBe('listening'));
+    act(() => result.current.prefetch());
+    expect(api.prefetchTranscriptionSocketTicket).toHaveBeenCalledTimes(1);
+    unmount();
   });
 
   it('does not erase a saved microphone before device permission reveals stable ids', async () => {
@@ -650,7 +703,7 @@ describe('realtime dictation transcript', () => {
     unmount();
   });
 
-  it('reports an error without opening a socket when all requested audio inputs are denied', async () => {
+  it('reports an error and closes the early socket when all requested audio inputs are denied', async () => {
     systemAudioBridge.start.mockRejectedValue(new Error('Computer audio access is blocked.'));
     installMediaDevices(vi.fn(async () => { throw new DOMException('Permission denied', 'NotAllowedError'); }));
     const api = {
@@ -662,7 +715,74 @@ describe('realtime dictation transcript', () => {
 
     expect(result.current.state).toBe('error');
     expect(result.current.error).toMatch(/no audio input is available/i);
-    expect(FakeWebSocket.instances).toHaveLength(0);
+    // The socket is opened as soon as the ticket lands, which is before the
+    // inputs are known; a denial then has to close what it opened.
+    expect(FakeWebSocket.instances.every((socket) => socket.readyState === FakeWebSocket.CLOSED)).toBe(true);
+  });
+
+  it('opens the transcription socket and builds the capture graph while the microphone is still opening', async () => {
+    const microphone = deferred<MediaStream>();
+    installMediaDevices(vi.fn(() => microphone.promise));
+    const audio = installAudioGraph();
+    const { result, unmount } = renderHook(() => useRealtimeDictation({
+      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/early-socket'),
+    }, vi.fn()));
+    let start!: Promise<void>;
+    act(() => { start = result.current.start(); });
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    expect(result.current.state).toBe('requesting');
+    const context = audio.contexts()[0]!;
+    await waitFor(() => expect(context.audioWorklet.addModule).toHaveBeenCalledOnce());
+    expect(context.createMediaStreamSource).not.toHaveBeenCalled();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'session.updated' }) })));
+    expect(socket.send).not.toHaveBeenCalled();
+
+    microphone.resolve(mediaStream());
+    await act(async () => start);
+
+    expect(result.current.state).toBe('listening');
+    expect(context.createMediaStreamSource).toHaveBeenCalledOnce();
+    act(() => audio.emitAudio(new Uint8Array([1, 2]).buffer));
+    expect(JSON.parse(String(socket.send.mock.calls[0]![0])).audio).toBe(btoa(String.fromCharCode(1, 2)));
+    unmount();
+  });
+
+  it('captures through a context that opens no output device and is never suspended', async () => {
+    installMediaDevices(vi.fn(async () => mediaStream()));
+    const audio = installAudioGraph();
+    const { result, unmount } = renderHook(() => useRealtimeDictation({
+      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/no-sink'),
+    }, vi.fn()));
+    act(() => { void result.current.start(); });
+    await waitFor(() => expect(result.current.state).toBe('listening'));
+
+    const context = audio.contexts()[0]!;
+    expect(context.options).toEqual({ sampleRate: 24_000, sinkId: { type: 'none' } });
+    expect(context.suspend).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('ends the attempt when the provider fails before the microphone opens and releases the late input', async () => {
+    const microphone = deferred<MediaStream>();
+    const trackStop = vi.fn();
+    installMediaDevices(vi.fn(() => microphone.promise));
+    installAudioGraph();
+    const { result } = renderHook(() => useRealtimeDictation({
+      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/early-failure'),
+    }, vi.fn()));
+    let start!: Promise<void>;
+    act(() => { start = result.current.start(); });
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => FakeWebSocket.instances[0]!.dispatchEvent(new CloseEvent('close', { code: 1011 })));
+    await waitFor(() => expect(result.current.state).toBe('error'));
+    expect(result.current.error).toMatch(/closed during setup/i);
+
+    microphone.resolve(mediaStream(trackStop));
+    await act(async () => start);
+
+    expect(trackStop).toHaveBeenCalled();
+    expect(result.current.state).toBe('error');
   });
 
   it('commits transcript segments without replacing the socket or audio capture', async () => {

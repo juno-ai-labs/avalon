@@ -61,6 +61,39 @@ describe('PCM16 capture worklet', () => {
     expect(pcm[1]).toBeCloseTo(0.1 * 0x7fff, -1);
   });
 
+  it('mixes with gains sent after construction, which is how the renderer sets them', () => {
+    const processor = new Processor({});
+    processor.port.onmessage?.(new MessageEvent('message', {
+      data: { type: 'gains', microphoneGain: 0.5, systemGain: 0.5 },
+    }));
+    processor.port.onmessage?.(new MessageEvent('message', {
+      data: {
+        buffer: new Float32Array([1, 0.5, 0, -0.5, -1, -0.5]).buffer,
+        sampleRate: 48_000,
+        type: 'system-audio',
+      },
+    }));
+
+    processor.process([[new Float32Array([0.2, 0.2])]], [[new Float32Array(2)]]);
+    processor.port.onmessage?.(new MessageEvent('message', { data: 'flush' }));
+
+    const pcm = emittedPcm(processor);
+    expect(pcm[0]).toBeCloseTo(0.6 * 0x7fff, -1);
+    expect(pcm[1]).toBeCloseTo(0.1 * 0x7fff, -1);
+  });
+
+  it('reports the RMS level of each chunk beside its samples', () => {
+    const processor = new Processor({ processorOptions: { microphoneGain: 1 } });
+    processor.process([[new Float32Array(128).fill(0.5)]], [[new Float32Array(128)]]);
+    processor.port.onmessage?.(new MessageEvent('message', { data: 'flush' }));
+
+    const message = processor.port.postMessage.mock.calls
+      .map(([value]) => value as { level?: number; type?: string })
+      .find((value) => value.type === 'audio');
+    expect(message?.level).toBeCloseTo(0.5);
+    expect(emittedPcm(processor)).toHaveLength(128);
+  });
+
   it('flushes resampled computer-audio samples that have not reached a full chunk', () => {
     const processor = new Processor({ processorOptions: { systemGain: 1 } });
     processor.port.onmessage?.(new MessageEvent('message', {
