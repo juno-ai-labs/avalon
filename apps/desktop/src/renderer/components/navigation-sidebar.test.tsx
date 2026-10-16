@@ -233,6 +233,17 @@ describe('the navigation sidebar', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Pinned' })).toHaveFocus());
   });
 
+  it('holds placeholders in the Pinned tab while its rows are read, rather than saying nothing is pinned', () => {
+    api.getMyThreads.mockReturnValue(new Promise(() => undefined));
+    useUiStore.getState().setSidebarSection('pinned');
+    renderSidebar((client) => client.setQueryData(PINS_QUERY_KEY, [{ kind: 'thread', id: 'plan', parentId: null }]));
+    for (const name of ['Pinned channels', 'Pinned threads']) {
+      const section = screen.getByRole('region', { name });
+      expect(section).toHaveAttribute('aria-busy', 'true');
+      expect(within(section).queryByText(/to keep it here/u)).not.toBeInTheDocument();
+    }
+  });
+
   it('says how to pin from the Pinned tab when nothing is pinned, and gives a guest no Channels there', async () => {
     api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [] });
     useUiStore.getState().setSidebarSection('pinned');
@@ -241,7 +252,7 @@ describe('the navigation sidebar', () => {
       0,
       { person: { ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } } },
     );
-    expect(within(screen.getByRole('region', { name: 'Pinned threads' })).getByText('Pin a thread to keep it here')).toBeInTheDocument();
+    expect(await within(screen.getByRole('region', { name: 'Pinned threads' })).findByText('Pin a thread to keep it here')).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Pinned channels' })).not.toBeInTheDocument();
   });
 
