@@ -726,6 +726,39 @@ describe("a Breakout's merge into its Thread", () => {
     await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID));
   });
 
+  it("replays a retry after the Breakout was renamed, keeping the first title", async () => {
+    const breakout = await seedBreakout("Sequence B");
+    const service = new ConversationMergeService(TEST_ENV, AUTH);
+    const request = { body: "Approved.", clientMessageId: "merge-renamed", breakoutId: breakout };
+    const first = await service.merge(ROOM_ID, request);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE breakouts SET title = 'Sequence C' WHERE substream_id = ?", breakout);
+    });
+    expect(await service.merge(ROOM_ID, request)).toEqual({ ...first, replayed: true });
+    expect((await mainState()).merges).toEqual([expect.objectContaining({ mergedFrom: { breakoutId: breakout, title: "Sequence B" } })]);
+  });
+
+  it("shares what the body cites by alias and through a footnote, and refuses an alias that names nothing", async () => {
+    await seedResources();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE resources SET slug = 'calm-river-quiet-lamp' WHERE id = ?", SHAREABLE_ID);
+    });
+    const breakout = await seedBreakout("Sequence B");
+    const service = new ConversationMergeService(TEST_ENV, AUTH);
+
+    await expect(service.merge(ROOM_ID, {
+      body: "See [it](resource://no-such-alias-here).", clientMessageId: "merge-alias-1", breakoutId: breakout,
+    })).rejects.toMatchObject({ code: "merge_resource_not_shareable", details: { field: "body.resources[0]" } });
+
+    const merged = await service.merge(ROOM_ID, {
+      body: "Priced.[^1]\n\n[^1]: [Price model](resource://calm-river-quiet-lamp)",
+      clientMessageId: "merge-alias-2", breakoutId: breakout,
+    });
+    expect(merged.sharedResourceIds).toEqual([SHAREABLE_ID]);
+    expect(await mainState()).toMatchObject({ links: [SHAREABLE_ID] });
+    await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID));
+  });
+
   it("refuses a Breakout that is not this Thread's", async () => {
     await expect(new ConversationMergeService(TEST_ENV, AUTH).merge(ROOM_ID, {
       body: "Done", clientMessageId: "merge-4", breakoutId: "00000000-0000-7000-8000-0000000c0aff",

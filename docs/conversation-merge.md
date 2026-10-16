@@ -41,9 +41,13 @@ The route, with `breakoutId`, runs in this order:
 1. **Admission.** `ConversationService.authorizeViewer(threadId, breakoutId)`
    checks the Breakout is this Thread's and the person can read it, and
    `writableClient(threadId, "0")` checks they can post in Main and that it is
-   not archived. Both run at once.
-2. **Embeds.** `mergeResourceIds(body)` reads the `resource://` ids out of the
-   body. Main's `attach_resources` op checks every one with the attach path's
+   not archived. Both run at once. A parent that is not a Thread (a Sidekick
+   and its runs) is refused as `conversation_access_denied`.
+2. **Embeds.** `mergeResourceIds(body)` reads every `resource://` target the
+   renderer draws as a link: inline chips and cards, and the citation
+   footnotes the body references. A link in code or behind an escaped bracket
+   is literal text and is skipped. A target is a UUID or a resource's alias
+   (`resource-slug.ts`); both resolve to the one row. Main's `attach_resources` op checks every one with the attach path's
    source checks (the resource exists, a guest's read grant, a personal
    connection's owner, an upload draft already sent), and only then links all
    of them in one commit. A refusal names the position (`body.resources[2]`)
@@ -51,7 +55,10 @@ The route, with `breakoutId`, runs in this order:
 3. **Post.** `createMergeMessage` appends to Main through the ordinary message
    admission with a server-only `merge` input: `{ type: "conversation_merge",
    mergedFrom: { breakoutId, title }, mergedByUserId, actingAgent }`. The
-   title is the Breakout's, frozen at merge time. With `merge` present the
+   title is the Breakout's, frozen at merge time, and left out of the
+   admission's replay hash: a rename between a lost response and its retry
+   still replays. The composer's mentions and confirmed people travel with it,
+   as with any message. With `merge` present the
    admission never classifies the message and never starts a run, whatever the
    room's size; the message still queues behind input waiting for Rally.
 
@@ -126,8 +133,15 @@ Channel>" is the second hover action on every settled text message, after
 Channel picker for a thread in several, Cancel, and an audience line. Merge
 keeps one `clientMessageId` for the same words and target until it succeeds,
 so a send whose response was lost is retried as a replay; new words or a new
-target are a new merge. A Channel the reader reaches only `through_channel` is
-not offered.
+target are a new merge. A merge that finishes after its composer was cancelled
+and another opened leaves the newer one and its draft alone. A Channel the
+reader reaches only `through_channel` is not offered. The thread's Channels
+come from its directory row, which keeps placements current, not from the
+conversation detail, which a socket install leaves without them. The merge
+composer has no attach control: a merge embeds artifacts by link. Stop still
+stops the run. A title-menu request opens merge mode once; returning to the
+pane does not reopen it. A Channel merge card's artifact opens in its thread
+with the artifact's panel open.
 
 ## Invariants
 
@@ -173,7 +187,7 @@ detach what a merge attached: detaching is the existing separate action.
 | `merge_channel_not_placed` | 409 | `channelId` names no current placement of the thread; `details.available` lists the ones the person may post in |
 | `merge_thread_private` | 409 | A Channel merge from a thread that is not Organization-wide |
 | `merge_target_not_writable` | 403 | The person cannot post in Main, or reaches the Channel only through a thread |
-| `merge_resource_not_shareable` | 403 | An embed fails a source check; `details.field` is `body.resources[i]` |
+| `merge_resource_not_shareable` | 403 | An embed names nothing (an unknown id or alias) or fails a source check; `details.field` is `body.resources[i]` |
 | `conversation_archived` | 409 | The source or target is archived |
 | `conversation_access_denied` | 404 | The person cannot read the source, or the Breakout is not this Thread's |
 
@@ -194,8 +208,8 @@ admission's own insert flag. The body's limit is the send path's
   and an unplaced Channel, Remove by author only, and a merge hidden once its
   thread is private.
 - `apps/api/test-workers/conversation-tools.test.ts`, "a Breakout's merge into
-  its Thread" (workerd): tags, no run, replay, atomic embeds, a foreign
-  Breakout. Resources are seeded in the WorkspaceDO's own `resources` and
+  its Thread" (workerd): tags, no run, replay, a replay after a rename,
+  atomic embeds, embeds cited by alias and by footnote, a foreign Breakout. Resources are seeded in the WorkspaceDO's own `resources` and
   `connector_connections`, which is the runtime database the attach check reads.
 - `apps/api/test-workers/space-routes.test.ts`: contract 7 versus 6 on the feed.
 - `apps/api/test-workers/space-message-merges-migration.test.ts`: migration 108
@@ -247,6 +261,8 @@ across different words. Every operation that wrote a Channel merge is kept in
 `space_message_operations`, so a late retry of an older one is a replay rather
 than an overwrite of a newer merge; that table grows by one row per merge a
 person makes. A future message about a thread must keep the
-openable-thread filter in both the feed and the stats arm.
+openable-thread filter in both the feed and the stats arm. What a merge shares
+is what `citedResourceIds` finds, so a new citation form the renderer draws as
+a link must be added there, or its artifact stays unshared.
 
 Design: [`PRDs/2026-10-16_merge-back/prd.md`](PRDs/2026-10-16_merge-back/prd.md).

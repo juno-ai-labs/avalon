@@ -71,6 +71,8 @@ export * from "./projects";
 export * from "./resource-relationships";
 export * from "./spaces";
 export * from "./conversation-merge";
+export { MentionSchema } from "./mention-schema";
+import { MentionSchema } from "./mention-schema";
 export * from "./navigation";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
@@ -743,15 +745,6 @@ export const MessageAuthorSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("system") })
 ]);
 
-export const MentionSchema = z.object({
-  type: z.enum(["person", "connector"]),
-  userId: IdSchema.nullable(),
-  connectorType: z.string().max(80).nullable(),
-  displayName: z.string().min(1).max(180).nullable().optional(),
-  avatarUrl: HttpUrlSchema.nullable().optional(),
-  startOffset: z.number().int().nonnegative(),
-  endOffset: z.number().int().positive()
-});
 
 export const MessageAttachmentSchema = z.object({
   id: IdSchema,

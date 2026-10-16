@@ -54,6 +54,27 @@ export function expandRequest(location: { key: string; state: unknown }): string
 }
 
 /**
+ * A navigation that opens a thread onto one of its artifacts: the thread's
+ * Main pane opens that artifact's panel once it is on screen.
+ */
+export function openThreadResourceState(threadId: string, resourceId: string): {
+  openExpanded: true; openResource: { threadId: string; resourceId: string };
+} {
+  return { ...OPEN_EXPANDED, openResource: { threadId, resourceId } };
+}
+
+/** The artifact a navigation asked a thread to open, or null when it asked for none. */
+export function openResourceRequest(state: unknown): { threadId: string; resourceId: string } | null {
+  if (typeof state !== 'object' || state === null || !('openResource' in state)) return null;
+  const request = state.openResource;
+  return typeof request === 'object' && request !== null
+    && 'threadId' in request && typeof request.threadId === 'string'
+    && 'resourceId' in request && typeof request.resourceId === 'string'
+    ? { threadId: request.threadId, resourceId: request.resourceId }
+    : null;
+}
+
+/**
  * Whether the pane open on one level of the stack (a thread over its Channel,
  * a breakout over its thread) is expanded. Held for the pane it was asked on,
  * so it drops when that pane closes or another opens, which then opens beside,
