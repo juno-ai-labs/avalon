@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { openRailAtEvenSplit } from './rail-split';
+import { openRailAtEvenSplit, railFillsPane } from './rail-split';
 import { useUiStore } from './ui-store';
 
 // Layout is the browser's, which jsdom does not do: the main pane starts 200px
@@ -55,5 +55,16 @@ describe('the width a panel opens at', () => {
     openRailAtEvenSplit('conversation-a', openRail);
     useUiStore.getState().setRailScope('conversation-a');
     expect(useUiStore.getState().railWidth).toBe(500);
+  });
+});
+
+describe('whether the panel takes the whole pane', () => {
+  // The conversation keeps 424px beside a panel no narrower than 280px.
+  it('sits beside the conversation while the pane holds both minimums', () => {
+    expect(railFillsPane(1_044, 340)).toBe(false);
+  });
+
+  it('takes the pane once the conversation would drop under its minimum', () => {
+    expect(railFillsPane(1_043, 340)).toBe(true);
   });
 });

@@ -29,6 +29,7 @@ import { useSupportWorkspaces } from '../lib/use-support-workspaces';
 import { layoutKey, writeLayout } from '../lib/desktop-layout';
 import { uuidV7 } from '../lib/telemetry';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
+import { useRailFillsPane } from '../lib/rail-split';
 import { SIDEBAR_CONTENT_MIN_WIDTH, useUiStore } from '../lib/ui-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useSpaceDirectories } from '../lib/use-space-directories';
@@ -207,6 +208,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const spacesEnabled = spacesEnabledForSession(session);
   // The main pane keeps room for a sidebar that is still fading out.
   const showShellRail = railOpen || railLeaving;
+  const railFillsPane = useRailFillsPane(sidebarWidth);
   // Nothing here loads the sidebar. Subscribing to the workspace socket is
   // answered with the whole of it — the first page of work streams, the
   // Sidekicks and the notes — and WorkspaceDO pushes each list again whenever
@@ -388,6 +390,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     'app-shell',
     windowControlsShellClass(runtime?.platform),
     showShellRail ? 'rail-open' : '',
+    railFillsPane ? 'rail-fills-pane' : '',
     // Where there is no window to open, a window surface takes the whole tab.
     host === 'browser' && isWindowSurfaceRoute(location.pathname) ? 'is-window-surface' : '',
     switchingWorkspaceKey !== null ? 'is-switching-workspace' : '',
