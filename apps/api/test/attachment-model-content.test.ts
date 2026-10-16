@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import * as UTIF from "utif2";
 import { ATTACHMENT_TEXT_EXTRACTOR_VERSION } from "../src/services/attachment-derivative-service";
-import { buildAttachmentManifestPart, buildAttachmentModelParts } from "../src/services/attachment-model-content";
+import { buildAttachmentManifestPart, buildAttachmentModelParts, normalizeModelImageBytes } from "../src/services/attachment-model-content";
 import {
   buildGifStoryboard,
   decodeTiffToPng,
@@ -17,6 +17,7 @@ import {
   createTestD1Result,
   createTestEnv,
 } from "./helpers/cloudflare-test";
+import { fakeImagesBinding } from "./helpers/images";
 import { workspaceObjectSqliteDatabase } from "./helpers/workspace-object-tables";
 import { workspaceResourceMaintenanceBinding } from "./helpers/workspace-object-rpcs";
 
@@ -538,24 +539,6 @@ function sqliteD1(database: DatabaseSync): D1Database {
   return createTestD1Database({ prepare });
 }
 
-function fakeImagesBinding(output: Uint8Array): ImagesBinding {
-  return createCloudflareTestBinding<ImagesBinding>({
-    input() {
-      const transformer = {
-        transform() { return transformer; },
-        async output() {
-          return {
-            image() { return new Blob([exactTestArrayBuffer(output)]).stream(); },
-            contentType() { return "image/jpeg"; },
-            response() { return new Response(exactTestArrayBuffer(output), { headers: { "content-type": "image/jpeg" } }); },
-          };
-        },
-      };
-      return transformer;
-    },
-  });
-}
-
 function exactTestArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
@@ -603,3 +586,27 @@ function webpHeader(width: number, height: number): Uint8Array {
 function animatedGif(): Uint8Array {
   return Uint8Array.from(atob("R0lGODlhBAADAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQICgAAACwAAAAABAADAAAICAABCBxIUGBAACH5BAgUAAAALAAAAAAEAAMAgQD/AAAAAAAAAAAAAAgIAAEIHEhQYEAAIfkECB4AAAAsAAAAAAQAAwCBAAD/AAAAAAAAAAAACAgAAQgcSFBgQAA7"), (character) => character.charCodeAt(0));
 }
+
+describe("normalizeModelImageBytes", () => {
+  it("names a codec failure instead of throwing", async () => {
+    // A TIFF header whose first directory points past the end of the file:
+    // the real codec throws on it rather than returning nothing.
+    const truncatedTiff = new Uint8Array([0x49, 0x49, 0x2a, 0x00, 0xff, 0xff, 0x00, 0x00]);
+    await expect(normalizeModelImageBytes(truncatedTiff, { documentProcessor }))
+      .resolves.toEqual({ ok: false, reason: "image_not_convertible" });
+  });
+
+  it("refuses a TIFF whose decoded PNG is past what a model takes", async () => {
+    // A TIFF skips the Images downscale, so only its decoded size can say
+    // whether it fits. Noise does not compress: 2000x1100 RGBA is over 8 MiB.
+    const width = 2_000;
+    const height = 1_100;
+    const pixels = new Uint8Array(width * height * 4);
+    for (let offset = 0; offset < pixels.length; offset += 65_536) {
+      crypto.getRandomValues(pixels.subarray(offset, offset + 65_536));
+    }
+    const tiff = new Uint8Array(UTIF.encodeImage(pixels, width, height));
+    await expect(normalizeModelImageBytes(tiff, { documentProcessor }))
+      .resolves.toEqual({ ok: false, reason: "image_too_large" });
+  });
+});

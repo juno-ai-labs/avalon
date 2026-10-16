@@ -3790,16 +3790,28 @@ export async function runWorkstreamHarness(
     },
     findCompletedToolResult: async (toolCallId, inputHash, policyIdentity) => {
       const expectedPolicy = resolveHarnessToolReceiptPolicy(policyIdentity, harnessTools);
-      const row = await createToolReceiptObjectPort(
+      const receipts = createToolReceiptObjectPort(
         env,
         input.workspaceId,
         input.parentId,
         undefined,
         conversationSubstreamId,
-      ).receiptForCall({ runId: input.harnessRunId, toolCallId });
+      );
+      const row = await receipts.receiptForCall({ runId: input.harnessRunId, toolCallId });
       if (!row) return null;
       const policyMatches = storedToolPolicyMatches(row.executionPlanJson, expectedPolicy);
       if (row.status === "completed" && row.requestHash === inputHash && policyMatches) {
+        if (expectedPolicy.definition.name === "view_image") {
+          // The picture was the result, and it lived only in that turn: the
+          // sandbox file may have changed or gone since. The read is safe, so
+          // run it again rather than replay a success with nothing to see.
+          await invalidateAttachmentToolReplay(env, {
+            workspaceId: input.workspaceId,
+            workstreamId: input.parentId,
+            invocationId: row.effectIntentId,
+          }, receipts);
+          return null;
+        }
         const attachmentReplay = await loadAuthorizedAttachmentReplay(env, input, {
           invocationId: row.effectIntentId,
           capability: expectedPolicy.definition.capability,

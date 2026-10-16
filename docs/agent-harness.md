@@ -418,8 +418,8 @@ Every run owns a fresh Bind registry. Canonical tool names are local to their ow
 In a provider-verified region, ordinary work-stream runs also register the
 deferred built-in `rally:terminal` plugin. It has no connection row. An explicit
 `load_plugin` acquires and initializes its Daytona sandbox and prepares the
-selected repository before the complete nine-tool family becomes visible.
-Repository failures that the nine-tool surface itself can repair are deferred,
+selected repository before the complete ten-tool family becomes visible.
+Repository failures that the ten-tool surface itself can repair are deferred,
 so `checkout_repository` remains available. A restored durable activation skips
 this hook: it does not eagerly allocate on every later run, and its first tool
 retains the ordinary acquisition path. Terminal is absent when the region is
@@ -704,7 +704,10 @@ summary. The in-memory tool message adds ordered image parts after that JSON for
 the next model turn. On receipt replay the regional host reauthorizes the
 resource and recreates those parts from the selected image derivative. If the
 parts cannot be recreated, it invalidates the safe-read receipt and executes the
-tool again rather than returning the JSON inclusion summary alone. No data URI
+tool again rather than returning the JSON inclusion summary alone. Terminal's
+`view_image` has no such derivative to rebuild from, since its picture is a file
+in the sandbox, so the host always invalidates its completed receipt and reads
+the file again. No data URI
 enters D1, the replay object, or a persisted transcript row.
 
 Attachment dependencies are registered only after the invocation completion is

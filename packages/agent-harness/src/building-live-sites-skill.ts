@@ -71,8 +71,8 @@ that works the first time.
    Rally banner. Rally normalizes these tags to absolute URLs when serving
    and generates a branded fallback card if the image or metadata is
    missing, but authored metadata and artwork produce the best unfurl.
-   Never create files beneath \`.rally/\`; Rally reserves that directory
-   for derived site assets. On an active site, keep the taught final
+   Never create files beneath \`.rally/\` inside the site directory; Rally
+   reserves that directory for derived site assets. On an active site, keep the taught final
    \`env.ASSETS.fetch(request)\` fallback: the generated preview image uses
    the ordinary asset route so Rally does not bypass your access guard.
    Include a short \`README.md\` in the directory saying what the site is
@@ -170,22 +170,54 @@ that works the first time.
    a stateless site may read them too.)
 
 7. **Design the page for where it actually lives.** The primary viewing
-   surface is a narrow pane in Rally's right rail (roughly phone-width),
-   then a pop-out window, then a browser tab — so build narrow-first
-   responsive layouts that also breathe at desktop width. The page's
-   own UI carries every interaction: never \`alert()\`, \`confirm()\`, or
-   \`prompt()\` (build inline messages and confirmations instead), and
-   never a Print, Save, or Export button — saving and exporting are the
-   platform's chrome, not the page's; keep layouts print-friendly with
-   \`@media print\` so future platform export renders well.
-8. **Let failures be loud and legible.** If the handler throws, viewers
+   surface is a pane beside the conversation, then a pop-out window, then
+   a browser tab; the pane can be dragged as narrow as about 400 CSS
+   pixels. Write the base stylesheet for a 400px-wide viewport and add
+   \`min-width\` media queries for wider layouts, never the reverse: a
+   desktop layout narrowed by \`max-width\` media queries is the one that
+   breaks in the pane. The page's own UI carries every interaction: never
+   \`alert()\`, \`confirm()\`, or \`prompt()\` (build inline messages and
+   confirmations instead), and never a Print, Save, or Export button —
+   saving and exporting are the platform's chrome, not the page's; keep
+   layouts print-friendly with \`@media print\` so future platform export
+   renders well.
+
+8. **Look at it before you announce it.** From the workspace root (omit
+   \`cwd\`), serve the directory and screenshot it at the pane's narrowest
+   width and at desktop width, in one \`run_command\`. The server lives
+   only inside this command and is stopped before it returns, which
+   \`run_command\` allows:
+
+   \`\`\`
+   mkdir -p .rally/tmp && rm -f .rally/tmp/site-400.png .rally/tmp/site-1280.png
+   python3 -m http.server 8765 --bind 127.0.0.1 --directory "$AVALON_RESOURCE_DIR/<site>" >/dev/null 2>&1 & server=$!
+   sleep 1
+   playwright screenshot --viewport-size "400, 900" http://127.0.0.1:8765/ .rally/tmp/site-400.png &&
+   playwright screenshot --viewport-size "1280, 900" http://127.0.0.1:8765/ .rally/tmp/site-1280.png
+   status=$?
+   kill $server
+   exit $status
+   \`\`\`
+
+   Call \`view_image\` on both PNGs. If either shows text clipped, running
+   off the right edge, or one word per line, fix the CSS and run the
+   command again; stop when neither does. An \`index.js\` handler does
+   not run under this server: for a public active site, publish first
+   and screenshot the \`url\` \`publish_resource\` returned instead. A
+   protected site answers the sandbox with its 401 page, so check its
+   layout with the local server and treat that as a layout check only.
+   If the command fails (Playwright or its browser missing, or the url
+   unreachable), do not install anything or retry: publish, and say in
+   your reply that you could not check the layout.
+
+9. **Let failures be loud and legible.** If the handler throws, viewers
    see a plain error page and the failure lands in the site's error log
    in the work stream — so throw early with a clear message rather than
    returning a half-rendered page. Validate your own routes' inputs and
    return real HTTP statuses (\`400\` with a short JSON body beats a
    \`200\` full of undefined).
 
-9. **Revise in place, never fork.** A change request means: edit the
+10. **Revise in place, never fork.** A change request means: edit the
    files in the workspace (re-import the site's source from the
    published resource first if the workspace no longer has it), then
    publish **the same directory path** again. Same URL, same rail
@@ -218,6 +250,15 @@ that works the first time.
   renders without it, silently and wrongly. Do instead: vendor the file
   into the directory and reference it relatively. Inline \`<script>\` and
   \`<style>\` blocks are fine, as are \`data:\` images.
+- **Hiding a grid item without removing its column.** \`display: none\`
+  takes the element out of the grid but leaves its track, so the next
+  item moves into it: a side rail hidden while the grid keeps
+  \`grid-template-columns: 0 1fr\` puts the main content in the
+  zero-width column, one word per line. Do instead: leave the rail out of
+  the base grid and add its track in the same \`min-width\` rule that
+  shows it (\`grid-template-columns: 64px 1fr\`). If you do hide a grid
+  item, change \`grid-template-columns\` in that same rule, or place
+  items with \`grid-column\`.
 - **A server for a public static page.** An \`index.js\` that only ever
   falls through to \`env.ASSETS.fetch(request)\` is overhead with no
   behavior. Do instead: delete it; \`index.html\` alone serves faster

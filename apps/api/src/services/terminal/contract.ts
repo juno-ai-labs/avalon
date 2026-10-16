@@ -19,6 +19,7 @@ export const TERMINAL_PLUGIN_SYSTEM_MESSAGE = "You have a Linux sandbox with Bas
 
 export const TERMINAL_TOOL_NAMES = [
   "read_file",
+  "view_image",
   "edit_file",
   "write_file",
   "apply_patch",
@@ -38,6 +39,9 @@ const readFileArguments = z.strictObject({
   filePath: relativePath,
   offset: z.number().int().positive().optional(),
   limit: z.number().int().positive().max(1_000).optional(),
+});
+const viewImageArguments = z.strictObject({
+  filePath: relativePath,
 });
 const editFileArguments = z.strictObject({
   filePath: relativePath,
@@ -85,6 +89,7 @@ const publishBranchAndPrArguments = z.strictObject({
 
 export const TerminalArgumentSchemas = {
   read_file: readFileArguments,
+  view_image: viewImageArguments,
   edit_file: editFileArguments,
   write_file: writeFileArguments,
   apply_patch: applyPatchArguments,
@@ -175,6 +180,17 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
       filePath: pathProperty("UTF-8 text-file path relative to the workspace root, using / separators, no leading / and no .. segment."),
       offset: { type: "integer", minimum: 1, description: "One-based starting line. Defaults to 1." },
       limit: { type: "integer", minimum: 1, maximum: 1_000, default: 200, description: "Number of lines to return, at most 1,000 and 256 KiB." },
+    }, ["filePath"]),
+  },
+  view_image: {
+    name: "view_image",
+    description: "Look at one PNG, JPEG, GIF, WebP, TIFF, or HEIF image file from the workspace: the image itself is returned to you, not its bytes as text. Use it to check a chart, a generated image, or a screenshot you took.",
+    capability: "terminal.file.read",
+    mode: "read",
+    idempotency: "safe",
+    timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 30_000,
+    inputSchema: objectSchema({
+      filePath: pathProperty("Image path relative to the workspace root, using / separators, no leading / and no .. segment."),
     }, ["filePath"]),
   },
   edit_file: {
