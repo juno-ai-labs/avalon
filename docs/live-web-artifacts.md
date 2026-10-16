@@ -200,7 +200,11 @@ can `GET` or `HEAD` the stable URL without a Rally session. The Worker reads the
 current manifest from `ArtifactHostDO`, strips any inbound cookie and viewer
 header before model code runs, and injects no identity. Static sites therefore
 cannot be private. Anonymous unsafe methods are refused before model code runs:
-public means readable, not anonymously writable.
+public means readable, not anonymously writable. That rule is about methods,
+not effects: an active site's own `index.js` runs on an anonymous `GET` and
+may write its storage, which is why Trusted-only Terminal sandboxes can send
+data to a Rally site
+([`terminal-workspaces.md`](terminal-workspaces.md#invariants)).
 
 The four-word hostname is a readable routing label with roughly 30 bits of
 combinations, not an access secret. Search crawlers receive
@@ -303,7 +307,8 @@ is the only place that can forward into it.
   sibling-artifact CSRF; it does not authenticate a non-browser caller, which
   can spell those headers itself. `GET` and `HEAD` may fall back to the public
   representation, while every unsafe method still requires a valid Rally
-  viewer session.
+  viewer session. Rally refuses the method, not the effect: a site's own code
+  may still write its storage on a `GET`.
 - **The desktop renderer never embeds, fetches, or parses artifact content.** An
   `<iframe>` would widen the renderer's CSP to a wildcard artifact host and graft
   remote model-authored content into the application DOM as a navigable,
