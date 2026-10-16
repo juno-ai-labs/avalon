@@ -6081,12 +6081,8 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   top: 0;
   grid-template-rows: minmax(0, 1fr);
 }
-/* A panel's header is a pane header like a conversation's, so it answers the
-   same narrow-pane rules: a long title truncates rather than pushing the pill
-   off the screen's edge. */
 .rail-surface-content {
   animation: rail-content-open 160ms ease;
-  container: conversation-pane / inline-size;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 44px minmax(0, 1fr);
@@ -7727,12 +7723,14 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 
 /* Phone width: the sidebar is a top bar over a sheet the menu button drops in.
    Why it is clipped rather than moved: `docs/desktop-shell.md#at-phone-width`.
-   `PHONE_LAYOUT_MAX_WIDTH` in `sidebar.tsx` is this 640. */
+   `PHONE_LAYOUT_MAX_WIDTH` in `packages/ui/src/lib/phone-layout.ts` is
+   this 640. */
 .sidebar-menu-toggle { display: none; }
 @media (max-width: 640px) {
   .app-shell {
     --av-cmp-sidebar-width: 0px !important;
-    --phone-top-bar-height: 56px;
+    --phone-sheet-header-height: 56px;
+    --phone-top-bar-height: var(--phone-sheet-header-height);
     --phone-sheet-duration: 260ms;
     --phone-sheet-motion: var(--phone-sheet-duration) cubic-bezier(.22, 1, .36, 1);
   }
@@ -7746,11 +7744,15 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
     z-index: 70;
   }
   .app-shell .single-sidebar.is-mobile-open { clip-path: inset(0); }
-  /* A pane with its own header is the screen's only header: it opens the
-     sheet (`PhoneHeaderContext`), so the shut sheet keeps no bar and is
-     hidden whole once it has closed. A screen without one keeps the bar. */
-  .app-shell:has(> .main-pane .title-pill-header) { --phone-top-bar-height: 0px; }
-  .app-shell:has(> .main-pane .title-pill-header) .navigation-sidebar:not(.is-mobile-open) > .navigation-body {
+  /* A visible pane header carrying the menu mark is the screen's only header:
+     it opens the sheet (`PhoneHeaderContext`, `PHONE_NAVIGATION_CONTROL`), so
+     the shut sheet keeps no bar and is hidden whole once it has closed. A
+     header in a hidden pane does not count, and the browser panel, which
+     covers the pane and draws no mark, keeps the bar above it. */
+  .app-shell:has(> .main-pane .has-phone-navigation:not([hidden] *)):not(:has(.embedded-browser-rail:not(.is-leaving))) {
+    --phone-top-bar-height: 0px;
+  }
+  .app-shell:has(> .main-pane .has-phone-navigation:not([hidden] *)):not(:has(.embedded-browser-rail:not(.is-leaving))) .navigation-sidebar:not(.is-mobile-open) > .navigation-body {
     transition: visibility 0s linear var(--phone-sheet-duration);
     visibility: hidden;
   }
@@ -7869,6 +7871,13 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 @media (max-width: 640px) {
   .icon-group-actions { display: none; }
   .icon-group-more { display: inline-flex; }
+  /* Every pane header on a phone, a right-slot panel's included, takes the
+     narrow pane's columns: the pill fills the middle and truncates. The
+     columns already keep it clear of the trailing buttons, so the crowding
+     shift is off; it would carry a truncated pill past the leading edge. */
+  .title-pill-header { grid-template-columns: fit-content(45%) minmax(0, 1fr) auto; }
+  .title-pill-current { display: flex; justify-content: center; justify-self: stretch; }
+  .title-pill-header.is-crowded .title-pill-current { transform: none; }
 }
 /*
  * Crumbs whose levels all have marks are always one `MarkBridge`; these rules
@@ -7904,9 +7913,6 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
      take above, so a named bridge ellipsizes rather than squeezing the pill. */
   .title-pill-header { grid-template-columns: fit-content(45%) minmax(0, 1fr) auto; }
   .title-pill-current { display: flex; justify-content: center; justify-self: stretch; }
-  /* The columns already keep the pill clear of the trailing buttons; moving
-     it too would carry a truncated pill past the leading edge. */
-  .title-pill-header.is-crowded .title-pill-current { transform: none; }
   .title-pill.is-ancestor .title-pill-menu-trigger { display: none; }
   .title-pill.is-ancestor .title-pill-title,
   .title-pill.is-ancestor .title-pill-meta,
@@ -8735,12 +8741,13 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
      as a row of tabs under it. */
   .app-shell .navigation-sidebar > .navigation-body { flex-direction: column; opacity: 1; transform: none; visibility: visible; }
   .app-shell .navigation-sidebar .navigation-panel { display: contents; }
-  /* Its menu button, title and actions are the pane header's thirds: the
-     title centred whatever sits either side of it. */
+  /* Close button, title and actions: the title centred while there is room,
+     and the sides never narrower than their buttons, so on a narrow phone the
+     title truncates rather than running under the actions. */
   .app-shell .navigation-sidebar .navigation-panel-header {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-    height: 56px;
+    grid-template-columns: minmax(max-content, 1fr) minmax(0, max-content) minmax(max-content, 1fr);
+    height: var(--phone-sheet-header-height);
     order: -2;
     padding: 0 12px;
   }
