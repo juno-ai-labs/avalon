@@ -187,30 +187,6 @@ describe("workspace preferences", () => {
     expect(update?.values.slice(0, 2)).toEqual([null, "Europe/London"]);
   });
 
-  it("records that the account timezone was chosen rather than inferred", async () => {
-    const database = new StubDatabase(({ sql }) =>
-      sql.startsWith("SELECT id, email, name, avatar_url, timezone")
-        ? {
-            id: ownerAuth.userId,
-            email: "owner@example.com",
-            name: "Owner",
-            avatar_url: null,
-            timezone: "America/New_York",
-            created_at: "2026-08-01T00:00:00.000Z",
-          }
-        : undefined);
-    const service = new WorkspaceService(environment(database), ownerAuth);
-
-    await expect(service.updateMyTimezone("America/New_York"))
-      .resolves.toMatchObject({ timezone: "America/New_York" });
-
-    // Without the recorded source, the next desktop sign-in writes the
-    // machine's zone back over this and every schedule derived from it.
-    const update = database.runs.find((statement) => statement.sql.startsWith("UPDATE users SET timezone"));
-    expect(update!.sql).toContain("timezone_source = 'user'");
-    expect(update!.values[0]).toBe("America/New_York");
-  });
-
   it("keeps workspace preferences admin-only", async () => {
     const database = new StubDatabase(() => undefined);
     const service = new WorkspaceService(environment(database), { ...ownerAuth, role: "member" });

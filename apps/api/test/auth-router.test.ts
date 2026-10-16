@@ -93,6 +93,19 @@ describe("authentication in the complete application router", () => {
     expect(members.find((member) => member.user.id === userId)).toMatchObject({ role:"owner" });
   });
 
+  it("saves a timezone chosen in Settings and then ignores a device in another zone", async () => {
+    const headers = { authorization: `Bearer ${await bearer()}`, "content-type": "application/json" };
+    const chosen = await createApp().request("/workspace/me",
+      { method: "PATCH", headers, body: JSON.stringify({ timezone: "America/New_York" }) }, env());
+    expect(chosen.status).toBe(200);
+    expect(await chosen.json()).toMatchObject({ id: userId, timezone: "America/New_York" });
+
+    const reported = await createApp().request("/workspace/me/device-timezone",
+      { method: "PUT", headers, body: JSON.stringify({ timezone: "Asia/Tokyo" }) }, env());
+    expect(reported.status).toBe(200);
+    expect(await reported.json()).toEqual({ timezone: "America/New_York", followsDevice: false });
+  });
+
   it("issues a guest the workspace socket ticket its sidebar nudges arrive on", async () => {
     const guestId = "00000000-0000-7000-8000-000000000004";
     database.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES (?, 'guest@example.com','Guest',?,?)").run(guestId, at, at);

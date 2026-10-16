@@ -78,6 +78,7 @@ import type {
   WorkspaceInvitation,
   WorkstreamConnection,
 } from '../lib/types';
+import { deviceTimezone, MY_TIMEZONE_QUERY_KEY } from '../lib/device-timezone';
 
 type SettingsSection = DesktopSettingsSection;
 type ConnectionFilter = 'all' | 'connected' | 'not_connected';
@@ -430,6 +431,8 @@ function connectionStatusDescription(connection: WorkstreamConnection): string {
     case 'disabled': return 'This connection is disabled and exposes no tools.';
   }
 }
+/** The Default timezone choice that follows whichever device the person is on. */
+const AUTOMATIC_TIMEZONE = 'automatic';
 const supportedTimezones = typeof Intl.supportedValuesOf === 'function'
   ? Intl.supportedValuesOf('timeZone')
   : ['America/Los_Angeles', 'Europe/London', 'UTC'];
@@ -625,7 +628,6 @@ export function WorkspaceSettingsScreen({
   const [role, setRole] = useState<'admin' | 'member'>('member');
   const [createdUrl, setCreatedUrl] = useState<string | null>(null);
   const [createdDelivery, setCreatedDelivery] = useState<'sent' | 'skipped' | null>(null);
-  const [userTimezone, setUserTimezone] = useState(workspace.currentUser.timezone);
   const [workspaceTimezone, setWorkspaceTimezone] = useState(workspace.timezone);
   const [terminalMode, setTerminalMode] = useState<'trusted_only' | 'full_internet'>('trusted_only');
   const [terminalDomains, setTerminalDomains] = useState('');
@@ -664,6 +666,15 @@ export function WorkspaceSettingsScreen({
   );
   const [customMcpToolPolicy, setCustomMcpToolPolicy] = useState<CustomMcpToolPolicy>('all_tools');
   const [leaveConfirmationOpen, setLeaveConfirmationOpen] = useState(false);
+  // The account's zone and whether it follows the device. Read here rather
+  // than from the session, which holds whatever sign-in last wrote.
+  const myTimezone = useQuery({
+    queryKey: MY_TIMEZONE_QUERY_KEY,
+    queryFn: ({ signal }) => api!.getMyTimezone(signal),
+    enabled: Boolean(api) && !guest,
+    staleTime: 15_000,
+  });
+  const userTimezone = myTimezone.data?.timezone ?? workspace.currentUser.timezone;
   const timezoneOptions = useMemo(
     () => [...new Set([...supportedTimezones, userTimezone, workspaceTimezone])].sort(),
     [userTimezone, workspaceTimezone],
@@ -998,8 +1009,20 @@ export function WorkspaceSettingsScreen({
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workspace-invitations'] }),
   });
   const updateUserTimezone = useMutation({
-    mutationFn: (timezone: string) => api!.updateMyTimezone(timezone),
-    onSuccess: (user) => setUserTimezone(user.timezone),
+    // Automatic takes this device's zone now and every device's report after.
+    mutationFn: (choice: string) => choice === AUTOMATIC_TIMEZONE
+      ? api!.updateMyTimezone(deviceTimezone() ?? userTimezone, true)
+      : api!.updateMyTimezone(choice),
+    onSuccess: (user, choice) => queryClient.setQueryData(MY_TIMEZONE_QUERY_KEY, {
+      timezone: user.timezone,
+      followsDevice: choice === AUTOMATIC_TIMEZONE,
+    }),
+    // Read back either way, so a failed save never leaves the picker showing
+    // a choice the server does not hold; the digest names the zone too.
+    onSettled: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: MY_TIMEZONE_QUERY_KEY }),
+      queryClient.invalidateQueries({ queryKey: ['digest-schedule'] }),
+    ]),
   });
   const updateWorkspaceTimezone = useMutation({
     mutationFn: (timezone: string) => api!.updateWorkspace({ timezone }),
@@ -1485,13 +1508,15 @@ export function WorkspaceSettingsScreen({
                     <SettingCopy setting={settings.personalTimezone} />
                     <DropdownSelect
                       ariaLabel="Personal default timezone"
-                      disabled={updateUserTimezone.isPending}
-                      onValueChange={(timezone) => {
-                        setUserTimezone(timezone);
-                        updateUserTimezone.mutate(timezone);
-                      }}
-                      options={timezoneOptions.map((timezone) => ({ label: timezone, value: timezone }))}
-                      value={userTimezone}
+                      disabled={updateUserTimezone.isPending || !myTimezone.data}
+                      onValueChange={(choice) => updateUserTimezone.mutate(choice)}
+                      options={[
+                        { label: `Automatic (${deviceTimezone() ?? userTimezone})`, value: AUTOMATIC_TIMEZONE },
+                        ...timezoneOptions.map((timezone) => ({ label: timezone, value: timezone })),
+                      ]}
+                      value={updateUserTimezone.isPending && updateUserTimezone.variables
+                        ? updateUserTimezone.variables
+                        : myTimezone.data?.followsDevice ? AUTOMATIC_TIMEZONE : userTimezone}
                       variant="secondary"
                     />
                   </label>

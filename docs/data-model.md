@@ -215,9 +215,12 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
 
 - `users` stores provider-independent identity and display information, plus the
   account's IANA `timezone` and the `timezone_source` that says who put it
-  there. `client` means a desktop sign-in seeded it from the machine and a
-  later sign-in may seed it again; `user` means somebody chose it in settings,
-  and sign-in leaves it alone from then on. It is one column per region —
+  there. `client` means the account follows the device: a desktop sign-in seeds
+  it, and every client reports its device's zone through
+  `PUT /workspace/me/device-timezone` at launch and on focus whenever that zone
+  differs from the last one it sent. `user` means somebody fixed a zone in
+  Account → Default timezone, and no report moves it; choosing **Automatic**
+  there sets `client` again. It is one column per region —
   `users` is regional — so it answers for every workspace the person belongs to
   in that region, and a second region's row keeps its own. `syncRegionalProfile`
   deliberately syncs `email`, `name`, and `avatar_url` and not `timezone`, so a
@@ -1372,6 +1375,24 @@ inactive legacy tables after deploying the Worker that no longer reaps them.
 The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
+
+### 2026-10-16 — The account timezone follows the device by default
+
+**What changed:** Every client (desktop and browser) now reports its device's
+zone, not only a desktop Google sign-in, so an account on `client` stays in the
+zone its person is actually in; digests are re-derived when it moves. Account →
+Default timezone gained **Automatic**, which returns a fixed account to
+`client`. `PATCH /workspace/me` also stopped answering 500 after every save: it
+parsed the saved user as a workspace membership.
+
+**Why:** Email and browser sign-in never sent a zone, sessions renew without a
+sign-in, and the column defaults to `America/Los_Angeles`, so most accounts
+held a zone nobody chose and digests arrived at the wrong local hour. A fixed
+zone still wins over a report, for the reason `assumptions.md` item 22 gives.
+
+**Consequences:** A device reports only when its zone differs from the last
+one it sent, so two devices in different zones each report once after moving;
+the last one wins. A support session never reports.
 
 ### 2026-09-21 — Scope Channel pins to Space placements
 
