@@ -14,28 +14,34 @@ function deviceIn(zone: string) {
     .mockReturnValue({ timeZone: zone } as Intl.ResolvedDateTimeFormatOptions);
 }
 
-afterEach(() => {
-  vi.restoreAllMocks();
-  window.localStorage.clear();
-});
+afterEach(() => { vi.restoreAllMocks(); });
 
 describe('useDeviceTimezoneSync', () => {
-  it('reports the device zone once, and again only after the device moves', async () => {
+  it('reports the device zone at launch and on every focus, since another device may have moved the account', async () => {
     deviceIn('Europe/Berlin');
     const reportDeviceTimezone = vi.fn(async (timezone: string) => ({ timezone, followsDevice: true }));
     const { client, Wrapper } = wrapper();
 
-    renderHook(() => useDeviceTimezoneSync({ reportDeviceTimezone }, 'user-1', true), { wrapper: Wrapper });
+    renderHook(() => useDeviceTimezoneSync({ reportDeviceTimezone }, true), { wrapper: Wrapper });
 
     await waitFor(() => expect(client.getQueryData(MY_TIMEZONE_QUERY_KEY))
       .toEqual({ timezone: 'Europe/Berlin', followsDevice: true }));
     act(() => { window.dispatchEvent(new Event('focus')); });
-    expect(reportDeviceTimezone).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(reportDeviceTimezone).toHaveBeenCalledTimes(2));
+    expect(reportDeviceTimezone).toHaveBeenLastCalledWith('Europe/Berlin');
+  });
 
-    deviceIn('Asia/Tokyo');
-    act(() => { window.dispatchEvent(new Event('focus')); });
-    await waitFor(() => expect(reportDeviceTimezone).toHaveBeenLastCalledWith('Asia/Tokyo'));
-    expect(reportDeviceTimezone).toHaveBeenCalledTimes(2);
+  it('drops a report that lands after the account it was sent for is gone', async () => {
+    deviceIn('Europe/Berlin');
+    let land!: (state: { timezone: string; followsDevice: boolean }) => void;
+    const reportDeviceTimezone = vi.fn(() => new Promise<{ timezone: string; followsDevice: boolean }>((resolve) => { land = resolve; }));
+    const { client, Wrapper } = wrapper();
+
+    const { unmount } = renderHook(() => useDeviceTimezoneSync({ reportDeviceTimezone }, true), { wrapper: Wrapper });
+    unmount();
+    await act(async () => { land({ timezone: 'Europe/Berlin', followsDevice: true }); });
+
+    expect(client.getQueryData(MY_TIMEZONE_QUERY_KEY)).toBeUndefined();
   });
 
   it('reports nothing during a support session', () => {
@@ -43,7 +49,7 @@ describe('useDeviceTimezoneSync', () => {
     const reportDeviceTimezone = vi.fn(async (timezone: string) => ({ timezone, followsDevice: true }));
     const { Wrapper } = wrapper();
 
-    renderHook(() => useDeviceTimezoneSync({ reportDeviceTimezone }, 'user-1', false), { wrapper: Wrapper });
+    renderHook(() => useDeviceTimezoneSync({ reportDeviceTimezone }, false), { wrapper: Wrapper });
 
     expect(reportDeviceTimezone).not.toHaveBeenCalled();
   });
