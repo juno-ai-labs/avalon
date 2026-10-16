@@ -313,6 +313,56 @@ describe('the navigation sidebar', () => {
     expect(screen.getByRole('img', { name: '3 waiting' })).toHaveTextContent('3');
   });
 
+  it('counts the pinned rows showing activity on the Pinned button, from any tab', async () => {
+    api.getMyThreads.mockResolvedValue({
+      nextCursor: null,
+      items: [thread('loose', 'Unpinned and unread', { hasUnread: true })],
+      pinned: [
+        thread('plan', 'Q4 plan', { hasUnread: true }),
+        thread('quiet', 'Read already'),
+        thread('site', 'Make a website', {
+          kind: 'breakout', youAreMentioned: true,
+          breakoutOf: { workstreamId: 'plan', substreamId: 'site', title: 'Q4 plan' },
+        }),
+      ],
+    });
+    renderSidebar((client) => {
+      client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound'), channel('growth', 'Growth'), channel('ops', 'Ops')] });
+      client.setQueryData(PINS_QUERY_KEY, [
+        { kind: 'channel', id: 'outbound', parentId: null },
+        { kind: 'channel', id: 'growth', parentId: null },
+        { kind: 'thread', id: 'plan', parentId: null },
+        { kind: 'thread', id: 'quiet', parentId: null },
+        { kind: 'breakout', id: 'site', parentId: 'plan' },
+      ]);
+      client.setQueryData(CHANNEL_STATS_QUERY_KEY, [
+        stats('outbound', { newThreadCount: 2, hasUnread: true }),
+        stats('growth'),
+        // Unpinned, so its news is the Channels tab's, not Pinned's.
+        stats('ops', { newThreadCount: 1, hasUnread: true }),
+      ]);
+    });
+
+    // Channels is the open tab; the pinned thread, breakout and Channel with news count.
+    expect(await screen.findByRole('img', { name: '3 pinned with activity' })).toHaveTextContent('3');
+  });
+
+  it('leaves the Pinned button bare when no pin shows activity, and counts no Channel for a guest', async () => {
+    const guest = { ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' as const } };
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [], pinned: [thread('quiet', 'Read already')] });
+    renderSidebar((client) => {
+      client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] });
+      client.setQueryData(PINS_QUERY_KEY, [
+        { kind: 'channel', id: 'outbound', parentId: null },
+        { kind: 'thread', id: 'quiet', parentId: null },
+      ]);
+      client.setQueryData(CHANNEL_STATS_QUERY_KEY, [stats('outbound', { newThreadCount: 2, hasUnread: true })]);
+    }, 0, { person: guest });
+
+    await waitFor(() => expect(api.getMyThreads).toHaveBeenCalled());
+    expect(screen.queryByRole('img', { name: /pinned with activity/u })).not.toBeInTheDocument();
+  });
+
   it('lists the person’s threads and breakouts, and opens a breakout beside its thread under that thread’s Channel', async () => {
     useUiStore.getState().setSidebarSection('threads');
     api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [

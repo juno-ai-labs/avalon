@@ -209,6 +209,13 @@ export function NavigationSidebar({
   // reader, and every access request waiting on them. The menu bar counts
   // Activity's unread rows instead.
   const waiting = attentionItems.length + accessRequests.length;
+  const pinnedActivity = usePinnedActivityCount(guest);
+  // Threads counts what waits on this person; Pinned counts its rows showing
+  // activity, so a pin's news shows from any tab.
+  const badges: Partial<Record<SidebarSection, { count: number; label: string }>> = {
+    pinned: { count: pinnedActivity, label: `${pinnedActivity} pinned with activity` },
+    threads: { count: waiting, label: `${waiting} waiting` },
+  };
   const title = SECTIONS.find((candidate) => candidate.id === section)?.label ?? 'Threads';
   const [creatingChannel, setCreatingChannel] = useState(false);
   const markActivityRead = useMarkActivityRead();
@@ -235,11 +242,7 @@ export function NavigationSidebar({
         >
           <span className="navigation-rail-icon">
             {candidate.icon}
-            {candidate.id === 'threads' && waiting > 0 && <span
-              aria-label={`${waiting} waiting`}
-              className={waiting > 99 ? 'navigation-rail-badge is-capped' : 'navigation-rail-badge'}
-              role="img"
-            >{waiting > 99 ? '99+' : waiting}</span>}
+            <RailBadge badge={badges[candidate.id]} />
           </span>
           <span className="navigation-rail-label">{candidate.label}</span>
         </button>)}
@@ -298,6 +301,16 @@ export function NavigationSidebar({
     {accountSlot && createPortal(accountMenu, accountSlot)}
     {creatingChannel && <NewChannelDialog onClose={() => setCreatingChannel(false)} />}
   </ResizableSidebar>;
+}
+
+/** A section button's red count, drawn only when there is something to count. */
+function RailBadge({ badge }: { badge: { count: number; label: string } | undefined }): React.JSX.Element | null {
+  if (!badge || badge.count <= 0) return null;
+  return <span
+    aria-label={badge.label}
+    className={badge.count > 99 ? 'navigation-rail-badge is-capped' : 'navigation-rail-badge'}
+    role="img"
+  >{badge.count > 99 ? '99+' : badge.count}</span>;
 }
 
 /** The Channel the open route sits under, so a thread opened from a list stays under it. */
@@ -744,6 +757,104 @@ function withLiveThread(
   };
 }
 
+/**
+ * This person's threads and breakouts, as the Threads tab lists them: the
+ * server's pages (`GET /navigation/threads`), with what the socket holds
+ * drawn over them so a dot moves live. `byId` also holds every pinned row,
+ * which comes whole with the first page, so a pin whose activity is pages
+ * back is still there; a row on a loaded page is the fresher copy.
+ */
+function useMyThreads(enabled = true): {
+  byId: ReadonlyMap<string, SpaceConversationSummary>;
+  list: ReturnType<typeof useMyThreadsQuery>;
+  live: ReturnType<typeof useWorkstreamsQuery>;
+  rows: SpaceConversationSummary[];
+} {
+  const live = useWorkstreamsQuery();
+  const list = useMyThreadsQuery(enabled);
+  const liveById = useMemo(() => new Map((live.data ?? []).map((row) => [row.id, row])), [live.data]);
+  const rows = useMemo(() => {
+    const fetched = (list.data?.pages ?? []).flatMap((page) => page.items);
+    const known = new Set(fetched.map((row) => row.id));
+    // A thread this person started a moment ago is theirs before the list is
+    // read again.
+    const started = (live.data ?? []).filter((row) => row.pending && !known.has(row.id))
+      .map((row): SpaceConversationSummary => ({ ...row, kind: 'channel', breakoutOf: null }));
+    return [...started, ...fetched.map((row) => withLiveThread(row, liveById))];
+  }, [list.data, live.data, liveById]);
+  const byId = useMemo(() => new Map([
+    ...(list.data?.pages[0]?.pinned ?? []).map((row): [string, SpaceConversationSummary] => [row.id, withLiveThread(row, liveById)]),
+    ...rows.map((row): [string, SpaceConversationSummary] => [row.id, row]),
+  ]), [list.data, liveById, rows]);
+  return { byId, list, live, rows };
+}
+
+function useMyThreadsQuery(enabled: boolean) {
+  const { api } = useAppSession();
+  return useInfiniteQuery({
+    queryKey: MY_THREADS_QUERY_KEY,
+    queryFn: ({ pageParam, signal }) => api!.getMyThreads(pageParam, signal),
+    initialPageParam: null as string | null,
+    getNextPageParam: (page) => page.nextCursor,
+    enabled: Boolean(api) && enabled,
+  });
+}
+
+/** Each Channel's counts. The socket's Space snapshot seeds this; a placement nudge marks it stale and only then is it read on its own. */
+function useChannelStats(): ReturnType<typeof useQuery<ChannelStats[]>> {
+  const { api } = useAppSession();
+  return useQuery<ChannelStats[]>({
+    queryKey: CHANNEL_STATS_QUERY_KEY,
+    queryFn: ({ signal }) => api!.getChannelStats(signal),
+    enabled: api !== null,
+    staleTime: Infinity,
+  });
+}
+
+/** The threads placed in a Channel since this person last had it open: what its row says in red. */
+function channelNews(stats: ChannelStats | undefined): number {
+  // The server counts the feed's rows above the read position; the optimistic
+  // read acknowledgement clears `hasUnread` before that count comes back.
+  return stats?.hasUnread ? stats.newThreadCount : 0;
+}
+
+/** What the Pinned button's count reads to know whether a pinned row shows activity. */
+interface PinActivitySources {
+  channels: ReadonlyMap<string, SpaceSummary>;
+  channelStats: ReadonlyMap<string, ChannelStats>;
+  threads: ReadonlyMap<string, SpaceConversationSummary>;
+}
+
+/**
+ * Whether a pinned row shows activity, by kind: exactly what its row draws,
+ * the unread dot of a thread or breakout or a Channel's new threads. Keyed by
+ * every `PinKind`, so a kind added to the contract does not compile until it
+ * says what its activity is, and the Pinned button counts it from then on.
+ * A pin with no row drawn shows nothing, so it counts nothing.
+ */
+const PIN_ACTIVITY: Record<PinKind, (id: string, sources: PinActivitySources) => boolean> = {
+  channel: (id, { channels, channelStats }) => channels.has(id) && channelNews(channelStats.get(id)) > 0,
+  thread: (id, { threads }) => { const row = threads.get(id); return row !== undefined && threadUnread(row); },
+  breakout: (id, { threads }) => { const row = threads.get(id); return row !== undefined && threadUnread(row); },
+};
+
+/**
+ * How many pinned rows show activity, for the Pinned button. The threads list
+ * is read only while a thread or breakout is pinned, so a person who pins
+ * none pays nothing for it. A guest's Pinned tab has no Channels, so neither
+ * does their count.
+ */
+function usePinnedActivityCount(guest: boolean): number {
+  const pins = usePins();
+  const visible = guest ? pins.filter((pin) => pin.kind !== 'channel') : pins;
+  const { byId: threads } = useMyThreads(visible.some((pin) => pin.kind !== 'channel'));
+  const stats = useChannelStats();
+  const channels = useSpaceMap();
+  const channelStats = useMemo(() => new Map((stats.data ?? []).map((item) => [item.channelId, item])), [stats.data]);
+  const sources = { channels, channelStats, threads };
+  return visible.filter((pin) => PIN_ACTIVITY[pin.kind](pin.id, sources)).length;
+}
+
 /** A list motion with nothing to watch, for a section drawn inside a tab that runs one over several. */
 const NO_CONTAINER: RefObject<HTMLElement | null> = { current: null };
 
@@ -784,35 +895,12 @@ function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefOb
   const { api } = useAppSession();
   const sort = useUiStore((state) => state.threadSort);
   const setSort = useUiStore((state) => state.setThreadSort);
-  const live = useWorkstreamsQuery();
+  const { byId, list, live, rows } = useMyThreads();
   const spaces = useSpaceMap();
   const pins = usePins();
   const pin = usePinAction(api);
   const openChannelId = useOpenChannelId();
   const openThreadId = useOpenThreadId();
-  const list = useInfiniteQuery({
-    queryKey: MY_THREADS_QUERY_KEY,
-    queryFn: ({ pageParam, signal }) => api!.getMyThreads(pageParam, signal),
-    initialPageParam: null as string | null,
-    getNextPageParam: (page) => page.nextCursor,
-    enabled: Boolean(api),
-  });
-  const liveById = useMemo(() => new Map((live.data ?? []).map((row) => [row.id, row])), [live.data]);
-  const rows = useMemo(() => {
-    const fetched = (list.data?.pages ?? []).flatMap((page) => page.items);
-    const known = new Set(fetched.map((row) => row.id));
-    // A thread this person started a moment ago is theirs before the list is
-    // read again.
-    const started = (live.data ?? []).filter((row) => row.pending && !known.has(row.id))
-      .map((row): SpaceConversationSummary => ({ ...row, kind: 'channel', breakoutOf: null }));
-    return [...started, ...fetched.map((row) => withLiveThread(row, liveById))];
-  }, [list.data, live.data, liveById]);
-  // Pinned rows come whole with the first page, so a pin whose activity is
-  // pages back is still drawn; a row on a loaded page is the fresher copy.
-  const byId = useMemo(() => new Map([
-    ...(list.data?.pages[0]?.pinned ?? []).map((row): [string, SpaceConversationSummary] => [row.id, withLiveThread(row, liveById)]),
-    ...rows.map((row): [string, SpaceConversationSummary] => [row.id, row]),
-  ]), [list.data, liveById, rows]);
   const threadPins = pins.filter((item) => item.kind === 'thread').map((item) => item.id);
   const breakoutPins = pins.filter((item) => item.kind === 'breakout').map((item) => item.id);
   const threadDrag = usePinnedDrag('thread', threadPins);
@@ -1059,14 +1147,7 @@ function ChannelsSection({ motion, scroll }: { motion?: () => void; scroll: RefO
   const pinnedOnly = motion !== undefined;
   const { active } = useSpaceDirectories();
   const { api } = useAppSession();
-  // The socket's Space snapshot seeds this; a placement nudge marks it stale
-  // and only then is it read on its own.
-  const stats = useQuery<ChannelStats[]>({
-    queryKey: CHANNEL_STATS_QUERY_KEY,
-    queryFn: ({ signal }) => api!.getChannelStats(signal),
-    enabled: api !== null,
-    staleTime: Infinity,
-  });
+  const stats = useChannelStats();
   const pins = usePins();
   const pin = usePinAction(api);
   const openChannelId = useOpenChannelId();
@@ -1146,9 +1227,7 @@ function ChannelRow({ active, drag, ghost, moves, onPin, pinned, position, space
   space: SpaceSummary;
   stats: ChannelStats | undefined;
 }): React.JSX.Element {
-  // The server counts the feed's rows above the read position; the optimistic
-  // read acknowledgement clears `hasUnread` before that count comes back.
-  const fresh = stats?.hasUnread ? stats.newThreadCount : 0;
+  const fresh = channelNews(stats);
   const unread = fresh > 0;
   const route = useCurrentRoute();
   const href = channelRoute(space.id);

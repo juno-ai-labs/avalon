@@ -59,7 +59,11 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   carries a red count: every conversation waiting on this person and every
   access request waiting on them, the same `attentionItems` the dock badge
   counts. The macOS menu bar counts Activity's unread rows instead
-  ([`menu-bar.md`](menu-bar.md)). Pinned, Channels and Activity carry no badge.
+  ([`menu-bar.md`](menu-bar.md)). **Pinned** carries a red count of its
+  rows showing activity: a pinned thread or breakout with its unread dot, or a
+  pinned Channel with new threads, exactly what each row draws
+  (`PIN_ACTIVITY`, one rule per pin kind). It shows from any tab, so a pin's
+  news is seen without opening Pinned. Channels and Activity carry no badge.
 - **One list**, titled with the section's name. Pinned's list is a section per
   kind, **Channels** then **Threads** (threads, then breakouts), each the same
   Pinned part its own tab draws above everything else, reorderable the same
@@ -443,6 +447,29 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-16 — The Pinned button counts pins with activity
+
+**What changed:** **Pinned** carries the same red count as Threads: the number
+of pinned rows showing activity. `PIN_ACTIVITY` holds one rule per pin kind,
+each what that kind's row draws as unread, and `usePinnedActivityCount` applies
+them to the pin list. The threads list and Channel stats moved into
+`useMyThreads` and `useChannelStats`, which the tabs and the count share.
+
+**Why:** A pin is something the person chose to follow, and its news was
+visible only on the tab that drew its row.
+
+**Considered and rejected:** Counting what waits on the person among pins, as
+Threads does. Threads already counts that, and a pinned Channel has no such
+state; activity is what every pinned row can show. A badge state kept by each
+section: it exists only while that section is drawn, and the count has to
+show from every tab.
+
+**Consequences:** `PIN_ACTIVITY` is a `Record<PinKind, …>`, so a kind added to
+`PinKindSchema` does not compile until it says what its activity is. Its rule
+must read data that is there on every tab, as Channel stats are. The threads
+list is now read while a thread or breakout is pinned, whatever tab is open; a
+person who pins none does not read it until Threads or Pinned is opened.
 
 ### 2026-10-16 — A Pinned section in the switcher
 
