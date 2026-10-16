@@ -8,6 +8,7 @@ import {
   IconAlertTriangle,
   IconCircleCheck,
   IconCornerDownRight,
+  IconCornerUpLeft,
   IconKeyframes,
   IconMailAi,
   IconPlug,
@@ -1717,9 +1718,30 @@ function StartSubstreamButton({ onStart }: { onStart: () => void }): React.JSX.E
   );
 }
 
-function AssistantMessageActions({ citations, mentions, onStartSubstream, telemetry, text }: {
+/**
+ * Merge this message's words back up: a Breakout's into its Thread, a
+ * Thread's into one of its Channels. First in the row, because it is the
+ * action that finishes a piece of work. The icon is the breakout mark rotated
+ * 180°: work goes down into a Breakout and comes back up.
+ */
+function MergeButton({ merge, text }: { merge: MessageMergeAction; text: string }): React.JSX.Element {
+  return (
+    <MessageAction className="message-merge" description={merge.label} onClick={() => merge.onMerge(text)}>
+      <IconCornerUpLeft aria-hidden="true" size={12} stroke={1.9} /> {merge.label}
+    </MessageAction>
+  );
+}
+
+/** Where a message's Merge action goes, as its host names it ("Merge to thread", "Merge to GTM"). */
+export interface MessageMergeAction {
+  label: string;
+  onMerge: (text: string) => void;
+}
+
+function AssistantMessageActions({ citations, mentions, onMerge, onStartSubstream, telemetry, text }: {
   citations?: CitationContext;
   mentions: MessageMention[];
+  onMerge?: MessageMergeAction;
   onStartSubstream?: () => void;
   telemetry?: MessageCopyTelemetry;
   text: string;
@@ -1789,6 +1811,7 @@ function AssistantMessageActions({ citations, mentions, onStartSubstream, teleme
         // as one attempt that did not work.
         onPointerLeave={() => setFailed(null)}
       >
+        {hasText && onMerge && <MergeButton merge={onMerge} text={text} />}
         {hasText && (
           <MessageAction description="Copy response" onClick={() => void copyResponse().catch(() => undefined)}><Clipboard size={12} /> Copy</MessageAction>
         )}
@@ -1846,6 +1869,7 @@ export function AssistantMessageContent({
   // The hoisted constant, not `= []`: a per-render array here would feed
   // MarkdownBody an always-new `mentions` and defeat its streaming memo.
   mentions = NO_MENTIONS,
+  onMerge,
   onStartSubstream,
   showCopy = true,
   streaming = false,
@@ -1856,6 +1880,7 @@ export function AssistantMessageContent({
   citations?: CitationContext;
   collapseHeadings?: boolean;
   mentions?: MessageMention[];
+  onMerge?: MessageMergeAction;
   onStartSubstream?: () => void;
   showCopy?: boolean;
   streaming?: boolean;
@@ -1872,6 +1897,7 @@ export function AssistantMessageContent({
         <AssistantMessageActions
           citations={citations}
           mentions={mentions}
+          onMerge={onMerge}
           onStartSubstream={onStartSubstream}
           telemetry={telemetry}
           text={text}
@@ -2634,8 +2660,33 @@ export function ElicitationPanel({
   );
 }
 
+/**
+ * The line over a Breakout's merged result: which Breakout, and who merged
+ * it ("merged by Rally for Alex" when Rally did, on Alex's request). The
+ * source keeps the unrotated breakout mark, and its name opens it.
+ */
+function MergedFromLine({ author, mergedFrom, onOpen }: {
+  author: string;
+  mergedFrom: NonNullable<Message['mergedFrom']>;
+  onOpen?: () => void;
+}): React.JSX.Element {
+  const title = mergedFrom.title || 'A breakout';
+  return (
+    <p className="message-merged-from">
+      <IconCornerDownRight aria-hidden="true" size={12} stroke={1.9} />
+      {onOpen ? <button onClick={onOpen} type="button">{title}</button> : <span>{title}</span>}
+      <span aria-hidden="true"> · </span>
+      <span>merged by {mergedFrom.actingAgent ? `Rally for ${author}` : author}</span>
+    </p>
+  );
+}
+
 interface MessageBlockProps {
   onStartSubstream?: (throughTurnId: string) => void;
+  /** The host's Merge action, offered on every settled text message; absent where nothing can merge. */
+  merge?: MessageMergeAction;
+  /** Opens a Breakout a merge names. */
+  onOpenBreakout?: (breakoutId: string) => void;
   /**
    * Whether this is the newest thing Rally said in the feed. Its breakout
    * action is then a visible line under the message rather than one of the
@@ -2680,6 +2731,8 @@ interface MessageBlockProps {
 
 export function MessageBlock({
   onStartSubstream,
+  merge,
+  onOpenBreakout,
   latestReply = false,
   citations,
   collapseHeadings = false,
@@ -2866,6 +2919,17 @@ export function MessageBlock({
     && !message.streaming && !message.deliveryState
     ? () => onStartSubstream(cutoffTurnId)
     : undefined;
+  // The same settled-text rule: a merge carries words that are done.
+  const mergeAction = merge && message.text && message.messageType === 'text'
+    && !message.streaming && !message.deliveryState ? merge : undefined;
+  const mergedFrom = message.mergedFrom;
+  const mergeMeta = mergedFrom ? (
+    <MergedFromLine
+      author={humanAuthorName}
+      mergedFrom={mergedFrom}
+      {...(onOpenBreakout ? { onOpen: () => onOpenBreakout(mergedFrom.breakoutId) } : {})}
+    />
+  ) : null;
   const article = (
     <article
       aria-label={sending ? 'Sending message' : pending && pendingLabel
@@ -2904,16 +2968,29 @@ export function MessageBlock({
       </MessageByline>
       {human ? (
         <div className="human-message-content">
+          {mergeMeta}
           {message.text ? (
             <HumanMessageBubble disclosure={rowDisclosure} messageId={message.id} text={message.text}>
-              <MarkdownBody
-                mentions={message.mentions}
-                preserveLineBreaks
-                rallyMentions
-                speechKind="message"
-                telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
-                verbatim
-              >{message.text}</MarkdownBody>
+              {mergedFrom ? (
+                // A merge is written to be read as a result: its markdown and
+                // its `resource://` embeds render, which a typed message's
+                // verbatim body does not.
+                <MarkdownBody
+                  citations={citations}
+                  mentions={message.mentions}
+                  speechKind="message"
+                  telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
+                >{message.text}</MarkdownBody>
+              ) : (
+                <MarkdownBody
+                  mentions={message.mentions}
+                  preserveLineBreaks
+                  rallyMentions
+                  speechKind="message"
+                  telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
+                  verbatim
+                >{message.text}</MarkdownBody>
+              )}
             </HumanMessageBubble>
           ) : null}
           {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
@@ -2933,7 +3010,12 @@ export function MessageBlock({
               and so does a turn that is not yet a cutoff; leaving the slot out
               there handed the next turn a 4px clearance on the bubble itself. */}
           <footer className="human-message-actions">
-            {startSubstream && <TipGroup><StartSubstreamButton onStart={startSubstream} /></TipGroup>}
+            {(mergeAction || startSubstream) && (
+              <TipGroup>
+                {mergeAction && message.text && <MergeButton merge={mergeAction} text={message.text} />}
+                {startSubstream && <StartSubstreamButton onStart={startSubstream} />}
+              </TipGroup>
+            )}
           </footer>
         </div>
       ) : (
@@ -2945,6 +3027,7 @@ export function MessageBlock({
             citations={citations}
             collapseHeadings={collapseHeadings}
             mentions={message.mentions}
+            onMerge={mergeAction}
             onStartSubstream={latestReply ? undefined : startSubstream}
             streaming={message.streaming}
             text={message.text ?? ''}

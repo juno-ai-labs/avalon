@@ -40,7 +40,8 @@ import { SidekickPicker } from '../components/sidekick-picker';
 import { workstreamSidekickRows } from '../components/sidekick-section';
 import { useChannelRail } from '../lib/channel-rails';
 import { type LaunchingSubstream, type SubstreamLaunchProps } from '../components/substream-launch';
-import { ConversationOpeningSkeleton, ConversationSurface, workspaceMemberFromSession, type ConversationHeaderContext } from './conversation-surface';
+import { ConversationOpeningSkeleton, ConversationSurface, mergeLabel, mergeTargetFor, workspaceMemberFromSession, type ConversationHeaderContext } from './conversation-surface';
+import { useSpaceDirectories } from '../lib/use-space-directories';
 
 // The feed, composer and rail live in `conversation-surface.tsx`, shared with
 // the automation screen. The helpers below are re-exported so the tests and
@@ -185,6 +186,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const openFirstWorkstream = useOpenFirstWorkstream();
   const selectedSubstreamId = searchParams.get('substream') || '0';
   const { guest } = useShellCapabilities();
+  const activeSpaces = useSpaceDirectories().active.data;
   const conversationDirectory = useConversationDirectory();
   const directoryEntry = conversationDirectory?.workstreams.find((item) => item.parentId === id);
   const row = useCachedWorkstreamSummary(id);
@@ -728,7 +730,16 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     selectSubstream(substreamId);
   };
 
+  // The title menu's Merge opens the composer's merge mode in that pane.
+  const [mergeRequest, setMergeRequest] = useState<{ substreamId: string; nonce: number } | null>(null);
+  const threadMerge = mergeTargetFor({
+    parentKind: 'workstream', substreamId: '0', guest, thread: parent.data, spaces: activeSpaces?.items ?? [],
+  });
   const mainActions = (conversationScoped ? mainVisible : parent.data) ? {
+    merge: threadMerge ? {
+      label: mergeLabel(threadMerge),
+      onSelect: () => setMergeRequest({ substreamId: '0', nonce: Date.now() }),
+    } : undefined,
     isPublic: parent.data?.scope === 'workspace',
     onSetPublic: !channelWritable || parent.data?.systemKind ? undefined : setPublic,
     publicDisabled: substreamPending,
@@ -737,6 +748,10 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     onArchive: !channelWritable ? undefined : (target: ConversationRowTarget) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuFailure(null); },
   } : undefined;
   const substreamActions = {
+    merge: openBreakoutId ? {
+      label: 'Merge to thread',
+      onSelect: () => setMergeRequest({ substreamId: openBreakoutId, nonce: Date.now() }),
+    } : undefined,
     onCopyLink: session?.workspace ? copyRowLink : undefined,
     onRename: (child: ConversationRowTarget) => { ++menuOperation.current; setRenameTarget({ ...child, parentId: id }); setRenameTitle(child.title); setSubstreamMenuFailure(null); },
     onArchive: (child: ConversationRowTarget) => { ++menuOperation.current; setArchiveTarget({ ...child, parentId: id }); setSubstreamMenuFailure(null); },
@@ -880,6 +895,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
 
   const mainPane = !mainVisible ? null : <ConversationSurface
     breakouts={breakoutMarks}
+    mergeRequest={mergeRequest?.substreamId === '0' ? mergeRequest.nonce : null}
     honorsSearchTarget={openBreakoutId === null}
     onOpenBreakout={openBreakout}
     onStartSubstream={startCreation}
@@ -918,6 +934,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     }}
     workstreamContext={conversationScoped ? undefined : parent.data}
   /> : <ConversationSurface
+    mergeRequest={mergeRequest && mergeRequest.substreamId === openBreakoutId ? mergeRequest.nonce : null}
     parentId={id}
     parentKind="workstream"
     renderHeader={(context) => <TitlePillHeader

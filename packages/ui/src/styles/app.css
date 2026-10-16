@@ -8914,3 +8914,78 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   padding: 0 16px var(--composer-dock-gap);
   position: relative;
 }
+
+/* Merge-back (docs/conversation-merge.md). The hover rows never wrap: a row
+   wider than its message runs under the title menu's pop-out rather than
+   breaking onto a second line, and Merge, first in the row, stays whole. */
+:is(.agent-message-actions, .human-message-actions) { flex-wrap: nowrap; white-space: nowrap; }
+.message-merge { white-space: nowrap; }
+/* The line over a Breakout's merged result, on the bubble's side. */
+.message-merged-from {
+  align-items: center;
+  align-self: flex-end;
+  color: var(--av-sys-color-text-subtle);
+  display: flex;
+  font-size: 11.5px;
+  gap: 4px;
+  margin: 0 0 4px;
+}
+.message-merged-from > svg { color: var(--av-sys-color-text-muted); flex: none; }
+.message-merged-from button { background: transparent; color: var(--av-sys-color-text-default); font: inherit; font-weight: 550; padding: 0; }
+.message-merged-from button:hover { text-decoration: underline; }
+/* A Breakout card whose result is in its Thread. */
+.breakout-merged-chip {
+  align-items: center;
+  background: var(--av-sys-color-surface-sunken);
+  border-radius: 999px;
+  color: var(--av-sys-color-text-muted);
+  display: inline-flex;
+  font-size: 11px;
+  gap: 3px;
+  margin-left: 4px;
+  padding: 1px 7px;
+}
+/* The composer's merge mode: what it merges into, the Channel picker for a
+   thread in several, Cancel, and who will see it. */
+.composer-merge-bar {
+  align-items: center;
+  color: var(--av-sys-color-text-default);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  font-weight: 550;
+  gap: 4px 8px;
+  padding: 0 4px;
+}
+.composer-merge-bar > svg { color: var(--av-sys-color-text-muted); flex: none; }
+.composer-merge-bar select { background: transparent; border: 1px solid var(--av-ref-color-line-2); border-radius: 6px; color: inherit; font: inherit; padding: 1px 4px; }
+.composer-merge-cancel { background: transparent; color: var(--av-sys-color-text-muted); font-size: 12px; margin-left: auto; padding: 2px 6px; }
+.composer-merge-cancel:hover { color: var(--av-sys-color-text-default); }
+.composer-merge-audience { color: var(--av-sys-color-text-subtle); flex-basis: 100%; font-size: 11.5px; font-weight: 400; }
+/* A thread's merge in its Channel: the thread it came from, a quote of it,
+   then the result. On the leading side, as a Channel message is. */
+.channel-feed-merge-source {
+  align-items: center;
+  align-self: flex-start;
+  background: transparent;
+  color: var(--av-sys-color-text-default);
+  display: inline-flex;
+  font-size: 12.5px;
+  font-weight: 600;
+  gap: 5px;
+  padding: 0;
+}
+.channel-feed-merge-source > svg { color: var(--av-sys-color-text-muted); }
+.channel-feed-merge-source:hover span { text-decoration: underline; }
+.channel-feed-merge-quote {
+  border-left: 2px solid var(--av-ref-color-line-2);
+  color: var(--av-sys-color-text-muted);
+  font-size: 13px;
+  margin: 0;
+  overflow: hidden;
+  padding-left: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.channel-feed-merge-remove { background: transparent; color: var(--av-sys-color-text-subtle); font-size: 12px; padding: 0; }
+.channel-feed-merge-remove:hover { color: var(--av-sys-color-text-default); text-decoration: underline; }

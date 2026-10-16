@@ -8,13 +8,15 @@ import type { SidekickRow } from '@rally/ui/components/sidekick-section';
 import { ChannelGlyph, spaceMark } from '@rally/ui/components/space-icon';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { TitleMenuItem, TitlePillAction, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { IconCloudDownload, IconPalette, IconPlus } from '@tabler/icons-react';
+import { IconCloudDownload, IconCornerUpLeft, IconPalette, IconPlus } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { ChannelComposer } from '../components/channel-composer';
 import { MarkdownBody } from '../components/workstream-blocks';
+import type { CitationContext } from '../components/markdown-citations';
+import { openLink } from '../lib/browser-rail-links';
 import { Avatar, Button, EmptyState, InlineError, LoadingState, Modal, RallyAvatar } from '../components/primitives';
 import { RelativeTime } from '../components/relative-time';
 import { reportActivityEvent } from '../lib/activity-events';
@@ -213,7 +215,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
   // it, and acknowledging only what is listed would leave the dot standing.
   const newestLoadedSequence = useMemo(() => Math.max(0, ...(feed.data?.pages ?? [])
     .flatMap((page) => [
-      ...page.items.map((item) => item.kind === 'message' ? 0 : item.attentionSequenceNumber),
+      ...page.items.map((item) => item.attentionSequenceNumber ?? 0),
       page.latestAttentionSequenceNumber ?? 0,
     ])), [feed.data]);
   // Subscribed rather than read once, so stats arriving after the feed (or a
@@ -344,13 +346,25 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
               placedAt={row.placedAt}
               thread={row.thread}
             />
-            : <MessageCard
-              author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
-              key={row.message.id}
-              members={members.data ?? NO_MEMBERS}
-              message={row.message}
-              placedAt={row.placedAt}
-            />;
+            : row.message.merge
+              ? <MergeCard
+                author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
+                channelId={channelId}
+                currentUser={workspace.currentUser}
+                key={row.message.id}
+                members={members.data ?? NO_MEMBERS}
+                merge={row.message.merge}
+                message={row.message}
+                onOpenThread={openThread}
+                placedAt={row.placedAt}
+              />
+              : <MessageCard
+                author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
+                key={row.message.id}
+                members={members.data ?? NO_MEMBERS}
+                message={row.message}
+                placedAt={row.placedAt}
+              />;
           const previous = ordered[index - 1];
           if (previous && new Date(previous.placedAt).toDateString() === day) return [card];
           return [<DaySeparator key={`day:${feedRowId(row)}`} placedAt={row.placedAt} />, card];
@@ -453,6 +467,85 @@ function MessageCard({ author, members, message, placedAt }: {
           <span aria-hidden="true">·</span>
           <RelativeTime value={placedAt} />
         </span>
+      </div>
+    </div>
+  </li>;
+}
+
+/**
+ * A thread's merged result, on the left at the bottom of the feed when it was
+ * merged, so the Channel reads in time order (docs/conversation-merge.md). It
+ * names its thread, and that name opens it; it quotes the thread's summary;
+ * its body renders as markdown with the artifacts it embeds as cards, drawn
+ * from the titles stored with the merge. An artifact opens in its thread,
+ * where it is attached and so readable by everyone who sees this.
+ */
+function MergeCard({ author, channelId, currentUser, members, merge, message, onOpenThread, placedAt }: {
+  author: WorkspaceMember | undefined;
+  channelId: string;
+  currentUser: WorkspaceMember;
+  members: readonly WorkspaceMember[];
+  merge: NonNullable<ChannelMessage['merge']>;
+  message: ChannelMessage;
+  onOpenThread: (threadId: string) => void;
+  placedAt: string;
+}): React.JSX.Element {
+  const { api } = useAppSession();
+  const queryClient = useQueryClient();
+  const [removing, setRemoving] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const body = useMemo(() => typedMentionRendering(message.body, members), [members, message.body]);
+  const citations = useMemo<CitationContext>(() => {
+    const embeds = new Map(merge.embeds.map((embed) => [embed.id, embed]));
+    return {
+      resolve: (resourceId) => {
+        const embed = embeds.get(resourceId);
+        return embed ? { id: embed.id, title: embed.title, resourceType: embed.kind } : undefined;
+      },
+      open: (target) => {
+        if (target.scheme === 'resource') onOpenThread(merge.threadId);
+        if (target.scheme === 'external') void openLink(target.url);
+      },
+    };
+  }, [merge.embeds, merge.threadId, onOpenThread]);
+  const removable = message.author.kind === 'member'
+    && (message.author.userId === currentUser.id || currentUser.role === 'owner' || currentUser.role === 'admin');
+  const remove = async (): Promise<void> => {
+    if (!api) return;
+    setRemoving(true);
+    setFailure(null);
+    try {
+      await api.removeChannelMessage(channelId, message.id);
+      await queryClient.invalidateQueries({ queryKey: channelFeedQueryKey(channelId) });
+    } catch {
+      setFailure('The merge couldn’t be removed. Try again.');
+    } finally {
+      setRemoving(false);
+    }
+  };
+  const quote = merge.summary?.split('\n').find((line) => line.trim() !== '')?.trim();
+  return <li className="channel-feed-item is-message is-merge">
+    <div className="channel-feed-message">
+      {author ? <Avatar member={author} title={null} /> : <RallyAvatar />}
+      <div className="channel-feed-message-body">
+        <button className="channel-feed-merge-source" onClick={() => onOpenThread(merge.threadId)} type="button">
+          <IconCornerUpLeft aria-hidden="true" size={12} stroke={1.9} />
+          <span>{merge.title || 'A thread'}</span>
+        </button>
+        {quote && <blockquote className="channel-feed-merge-quote">{quote}</blockquote>}
+        <div className="channel-feed-message-text">
+          <MarkdownBody citations={citations} mentions={body.mentions}>{body.text}</MarkdownBody>
+        </div>
+        <span className="channel-feed-meta">
+          <span>merged by {author?.name ?? 'Someone'}</span>
+          <span aria-hidden="true">·</span>
+          <RelativeTime value={placedAt} />
+          {removable && <>
+            <span aria-hidden="true">·</span>
+            <button className="channel-feed-merge-remove" disabled={removing} onClick={() => void remove()} type="button">Remove</button>
+          </>}
+        </span>
+        {failure && <InlineError>{failure}</InlineError>}
       </div>
     </div>
   </li>;

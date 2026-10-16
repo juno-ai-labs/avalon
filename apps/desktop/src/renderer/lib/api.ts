@@ -6,6 +6,9 @@ import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepart
 import {
   ActivityPageSchema,
   ChannelFeedItemSchema,
+  ConversationMergeResultSchema,
+  type ConversationMergeRequest,
+  type ConversationMergeResult,
   ChannelFeedPageSchema,
   type ChannelMessage,
   MyThreadsPageSchema,
@@ -1508,7 +1511,14 @@ export class RallyApi {
     return {
       items: page.items.flatMap((item): ChannelFeedPageView['items'] => {
         if (!('placedAt' in item)) return [];
-        if (item.kind === 'message') return [{ kind: 'message', placedAt: item.placedAt, message: item.message }];
+        if (item.kind === 'message') {
+          return [{
+            kind: 'message',
+            placedAt: item.placedAt,
+            message: item.message,
+            ...(item.attentionSequenceNumber === undefined ? {} : { attentionSequenceNumber: item.attentionSequenceNumber }),
+          }];
+        }
         if (item.kind !== 'thread') return [];
         return [{
           kind: 'thread',
@@ -2104,6 +2114,26 @@ export class RallyApi {
       ...(input.signal ? { signal: input.signal } : {}),
     });
     return { items: page.items.map(mapResource), nextCursor: page.nextCursor, ...(page.complete !== undefined ? { complete: page.complete } : {}) };
+  }
+
+  /**
+   * Merge-back (docs/conversation-merge.md): with `breakoutId`, that Breakout's
+   * result into this Thread; without it, this Thread's result into one of its
+   * Channels. A retry with the same `clientMessageId` writes nothing again.
+   */
+  async mergeConversation(threadId: string, request: ConversationMergeRequest): Promise<ConversationMergeResult> {
+    return this.request(`/conversations/${encodeURIComponent(threadId)}/merge`, {
+      method: 'POST',
+      body: request,
+      schema: ConversationMergeResultSchema,
+    });
+  }
+
+  /** Remove a Channel message: a merge's Remove, by its author or an admin. */
+  async removeChannelMessage(channelId: string, messageId: string): Promise<void> {
+    await this.requestVoid(`/spaces/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}`, {
+      method: 'DELETE',
+    });
   }
 
   async attachResource(parentId: string, resourceId: string): Promise<WorkstreamDetail> {
@@ -2765,7 +2795,7 @@ export class RallyApi {
 export interface ChannelFeedPageView {
   items: Array<
     | { kind: 'thread'; placedAt: string; attentionSequenceNumber: number; thread: WorkstreamSummary }
-    | { kind: 'message'; placedAt: string; message: ChannelMessage }
+    | { kind: 'message'; placedAt: string; message: ChannelMessage; attentionSequenceNumber?: number }
   >;
   nextCursor: string | null;
   /** The Channel's latest attention sequence number as the first page was read; null on a later page. */
