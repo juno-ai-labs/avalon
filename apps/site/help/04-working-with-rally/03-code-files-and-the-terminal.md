@@ -88,8 +88,8 @@ Code in the sandbox can reach the internet, but only as far as your
 Organization allows. An administrator chooses between two settings in
 **Settings → Security**, under **Terminal network access**:
 
-- **Trusted only**: the services Rally needs to work, plus any extra
-  addresses the Organization approves.
+- **Trusted only**: the services Rally needs to work, including sites
+  published with Rally, plus any extra addresses the Organization approves.
 - **Full internet**: any public address.
 
 Either way, the sandbox cannot reach private networks. If Rally says a
