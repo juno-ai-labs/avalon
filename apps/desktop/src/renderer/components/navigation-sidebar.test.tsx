@@ -184,6 +184,46 @@ describe('the navigation sidebar', () => {
     expect(await within(await screen.findByRole('region', { name: 'Pinned threads' })).findByText('Move a thread here to pin it')).toBeInTheDocument();
   });
 
+  it('gathers every pin in the Pinned tab, a section per kind, with nothing unpinned beside them', async () => {
+    const pinnedPlan = thread('plan', 'Q4 plan');
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [thread('notes', 'Notes')], pinned: [pinnedPlan] });
+    const pins = [
+      { kind: 'channel' as const, id: 'outbound', parentId: null },
+      { kind: 'thread' as const, id: 'plan', parentId: null },
+    ];
+    api.reorderPins.mockResolvedValue(pins);
+    renderSidebar((client) => {
+      client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound'), channel('growth', 'Growth')] });
+      client.setQueryData(PINS_QUERY_KEY, pins);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pinned' }));
+
+    expect(screen.getByRole('heading', { name: 'Pinned' })).toBeInTheDocument();
+    const channels = within(screen.getByRole('region', { name: 'Pinned channels' }));
+    expect(channels.getByText('Channels')).toBeInTheDocument();
+    expect(channels.getAllByRole('link').map((row) => row.textContent)).toEqual(['OutboundPinned, 1 of 1.']);
+    const threads = within(screen.getByRole('region', { name: 'Pinned threads' }));
+    expect(threads.getByText('Threads')).toBeInTheDocument();
+    await threads.findByRole('link', { name: /Q4 plan/u });
+    expect(threadRows(threads)).toEqual([['Q4 plan', 'Outbound']]);
+    expect(screen.queryByRole('region', { name: 'All channels' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'All threads' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Growth|Notes/u })).not.toBeInTheDocument();
+  });
+
+  it('says how to pin from the Pinned tab when nothing is pinned, and gives a guest no Channels there', async () => {
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [] });
+    useUiStore.getState().setSidebarSection('pinned');
+    renderSidebar(
+      (client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }),
+      0,
+      { person: { ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } } },
+    );
+    expect(within(screen.getByRole('region', { name: 'Pinned threads' })).getByText('Pin a thread to keep it here')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Pinned channels' })).not.toBeInTheDocument();
+  });
+
   it('says why a pin did not save', async () => {
     api.setPinned.mockRejectedValue(new ApiError('limit', 409, 'pin_limit_reached'));
     renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
