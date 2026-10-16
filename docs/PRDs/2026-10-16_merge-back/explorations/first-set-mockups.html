@@ -1,0 +1,2769 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Merge-Back UI Explorations</title>
+    <style>
+      /* Layout: a gallery of real-scale app panes ("boards"), grouped by level: Breakout, Thread, Channel, around the app. Tokens are Rally's own renderer tokens. */
+      :root {
+        --canvas: #f3f3f3;
+        --pane: #fcfcfc;
+        --subtle: #f7f7f7;
+        --sunken: #f3f3f3;
+        --raised: #fcfcfc;
+        --raised-hover: rgba(119, 119, 119, 0.17);
+        --hover: rgba(119, 119, 119, 0.09);
+        --t: #141414;
+        --t2: #3d3d3d;
+        --t3: #696969;
+        --t4: #8f8f8f;
+        --body: #2f2f2f;
+        --h2: #555555;
+        --b: #e5e5e5;
+        --b-subtle: #f0f0f0;
+        --b-strong: #d9d9d9;
+        --line4: #cecece;
+        --accent: #6a80b8;
+        --accent-strong: #55689b;
+        --accent-wash: #eef1f8;
+        --accent-edge: #c9d3e8;
+        --ok: #2f7d55;
+        --ok-wash: #e3f1e8;
+        --warn: #b07d0a;
+        --warn-wash: #fbf3e0;
+        --news: #e5332a;
+        --danger: #c3453f;
+        --primary: #070707;
+        --on-primary: #fcfcfc;
+        --tint-blue: #dce9fe;
+        --ink-blue: #2b58a2;
+        --tint-amber: #fee3c5;
+        --ink-amber: #7e4f04;
+        --tint-green: #d1f2d6;
+        --ink-green: #026e2f;
+        --tint-violet: #e8e4ff;
+        --ink-violet: #5f499c;
+        --adam: #3b82f6;
+        --sam: #070707;
+        --priya: #7a4a91;
+        --brand: #ccff00;
+        --ring: 0 0 0 1px var(--b-strong);
+        --lift:
+          0 2px 8px -1px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03);
+        --shadow-md: 0 8px 26px rgba(30, 28, 22, 0.13);
+        --page: #ebebea;
+        --note: #3d3d3d;
+        --sans:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --canvas: #111111;
+          --pane: #070707;
+          --subtle: #111111;
+          --sunken: #151515;
+          --raised: #2f2f2f;
+          --raised-hover: #313131;
+          --hover: rgba(119, 119, 119, 0.17);
+          --t: #fcfcfc;
+          --t2: #e4e4e4;
+          --t3: #a3a3a3;
+          --t4: #777777;
+          --body: #e4e4e4;
+          --h2: #cbcbcb;
+          --b: #202020;
+          --b-subtle: #131313;
+          --b-strong: #2c2c2c;
+          --line4: #383838;
+          --accent: #7fa8c8;
+          --accent-strong: #9dc0da;
+          --accent-wash: #101820;
+          --accent-edge: #22303c;
+          --ok: #74c48c;
+          --ok-wash: #14261a;
+          --warn: #dcb45f;
+          --warn-wash: #2a2010;
+          --news: #f0675d;
+          --danger: #cc7a6a;
+          --primary: #fcfcfc;
+          --on-primary: #141414;
+          --tint-blue: #283d5f;
+          --ink-blue: #bcd6ff;
+          --tint-amber: #533611;
+          --ink-amber: #fbca93;
+          --tint-green: #22472a;
+          --ink-green: #aae5b5;
+          --tint-violet: #3e365c;
+          --ink-violet: #d5ccff;
+          --sam: #5a5a5a;
+          --shadow-md: 0 18px 60px rgba(0, 0, 0, 0.62);
+          --lift: none;
+          --page: #000000;
+          --note: #cbcbcb;
+          color-scheme: dark;
+        }
+      }
+      :root[data-theme="dark"] {
+        --canvas: #111111;
+        --pane: #070707;
+        --subtle: #111111;
+        --sunken: #151515;
+        --raised: #2f2f2f;
+        --raised-hover: #313131;
+        --hover: rgba(119, 119, 119, 0.17);
+        --t: #fcfcfc;
+        --t2: #e4e4e4;
+        --t3: #a3a3a3;
+        --t4: #777777;
+        --body: #e4e4e4;
+        --h2: #cbcbcb;
+        --b: #202020;
+        --b-subtle: #131313;
+        --b-strong: #2c2c2c;
+        --line4: #383838;
+        --accent: #7fa8c8;
+        --accent-strong: #9dc0da;
+        --accent-wash: #101820;
+        --accent-edge: #22303c;
+        --ok: #74c48c;
+        --ok-wash: #14261a;
+        --warn: #dcb45f;
+        --warn-wash: #2a2010;
+        --news: #f0675d;
+        --danger: #cc7a6a;
+        --primary: #fcfcfc;
+        --on-primary: #141414;
+        --tint-blue: #283d5f;
+        --ink-blue: #bcd6ff;
+        --tint-amber: #533611;
+        --ink-amber: #fbca93;
+        --tint-green: #22472a;
+        --ink-green: #aae5b5;
+        --tint-violet: #3e365c;
+        --ink-violet: #d5ccff;
+        --sam: #5a5a5a;
+        --shadow-md: 0 18px 60px rgba(0, 0, 0, 0.62);
+        --lift: none;
+        --page: #000000;
+        --note: #cbcbcb;
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        background: var(--page);
+        color: var(--t);
+        font: 420 14px/20px var(--sans);
+        -webkit-font-smoothing: antialiased;
+        padding-inline: 20px;
+        padding-block: 36px 80px;
+      }
+      .wrap {
+        max-width: 1240px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+      }
+      svg.i {
+        width: 16px;
+        height: 16px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.7;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        flex: none;
+      }
+      svg.s14 {
+        width: 14px;
+        height: 14px;
+      }
+      svg.s18 {
+        width: 18px;
+        height: 18px;
+      }
+      svg.s12 {
+        width: 12px;
+        height: 12px;
+      }
+
+      /* page chrome */
+      header.top h1 {
+        font: 700 32px/1.15 var(--sans);
+        letter-spacing: -0.02em;
+        margin: 0 0 6px;
+      }
+      header.top p {
+        margin: 0;
+        color: var(--t3);
+        max-width: 68ch;
+        font-size: 15px;
+        line-height: 22px;
+      }
+      .sec {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .sec > h2 {
+        font: 700 22px/1.2 var(--sans);
+        letter-spacing: -0.015em;
+        margin: 20px 0 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .sec > p.lead {
+        margin: 0;
+        color: var(--t3);
+        max-width: 76ch;
+        font-size: 14.5px;
+        line-height: 21px;
+      }
+      .boards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr));
+        gap: 22px;
+        align-items: start;
+      }
+      .board {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        min-width: 0;
+      }
+      .board .label {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .board .id {
+        font:
+          600 11px/1 "Geist Mono",
+          ui-monospace,
+          monospace;
+        color: var(--t3);
+        letter-spacing: 0.04em;
+      }
+      .board .name {
+        font: 650 15px/1.3 var(--sans);
+      }
+      .tag {
+        font: 600 11px/18px var(--sans);
+        padding: 0 8px;
+        border-radius: 999px;
+        background: var(--ok-wash);
+        color: var(--ok);
+      }
+      .tag.alt {
+        background: var(--hover);
+        color: var(--t3);
+      }
+      .board .why {
+        color: var(--note);
+        font-size: 13.5px;
+        line-height: 20px;
+        margin: 0;
+      }
+      .board .why b {
+        font-weight: 600;
+      }
+      .frame {
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow:
+          0 0 0 1px var(--b-strong),
+          var(--shadow-md);
+        background: var(--pane);
+        min-width: 0;
+      }
+      .scroll {
+        overflow-x: auto;
+      }
+
+      /* pane chrome */
+      .pane {
+        background: var(--pane);
+        position: relative;
+        padding: 0 0 14px;
+        min-width: 520px;
+      }
+      .pillbar {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        align-items: center;
+        gap: 8px;
+        padding: 12px 14px 6px;
+      }
+      .pillbar .l {
+        display: flex;
+        gap: 6px;
+        min-width: 0;
+      }
+      .pillbar .r {
+        display: flex;
+        justify-content: flex-end;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        height: 34px;
+        padding: 0 13px 0 8px;
+        border-radius: 999px;
+        background: var(--raised);
+        box-shadow: var(--ring), var(--lift);
+        font: 600 14px/1 var(--sans);
+        white-space: nowrap;
+      }
+      .pill.anc {
+        box-shadow: var(--ring);
+        font-weight: 600;
+      }
+      .pill .muted {
+        color: var(--t3);
+        font-weight: 420;
+      }
+      .glyph {
+        width: 20px;
+        height: 20px;
+        border-radius: 32%;
+        display: grid;
+        place-items: center;
+        background: var(--tint-blue);
+        color: var(--ink-blue);
+      }
+      .glyph.c {
+        border-radius: 50%;
+      }
+      .glyph.amber {
+        background: var(--tint-amber);
+        color: var(--ink-amber);
+      }
+      .glyph.green {
+        background: var(--tint-green);
+        color: var(--ink-green);
+      }
+      .glyph.violet {
+        background: var(--tint-violet);
+        color: var(--ink-violet);
+      }
+      .xbtn {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        box-shadow: var(--ring);
+        color: var(--t2);
+      }
+      .feed {
+        padding: 8px 28px 0 44px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        position: relative;
+      }
+      .feed.narrow {
+        padding-left: 28px;
+      }
+
+      /* bylines + turns */
+      .by {
+        font-size: 12px;
+        line-height: 16px;
+        color: var(--t3);
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .by b {
+        font-weight: 500;
+        color: var(--t2);
+      }
+      .by .dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+      .human {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 4px;
+      }
+      .bubble {
+        max-width: 78%;
+        border-radius: 18px;
+        padding: 8px 12px;
+        color: #fcfcfc;
+        font-size: 14px;
+        line-height: 20px;
+      }
+      .agent {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-width: min(92%, 600px);
+      }
+      .md {
+        color: var(--body);
+        font-size: 14px;
+        line-height: 20px;
+      }
+      .md p {
+        margin: 0 0 10px;
+      }
+      .md p:last-child {
+        margin: 0;
+      }
+      .md ul {
+        margin: 0 0 10px;
+        padding-left: 22px;
+      }
+      .md li {
+        margin: 3px 0;
+      }
+      .md b {
+        font-weight: 560;
+        color: var(--t);
+      }
+      .faded {
+        opacity: 0.45;
+      }
+      .actions {
+        display: flex;
+        gap: 12px;
+        color: var(--t3);
+        font-size: 11px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .actions span {
+        display: inline-flex;
+        gap: 4px;
+        align-items: center;
+      }
+      .actions .hl {
+        color: var(--t);
+        font-weight: 560;
+        background: var(--hover);
+        padding: 3px 8px 3px 6px;
+        border-radius: 999px;
+      }
+      .worked {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--t4);
+        font-size: 12.5px;
+        font-weight: 500;
+      }
+      .orb {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        border: 1.5px dotted var(--t4);
+      }
+
+      /* chips */
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        height: 30px;
+        padding: 0 12px 0 10px;
+        border-radius: 999px;
+        background: var(--raised);
+        box-shadow: var(--ring);
+        font-size: 13px;
+        white-space: nowrap;
+        color: var(--t);
+      }
+      .chip .ic {
+        color: var(--t3);
+        display: inline-flex;
+      }
+      .chip b {
+        font-weight: 600;
+      }
+      .chip .news {
+        color: var(--news);
+        font-weight: 600;
+      }
+      .chip .mute {
+        color: var(--t3);
+      }
+      .chip.merged .okk {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        color: var(--ok);
+        font-weight: 600;
+      }
+      .chip.open {
+        background: var(--accent-wash);
+        box-shadow: 0 0 0 1.5px var(--accent);
+        color: var(--accent-strong);
+      }
+      .chip.sm {
+        height: 26px;
+        font-size: 12.5px;
+        padding: 0 10px 0 8px;
+      }
+      .cite {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        height: 24px;
+        padding: 0 9px 0 7px;
+        border-radius: 999px;
+        background: var(--raised);
+        border: 1px solid var(--line4);
+        font-size: 12.5px;
+        font-weight: 560;
+        white-space: nowrap;
+        color: var(--t);
+      }
+      .cite .ic {
+        color: var(--t3);
+        display: inline-flex;
+      }
+      .fn {
+        display: inline-grid;
+        place-items: center;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        font: 680 10px/1 var(--sans);
+        background: rgba(119, 119, 119, 0.18);
+        border: 1px solid rgba(119, 119, 119, 0.35);
+        vertical-align: 1px;
+        margin-left: 2px;
+        color: var(--t2);
+      }
+
+      /* the new primitive: outcome card (shares the breakout origin card's sunken look) */
+      .outcome {
+        background: var(--sunken);
+        border-radius: 18px;
+        box-shadow: 0 0 0 1px var(--b);
+        padding: 12px 14px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+        max-width: 600px;
+      }
+      .oc-head {
+        display: flex;
+        align-items: flex-start;
+        gap: 9px;
+      }
+      .st {
+        flex: none;
+        display: inline-grid;
+        place-items: center;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        margin-top: 1px;
+      }
+      .st.done {
+        background: var(--ok);
+        color: var(--pane);
+      }
+      .st.update {
+        background: var(--warn);
+        color: var(--pane);
+      }
+      .st.open {
+        box-shadow: inset 0 0 0 1.6px var(--t3);
+        color: var(--t3);
+      }
+      .st svg {
+        width: 11px;
+        height: 11px;
+        stroke-width: 2.6;
+      }
+      .oc-title {
+        font: 560 15px/20px var(--sans);
+        color: var(--t);
+        text-wrap: pretty;
+      }
+      .oc-body {
+        color: var(--t2);
+        font-size: 13.5px;
+        line-height: 19.5px;
+        margin-left: 27px;
+      }
+      .oc-body p {
+        margin: 0 0 6px;
+      }
+      .oc-body p:last-child {
+        margin: 0;
+      }
+      .oc-foot {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+        margin-left: 27px;
+      }
+      .oc-meta {
+        margin-left: 27px;
+        color: var(--t3);
+        font-size: 12px;
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .oc-meta a {
+        color: var(--t2);
+        text-decoration: none;
+        font-weight: 500;
+      }
+      .dr {
+        margin-left: 27px;
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 4px 12px;
+        font-size: 13.5px;
+        line-height: 19.5px;
+      }
+      .dr dt {
+        color: var(--t3);
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        font-weight: 600;
+        padding-top: 1px;
+      }
+      .dr dd {
+        margin: 0;
+        color: var(--t2);
+      }
+      .since {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--warn);
+        font-weight: 560;
+      }
+      .ver {
+        font: 600 11px/18px var(--sans);
+        padding: 0 7px;
+        border-radius: 999px;
+        background: var(--hover);
+        color: var(--t3);
+      }
+      .merge-by {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--t3);
+      }
+      .merge-by b {
+        color: var(--t2);
+        font-weight: 500;
+      }
+      .merge-by .mk {
+        color: var(--ok);
+        display: inline-flex;
+      }
+      .merge-by .src {
+        display: inline-flex;
+        gap: 3px;
+        align-items: center;
+        color: var(--t2);
+        font-weight: 500;
+      }
+
+      /* composer + merge sheet */
+      .dock {
+        padding: 6px 14px 0;
+      }
+      .composer {
+        border: 1px solid var(--b-subtle);
+        border-radius: 22px;
+        background: var(--raised);
+        box-shadow: var(--ring);
+      }
+      .composer .ph {
+        padding: 12px 15px 2px;
+        color: var(--t3);
+      }
+      .ctool {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 6px 6px;
+      }
+      .round {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: var(--hover);
+        color: var(--t2);
+      }
+      .send {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: var(--primary);
+        color: var(--on-primary);
+        opacity: 0.4;
+      }
+      .sp {
+        flex: 1;
+      }
+      .sheet {
+        border-radius: 22px;
+        background: var(--raised);
+        box-shadow: var(--ring), var(--shadow-md);
+        padding: 14px 14px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .sh-top {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font: 600 14px/1 var(--sans);
+      }
+      .sh-top .to {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .seg {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .seg span {
+        font-size: 12.5px;
+        padding: 5px 11px;
+        border-radius: 999px;
+        background: var(--raised);
+        box-shadow: inset 0 0 0 1px var(--b-strong);
+        white-space: nowrap;
+        color: var(--t2);
+      }
+      .seg span.on {
+        background: var(--t);
+        color: var(--pane);
+        box-shadow: none;
+      }
+      .seg span .spark {
+        color: var(--accent);
+      }
+      .field {
+        border-radius: 12px;
+        background: var(--pane);
+        box-shadow: inset 0 0 0 1px var(--b-strong);
+        padding: 9px 11px;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .field .lab {
+        font-size: 10.5px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-weight: 600;
+        color: var(--t3);
+        display: flex;
+        justify-content: space-between;
+      }
+      .field .val {
+        font-size: 14px;
+        line-height: 20px;
+        color: var(--t);
+      }
+      .field .val.title {
+        font-weight: 560;
+        font-size: 15px;
+      }
+      .count {
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0;
+        text-transform: none;
+        font-weight: 500;
+      }
+      .pick {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .prow {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 10px;
+        border-radius: 12px;
+        box-shadow: inset 0 0 0 1px var(--b-strong);
+        background: var(--pane);
+        font-size: 13.5px;
+      }
+      .prow.on {
+        box-shadow: inset 0 0 0 1.5px var(--accent);
+        background: var(--accent-wash);
+      }
+      .prow.gone {
+        opacity: 0.5;
+      }
+      .prow .badge {
+        width: 30px;
+        height: 30px;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        background: color-mix(in srgb, var(--accent) 18%, var(--raised));
+        color: var(--accent);
+      }
+      .prow .tx {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        flex: 1;
+      }
+      .prow .tx b {
+        font-weight: 560;
+      }
+      .prow .tx span {
+        font-size: 12px;
+        color: var(--t3);
+      }
+      .box {
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+        box-shadow: inset 0 0 0 1.5px var(--t4);
+        display: grid;
+        place-items: center;
+        flex: none;
+      }
+      .box.on {
+        background: var(--accent);
+        box-shadow: none;
+        color: var(--pane);
+      }
+      .box.on svg {
+        width: 11px;
+        height: 11px;
+        stroke-width: 2.8;
+      }
+      .aud {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12.5px;
+        color: var(--t2);
+        padding: 8px 10px;
+        border-radius: 10px;
+        background: var(--hover);
+      }
+      .aud.warn {
+        background: var(--warn-wash);
+        color: var(--t);
+      }
+      .aud .ic {
+        display: inline-flex;
+        color: var(--t3);
+      }
+      .aud.warn .ic {
+        color: var(--warn);
+      }
+      .sh-foot {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .stp {
+        display: inline-flex;
+        gap: 4px;
+        background: var(--hover);
+        border-radius: 999px;
+        padding: 3px;
+      }
+      .stp span {
+        font-size: 12px;
+        padding: 3px 10px;
+        border-radius: 999px;
+        color: var(--t3);
+        display: inline-flex;
+        gap: 5px;
+        align-items: center;
+      }
+      .stp span.on {
+        background: var(--raised);
+        color: var(--t);
+        box-shadow: var(--ring);
+        font-weight: 560;
+      }
+      .sd {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+      .cb {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12.5px;
+        color: var(--t2);
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 32px;
+        padding: 0 14px;
+        border-radius: 999px;
+        font: 560 13px/1 var(--sans);
+        white-space: nowrap;
+      }
+      .btn.pri {
+        background: var(--primary);
+        color: var(--on-primary);
+      }
+      .btn.q {
+        background: var(--hover);
+        color: var(--t2);
+      }
+      .dots {
+        display: inline-flex;
+        gap: 3px;
+      }
+      .dots i {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--t4);
+        display: block;
+      }
+
+      /* merge waterline in source */
+      .wl {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 12px;
+        color: var(--t3);
+      }
+      .wl:before,
+      .wl:after {
+        content: "";
+        height: 1px;
+        background: var(--b-strong);
+        flex: 1;
+      }
+      .wl .k {
+        display: inline-flex;
+        gap: 6px;
+        align-items: center;
+        color: var(--ok);
+        font-weight: 560;
+      }
+      .bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 10px;
+        padding: 8px 10px 8px 14px;
+        border-radius: 14px;
+        background: var(--warn-wash);
+        font-size: 13px;
+      }
+      .bar.ready {
+        background: var(--accent-wash);
+      }
+      .bar .sp {
+        flex: 1;
+      }
+
+      /* ticks */
+      .ticks {
+        position: absolute;
+        left: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+      .tick {
+        width: 11px;
+        height: 2px;
+        border-radius: 2px;
+        background: var(--line4);
+      }
+      .tick.ok {
+        width: 14px;
+        height: 3px;
+        background: var(--ok);
+      }
+
+      /* channel feed */
+      .cfeed {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 4px 18px 0;
+        max-width: 640px;
+        margin: 0 auto;
+      }
+      .citem {
+        border-radius: 14px;
+        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .citem.hl {
+        background: var(--hover);
+      }
+      .meta {
+        font-size: 12.5px;
+        color: var(--t3);
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .meta b {
+        color: var(--t);
+        font-weight: 600;
+      }
+      .summ {
+        font-size: 14.5px;
+        line-height: 21px;
+        color: var(--t);
+      }
+      .summ.desc {
+        color: var(--t2);
+      }
+      .summ.res {
+        font-weight: 560;
+        display: flex;
+        gap: 9px;
+        align-items: flex-start;
+      }
+      .locked {
+        color: var(--t3);
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .expand {
+        color: var(--t3);
+        font-size: 12.5px;
+        display: inline-flex;
+        gap: 4px;
+        align-items: center;
+      }
+
+      /* sidebar bits */
+      .side {
+        background: var(--subtle);
+        padding: 10px 8px;
+        min-width: 300px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        padding: 8px 10px;
+        border-radius: 12px;
+      }
+      .row.sel {
+        background: var(--raised-hover);
+      }
+      .tile {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        position: relative;
+        flex: none;
+      }
+      .tile .bdg {
+        position: absolute;
+        right: -5px;
+        bottom: -5px;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        box-shadow: 0 0 0 2.5px var(--subtle);
+      }
+      .copy {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+        flex: 1;
+      }
+      .l1 {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+      }
+      .l1 b {
+        font: 500 14.5px/19px var(--sans);
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .l1 time {
+        font-size: 12px;
+        color: var(--t3);
+      }
+      .l2 {
+        font-size: 12.5px;
+        line-height: 17px;
+        color: var(--t3);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .l2 .okt {
+        color: var(--ok);
+        font-weight: 560;
+      }
+      .sidehd {
+        font: 500 12.5px/26px var(--sans);
+        color: var(--t3);
+        padding: 0 12px;
+      }
+
+      /* popover menu */
+      .menu {
+        width: 300px;
+        border-radius: 16px;
+        background: var(--raised);
+        box-shadow: var(--ring), var(--shadow-md);
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .tiles {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+        margin-bottom: 6px;
+      }
+      .tl {
+        border-radius: 12px;
+        background: var(--hover);
+        height: 62px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        font-size: 11.5px;
+        color: var(--t2);
+      }
+      .tl.new {
+        background: var(--accent-wash);
+        color: var(--accent-strong);
+        box-shadow: inset 0 0 0 1.5px var(--accent);
+        font-weight: 560;
+      }
+      .mrow {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 8px;
+        border-radius: 10px;
+        font-size: 13.5px;
+      }
+      .mrow .r {
+        margin-left: auto;
+        color: var(--t3);
+        font-size: 12.5px;
+        display: inline-flex;
+        gap: 4px;
+        align-items: center;
+      }
+      .anat {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 22px;
+        align-items: center;
+      }
+      .anat ol {
+        margin: 0;
+        padding-left: 20px;
+        color: var(--note);
+        font-size: 13.5px;
+        line-height: 21px;
+      }
+      .anat ol b {
+        color: var(--t);
+        font-weight: 600;
+      }
+      @media (max-width: 760px) {
+        .anat {
+          grid-template-columns: 1fr;
+        }
+      }
+      .legend {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        font-size: 12.5px;
+        color: var(--t3);
+        align-items: center;
+      }
+      .legend span {
+        display: inline-flex;
+        gap: 6px;
+        align-items: center;
+      }
+      a.doc {
+        color: var(--accent-strong);
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      role="note"
+      style="
+        max-width: 760px;
+        margin: 0 auto 24px;
+        padding: 10px 14px;
+        border-radius: 10px;
+        background: #fbf1dc;
+        color: #3d2a00;
+        font:
+          14px/20px -apple-system,
+          BlinkMacSystemFont,
+          &quot;Segoe UI&quot;,
+          system-ui,
+          sans-serif;
+      "
+    >
+      Exploration, kept for the record. The first set of mockups, in the current
+      desktop look, built on the earlier and richer Outcome model: statuses,
+      decision records with citations, versions. The current design is
+      <a href="../prd.md" style="color: #3d2a00; font-weight: 600">prd.md</a>
+      and
+      <a href="../design.html" style="color: #3d2a00; font-weight: 600"
+        >design.html</a
+      >.
+    </div>
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <defs>
+        <symbol id="merge" viewBox="0 0 24 24">
+          <path d="M18 19v-6a4 4 0 0 0-4-4H6" />
+          <path d="M10 5 6 9l4 4" />
+        </symbol>
+        <symbol id="brk" viewBox="0 0 24 24">
+          <path d="M6 5v6a4 4 0 0 0 4 4h9" />
+          <path d="m15 11 4 4-4 4" />
+        </symbol>
+        <symbol id="ck" viewBox="0 0 24 24">
+          <path d="m5 12.5 4.5 4.5L19 7.5" />
+        </symbol>
+        <symbol id="doc" viewBox="0 0 24 24">
+          <path d="M7 3h7l5 5v13H7z" />
+          <path d="M14 3v5h5M10 13h6M10 17h5" />
+        </symbol>
+        <symbol id="sheet" viewBox="0 0 24 24">
+          <rect x="4" y="4" width="16" height="16" rx="2" />
+          <path d="M4 10h16M4 15h16M10 4v16" />
+        </symbol>
+        <symbol id="cd" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
+        <symbol id="cr" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" /></symbol>
+        <symbol id="lock" viewBox="0 0 24 24">
+          <rect x="5" y="11" width="14" height="10" rx="2" />
+          <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+        </symbol>
+        <symbol id="x" viewBox="0 0 24 24">
+          <path d="M6 6l12 12M18 6 6 18" />
+        </symbol>
+        <symbol id="spark" viewBox="0 0 24 24">
+          <path
+            d="M12 3c.6 4.6 2.4 6.4 7 7-4.6.6-6.4 2.4-7 7-.6-4.6-2.4-6.4-7-7 4.6-.6 6.4-2.4 7-7z"
+          />
+        </symbol>
+        <symbol id="copy" viewBox="0 0 24 24">
+          <rect x="8" y="8" width="12" height="12" rx="2" />
+          <path d="M16 8V5H4v11h4" />
+        </symbol>
+        <symbol id="spk" viewBox="0 0 24 24">
+          <path d="M4 10v4h4l5 4V6L8 10z" />
+          <path d="M16 9a4 4 0 0 1 0 6" />
+        </symbol>
+        <symbol id="bld" viewBox="0 0 24 24">
+          <rect x="4" y="3" width="10" height="18" rx="1" />
+          <path d="M14 9h6v12h-6M7 7h4M7 11h4M7 15h4" />
+        </symbol>
+        <symbol id="tgt" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="8" />
+          <circle cx="12" cy="12" r="2" />
+        </symbol>
+        <symbol id="plus" viewBox="0 0 24 24">
+          <path d="M12 5v14M5 12h14" />
+        </symbol>
+        <symbol id="up" viewBox="0 0 24 24">
+          <path d="M12 19V5M6 11l6-6 6 6" />
+        </symbol>
+        <symbol id="ppl" viewBox="0 0 24 24">
+          <circle cx="9" cy="8" r="3" />
+          <path d="M3 20a6 6 0 0 1 12 0" />
+          <path d="M16 5a3 3 0 0 1 0 6M21 20a6 6 0 0 0-4-5.6" />
+        </symbol>
+        <symbol id="globe" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18" />
+        </symbol>
+        <symbol id="clock" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v5l3 2" />
+        </symbol>
+        <symbol id="edit" viewBox="0 0 24 24">
+          <path d="M4 20h4L19 9l-4-4L4 16z" />
+        </symbol>
+        <symbol id="link" viewBox="0 0 24 24">
+          <path d="M10 14a4 4 0 0 0 6 0l3-3a4 4 0 0 0-6-6l-1 1" />
+          <path d="M14 10a4 4 0 0 0-6 0l-3 3a4 4 0 0 0 6 6l1-1" />
+        </symbol>
+        <symbol id="dots3" viewBox="0 0 24 24">
+          <circle cx="6" cy="12" r="1" />
+          <circle cx="12" cy="12" r="1" />
+          <circle cx="18" cy="12" r="1" />
+        </symbol>
+      </defs>
+    </svg>
+
+    <div class="wrap">
+      <header class="top">
+        <h1>Merge-back, in Rally's own UI</h1>
+        <p>
+          Explorations for merging a Breakout's result into its Thread and a
+          Thread's result into its Channel. Every board is drawn at real size
+          with the app's tokens, from screenshots of the running desktop client.
+          Each level shows a recommended option and at least one alternative.
+          Reasoning and architecture are in the companion
+          <a class="doc" href="first-draft-design-doc.html">design document</a>.
+        </p>
+      </header>
+
+      <!-- ============ ANATOMY ============ -->
+      <section class="sec">
+        <h2>The one new object: an Outcome</h2>
+        <p class="lead">
+          A Breakout opens with <b>↳</b> and is shown in its pane with a sunken
+          origin card. The Outcome mirrors both: it comes back with <b>↰</b> and
+          is drawn as the same sunken card, so it reads as the other end of
+          something the app already shows.
+        </p>
+        <div class="anat">
+          <div class="frame">
+            <div class="pane" style="padding: 18px; min-width: 0">
+              <div class="merge-by" style="margin-bottom: 6px">
+                <span class="mk"
+                  ><svg class="i s14"><use href="#merge" /></svg></span
+                ><b>Adam</b> merged from
+                <span class="src"
+                  ><svg class="i s12"><use href="#brk" /></svg>Comparison
+                  table</span
+                >
+                · 2 min ago
+              </div>
+              <div class="outcome">
+                <div class="oc-head">
+                  <span class="st done"
+                    ><svg class="i"><use href="#ck" /></svg
+                  ></span>
+                  <div class="oc-title">
+                    Comparison table is ready: three plans, SSO an add-on on
+                    Team
+                  </div>
+                </div>
+                <div class="oc-body">
+                  <p>
+                    Team, Business and Enterprise columns. Starter is gone. Two
+                    claims still need Samantha: the SSO line and the customer
+                    quote.
+                  </p>
+                </div>
+                <div class="oc-foot">
+                  <span class="cite"
+                    ><span class="ic"
+                      ><svg class="i s14"><use href="#sheet" /></svg></span
+                    >Pricing comparison · v3</span
+                  >
+                </div>
+                <div class="oc-meta">
+                  <a>Open breakout</a> · 23 messages · Adam, Rally
+                </div>
+              </div>
+            </div>
+          </div>
+          <ol>
+            <li>
+              <b>Who and from where.</b> The person who merged, ↰, and the
+              source. Rally appears here only when it merged on someone's
+              request ("Rally for Adam").
+            </li>
+            <li>
+              <b>Status.</b> Done (green tick), Update (amber), Open (ring).
+              Shape and colour both carry it.
+            </li>
+            <li>
+              <b>Headline.</b> One line that states the result, not the topic.
+              This is the only part the Channel shows by default.
+            </li>
+            <li>
+              <b>Body.</b> A few short lines, collapsed past the level's budget.
+            </li>
+            <li>
+              <b>Artifacts.</b> Live citation chips, the same chips the
+              transcript already uses.
+            </li>
+            <li>
+              <b>Way back.</b> Open the source, how big it is, who was in it.
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- ============ BREAKOUT ============ -->
+      <section class="sec">
+        <h2>
+          <span
+            class="glyph c"
+            style="background: var(--hover); color: var(--t2)"
+            ><svg class="i s14"><use href="#brk" /></svg></span
+          >In the Breakout: making the merge
+        </h2>
+        <p class="lead">
+          The merge composer replaces the reply composer in place, at the bottom
+          of the Breakout pane, so the conversation stays readable above it. It
+          opens with Rally's best guess already chosen.
+        </p>
+        <div class="boards">
+          <div class="board">
+            <div class="label">
+              <span class="id">B1</span
+              ><span class="name">Merge composer, suggested artifact</span
+              ><span class="tag">Recommended</span>
+            </div>
+            <div class="frame scroll">
+              <div class="pane">
+                <div class="pillbar">
+                  <div class="l">
+                    <span class="pill anc"
+                      ><span class="glyph c"
+                        ><svg class="i s12"><use href="#tgt" /></svg></span
+                      >Q4 pricing page refresh
+                      <svg class="i s14"><use href="#cr" /></svg
+                    ></span>
+                  </div>
+                  <span class="pill"
+                    ><svg class="i s14" style="color: var(--t3)">
+                      <use href="#brk" /></svg
+                    >Comparison table <span class="muted">23 replies</span
+                    ><svg class="i s14" style="color: var(--t3)">
+                      <use href="#cd" /></svg
+                  ></span>
+                  <div class="r">
+                    <span class="xbtn"
+                      ><svg class="i s14"><use href="#x" /></svg
+                    ></span>
+                  </div>
+                </div>
+                <div class="feed narrow">
+                  <div class="agent faded">
+                    <div class="by"><b>Rally</b> 10 min ago</div>
+                    <div class="md">
+                      <p>
+                        Updated the table: Q3 changed to Q4 in the header and
+                        the second footnote is gone.
+                      </p>
+                    </div>
+                  </div>
+                  <div class="human">
+                    <div class="by">
+                      4 min ago
+                      <span class="dot" style="background: var(--adam)"></span
+                      ><b>Adam</b>
+                    </div>
+                    <div class="bubble" style="background: var(--adam)">
+                      How did you get 38% for the Business discount?
+                    </div>
+                  </div>
+                  <div class="agent">
+                    <div class="by"><b>Rally</b> 3 min ago</div>
+                    <div class="md">
+                      <p>
+                        It is the annual price ($96 × 12 = $1,152) against
+                        twelve monthly payments of $155, which is $1,860. That
+                        is 38% off.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div class="dock" style="margin-top: 12px">
+                  <div class="sheet">
+                    <div class="sh-top">
+                      <span style="color: var(--ok)"
+                        ><svg class="i s18"><use href="#merge" /></svg></span
+                      ><span class="to"
+                        >Merge into
+                        <span class="glyph c"
+                          ><svg class="i s12"><use href="#tgt" /></svg></span
+                        >Q4 pricing page refresh</span
+                      ><span class="sp"></span
+                      ><span class="round" style="background: none"
+                        ><svg class="i s14"><use href="#x" /></svg
+                      ></span>
+                    </div>
+                    <div class="seg">
+                      <span class="on">Artifact</span><span>Message</span
+                      ><span><span class="spark">✦</span> Summary</span
+                      ><span><span class="spark">✦</span> Ask Rally</span
+                      ><span>Write</span>
+                    </div>
+                    <div class="pick">
+                      <div class="prow on">
+                        <span class="box on"
+                          ><svg class="i"><use href="#ck" /></svg></span
+                        ><span class="badge"
+                          ><svg class="i"><use href="#sheet" /></svg></span
+                        ><span class="tx"
+                          ><b>Pricing comparison</b
+                          ><span>Table · v3 · edited 10 min ago</span></span
+                        ><span class="tag">Latest</span>
+                      </div>
+                      <div class="prow gone">
+                        <span class="box"></span
+                        ><span class="badge"
+                          ><svg class="i"><use href="#sheet" /></svg></span
+                        ><span class="tx"
+                          ><b>Pricing comparison (draft)</b
+                          ><span>Replaced by v3</span></span
+                        >
+                      </div>
+                    </div>
+                    <div class="field">
+                      <div class="lab">
+                        Headline <span class="count">58 / 90</span>
+                      </div>
+                      <div class="val title">
+                        Comparison table is ready: three plans, SSO an add-on on
+                        Team
+                      </div>
+                    </div>
+                    <div class="field">
+                      <div class="lab">
+                        Note <span class="count">optional</span>
+                      </div>
+                      <div class="val" style="color: var(--t2)">
+                        Two claims still need Samantha: the SSO line and the
+                        customer quote.
+                      </div>
+                    </div>
+                    <div class="aud">
+                      <span class="ic"
+                        ><svg class="i s14"><use href="#ppl" /></svg></span
+                      >Visible to the 5 people in Q4 pricing page refresh. The
+                      breakout stays private.
+                    </div>
+                    <div class="sh-foot">
+                      <span class="stp"
+                        ><span class="on"
+                          ><i class="sd" style="background: var(--ok)"></i
+                          >Done</span
+                        ><span>Update</span><span>Open</span></span
+                      ><span class="cb"
+                        ><span class="box"></span>Archive breakout</span
+                      ><span class="sp"></span
+                      ><span class="btn pri"
+                        ><svg class="i s14"><use href="#merge" /></svg
+                        >Merge</span
+                      >
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              The last message is Q&amp;A about a figure, so Rally skipped it
+              and chose the newest artifact version, which already holds every
+              edit. Headline is prefilled and editable. The audience line says
+              who newly sees this before anything is posted.
+            </p>
+          </div>
+
+          <div class="board">
+            <div class="label">
+              <span class="id">B2</span
+              ><span class="name"
+                >Summary tab: a decision record with sources</span
+              >
+            </div>
+            <div class="frame scroll">
+              <div class="pane" style="padding-top: 12px">
+                <div class="dock">
+                  <div class="sheet">
+                    <div class="sh-top">
+                      <span style="color: var(--ok)"
+                        ><svg class="i s18"><use href="#merge" /></svg></span
+                      ><span class="to"
+                        >Merge into
+                        <span class="glyph c"
+                          ><svg class="i s12"><use href="#tgt" /></svg></span
+                        >Annual plan pricing</span
+                      ><span class="sp"></span
+                      ><span class="round" style="background: none"
+                        ><svg class="i s14"><use href="#x" /></svg
+                      ></span>
+                    </div>
+                    <div class="seg">
+                      <span>Artifact</span><span>Message</span
+                      ><span class="on">✦ Summary</span><span>✦ Ask Rally</span
+                      ><span>Write</span>
+                    </div>
+                    <div class="field">
+                      <div class="lab">
+                        Headline <span class="count">61 / 90</span>
+                      </div>
+                      <div class="val title">
+                        Annual plan at $96/seat; monthly stays $15; no Starter
+                        tier
+                      </div>
+                    </div>
+                    <div class="field" style="gap: 8px">
+                      <div class="lab">
+                        Decision record
+                        <span class="count">74 / 250 words</span>
+                      </div>
+                      <dl class="dr" style="margin: 0">
+                        <dt>Why</dt>
+                        <dd>
+                          Matches the two closest competitors within 5%<span
+                            class="fn"
+                            >1</span
+                          >
+                          and keeps the 38% annual discount sales asked for<span
+                            class="fn"
+                            >2</span
+                          >.
+                        </dd>
+                        <dt>Agreed</dt>
+                        <dd>
+                          Adam and Priya, Oct 9<span class="fn">3</span>.
+                          Samantha did not weigh in.
+                        </dd>
+                        <dt>Open</dt>
+                        <dd>
+                          Whether SSO is included on Team<span class="fn"
+                            >4</span
+                          >.
+                        </dd>
+                      </dl>
+                    </div>
+                    <div class="aud warn">
+                      <span class="ic"
+                        ><svg class="i s14"><use href="#edit" /></svg></span
+                      >Rally drafted this from 41 messages. Check each line
+                      against its source before merging.
+                    </div>
+                    <div class="sh-foot">
+                      <span class="stp"
+                        ><span>Done</span><span>Update</span
+                        ><span class="on"
+                          ><i
+                            class="sd"
+                            style="box-shadow: inset 0 0 0 1.5px var(--t3)"
+                          ></i
+                          >Open</span
+                        ></span
+                      ><span class="btn q">Regenerate</span
+                      ><span class="sp"></span
+                      ><span class="btn pri"
+                        ><svg class="i s14"><use href="#merge" /></svg
+                        >Merge</span
+                      >
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              For a choice made across many turns. Every line carries numbered
+              sources pointing into this breakout only. The draft names who
+              agreed and who did not, because the common failure of chat
+              summaries is reporting agreement that was only implied. Status
+              goes to Open on its own because the draft found an open question.
+            </p>
+          </div>
+
+          <div class="board">
+            <div class="label">
+              <span class="id">B3</span
+              ><span class="name">Message tab: pick in the transcript</span
+              ><span class="tag alt">Alternative</span>
+            </div>
+            <div class="frame scroll">
+              <div class="pane">
+                <div class="feed" style="padding-top: 16px">
+                  <div class="agent" style="position: relative">
+                    <span
+                      class="box on"
+                      style="position: absolute; left: -30px; top: 2px"
+                      ><svg class="i"><use href="#ck" /></svg
+                    ></span>
+                    <div class="by"><b>Rally</b> 1 hour ago</div>
+                    <div class="md">
+                      <p>
+                        <b>Positioning for Enterprise.</b> Lead with audit logs
+                        and data residency; keep SSO as the third bullet. Pull
+                        the customer quote from the Northwind call.
+                      </p>
+                      <ul>
+                        <li>
+                          Headline: "Built for the teams your security review
+                          asks about"
+                        </li>
+                        <li>Three proof points, one quote</li>
+                      </ul>
+                    </div>
+                  </div>
+                  <div class="human">
+                    <div class="by">
+                      52 min ago
+                      <span class="dot" style="background: var(--sam)"></span
+                      ><b>Samantha Lee</b>
+                    </div>
+                    <div class="bubble" style="background: var(--sam)">
+                      Change "security review" to "security team"
+                    </div>
+                  </div>
+                  <div class="agent" style="position: relative">
+                    <span
+                      class="box"
+                      style="position: absolute; left: -30px; top: 2px"
+                    ></span>
+                    <div class="by"><b>Rally</b> 51 min ago</div>
+                    <div class="md">
+                      <p>
+                        Done. Headline now reads "Built for the teams your
+                        security team asks about".
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div class="dock" style="margin-top: 14px">
+                  <div class="bar ready">
+                    <span style="color: var(--accent-strong)"
+                      ><svg class="i"><use href="#merge" /></svg></span
+                    ><span
+                      ><b style="font-weight: 600">1 message selected</b> · a
+                      later message changed it</span
+                    ><span class="sp"></span
+                    ><span class="btn q">✦ Apply later edits</span
+                    ><span class="btn pri">Next</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              Selection boxes appear in the tick-bar gutter. When later turns
+              edited the picked message, Rally offers <b>Apply later edits</b>,
+              which rewrites the pick with the change and shows the diff, so
+              nobody merges a stale version or reprints the whole thing.
+            </p>
+          </div>
+
+          <div class="board">
+            <div class="label">
+              <span class="id">B4</span><span class="name">Ways in</span>
+            </div>
+            <div class="frame scroll">
+              <div
+                class="pane"
+                style="
+                  padding: 16px 18px;
+                  display: flex;
+                  gap: 18px;
+                  align-items: flex-start;
+                  flex-wrap: wrap;
+                "
+              >
+                <div
+                  style="
+                    display: flex;
+                    flex-direction: column;
+                    gap: 14px;
+                    flex: 1;
+                    min-width: 230px;
+                  "
+                >
+                  <div class="agent">
+                    <div class="by"><b>Rally</b> just now</div>
+                    <div class="md">
+                      <p>Here is the final table with all three plans…</p>
+                    </div>
+                    <div class="actions">
+                      <span
+                        ><svg class="i s14"><use href="#copy" /></svg>Copy</span
+                      ><span
+                        ><svg class="i s14"><use href="#spk" /></svg>Speak</span
+                      ><span class="hl"
+                        ><svg class="i s14" style="color: var(--ok)">
+                          <use href="#merge" /></svg
+                        >Merge to thread</span
+                      >
+                    </div>
+                  </div>
+                  <div class="bar ready" style="font-size: 12.5px">
+                    <span style="color: var(--accent-strong)"
+                      ><svg class="i"><use href="#spark" /></svg></span
+                    ><span style="flex: 1 1 180px"
+                      >Looks finished. Merge the table into the thread?</span
+                    ><span class="btn q" style="height: 28px">Not yet</span
+                    ><span class="btn pri" style="height: 28px">Review</span>
+                  </div>
+                </div>
+                <div class="menu">
+                  <div class="tiles">
+                    <div class="tl">
+                      <svg class="i s18"><use href="#ppl" /></svg>Add people
+                    </div>
+                    <div class="tl">
+                      <svg class="i s18"><use href="#edit" /></svg>Rename
+                    </div>
+                    <div class="tl new">
+                      <svg class="i s18"><use href="#merge" /></svg>Merge
+                    </div>
+                    <div class="tl">
+                      <svg class="i s18"><use href="#dots3" /></svg>More
+                    </div>
+                  </div>
+                  <div class="mrow">
+                    <svg class="i"><use href="#ppl" /></svg>People<span
+                      class="r"
+                      >2 · Private <svg class="i s14"><use href="#cr" /></svg
+                    ></span>
+                  </div>
+                  <div class="mrow">
+                    <svg class="i" style="color: var(--ok)">
+                      <use href="#merge" /></svg
+                    >Merged into thread<span class="r"
+                      >v2 · 1h <svg class="i s14"><use href="#cr" /></svg
+                    ></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              Three entry points: <b>Merge to thread</b> in a message's action
+              row (preselects that message), a <b>Merge</b> tile in the
+              breakout's title menu, and a quiet suggestion when Rally sees a
+              finished deliverable and a lull. The suggestion never posts on its
+              own. Saying "merge it when Samantha approves" to Rally also works,
+              through an agent tool.
+            </p>
+          </div>
+
+          <div class="board">
+            <div class="label">
+              <span class="id">B5</span
+              ><span class="name">After merging: the waterline</span>
+            </div>
+            <div class="frame scroll">
+              <div class="pane">
+                <div class="feed narrow" style="padding-top: 16px">
+                  <div class="agent faded">
+                    <div class="by"><b>Rally</b> 1 hour ago</div>
+                    <div class="md">
+                      <p>Here is the final table with all three plans…</p>
+                    </div>
+                  </div>
+                  <div class="wl">
+                    <span class="k"
+                      ><svg class="i s14"><use href="#merge" /></svg>Merged into
+                      Q4 pricing page refresh · v1 · 2:14 PM</span
+                    >
+                  </div>
+                  <div class="human">
+                    <div class="by">
+                      20 min ago
+                      <span class="dot" style="background: var(--adam)"></span
+                      ><b>Adam</b>
+                    </div>
+                    <div class="bubble" style="background: var(--adam)">
+                      Samantha says SSO is included on Team after all. Update
+                      the table.
+                    </div>
+                  </div>
+                  <div class="agent">
+                    <div class="by"><b>Rally</b> 19 min ago</div>
+                    <div class="md">
+                      <p>
+                        Updated. Team now lists SSO as included. Saved as v4.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div class="dock" style="margin-top: 12px">
+                  <div class="bar">
+                    <span style="color: var(--warn)"
+                      ><svg class="i"><use href="#clock" /></svg></span
+                    ><span
+                      >2 messages and a new table version since the merge</span
+                    ><span class="sp"></span
+                    ><span class="btn pri"
+                      ><svg class="i s14"><use href="#merge" /></svg>Update
+                      merge</span
+                    >
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              A thin rule marks the last turn the merge covered. Work after it
+              shows a bar with <b>Update merge</b>, which opens the composer
+              prefilled with the last Outcome and posts revision 2 in place.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ THREAD ============ -->
+      <section class="sec">
+        <h2>
+          <span class="glyph c"
+            ><svg class="i s14"><use href="#tgt" /></svg></span
+          >In the Thread: reading a merge
+        </h2>
+        <p class="lead">
+          A Thread is read top to bottom, so the Outcome must not break its
+          flow. It is one card, a few lines tall, attributed to the person who
+          merged.
+        </p>
+        <div class="boards">
+          <div class="board">
+            <div class="label">
+              <span class="id">T1</span
+              ><span class="name">Card in time order, chip marked merged</span
+              ><span class="tag">Recommended</span>
+            </div>
+            <div class="frame scroll">
+              <div class="pane">
+                <div class="pillbar">
+                  <div class="l">
+                    <span class="pill anc"
+                      ><span class="glyph"
+                        ><svg class="i s12"><use href="#bld" /></svg></span
+                      >General</span
+                    >
+                  </div>
+                  <span class="pill"
+                    ><span class="glyph c"
+                      ><svg class="i s12"><use href="#tgt" /></svg></span
+                    >Q4 pricing page refresh<svg
+                      class="i s14"
+                      style="color: var(--t3)"
+                    >
+                      <use href="#cd" /></svg
+                  ></span>
+                  <div class="r"></div>
+                </div>
+                <div class="feed">
+                  <div class="ticks">
+                    <span class="tick"></span><span class="tick ok"></span
+                    ><span class="tick"></span>
+                  </div>
+                  <div class="agent">
+                    <div class="by"><b>Rally</b> 2 hours ago</div>
+                    <div class="md">
+                      <p>
+                        The last one is the one most likely to change the table,
+                        so I would start there.
+                      </p>
+                    </div>
+                    <div class="chips">
+                      <span class="chip merged"
+                        ><span class="ic"
+                          ><svg class="i s14"><use href="#brk" /></svg></span
+                        ><b>Comparison table</b
+                        ><span class="okk"
+                          ><svg class="i s14"><use href="#ck" /></svg
+                          >Merged</span
+                        ></span
+                      ><span class="chip"
+                        ><span class="ic"
+                          ><svg class="i s14"><use href="#brk" /></svg></span
+                        ><b>Enterprise copy</b
+                        ><span class="news">· 2 new</span></span
+                      >
+                    </div>
+                  </div>
+                  <div class="human">
+                    <div class="by">
+                      1 hour ago
+                      <span class="dot" style="background: var(--sam)"></span
+                      ><b>Samantha Lee</b>
+                    </div>
+                    <div class="bubble" style="background: var(--sam)">
+                      I'll take the quote from the Northwind call.
+                    </div>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 6px">
+                    <div class="merge-by">
+                      <span class="mk"
+                        ><svg class="i s14"><use href="#merge" /></svg></span
+                      ><b>Adam</b> merged from
+                      <span class="src"
+                        ><svg class="i s12"><use href="#brk" /></svg>Comparison
+                        table</span
+                      >
+                      · 2 min ago
+                    </div>
+                    <div class="outcome">
+                      <div class="oc-head">
+                        <span class="st done"
+                          ><svg class="i"><use href="#ck" /></svg
+                        ></span>
+                        <div class="oc-title">
+                          Comparison table is ready: three plans, SSO an add-on
+                          on Team
+                        </div>
+                      </div>
+                      <div class="oc-body">
+                        <p>
+                          Team, Business and Enterprise columns. Starter is
+                          gone. Two claims still need Samantha: the SSO line and
+                          the customer quote.
+                        </p>
+                      </div>
+                      <div class="oc-foot">
+                        <span class="cite"
+                          ><span class="ic"
+                            ><svg class="i s14">
+                              <use href="#sheet" /></svg></span
+                          >Pricing comparison · v3</span
+                        >
+                      </div>
+                      <div class="oc-meta">
+                        <a>Open breakout</a> · 23 messages · Adam, Rally
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="dock" style="margin-top: 14px">
+                  <div class="composer">
+                    <div class="ph">Message Q4 pricing page refresh</div>
+                    <div class="ctool">
+                      <span class="round"
+                        ><svg class="i s14"><use href="#plus" /></svg></span
+                      ><span class="sp"></span
+                      ><span class="send"
+                        ><svg class="i s14"><use href="#up" /></svg
+                      ></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              The Outcome is appended where the conversation is now, which is
+              where people catching up are reading. The breakout chip under the
+              origin message gains a green <b>Merged</b>, and its tick turns
+              green, so a scan of the chips tells finished side-work from open
+              side-work. Clicking Merged scrolls to the card.
+            </p>
+          </div>
+
+          <div class="board">
+            <div class="label">
+              <span class="id">T2</span
+              ><span class="name">Card attached under the origin message</span
+              ><span class="tag alt">Alternative</span>
+            </div>
+            <div class="frame scroll">
+              <div class="pane">
+                <div class="feed" style="padding-top: 16px">
+                  <div class="agent">
+                    <div class="by"><b>Rally</b> 2 hours ago</div>
+                    <div class="md">
+                      <p>I can draft the new comparison table in a breakout.</p>
+                    </div>
+                    <div class="chips">
+                      <span class="chip merged"
+                        ><span class="ic"
+                          ><svg class="i s14"><use href="#brk" /></svg></span
+                        ><b>Comparison table</b
+                        ><span class="okk"
+                          ><svg class="i s14"><use href="#ck" /></svg
+                          >Merged</span
+                        ></span
+                      >
+                    </div>
+                    <div
+                      class="outcome"
+                      style="margin-top: 2px; border-top-left-radius: 6px"
+                    >
+                      <div class="oc-head">
+                        <span class="st done"
+                          ><svg class="i"><use href="#ck" /></svg
+                        ></span>
+                        <div class="oc-title">
+                          Comparison table is ready: three plans, SSO an add-on
+                          on Team
+                        </div>
+                      </div>
+                      <div class="oc-foot">
+                        <span class="cite"
+                          ><span class="ic"
+                            ><svg class="i s14">
+                              <use href="#sheet" /></svg></span
+                          >Pricing comparison · v3</span
+                        ><span
+                          class="mute"
+                          style="font-size: 12px; color: var(--t3)"
+                          >Adam · 2 min ago</span
+                        >
+                      </div>
+                    </div>
+                  </div>
+                  <div class="human faded">
+                    <div class="by">
+                      1 hour ago
+                      <span class="dot" style="background: var(--sam)"></span
+                      ><b>Samantha Lee</b>
+                    </div>
+                    <div class="bubble" style="background: var(--sam)">
+                      I'll take the quote from the Northwind call.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              Question and answer sit together, which reads well later. But the
+              result lands above messages people already read, so it is easy to
+              miss, and the Thread's agent sees it out of order. Use it only if
+              the T1 card is also echoed here as a one-line headline under the
+              chip.
+            </p>
+          </div>
+
+          <div class="board">
+            <div class="label">
+              <span class="id">T3</span
+              ><span class="name">Decision record, after a revision</span>
+            </div>
+            <div class="frame scroll">
+              <div class="pane">
+                <div class="feed narrow" style="padding-top: 16px">
+                  <div style="display: flex; flex-direction: column; gap: 6px">
+                    <div class="merge-by">
+                      <span class="mk"
+                        ><svg class="i s14"><use href="#merge" /></svg></span
+                      ><b>Priya</b> merged from
+                      <span class="src"
+                        ><svg class="i s12"><use href="#brk" /></svg>Annual plan
+                        math</span
+                      >
+                      · updated 1h ago <span class="ver">v2</span>
+                    </div>
+                    <div class="outcome">
+                      <div class="oc-head">
+                        <span class="st done"
+                          ><svg class="i"><use href="#ck" /></svg
+                        ></span>
+                        <div class="oc-title">
+                          Annual plan at $96/seat; monthly stays $15; no Starter
+                          tier
+                        </div>
+                      </div>
+                      <dl class="dr">
+                        <dt>Why</dt>
+                        <dd>
+                          Within 5% of the two closest competitors<span
+                            class="fn"
+                            >1</span
+                          >; keeps the 38% annual discount sales asked for<span
+                            class="fn"
+                            >2</span
+                          >.
+                        </dd>
+                        <dt>Agreed</dt>
+                        <dd>Adam, Priya, Samantha<span class="fn">3</span></dd>
+                      </dl>
+                      <div class="oc-meta">
+                        <span class="since"
+                          ><svg class="i s14"><use href="#clock" /></svg>3 new
+                          messages since merge</span
+                        >
+                        · <a>Open breakout</a> · <a>Version 1</a>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="by" style="padding-left: 2px">
+                    <svg class="i s12" style="color: var(--t3)">
+                      <use href="#edit" /></svg
+                    >Priya updated the outcome: Samantha agreed · 1h ago
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              A second merge revises the same card and adds one muted line to
+              the thread, instead of a second card. Footnote pills open the
+              cited breakout message. "New since merge" is shown only to people
+              who can open the breakout.
+            </p>
+          </div>
+
+          <div class="board">
+            <div class="label">
+              <span class="id">T4</span
+              ><span class="name">Seen by someone outside the breakout</span>
+            </div>
+            <div class="frame scroll">
+              <div class="pane">
+                <div class="feed narrow" style="padding-top: 16px">
+                  <div style="display: flex; flex-direction: column; gap: 6px">
+                    <div class="merge-by">
+                      <span class="mk"
+                        ><svg class="i s14"><use href="#merge" /></svg></span
+                      ><b>Rally for Adam</b> merged from
+                      <span class="src"
+                        ><svg class="i s12"><use href="#lock" /></svg>a private
+                        breakout</span
+                      >
+                      · 5 min ago
+                    </div>
+                    <div class="outcome">
+                      <div class="oc-head">
+                        <span class="st update"
+                          ><svg class="i"><use href="#clock" /></svg
+                        ></span>
+                        <div class="oc-title">
+                          Northwind quote approved; logo use still waiting on
+                          legal
+                        </div>
+                      </div>
+                      <div class="oc-foot">
+                        <span class="cite"
+                          ><span class="ic"
+                            ><svg class="i s14"><use href="#doc" /></svg></span
+                          >Northwind quote</span
+                        >
+                      </div>
+                      <div class="oc-meta">
+                        <a>Request access to breakout</a>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              The result is shared; the breakout is not. Its name, size and
+              members stay hidden, matching how locked rows work today. The
+              artifact opens because merging linked it into the thread. This one
+              was merged by Rally on Adam's instruction, and the byline says so.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ CHANNEL ============ -->
+      <section class="sec">
+        <h2>
+          <span class="glyph"
+            ><svg class="i s14"><use href="#bld" /></svg></span
+          >In the Channel: skimming results
+        </h2>
+        <p class="lead">
+          A Channel is browsed, not read. A merged Thread should change from
+          what it is about to what it concluded, in one line.
+        </p>
+        <div class="boards">
+          <div class="board">
+            <div class="label">
+              <span class="id">C1</span
+              ><span class="name">The thread row becomes its result</span
+              ><span class="tag">Recommended</span>
+            </div>
+            <div class="frame scroll">
+              <div class="pane">
+                <div class="pillbar">
+                  <div class="l"></div>
+                  <span class="pill"
+                    ><span class="glyph"
+                      ><svg class="i s12"><use href="#bld" /></svg></span
+                    >Pricing<svg class="i s14" style="color: var(--t3)">
+                      <use href="#cd" /></svg
+                  ></span>
+                  <div class="r"></div>
+                </div>
+                <div class="cfeed" style="padding-top: 24px">
+                  <div class="citem">
+                    <div class="meta"><b>Rally</b> · Monday</div>
+                    <div class="summ desc">
+                      Investigating why checkout drops annual buyers on Safari.
+                    </div>
+                    <div class="chips">
+                      <span class="chip"
+                        ><span class="ic"
+                          ><svg class="i s14"><use href="#brk" /></svg></span
+                        ><b>Investigate ENG-142</b></span
+                      >
+                    </div>
+                  </div>
+                  <div class="citem">
+                    <div class="meta"><b>Priya</b> merged · Yesterday</div>
+                    <div class="summ res">
+                      <span class="st done"
+                        ><svg class="i"><use href="#ck" /></svg></span
+                      >Annual plan at $96/seat; monthly stays $15; no Starter
+                      tier
+                    </div>
+                    <div class="chips">
+                      <span class="chip merged"
+                        ><span class="ic"
+                          ><svg class="i s14"><use href="#brk" /></svg></span
+                        ><b>Annual plan pricing</b></span
+                      ><span class="cite" style="height: 30px"
+                        ><span class="ic"
+                          ><svg class="i s14"><use href="#doc" /></svg></span
+                        >Pricing PRD</span
+                      >
+                    </div>
+                  </div>
+                  <div class="citem">
+                    <div class="meta">
+                      <span class="locked"
+                        ><svg class="i s14"><use href="#lock" /></svg>Private
+                        thread</span
+                      >
+                      · 2 hours ago
+                    </div>
+                    <div class="chips">
+                      <span class="chip"><b>Request access</b></span>
+                    </div>
+                  </div>
+                  <div class="citem hl">
+                    <div class="meta">
+                      <b>Samantha Lee</b> merged · 10 min ago
+                    </div>
+                    <div class="summ res">
+                      <span class="st done"
+                        ><svg class="i"><use href="#ck" /></svg></span
+                      >New pricing page is live: three plans, annual toggle on
+                      by default
+                    </div>
+                    <div class="chips">
+                      <span class="chip merged"
+                        ><span class="ic"
+                          ><svg class="i s14"><use href="#brk" /></svg></span
+                        ><b>Q4 pricing page refresh</b></span
+                      ><span class="cite" style="height: 30px"
+                        ><span class="ic"
+                          ><svg class="i s14"><use href="#sheet" /></svg></span
+                        >Pricing comparison</span
+                      ><span class="expand"
+                        ><svg class="i s14"><use href="#cd" /></svg>More</span
+                      >
+                    </div>
+                  </div>
+                </div>
+                <div class="dock" style="margin-top: 12px">
+                  <div class="composer">
+                    <div class="ph">Start a thread in Pricing</div>
+                    <div class="ctool">
+                      <span class="round"
+                        ><svg class="i s14"><use href="#plus" /></svg></span
+                      ><span class="sp"></span
+                      ><span class="send"
+                        ><svg class="i s14"><use href="#up" /></svg
+                      ></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              Uses the summary slot the feed already has. Open threads show
+              their description in grey; finished threads show their result in
+              full-weight text with a tick, and the byline says who merged. A
+              merge moves the row to the bottom, nearest the composer, as news.
+              A newcomer reads the Channel as a list of conclusions.
+              <b>More</b> expands the short body in place.
+            </p>
+          </div>
+
+          <div class="board">
+            <div class="label">
+              <span class="id">C2</span
+              ><span class="name">Outcome as its own feed item</span
+              ><span class="tag alt">Alternative</span>
+            </div>
+            <div class="frame scroll">
+              <div class="pane">
+                <div class="cfeed" style="padding-top: 18px">
+                  <div class="citem">
+                    <div class="meta"><b>Rally</b> · 3 days ago</div>
+                    <div class="summ desc">
+                      Research seat pricing across eight competitors.
+                    </div>
+                    <div class="chips">
+                      <span class="chip merged"
+                        ><span class="ic"
+                          ><svg class="i s14"><use href="#brk" /></svg></span
+                        ><b>Competitor seat pricing</b
+                        ><span class="okk"
+                          ><svg class="i s14"><use href="#ck" /></svg></span
+                      ></span>
+                    </div>
+                  </div>
+                  <div class="citem">
+                    <div class="merge-by">
+                      <span class="mk"
+                        ><svg class="i s14"><use href="#merge" /></svg></span
+                      ><b>Priya</b> merged from
+                      <span class="src"
+                        ><svg class="i s12"><use href="#tgt" /></svg>Competitor
+                        seat pricing</span
+                      >
+                      · 1 hour ago
+                    </div>
+                    <div class="outcome">
+                      <div class="oc-head">
+                        <span class="st done"
+                          ><svg class="i"><use href="#ck" /></svg
+                        ></span>
+                        <div class="oc-title">
+                          Median seat price is $14; only two of eight charge for
+                          SSO
+                        </div>
+                      </div>
+                      <div class="oc-body">
+                        <p>
+                          Notion and Linear bundle SSO on their top tier; the
+                          rest include it from the middle tier up.
+                        </p>
+                      </div>
+                      <div class="oc-foot">
+                        <span class="cite"
+                          ><span class="ic"
+                            ><svg class="i s14"><use href="#doc" /></svg></span
+                          >Seat pricing research</span
+                        ><span class="cite"
+                          ><span class="ic"
+                            ><svg class="i s14">
+                              <use href="#sheet" /></svg></span
+                          >Raw price table</span
+                        >
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              The thread row stays where it was, with only a tick, and the
+              Outcome arrives as a separate card at the bottom. Stronger for a
+              deliverable people should open, such as deep research. Costs more
+              height per item, so a busy Channel skims worse than C1.
+            </p>
+          </div>
+
+          <div class="board">
+            <div class="label">
+              <span class="id">C3</span
+              ><span class="name"
+                >Merge a private thread into a public Channel</span
+              >
+            </div>
+            <div class="frame scroll">
+              <div class="pane" style="padding-top: 12px">
+                <div class="dock">
+                  <div class="sheet">
+                    <div class="sh-top">
+                      <span style="color: var(--ok)"
+                        ><svg class="i s18"><use href="#merge" /></svg></span
+                      ><span class="to"
+                        >Merge into
+                        <span class="glyph"
+                          ><svg class="i s12"><use href="#bld" /></svg></span
+                        >Sales
+                        <svg class="i s14" style="color: var(--t3)">
+                          <use href="#cd" /></svg></span
+                      ><span class="sp"></span
+                      ><span class="round" style="background: none"
+                        ><svg class="i s14"><use href="#x" /></svg
+                      ></span>
+                    </div>
+                    <div class="seg">
+                      <span>Artifact</span><span>Message</span
+                      ><span class="on">✦ Summary</span><span>Write</span>
+                    </div>
+                    <div class="field">
+                      <div class="lab">
+                        Headline <span class="count">54 / 90</span>
+                      </div>
+                      <div class="val title">
+                        Discounts over 20% now need finance sign-off in Slack
+                      </div>
+                    </div>
+                    <div class="field">
+                      <div class="lab">
+                        Shown on expand
+                        <span class="count">31 / 120 words</span>
+                      </div>
+                      <div class="val" style="color: var(--t2)">
+                        Applies to new deals from Nov 1. Renewals keep their
+                        current terms. Request in #deal-desk with the deal link.
+                      </div>
+                    </div>
+                    <div class="aud warn">
+                      <span class="ic"
+                        ><svg class="i s14"><use href="#globe" /></svg></span
+                      ><span
+                        >Everyone in Acme can see this in Sales. The thread
+                        stays private and shows as a locked row.</span
+                      >
+                    </div>
+                    <div class="pick">
+                      <div class="prow">
+                        <span class="box"></span
+                        ><span class="badge"
+                          ><svg class="i"><use href="#doc" /></svg></span
+                        ><span class="tx"
+                          ><b>Discount policy v2</b
+                          ><span
+                            >Currently 3 people · sharing it gives everyone in
+                            Acme read access</span
+                          ></span
+                        >
+                      </div>
+                    </div>
+                    <div class="sh-foot">
+                      <span class="stp"
+                        ><span class="on"
+                          ><i class="sd" style="background: var(--ok)"></i
+                          >Done</span
+                        ><span>Update</span></span
+                      ><span class="sp"></span
+                      ><span class="btn pri"
+                        ><svg class="i s14"><use href="#merge" /></svg>Merge to
+                        Sales</span
+                      >
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              Thread to Channel uses the same composer with tighter budgets.
+              When the thread is private, the amber line says exactly who will
+              see the result, and the artifact is unchecked until someone
+              chooses to share it. Thread in several Channels: the target is a
+              picker.
+            </p>
+          </div>
+
+          <div class="board">
+            <div class="label">
+              <span class="id">C4</span
+              ><span class="name">A long-running thread posting updates</span>
+            </div>
+            <div class="frame scroll">
+              <div class="pane">
+                <div class="cfeed" style="padding-top: 18px">
+                  <div class="citem">
+                    <div class="meta">
+                      <b>Adam</b> updated · Today, 9:02 AM
+                      <span class="ver">Week 6</span>
+                    </div>
+                    <div class="summ res">
+                      <span class="st update"
+                        ><svg class="i"><use href="#clock" /></svg></span
+                      >Churn down to 3.1%; two at-risk accounts saved, one lost
+                      to price
+                    </div>
+                    <div class="chips">
+                      <span class="chip"
+                        ><span class="ic"
+                          ><svg class="i s14"><use href="#brk" /></svg></span
+                        ><b>Weekly churn review</b
+                        ><span class="news">· 4 new</span></span
+                      ><span class="expand"
+                        ><svg class="i s14"><use href="#clock" /></svg>5
+                        earlier</span
+                      >
+                    </div>
+                  </div>
+                  <div class="citem">
+                    <div class="meta">
+                      <span class="locked"
+                        ><svg class="i s14"><use href="#lock" /></svg>Private
+                        thread</span
+                      >
+                      · <b>Priya</b> merged · 1 hour ago
+                    </div>
+                    <div class="summ res">
+                      <span class="st done"
+                        ><svg class="i"><use href="#ck" /></svg></span
+                      >Discounts over 20% now need finance sign-off in Slack
+                    </div>
+                    <div class="chips">
+                      <span class="chip"><b>Request access</b></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              Status <b>Update</b> (amber clock) turns an Outcome into a living
+              status line. Each revision replaces the row's text; earlier ones
+              sit behind "5 earlier". The second row is the result of C3: a
+              locked thread whose result was shared on purpose.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ AROUND ============ -->
+      <section class="sec">
+        <h2>Around the app</h2>
+        <p class="lead">
+          Merges show up in the lists people already use, with the same mark, so
+          a person new to an Organization can tell what is finished without
+          opening anything.
+        </p>
+        <div class="boards">
+          <div class="board">
+            <div class="label">
+              <span class="id">A1</span
+              ><span class="name">Threads list and Activity</span>
+            </div>
+            <div class="frame scroll">
+              <div
+                class="side"
+                style="
+                  display: grid;
+                  grid-template-columns: minmax(0, 1fr);
+                  gap: 2px;
+                "
+              >
+                <div class="sidehd">Recent</div>
+                <div class="row">
+                  <span
+                    class="tile"
+                    style="
+                      background: var(--tint-amber);
+                      color: var(--ink-amber);
+                    "
+                    ><svg class="i s18"><use href="#tgt" /></svg
+                    ><span
+                      class="bdg"
+                      style="
+                        background: var(--tint-blue);
+                        color: var(--ink-blue);
+                        border-radius: 32%;
+                      "
+                      ><svg class="i s12"><use href="#bld" /></svg></span></span
+                  ><span class="copy"
+                    ><span class="l1"
+                      ><b>Q4 pricing page refresh</b><time>2:14 PM</time></span
+                    ><span class="l2">Pricing</span></span
+                  >
+                </div>
+                <div class="row sel">
+                  <span
+                    class="tile"
+                    style="background: var(--hover); color: var(--t2)"
+                    ><svg class="i s18"><use href="#brk" /></svg></span
+                  ><span class="copy"
+                    ><span class="l1"
+                      ><b>Comparison table</b><time>2:14 PM</time></span
+                    ><span class="l2"
+                      ><span class="okt">✓ Merged</span> · ↳ Q4 pricing page
+                      refresh</span
+                    ></span
+                  >
+                </div>
+                <div class="sidehd" style="margin-top: 8px">Today</div>
+                <div class="row">
+                  <span
+                    class="tile"
+                    style="
+                      background: var(--tint-green);
+                      color: var(--ink-green);
+                    "
+                    ><svg class="i s18"><use href="#merge" /></svg
+                    ><span
+                      class="bdg"
+                      style="
+                        background: var(--sam);
+                        color: #fcfcfc;
+                        font: 600 9px/1 var(--sans);
+                      "
+                      >SL</span
+                    ></span
+                  ><span class="copy"
+                    ><span class="l1"
+                      ><b
+                        ><span style="font-weight: 650">Samantha</span> merged
+                        into Pricing</b
+                      ><time>2:30 PM</time></span
+                    ><span class="l2"
+                      >New pricing page is live: three plans…</span
+                    ></span
+                  >
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              A merged breakout's row reads "✓ Merged" in green, which is
+              distinct from a breakout that has gone quiet. Activity gains one
+              row type: "<i>person</i> merged into <i>place</i>", with the
+              headline as the detail line. It reaches the target's readers, not
+              the source's.
+            </p>
+          </div>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>
