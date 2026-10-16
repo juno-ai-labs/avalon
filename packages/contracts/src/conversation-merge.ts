@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { citedResourceIds } from "./citations";
 import { IdSchema, SubstreamIdSchema, UserIdSchema, WorkstreamIdSchema } from "./identifiers";
+import { MentionSchema } from "./mention-schema";
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 
 /**
@@ -25,6 +26,13 @@ export const ConversationMergeRequestSchema = z.strictObject({
   clientMessageId: z.string().min(1).max(120),
   breakoutId: IdSchema.optional(),
   channelId: z.string().uuid().optional(),
+  /**
+   * A Breakout merge's mentions and the nonparticipants the person confirmed,
+   * as the composer hands them to any message; the Thread's Main admits them
+   * as it admits its own messages. A Channel merge has no mentions to keep.
+   */
+  mentions: z.array(MentionSchema).optional(),
+  confirmedParticipantUserIds: z.array(z.string().uuid()).optional(),
 }).refine((value) => value.breakoutId === undefined || value.channelId === undefined, {
   message: "A merge goes into a Thread (breakoutId) or into a Channel (channelId), not both",
   path: ["channelId"],
@@ -99,8 +107,16 @@ export const ConversationMergeV1Schema = z.strictObject({
 export type ConversationMergeV1 = z.infer<typeof ConversationMergeV1Schema>;
 
 /** An artifact a merge embeds, as it was when merged: enough to draw its card. */
+/**
+ * How a citation names a resource: its UUID or its alias. A merge attaches
+ * what its body cites, as written.
+ */
+export const MergeResourceTokenSchema = z.string().regex(/^[A-Za-z0-9_-]+$/u);
+
 export const MergeEmbedSchema = z.strictObject({
   id: z.string().min(1),
+  /** The resource's alias, so a body citing it by alias still resolves. */
+  slug: z.string().min(1).optional(),
   title: z.string().max(500),
   kind: z.string().max(100),
 });

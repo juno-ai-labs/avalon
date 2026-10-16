@@ -6,6 +6,7 @@ import { ParticipantAuthorityTransferStorage, ParticipantProjectionSchema, Parti
   type ParticipantTransferRequest, type ParticipantProjection } from "./participant-authority-transfer";
 import { workstreamImportHash } from "./workstream-import-hash";
 import { PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
+import { MergeResourceTokenSchema } from "@rally/contracts";
 import { AGENT_HANDOFF_TOOL_NAMES, AgentCommunicationService } from "../services/agent-communication-service";
 import { RegionSchema } from "@rally/contracts/regions";
 import { agentIdForAddress, AgentExchangeSchema } from "@rally/contracts";
@@ -502,7 +503,7 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   productOperation({ operation: z.literal("remove_participant"), userId: IdSchema,
     operationId: IdSchema.optional() }),
   productOperation({ operation: z.literal("attach_resource"), resourceId: IdSchema }),
-  productOperation({ operation: z.literal("attach_resources"), resourceIds: z.array(IdSchema) }),
+  productOperation({ operation: z.literal("attach_resources"), resourceIds: z.array(MergeResourceTokenSchema) }),
   productOperation({ operation: z.literal("detach_resource"), resourceId: IdSchema }),
   productOperation({ operation: z.literal("answer_elicitation"),
     elicitationId: IdSchema, input: AnswerElicitationRequestSchema,

@@ -23,7 +23,7 @@ import { reportActivityEvent } from '../lib/activity-events';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { copySpaceLink } from '../lib/copy-workstream-link';
-import { ChannelPaneContextValue, OPEN_EXPANDED, channelRoute, threadRoute, usePaneExpansion, type ChannelPaneContext } from '../lib/navigation-routes';
+import { ChannelPaneContextValue, OPEN_EXPANDED, channelRoute, openThreadResourceState, threadRoute, usePaneExpansion, type ChannelPaneContext } from '../lib/navigation-routes';
 import { PaneVisibility } from '../lib/pane-visibility';
 import { useNow } from '../lib/clock';
 import { formatDayLabel } from '../lib/format';
@@ -311,7 +311,9 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
 
   if (active.data === undefined) return <LoadingState label="Opening channel…" />;
   if (!space) return <EmptyState description="It may have been archived, made private, or you may no longer have access." title="Channel not found" />;
-  const openThread = (threadId: string): void => void navigate(threadRoute(threadId, channelId), { state: OPEN_EXPANDED });
+  const openThread = (threadId: string, resourceId?: string): void => void navigate(threadRoute(threadId, channelId), {
+    state: resourceId ? openThreadResourceState(threadId, resourceId) : OPEN_EXPANDED,
+  });
   // Only a member may start a thread in a private Channel; a thread placed
   // there is the Channel's to accept (`canEdit` on the server).
   const canStart = workspace.currentUser.accessClass !== 'guest' && space.reach !== 'through_channel';
@@ -487,7 +489,7 @@ function MergeCard({ author, channelId, currentUser, members, merge, message, on
   members: readonly WorkspaceMember[];
   merge: NonNullable<ChannelMessage['merge']>;
   message: ChannelMessage;
-  onOpenThread: (threadId: string) => void;
+  onOpenThread: (threadId: string, resourceId?: string) => void;
   placedAt: string;
 }): React.JSX.Element {
   const { api } = useAppSession();
@@ -496,15 +498,18 @@ function MergeCard({ author, channelId, currentUser, members, merge, message, on
   const [failure, setFailure] = useState<string | null>(null);
   const body = useMemo(() => typedMentionRendering(message.body, members), [members, message.body]);
   const citations = useMemo<CitationContext>(() => {
-    const embeds = new Map(merge.embeds.map((embed) => [embed.id, embed]));
+    const embeds = new Map(merge.embeds.flatMap((embed) => [[embed.id, embed] as const, ...(embed.slug ? [[embed.slug, embed] as const] : [])]));
     return {
       resolve: (resourceId) => {
         const embed = embeds.get(resourceId);
         return embed ? { id: embed.id, title: embed.title, resourceType: embed.kind } : undefined;
       },
       open: (target) => {
-        if (target.scheme === 'resource') onOpenThread(merge.threadId);
         if (target.scheme === 'external') void openLink(target.url);
+        if (target.scheme !== 'resource') return;
+        // The artifact is attached to the thread, so it opens there, by its id
+        // whichever spelling the body cited it by.
+        onOpenThread(merge.threadId, embeds.get(target.resourceId)?.id);
       },
     };
   }, [merge.embeds, merge.threadId, onOpenThread]);

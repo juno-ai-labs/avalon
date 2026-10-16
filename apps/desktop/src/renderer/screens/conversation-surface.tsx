@@ -22,7 +22,8 @@ import {
   Search,
 } from 'lucide-react';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { openResourceRequest } from '../lib/navigation-routes';
 import {
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
@@ -105,7 +106,7 @@ import {
 } from '../lib/use-workstream-socket';
 import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
-import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
+import { WORKSTREAMS_QUERY_KEY, useCachedWorkstreamPlacements } from '../lib/use-workstreams-query';
 import { evictCachedWorkstream, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import {
   SubstreamLaunchSurface,
@@ -1131,6 +1132,8 @@ export function mergeTargetFor(input: {
   substreamId: string;
   guest: boolean;
   thread: Pick<WorkstreamDetail, 'title' | 'scope' | 'spaceIds'> | null | undefined;
+  /** The thread's placements from the directory, which wins over the detail's when present. */
+  placements?: readonly string[] | undefined;
   spaces: readonly Pick<SpaceSummary, 'id' | 'name' | 'scope' | 'reach'>[];
 }): MergeTarget | null {
   if (input.parentKind !== 'workstream' || !input.thread) return null;
@@ -1139,7 +1142,7 @@ export function mergeTargetFor(input: {
   const byId = new Map(input.spaces.map((space) => [space.id as string, space]));
   // A Channel reached only through a thread in it is read-only to this
   // person, and the server refuses a merge there.
-  const channels = input.thread.spaceIds.flatMap((spaceId) => {
+  const channels = (input.placements ?? input.thread.spaceIds).flatMap((spaceId) => {
     const space = byId.get(spaceId);
     return space && space.reach !== 'through_channel'
       ? [{ id: space.id as string, name: space.name, scope: space.scope }]
@@ -1354,10 +1357,19 @@ export function ConversationSurface({
   const mergeAttemptRef = useRef<{ key: string; id: string } | null>(null);
   useEffect(() => { setMergeMode(null); setMergeError(undefined); }, [id, substreamId]);
   const activeSpaces = useSpaceDirectories().active.data;
+  const threadPlacements = useCachedWorkstreamPlacements(id);
   const startMergeRef = useRef<((text: string) => void) | undefined>(undefined);
+  // A request counts once: the one standing when this surface mounts was
+  // already answered by an earlier mount, so coming back does not reopen it.
+  const handledMergeRequestRef = useRef(mergeRequest);
   useEffect(() => {
-    if (mergeRequest !== null) startMergeRef.current?.('');
+    if (mergeRequest === null || mergeRequest === handledMergeRequestRef.current) return;
+    handledMergeRequestRef.current = mergeRequest;
+    startMergeRef.current?.('');
   }, [mergeRequest]);
+  // The merge composer on screen now, so a merge that finishes after it was
+  // cancelled and another opened leaves the newer one and its draft alone.
+  const mergeNonceRef = useRef<number | null>(null);
   // Declared up here because sending clears it, and the composer's send is
   // defined long before the fold below that maintains it.
   const [carriedStopAcknowledgement, setCarriedStopAcknowledgement] = useState(NO_STOP_ACKNOWLEDGEMENT);
@@ -1406,6 +1418,12 @@ export function ConversationSurface({
   const openWorkstreamResourceDetails = useCallback((resourceId: string): void => {
     openPanel({ kind: 'resource', resourceId, workstreamScoped: true });
   }, [openPanel]);
+  // A navigation can ask this thread's Main to open onto an artifact (a
+  // Channel merge card's embed). Arriving by it, the panel restored below is
+  // that artifact rather than the one this conversation saved.
+  const location = useLocation();
+  const resourceRequest = openResourceRequest(location.state);
+  const requestedResourceId = resourceRequest?.threadId === id && substreamId === '0' ? resourceRequest.resourceId : null;
   const workspaceId = session?.workspace?.id ?? 'unbound';
   // Requests to join waiting on this reader, kept by the workspace socket; the
   // People level lists the ones for the conversation on screen.
@@ -1442,7 +1460,9 @@ export function ConversationSurface({
   // move together, or the render that changes the route reads an open rail that
   // belongs to the stream it just left.
   useLayoutEffect(() => {
-    const savedPanel = readArtifactPanel(artifactPanelKey);
+    const savedPanel = requestedResourceId !== null
+      ? { resourceId: requestedResourceId, workstreamScoped: false }
+      : readArtifactPanel(artifactPanelKey);
     setPanel(savedPanel ? { kind: 'resource', ...savedPanel } : null);
     setExpanded(null);
     setResourceDialogOpen(false);
@@ -1460,7 +1480,7 @@ export function ConversationSurface({
         setRailScope(null);
       }
     };
-  }, [artifactPanelKey, closeRail, inspect, railScopeKey, setRailScope]);
+  }, [artifactPanelKey, closeRail, inspect, railScopeKey, requestedResourceId, setRailScope]);
   // Only a Channel draws the browser rail; a Sidekick's links stay external.
   useBrowserRailLinks(parentKind === 'workstream', layoutElement, claimRail);
 
@@ -2977,6 +2997,7 @@ export function ConversationSurface({
     substreamId,
     guest,
     thread: substreamId === '0' ? displayedDetail : workstreamContext?.id === id ? workstreamContext : null,
+    placements: threadPlacements,
     spaces: activeSpaces?.items ?? [],
   });
   const mergeChannel = merge?.kind === 'channel'
@@ -2989,20 +3010,28 @@ export function ConversationSurface({
       setMergeMode({ nonce: Date.now(), channelId: merge.kind === 'channel' ? merge.channels[0]!.id : null });
     });
   } : undefined;
-  const submitMerge = async (text: string): Promise<void> => {
+  mergeNonceRef.current = mergeMode?.nonce ?? null;
+  const submitMerge = async (text: string, mentions: MentionIdentity[], confirmedParticipantUserIds?: string[]): Promise<void> => {
     if (!api || !merge) return;
+    const nonce = mergeMode?.nonce ?? null;
+    const draftKey = mergeDraftKey;
     setMerging(true);
     setMergeError(undefined);
-    const target = merge.kind === 'thread' ? { breakoutId: substreamId } : mergeChannel ? { channelId: mergeChannel.id } : {};
+    const target = merge.kind === 'thread'
+      ? { breakoutId: substreamId, mentions, ...(confirmedParticipantUserIds?.length ? { confirmedParticipantUserIds } : {}) }
+      : mergeChannel ? { channelId: mergeChannel.id } : {};
     const attemptKey = JSON.stringify([text, target]);
     if (mergeAttemptRef.current?.key !== attemptKey) mergeAttemptRef.current = { key: attemptKey, id: crypto.randomUUID() };
     try {
       await api.mergeConversation(id, { body: text, clientMessageId: mergeAttemptRef.current.id, ...target });
       mergeAttemptRef.current = null;
-      setMergeMode(null);
-      void writeDraftText(mergeDraftKey, '');
+      const current = mergeNonceRef.current;
+      if (current === nonce) setMergeMode(null);
+      // Cancelled and not reopened, the draft is these words; reopened, it is
+      // the newer merge's.
+      if (current === nonce || current === null) void writeDraftText(draftKey, '');
     } catch (error) {
-      setMergeError(mergeFailureMessage(error));
+      if (mergeNonceRef.current === nonce) setMergeError(mergeFailureMessage(error));
       // The composer keeps the words when a send throws.
       throw error;
     } finally {
@@ -3429,12 +3458,13 @@ export function ConversationSurface({
               fileInputRef={mergeFileInputRef}
               key={`${conversationAddress}:merge:${mergeMode.nonce}`}
               members={visibleMembers}
-              onAttach={() => undefined}
               onOpenAttachment={openAttachment}
               onRemoveAttachment={() => undefined}
               onRetryAttachment={() => undefined}
-              onSend={(text) => submitMerge(text)}
-              onStop={async () => undefined}
+              onSend={(text, mentions, confirmedParticipantUserIds) => submitMerge(text, mentions, confirmedParticipantUserIds)}
+              onStop={async () => {
+                await stop.mutateAsync();
+              }}
               placeholder="Write what the readers should know…"
               sending={merging}
               submitLabel="Merge"

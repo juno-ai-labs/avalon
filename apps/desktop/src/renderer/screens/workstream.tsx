@@ -733,7 +733,8 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   // The title menu's Merge opens the composer's merge mode in that pane.
   const [mergeRequest, setMergeRequest] = useState<{ substreamId: string; nonce: number } | null>(null);
   const threadMerge = mergeTargetFor({
-    parentKind: 'workstream', substreamId: '0', guest, thread: parent.data, spaces: activeSpaces?.items ?? [],
+    parentKind: 'workstream', substreamId: '0', guest, thread: parent.data, placements: row?.spaceIds,
+    spaces: activeSpaces?.items ?? [],
   });
   const mainActions = (conversationScoped ? mainVisible : parent.data) ? {
     merge: threadMerge ? {
@@ -748,7 +749,9 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     onArchive: !channelWritable ? undefined : (target: ConversationRowTarget) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuFailure(null); },
   } : undefined;
   const substreamActions = {
-    merge: openBreakoutId ? {
+    // The Breakout's pane merges only when it has its Thread to merge into,
+    // which a reader scoped to the Breakout alone does not.
+    merge: openBreakoutId && !conversationScoped && parent.data ? {
       label: 'Merge to thread',
       onSelect: () => setMergeRequest({ substreamId: openBreakoutId, nonce: Date.now() }),
     } : undefined,

@@ -2121,10 +2121,17 @@ export class RallyApi {
    * result into this Thread; without it, this Thread's result into one of its
    * Channels. A retry with the same `clientMessageId` writes nothing again.
    */
-  async mergeConversation(threadId: string, request: ConversationMergeRequest): Promise<ConversationMergeResult> {
+  async mergeConversation(
+    threadId: string,
+    { mentions: selected, ...request }: Omit<ConversationMergeRequest, 'mentions'> & { mentions?: MentionIdentity[] },
+  ): Promise<ConversationMergeResult> {
+    // A Breakout merge keeps its mentions, resolved the way a message's are.
+    const mentions = request.breakoutId !== undefined && (request.body.includes('@') || (selected?.length ?? 0) > 0)
+      ? await this.messageMentionPayload(request.body, selected)
+      : [];
     return this.request(`/conversations/${encodeURIComponent(threadId)}/merge`, {
       method: 'POST',
-      body: request,
+      body: { ...request, ...(mentions.length > 0 ? { mentions } : {}) },
       schema: ConversationMergeResultSchema,
     });
   }

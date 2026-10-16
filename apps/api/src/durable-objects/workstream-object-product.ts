@@ -3243,21 +3243,23 @@ export class WorkstreamObjectProductService {
    * lists the ids this call newly linked; `resources` describes each in the
    * order asked, for a merge's stored embeds.
    */
-  async attachResources(auth: AuthContext, resourceIds: readonly string[]): Promise<
+  async attachResources(auth: AuthContext, resourceTokens: readonly string[]): Promise<
     | {
       ok: true;
       linked: string[];
-      resources: Array<{ id: string; title: string; kind: string }>;
+      resources: Array<{ id: string; slug?: string; title: string; kind: string }>;
       /** The newly linked resources as the rail reads them, for its live event. */
       attached: WorkstreamResource[];
     }
     | { ok: false; index: number; code: "resource_not_found" | "resource_access_denied" | "attachment_draft_requires_message" }
   > {
     await this.authorize(auth);
-    const ids = [...new Set(resourceIds)];
-    if (ids.length === 0) return { ok: true, linked: [], resources: [], attached: [] };
-    const rows = new Map<string, Record<string, unknown>>();
-    for (const resourceId of ids) {
+    // A citation names a resource by its UUID or by its alias
+    // (resource-slug.ts); both resolve to the one row.
+    const tokens = [...new Set(resourceTokens)];
+    if (tokens.length === 0) return { ok: true, linked: [], resources: [], attached: [] };
+    const byToken = new Map<string, Record<string, unknown>>();
+    for (const token of tokens) {
       // One keyed read each: an embed list is a handful of links in one
       // message, and the reads are the same statement `attachResource` runs.
       const row = await this.workspaceDatabase(auth.workspaceId).prepare(
@@ -3265,14 +3267,15 @@ export class WorkstreamObjectProductService {
                 connection.owner_user_id
            FROM resources resource
            LEFT JOIN connector_connections connection ON connection.id = resource.connection_id
-          WHERE resource.id = ? AND resource.workspace_id = ?`,
-      ).bind(resourceId, auth.workspaceId).first<Record<string, unknown>>();
-      if (row) rows.set(resourceId, row);
+          WHERE (resource.id = ? OR resource.slug = ?) AND resource.workspace_id = ?`,
+      ).bind(token, token, auth.workspaceId).first<Record<string, unknown>>();
+      if (row) byToken.set(token, row);
     }
     const access = auth.role === null ? createAccessContext(this.env, auth) : null;
-    for (const [index, resourceId] of ids.entries()) {
-      const resource = rows.get(resourceId);
+    for (const [index, token] of tokens.entries()) {
+      const resource = byToken.get(token);
       if (!resource) return { ok: false, index, code: "resource_not_found" };
+      const resourceId = String(resource.id);
       if (access) {
         const decision = await access.check({ kind: "resource", workspaceId: auth.workspaceId, resourceId });
         // Unavailable is not a refusal: it throws, so the merge can be retried.
@@ -3286,6 +3289,8 @@ export class WorkstreamObjectProductService {
         return { ok: false, index, code: "attachment_draft_requires_message" };
       }
     }
+    const rows = new Map([...byToken.values()].map((row) => [String(row.id), row]));
+    const ids = [...rows.keys()];
     this.locallyAuthorizedRoot(auth);
     const present = new Set(this.storage.sql.exec<{ resource_id: string } & Record<string, SqlStorageValue>>(
       "SELECT resource_id FROM workstream_resource_links WHERE resource_id IN (SELECT value FROM json_each(?))",
@@ -3337,11 +3342,15 @@ export class WorkstreamObjectProductService {
       ok: true,
       linked,
       attached,
-      resources: ids.map((id) => ({
-        id,
-        title: String(rows.get(id)!.title).slice(0, 500),
-        kind: String(rows.get(id)!.resource_type).slice(0, 100),
-      })),
+      resources: ids.map((id) => {
+        const row = rows.get(id)!;
+        return {
+          id,
+          ...(row.slug == null ? {} : { slug: String(row.slug) }),
+          title: String(row.title).slice(0, 500),
+          kind: String(row.resource_type).slice(0, 100),
+        };
+      }),
     };
   }
 
@@ -4647,6 +4656,11 @@ export class WorkstreamObjectProductService {
     delete receiptInput.telemetryOperationId;
     delete receiptInput.telemetryRequestReceivedAt;
     delete receiptInput.telemetryJourney;
+    // A merge's Breakout title is the server's snapshot, not the caller's
+    // words: a rename between a lost response and its retry must still replay.
+    if (receiptInput.merge) {
+      receiptInput.merge = { ...receiptInput.merge, mergedFrom: { ...receiptInput.merge.mergedFrom, title: "" } };
+    }
     const requestHash = workstreamImportHash({
       command: "create_message",
       authorUserId: auth.userId,

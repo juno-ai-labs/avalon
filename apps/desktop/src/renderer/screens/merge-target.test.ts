@@ -26,6 +26,13 @@ describe('where a conversation merges', () => {
     expect(mergeLabel(target!)).toBe('Merge to GTM');
   });
 
+  it('reads the directory’s placements over a detail that carries none', () => {
+    expect(mergeTargetFor({
+      parentKind: 'workstream', substreamId: '0', guest: false, thread: { ...thread, spaceIds: [] },
+      placements: [BOARD], spaces: [space(GTM, 'GTM', 'organization'), space(BOARD, 'Board', 'participant')],
+    })).toEqual({ kind: 'channel', channels: [{ id: BOARD, name: 'Board', scope: 'workspace' }] });
+  });
+
   it('offers nothing when every Channel is read-only to the reader, and a Breakout its Thread', () => {
     expect(mergeTargetFor({
       parentKind: 'workstream', substreamId: '0', guest: false, thread,
