@@ -98,8 +98,10 @@ export async function fireDigestSchedule(
 
   let delivery = existing;
   if (!delivery) {
-    const items = await unreadActivity(env, input.workspaceId, digest.userId);
-    const markdown = items.length ? await renderUnreadDigest(env, input.workspaceId, items) : null;
+    const { items, olderCount } = splitByAge(await unreadActivity(env, input.workspaceId, digest.userId), input.plannedFor);
+    // Only rows older than the window left: they were in earlier digests, so
+    // this occurrence has nothing new and sends nothing.
+    const markdown = items.length ? await renderUnreadDigest(env, input.workspaceId, items, olderCount) : null;
     const claimed = WorkspaceDigestClaimResultSchema.parse(await workspace.claimDigestDelivery({
       workspaceId: input.workspaceId,
       deliveryId,
@@ -170,6 +172,24 @@ async function unreadActivity(env: Env, workspaceId: string, userId: string): Pr
   return result.page.items.filter((item) => item.unread);
 }
 
+/**
+ * How long an unread row keeps being listed. A row stays unread until it is
+ * read, so without this every digest repeats everything the person has not
+ * opened; past the window it is only counted. The number is the team's choice.
+ */
+const LISTED_FOR_MS = 2 * 24 * 60 * 60 * 1000;
+
+/** Unread rows within the window of the occurrence, and how many fell outside it. */
+export function splitByAge(
+  items: readonly ActivityItem[],
+  plannedFor: string,
+): { items: ActivityItem[]; olderCount: number } {
+  // Measured from the occurrence, not the clock, so a retry reaches the same split.
+  const cutoff = Date.parse(plannedFor) - LISTED_FOR_MS;
+  const recent = items.filter((item) => Date.parse(item.occurredAt) >= cutoff);
+  return { items: recent, olderCount: items.length - recent.length };
+}
+
 /** The sections of a digest, in the order Settings lists the kinds. */
 const SECTIONS: ReadonlyArray<{ kinds: readonly ActivityItemKind[]; heading: string }> = [
   { kinds: ["mentioned"], heading: "Mentions" },
@@ -186,7 +206,12 @@ const UNNAMED_BREAKOUT = "Untitled breakout";
  * the sidebar words it and linked to what it names. Markdown, because every
  * destination already renders it: the email, a Slack message, a thread.
  */
-export async function renderUnreadDigest(env: Env, workspaceId: string, items: readonly ActivityItem[]): Promise<string> {
+export async function renderUnreadDigest(
+  env: Env,
+  workspaceId: string,
+  items: readonly ActivityItem[],
+  olderCount = 0,
+): Promise<string> {
   const actorIds = [...new Set(items.flatMap((item) => item.actorUserId ? [item.actorUserId] : []))];
   const names = new Map<string, string>();
   if (actorIds.length) {
@@ -220,7 +245,8 @@ export async function renderUnreadDigest(env: Env, workspaceId: string, items: r
     sections.push([`## ${section.heading}`, ...lines].join("\n"));
   }
   const count = items.length;
-  return [`${count} unread item${count === 1 ? "" : "s"} in your Activity.`, ...sections].join("\n\n");
+  const older = olderCount ? [`${olderCount} more older than 2 days.`] : [];
+  return [`${count} unread item${count === 1 ? "" : "s"} in your Activity.`, ...sections, ...older].join("\n\n");
 }
 
 /**

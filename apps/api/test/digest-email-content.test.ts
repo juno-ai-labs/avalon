@@ -47,7 +47,7 @@ describe("digest email", () => {
     expect(html).toContain("1 needs you · 4 updates in Avalon Studio");
   });
 
-  it("declares itself dark so no client repaints it", () => {
+  it("declares itself light only so no dark-mode client repaints it", () => {
     const html = digestEmailHtml({
       recipientName: "Ada",
       workspaceName: "Avalon Studio",
@@ -59,19 +59,19 @@ describe("digest email", () => {
       settingsUrl: "https://with-avalon.com/app/settings/digest",
     });
 
-    expect(html).toContain('name="color-scheme" content="dark"');
-    expect(html).toContain("color-scheme:dark");
+    expect(html).toContain('name="color-scheme" content="light only"');
+    expect(html).toContain("color-scheme:light only");
     // The app's own canvas token, so the email and the product are one surface.
-    expect(html).toContain("background:#111210");
+    expect(html).toContain("background:#f3f3f3");
     // A full-height body paints the pane itself, for the client that paints its
     // own background onto `html` and so stops the body's from propagating.
     expect(html).toMatch(/<html[^>]*style="[^"]*height:100%/u);
-    expect(html).toMatch(/<body style="[^"]*height:100%;background:#111210/u);
+    expect(html).toMatch(/<body style="[^"]*height:100%;background:#f3f3f3/u);
     // That height is a percentage and never a viewport unit, and no table
     // carries one at all. Both would grow the message past its pane in a client
     // that measures them against something else — the browser window in webmail
     // that injects this markup into its own page, the page box in Word — and
-    // hang a dark tail off the bottom of it.
+    // hang a tail off the bottom of it.
     expect(html).not.toMatch(/\d(?:vh|vmin|vmax)/u);
     expect(html).not.toMatch(/<table[^>]*height/u);
   });

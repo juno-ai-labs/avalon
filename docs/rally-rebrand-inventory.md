@@ -311,11 +311,10 @@ and Sheets descriptions in `packages/connectors/src/index.ts`, the X plugin, the
 Linear native-agent plugin, and the core plugin's own utilities line all moved;
 the four Slack connector labels moved earlier, in the Slack cut-over.
 
-**Not section 9, and deliberately left here:** the remaining transactional email
-copy (`digest-email-content.ts`) and the API error
-strings surfaced in the client UI. Those are user-facing copy the public-site
-pass did not reach, and they are section 7's remainder rather than this
-section's.
+**Not section 9, and deliberately left here:** the API error strings surfaced
+in the client UI. Those are user-facing copy the public-site pass did not reach,
+and they are section 7's remainder rather than this section's. The digest email
+(`digest-email-content.ts`), once listed here too, now says Rally.
 
 The two **person-notification** emails — `participant-` and
 `mention-email-service.ts` — have moved, along with configured deployments'
