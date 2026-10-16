@@ -4,7 +4,8 @@
 >
 > How a Breakout hands its result to its Thread, and a Thread hands its result
 > to its Channel, without copying the conversation. Companion:
-> [state](state.md), [design](design.html). Related:
+> [state](state.md), [design](design.html),
+> [agent behavior](agent-behavior.md). Related:
 > [the navigation PRD](../2026-10-10_channels-threads-navigation/prd.md),
 > [Spaces](../../spaces.md), [conversation tools](../../conversation-tools.md),
 > [authorization](../../authorization.md),
@@ -322,6 +323,10 @@ wider, as below, and the composer says so.
   says what that means.
 
 ### Agent tool: `conversation_merge`
+
+The full tool contract (catalog, wire shapes, failures and recovery, replay,
+and model-usability acceptance) is in [agent-behavior.md](agent-behavior.md).
+This section is the summary.
 
 - `body` (markdown, may embed `resource://` links), and for a Thread's Main
   loop an optional `channel`. A Breakout loop always merges into its Thread. A
