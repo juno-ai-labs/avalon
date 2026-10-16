@@ -19,6 +19,7 @@ const api = vi.hoisted(() => ({
   updateSpacePresentation: vi.fn(),
   updateSpaceAudience: vi.fn(),
   acknowledgeChannelRead: vi.fn(),
+  removeChannelMessage: vi.fn(async () => undefined),
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session: null }) }));
 const spaces = vi.hoisted(() => ({ data: undefined as unknown }));
@@ -267,6 +268,36 @@ describe('a Channel', () => {
     expect(rows[0]).toHaveTextContent('Rally');
     await waitFor(() => expect(rows[2]).toHaveTextContent('Alex Todorovic'));
     expect(within(rows[2]!).getByText('Q4', { selector: 'strong' })).toBeInTheDocument();
+  });
+
+  it('draws a thread’s merge with its thread, a quote, its embeds, and Remove for its author', async () => {
+    const mergeId = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a62';
+    api.getWorkspaceMembers.mockResolvedValueOnce([workspace.currentUser] as never);
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 3, items: [
+      { kind: 'message', placedAt: '2026-10-02T03:00:00.000Z', attentionSequenceNumber: 3, message: {
+        id: mergeId,
+        author: { kind: 'member', userId: 'me' },
+        body: 'Shipped. See [Price model](resource://res-1).',
+        merge: {
+          threadId: plan.id,
+          title: 'Q4 plan',
+          summary: 'Plan the quarter\nand more',
+          embeds: [{ id: 'res-1', title: 'Price model', kind: 'document' }],
+        },
+      } },
+      { kind: 'thread', placedAt: '2026-10-02T01:00:00.000Z', attentionSequenceNumber: 1, thread: plan },
+    ] });
+    renderChannel();
+    const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
+    const rows = await feed.findAllByRole('listitem');
+    // The merge is at the bottom, when it was merged.
+    const merge = within(rows[1]!);
+    expect(merge.getByRole('button', { name: 'Q4 plan' })).toBeVisible();
+    expect(merge.getByText('Plan the quarter')).toBeVisible();
+    expect(merge.getByText('Price model')).toBeVisible();
+    await waitFor(() => expect(merge.getByText('merged by Me')).toBeVisible());
+    fireEvent.click(merge.getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(api.removeChannelMessage).toHaveBeenCalledExactlyOnceWith('outbound', mergeId));
   });
 
   it('names somebody it cannot look up as someone, not Rally', async () => {

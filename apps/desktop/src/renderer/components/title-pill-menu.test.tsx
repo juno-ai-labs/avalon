@@ -41,6 +41,21 @@ describe('a title pill menu with levels', () => {
     expect(screen.getByRole('menuitem', { name: 'More' })).toBeInTheDocument();
   });
 
+  it('offers the thread’s Merge as a row named for its Channel, and only when given one', async () => {
+    const onSelect = vi.fn();
+    renderChannelPill({ actions: { merge: { label: 'Merge to GTM', onSelect } } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Merge to GTM' }));
+    expect(onSelect).toHaveBeenCalledOnce();
+  });
+
+  it('has no Merge row where nothing can merge', async () => {
+    renderChannelPill();
+    openMenu();
+    await screen.findByRole('menuitem', { name: /^People/u });
+    expect(screen.queryByRole('menuitem', { name: /^Merge/u })).not.toBeInTheDocument();
+  });
+
   it('turns the pill into a breadcrumb for the open level, and steps back before it closes', async () => {
     renderChannelPill();
     openMenu();
