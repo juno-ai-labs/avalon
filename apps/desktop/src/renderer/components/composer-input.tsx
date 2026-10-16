@@ -318,6 +318,18 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
     highlight.scrollTop = textarea.scrollTop;
     highlight.scrollLeft = textarea.scrollLeft;
   }, []);
+  // Dictation writes into the field from outside it, and the browser only
+  // keeps a caret in view, never a value it was handed. Once the field is at
+  // its height limit the newest words would land below the fold, so each
+  // transcript update asks for the tail to be shown after the field has
+  // taken its new height; the highlight layer follows the same scroll.
+  const transcriptTailPendingRef = useRef(false);
+  const followTranscriptTail = useCallback((): void => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.scrollTop = textarea.scrollHeight;
+    syncHighlightScroll();
+  }, [syncHighlightScroll]);
   const resizeTextarea = useCallback((nextValue?: string): void => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -368,7 +380,10 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   }, [attachments.length, layout, maxHeight, syncHighlightScroll]);
   useLayoutEffect(() => {
     resizeTextarea(value);
-  }, [resizeTextarea, value]);
+    if (!transcriptTailPendingRef.current) return;
+    transcriptTailPendingRef.current = false;
+    followTranscriptTail();
+  }, [followTranscriptTail, resizeTextarea, value]);
   useEffect(() => () => {
     for (const animation of resizeAnimationsRef.current) animation.cancel();
   }, []);
@@ -389,7 +404,13 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   const microphoneControlRef = useRef<HTMLDivElement>(null);
   const dictation = useRealtimeDictation(api, (transcript) => {
     onValueChange(appendDictationTranscript(dictationBaseRef.current, transcript));
-    requestAnimationFrame(() => resizeTextarea());
+    transcriptTailPendingRef.current = true;
+    // The layout effect follows the tail on the render that carries the new
+    // value; this frame covers the capsule's height animation settling after it.
+    requestAnimationFrame(() => {
+      resizeTextarea();
+      followTranscriptTail();
+    });
   }, {
     onLevel: (level) => microphoneControlRef.current?.style.setProperty('--dictation-level', level.toFixed(3)),
   });
