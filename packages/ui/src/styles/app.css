@@ -389,7 +389,9 @@ pre {
   color: var(--av-sys-color-text-subtle);
   display: inline-flex;
   justify-content: center;
-  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+  /* `box-shadow` is here for the one button that draws a ring, the dictation
+     level; it costs nothing on the buttons that never get a shadow. */
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 100ms linear;
 }
 
 .button {
@@ -4636,12 +4638,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .header-socket-state:focus-visible { background-image: var(--hover-layer); }
 .header-socket-state > span { height: 7px; width: 7px; }
 .microphone-control { align-items: center; display: flex; gap: 0; }
-.microphone-control .dictation-button {
-  border-radius: var(--av-sys-size-radius-md) 0 0 var(--av-sys-size-radius-md);
-  /* `.icon-button`'s own three, restated so the ring below can join them. */
-  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 100ms linear;
-  width: 27px;
-}
+.microphone-control .dictation-button { border-radius: var(--av-sys-size-radius-md) 0 0 var(--av-sys-size-radius-md); width: 27px; }
 .microphone-control .microphone-menu-trigger { border-radius: 0 var(--av-sys-size-radius-md) var(--av-sys-size-radius-md) 0; width: 21px; }
 .microphone-control .microphone-menu-trigger::before { background: var(--av-ref-color-neutral-5); content: ''; height: 14px; left: 0; position: absolute; width: 1px; }
 /* Recording is the one state the control announces on its own, and it says so
@@ -4656,10 +4653,9 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .microphone-control.is-listening .dictation-button {
   background: var(--av-sys-color-danger-base);
   color: var(--av-sys-color-danger-on);
-  /* The level ring. `--dictation-level` is 0 to 1 from the capture worklet's
-     RMS, written onto `.microphone-control` by the composer about ten times
-     a second; the transition above carries the ring between writes. It is
-     what says "it hears me" once the fill has said "it is recording". */
+  /* The level ring: `--dictation-level` is 0 to 1 from the capture worklet's
+     RMS, written onto `.microphone-control` by the composer ten times a
+     second; `.icon-button`'s transition carries it between writes. */
   box-shadow: 0 0 0 calc(var(--dictation-level, 0) * 6px) color-mix(in srgb, var(--av-sys-color-danger-base) 35%, transparent);
 }
 /* Arming: the press is answered at once, before the microphone has opened.
