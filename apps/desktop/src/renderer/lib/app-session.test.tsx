@@ -678,7 +678,12 @@ describe('single-platform desktop identity routing', () => {
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('workspace'));
   });
 
-  it('opens the sidebar on Activity from the digest\'s link', async () => {
+  it.each([
+    { width: 1280, sheetOpen: false },
+    { width: 390, sheetOpen: true },
+  ])('opens the sidebar on Activity from the digest\'s link at $width px, opening the sheet only at phone width', async ({ width, sheetOpen }) => {
+    const innerWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
     useUiStore.setState({ sidebarSection: 'channels', sidebarOpen: false });
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     renderProvider();
@@ -686,7 +691,8 @@ describe('single-platform desktop identity routing', () => {
 
     await dispatchDeepLink('rallywithai://activity');
 
-    expect(useUiStore.getState()).toMatchObject({ sidebarSection: 'activity', sidebarOpen: true });
+    expect(useUiStore.getState()).toMatchObject({ sidebarSection: 'activity', sidebarOpen: sheetOpen });
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: innerWidth });
   });
 
   it('does not drain a cold-start OAuth callback until runtime endpoints are loaded', async () => {
