@@ -185,9 +185,9 @@ describe('token references', () => {
     // The count wheel reverses its travel when the value decreases. This is
     // local animation geometry, independent of the selected theme.
     '--wheel-travel',
-    // The phone layout's top-bar height and sheet motion: geometry and timing
-    // of one responsive block, the same in every theme.
-    '--phone-top-bar-height', '--phone-sheet-duration', '--phone-sheet-motion',
+    // The phone layout's sheet header and top-bar heights and sheet motion:
+    // geometry and timing of one responsive block, the same in every theme.
+    '--phone-sheet-header-height', '--phone-top-bar-height', '--phone-sheet-duration', '--phone-sheet-motion',
     // The Settings header's height, which the phone sections sheet starts under.
     '--settings-header-height',
     // The width a title menu level may take: what Radix reports as available,

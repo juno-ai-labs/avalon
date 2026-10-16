@@ -40,7 +40,7 @@ import { moveWithin } from '../lib/personal-order';
 import { compareChannels } from '../lib/sidebar-channel-order';
 import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, MY_THREADS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
-import { latestPinWrite, reportThreadPin, usePinAction, usePinFailure, usePins, usePinWrite, type PinnedThread } from '../lib/pins';
+import { latestPinWrite, reportThreadPin, usePinAction, usePinFailure, usePinnedIds, usePins, usePinWrite, type PinnedThread } from '../lib/pins';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation } from '../lib/telemetry';
 import type { SpaceConversationSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { useUiStore, type SidebarChannelSort, type SidebarSection } from '../lib/ui-store';
@@ -53,11 +53,10 @@ import { Avatar, Button, IconButton, InlineError, Modal, RallyAvatar, TitleSkele
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import { RelativeTime } from './relative-time';
 import { ResizableSidebar, SidebarFooterItems, SidebarScroll } from '@rally/ui/components/resizable-sidebar';
+import { PHONE_LAYOUT_MAX_WIDTH } from '@rally/ui/lib/phone-layout';
 import type { ChannelStats, SpaceDirectory } from '@rally/contracts';
 
 const NAVIGATION_SHEET_ID = 'rally-navigation-sheet';
-/** The stylesheet's phone breakpoint: at or under it the sidebar is a sheet. */
-const PHONE_LAYOUT_MAX_WIDTH = 640;
 /**
  * How long a pin's scroll-to-row waits for the list to carry the pin before
  * giving up. Carried over from the sidebar this one replaced.
@@ -169,11 +168,15 @@ export function NavigationSidebar({
   const menuToggle = useRef<HTMLButtonElement>(null);
   const { pathname } = useLocation();
   // The phone sheet. Escape closes it as it would any menu and hands focus
-  // back to the button; widening past the phone layout closes it, so an open
-  // sheet never leaves the conversation behind it inert at a width that draws
-  // no sheet. Both carried over from the sidebar this one replaced.
+  // back to the button (the app shell then moves it on to a pane header's
+  // menu mark, when that is what opened the sheet); widening past the phone
+  // layout closes it, so an open sheet never leaves the conversation behind
+  // it inert at a width that draws no sheet.
   useEffect(() => {
     if (!sidebarOpen) return undefined;
+    // Opened from a pane header, focus fell with the pane as it went inert;
+    // it lands on the close button, where the sheet starts.
+    if (!panel.current?.contains(document.activeElement)) menuToggle.current?.focus();
     const closeOnEscape = (event: KeyboardEvent): void => {
       // A menu or dialog open over the sheet takes this Escape for itself.
       if (event.key !== 'Escape' || document.querySelector('[role="menu"], [role="dialog"]')) return;
@@ -205,10 +208,21 @@ export function NavigationSidebar({
   const sections = guest ? SECTIONS.filter((candidate) => candidate.id !== 'channels') : SECTIONS;
   const section = guest && chosenSection === 'channels' ? 'threads' : chosenSection;
   const pinFailure = usePinFailure();
-  // The same number as the dock badge: every conversation waiting on this
-  // reader, and every access request waiting on them. The menu bar counts
-  // Activity's unread rows instead.
+  // Threads: the dock badge's number, every conversation waiting on this
+  // reader and every access request waiting on them. Activity: the menu
+  // bar's, the access requests and every unread row. Channels: each Channel
+  // with threads this reader has not seen. Pinned: each pinned row whose own
+  // row says it is unread.
   const waiting = attentionItems.length + accessRequests.length;
+  const unreadActivity = useUnreadActivityCount() + accessRequests.length;
+  const channelNews = useChannelsWithNews(!guest);
+  const unreadPinnedThreads = useUnreadPinnedThreadCount();
+  const badges: Record<SidebarSection, number> = {
+    pinned: channelNews.pinned + unreadPinnedThreads,
+    channels: channelNews.all,
+    threads: waiting,
+    activity: unreadActivity,
+  };
   const title = SECTIONS.find((candidate) => candidate.id === section)?.label ?? 'Threads';
   const [creatingChannel, setCreatingChannel] = useState(false);
   const markActivityRead = useMarkActivityRead();
@@ -235,11 +249,7 @@ export function NavigationSidebar({
         >
           <span className="navigation-rail-icon">
             {candidate.icon}
-            {candidate.id === 'threads' && waiting > 0 && <span
-              aria-label={`${waiting} waiting`}
-              className={waiting > 99 ? 'navigation-rail-badge is-capped' : 'navigation-rail-badge'}
-              role="img"
-            >{waiting > 99 ? '99+' : waiting}</span>}
+            <RailBadge count={badges[candidate.id]} section={candidate.id} />
           </span>
           <span className="navigation-rail-label">{candidate.label}</span>
         </button>)}
@@ -298,6 +308,99 @@ export function NavigationSidebar({
     {accountSlot && createPortal(accountMenu, accountSlot)}
     {creatingChannel && <NewChannelDialog onClose={() => setCreatingChannel(false)} />}
   </ResizableSidebar>;
+}
+
+/** What a section's count says it counts, for its accessible name. */
+const BADGE_NOUNS: Record<SidebarSection, string> = { pinned: 'pinned with news', channels: 'with new threads', threads: 'waiting', activity: 'unread' };
+
+/** A section button's red count; nothing at zero, `99+` past two digits. */
+function RailBadge({ count, section }: { count: number; section: SidebarSection }): React.JSX.Element | null {
+  if (count <= 0) return null;
+  return <span
+    aria-label={`${count} ${BADGE_NOUNS[section]}`}
+    className={count > 99 ? 'navigation-rail-badge is-capped' : 'navigation-rail-badge'}
+    role="img"
+  >{count > 99 ? '99+' : count}</span>;
+}
+
+/** The Activity tab's whole feed, whichever filter is shown: the tab and its badge share the one cache entry per filter. */
+function useActivityFeed(only: ActivityFilter | null) {
+  const { api } = useAppSession();
+  return useInfiniteQuery({
+    queryKey: activityQueryKey(only),
+    queryFn: ({ pageParam, signal }) => api!.getActivity(pageParam, only, signal),
+    initialPageParam: null as string | null,
+    getNextPageParam: (page: ActivityPage) => page.nextCursor,
+    enabled: Boolean(api),
+    refetchOnMount: 'always',
+  });
+}
+
+/**
+ * Activity's unread rows, as the menu bar counts them: the first page is 250
+ * rows, so the count is exact up to that. The socket's activity nudge
+ * refetches it, and Mark all read clears it with the dots.
+ */
+function useUnreadActivityCount(): number {
+  const feed = useActivityFeed(null);
+  return useMemo(() => (feed.data?.pages ?? []).reduce(
+    (total, page) => total + page.items.filter((item) => item.unread).length, 0,
+  ), [feed.data]);
+}
+
+/**
+ * Channels with threads this reader has not seen, as each row says "n new
+ * threads": all of them, and the pinned ones. The same stats query the
+ * Channels list reads, which the socket's Space snapshot seeds. A guest has no
+ * Channels section, so nothing to count.
+ */
+function useChannelsWithNews(enabled: boolean): { all: number; pinned: number } {
+  const { api } = useAppSession();
+  const pinned = usePinnedIds('channel');
+  const stats = useQuery<ChannelStats[]>({
+    queryKey: CHANNEL_STATS_QUERY_KEY,
+    queryFn: ({ signal }) => api!.getChannelStats(signal),
+    enabled: enabled && api !== null,
+    staleTime: Infinity,
+  });
+  const news = enabled ? (stats.data ?? []).filter((item) => item.hasUnread && item.newThreadCount > 0) : [];
+  return { all: news.length, pinned: news.filter((item) => pinned.has(item.channelId)).length };
+}
+
+/** This person's threads and breakouts (`GET /navigation/threads`): the Threads tab and the Pinned count share it. */
+function useMyThreads() {
+  const { api } = useAppSession();
+  return useInfiniteQuery({
+    queryKey: MY_THREADS_QUERY_KEY,
+    queryFn: ({ pageParam, signal }) => api!.getMyThreads(pageParam, signal),
+    initialPageParam: null as string | null,
+    getNextPageParam: (page) => page.nextCursor,
+    enabled: Boolean(api),
+  });
+}
+
+/**
+ * Pinned threads and breakouts whose rows read as unread, from the copies
+ * the Pinned list draws: a thread started a moment ago, which the socket
+ * holds before the list is read again, the first page's pinned rows, a loaded
+ * page's row where it has one, and the socket's live thread over each.
+ */
+function useUnreadPinnedThreadCount(): number {
+  const list = useMyThreads();
+  const live = useWorkstreamsQuery();
+  const threads = usePinnedIds('thread');
+  const breakouts = usePinnedIds('breakout');
+  return useMemo(() => {
+    const liveById = new Map((live.data ?? []).map((row) => [row.id, row]));
+    const byId = new Map<string, SpaceConversationSummary>();
+    for (const row of live.data ?? []) if (row.pending) byId.set(row.id, { ...row, kind: 'channel', breakoutOf: null });
+    for (const row of list.data?.pages[0]?.pinned ?? []) byId.set(row.id, row);
+    for (const page of list.data?.pages ?? []) for (const row of page.items) byId.set(row.id, row);
+    return [...threads, ...breakouts].filter((id) => {
+      const row = byId.get(id);
+      return row !== undefined && threadUnread(withLiveThread(row, liveById));
+    }).length;
+  }, [breakouts, list.data, live.data, threads]);
 }
 
 /** The Channel the open route sits under, so a thread opened from a list stays under it. */
@@ -790,13 +893,7 @@ function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefOb
   const pin = usePinAction(api);
   const openChannelId = useOpenChannelId();
   const openThreadId = useOpenThreadId();
-  const list = useInfiniteQuery({
-    queryKey: MY_THREADS_QUERY_KEY,
-    queryFn: ({ pageParam, signal }) => api!.getMyThreads(pageParam, signal),
-    initialPageParam: null as string | null,
-    getNextPageParam: (page) => page.nextCursor,
-    enabled: Boolean(api),
-  });
+  const list = useMyThreads();
   const liveById = useMemo(() => new Map((live.data ?? []).map((row) => [row.id, row])), [live.data]);
   const rows = useMemo(() => {
     const fetched = (list.data?.pages ?? []).flatMap((page) => page.items);
@@ -1331,14 +1428,7 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
       ? <RallyAvatar />
       : <Avatar member={member ?? { id: item.actorUserId, name, email: '', timezone: '' }} title={null} />,
   });
-  const feed = useInfiniteQuery({
-    queryKey: activityQueryKey(only),
-    queryFn: ({ pageParam, signal }) => api!.getActivity(pageParam, only, signal),
-    initialPageParam: null as string | null,
-    getNextPageParam: (page) => page.nextCursor,
-    enabled: Boolean(api),
-    refetchOnMount: 'always',
-  });
+  const feed = useActivityFeed(only);
   const fetched = useMemo(() => (feed.data?.pages ?? []).flatMap((page) => page.items), [feed.data]);
   const items = chip === 'unread' ? fetched.filter((item) => item.unread) : fetched;
   const href = (item: ActivityItem): string => {
