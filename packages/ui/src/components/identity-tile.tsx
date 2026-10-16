@@ -166,9 +166,12 @@ export function ShapeOutline({ className, shape, size = 22, strokeWidth = 1.8 }:
 }
 
 /** Where each of a grid's four cells sits in the 24-unit grid, clockwise from the top left. */
-const GRID_CELLS = [[1.5, 1.5], [13.5, 1.5], [13.5, 13.5], [1.5, 13.5]] as const;
-/** Each cell is 9 units, leaving a clear gap between strokes; an outline's drawn box is 17.4 of its own 24. */
-const GRID_SCALE = 9 / 17.4;
+const GRID_CELLS = [[2.4, 2.4], [14, 2.4], [14, 14], [2.4, 14]] as const;
+/**
+ * Each cell is 7.6 units, a 4-unit gutter between them, so four shapes in the
+ * space of one stay apart; an outline's drawn box is 17.4 of its own 24.
+ */
+const GRID_SCALE = 7.6 / 17.4;
 
 /**
  * Four outlines in a two-by-two grid, clockwise from the top left, for a
@@ -176,7 +179,7 @@ const GRID_SCALE = 9 / 17.4;
  * grid's units, a little lighter than a lone outline's so the four small
  * shapes stay apart.
  */
-export function ShapeGrid({ className, shapes, size = 22, strokeWidth = 1.5 }: {
+export function ShapeGrid({ className, shapes, size = 22, strokeWidth = 1.2 }: {
   className?: string | undefined;
   shapes: readonly [OutlineShape, OutlineShape, OutlineShape, OutlineShape];
   size?: number;
