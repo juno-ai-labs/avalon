@@ -40,7 +40,7 @@ import { useFileDrop } from '../lib/use-file-drop';
 import { useFilePaste } from '../lib/use-file-paste';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import { type AttachmentPreview, PendingAttachmentTile } from './attachments';
-import { IconButton, InlineError } from './primitives';
+import { IconButton, InlineError, Tip } from './primitives';
 
 /**
  * The model control a composer offers, in whichever of its two shapes fits
@@ -93,6 +93,24 @@ export type ComposerModelControl =
     pinned: boolean;
   };
 
+/**
+ * A host's own entry in the message capsule's "+" menu, listed after Attach
+ * files when the host takes attachments. The menu shows whenever it has an
+ * entry, so a host without attachments can still offer these. The composer draws it and calls `onSelect`; what it does belongs to
+ * the host, so a surface can offer an action that only makes sense there.
+ */
+export interface ComposerMenuAction {
+  /**
+   * Why the action cannot run here. The entry still shows, disabled, with this
+   * as its tooltip: an action that silently vanishes on one platform reads as
+   * missing rather than unavailable.
+   */
+  disabledReason?: string;
+  icon: ReactNode;
+  label: string;
+  onSelect: () => void;
+}
+
 interface ComposerInputProps {
   api?: RealtimeDictationApi;
   ariaLabel: string;
@@ -111,6 +129,8 @@ interface ComposerInputProps {
   /** Main work streams opt into GrokBot's single-row message capsule. */
   layout?: 'toolbar' | 'message-capsule';
   maxHeight?: number;
+  /** Extra "+" menu entries; only the message capsule has the menu to put them in. */
+  menuActions?: readonly ComposerMenuAction[];
   mentionDisabled?: boolean;
   mentionLabel?: string;
   /** Labels of the resources an `@` can name here; typing one highlights it in the draft. */
@@ -238,6 +258,7 @@ function listShortcutKind(event: KeyboardEvent<HTMLTextAreaElement>): ListMarker
 
 /** Stable empty default so the highlight memo is not invalidated every render. */
 const NO_MENTION_LABELS: readonly string[] = [];
+const NO_MENU_ACTIONS: readonly ComposerMenuAction[] = [];
 
 /**
  * The shared text-entry surface for both a new work stream and an existing one.
@@ -263,6 +284,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   submitContent,
   layout = 'toolbar',
   maxHeight = 180,
+  menuActions = NO_MENU_ACTIONS,
   mentionDisabled = false,
   mentionLabel = 'Mention a participant',
   mentionLabels = NO_MENTION_LABELS,
@@ -717,7 +739,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 <AtSign size={15} />
               </IconButton>
             )}
-            {!onAttach ? null : messageCapsule ? (
+            {messageCapsule ? (onAttach || menuActions.length > 0) && (
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
                   <IconButton className="composer-action-trigger" disabled={submitting} label="Composer actions">
@@ -732,17 +754,43 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                     side="top"
                     sideOffset={8}
                   >
-                    <DropdownMenu.Item
-                      className="menu-item composer-action-menu-item"
-                      onSelect={() => fileInputRef.current?.click()}
-                    >
-                      <Paperclip aria-hidden="true" />
-                      <span>Attach files</span>
-                    </DropdownMenu.Item>
+                    {onAttach && (
+                      <DropdownMenu.Item
+                        className="menu-item composer-action-menu-item"
+                        onSelect={() => fileInputRef.current?.click()}
+                      >
+                        <Paperclip aria-hidden="true" />
+                        <span>Attach files</span>
+                      </DropdownMenu.Item>
+                    )}
+                    {menuActions.map((action) => {
+                      const disabled = action.disabledReason !== undefined;
+                      // Disabled by hand rather than with Radix's `disabled`, which
+                      // drops the item from arrow-key focus and so leaves a keyboard
+                      // never reaching the tooltip that says why.
+                      const item = (
+                        <DropdownMenu.Item
+                          aria-disabled={disabled || undefined}
+                          className="menu-item composer-action-menu-item"
+                          data-disabled={disabled ? '' : undefined}
+                          key={action.label}
+                          onSelect={(event) => {
+                            if (disabled) event.preventDefault();
+                            else action.onSelect();
+                          }}
+                        >
+                          {action.icon}
+                          <span>{action.label}</span>
+                        </DropdownMenu.Item>
+                      );
+                      return action.disabledReason === undefined
+                        ? item
+                        : <Tip key={action.label} label={action.disabledReason} side="right">{item}</Tip>;
+                    })}
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
-            ) : (
+            ) : onAttach && (
               <IconButton disabled={submitting} label="Attach a file" onClick={() => fileInputRef.current?.click()}>
                 {uploading ? <LoaderCircle className="spin" size={15} /> : <Plus size={16} />}
               </IconButton>

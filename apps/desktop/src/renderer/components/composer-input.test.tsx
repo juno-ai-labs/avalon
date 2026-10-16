@@ -1,5 +1,5 @@
 import { createRef, type ComponentProps } from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ComposerInput } from './composer-input';
@@ -270,5 +270,40 @@ describe('ComposerInput markdown lists', () => {
     // A list is started by typing one, so the menu offers no list command to
     // get out of step with what the keys do.
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Attach files']);
+  });
+
+  it('lists a host action after Attach files and runs it when chosen', () => {
+    const onSelect = vi.fn();
+    composeAt('', 0, { layout: 'message-capsule', menuActions: [{ icon: null, label: 'Import from Claude or ChatGPT', onSelect }] });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Composer actions' }), { button: 0, ctrlKey: false });
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Attach files', 'Import from Claude or ChatGPT']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Import from Claude or ChatGPT' }));
+    expect(onSelect).toHaveBeenCalledOnce();
+  });
+
+  it('shows a host action it cannot run as disabled, saying why', async () => {
+    const onSelect = vi.fn();
+    composeAt('', 0, {
+      layout: 'message-capsule',
+      menuActions: [{ disabledReason: 'Importing needs the Rally Mac app', icon: null, label: 'Import from Claude or ChatGPT', onSelect }],
+    });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Composer actions' }), { button: 0, ctrlKey: false });
+    const item = screen.getByRole('menuitem', { name: 'Import from Claude or ChatGPT' });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    // Reached the way a keyboard reaches it: arrowing past Attach files.
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowDown' });
+    await waitFor(() => expect(document.activeElement).toHaveTextContent('Attach files'));
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+    await waitFor(() => expect(document.activeElement).toBe(item));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Importing needs the Rally Mac app');
+    fireEvent.keyDown(item, { key: 'Enter' });
+    fireEvent.click(item);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('opens the menu for host actions when the host takes no attachments', () => {
+    composeAt('', 0, { layout: 'message-capsule', menuActions: [{ icon: null, label: 'Import from Claude or ChatGPT', onSelect: () => undefined }], onAttach: undefined });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Composer actions' }), { button: 0, ctrlKey: false });
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Import from Claude or ChatGPT']);
   });
 });
