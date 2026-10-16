@@ -683,6 +683,19 @@ personless; it is not duplicated into these product events.
 - **Network policy is host compiled, revision fenced, applied to a running
   sandbox only after it stops, and read back.** Letting the model edit egress or assuming a provider update
   succeeded would make Trusted only a UI label rather than an enforced state.
+- **Trusted only limits which hosts a sandbox reaches; it does not stop data
+  leaving through them.** The baseline admits every Rally site in both regions
+  (`*.rallyusercontent.com`) so an agent can screenshot the active site it
+  published. A site's own `index.js` runs on an anonymous `GET` and may store
+  what the request carries, so a prompt-injected agent can send data to a site
+  another Rally user owns, who can then read it in that site's Data view.
+  This was accepted on 2026-10-16 so the building-live-sites skill can check a
+  public active site at its published URL; the help center tells
+  administrators so. Nothing may describe Trusted only as a guard against
+  data leaving through Rally sites. Narrowing it means removing the wildcard,
+  which leaves active sites unchecked in Trusted only, or having the serving
+  Worker refuse sandbox requests to sites that keep storage; a check inside
+  the agent cannot work, since the agent is what is misled.
 - **No model-facing revisions, lifecycle, directory-listing, polling, PTY,
   network, credential, or raw-Daytona tools exist.** These duplicate trained CLI
   behavior or expose control-plane authority that the task does not need. The

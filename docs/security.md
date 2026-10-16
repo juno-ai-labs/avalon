@@ -698,7 +698,11 @@ network-policy, credential, or raw-Daytona tool. Paths stay at or below `/worksp
 output is stripped of terminal controls and recognizable token forms, and logs
 never carry commands or output. Trusted-only egress is a host-compiled Daytona
 `domainAllowList` with an immutable baseline and read-back verification; the
-model cannot add a domain. Full internet is an explicit workspace-admin choice.
+model cannot add a domain. The baseline includes every Rally site, which can
+keep what a request sends it, so Trusted only limits where data can go rather
+than stopping it leaving
+([`terminal-workspaces.md`](terminal-workspaces.md#invariants)). Full internet
+is an explicit workspace-admin choice.
 Before a model-selected repository change destroys a retained generation,
 Rally transfers a bounded recovery archive through the trusted Worker, verifies
 its size and digest, and attaches it as a regional resource. Git metadata,
