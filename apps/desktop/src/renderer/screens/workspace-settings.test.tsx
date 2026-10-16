@@ -302,9 +302,6 @@ describe('Organization settings', () => {
     api.getConnections.mockResolvedValue([]);
     api.getMyPersonalSystemPrompt.mockResolvedValue('');
     api.getMyPreferences.mockResolvedValue(DEFAULT_MEMBER_PREFERENCES);
-    // Every existing test in this file was written before digestsEnabled
-    // existed and expects the section to be there; a test that cares about it
-    // being hidden overrides this with its own resolved value.
     api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({}));
     api.getGitHubRepositoryAccessSettings.mockResolvedValue({
       connectionId: '00000000-0000-7000-8000-000000000020',
@@ -3181,18 +3178,6 @@ describe('Organization settings', () => {
     openSettingsSection('Application');
 
     expect(await screen.findByText('Application settings could not be read.')).toBeVisible();
-  });
-
-  it('leaves the Daily digest out of Notifications when digestsEnabled resolves false', async () => {
-    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ digestsEnabled: false }));
-    renderSettings();
-    openSettingsSection('Notifications');
-
-    await screen.findByText('Notify me about');
-    // Their digest has in fact stopped arriving — see the same comment on
-    // `digestSettingsAvailable`'s use site — but there is no copy here for a
-    // paused state, so the section is simply not offered.
-    expect(screen.queryByText('Daily digest')).toBeNull();
   });
 });
 

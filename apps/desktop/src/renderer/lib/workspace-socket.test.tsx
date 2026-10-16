@@ -2854,7 +2854,7 @@ describe('the organization-sync relay between windows', () => {
         automations: { waterline: 1, items: [] },
         notes: { waterline: 1, items: [], nextCursor: null },
       },
-      featureFlags: { digestsEnabled: false },
+      featureFlags: { liveArtifactsEnabled: false },
     }));
     act(() => socket.message({
       type: 'workspace_sync',
@@ -2867,8 +2867,8 @@ describe('the organization-sync relay between windows', () => {
     act(() => socket.message({
       type: 'workspace_feature_flags',
       occurredAt: '2026-08-17T20:00:02.000Z',
-      changedFlag: 'digests-enabled',
-      flags: ClientFeatureFlagsSchema.parse({ digestsEnabled: true }),
+      changedFlag: 'live-artifacts-enabled',
+      flags: ClientFeatureFlagsSchema.parse({ liveArtifactsEnabled: true }),
     }));
     act(() => socket.message({
       type: 'workspace_sidebar_list',
