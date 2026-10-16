@@ -512,7 +512,9 @@ describe('a Channel', () => {
 
     await waitFor(() => expect(api.updateSpaceAudience).toHaveBeenCalledWith('outbound', { scope: 'personal', participantUserIds: ['jordan'] }));
     await waitFor(() => expect(client.getQueryData<{ items: unknown[] }>(['spaces'])?.items).toEqual([]));
-    expect(screen.getByTestId('location')).not.toHaveTextContent('/channels/outbound');
+    // The navigation away is rendered after the cache write commits, so it is
+    // waited for too: asserting it in the same tick failed under a loaded full run.
+    await waitFor(() => expect(screen.getByTestId('location')).not.toHaveTextContent('/channels/outbound'));
   });
 
   it('closes a leave still being asked when another Channel opens, so it cannot leave that one', async () => {
