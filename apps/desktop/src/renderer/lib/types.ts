@@ -621,7 +621,7 @@ export interface Message {
   /**
    * Set on an activation row: which Sidekick delivered this result, under the
    * name frozen at delivery. The author slot reads it instead of the generic
-   * 'Automation' label.
+   * 'Sidekick' label.
    */
   automationActivation?: {
     automationId: string;

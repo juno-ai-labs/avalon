@@ -2606,7 +2606,7 @@ describe('MessageBlock heading collapse control', () => {
   });
 });
 
-describe('an automation result in the room', () => {
+describe('a Sidekick result in the room', () => {
   const activation = {
     ...baseMessage,
     id: 'message-activation',
@@ -2619,14 +2619,14 @@ describe('an automation result in the room', () => {
     text: '## Monday agenda\n\nTwo candidates reached final round.',
   };
 
-  it('renders as an ordinary authored message, named Automation', () => {
+  it('renders as an ordinary authored message, named Sidekick', () => {
     render(<MessageBlock {...actions} collapseHeadings message={activation} />);
 
     // The generic label is the fallback: this row carries no parsed activation,
     // so there is no Sidekick name to put in the author slot.
-    const article = screen.getByRole('article', { name: 'Result from Automation' });
+    const article = screen.getByRole('article', { name: 'Result from Sidekick' });
     expect(article).toHaveClass('message-block', 'agent-message');
-    expect(article.querySelector('.message-author')?.textContent).toBe('Automation');
+    expect(article.querySelector('.message-author')?.textContent).toBe('Sidekick');
     // Not "Rally": the room is being told what an automation found, and the
     // name in the author slot is the whole of what marks it as one.
     expect(article.textContent).not.toContain('Rally');
@@ -2708,7 +2708,7 @@ describe('the card proposing an automation drafted in this room', () => {
     const onAcceptDraft = vi.fn();
     render(<MessageBlock {...actions} message={proposal} onAcceptDraft={onAcceptDraft} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Create this automation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create this Sidekick' }));
 
     expect(onAcceptDraft).toHaveBeenCalledExactlyOnceWith('automation-7');
   });
@@ -2728,7 +2728,7 @@ describe('the card proposing an automation drafted in this room', () => {
 
     // A hash link rather than a router link: the card also renders on
     // surfaces that mount no router, and the app routes by hash.
-    expect(screen.getByRole('link', { name: 'Open automation' }))
+    expect(screen.getByRole('link', { name: 'Open Sidekick' }))
       .toHaveAttribute('href', '#/automations/automation-7');
   });
 
@@ -2742,7 +2742,7 @@ describe('the card proposing an automation drafted in this room', () => {
       />,
     );
 
-    expect(screen.queryByRole('button', { name: 'Create this automation' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Create this Sidekick' })).toBeNull();
     expect(screen.getByRole('group').textContent).toContain('Still being drafted');
   });
 });
@@ -2902,7 +2902,7 @@ describe('MessageBlock breakout cutoff', () => {
     render(
       <MessageBlock {...actions} message={{ ...settledAgentTurn, messageType: 'automation_activation' }} onStartSubstream={onStartSubstream} />,
     );
-    expect(screen.getByText('Automation')).toBeInTheDocument();
+    expect(screen.getByText('Sidekick')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'New breakout from this message' }));
     expect(onStartSubstream).toHaveBeenCalledExactlyOnceWith('turn-9');
   });
