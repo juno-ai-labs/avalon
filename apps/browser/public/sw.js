@@ -58,9 +58,13 @@ self.addEventListener("notificationclick", (event) => {
     const path = (client) => new URL(client.url).pathname.replace(/\/$/u, "");
     const same = data.workspacePath && windows.find((client) => path(client) === data.workspacePath);
     if (same) {
-      const focused = await same.focus();
-      focused.postMessage({ type: "rally:open", url });
-      return focused;
+      try {
+        const focused = await same.focus();
+        focused.postMessage({ type: "rally:open", url });
+        return focused;
+      } catch {
+        // The tab closed since it was listed; fall through to the others.
+      }
     }
     // Otherwise reuse a Rally tab on this host: loading the link switches it
     // to the link's Organization.
