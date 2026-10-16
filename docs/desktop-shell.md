@@ -51,10 +51,8 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   its name, and the account menu at the bottom (its trigger shows only the
   avatar here). The outlines are what each list holds: a Channel is a squircle
   and a Thread is a circle, as their rows draw them, and Activity, which holds
-  neither, is a triangle. Pinned holds every kind that can be pinned, so its
-  icon is a two-by-two grid (`ShapeGrid`), clockwise from the top left: a
-  Channel, a Thread, a Sidekick's hexagon and a Thread. The hexagon is there for
-  kinds still to come; Pinned lists Channels and Threads today.
+  neither, is a triangle. Pinned holds every kind that can be pinned, so it
+  takes the Tabler pin a row's pin button draws, at the outlines' 1.8 stroke.
   The choice is a device preference (`rally.sidebar-section`). Every section
   carries a red count (`RailBadge`; nothing at zero, `99+` past two digits). **Threads**: every conversation waiting on this
   person and every access request waiting on them, the same `attentionItems`
@@ -466,6 +464,22 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-16 — Pinned's rail icon is the pin
+
+**What changed:** The Pinned section's icon is `IconPin` at 22px and a 1.8
+stroke, replacing `ShapeGrid`. `ShapeGrid` and the hexagon outline it alone
+used are gone from `identity-tile.tsx`.
+
+**Why:** The grid did not sit with its neighbours. It spanned 2.4 to 21.6 of the
+24-unit grid against the outlines' 3.6 keyline, and its 1.2 stroke made four
+thin shapes that read as grey texture beside single 1.8 outlines. A tuned grid,
+a squircle-and-circle pair, a nested squircle, a diamond and a star were drawn
+and compared; the product owner chose the pin because it names the section
+and matches the control that fills it. It breaks the rule that each section's
+icon is the outline of what it holds, so a later section should not take that
+as precedent: the pin is an exception for a list defined by an action, not by
+a kind.
 
 ### 2026-10-16 — New breakout and Merge lead every message's hover row
 

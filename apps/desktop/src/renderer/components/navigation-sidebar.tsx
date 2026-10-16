@@ -1,6 +1,6 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import type { ActivityFilter, ActivityItem, ActivityPage, ConversationAccessRequestItem, PinKind, SpaceSummary, WorkstreamAppearance } from '@rally/contracts';
-import { IdentityTile, ShapeGrid, ShapeOutline, type TileBadge } from '@rally/ui/components/identity-tile';
+import { IdentityTile, ShapeOutline, type TileBadge } from '@rally/ui/components/identity-tile';
 import { resolveWorkstreamAppearance, WORKSTREAM_ICON_COMPONENTS } from '@rally/ui/components/workstream-glyph';
 import { markColors } from '@rally/ui/lib/project-palette';
 import {
@@ -67,11 +67,11 @@ const REVEAL_DEADLINE_MS = 2_000;
  * Each section's button is the outline of what its list holds: a Channel is a
  * squircle and a Thread a circle, as their rows draw them. Activity holds
  * neither, so it takes the triangle no object uses. Pinned holds every kind
- * that can be pinned, so it is a grid of them, a Sidekick's hexagon included
- * for the kinds still to come.
+ * that can be pinned, so it takes the pin a row's pin button draws, at the
+ * outlines' stroke.
  */
 const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNode }> = [
-  { id: 'pinned', label: 'Pinned', icon: <ShapeGrid shapes={['squircle', 'circle', 'hexagon', 'circle']} /> },
+  { id: 'pinned', label: 'Pinned', icon: <IconPin aria-hidden="true" size={22} stroke={1.8} /> },
   { id: 'channels', label: 'Channels', icon: <ShapeOutline shape="squircle" /> },
   { id: 'threads', label: 'Threads', icon: <ShapeOutline shape="circle" /> },
   { id: 'activity', label: 'Activity', icon: <ShapeOutline shape="triangle" /> },
