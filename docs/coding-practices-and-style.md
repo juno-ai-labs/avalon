@@ -117,6 +117,24 @@ the deferred factory. Ordinary consumers should not unwrap merely to parse.
 custom refinements, issue paths, and detailed messages. It is not a reason to
 switch to Zod Mini or to return raw Zod errors directly to users.
 
+## A control that hides its input is a label
+
+Some controls hide their real `<input>` in the stylesheet and draw a sibling in
+its place: `.settings-toggle` and `.watch-toggle` keep the input 1px wide and
+transparent, and the switch a person sees is a `<span>`. A click on that span
+reaches the input only through a `<label>`, so the element carrying the class
+must be a `<label>` or sit inside one. `SettingToggle` wraps its whole row in a
+label; a bare switch is the label itself.
+
+`rally/hidden-input-control-label` enforces this over `.tsx` source in `apps/`
+and `packages/`. The class list lives in `eslint.config.mjs`, because which
+classes hide their input is the stylesheet's decision; add a class there when a
+new control draws over its input the same way. The rule reads class names
+spelled literally, including inside template literals and conditionals, and
+looks for a `<label>` ancestor only within the same JSX tree, so a control
+whose label comes from a parent component needs restructuring or the label
+moved in.
+
 ## Testing
 
 Repository-wide rules should have a mechanical check when the syntax can be
@@ -125,6 +143,27 @@ production JavaScript and TypeScript source. Existing test and operator-script
 exceptions are migration debt and must be removed when those files are touched;
 native host-language calls such as Objective-C's `ObjC.import` are not
 JavaScript module imports.
+
+### 2026-10-16 — A control that hides its input must be a label
+
+**What changed:** `rally/hidden-input-control-label` rejects an element with a
+listed class (`settings-toggle`, `watch-toggle`) that is neither a `<label>`
+nor inside one.
+
+**Why:** The daily digest's Start of day and End of day switches wrapped the
+hidden checkbox in a `<span>`, so clicking the drawn switch did nothing. The
+shared `SettingToggle` worked only because it wraps its row in a label, and
+nothing said a hand-built switch had to do the same.
+
+**Considered and rejected:** Giving the hidden input the switch's full size
+would make the click land without a label, but every control styled this way
+would need the same change, and the label also makes the row text clickable.
+A rule keyed on the input's CSS cannot be written from the JSX alone, so the
+class list is configuration.
+
+**Consequences:** A new control that hides its input joins the list in
+`eslint.config.mjs`. A label supplied by a parent component is invisible to the
+rule; keep the label in the same component as the control.
 
 ### 2026-09-18 — Sidebar presentation owns failure language
 

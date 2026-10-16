@@ -34,6 +34,7 @@ import { durableObjectRegionRoutingRule } from "./scripts/eslint-rules/durable-o
 import { durableObjectNativeRpcRule } from "./scripts/eslint-rules/durable-object-native-rpc.mjs";
 import { durableObjectSyncTransactionRule } from "./scripts/eslint-rules/durable-object-sync-transaction.mjs";
 import { durableObjectWorkspaceTableRoutingRule } from "./scripts/eslint-rules/durable-object-workspace-table-routing.mjs";
+import { hiddenInputControlLabelRule } from "./scripts/eslint-rules/hidden-input-control-label.mjs";
 
 export default tseslint.config(
   {
@@ -83,6 +84,7 @@ export default tseslint.config(
           "durable-object-native-rpc": durableObjectNativeRpcRule,
           "durable-object-sync-transaction": durableObjectSyncTransactionRule,
           "durable-object-workspace-table-routing": durableObjectWorkspaceTableRoutingRule,
+          "hidden-input-control-label": hiddenInputControlLabelRule,
         },
       },
     },
@@ -117,6 +119,15 @@ export default tseslint.config(
     ignores: ["**/*.test.{ts,tsx}"],
     rules: {
       "rally/prefer-zod-direct-object": "error",
+    },
+  },
+  {
+    // These classes hide their real input in packages/ui/src/styles/app.css and
+    // draw a sibling in its place; only a <label> forwards a click on that
+    // sibling to the input. Add a class here when its stylesheet does the same.
+    files: ["apps/**/src/**/*.tsx", "packages/**/src/**/*.tsx"],
+    rules: {
+      "rally/hidden-input-control-label": ["error", { classNames: ["settings-toggle", "watch-toggle"] }],
     },
   },
   {
