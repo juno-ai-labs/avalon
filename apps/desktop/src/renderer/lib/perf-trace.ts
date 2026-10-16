@@ -28,7 +28,20 @@ import { reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './te
  * ids required to join the matching backend work.
  */
 
-export type PerfFlow = 'workstream_create' | 'substream_prepare' | 'substream_create' | 'workstream_open' | 'workstream_message_send' | 'workspace_search';
+/** The flows the `renderer_perf_flow` event's schema carries. */
+export type ReportedPerfFlow = 'workstream_create' | 'substream_prepare' | 'substream_create' | 'workstream_open' | 'workstream_message_send' | 'workspace_search';
+/**
+ * `dictation_start` prints its line and stops there: the event's schema does
+ * not name it, so its trace is opened with `report: false` and never reaches
+ * telemetry. Adding it to the schema is what would make it a reported flow.
+ */
+export type PerfFlow = ReportedPerfFlow | 'dictation_start';
+const reportedPerfFlows: ReadonlySet<string> = new Set<ReportedPerfFlow>([
+  'workstream_create', 'substream_prepare', 'substream_create', 'workstream_open', 'workstream_message_send', 'workspace_search',
+]);
+function isReportedPerfFlow(flow: PerfFlow): flow is ReportedPerfFlow {
+  return reportedPerfFlows.has(flow);
+}
 
 export interface PerfTrace {
   readonly traceId: string;
@@ -155,7 +168,7 @@ function countBucketOrUndefined(value: unknown): ReturnType<typeof telemetryCoun
 }
 
 export function rendererPerfFlowIntent(
-  flow: PerfFlow,
+  flow: ReportedPerfFlow,
   operationId: string,
   durationMs: number,
   phases: ReadonlyArray<readonly [string, number]>,
@@ -318,7 +331,7 @@ export function startPerfTrace(flow: PerfFlow, options: PerfTraceOptions = {}): 
         ...blocking,
         ...combinedFields,
       });
-      if (options.report !== false) {
+      if (options.report !== false && isReportedPerfFlow(flow)) {
         reportTelemetryProductIntent(rendererPerfFlowIntent(
           flow,
           operationId,

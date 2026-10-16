@@ -1,7 +1,8 @@
 import clsx from 'clsx';
 import { LoaderCircle, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
-import type { RallyApi, MentionIdentity } from '../lib/api';
+import type { MentionIdentity } from '../lib/api';
+import type { RealtimeDictationApi } from '../lib/use-realtime-dictation';
 import {
   completeMentionAtCaret,
   mentionsInTrimmedText,
@@ -79,7 +80,7 @@ interface WorkstreamComposerProps {
   footerHint?: string;
   submitLabel?: string;
   autoFocus?: boolean;
-  api?: Pick<RallyApi, 'getTranscriptionSocketTicket'>;
+  api?: RealtimeDictationApi;
   workstream: ComposerConversation;
   /** The key the unsent draft is cached under; see `lib/draft-keys.ts`. */
   draftKey: string;
