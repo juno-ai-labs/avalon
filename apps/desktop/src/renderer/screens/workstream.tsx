@@ -11,7 +11,7 @@ import { fetchThroughOwner } from '../lib/fetch-through-owner';
 import { PaneVisibility } from '../lib/pane-visibility';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
-import { asSubstreamId, asWorkspaceId, asWorkstreamId, conversationNeedsViewer, type HarnessStatus } from '@rally/contracts';
+import { asSubstreamId, asWorkspaceId, asWorkstreamId, conversationNeedsViewer, type ConversationMergeResult, type HarnessStatus } from '@rally/contracts';
 import { logError } from '../../common/logger';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { mainOmitted, mainReachable, useConversationDirectory } from '../lib/conversation-directory';
@@ -69,7 +69,7 @@ export {
 } from './conversation-surface';
 
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
-import { channelRoute, useChannelPane, usePaneExpansion } from '../lib/navigation-routes';
+import { channelRoute, revealChannelMessageState, useChannelPane, usePaneExpansion } from '../lib/navigation-routes';
 import { usePinAction, usePinnedIds } from '../lib/pins';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { normalizeHarnessStatus } from '../lib/api';
@@ -715,7 +715,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     setBreakoutWidth(width);
     writeLayout(breakoutWidthKey, String(width));
   }, [breakoutWidthKey]);
-  const [scrollToTurn, setScrollToTurn] = useState<{ turnId: string; nonce: number } | null>(null);
+  const [scrollToTurn, setScrollToTurn] = useState<{ turnId: string; nonce: number; arriving?: boolean } | null>(null);
   const showInChannel = (turnId: string | null | undefined): void => {
     if (breakoutOwnsRail) closeRail();
     if (turnId) setScrollToTurn((current) => ({ turnId, nonce: (current?.nonce ?? 0) + 1 }));
@@ -725,6 +725,16 @@ function OpenWorkstreamScreen(): React.JSX.Element {
    * surface closes its own panel as it unmounts.
    */
   const openThreadAlone = (): void => selectSubstream('0');
+  // A merge takes the reader up to where it landed, onto the merge itself.
+  const showMerge = (result: ConversationMergeResult): void => {
+    if (result.mergedInto.kind === 'channel') {
+      void navigate(channelRoute(result.mergedInto.id), { state: revealChannelMessageState(result.messageId) });
+      return;
+    }
+    if (!mainVisible) return;
+    openThreadAlone();
+    setScrollToTurn((current) => ({ turnId: result.messageId, nonce: (current?.nonce ?? 0) + 1, arriving: true }));
+  };
   const openBreakout = (substreamId: string): void => {
     // A panel the Channel has open would hide the Breakout being asked for.
     if (mainOwnsRail) closeRail();
@@ -904,6 +914,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const mainPane = !mainVisible ? null : <ConversationSurface
     breakouts={breakoutMarks}
     mergeRequest={mergeRequest?.substreamId === '0' ? mergeRequest.nonce : null}
+    onMerged={showMerge}
     honorsSearchTarget={openBreakoutId === null}
     onOpenBreakout={openBreakout}
     onStartSubstream={startCreation}
@@ -943,6 +954,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     workstreamContext={conversationScoped ? undefined : parent.data}
   /> : <ConversationSurface
     mergeRequest={mergeRequest && mergeRequest.substreamId === openBreakoutId ? mergeRequest.nonce : null}
+    onMerged={showMerge}
     parentId={id}
     parentKind="workstream"
     renderHeader={(context) => <TitlePillHeader

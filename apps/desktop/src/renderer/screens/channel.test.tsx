@@ -2,10 +2,10 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Link, MemoryRouter, parsePath, Route, Routes, useLocation } from 'react-router-dom';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type { ChannelStats } from '@rally/contracts';
-import { OPEN_EXPANDED, openResourceRequest } from '../lib/navigation-routes';
+import { OPEN_EXPANDED, openResourceRequest, revealChannelMessageState } from '../lib/navigation-routes';
 import { CHANNEL_STATS_QUERY_KEY } from '../lib/sidebar-list-store';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { ChannelScreen } from './channel';
@@ -320,6 +320,28 @@ describe('a Channel', () => {
     fireEvent.click(feed.getByRole('button', { name: 'An older thread' }));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/older'));
     expect(scrollIntoView).toHaveBeenCalledOnce();
+  });
+
+  it('brings into view the merge a navigation opened it onto', async () => {
+    const mergeId = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a63';
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 3, items: [
+      { kind: 'message', placedAt: '2026-10-02T03:00:00.000Z', attentionSequenceNumber: 3, message: {
+        id: mergeId,
+        author: { kind: 'member', userId: 'me' },
+        body: 'Shipped.',
+        merge: { threadId: plan.id, title: 'Q4 plan', summary: null, embeds: [] },
+      } },
+      { kind: 'thread', placedAt: '2026-10-02T01:00:00.000Z', attentionSequenceNumber: 1, thread: plan },
+    ] });
+    // jsdom does not scroll, so the call is the observable.
+    const original = Element.prototype.scrollIntoView;
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    onTestFinished(() => { Element.prototype.scrollIntoView = original; });
+    renderChannel('/channels/outbound', undefined, revealChannelMessageState(mergeId));
+    const merge = await screen.findByText('Shipped.');
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({ block: 'center' }));
+    expect(scrollIntoView.mock.contexts[0]).toBe(merge.closest('li'));
   });
 
   it('opens an artifact a merge cites, by its alias, in its thread', async () => {

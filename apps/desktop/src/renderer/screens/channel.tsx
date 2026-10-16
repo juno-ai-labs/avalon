@@ -25,7 +25,7 @@ import { reportActivityEvent } from '../lib/activity-events';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { copySpaceLink } from '../lib/copy-workstream-link';
-import { ChannelPaneContextValue, OPEN_EXPANDED, channelRoute, openThreadResourceState, threadRoute, usePaneExpansion, type ChannelPaneContext } from '../lib/navigation-routes';
+import { ChannelPaneContextValue, OPEN_EXPANDED, channelRoute, openThreadResourceState, revealChannelMessageRequest, threadRoute, usePaneExpansion, type ChannelPaneContext } from '../lib/navigation-routes';
 import { PaneVisibility } from '../lib/pane-visibility';
 import { useNow } from '../lib/clock';
 import { formatDayLabel } from '../lib/format';
@@ -315,6 +315,18 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
     // `space` too: the feed element first mounts when the Channel list arrives,
     // which may be after the rows were already in hand.
   }, [channelId, earlierPages, rows, space]);
+  // A navigation onto a message (a merge just made) brings it into view once
+  // the feed lists it, once per navigation.
+  const location = useLocation();
+  const revealMessageId = revealChannelMessageRequest(location.state);
+  const revealedFor = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (!revealMessageId || revealedFor.current === location.key) return;
+    const target = feedScroll.current?.querySelector(`[data-message-id="${CSS.escape(revealMessageId)}"]`);
+    if (!target) return;
+    revealedFor.current = location.key;
+    target.scrollIntoView({ block: 'center' });
+  }, [location.key, revealMessageId, rows, space]);
 
   if (active.data === undefined) return <LoadingState label="Opening channel…" />;
   if (!space) return <EmptyState description="It may have been archived, made private, or you may no longer have access." title="Channel not found" />;
@@ -464,7 +476,7 @@ function MessageCard({ author, members, message, placedAt }: {
 }): React.JSX.Element {
   const rally = message.author.kind === 'rally';
   const body = useMemo(() => typedMentionRendering(message.body, members), [members, message.body]);
-  return <li className="channel-feed-item is-message">
+  return <li className="channel-feed-item is-message" data-message-id={message.id}>
     <div className="channel-feed-message">
       {rally ? <RallyAvatar /> : author && <Avatar member={author} title={null} />}
       <div className="channel-feed-message-body">
@@ -548,7 +560,7 @@ function MergeCard({ author, channelId, currentUser, members, merge, message, on
     card.scrollIntoView({ block: 'center' });
     card.querySelector('button')?.focus({ preventScroll: true });
   };
-  return <li className="channel-feed-item is-message is-merge">
+  return <li className="channel-feed-item is-message is-merge" data-message-id={message.id}>
     <MergeMessage
       actions={<>
         {removable && <footer className="merge-message-actions">

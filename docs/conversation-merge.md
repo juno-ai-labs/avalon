@@ -179,6 +179,15 @@ stops the run. A title-menu request opens merge mode once; returning to the
 pane does not reopen it. A Channel merge card's artifact opens in its thread
 with the artifact's panel open.
 
+A merge that lands takes the reader to it. `ConversationSurface` reports the
+result through `onMerged`, and the thread screen acts on it: a Breakout's merge
+closes the Breakout and scrolls its Thread to the new message (`scrollToTurn`
+with `arriving`, which waits for the socket to deliver the turn instead of
+paging back, and scrolls to the end when the turn is the newest row); a
+Thread's merge opens the Channel it landed in with
+`revealChannelMessageState`, and the feed scrolls to that message once it is
+listed. Only the merge whose composer is still open moves the reader.
+
 ## Invariants
 
 - **The server writes every tag.** `mergedFrom`, `actingAgent`, the author and
@@ -272,6 +281,27 @@ connection's resource can be embedded only by its owner. Removing a merge
 leaves its attachments, since people may already rely on them.
 
 ## Changelog
+
+### 2026-10-16 — A merge opens where it landed
+
+**What changed:** After a merge the client goes up one level and scrolls to
+the merge message: the Thread for a Breakout's merge, the Channel for a
+Thread's.
+
+**Why:** The merge landed out of sight. The reader stayed in the Breakout or
+Thread and had to go and find the result to check it.
+
+**Considered and rejected:** Scrolling with the existing `scrollToTurn` as is.
+It pages back through older messages when the turn is not loaded, and a merge
+just written is usually not in the feed yet, so it would page to the start of
+the Thread. `arriving` makes it wait instead. Centering the newest row with
+`scrollToIndex` also landed a screen short in a long Thread, because the rows
+above it were still estimates, so the newest row goes through
+`scrollTranscriptToEnd`.
+
+**Consequences:** An `arriving` request that never arrives stays pending until
+the next request replaces it; a merge queued behind input waiting for Rally
+scrolls when it lands, not before.
 
 ### 2026-10-16 — Merge-back ships
 
