@@ -141,6 +141,11 @@ type FeedRow =
   | { kind: 'thread'; placedAt: string; thread: WorkstreamSummary }
   | { kind: 'message'; placedAt: string; message: ChannelMessage };
 
+/** A thread card's element id in the feed, so a merge can bring its thread into view. */
+function feedThreadElementId(threadId: string): string {
+  return `channel-feed-thread-${threadId}`;
+}
+
 function feedRowId(row: FeedRow): string {
   return row.kind === 'thread' ? row.thread.id : row.message.id;
 }
@@ -316,6 +321,12 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
   const openThread = (threadId: string, resourceId?: string): void => void navigate(threadRoute(threadId, channelId), {
     state: resourceId ? openThreadResourceState(threadId, resourceId) : OPEN_EXPANDED,
   });
+  // A merge's quote scrolls to its thread's card, when that card is loaded;
+  // an older one is a page away and the quote stays plain text.
+  const threadsInFeed = new Set(rows.flatMap((row) => row.kind === 'thread' ? [row.thread.id] : []));
+  const showThread = (threadId: string): void => {
+    document.getElementById(feedThreadElementId(threadId))?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
   // Only a member may start a thread in a private Channel; a thread placed
   // there is the Channel's to accept (`canEdit` on the server).
   const canStart = workspace.currentUser.accessClass !== 'guest' && space.reach !== 'through_channel';
@@ -360,6 +371,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
                 merge={row.message.merge}
                 message={row.message}
                 onOpenThread={openThread}
+                onShowThread={threadsInFeed.has(row.message.merge.threadId) ? showThread : undefined}
                 placedAt={row.placedAt}
               />
               : <MessageCard
@@ -430,7 +442,7 @@ function ThreadCard({ author, members, onOpen, open, placedAt, thread }: {
   // names in it are found again the way the send path found them, and drawn
   // by the renderer the message itself uses.
   const summary = useMemo(() => typedMentionRendering(thread.objective ?? '', members), [members, thread.objective]);
-  return <li className="channel-feed-item">
+  return <li className="channel-feed-item" id={feedThreadElementId(thread.id)}>
     <ConversationCard
       conversation={mark}
       meta={<>
@@ -484,7 +496,7 @@ function MessageCard({ author, members, message, placedAt }: {
  * from the titles stored with the merge. An artifact opens in its thread,
  * where it is attached and so readable by everyone who sees this.
  */
-function MergeCard({ author, channelId, currentUser, members, merge, message, onOpenThread, placedAt }: {
+function MergeCard({ author, channelId, currentUser, members, merge, message, onOpenThread, onShowThread, placedAt }: {
   author: WorkspaceMember | undefined;
   channelId: string;
   currentUser: WorkspaceMember;
@@ -492,6 +504,8 @@ function MergeCard({ author, channelId, currentUser, members, merge, message, on
   merge: NonNullable<ChannelMessage['merge']>;
   message: ChannelMessage;
   onOpenThread: (threadId: string, resourceId?: string) => void;
+  /** Scrolls the feed to the thread's card; absent when the card is not loaded. */
+  onShowThread: ((threadId: string) => void) | undefined;
   placedAt: string;
 }): React.JSX.Element {
   const { api } = useAppSession();
@@ -544,6 +558,7 @@ function MergeCard({ author, channelId, currentUser, members, merge, message, on
       </>}
       label={`${merge.title || 'A thread'}, merged by ${merger}`}
       mergedBy={<>{author && <Avatar member={author} size="small" title={null} />}{merger}</>}
+      onQuote={onShowThread ? () => onShowThread(merge.threadId) : undefined}
       quote={quote}
       source={{
         mark: <Icon size={10} strokeWidth={2} />,
