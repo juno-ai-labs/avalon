@@ -212,6 +212,27 @@ describe('the navigation sidebar', () => {
     expect(screen.queryByRole('link', { name: /Growth|Notes/u })).not.toBeInTheDocument();
   });
 
+  it('hands focus to the row beside an unpinned row in the Pinned tab, and to the tab when none is left', async () => {
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [] });
+    useUiStore.getState().setSidebarSection('pinned');
+    const growth = { kind: 'channel' as const, id: 'growth', parentId: null };
+    api.setPinned.mockResolvedValueOnce([growth]).mockResolvedValueOnce([]);
+    renderSidebar((client) => {
+      client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound'), channel('growth', 'Growth')] });
+      client.setQueryData(PINS_QUERY_KEY, [{ kind: 'channel', id: 'outbound', parentId: null }, growth]);
+    });
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Outbound/u }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Unpin' }));
+    await waitFor(() => expect(screen.queryByRole('link', { name: /Outbound/u })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('link', { name: /Growth/u })).toHaveFocus());
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Growth/u }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Unpin' }));
+    await waitFor(() => expect(screen.queryByRole('link', { name: /Growth/u })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Pinned' })).toHaveFocus());
+  });
+
   it('says how to pin from the Pinned tab when nothing is pinned, and gives a guest no Channels there', async () => {
     api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [] });
     useUiStore.getState().setSidebarSection('pinned');
