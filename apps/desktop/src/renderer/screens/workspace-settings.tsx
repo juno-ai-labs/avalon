@@ -431,8 +431,6 @@ function connectionStatusDescription(connection: WorkstreamConnection): string {
     case 'disabled': return 'This connection is disabled and exposes no tools.';
   }
 }
-/** The Default timezone choice that follows whichever device the person is on: the Automatic switch. */
-const AUTOMATIC_TIMEZONE = 'automatic';
 const supportedTimezones = typeof Intl.supportedValuesOf === 'function'
   ? Intl.supportedValuesOf('timeZone')
   : ['America/Los_Angeles', 'Europe/London', 'UTC'];
@@ -1009,25 +1007,19 @@ export function WorkspaceSettingsScreen({
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workspace-invitations'] }),
   });
   const updateUserTimezone = useMutation({
-    // Automatic takes this device's zone now and every device's report after.
-    mutationFn: (choice: string) => choice === AUTOMATIC_TIMEZONE
-      ? api!.updateMyTimezone(deviceTimezone() ?? userTimezone, true)
-      : api!.updateMyTimezone(choice),
-    onSuccess: (user, choice) => queryClient.setQueryData(MY_TIMEZONE_QUERY_KEY, {
-      timezone: user.timezone,
-      followsDevice: choice === AUTOMATIC_TIMEZONE,
-    }),
-    // Read back either way, so a failed save never leaves the picker showing
-    // a choice the server does not hold; the digest names the zone too.
+    mutationFn: (choice: { timezone: string; followDevice: boolean }) =>
+      api!.updateMyTimezone(choice.timezone, choice.followDevice),
+    // Read back rather than written from the response, so a failed save never
+    // leaves the controls showing a choice the server does not hold; the
+    // digest names the zone too.
     onSettled: () => Promise.all([
       queryClient.invalidateQueries({ queryKey: MY_TIMEZONE_QUERY_KEY }),
       queryClient.invalidateQueries({ queryKey: ['digest-schedule'] }),
     ]),
   });
-  // While a save is in flight, the switch shows where it is going.
-  const timezoneFollowsDevice = updateUserTimezone.isPending && updateUserTimezone.variables
-    ? updateUserTimezone.variables === AUTOMATIC_TIMEZONE
-    : myTimezone.data?.followsDevice === true;
+  // While a save is in flight, the controls show where it is going.
+  const pendingTimezone = updateUserTimezone.isPending ? updateUserTimezone.variables : undefined;
+  const timezoneFollowsDevice = pendingTimezone?.followDevice ?? myTimezone.data?.followsDevice === true;
   const updateWorkspaceTimezone = useMutation({
     mutationFn: (timezone: string) => api!.updateWorkspace({ timezone }),
     onSuccess: (updated) => setWorkspaceTimezone(updated.timezone),
@@ -1508,23 +1500,26 @@ export function WorkspaceSettingsScreen({
                 {!guest && <>
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Preferences</h2></div>
                 <div className="settings-list-card">
+                  {/* Waits for the read: on or off is unknown until then. Off
+                      fixes the zone the account is in now. */}
                   <SettingToggle setting={settings.personalTimezoneAutomatic}
                     checked={timezoneFollowsDevice}
                     disabled={updateUserTimezone.isPending || !myTimezone.data}
-                    // Off fixes the zone the account is in now.
-                    onChange={(event) => updateUserTimezone.mutate(event.currentTarget.checked ? AUTOMATIC_TIMEZONE : userTimezone)}
+                    onChange={(event) => updateUserTimezone.mutate(event.currentTarget.checked
+                      ? { timezone: deviceTimezone() ?? userTimezone, followDevice: true }
+                      : { timezone: userTimezone, followDevice: false })}
                     role="switch" />
                   <label className="settings-preference-row">
                     <SettingCopy setting={settings.personalTimezone} />
                     <DropdownSelect
                       ariaLabel="Personal default timezone"
-                      disabled={updateUserTimezone.isPending || !myTimezone.data || timezoneFollowsDevice}
-                      onValueChange={(choice) => updateUserTimezone.mutate(choice)}
+                      // Usable even if the read fails, falling back to the
+                      // session's zone, as before the switch existed.
+                      disabled={updateUserTimezone.isPending || timezoneFollowsDevice}
+                      onValueChange={(timezone) => updateUserTimezone.mutate({ timezone, followDevice: false })}
                       options={timezoneOptions.map((timezone) => ({ label: timezone, value: timezone }))}
-                      value={updateUserTimezone.isPending && updateUserTimezone.variables
-                        && updateUserTimezone.variables !== AUTOMATIC_TIMEZONE
-                        ? updateUserTimezone.variables
-                        : timezoneFollowsDevice ? deviceTimezone() ?? userTimezone : userTimezone}
+                      // The server's zone, which another device may have moved.
+                      value={pendingTimezone?.timezone ?? userTimezone}
                       variant="secondary"
                     />
                   </label>
