@@ -141,15 +141,13 @@ export function IdentityTile({ badges, className, icon: Icon, ink, shape, size =
   </span>;
 }
 
-/** A shape an outline can draw: a tile's, the triangle no object uses, and a Sidekick's hexagon. */
-export type OutlineShape = TileShape | 'triangle' | 'hexagon';
+/** A shape an outline can draw: a tile's, and the triangle no object uses. */
+export type OutlineShape = TileShape | 'triangle';
 
 const OUTLINES: Record<OutlineShape, ReactNode> = {
   squircle: <rect height="16.8" rx="5.6" width="16.8" x="3.6" y="3.6" />,
   circle: <circle cx="12" cy="12" r="8.6" />,
   triangle: <path d="M10.6 4.3a1.6 1.6 0 0 1 2.8 0l7.9 13.9a1.6 1.6 0 0 1-1.4 2.4H4.1a1.6 1.6 0 0 1-1.4-2.4z" />,
-  // `HexagonGlyph`'s outline, scaled into this grid.
-  hexagon: <path d="M10.72 3.85C11.45 3.3 12.37 3.3 13.28 3.85L18.59 6.96C19.51 7.51 20.06 8.25 20.06 9.34L20.06 14.84C20.06 15.94 19.51 16.67 18.59 17.22L13.28 20.15C12.37 20.7 11.45 20.7 10.53 20.15L5.41 17.04C4.49 16.49 3.94 15.75 3.94 14.66L3.94 9.16C3.94 8.06 4.49 7.33 5.41 6.78Z" />,
 };
 
 /** A shape's bare outline, for the section switcher and a collapsed title crumb. */
@@ -162,34 +160,5 @@ export function ShapeOutline({ className, shape, size = 22, strokeWidth = 1.8 }:
 }): React.JSX.Element {
   return <svg aria-hidden="true" className={className} fill="none" height={size} stroke="currentColor" strokeLinejoin="round" strokeWidth={strokeWidth} viewBox="0 0 24 24" width={size}>
     {OUTLINES[shape]}
-  </svg>;
-}
-
-/** Where each of a grid's four cells sits in the 24-unit grid, clockwise from the top left. */
-const GRID_CELLS = [[2.4, 2.4], [14, 2.4], [14, 14], [2.4, 14]] as const;
-/**
- * Each cell is 7.6 units, a 4-unit gutter between them, so four shapes in the
- * space of one stay apart; an outline's drawn box is 17.4 of its own 24.
- */
-const GRID_SCALE = 7.6 / 17.4;
-
-/**
- * Four outlines in a two-by-two grid, clockwise from the top left, for a
- * section that holds several kinds of object. The stroke is in the whole
- * grid's units, a little lighter than a lone outline's so the four small
- * shapes stay apart.
- */
-export function ShapeGrid({ className, shapes, size = 22, strokeWidth = 1.2 }: {
-  className?: string | undefined;
-  shapes: readonly [OutlineShape, OutlineShape, OutlineShape, OutlineShape];
-  size?: number;
-  strokeWidth?: number;
-}): React.JSX.Element {
-  return <svg aria-hidden="true" className={className} fill="none" height={size} stroke="currentColor" strokeLinejoin="round" strokeWidth={strokeWidth / GRID_SCALE} viewBox="0 0 24 24" width={size}>
-    {shapes.map((shape, index) => {
-      const [x, y] = GRID_CELLS[index]!;
-      // The outline's 3.3-unit margin is cropped, so its box fills the cell.
-      return <g key={index} transform={`translate(${x} ${y}) scale(${GRID_SCALE}) translate(-3.3 -3.3)`}>{OUTLINES[shape]}</g>;
-    })}
   </svg>;
 }
