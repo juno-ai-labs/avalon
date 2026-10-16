@@ -1,4 +1,6 @@
-import { useUiStore } from './ui-store';
+import { useEffect, useState } from 'react';
+
+import { MIN_RAIL_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, useUiStore } from './ui-store';
 
 /**
  * Open the right panel for `scope`, at an even split with the conversation
@@ -34,4 +36,24 @@ export function evenSplitWidth(): number | null {
   const pane = document.querySelector<HTMLElement>('.main-pane');
   if (!pane) return null;
   return Math.round((window.innerWidth - pane.getBoundingClientRect().left) / 2);
+}
+
+/**
+ * Whether the main pane is too narrow to hold the conversation at its minimum
+ * beside the narrowest panel. There the panel takes the whole pane instead of
+ * squeezing the conversation to a sliver. It never floats over a dimmed
+ * conversation: closing the panel is the way back.
+ */
+export function railFillsPane(windowWidth: number, sidebarWidth: number): boolean {
+  return windowWidth - sidebarWidth < SIDEBAR_CONTENT_MIN_WIDTH + MIN_RAIL_WIDTH;
+}
+
+export function useRailFillsPane(sidebarWidth: number): boolean {
+  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const update = (): void => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+  return railFillsPane(windowWidth, sidebarWidth);
 }

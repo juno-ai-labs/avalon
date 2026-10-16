@@ -39,10 +39,15 @@ for the outgoing panel included.
 
 **The panel never floats over the conversation.** At any width above the phone
 layout (641px and up) the main pane gives up the panel's width and the panel
-sits beside it; there is no dimming layer to click away. At phone width the
-panel is a full-width sheet. The panel's width is still capped by
-`--rail-max-slot`, which keeps `--conversation-min-width` for the
-conversation where the window allows.
+sits beside it; there is no dimming layer to click away. The panel's width is
+capped by `--rail-max-slot`, which keeps `--conversation-min-width` for the
+conversation where the window allows. Where the pane cannot hold that minimum
+beside the narrowest panel, 424 + 280px (`railFillsPane` in `rail-split.ts`,
+which sets `rail-fills-pane` on the shell), the panel takes the whole pane and
+closing it is the way back. The app shell keeps its sidebar above phone width,
+so at the default 340px sidebar this is any window or tab narrower than
+1044px, the desktop app's 860px minimum included.
+At phone width the panel is a full-width sheet.
 
 Switching items in a panel already open for the same conversation keeps the
 width the person dragged it to. The split itself is not saved: the width
@@ -129,6 +134,8 @@ window's size and position alone. The panel opens at half the main pane. The
 the saved-state step that subtracted the panel's width are gone. Windows
 1180px wide or narrower no longer float the panel over a dimmed conversation:
 it sits beside it at every width above phone layout, and the scrim is gone.
+A pane too narrow to keep the conversation's minimum beside it gives the
+panel the whole pane instead.
 Double-click or `Enter` on the panel's edge now resets it to the even split
 instead of 320px.
 
