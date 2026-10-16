@@ -30,6 +30,7 @@ import {
   type TranscriptTurn,
   type WorkstreamMessageDeliveryState,
   type WorkstreamTranscriptSnapshot,
+  type SpaceSummary,
 } from '@rally/contracts';
 import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
 import type { SubstreamInitialContext } from '@rally/contracts/substream-creation';
@@ -39,7 +40,11 @@ import { useCitations } from '../lib/use-citations';
 import { breakoutResourceActions } from '../lib/breakout-resource-actions';
 import { ApiError, type MentionIdentity } from '../lib/api';
 import { useChannelRail } from '../lib/channel-rails';
+import { writeDraftText } from '../lib/draft-cache';
+import type { PendingAttachment } from '../lib/use-file-attachments';
+import { IconCornerUpLeft } from '@tabler/icons-react';
 import { workstreamDraftKey } from '../lib/draft-keys';
+import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useBrowserRailLinks } from '../lib/browser-rail-links';
 import { BreakoutTickBar, breakoutsByOrigin, orderBreakoutsForTicks, type BreakoutMark } from '@rally/ui/components/breakout-marks';
 import type { TitleMenuPeople } from '@rally/ui/components/conversation-menus';
@@ -1108,6 +1113,67 @@ export interface ConversationSubstreamLaunch {
   onCreate: SubstreamLaunchProps['onCreate'];
 }
 
+const NO_PENDING_ATTACHMENTS: PendingAttachment[] = [];
+
+/** Where this conversation's Merge goes, or null when nothing here can merge. */
+export type MergeTarget =
+  | { kind: 'thread'; threadTitle: string }
+  | { kind: 'channel'; channels: Array<{ id: string; name: string; scope: SpaceSummary['scope'] }> };
+
+/**
+ * A Breakout merges into its Thread. A Thread's Main merges into one of its
+ * Channels, when it is Organization-wide and in a Channel this person can see:
+ * the server's rule, asked here only so a Merge that would be refused is not
+ * offered. A Sidekick's conversation merges nowhere.
+ */
+export function mergeTargetFor(input: {
+  parentKind: ConversationParentKind;
+  substreamId: string;
+  guest: boolean;
+  thread: WorkstreamDetail | null | undefined;
+  spaces: readonly SpaceSummary[];
+}): MergeTarget | null {
+  if (input.parentKind !== 'workstream' || !input.thread) return null;
+  if (input.substreamId !== '0') return { kind: 'thread', threadTitle: input.thread.title };
+  if (input.guest || input.thread.scope !== 'workspace') return null;
+  const byId = new Map(input.spaces.map((space) => [space.id as string, space]));
+  const channels = input.thread.spaceIds.flatMap((spaceId) => {
+    const space = byId.get(spaceId);
+    return space ? [{ id: space.id as string, name: space.name, scope: space.scope }] : [];
+  });
+  return channels.length > 0 ? { kind: 'channel', channels } : null;
+}
+
+/** What a Merge action reads as: "Merge to thread", or the default Channel's name. */
+export function mergeLabel(target: MergeTarget): string {
+  return target.kind === 'thread' ? 'Merge to thread' : `Merge to ${target.channels[0]!.name}`;
+}
+
+/** The merge composer's audience line: who will see it, and who can open what it embeds. */
+function mergeAudience(target: MergeTarget, channel: { name: string; scope: SpaceSummary['scope'] } | null): string {
+  if (target.kind === 'thread') {
+    return `Visible to everyone in ${target.threadTitle || 'the thread'}, who can also open the artifacts it embeds.`;
+  }
+  if (!channel) return '';
+  return channel.scope === 'workspace'
+    ? `Visible in ${channel.name}.`
+    : `Visible in ${channel.name}. Everyone in your organization can open the artifacts it embeds.`;
+}
+
+function mergeFailureMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    switch (error.code) {
+      case 'merge_channel_not_placed': return 'That channel no longer holds this thread.';
+      case 'merge_thread_private': return 'Only an organization-wide thread can merge into a channel.';
+      case 'merge_target_not_writable': return 'You can’t post there.';
+      case 'merge_resource_not_shareable': return 'An embedded artifact can’t be shared there, so nothing was merged.';
+      case 'conversation_archived': return 'That conversation is archived.';
+      default: break;
+    }
+  }
+  return 'The merge couldn’t be made. Try again.';
+}
+
 export interface ConversationSurfaceProps {
   parentKind: ConversationParentKind;
   parentId: string;
@@ -1142,6 +1208,8 @@ export interface ConversationSurfaceProps {
   /** The Breakout open beside this conversation, if any. */
   openBreakoutId?: string | null;
   onOpenBreakout?: (substreamId: string) => void;
+  /** Open the composer's merge mode, empty: the title menu's Merge. A new nonce asks again. */
+  mergeRequest?: number | null;
   /** Bring this turn into view; a new nonce asks again for the same turn. */
   scrollToTurn?: { turnId: string; nonce: number } | null;
   /**
@@ -1195,6 +1263,7 @@ export function ConversationSurface({
   breakouts,
   openBreakoutId = null,
   onOpenBreakout,
+  mergeRequest = null,
   scrollToTurn = null,
   honorsSearchTarget = true,
   paneKey,
@@ -1249,6 +1318,7 @@ export function ConversationSurface({
   const setRailVariant = useUiStore((state) => state.setRailVariant);
   const setRailWidth = useUiStore((state) => state.setRailWidth);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mergeFileInputRef = useRef<HTMLInputElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const transcriptContentRef = useRef<HTMLDivElement>(null);
   const conversationGenerationRef = useRef(0);
@@ -1267,6 +1337,19 @@ export function ConversationSurface({
   const [debouncedResourceSearch, setDebouncedResourceSearch] = useState('');
   const [sendError, setSendError] = useState<string | undefined>();
   const [sending, setSending] = useState(false);
+  // Merge-back (docs/conversation-merge.md): the composer's merge mode,
+  // opened prefilled from a message's words. `channelId` is the Channel a
+  // thread merges into, picked from its Channels; a Breakout merges into its
+  // Thread and names none.
+  const [mergeMode, setMergeMode] = useState<{ nonce: number; channelId: string | null } | null>(null);
+  const [mergeError, setMergeError] = useState<string | undefined>();
+  const [merging, setMerging] = useState(false);
+  useEffect(() => { setMergeMode(null); setMergeError(undefined); }, [id, substreamId]);
+  const activeSpaces = useSpaceDirectories().active.data;
+  const startMergeRef = useRef<((text: string) => void) | undefined>(undefined);
+  useEffect(() => {
+    if (mergeRequest !== null) startMergeRef.current?.('');
+  }, [mergeRequest]);
   // Declared up here because sending clears it, and the composer's send is
   // defined long before the fold below that maintains it.
   const [carriedStopAcknowledgement, setCarriedStopAcknowledgement] = useState(NO_STOP_ACKNOWLEDGEMENT);
@@ -1856,23 +1939,32 @@ export function ConversationSurface({
   // Breakouts placed in this feed: cards under each origin turn, and the tick
   // bar's order, which follows the turns as they are loaded. A card's byline
   // says who started the Breakout and when, as a Channel's thread card does.
+  //
+  // A Breakout reads as Merged once its result is in this feed: derived from
+  // the merge messages themselves, so nothing about the Breakout is stored.
+  const mergedBreakoutIds = useMemo(() => new Set(transcript.flatMap((message) =>
+    message.mergedFrom ? [message.mergedFrom.breakoutId] : [])), [transcript]);
   const breakoutCards = useMemo(() => breakouts && onOpenBreakout && breakouts.length > 0
     ? {
       byTurn: breakoutsByOrigin(breakouts),
       openSubstreamId: openBreakoutId,
       onOpen: onOpenBreakout,
       renderMeta: (breakout: BreakoutMark): React.ReactNode => {
-        if (!breakout.createdByUserId || !breakout.createdAt) return null;
+        const merged = mergedBreakoutIds.has(breakout.substreamId)
+          ? <span className="breakout-merged-chip"><IconCornerUpLeft aria-hidden="true" size={11} stroke={1.9} /> Merged</span>
+          : null;
+        if (!breakout.createdByUserId || !breakout.createdAt) return merged;
         const author = visibleMembers.find((member) => member.id === breakout.createdByUserId);
         return <>
           {author && <Avatar member={author} size="small" title={null} />}
           <span>{author?.name ?? 'Someone'}</span>
           <span aria-hidden="true">·</span>
           <RelativeTime value={breakout.createdAt} />
+          {merged}
         </>;
       },
     }
-    : undefined, [breakouts, onOpenBreakout, openBreakoutId, visibleMembers]);
+    : undefined, [breakouts, mergedBreakoutIds, onOpenBreakout, openBreakoutId, visibleMembers]);
   const tickBreakouts = useMemo(() => breakouts && breakouts.length > 0
     ? orderBreakoutsForTicks(breakouts, transcript.flatMap((message) => message.transcriptTurnId ?? []))
     : [], [breakouts, transcript]);
@@ -2872,6 +2964,44 @@ export function ConversationSurface({
       presenceUserIdsByWorkstream[id] ?? [],
     ),
   };
+  const merge = mergeTargetFor({
+    parentKind,
+    substreamId,
+    guest,
+    thread: substreamId === '0' ? displayedDetail : workstreamContext?.id === id ? workstreamContext : null,
+    spaces: activeSpaces?.items ?? [],
+  });
+  const mergeChannel = merge?.kind === 'channel'
+    ? merge.channels.find((channel) => channel.id === mergeMode?.channelId) ?? merge.channels[0]!
+    : null;
+  const mergeDraftKey = `${workstreamDraftKey(workspaceRegion, workspaceId, id, substreamId)}:merge`;
+  const startMerge = merge ? (text: string): void => {
+    void writeDraftText(mergeDraftKey, text).then(() => {
+      setMergeError(undefined);
+      setMergeMode({ nonce: Date.now(), channelId: merge.kind === 'channel' ? merge.channels[0]!.id : null });
+    });
+  } : undefined;
+  const submitMerge = async (text: string): Promise<void> => {
+    if (!api || !merge) return;
+    setMerging(true);
+    setMergeError(undefined);
+    try {
+      await api.mergeConversation(id, {
+        body: text,
+        clientMessageId: crypto.randomUUID(),
+        ...(merge.kind === 'thread' ? { breakoutId: substreamId } : mergeChannel ? { channelId: mergeChannel.id } : {}),
+      });
+      setMergeMode(null);
+      void writeDraftText(mergeDraftKey, '');
+    } catch (error) {
+      setMergeError(mergeFailureMessage(error));
+      // The composer keeps the words when a send throws.
+      throw error;
+    } finally {
+      setMerging(false);
+    }
+  };
+  startMergeRef.current = startMerge;
   const sidebarDetail = sidebarScope === "conversation" ? displayedDetail : workstreamContext?.id === id ? workstreamContext : {
     ...displayedDetail, resources: [], participants: [], viewers: [],
   };
@@ -3208,6 +3338,11 @@ export function ConversationSurface({
               onAnswerElicitation={answerElicitation}
               onOpenAttachment={openAttachment}
               onStartSubstream={parentKind === 'workstream' && substreamId === '0' ? onStartSubstream : undefined}
+              {...(merge && startMerge ? { merge: {
+                label: mergeLabel(merge),
+                onMerge: startMerge,
+              } } : {})}
+              {...(onOpenBreakout ? { onOpenBreakout } : {})}
               {...(breakoutCards ? { breakoutCards } : {})}
               {...(api ? { onAcceptDraft: (automationId: string) => {
                 acceptProposedAutomation.mutate(automationId);
@@ -3257,7 +3392,49 @@ export function ConversationSurface({
             || stopAcknowledgement.pendingRunId !== null
             || stopAcknowledgement.runId !== null)
             && <RunStopAcknowledgement settled={stopAcknowledgement.runId !== null} />}
-          <WorkstreamComposer
+          {mergeMode && merge ? <>
+            <div className="composer-merge-bar" role="group" aria-label="Merge">
+              <IconCornerUpLeft aria-hidden="true" size={14} stroke={1.9} />
+              {merge.kind === 'thread' ? <span>Merging to {merge.threadTitle || 'the thread'}</span> : merge.channels.length > 1 ? (
+                <label>
+                  Merging to{' '}
+                  <select
+                    onChange={(event) => setMergeMode({ ...mergeMode, channelId: event.target.value })}
+                    value={mergeChannel?.id}
+                  >
+                    {merge.channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
+                  </select>
+                </label>
+              ) : <span>Merging to {mergeChannel?.name}</span>}
+              <button className="composer-merge-cancel" onClick={() => setMergeMode(null)} type="button">Cancel</button>
+              {/* The audience line: in the bar rather than the composer's hint,
+                  which the message capsule hides. */}
+              <span className="composer-merge-audience">{mergeAudience(merge, mergeChannel)}</span>
+            </div>
+            <WorkstreamComposer
+              api={api ?? undefined}
+              ariaLabel="Merge message"
+              attachments={NO_PENDING_ATTACHMENTS}
+              autoFocus
+              draftKey={mergeDraftKey}
+              error={mergeError}
+              fileInputRef={mergeFileInputRef}
+              key={`${conversationAddress}:merge:${mergeMode.nonce}`}
+              members={visibleMembers}
+              onAttach={() => undefined}
+              onOpenAttachment={openAttachment}
+              onRemoveAttachment={() => undefined}
+              onRetryAttachment={() => undefined}
+              onSend={(text) => submitMerge(text)}
+              onStop={async () => undefined}
+              placeholder="Write what the readers should know…"
+              sending={merging}
+              submitLabel="Merge"
+              substreamId={substreamId}
+              uploading={false}
+              workstream={displayedDetail}
+            />
+          </> : <WorkstreamComposer
             api={api ?? undefined}
             placeholder={parentKind === 'automation'
               ? 'Ask your Sidekick…'
@@ -3303,7 +3480,7 @@ export function ConversationSurface({
             workstream={displayedDetail}
             draftKey={workstreamDraftKey(workspaceRegion, workspaceId, displayedDetail.id, substreamId)}
             substreamId={substreamId}
-          />
+          />}
         </div>
       </div>
       </>}
