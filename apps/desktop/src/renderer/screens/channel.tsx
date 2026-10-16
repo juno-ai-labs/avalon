@@ -543,7 +543,7 @@ function MergeCard({ author, channelId, currentUser, members, merge, message, on
   // older one is pages away, so the quote opens the thread instead.
   const showThread = (): void => {
     const card = document.getElementById(feedThreadElementId(merge.threadId));
-    if (card) card.scrollIntoView({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+    if (card) card.scrollIntoView({ block: 'center' });
     else onOpenThread(merge.threadId);
   };
   return <li className="channel-feed-item is-message is-merge">
