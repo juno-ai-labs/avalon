@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { ChannelMergeSourceSchema } from "./conversation-merge";
 import { IdSchema, UserIdSchema, WorkstreamIdSchema } from "./identifiers";
 import { PICKABLE_APPEARANCE_ICON_KEYS, STORABLE_APPEARANCE_ICON_KEYS } from "./appearance-icons";
 import { PALETTE_KEYS, PALETTE_RING } from "./palette";
@@ -626,5 +627,11 @@ export const ChannelMessageSchema = z.strictObject({
   id: z.string().uuid(),
   author: ChannelMessageAuthorSchema,
   body: z.string().min(1),
+  /**
+   * Present when the message is a thread's merged result: which thread, and
+   * the artifacts it embeds. Served only to a build at
+   * `CHANNEL_MERGES_CLIENT_CONTRACT` or later. See docs/conversation-merge.md.
+   */
+  merge: ChannelMergeSourceSchema.optional(),
 });
 export type ChannelMessage = z.infer<typeof ChannelMessageSchema>;
