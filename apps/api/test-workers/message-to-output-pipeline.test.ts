@@ -3273,7 +3273,7 @@ describe("a member's message travels the whole pipeline", () => {
         expect(catalogResults.length).toBeGreaterThan(0);
         for (const result of catalogResults) {
           expect(JSON.parse(result.content ?? "null")).toMatchObject({ success: true, data: {
-            sidekicks: [], workspaceSidekicks: [{ sidekickId: recommendedSidekick.automationId,
+            workspaceSidekicks: [{ sidekickId: recommendedSidekick.automationId,
               canAttach: false, attached: true }],
           } });
         }

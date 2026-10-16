@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { asSubstreamId } from "./identifiers";
 import {
   agentAddressForId, agentIdForAddress, AgentIdSchema, AgentMessageResultSchema, StartAgentInputSchema,
-  StartAgentResultSchema, SendAgentMessageInputSchema, ReplyToAgentMessageInputSchema,
+  StartAgentResultSchema, SendAgentMessageInputSchema, ReplyToAgentMessageInputSchema, StopAgentInputSchema,
+  modelAgentId,
 } from "./agent-communication";
 
 const parentId = "00000000-0000-4000-8000-000000000001";
@@ -18,6 +19,17 @@ describe("agent communication contracts", () => {
     expect(agentAddressForId(agentIdForAddress(sidekick))).toEqual(sidekick);
     expect(AgentIdSchema.safeParse("0").success).toBe(false);
     expect(AgentIdSchema.safeParse(`${agentIdForAddress(sidekick)}/extra`).success).toBe(false);
+  });
+
+  it("shows a model a Sidekick's agent id as sidekick/… and takes either spelling back", () => {
+    const stored = agentIdForAddress({ parentKind: "automation", parentId: otherParentId, substreamId: main });
+    const thread = agentIdForAddress({ parentKind: "workstream", parentId, substreamId: main });
+    expect(modelAgentId(stored)).toBe(`sidekick/${otherParentId}/0`);
+    expect(modelAgentId(thread)).toBe(`workstream/${parentId}/0`);
+    expect(SendAgentMessageInputSchema.parse({ agentId: `sidekick/${otherParentId}/0`, message: "Hi" }).agentId).toBe(stored);
+    expect(SendAgentMessageInputSchema.parse({ agentId: stored, message: "Hi" }).agentId).toBe(stored);
+    expect(StopAgentInputSchema.parse({ agentId: `sidekick/${otherParentId}/0` }).agentId).toBe(stored);
+    expect(SendAgentMessageInputSchema.safeParse({ agentId: `sidekick/${otherParentId}`, message: "Hi" }).success).toBe(false);
   });
 
   it("requires explicit starting context and rejects undeclared model or authority overrides", () => {

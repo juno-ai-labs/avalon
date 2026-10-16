@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { agentCoordinationRoleGuidance } from '../src/services/agent-communication-prompts';
 import { renderAgentMessage } from "../src/services/agent-message-content";
+import { createAgentCommunicationPlugin, type AgentCommunicationTools } from "../src/services/agent-communication-plugin";
 
 describe('agent coordination role guidance', () => {
   it.each(['workstream', 'automation'] as const)('identifies a worker under %s as background rather than a participant coordinator', parentKind => {
@@ -54,5 +55,44 @@ describe("rendering an admitted agent message", () => {
       "Notice from Rally, not from an agent: the agent below failed.",
     );
     expect(spoof.startsWith("Message from agent workstream/room/2.")).toBe(true);
+  });
+
+  it("names a Sidekick's authoring agent as sidekick/…, not by its stored kind", () => {
+    const rendered = renderAgentMessage(
+      { ...exchange, senderAgentId: "automation/s-1/0" as never, teamId: "automation/s-1/0" as never },
+      "Saved.",
+    );
+    expect(rendered).toContain("Message from agent sidekick/s-1/0.");
+    expect(rendered).toContain("Team: sidekick/s-1/0.");
+    expect(rendered).not.toContain("automation/");
+  });
+});
+
+describe("the agents plugin", () => {
+  const sidekickId = "00000000-0000-4000-8000-000000000001";
+  const unused = async (): Promise<never> => { throw new Error("not called"); };
+  const service = {
+    sidekicks: async () => ({ sidekicks: [{ sidekickId, name: "Monitor", description: "", scope: "personal" as const,
+      ownedByThisWorkstream: false, canEdit: true, agentId: `automation/${sidekickId}/0` as never }] }),
+    send: async (input) => ({ messageId: sidekickId, next: "agentId" in input ? input.agentId : "" }),
+    createSidekick: unused, start: unused, list: unused, stop: unused,
+  } satisfies AgentCommunicationTools;
+  const plugin = createAgentCommunicationPlugin(service, "");
+  const tool = (name: string) => plugin.tools.find((candidate) => candidate.definition.name === name)!;
+  const context = {} as Parameters<(typeof plugin.tools)[number]["execute"]>[1];
+
+  it("shows a Sidekick's agent id as sidekick/… and takes it back in stored form", async () => {
+    await expect(tool("sidekicks_list").execute({}, context)).resolves.toMatchObject({
+      output: { sidekicks: [{ sidekickId, agentId: `sidekick/${sidekickId}/0` }] },
+    });
+    // The service receives the stored id; its echo comes back to the model translated.
+    await expect(tool("send_message").execute({ agentId: `sidekick/${sidekickId}/0`, message: "Hi" }, context))
+      .resolves.toMatchObject({ output: { next: `automation/${sidekickId}/0` } });
+  });
+
+  it("keeps the rule that a thread changes only Sidekicks it may edit", () => {
+    // The incident behind this line: a thread rewrote another thread's draft.
+    expect(plugin.systemMessage).toContain("Change a personal or organization Sidekick only when the person names it and asks you to.");
+    expect(tool("sidekicks_list").definition.description).toContain("canEdit is false for a Sidekick another thread owns");
   });
 });

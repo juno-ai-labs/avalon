@@ -1,8 +1,15 @@
+import type * as PlatformModule from '../lib/platform';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { AutomationDetail } from '../lib/types';
 import { AutomationHeader, type AutomationHeaderProps } from './automation-header';
+
+const openThread = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('../lib/platform', async (importOriginal) => ({
+  ...await importOriginal<typeof PlatformModule>(),
+  desktopBridge: () => ({ openThread }),
+}));
 
 const definition: NonNullable<AutomationDetail['currentDefinition']> = {
   name: 'Weekly changelog',
@@ -258,5 +265,26 @@ describe('AutomationHeader', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close dialog' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Run history' })).toBeNull());
     expect(screen.queryByRole('list', { name: 'Runs' })).toBeNull();
+  });
+
+  it('names the owning Thread in the scope badge and opens it', () => {
+    const threadId = '0191c0de-0000-7000-8000-00000000cafe';
+    renderHeader({
+      ...draft,
+      scope: 'workstream',
+      owningWorkstreamId: threadId,
+      owningThread: { id: threadId, title: 'Release room', appearance: { icon: 'rocket', color: 'purple' } },
+    });
+
+    expect(screen.queryByText('Thread')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Release room' }));
+    expect(openThread).toHaveBeenCalledWith(threadId);
+  });
+
+  it('says only "Thread" when the reader was not told which one', () => {
+    renderHeader({ ...draft, scope: 'workstream', owningWorkstreamId: '0191c0de-0000-7000-8000-00000000cafe' });
+
+    expect(screen.getByText('Thread')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Release room/ })).toBeNull();
   });
 });
