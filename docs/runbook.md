@@ -1485,8 +1485,13 @@ audit, and telemetry remain valid D1 writers.
   `timezone_source` is still `client` and never writes over one somebody chose in settings;
   a client that sends no zone leaves the account alone, because there is no server-side default.
 
-- Owners and admins may change the workspace timezone. Every user may change their personal
-  timezone, which records `timezone_source = 'user'` and stops sign-in reseeding it.
+- Every client reports its device's zone (`PUT /workspace/me/device-timezone`) at launch and
+  on focus when it differs from the last one it sent; the server applies it only while
+  `timezone_source` is `client`.
+
+- Owners and admins may change the workspace timezone. Every user may fix their personal
+  timezone, which records `timezone_source = 'user'` and stops sign-in and device reports
+  moving it; choosing Automatic sets `client` again.
 
 - Calendar automation precedence is explicit trigger timezone, then the automation **author's**
   timezone for personal scope, then the workspace timezone — resolved at acceptance, inside the
