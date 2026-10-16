@@ -502,7 +502,7 @@ surfaced 120 errors across `apps/api` on a warm run.
 contents and nothing else:
 
 - **A rule implementation changing is invisible to it.** The config imports the
-  18 rules in `scripts/eslint-rules/` from separate files, and those are not part
+  17 rules in `scripts/eslint-rules/` from separate files, and those are not part
   of the key. Rewriting one to report on every file flagged 889 files cold and 1
   warm — the one being the rule file itself, which had changed. **Run
   `pnpm lint:fresh` after touching a rule.**
