@@ -268,7 +268,7 @@ export function NavigationSidebar({
           </IconButton>
           <h1 className="navigation-panel-title">{title}</h1>
           <div className="navigation-panel-actions window-no-drag">
-            {downloadedUpdate !== null && <IconButton label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
+            {downloadedUpdate !== null && <IconButton className="navigation-update" label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
               <IconDeviceDesktopDown aria-hidden="true" size={17} stroke={1.8} />
             </IconButton>}
             {section === 'channels' && <IconButton label="New channel" onClick={() => setCreatingChannel(true)}>
