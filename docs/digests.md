@@ -198,7 +198,7 @@ for one person, newest first:
   than from an event; and
 - every **merge** somebody else made ([`conversation-merge.md`](conversation-merge.md)):
   a breakout's into a thread they may list, read from the merge message's own
-  event (its `metadata.mergedFrom`, through migration 108's partial index), and
+  event (its `metadata.mergedFrom`, through migration 109's partial index), and
   a thread's into a Channel they may list, about a thread they may open, read
   from `space_messages`. Both are `merged`; a thread's carries `mergedInto`.
   A build before client contract 7 is served the page without them.

@@ -6128,7 +6128,7 @@ function attachmentMetadataSize(metadataJson: unknown): number {
  * A Breakout merge's activity-event metadata: the source the `merged`
  * Activity row names, frozen at merge time, as the message's own tag is.
  * Empty for any other message. The feed reads `mergedFrom.breakoutId` through
- * a partial index (WorkspaceDO migration 108).
+ * a partial index (WorkspaceDO migration 109).
  */
 function mergeActivityMetadata(merge: ConversationMergeV1 | undefined): { mergedFrom?: { breakoutId: string; title: string } } {
   return merge ? { mergedFrom: { breakoutId: merge.mergedFrom.breakoutId, title: merge.mergedFrom.title } } : {};

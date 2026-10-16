@@ -268,7 +268,7 @@ export class WorkspaceActivityFeed {
                  AND breakout.source_created_at IS NOT NULL
                  AND breakout.archived_at IS NULL`) : []),
       // A breakout's merge into its thread, read from the merge message's
-      // activity event through migration 108's partial index; anyone who may
+      // activity event through migration 109's partial index; anyone who may
       // list the thread is told, as anyone who may read it sees the message.
       ...(mentionsOnly ? [] : arm(`SELECT 'merged:' || event.event_id AS id, 'merged' AS kind,
                      event.occurred_at, event.actor_user_id, event.actor_label,
