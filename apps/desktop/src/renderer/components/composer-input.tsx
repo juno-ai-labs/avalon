@@ -14,7 +14,6 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { RallyApi } from '../lib/api';
 import {
   AGENT_MODEL_GROUPS,
   UNPINNED_AGENT_MODEL,
@@ -36,12 +35,12 @@ import {
 } from '../lib/markdown-lists';
 import { normalizeMentionLabels, splitMentionHighlights } from '../lib/mention-highlight';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
-import { appendDictationTranscript, useRealtimeDictation } from '../lib/use-realtime-dictation';
+import { appendDictationTranscript, type RealtimeDictationApi, useRealtimeDictation } from '../lib/use-realtime-dictation';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useFilePaste } from '../lib/use-file-paste';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import { type AttachmentPreview, PendingAttachmentTile } from './attachments';
-import { IconButton, InlineError } from './primitives';
+import { IconButton, InlineError, Tip } from './primitives';
 
 /**
  * The model control a composer offers, in whichever of its two shapes fits
@@ -94,8 +93,26 @@ export type ComposerModelControl =
     pinned: boolean;
   };
 
+/**
+ * A host's own entry in the message capsule's "+" menu, listed after Attach
+ * files when the host takes attachments. The menu shows whenever it has an
+ * entry, so a host without attachments can still offer these. The composer draws it and calls `onSelect`; what it does belongs to
+ * the host, so a surface can offer an action that only makes sense there.
+ */
+export interface ComposerMenuAction {
+  /**
+   * Why the action cannot run here. The entry still shows, disabled, with this
+   * as its tooltip: an action that silently vanishes on one platform reads as
+   * missing rather than unavailable.
+   */
+  disabledReason?: string;
+  icon: ReactNode;
+  label: string;
+  onSelect: () => void;
+}
+
 interface ComposerInputProps {
-  api?: Pick<RallyApi, 'getTranscriptionSocketTicket'>;
+  api?: RealtimeDictationApi;
   ariaLabel: string;
   attachments: PendingAttachment[];
   autoFocus?: boolean;
@@ -103,9 +120,17 @@ interface ComposerInputProps {
   error?: string;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   footerHint?: ReactNode;
+  /** A line inside the composer, over its toolbar: what sending will do, for a host that sends somewhere unusual. */
+  notice?: ReactNode;
+  /** A host's own control at the end of the toolbar's tools, such as where a merge goes. */
+  toolsAccessory?: ReactNode;
+  /** What the send button shows in place of its arrow, for a host whose send is not a plain send. */
+  submitContent?: ReactNode;
   /** Main work streams opt into GrokBot's single-row message capsule. */
   layout?: 'toolbar' | 'message-capsule';
   maxHeight?: number;
+  /** Extra "+" menu entries; only the message capsule has the menu to put them in. */
+  menuActions?: readonly ComposerMenuAction[];
   mentionDisabled?: boolean;
   mentionLabel?: string;
   /** Labels of the resources an `@` can name here; typing one highlights it in the draft. */
@@ -139,7 +164,8 @@ interface ComposerInputProps {
    * `choice`; the conversation composer inside either one takes `settled`.
    */
   model?: ComposerModelControl;
-  onAttach: (files: FileList | File[]) => void;
+  /** Absent where the message cannot carry files: no attach control, drop or paste. */
+  onAttach?: (files: FileList | File[]) => void;
   /**
    * The host's own key handling — mention navigation, dismissing a popover,
    * slash commands. It never receives a keydown dispatched during an IME
@@ -232,6 +258,7 @@ function listShortcutKind(event: KeyboardEvent<HTMLTextAreaElement>): ListMarker
 
 /** Stable empty default so the highlight memo is not invalidated every render. */
 const NO_MENTION_LABELS: readonly string[] = [];
+const NO_MENU_ACTIONS: readonly ComposerMenuAction[] = [];
 
 /**
  * The shared text-entry surface for both a new work stream and an existing one.
@@ -252,8 +279,12 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   error,
   fileInputRef,
   footerHint,
+  notice,
+  toolsAccessory,
+  submitContent,
   layout = 'toolbar',
   maxHeight = 180,
+  menuActions = NO_MENU_ACTIONS,
   mentionDisabled = false,
   mentionLabel = 'Mention a participant',
   mentionLabels = NO_MENTION_LABELS,
@@ -286,10 +317,10 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   const dictationBaseRef = useRef('');
   const microphonePressRef = useRef<{ startedAt: number; startedRecording: boolean } | undefined>(undefined);
   const attachFiles = useCallback((files: FileList | File[]): void => {
-    if (!submitting) onAttach(files);
+    if (!submitting) onAttach?.(files);
   }, [onAttach, submitting]);
   const debugEnabled = useDebugEnabled();
-  const drop = useFileDrop((files) => attachFiles(files), submitting);
+  const drop = useFileDrop((files) => attachFiles(files), submitting || !onAttach);
   // Turning Debug enabled off takes the control away; it has to take the choice
   // with it. A pin left behind in the parent's state would keep pinning every
   // work stream started from this screen with nothing on screen saying so, and
@@ -301,7 +332,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   useEffect(() => {
     if (!debugEnabled && modelOverrideValue !== null) releaseModelOverride?.(null);
   }, [debugEnabled, modelOverrideValue, releaseModelOverride]);
-  const paste = useFilePaste(attachFiles, submitting);
+  const paste = useFilePaste(attachFiles, submitting || !onAttach);
   // An IME's in-flight text never reaches `value`, so the highlight layer steps
   // aside and lets the textarea paint itself until the composition commits.
   const [composing, setComposing] = useState(false);
@@ -319,6 +350,18 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
     highlight.scrollTop = textarea.scrollTop;
     highlight.scrollLeft = textarea.scrollLeft;
   }, []);
+  // Dictation writes into the field from outside it, and the browser only
+  // keeps a caret in view, never a value it was handed. Once the field is at
+  // its height limit the newest words would land below the fold, so each
+  // transcript update asks for the tail to be shown after the field has
+  // taken its new height; the highlight layer follows the same scroll.
+  const transcriptTailPendingRef = useRef(false);
+  const followTranscriptTail = useCallback((): void => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.scrollTop = textarea.scrollHeight;
+    syncHighlightScroll();
+  }, [syncHighlightScroll]);
   const resizeTextarea = useCallback((nextValue?: string): void => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -369,7 +412,10 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   }, [attachments.length, layout, maxHeight, syncHighlightScroll]);
   useLayoutEffect(() => {
     resizeTextarea(value);
-  }, [resizeTextarea, value]);
+    if (!transcriptTailPendingRef.current) return;
+    transcriptTailPendingRef.current = false;
+    followTranscriptTail();
+  }, [followTranscriptTail, resizeTextarea, value]);
   useEffect(() => () => {
     for (const animation of resizeAnimationsRef.current) animation.cancel();
   }, []);
@@ -385,9 +431,26 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
     observer.observe(composer);
     return () => observer.disconnect();
   }, [resizeTextarea]);
+  // The level ring is painted straight onto the control: ten writes a second
+  // through React would re-render the whole composer for a box-shadow.
+  const microphoneControlRef = useRef<HTMLDivElement>(null);
   const dictation = useRealtimeDictation(api, (transcript) => {
-    onValueChange(appendDictationTranscript(dictationBaseRef.current, transcript));
-    requestAnimationFrame(() => resizeTextarea());
+    const next = appendDictationTranscript(dictationBaseRef.current, transcript);
+    // An update that changes nothing, such as the empty transcript a start
+    // sends, must not leave the follow armed for the person's next keystroke.
+    if (next === value) return;
+    onValueChange(next);
+    transcriptTailPendingRef.current = true;
+    // The layout effect follows the tail on the render that carries the new
+    // value; this frame covers the capsule's height animation settling after
+    // it, and clears the flag in case that render has not happened.
+    requestAnimationFrame(() => {
+      transcriptTailPendingRef.current = false;
+      resizeTextarea();
+      followTranscriptTail();
+    });
+  }, {
+    onLevel: (level) => microphoneControlRef.current?.style.setProperty('--dictation-level', level.toFixed(3)),
   });
   const dictationActive = !['idle', 'error'].includes(dictation.state);
   // Dictation owns the text while it is running: the transcript is written into
@@ -552,6 +615,11 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
         };
         toggleDictation();
       }}
+      // A pointer or focus reaching the button is the best signal a press is
+      // coming: the ticket it will need is requested now, so the socket can
+      // open the moment capture starts.
+      onFocus={() => dictation.prefetch()}
+      onPointerEnter={() => dictation.prefetch()}
       onPointerUp={() => {
         const press = microphonePressRef.current;
         microphonePressRef.current = undefined;
@@ -560,10 +628,17 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
         }
       }}
     >
-      {dictation.state === 'requesting' || dictation.state === 'transcribing' || dictation.state === 'finalizing'
+      {dictation.state === 'transcribing' || dictation.state === 'finalizing'
         ? <LoaderCircle className="spin" size={15} />
         : <Mic size={15} />}
     </IconButton>
+  );
+  // `is-arming` answers the press before the microphone has opened;
+  // `is-listening` is reserved for capture that is running.
+  const microphoneControlClassName = clsx(
+    'microphone-control',
+    dictation.state === 'requesting' && 'is-arming',
+    dictation.state === 'listening' && 'is-listening',
   );
 
   return (
@@ -656,6 +731,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
             value={value}
           />
         </div>
+        {notice && <div className="composer-notice">{notice}</div>}
         <div className="composer-toolbar">
           <div className="composer-tools">
             {!messageCapsule && (
@@ -663,7 +739,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 <AtSign size={15} />
               </IconButton>
             )}
-            {messageCapsule ? (
+            {messageCapsule ? (onAttach || menuActions.length > 0) && (
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
                   <IconButton className="composer-action-trigger" disabled={submitting} label="Composer actions">
@@ -678,23 +754,49 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                     side="top"
                     sideOffset={8}
                   >
-                    <DropdownMenu.Item
-                      className="menu-item composer-action-menu-item"
-                      onSelect={() => fileInputRef.current?.click()}
-                    >
-                      <Paperclip aria-hidden="true" />
-                      <span>Attach files</span>
-                    </DropdownMenu.Item>
+                    {onAttach && (
+                      <DropdownMenu.Item
+                        className="menu-item composer-action-menu-item"
+                        onSelect={() => fileInputRef.current?.click()}
+                      >
+                        <Paperclip aria-hidden="true" />
+                        <span>Attach files</span>
+                      </DropdownMenu.Item>
+                    )}
+                    {menuActions.map((action) => {
+                      const disabled = action.disabledReason !== undefined;
+                      // Disabled by hand rather than with Radix's `disabled`, which
+                      // drops the item from arrow-key focus and so leaves a keyboard
+                      // never reaching the tooltip that says why.
+                      const item = (
+                        <DropdownMenu.Item
+                          aria-disabled={disabled || undefined}
+                          className="menu-item composer-action-menu-item"
+                          data-disabled={disabled ? '' : undefined}
+                          key={action.label}
+                          onSelect={(event) => {
+                            if (disabled) event.preventDefault();
+                            else action.onSelect();
+                          }}
+                        >
+                          {action.icon}
+                          <span>{action.label}</span>
+                        </DropdownMenu.Item>
+                      );
+                      return action.disabledReason === undefined
+                        ? item
+                        : <Tip key={action.label} label={action.disabledReason} side="right">{item}</Tip>;
+                    })}
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
-            ) : (
+            ) : onAttach && (
               <IconButton disabled={submitting} label="Attach a file" onClick={() => fileInputRef.current?.click()}>
                 {uploading ? <LoaderCircle className="spin" size={15} /> : <Plus size={16} />}
               </IconButton>
             )}
             {!messageCapsule && (
-              <div className={clsx('microphone-control', dictation.state === 'listening' && 'is-listening')}>
+              <div className={microphoneControlClassName} ref={microphoneControlRef}>
                 {dictationButton('Click or hold to dictate')}
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger asChild>
@@ -795,11 +897,12 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 )}
               </DropdownMenu.Root>
             )}
+            {toolsAccessory}
           </div>
           {footerHint && <span className="composer-hint">{footerHint}</span>}
           <div className="composer-submit-area">
             {messageCapsule && (
-              <div className={clsx('microphone-control', dictation.state === 'listening' && 'is-listening')}>
+              <div className={microphoneControlClassName} ref={microphoneControlRef}>
                 {dictationButton('Start voice input')}
               </div>
             )}
@@ -810,8 +913,8 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 first-time reader looks for is the one that was missing. Every
                 host already passes `submitDisabled` for an empty draft, so the
                 disabled state is the one it always computed. */}
-            <button aria-label={submitLabel} className="composer-send" disabled={(submitDisabled && !dictationActive) || sendAfterDictation} onClick={() => void submit()} type="button">
-              {submitting || sendAfterDictation ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}
+            <button aria-label={submitLabel} className={clsx('composer-send', submitContent !== undefined && 'has-content')} disabled={(submitDisabled && !dictationActive) || sendAfterDictation} onClick={() => void submit()} type="button">
+              {submitting || sendAfterDictation ? <LoaderCircle className="spin" size={15} /> : submitContent ?? <ArrowUp size={15} />}
             </button>
             {submitAccessory}
           </div>
@@ -820,7 +923,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
       {(error || dictation.error) && (
         <div className="composer-error-slot"><InlineError>{error || dictation.error}</InlineError></div>
       )}
-      <input
+      {onAttach && <input
         className="sr-only"
         disabled={submitting}
         multiple
@@ -831,7 +934,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
         ref={fileInputRef}
         tabIndex={-1}
         type="file"
-      />
+      />}
     </>
   );
 });

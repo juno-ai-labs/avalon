@@ -11,6 +11,9 @@ import {
   ActivityItemSchema,
   ActivityPageSchema,
   ChannelFeedPageSchema,
+  ConversationMergeChannelSchema,
+  MergeEmbedSchema,
+  MESSAGE_MAX_CHARACTERS,
   ChannelStatsListSchema,
   ChannelStatsSchema,
   MyThreadsPageSchema,
@@ -806,6 +809,80 @@ export const WorkspaceSpaceChannelChangeRequestSchema = z.strictObject({
   workstreamId: WorkstreamIdSchema,
 });
 export type WorkspaceSpaceChannelChangeRequest = z.infer<typeof WorkspaceSpaceChannelChangeRequestSchema>;
+
+/**
+ * `channelMergeTarget`: where this thread's merge would go for this person,
+ * `spaceId` when they named one, and the Channels they could pick instead.
+ * Asked before any resource is attached; `mergeThreadIntoChannel` asks again
+ * inside its write.
+ */
+export const WorkspaceChannelMergeTargetRequestSchema = z.strictObject({
+  auth: SpaceActorAuthSchema,
+  workstreamId: WorkstreamIdSchema,
+  spaceId: SpaceIdSchema.nullable(),
+});
+export type WorkspaceChannelMergeTargetRequest = z.infer<typeof WorkspaceChannelMergeTargetRequestSchema>;
+
+const ChannelMergeRefusalSchema = z.strictObject({
+  ok: z.literal(false),
+  code: z.enum([
+    "space_access_denied",
+    "workstream_not_found",
+    "conversation_archived",
+    "merge_thread_private",
+    "merge_channel_not_placed",
+    "merge_target_not_writable",
+  ]),
+  channels: z.array(ConversationMergeChannelSchema),
+});
+
+export const WorkspaceChannelMergeTargetResultSchema = z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    spaceId: SpaceIdSchema,
+    name: z.string(),
+    channels: z.array(ConversationMergeChannelSchema),
+  }),
+  ChannelMergeRefusalSchema,
+]);
+export type WorkspaceChannelMergeTargetResult = z.infer<typeof WorkspaceChannelMergeTargetResultSchema>;
+
+/** `mergeThreadIntoChannel`: post or replace this thread's merge in one of its Channels. */
+export const WorkspaceChannelMergeRequestSchema = WorkspaceChannelMergeTargetRequestSchema.extend({
+  body: z.string().trim().min(1).max(MESSAGE_MAX_CHARACTERS),
+  embeds: z.array(MergeEmbedSchema),
+  operationId: z.string().min(1).max(200),
+}).strict();
+export type WorkspaceChannelMergeRequest = z.infer<typeof WorkspaceChannelMergeRequestSchema>;
+
+export const WorkspaceChannelMergeResultSchema = z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    spaceId: SpaceIdSchema,
+    name: z.string(),
+    messageId: z.string().uuid(),
+    replayed: z.boolean(),
+  }),
+  ChannelMergeRefusalSchema,
+]);
+export type WorkspaceChannelMergeResult = z.infer<typeof WorkspaceChannelMergeResultSchema>;
+
+/** `removeChannelMessage`: its author, or an Organization admin, deletes one Channel message. */
+export const WorkspaceChannelMessageRemoveRequestSchema = z.strictObject({
+  auth: SpaceActorAuthSchema,
+  spaceId: SpaceIdSchema,
+  messageId: z.string().uuid(),
+});
+export type WorkspaceChannelMessageRemoveRequest = z.infer<typeof WorkspaceChannelMessageRemoveRequestSchema>;
+
+export const WorkspaceChannelMessageRemoveResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true) }),
+  z.strictObject({
+    ok: z.literal(false),
+    code: z.enum(["space_access_denied", "space_not_found", "channel_message_not_found"]),
+  }),
+]);
+export type WorkspaceChannelMessageRemoveResult = z.infer<typeof WorkspaceChannelMessageRemoveResultSchema>;
 
 /** `placeChannelInGeneral`: the cutover homing one Channel, as one of its people. */
 export const WorkspaceGeneralPlacementRequestSchema = z.strictObject({

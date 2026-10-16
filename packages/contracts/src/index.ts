@@ -70,6 +70,9 @@ export * from "./palette";
 export * from "./projects";
 export * from "./resource-relationships";
 export * from "./spaces";
+export * from "./conversation-merge";
+export { MentionSchema } from "./mention-schema";
+import { MentionSchema } from "./mention-schema";
 export * from "./navigation";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
@@ -742,15 +745,6 @@ export const MessageAuthorSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("system") })
 ]);
 
-export const MentionSchema = z.object({
-  type: z.enum(["person", "connector"]),
-  userId: IdSchema.nullable(),
-  connectorType: z.string().max(80).nullable(),
-  displayName: z.string().min(1).max(180).nullable().optional(),
-  avatarUrl: HttpUrlSchema.nullable().optional(),
-  startOffset: z.number().int().nonnegative(),
-  endOffset: z.number().int().positive()
-});
 
 export const MessageAttachmentSchema = z.object({
   id: IdSchema,
@@ -1246,14 +1240,19 @@ export const ChannelFeedItemSchema = z.discriminatedUnion("kind", [
     thread: WorkstreamSchema,
   }),
   /**
-   * A message in the Channel itself, outside any thread. Not unread-tracked,
-   * so it has no sequence number. Served only to a build at
-   * `CHANNEL_MESSAGES_CLIENT_CONTRACT` or later: a build before it parses a
-   * feed row as a thread. See docs/spaces.md#channel-messages.
+   * A message in the Channel itself, outside any thread. Served only to a
+   * build at `CHANNEL_MESSAGES_CLIENT_CONTRACT` or later: a build before it
+   * parses a feed row as a thread. See docs/spaces.md#channel-messages.
    */
   z.strictObject({
     kind: z.literal("message"),
     placedAt: TimestampSchema,
+    /**
+     * The message's position in the Channel's unread order, zero for one that
+     * is not news (a Channel's opening messages). Absent for a build before
+     * `CHANNEL_MERGES_CLIENT_CONTRACT`.
+     */
+    attentionSequenceNumber: z.number().int().nonnegative().optional(),
     message: ChannelMessageSchema,
   }),
 ]);
@@ -1928,7 +1927,7 @@ export const DEFAULT_PUSH_PREFERENCES: PushPreferences = {
 export const NotificationChannelSchema = z.union([z.literal("push"), AutomationDeliveryTargetTypeSchema]);
 export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
 /** The kinds of Activity row a person chooses channels for, one per row in Settings. */
-export const NotificationKindSchema = z.enum(["mentions", "added", "newThreads", "newBreakouts", "runFinished"]);
+export const NotificationKindSchema = z.enum(["mentions", "added", "newThreads", "newBreakouts", "runFinished", "merges"]);
 export type NotificationKind = z.infer<typeof NotificationKindSchema>;
 /**
  * Lenient on read: a channel this build does not know (a newer server's, or
@@ -1948,6 +1947,8 @@ export const NotificationChannelsSchema = z.object({
   newThreads: NotificationChannelListSchema,
   newBreakouts: NotificationChannelListSchema,
   runFinished: NotificationChannelListSchema,
+  /** Defaulted: a server older than merges does not send it. */
+  merges: NotificationChannelListSchema.default(["push"]),
 });
 export type NotificationChannels = z.infer<typeof NotificationChannelsSchema>;
 export const DEFAULT_NOTIFICATION_CHANNELS: NotificationChannels = {
@@ -1956,6 +1957,7 @@ export const DEFAULT_NOTIFICATION_CHANNELS: NotificationChannels = {
   newThreads: ["push"],
   newBreakouts: ["push"],
   runFinished: ["push"],
+  merges: ["push"],
 };
 export const MemberPreferencesSchema = z.object({
   /** Whether the transcript shows the agent's work: its thinking and its tool and plugin calls. */

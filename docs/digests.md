@@ -195,7 +195,13 @@ for one person, newest first:
   `source_created_at`) rather than from an event; and
 - the latest finished run (`exact_state = 'completed'`, `completed_at`) of
   each thread and breakout they take part in, read from the directory rather
-  than from an event.
+  than from an event; and
+- every **merge** somebody else made ([`conversation-merge.md`](conversation-merge.md)):
+  a breakout's into a thread they may list, read from the merge message's own
+  event (its `metadata.mergedFrom`, through migration 109's partial index), and
+  a thread's into a Channel they may list, about a thread they may open, read
+  from `space_messages`. Both are `merged`; a thread's carries `mergedInto`.
+  A build before client contract 7 is served the page without them.
 
 The listing rules apply inside each SQL arm, a breakout through both of the
 conversation page's gates, so a row the person may not list now is never read
@@ -257,6 +263,8 @@ each row's subjects (`activityRowFacts`). In words:
 - `thread_started`: the thread opened, or a Channel it was placed in read past
   that placement, removed placements included.
 - `run_finished`: the conversation opened after the run finished.
+- `merged`: where it landed read through the merge's own ordinal, or opened:
+  the thread for a breakout's merge, the Channel for a thread's.
 
 A rule only compares against things that move forward, so a cleared row stays
 cleared; a new rule has to keep that.
@@ -681,6 +689,25 @@ read from `digest_deliveries`, so a weekend or a weekly schedule never hides a
 row that no digest has listed. The age is measured from the occurrence, not the
 clock, so a retried occurrence splits the same way. Two days was the product's call; a
 digest with only older rows sends nothing, so the count never arrives alone.
+
+### 2026-10-16 — A merge is an Activity row
+
+**What changed:** The Activity tab lists every merge somebody else made: a
+breakout into a thread, and a thread into a Channel, as kind `merged`. The
+daily digest has a Merges section.
+
+**Why:** A merge is a result arriving where a person works, and the product
+owner asked for it to reach the sidebar and push the way starts and finishes
+do.
+
+**Considered and rejected:** Reading a breakout's merge from the breakout's
+directory row, as a start is. A breakout can merge many times and its row holds
+none of them; the merge message's event is the one record of each.
+
+**Consequences:** The breakout-merge arm reads the shared event log by a JSON
+field, so it stays on a partial index; a future arm that reads metadata needs
+its own. A breakout's merge names the breakout to everyone who may list the
+thread, as the merge message itself does.
 
 ### 2026-10-16 — The `digests-enabled` flag is removed, and every digest starts the day at 07:45
 

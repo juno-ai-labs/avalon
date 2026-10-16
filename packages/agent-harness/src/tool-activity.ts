@@ -72,6 +72,11 @@ const CONVERSATION_PROSE: Record<string, ToolProse> = {
     settled: "Posted to a conversation",
     failed: "Could not post to a conversation",
   },
+  conversation_merge: {
+    started: "Merging the result",
+    settled: "Merged the result",
+    failed: "Could not merge the result",
+  },
   conversation_attach: {
     started: "Attaching a conversation",
     settled: "Attached a conversation",

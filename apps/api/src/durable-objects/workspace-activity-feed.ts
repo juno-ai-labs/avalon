@@ -85,6 +85,12 @@ interface ActivityKey extends Record<string, SqlStorageValue> {
   substream_id: string | null;
   /** The message's attention ordinal, on a message event that recorded one. */
   attention_ordinal: number | null;
+  /** On a breakout's `merged` row: the breakout, frozen at merge time. */
+  merged_breakout_id?: string | null;
+  merged_breakout_title?: string | null;
+  /** On a thread's `merged` row: the Channel it merged into. */
+  merged_channel_id?: string | null;
+  merged_channel_name?: string | null;
 }
 
 /**
@@ -98,9 +104,12 @@ function activityRowFacts(
   placements: ReadonlyArray<{ channelId: string; ordinal: number }>,
 ): ActivityRowFacts {
   const threadId = key.thread_id as ActivityItem["threadId"];
-  const conversation = activitySubjectKey(key.substream_id !== null && key.substream_id !== "0"
-    ? { kind: "breakout", threadId, substreamId: key.substream_id }
-    : { kind: "thread", threadId });
+  // A thread's merge landed in a Channel, and took an ordinal on its waterline.
+  const conversation = activitySubjectKey(key.merged_channel_id
+    ? { kind: "channel", channelId: key.merged_channel_id }
+    : key.substream_id !== null && key.substream_id !== "0"
+      ? { kind: "breakout", threadId, substreamId: key.substream_id }
+      : { kind: "thread", threadId });
   return {
     roles: {
       conversation: [{
@@ -258,6 +267,25 @@ export class WorkspaceActivityFeed {
                  AND breakout.created_by_user_id <> ?1
                  AND breakout.source_created_at IS NOT NULL
                  AND breakout.archived_at IS NULL`) : []),
+      // A breakout's merge into its thread, read from the merge message's
+      // activity event through migration 109's partial index; anyone who may
+      // list the thread is told, as anyone who may read it sees the message.
+      ...(mentionsOnly ? [] : arm(`SELECT 'merged:' || event.event_id AS id, 'merged' AS kind,
+                     event.occurred_at, event.actor_user_id, event.actor_label,
+                     event.subject_id AS thread_id, '0' AS substream_id,
+                     json_extract(event.metadata_json, '$.attentionOrdinal') AS attention_ordinal,
+                     json_extract(event.metadata_json, '$.mergedFrom.breakoutId') AS merged_breakout_id,
+                     json_extract(event.metadata_json, '$.mergedFrom.title') AS merged_breakout_title
+                FROM workspace_activity_events event
+                JOIN channels directory ON directory.workstream_id = event.subject_id
+                ${CHANNEL_VIEWER}
+               WHERE json_extract(event.metadata_json, '$.mergedFrom.breakoutId') IS NOT NULL
+                 AND event.event_type = 'workstream_message_created'
+                 AND event.subject_type = 'workstream'
+                 AND (event.actor_user_id IS NULL OR event.actor_user_id <> ?1)
+                 AND directory.archived_at IS NULL
+                 AND ${threadListed}`)),
+      ...(mentionsOnly ? [] : this.spaces.mergeActivityKeys(viewer, after, limit)),
       ...(mentionsOnly ? [] : arm(`SELECT 'finished:' || directory.workstream_id || ':' || directory.completed_at AS id,
                      'run_finished' AS kind,
                      directory.completed_at AS occurred_at,
@@ -387,7 +415,10 @@ export class WorkspaceActivityFeed {
         actorLabel: key.actor_label,
         threadId: key.thread_id as ActivityItem["threadId"],
         threadTitle: threadTitle ?? "",
-        breakout: breakout ? { substreamId: key.substream_id as string, title: breakout.title } : null,
+        breakout: breakout ? { substreamId: key.substream_id as string, title: breakout.title }
+          : key.merged_breakout_id ? { substreamId: key.merged_breakout_id, title: key.merged_breakout_title ?? "" }
+            : null,
+        ...(key.merged_channel_id ? { mergedInto: { channelId: key.merged_channel_id, name: key.merged_channel_name ?? "" } } : {}),
         channelIds: channelIds.get(key.thread_id) ?? [],
         unread: key.occurred_at > seenThrough && !done(key),
       }];

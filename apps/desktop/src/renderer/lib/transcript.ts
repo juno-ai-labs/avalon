@@ -16,6 +16,7 @@ import {
 } from './plugin-groups';
 import {
   AutomationActivationV1Schema,
+  ConversationMergeV1Schema,
   AutomationDraftProposedV1Schema,
   ElicitationSchema,
   agentMessageNotice,
@@ -539,6 +540,7 @@ export function orderedTranscriptMessages(
             ...(imported.success ? { importProvenance: imported.data } : {}),
             ...draftProposedFields(structured),
             ...automationActivationFields(structured),
+            ...mergedFromFields(structured),
             ...(elicitation.success ? { elicitation: normalizeElicitation(elicitation.data) } : {}),
           };
         }
@@ -2831,6 +2833,22 @@ function draftProposedFields(
  * whose structured content will not parse falls back to the generic label
  * rather than rendering a half-read identity.
  */
+/** A Breakout merge's tags, read from the server-written structured content. */
+function mergedFromFields(
+  structured: Record<string, unknown>,
+): Pick<Message, 'mergedFrom'> | Record<string, never> {
+  if (structured['type'] !== 'conversation_merge') return {};
+  const parsed = ConversationMergeV1Schema.safeParse(structured);
+  if (!parsed.success) return {};
+  return {
+    mergedFrom: {
+      breakoutId: parsed.data.mergedFrom.breakoutId,
+      title: parsed.data.mergedFrom.title,
+      actingAgent: parsed.data.actingAgent,
+    },
+  };
+}
+
 function automationActivationFields(
   structured: Record<string, unknown>,
 ): Pick<Message, 'automationActivation'> | Record<string, never> {
