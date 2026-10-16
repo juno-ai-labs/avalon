@@ -1130,6 +1130,13 @@ describe("the navigation routes", () => {
       kind: "message", placedAt: expect.any(String),
       message: { id: expect.any(String), author: { kind: "member", userId: OWNER }, body: "Shipped." },
     }]);
+    // Activity: a merged row for a build that reads merges, none for one that does not.
+    const activityRows = async (contract: string) => ((await request("/navigation/activity", MEMBER_AUTH, undefined, "GET", contract))
+      .body as { items: Array<{ kind: string; mergedInto?: unknown }> }).items.filter((item) => item.kind === "merged");
+    expect(await activityRows("7")).toEqual([expect.objectContaining({
+      kind: "merged", threadId, mergedInto: { channelId: opened.space.id, name: opened.space.name },
+    })]);
+    expect(await activityRows("6")).toEqual([]);
   });
 
   it("answers nobody who is not signed in", async () => {

@@ -5023,8 +5023,9 @@ const DirectoryFollowUpSchema = z.strictObject({
   activityPushSubjects: z.array(z.strictObject({
     threadId: z.string(),
     substreamId: z.string().nullable(),
-    kind: z.enum(["start", "finish", "joined"]),
+    kind: z.enum(["start", "finish", "joined", "merge"]),
     userId: z.string().optional(),
+    itemId: z.string().optional(),
   })).default([]),
 });
 type DirectoryFollowUp = z.infer<typeof DirectoryFollowUpSchema>;
@@ -5553,6 +5554,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       followUp.syncTopics.push(...(effect.kind === "activity_event"
         ? ["activity", "work_opportunities"] as const : ["activity", "workstream_directory"] as const));
       if (effect.kind === "activity_event" && !applied.replayed) followUp.refreshProductAlarm = true;
+      // A Breakout's merge into its thread is a `merged` Activity row, pushed
+      // like a start once this batch commits.
+      if (effect.kind === "activity_event" && !applied.replayed && mergedBreakoutId(effect.metadata) !== null) {
+        followUp.activityPushSubjects.push({
+          threadId: envelope.parentId, substreamId: null, kind: "merge", itemId: `merged:${effect.eventId}`,
+        });
+      }
       if (isPersonNotificationEffect(effect)) {
         if (applied.notificationIntentId) outbox.push(envelope);
       } else if (effect.kind === "activity_event" && effect.sourceKind === "workstream_message"
@@ -10432,14 +10440,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!await this.activeSpaceMember(request.auth.workspaceId, request.auth.userId)) {
       return { ok: false, code: "space_access_denied", channels: [] };
     }
+    const now = Date.now();
     const result = this.spaceStorage().mergeThreadIntoChannel(member(request.auth.userId), {
       workstreamId: request.workstreamId,
       spaceId: request.spaceId,
       body: request.body,
       embeds: request.embeds,
       operationId: request.operationId,
-    }, Date.now());
-    if (result.ok && !result.replayed) this.publishSpaceConversationsChanged({ spaceIds: [result.spaceId] });
+    }, now);
+    if (result.ok && !result.replayed) {
+      this.publishSpaceConversationsChanged({ spaceIds: [result.spaceId] });
+      // Best effort, as every Activity push is: the row is in Activity either way.
+      await this.pushActivity(request.auth.workspaceId, [{
+        threadId: request.workstreamId, substreamId: null, kind: "merge", itemId: `merged:${result.messageId}:${now}`,
+      }]).catch((error: unknown) => logWarn(this.env, "activity_push_failed", {
+        workspace_id: request.auth.workspaceId, code: diagnosticErrorCode(error, "activity_push_failed"),
+      }));
+    }
     return WorkspaceChannelMergeResultSchema.parse(result);
   }
 
@@ -18077,3 +18094,11 @@ applyRetirementGate(WorkspaceDO, {
     alarm: () => Promise.resolve(),
   },
 });
+
+/** The breakout a merge message's activity event names, or null for any other event. */
+function mergedBreakoutId(metadata: Record<string, unknown> | undefined): string | null {
+  const merged = metadata?.mergedFrom;
+  return merged !== null && typeof merged === "object" && typeof (merged as { breakoutId?: unknown }).breakoutId === "string"
+    ? (merged as { breakoutId: string }).breakoutId
+    : null;
+}

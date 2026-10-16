@@ -52,8 +52,12 @@ export const WORKSPACE_MEMBER_NOTIFY_PREFERENCES_MIGRATION: readonly string[] = 
      ADD COLUMN notify_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(notify_json))`,
 ];
 
-/** The push switch each kind of channel list mirrors for an older client. */
-const PUSH_SWITCH: Record<NotificationKind, keyof PushPreferences> = {
+/**
+ * The push switch each kind of channel list mirrors for an older client. A
+ * kind newer than the switches (`merges`) has none: an older client never
+ * shows it, and its channels read from the default until the person sets them.
+ */
+const PUSH_SWITCH: Partial<Record<NotificationKind, keyof PushPreferences>> = {
   mentions: "mentions",
   added: "added",
   newThreads: "newThreads",
@@ -69,6 +73,7 @@ export const NOTIFICATION_KIND_FOR_PUSH: Record<PushNotificationData["kind"], No
   thread_started: "newThreads",
   breakout_started: "newBreakouts",
   run_finished: "runFinished",
+  merged: "merges",
 };
 
 /** `changes` over `base`, switch by switch; a switch `changes` does not name keeps its value. */
@@ -92,9 +97,17 @@ export function storedPushPreferences(json: string | null | undefined): PushPref
 /** The kinds a person has set; a kind they never touched is absent. */
 type ChosenNotify = { [Kind in NotificationKind]?: NotificationChannel[] | undefined };
 
+/**
+ * The stored record's shape: every kind optional and none defaulted, so a
+ * kind the person never set stays absent rather than reading as its default.
+ */
+const StoredNotifySchema = NotificationChannelsSchema
+  .extend({ merges: NotificationChannelsSchema.shape.merges.unwrap() })
+  .partial();
+
 /** The kinds this person has set, as stored. */
 function storedNotify(json: string | null | undefined): ChosenNotify {
-  return NotificationChannelsSchema.partial().parse(JSON.parse(json ?? "{}"));
+  return StoredNotifySchema.parse(JSON.parse(json ?? "{}"));
 }
 
 /** `channels` with `push` present or absent. */
@@ -116,15 +129,21 @@ export function storedMemberPreferences(row: {
   if (!row) return { ...DEFAULT_MEMBER_PREFERENCES };
   const legacy = storedPushPreferences(row.push_json);
   const chosen = storedNotify(row.notify_json);
-  const notify = Object.fromEntries(KINDS.map((kind) => [kind, chosen[kind]
-    ?? withPush(DEFAULT_NOTIFICATION_CHANNELS[kind], DEFAULT_NOTIFICATION_CHANNELS[kind].includes("push") && legacy[PUSH_SWITCH[kind]])])) as NotificationChannels;
+  const notify = Object.fromEntries(KINDS.map((kind) => {
+    const legacySwitch = PUSH_SWITCH[kind];
+    return [kind, chosen[kind] ?? (legacySwitch === undefined ? [...DEFAULT_NOTIFICATION_CHANNELS[kind]]
+      : withPush(DEFAULT_NOTIFICATION_CHANNELS[kind], DEFAULT_NOTIFICATION_CHANNELS[kind].includes("push") && legacy[legacySwitch]))];
+  })) as NotificationChannels;
   return { showAgentWork: row.show_agent_work === 1, push: mirroredPush(legacy, notify), notify };
 }
 
 /** The push switches an older client reads: each kind's from its channels. */
 function mirroredPush(legacy: PushPreferences, notify: NotificationChannels): PushPreferences {
   const push = { ...legacy };
-  for (const kind of KINDS) push[PUSH_SWITCH[kind]] = notify[kind].includes("push");
+  for (const kind of KINDS) {
+    const legacySwitch = PUSH_SWITCH[kind];
+    if (legacySwitch !== undefined) push[legacySwitch] = notify[kind].includes("push");
+  }
   return push;
 }
 
@@ -141,7 +160,8 @@ export function savedNotify(
 ): ChosenNotify {
   const next: ChosenNotify = { ...storedNotify(row?.notify_json) };
   for (const kind of KINDS) {
-    const switched = update.push?.[PUSH_SWITCH[kind]];
+    const legacySwitch = PUSH_SWITCH[kind];
+    const switched = legacySwitch === undefined ? undefined : update.push?.[legacySwitch];
     if (switched !== undefined) next[kind] = withPush(next[kind] ?? current[kind], switched);
     const channels = update.notify?.[kind];
     if (channels !== undefined) next[kind] = channels;

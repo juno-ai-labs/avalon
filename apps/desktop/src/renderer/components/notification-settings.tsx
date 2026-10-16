@@ -42,6 +42,7 @@ const KIND_SETTINGS: Record<NotificationKind, SettingDefinition> = {
   newThreads: settings.notifyNewThreads,
   newBreakouts: settings.notifyNewBreakouts,
   runFinished: settings.notifyRunFinished,
+  merges: settings.notifyMerges,
 };
 
 /**

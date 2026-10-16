@@ -471,6 +471,26 @@ describe('the navigation sidebar', () => {
     await waitFor(() => expect(today.getByRole('link')).toHaveTextContent('Maya K started Q4 plan'));
   });
 
+  it('says what merged into what, and opens a merge where it landed', async () => {
+    useUiStore.getState().setSidebarSection('activity');
+    const now = new Date().toISOString();
+    api.getActivity.mockResolvedValue({ nextCursor: null, items: [
+      { id: 'merged:1', kind: 'merged', occurredAt: now, actorUserId: 'maya', actorLabel: '',
+        threadId: 'plan', threadTitle: 'Q4 plan', breakout: { substreamId: 'b1', title: 'Sequence B' },
+        channelIds: ['outbound'], unread: true },
+      { id: 'merged:2', kind: 'merged', occurredAt: now, actorUserId: 'maya', actorLabel: '',
+        threadId: 'plan', threadTitle: 'Q4 plan', breakout: null, mergedInto: { channelId: 'outbound', name: 'Outbound' },
+        channelIds: ['outbound'], unread: true },
+    ] });
+    renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
+
+    const today = within(await screen.findByRole('region', { name: 'Today' }));
+    const intoThread = await waitFor(() => today.getByRole('link', { name: /Maya K merged Sequence B into Q4 plan/u }));
+    const intoChannel = today.getByRole('link', { name: /Maya K merged Q4 plan into Outbound/u });
+    expect(intoThread.getAttribute('href')).not.toContain('b1');
+    expect(intoChannel.getAttribute('href')).toBe('/channels/outbound');
+  });
+
   it('badges Activity with Rally’s mark and each person’s own avatar', async () => {
     useUiStore.getState().setSidebarSection('activity');
     api.getWorkspaceMembers.mockResolvedValueOnce([{
