@@ -29,8 +29,13 @@
   to the bottom again.
 - **Artifacts ride inside the text** as `resource://` embeds, which the
   renderer already draws as cards.
-- **Edit and delete are the ones messages already have.** Merging again is an
-  edit.
+- **One merge route, and the server owns the tags.** A merge goes through its
+  own route, which checks the source and the target, shares the embedded
+  artifacts, and writes the `mergedFrom` tag itself. A client can never claim
+  one through the ordinary send path.
+- **Merging again** posts a new merge in a Thread, and replaces the earlier one
+  in a Channel. Messages have no edit or delete today, and this change adds
+  neither.
 - **Rally can merge when asked**, through one tool that calls the same write as
   the Merge button.
 - **One hop at a time:** Breakout to Thread, Thread to Channel.
@@ -58,8 +63,11 @@ shows what a thread is _about_, never what it _concluded_.
 | GitHub squash merge           | The merge carries a short, editable message; the history stays on the branch. |
 | Claude Code subagents         | Only a final report comes back to the caller, written for the caller.         |
 
-Research on chat summaries says they are often unfaithful, so an AI-written
-merge is always a draft the person edits before posting.
+Studies of dialogue summarization find a large share of generated summaries
+unfaithful to the conversation, and model judges poor at catching it (Wang et
+al., EMNLP 2022, [arXiv:2210.11777](https://arxiv.org/abs/2210.11777); Tang et
+al., TofuEval, NAACL 2024, [arXiv:2402.13249](https://arxiv.org/abs/2402.13249)),
+so an AI-written merge is always a draft the person edits before posting.
 
 ## How it works
 
@@ -118,23 +126,42 @@ merge is always a draft the person edits before posting.
 | The result changed after small follow-up edits | Embed the artifact, which holds every edit, or edit the text, or Summarize (phase 2).                                                                                                                  |
 | Several artifacts                              | Embed as many as you like; each is one link in the text.                                                                                                                                               |
 | No real result                                 | Don't merge. Nothing forces one.                                                                                                                                                                       |
-| More work after a merge                        | Edit the merge.                                                                                                                                                                                        |
+| More work after a merge                        | Merge again. In a Thread that posts a new merge, and the Breakout's chip and byline point to the newest. In a Channel it replaces the earlier one.                                                     |
+| Merged by mistake                              | A Channel merge has **Remove**. A Thread merge cannot be removed in this version, like any message today; its artifacts can be detached with the existing action.                                      |
+| Thread moved to another Channel                | The merge stays in the Channel it was posted to, as part of that Channel's history. Merging again goes to the thread's current default Channel.                                                        |
 | A private Breakout's result                    | Becomes visible to the Thread, which the audience line says. Embedded artifacts become readable by the Thread's readers (see [Who can open the merged artifacts](#who-can-open-the-merged-artifacts)). |
 | Can't post in the target                       | You don't see Merge.                                                                                                                                                                                   |
-| Everything else                                | Last write wins, removal follows message deletion rules, and every card renders with the reader's own access, as today.                                                                                |
+| Everything else                                | Last write wins, and every card renders with the reader's own access, as today.                                                                                                                        |
 
 ## Architecture
 
+### One merge route
+
+`POST /conversations/:parentId/merge`, body `{ body, clientMessageId,
+breakoutId?, channelId? }`: with `breakoutId` it merges that Breakout into
+this Thread; without it, it merges this Thread into a Channel. It is its own
+route because `CreateMessageRequestSchema` carries no `structuredContent`, and
+because the merge's tags must never come from a client:
+
+- `mergedFrom` is written by the server, after it checks that `breakoutId` is a
+  Breakout of this Thread and that the caller can read it. Otherwise anyone
+  could post a "↳ Sequence B · merged by Alex" byline pointing anywhere.
+- `actingAgent` is set only on the agent tool's path, never from a request
+  body.
+- The caller must be able to post in the target.
+- The embedded resources are checked, then attached, then the merge is posted
+  (see [Who can open the merged artifacts](#who-can-open-the-merged-artifacts)).
+
 ### Breakout → Thread: a message
 
-The merge is posted through the normal send path into the Thread's Main
-conversation, with `structuredContent: { mergedFrom: breakoutId }`.
-`MessageSchema` already has an open `structuredContent` and is not strict, so
-released clients render it as a plain message. Because it is an ordinary
-message, unread, mentions, the Thread's agent seeing it, later Breakouts
-capturing it, edit and delete all work with no new code. The client adds the
-"merged by" line and the Breakout chip's **Merged** state, read from that
-field.
+The route appends to the Thread's Main conversation through the same append
+the send path uses (`appendPreparedMessage`), with `structuredContent:
+{ mergedFrom: breakoutId }`. `MessageSchema` already has an open
+`structuredContent` and is not strict, so released clients render it as a plain
+message. Because it is stored as an ordinary message, unread, mentions, the
+Thread's agent seeing it and later Breakouts capturing it all work as they do
+for any message. The client adds the "merged by" line and the Breakout chip's
+**Merged** state, read from that field.
 
 ### Thread → Channel: a Channel message
 
@@ -148,30 +175,46 @@ one of these, plus one column saying which thread it came from.
 -- WorkspaceDO
 ALTER TABLE space_messages ADD COLUMN source_workstream_id TEXT;  -- the thread a message is about
 ALTER TABLE space_messages ADD COLUMN attention_ordinal INTEGER;  -- see "One Channel waterline"
+ALTER TABLE space_messages ADD COLUMN embeds_json TEXT;           -- [{id, title, kind}] at merge time
 ```
 
-- **Posting.** The first route over `postMessages` (none exists yet;
-  [`spaces.md`](../../spaces.md) says the first feature that needs one adds
-  it). Author is the person who merged, key is `merge:<threadId>`, body is the
-  markdown. It checks the person can post in the thread and the thread is
-  Organization-wide.
+- **Posting.** The merge route is the first caller of `postMessages` from
+  outside WorkspaceDO ([`spaces.md`](../../spaces.md) says the first feature
+  that needs one adds it). Author is the person who merged, key is
+  `merge:<threadId>`, body is the markdown. It checks the person can post in the
+  thread and the thread is Organization-wide.
 - **Merging again** moves it back to the bottom. `postMessages` gains one option
   for a keyed draft: replace instead of skip, rewriting the body and
   `posted_at` and taking a fresh ordinal. Generic: any platform message that
-  should update in place can use it.
+  should update in place can use it. Moving a row in a keyset-paged feed means
+  a client paging older items can miss it or see it twice; the live socket
+  update that announces the merge is what puts it in front of people, so that
+  is accepted.
+- **Moves.** The message id derives from the Channel and the key, so a merge
+  belongs to the Channel it was posted in. After a thread moves, the old merge
+  stays where it was and a new merge goes to the thread's current default
+  Channel.
 - **Remove** deletes the message by id, a small new call.
 - **Chronological for free.** A message's `posted_at` is when it was merged,
   and the feed already orders by it.
 
 ### Latency
 
-No change to what a feed page costs. `feedPage` already runs two index seeks
-and merges them in memory: placements through migration 97's index, messages
+Still two seeks per feed page. `feedPage` already runs two index seeks and
+merges them in memory: placements through migration 97's index, messages
 through `space_messages_feed_idx (space_id, posted_at, message_id)`, each
 `LIMIT` one page plus one, then a sort of at most two pages of rows. A merge is
-a message, so it adds rows to the second seek, not a third query. Both seeks run
-in the WorkspaceDO's own SQLite, in process, so a page costs well under a
-millisecond of SQL; the socket or HTTP round trip is what a person waits on.
+a message, so it adds rows to the second seek, not a third query.
+
+What does change: the message seek gains the openable-thread check for rows
+with a `source_workstream_id`, a primary-key join to `channels` and
+`channel_viewers`, the same predicate the placement seek already runs. That is
+at most one page plus one key lookups, in the WorkspaceDO's own SQLite, in
+process. Embedded artifacts add no lookup at all: their title and kind are
+stored with the message when it is merged (see
+[Rendering in a Channel](#who-can-open-the-merged-artifacts)), and access is
+enforced when a card is opened, as everywhere else. The socket or HTTP round
+trip is still what a person waits on.
 
 ### One Channel waterline
 
@@ -250,14 +293,16 @@ see the merge, and adds no new access source.
   reach the merger already has with Attach to thread, to the same people, so
   it is accepted rather than rolled back.
 - **Rendering in a Channel.** A `resource://` embed only resolves against the
-  loaded conversation's resource set, and a Channel feed has none. So a merge
-  message in the feed carries the metadata (title, kind, id) of each embedded
-  resource the viewer may read, checked per viewer, and the renderer uses it as
-  that message's resource set. A resource the viewer may not read renders as
-  unavailable, as it does today.
-- **Edit and remove.** Editing a merge attaches anything newly embedded.
-  Removing an embed or the whole merge leaves the attachments in place, since
-  people may already rely on them. Detaching is the existing separate action.
+  loaded conversation's resource set, and a Channel feed has none. So the merge
+  route stores each embed's id, title and kind with the message
+  (`embeds_json`), and the renderer uses that as the message's resource set.
+  The feed does no per-viewer resource check: everyone who sees the merge can
+  open its thread, so they can open what is attached to it, and opening a card
+  checks access as it does today.
+- **Removal leaves attachments.** Removing a Channel merge leaves the
+  attachments it made, since people may already rely on them. Detaching is the
+  existing separate action. [Security and trust model](#security-and-trust-model)
+  says what that means.
 
 ### Agent tool: `conversation_merge`
 
@@ -270,8 +315,8 @@ see the merge, and adds no new access source.
 - Added to `rally:conversations`. `conversationToolAccess` gains `merge` on the
   Breakout arm (today `list`, `read`) and a new Thread Main arm that returns
   `merge` alone (today that loop gets no conversation tools).
-- It calls the same server write as the Merge button, as the person the run
-  serves (`actingUserId`). One write path, one access check.
+- It calls the merge route's service, the same write as the Merge button, as
+  the person the run serves (`actingUserId`). One write path, one access check.
 - **Attribution.** Into a Thread, the message carries `actingAgent: true` in its
   `structuredContent`, and the byline reads "merged by Rally for Alex". A
   Channel message has no structured content, and a merge there is authored by
@@ -300,15 +345,47 @@ Breakout handoff summary. Stores nothing.
 
 | Need                                | Existing piece                                                                   |
 | ----------------------------------- | -------------------------------------------------------------------------------- |
-| Post the merge into a Thread        | The normal message send path                                                     |
+| Post the merge into a Thread        | `appendPreparedMessage`, the append the send path uses, behind the merge route   |
 | Tag it                              | `structuredContent` on `MessageSchema`                                           |
 | Show artifacts                      | `resource://` embeds in `MarkdownBody`                                           |
 | Let Thread readers open them        | Attach to thread (`POST /conversations/:parentId/resources`)                     |
 | Merge into a Channel                | Channel messages (`space_messages`, `postMessages`), already in the feed by time |
 | Channel dot                         | The Channel waterline, generalized from placements to any Channel news           |
 | Older clients                       | Client contract numbers                                                          |
-| Edit, delete, unread, mentions      | Existing message behaviour                                                       |
+| Unread, mentions, Breakout capture  | Existing message behaviour                                                       |
 | Agent access to other conversations | `rally:conversations` and `conversationToolAccess`                               |
+
+## Security and trust model
+
+- **A merge changes who can read a resource.** Each embedded artifact becomes
+  readable by everyone who can read the target: a Thread's readers for a
+  Breakout merge, every member for a Channel merge. The composer's audience line
+  names who will see the merge and open its artifacts before anything is posted
+  ("The 6 people in Cold Outreach will see this and can open Sequence B").
+- **It is not undone by removing the merge.** The attachments stay until someone
+  detaches them, so a mistaken merge from a private Breakout leaves its
+  artifacts readable by the Thread, and a Channel merge leaves them readable by
+  the Organization. That is the same reach the merger has today with Attach to
+  thread, so the merge adds no new power, only a faster path to it.
+- **The server owns every tag.** `mergedFrom` is checked against the Thread's
+  own Breakouts and the caller's access to the source. `actingAgent` is set only
+  by the agent tool's path. Neither is accepted from a request body.
+- **Private stays private.** The Breakout itself stays private after a merge,
+  and a private thread cannot merge into a Channel in this version. A guest sees
+  a Channel merge only if they can open its thread.
+- **Rejections name their field**, through `describeZodIssues`, and never echo a
+  resource's content.
+
+## Rollout
+
+- Ships on merge with no feature flag, macOS and the browser together. iOS
+  shows Thread merges as plain messages and gains no new UI.
+- The new Channel-message fields go out only to client contract 7. A
+  contract-6 build sees a Channel merge as a plain message from the person who
+  merged.
+- The WorkspaceDO migration adds nullable columns only. Existing messages stay
+  as they are, and nobody's Channel turns unread on deploy.
+- Summarize is phase 2, after the merge route and both levels ship.
 
 ## Not now
 
@@ -325,10 +402,13 @@ Cut until someone asks. Nothing above blocks adding any of them later.
 - Merging one thread into several Channels.
 - A new Activity row type.
 - Marking a Channel merge as made by Rally.
+- Editing a merge, or removing one from a Thread. Messages have neither today.
 - Statuses, update streams, citations, versions, "new since merge" markers,
   length guides.
 
 ## Open questions
 
 - **Name.** "Merge" fits the founder's model; our users are recruiters and
-  operators. "Bring back" or "Share result" are the alternatives.
+  operators. "Bring back" or "Share result" are the alternatives. Settle it
+  before implementation: it names the route, the tool (`conversation_merge`),
+  the tag (`mergedFrom`) and the button labels.
