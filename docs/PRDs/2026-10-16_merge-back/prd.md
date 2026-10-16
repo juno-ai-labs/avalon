@@ -176,6 +176,7 @@ one of these, plus one column saying which thread it came from.
 ALTER TABLE space_messages ADD COLUMN source_workstream_id TEXT;  -- the thread a message is about
 ALTER TABLE space_messages ADD COLUMN attention_ordinal INTEGER;  -- see "One Channel waterline"
 ALTER TABLE space_messages ADD COLUMN embeds_json TEXT;           -- [{id, title, kind}] at merge time
+ALTER TABLE space_messages ADD COLUMN merge_operation_id TEXT;    -- the clientMessageId that last wrote it
 ```
 
 - **Posting.** The merge route is the first caller of `postMessages` from
@@ -190,6 +191,13 @@ ALTER TABLE space_messages ADD COLUMN embeds_json TEXT;           -- [{id, title
   a client paging older items can miss it or see it twice; the live socket
   update that announces the merge is what puts it in front of people, so that
   is accepted.
+- **Retries.** The route's `clientMessageId` is the operation id, and the row
+  stores the one that last wrote it (`merge_operation_id`). A request whose id
+  matches the row's returns the stored result without rewriting the row or
+  taking an ordinal, in the same transaction as the check, so a retry after a
+  lost response moves nothing and lights no dot. A request with a new id is a
+  new merge and wins, last write wins; a client only retries the attempt it is
+  still waiting on.
 - **Moves.** The message id derives from the Channel and the key, so a merge
   belongs to the Channel it was posted in. After a thread moves, the old merge
   stays where it was and a new merge goes to the thread's current default
@@ -262,8 +270,10 @@ merged. No query flag.
 person can read a resource when it is attached to a conversation they can
 read, and any one attachment location is enough
 ([`authorization.md`](../../authorization.md)). So the merge attaches each
-embedded resource to a conversation whose readers are exactly the people who can
-see the merge, and adds no new access source.
+embedded resource to a conversation that everyone who can see the merge can
+read, and adds no new access source. For a Thread target that conversation's
+readers are exactly the merge's audience. For a Channel target they can be
+wider, as below, and the composer says so.
 
 - **Which resources.** The route reads the `resource://` ids out of the body
   with the parser the citation code already uses. It does not take a separate
@@ -277,7 +287,14 @@ see the merge, and adds no new access source.
   resource is attached to the source thread's Main, the same call. A Channel
   merge needs an Organization-wide thread, so that thread's readers are every
   member, which covers any Channel's audience: Organization-wide, private, or a
-  Personal Channel.
+  Personal Channel. In a private or Personal Channel this is **wider than the
+  merge**: the merge is seen by the Channel's members, but its artifacts become
+  readable by everyone in the Organization through the thread. Anyone in the
+  Organization could already open that thread, so this only matters for an
+  artifact that was not attached to it yet, such as one from a private
+  Breakout. The composer's audience line names both audiences in that case
+  ("Visible in Pricing. Everyone in Acme can open Price model."), and nothing
+  is attached until the person merges.
 - **Guests in a Channel** see a merge only if they can open its thread. The feed
   filters merge messages with the same openable-thread check it already applies
   to thread items. That keeps the rule exact: seeing the merge means you can
@@ -359,7 +376,8 @@ Breakout handoff summary. Stores nothing.
 
 - **A merge changes who can read a resource.** Each embedded artifact becomes
   readable by everyone who can read the target: a Thread's readers for a
-  Breakout merge, every member for a Channel merge. The composer's audience line
+  Breakout merge, every member for a Channel merge, even when the Channel
+  itself is private. The composer's audience line
   names who will see the merge and open its artifacts before anything is posted
   ("The 6 people in Cold Outreach will see this and can open Sequence B").
 - **It is not undone by removing the merge.** The attachments stay until someone
