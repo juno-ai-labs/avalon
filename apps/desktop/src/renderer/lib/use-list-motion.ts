@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type RefObject } from 'react';
+import { useCallback, useLayoutEffect, useRef, type RefObject } from 'react';
 import {
   LIST_MOTION,
   enterKeyframes,
@@ -95,6 +95,22 @@ export function useListMotion(
   layoutKey?: unknown,
   layoutSettling = false,
 ): void {
+  const pass = useListMotionPass(containerRef, layoutKey, layoutSettling);
+  useLayoutEffect(() => pass());
+}
+
+/**
+ * `useListMotion` with the pass handed back rather than run on this
+ * component's own commits: for one list drawn by several components, each of
+ * which can re-render alone. Each calls the pass from a layout effect with no
+ * dependency list, so a commit of any of them is measured. A second call in
+ * the same commit finds every row where the first left it, and plays nothing.
+ */
+export function useListMotionPass(
+  containerRef: RefObject<HTMLElement | null>,
+  layoutKey?: unknown,
+  layoutSettling = false,
+): () => void {
   const lastSeen = useRef<Map<string, Seen>>(new Map());
   const lastLayoutKey = useRef<unknown>(layoutKey);
   const lastLayoutSettling = useRef(false);
@@ -102,8 +118,9 @@ export function useListMotion(
   const running = useRef<Map<HTMLElement, Running>>(new Map());
   /** The exits in flight, each on a stand-in its own settling removes. */
   const leaving = useRef<Set<Animation>>(new Set());
+  const pass = useRef<() => void>(() => undefined);
 
-  useLayoutEffect(() => {
+  pass.current = () => {
     const container = containerRef.current;
     if (container === null) return;
 
@@ -249,7 +266,7 @@ export function useListMotion(
       const entry = byKey.get(shifter.key);
       if (entry !== undefined) play(entry.element, shifter, shifterKeyframes(shifter));
     }
-  });
+  };
 
   useLayoutEffect(() => () => {
     for (const entry of running.current.values()) entry.animation.cancel();
@@ -261,6 +278,8 @@ export function useListMotion(
     for (const animation of [...leaving.current]) animation.cancel();
     leaving.current.clear();
   }, []);
+
+  return useCallback(() => pass.current(), []);
 }
 
 /**

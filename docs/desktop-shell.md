@@ -26,7 +26,7 @@ a thread or a breakout opens, or who owns the right panel.
 | `packages/ui/src/components/breakout-marks.tsx` | `BreakoutMark`, `breakoutsByOrigin`, `orderBreakoutsForTicks`, `breakoutHasActivity`, `BreakoutTickBar`. |
 | `packages/ui/src/components/conversation-card.tsx` | `ConversationCard`: one thread or Breakout as a feed entry. The Channel feed draws its threads with it, and a thread's feed its Breakouts. |
 | `packages/ui/src/components/split-conversation.tsx` | `SplitConversationLayout`, `SplitConversationMode`, `clampBreakoutWidth`. |
-| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the section switcher (Channels, Threads, Activity), the account menu under it, and the three lists with their Pinned sections, sort, and drag to reorder. |
+| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the section switcher (Pinned, Channels, Threads, Activity), the account menu under it, and the lists with their Pinned sections, sort, and drag to reorder. |
 | `apps/desktop/src/renderer/screens/channel.tsx` | The Channel screen: its pill and menu, the feed of threads, the composer, and `ChannelStack`, the first two panes of the stack ([`pane-stack.md`](pane-stack.md)). |
 | `apps/desktop/src/renderer/components/channel-composer.tsx` | Starting a thread from a Channel. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | The thread screen: the thread and breakout panes, both pills, the one-slot rule, breakout creation in the right pane, and the Channel breadcrumb once the thread has shifted left. |
@@ -47,23 +47,30 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
 - **The section switcher**, a 76px rail under the macOS window controls,
   which the main window centers over it per macOS version (the width is
   `--navigation-rail-width`; change it and the light position together):
-  **Channels**, **Threads** and **Activity**, each an outline over its name,
-  and the account menu at the bottom (its trigger shows only the avatar here).
-  The outlines are what each list holds: a Channel is a squircle and a Thread
-  is a circle, as their rows draw them, and Activity, which holds neither, is
-  a triangle.
+  **Pinned**, **Channels**, **Threads** and **Activity**, each an outline over
+  its name, and the account menu at the bottom (its trigger shows only the
+  avatar here). The outlines are what each list holds: a Channel is a squircle
+  and a Thread is a circle, as their rows draw them, and Activity, which holds
+  neither, is a triangle. Pinned holds every kind that can be pinned, so its
+  icon is a two-by-two grid (`ShapeGrid`), clockwise from the top left: a
+  Channel, a Thread, a Sidekick's hexagon and a Thread. The hexagon is there for
+  kinds still to come; Pinned lists Channels and Threads today.
   The choice is a device preference (`rally.sidebar-section`). **Threads**
   carries a red count: every conversation waiting on this person and every
   access request waiting on them, the same `attentionItems` the dock badge
   counts. The macOS menu bar counts Activity's unread rows instead
-  ([`menu-bar.md`](menu-bar.md)). Channels and Activity carry no badge.
-- **One list**, titled with the section's name, with **Restart to update**
+  ([`menu-bar.md`](menu-bar.md)). Pinned, Channels and Activity carry no badge.
+- **One list**, titled with the section's name. Pinned's list is a section per
+  kind, **Channels** then **Threads** (threads, then breakouts), each the same
+  Pinned part its own tab draws above everything else, reorderable the same
+  way, with nothing unpinned beside it. A guest gets no Channels section there
+  either. Each list has **Restart to update**
   when one is downloaded, **New channel** on Channels or **Mark all read** on
   Activity, and **Search organization** last, so it holds its place as the
-  person moves between the three lists. Threads has no section action: a
+  person moves between the lists. Pinned and Threads have no section action: a
   thread starts from a Channel's composer.
 
-Every row in the three lists is one layout (`RowLayout`): an `IdentityTile`
+Every row in the lists is one layout (`RowLayout`): an `IdentityTile`
 (`packages/ui/src/components/identity-tile.tsx`), a name with a time, and a
 second line with the unread dot at its end. A tile is a shape in the object's
 pastel pair with its glyph, and can carry small badges on its corner, each in
@@ -141,7 +148,7 @@ moves the read time to the newest row held and clears every held dot at once
 A row opened from any list opens the thread under one of its Channels — the
 one already open when it sits there — expanded over it, so a Channel is always
 one step back ([`pane-stack.md`](pane-stack.md)).
-Every row in the three lists is a link, so a modified click opens it
+Every row in the lists is a link, so a modified click opens it
 elsewhere (a new tab, in the web app). Each list draws placeholder rows until
 its first page arrives. A guest has no Channels section, per the navigation
 PRD; a guest whose stored section is Channels sees Threads.
@@ -436,6 +443,34 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-16 — A Pinned section in the switcher
+
+**What changed:** The switcher gains **Pinned**, first, whose list is every
+pin grouped by kind: Channels, then Threads. Its icon is `ShapeGrid`, four
+outlines in a two-by-two grid, and `ShapeOutline` learns the Sidekick hexagon.
+`ChannelsSection` and `ThreadsSection` take the Pinned tab's shared list
+motion, and given it draw only their Pinned part, titled with the kind, with
+placeholders while its rows are read.
+
+**Why:** Pins were split across two tabs, so reaching a pinned Channel and a
+pinned thread meant switching between them. More pinnable kinds are coming,
+and each would add another tab to check.
+
+**Considered and rejected:** A separate pinned list component. Reusing each
+tab's own Pinned part keeps one drawing of a pinned row, one reorder path and
+one empty state per kind, so a fix to either tab reaches Pinned too.
+
+**Consequences:** A new pinnable kind adds its section to `PinnedPanel` and,
+once it has one, its shape to the grid. Two list motions over one scroll box
+would each animate every row, so a section drawn inside `PinnedPanel` takes
+the tab's `useListMotionPass` and runs it on its own commits: a drag preview
+re-renders only its section, so a pass run by the tab alone would miss it
+([`list-motion.md`](list-motion.md)). A desktop link opened while Pinned is
+showing scrolls to the row if it is pinned and does not page through the
+Threads list for it. Unpinning on Pinned takes the row off the tab, so the pin
+reveal hands focus to the row that was beside it, or to the Pinned button when
+none is left, rather than leaving it on the page body.
 
 ### 2026-10-15 — Breakouts in a thread are cards, like threads in a Channel
 
