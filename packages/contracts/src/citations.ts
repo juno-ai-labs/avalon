@@ -557,6 +557,25 @@ export function embeddedResourceCitations(markdown: string): readonly { readonly
 }
 
 /**
+ * Every resource a markdown body cites, as a chip (`[T](resource://id)`) or a
+ * card (`![T](resource://id)`), in document order and without repeats. Code
+ * and footnote definitions are skipped exactly as {@link embeddedResourceCitations}
+ * skips them. A merge reads this to know which artifacts it shares; see
+ * docs/conversation-merge.md.
+ */
+export function citedResourceIds(markdown: string): string[] {
+  const found: string[] = [];
+  mapOutsideCode(stripFootnoteDefinitions(markdown), (segment) => {
+    for (const match of segment.matchAll(INLINE_LINK)) {
+      const target = parseCitationHref(match[2]);
+      if (target.scheme === "resource" && !found.includes(target.resourceId)) found.push(target.resourceId);
+    }
+    return segment;
+  });
+  return found;
+}
+
+/**
  * The same answer, written for a surface that renders no citations at all.
  *
  * Outbound email and Slack delivery both take agent Markdown and hand it to
