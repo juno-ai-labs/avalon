@@ -28,8 +28,9 @@ holds it.
 | `apps/api/src/routes/spaces.ts` | The feed's contract-7 stripping, and `DELETE /spaces/:id/messages/:messageId` (Remove). |
 | `apps/api/src/services/conversation-tools.ts` | `conversation_merge`; see [`conversation-tools.md`](conversation-tools.md). |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | `mergeTargetFor` (who can merge where), the composer's merge mode, the audience line, the Breakout card's **Merged** chip. |
-| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MergeButton`, after New breakout in both hover rows, and `MergedFromLine` over a Thread merge. |
-| `apps/desktop/src/renderer/screens/channel.tsx` | `MergeCard`, a Channel merge in the feed, with Remove. |
+| `packages/ui/src/components/merge-message.tsx` | `MergeMessage`, the one block every merge is drawn with, in a Thread and in a Channel. |
+| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MergeButton`, after New breakout in both hover rows, and a Thread merge drawn as `MergeMessage`. |
+| `apps/desktop/src/renderer/screens/channel.tsx` | `MergeCard`, a Channel merge in the feed as `MergeMessage`, with Remove. |
 | `packages/ui/src/components/conversation-menus.tsx` | The title menu's Merge row (`ConversationRowActions.merge`). |
 
 ## How it works
@@ -64,8 +65,8 @@ The route, with `breakoutId`, runs in this order:
 
 Because it is an ordinary message, unread, mentions, the Thread's agent reading
 it later and Breakouts capturing it all work as for any message. The client
-draws "↳ Sequence B · merged by Alex" over it, renders its body as markdown
-with its embeds, and marks the Breakout's card **Merged** from the merge
+draws it as a merge, not as its author's bubble (see "Every merge looks the
+same" below), and marks the Breakout's card **Merged** from the merge
 messages in the transcript. Merging again posts a new merge. A Thread merge
 cannot be removed, like any message.
 
@@ -98,6 +99,22 @@ description for the card. The card draws its embeds from the stored titles: the
 feed does no per-viewer resource lookup, and opening an artifact opens the
 thread it is attached to. **Remove** deletes the row; its author or an
 Organization owner or admin may.
+
+### Every merge looks the same
+
+`MergeMessage` (`packages/ui`) draws every merge, in a Thread and in a
+Channel, on the leading side. That is the side results come back on; a
+person's own words go out on the trailing side. It is drawn as the design's
+5c set shows:
+- **A meta line:** the source's mark and name, "merged by", the merger's
+  avatar and name ("Rally for Alex" when Rally merged on Alex's request), and
+  the time. The source's name opens it. A Breakout's mark is the unrotated
+  breakout mark on the neutral fill. A Thread's mark is its own icon on its
+  own tint.
+- **A quote line,** in a Channel only, of the thread's first line.
+- **The body,** as markdown with its embeds.
+- **The host's actions** under it: the hover row in a Thread, Remove in a
+  Channel.
 
 ### The waterline
 
@@ -263,6 +280,9 @@ than an overwrite of a newer merge; that table grows by one row per merge a
 person makes. A future message about a thread must keep the
 openable-thread filter in both the feed and the stats arm. What a merge shares
 is what `citedResourceIds` finds, so a new citation form the renderer draws as
-a link must be added there, or its artifact stays unshared.
+a link must be added there, or its artifact stays unshared. A merge is drawn
+by `MergeMessage` alone, so a change to how merges look is one change, not
+one per surface; a Thread merge was first drawn as its author's bubble and
+read as something they typed.
 
 Design: [`PRDs/2026-10-16_merge-back/prd.md`](PRDs/2026-10-16_merge-back/prd.md).
