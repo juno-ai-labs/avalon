@@ -629,6 +629,15 @@ control reading around 0.6); the composer writes it onto the control as
 `--dictation-level`, outside React, and the stylesheet draws it as a ring
 around the button.
 
+The transcript lands in the same field a person types into, and the field
+treats it the way it treats typing: it grows with the text up to the composer's
+height limit and scrolls past it. The browser only keeps a caret in view, never
+a value it was handed, so each transcript update also asks the field to show
+its tail once it has taken its new height, on the render that carries the new
+value and again a frame later when the capsule's height animation has settled;
+the mention highlight layer follows the same scroll. The newest words are
+therefore always the ones on screen while dictation runs.
+
 A pointer or focus reaching the microphone calls `prefetch`, which asks the API
 client for a ticket ahead of the press (`prefetchTranscriptionSocketTicket`).
 The client hands that ticket to the next `getTranscriptionSocketTicket` once,
@@ -728,7 +737,8 @@ microphone. The worklet's context is created inside the press with
 the ticket lands rather than after local capture starts. The control arms on
 the press (`is-arming`) before it fills on capture (`is-listening`), a level
 ring driven by the worklet's RMS shows that audio is arriving, and hovering or
-focusing the microphone prefetches the ticket through the API client. A
+focusing the microphone prefetches the ticket through the API client. The
+field follows the transcript's tail once it is at its height limit. A
 device-local `dictation_start` trace records the phases.
 
 **Why:** Three independent costs were paid in series. The worklet module fetch
@@ -739,7 +749,9 @@ WorkspaceDO admission and Azure's acknowledgement behind it, began only once
 `listening` had been reached. None of that had to wait for the microphone,
 which is the one step that does. The spinner shown during `requesting` read as
 loading rather than as a press acknowledged, and nothing on the control said
-audio was arriving once it was.
+audio was arriving once it was. A transcript longer than the field's height
+limit also wrote its newest words below the fold: the field grew and then
+scrolled, but a value set from outside never moves a textarea's scroll.
 
 **Considered and rejected:** Holding one warm `AudioContext` and worklet per
 renderer across recordings. It removes the graph build from the press
