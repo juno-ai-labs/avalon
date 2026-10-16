@@ -27,17 +27,20 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 | `apps/desktop/src/renderer/screens/browser-import.tsx` | The import window: Import, the name-and-Space sheet, the run's progress modal and Cancel. |
 | `apps/desktop/src/renderer/lib/browser-import-progress.tsx` | The main window's half: lists the Channel as pending, shows "Importing conversation…", and settles or discards it. |
 | `packages/agent-harness/src/evaluation.ts` | Scenario/checkpoint evaluation using the production Rally runtime. |
-| `apps/desktop/src/renderer/screens/channel.tsx`, `components/session-import-update-dialog.tsx` | The Channel header's **Import from Claude or ChatGPT** button that opens the import window, and the explicit update control. |
+| `apps/desktop/src/renderer/screens/channel.tsx`, `components/channel-composer.tsx`, `components/session-import-update-dialog.tsx` | The two **Import from Claude or ChatGPT** entry points that open the import window (the Channel header's button and the Channel composer's plus menu), and the explicit update control. |
 
 ## How it works
 
 Every import goes through Rally's own browser, read by an agent. The
 **Import from Claude or ChatGPT** button on the right of a Channel's header
 opens the [import window](embedded-browser.md) locked to that Channel, since an
-import starts a new thread there. Only the desktop host, which has that browser,
-offers it, and only to someone who may start a thread in that Channel; a guest
-never sees it. The person opens a conversation in the window — their own,
-signed in, or a shared link — and clicks Import. A sheet asks for a thread
+import starts a new thread there. The same item sits in the plus menu of the
+Channel's composer, beside **Attach files**. Only the desktop host has that
+browser: the header button appears only there, and in the browser the plus-menu
+item shows disabled with a tooltip saying it needs the Mac app. Both appear only
+to someone who may start a thread in that Channel; a guest never sees them.
+The person opens a conversation in the window — their own, signed in, or a
+shared link — and clicks Import. A sheet asks for a thread
 name, prefilled with the tab's title, and shows the Channel without letting it
 change. Names stop at the server's 180-character limit. The entered name is
 the settled thread title. Once the thread opens, a background pass picks its
@@ -422,6 +425,14 @@ These deterministic checks do not measure model compliance: live runs across
 these variations are still required to establish it.
 
 ## Changelog
+
+### 2026-10-16 — Import also offered from the Channel composer's plus menu
+
+**What changed:** The Channel's composer lists **Import from Claude or ChatGPT** in its plus menu after **Attach files**, opening the same import window locked to that Channel. The header button stays. In the browser, which has no embedded browser to import through, the item shows disabled with a tooltip saying it needs the Mac app.
+
+**Why:** The plus menu is where a person looks for ways to bring something into a new thread, and an import is one. The header button alone sat away from the place the thread is started.
+
+**Considered and rejected:** Hiding the item in the browser, as the header button is. A menu entry that exists on one platform and silently not on another reads as missing; showing it disabled says why.
 
 ### 2026-10-13 — Import moves from the sidebar to the Channel header
 
