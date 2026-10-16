@@ -453,8 +453,8 @@ describe("Rally engineering MCP tools", () => {
     vi.mocked(flags.listProductFlags).mockResolvedValue({
       ok: true,
       value: [{
-        ...MANAGED_FLAGS.find((flag) => flag.key === "digests-enabled")!,
-        flag: { key: "digests-enabled", enabled: true, default_variation: "on", rules: [] },
+        ...MANAGED_FLAGS.find((flag) => flag.key === "push-notifications-enabled")!,
+        flag: { key: "push-notifications-enabled", enabled: true, default_variation: "on", rules: [] },
       }],
     });
     const env = testEnv({ FLAG_ADMINISTRATION: flags });
@@ -462,10 +462,10 @@ describe("Rally engineering MCP tools", () => {
     const response = await rpc(env, "tools/call", { name: "list_feature_flags", arguments: {} });
     const result = response.result as { content: Array<{ text: string }> };
     expect(JSON.parse(result.content[0]!.text)).toEqual([expect.objectContaining({
-      key: "digests-enabled",
-      label: "Digests Enabled",
+      key: "push-notifications-enabled",
+      label: "Push Notifications Enabled",
       defaultVariation: "on",
-      flag: { key: "digests-enabled", enabled: true, default_variation: "on", rules: [] },
+      flag: { key: "push-notifications-enabled", enabled: true, default_variation: "on", rules: [] },
     })]);
   });
 

@@ -581,11 +581,6 @@ export function WorkspaceSettingsScreen({
   const browserHost = host === 'browser';
   const workspaceSocket = useOptionalWorkspaceSocket();
   const featureFlags = useClientFeatureFlags(api);
-  // Fails open: `digestsEnabled` defaults `true` and only an explicit `false`
-  // hides the section, so a stale cache entry, an unbound Flagship, or the
-  // brief window before the first fetch resolves all show the section rather
-  // than hiding someone's own saved settings for no reason they could find.
-  const digestSettingsAvailable = featureFlags.data?.digestsEnabled !== false;
   const queryClient = useQueryClient();
   const bridge = useMemo(() => desktopBridge(), []);
   const contentRef = useRef<HTMLElement | null>(null);
@@ -1091,11 +1086,6 @@ export function WorkspaceSettingsScreen({
     const withConnections = group.label !== 'Settings'
       ? group
       : { ...group, items: group.items.flatMap((item) => item.id === 'connections' ? [item, ...connectionNavigationItems] : [item]) };
-    // Dropped from the list entirely rather than shown disabled: their digest
-    // has in fact stopped arriving (`fireDigestSchedule` reads this same flag
-    // and returns `flag_disabled`), but there is no copy in this screen for a
-    // paused state, and an absent section is still an honest answer to "is
-    // this available to me."
     return { ...withConnections, items: withConnections.items.filter((item) =>
       (!guest || GUEST_SETTINGS_SECTIONS.has(item.id))
       ) };
@@ -1117,9 +1107,7 @@ export function WorkspaceSettingsScreen({
   }), [browserHost, availableSections, isAdmin, developerSettingsAvailable, applicationSettings?.menuBarAvailable, applicationSettings?.launchAtLoginAvailable, applicationSettings?.releaseChannelAvailable]);
   const [searchTarget, setSearchTarget] = useState<SettingSearchResult | null>(null);
   const searchEntries = useMemo(() => collectSettings([
-    // The digest's rows are searchable only while the digest is drawn.
-    { ...coreSettingsProvider, entries: coreSettingsProvider.entries.filter((entry) => !entry.definition.connectionKind
-      && (digestSettingsAvailable || !entry.definition.id.startsWith('digest')))
+    { ...coreSettingsProvider, entries: coreSettingsProvider.entries.filter((entry) => !entry.definition.connectionKind)
       .map((entry) => ({ ...entry, instanceLabel: connectorProviders.find((provider) =>
         'provider:' + provider.id === entry.definition.entryPoint)?.name })) },
     {
@@ -1143,7 +1131,7 @@ export function WorkspaceSettingsScreen({
         instanceId: connection.id,
       })),
     },
-  ], settingsContext), [connections.data, installedConnections, isAdmin, settingsContext, digestSettingsAvailable]);
+  ], settingsContext), [connections.data, installedConnections, isAdmin, settingsContext]);
   const searchResults = useMemo(() => {
     const action = navigationQuery.trim().toLowerCase();
     const exactConnectAction = [PERSONAL_CONNECT_LABEL, 'Connect for organization'].some((label) => label.toLowerCase() === action);
@@ -1576,7 +1564,7 @@ export function WorkspaceSettingsScreen({
                 workspaceId={workspace.id}
               />
             )}
-            {activeSection === 'notifications' && api && digestSettingsAvailable && (
+            {activeSection === 'notifications' && api && (
               <DailyDigestSettings
                 api={api}
                 connections={connections.data ?? []}

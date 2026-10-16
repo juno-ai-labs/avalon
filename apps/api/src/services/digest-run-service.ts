@@ -21,7 +21,6 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { stableUuid } from "../lib/stable-uuid";
 import { emitProductUsageTelemetry, resourceTelemetryEventId, telemetryCountBucket } from "../telemetry/product-usage";
 import { deliverDigest } from "./digest-delivery-service";
-import { resolveDigestsEnabled } from "./digest-flags";
 import { singleLine } from "./resend";
 import { withWorkspaceRuntimeDatabase, workspaceRegionalDatabase } from "./workspace-runtime-database";
 import { canonicalWorkstreamUrl } from "./workstream-link-service";
@@ -40,7 +39,7 @@ export interface DigestScheduleFireInput {
 
 export type DigestFireOutcome =
   | { sent: true; deliveryId: string; itemCount: number }
-  | { sent: false; reason: "already_settled" | "disabled" | "flag_disabled" | "unauthorized" | "empty" };
+  | { sent: false; reason: "already_settled" | "disabled" | "unauthorized" | "empty" };
 
 /** The WorkspaceDO that owns this workspace's digest tables and its Activity feed. */
 function workspaceDigests(env: Env, workspaceId: string) {
@@ -85,11 +84,6 @@ export async function fireDigestSchedule(
   // retrying would only reach the same answer.
   if (!digest || !identity) return { sent: false, reason: "unauthorized" };
   if (!digest.enabled) return { sent: false, reason: "disabled" };
-  // Checked before any write, so an occurrence skipped here claims nothing.
-  // See `digest-flags.ts` for why this fails open rather than closed.
-  if (!await resolveDigestsEnabled(env, { userId: digest.userId, workspaceId: input.workspaceId })) {
-    return { sent: false, reason: "flag_disabled" };
-  }
   // A schedule saved months ago must not still act as somebody who is no
   // longer that person.
   const principal = ExecutionPrincipalSchema.parse(JSON.parse(digest.executionPrincipalJson));
