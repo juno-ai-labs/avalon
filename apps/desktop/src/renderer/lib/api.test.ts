@@ -258,6 +258,24 @@ describe('Rally API wire adapter', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('requests a fresh transcription ticket when the prefetch resolves only after its window', async () => {
+    vi.useFakeTimers();
+    let releasePrefetch!: (response: Response) => void;
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { releasePrefetch = resolve; }))
+      .mockResolvedValueOnce(json({ url: 'wss://api.rally.test/socket/transcription', ticket: 'fresh' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    api.prefetchTranscriptionSocketTicket(50_000);
+    const ticket = api.getTranscriptionSocketTicket();
+    await vi.advanceTimersByTimeAsync(50_001);
+    releasePrefetch(json({ url: 'wss://api.rally.test/socket/transcription', ticket: 'late' }));
+
+    await expect(ticket).resolves.toMatchObject({ ticket: 'fresh' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('falls back to a fresh request when the prefetched transcription ticket failed', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({ error: 'dictation_not_configured' }, { status: 503 }))

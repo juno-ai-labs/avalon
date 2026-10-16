@@ -403,11 +403,17 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   // through React would re-render the whole composer for a box-shadow.
   const microphoneControlRef = useRef<HTMLDivElement>(null);
   const dictation = useRealtimeDictation(api, (transcript) => {
-    onValueChange(appendDictationTranscript(dictationBaseRef.current, transcript));
+    const next = appendDictationTranscript(dictationBaseRef.current, transcript);
+    // An update that changes nothing, such as the empty transcript a start
+    // sends, must not leave the follow armed for the person's next keystroke.
+    if (next === value) return;
+    onValueChange(next);
     transcriptTailPendingRef.current = true;
     // The layout effect follows the tail on the render that carries the new
-    // value; this frame covers the capsule's height animation settling after it.
+    // value; this frame covers the capsule's height animation settling after
+    // it, and clears the flag in case that render has not happened.
     requestAnimationFrame(() => {
+      transcriptTailPendingRef.current = false;
       resizeTextarea();
       followTranscriptTail();
     });

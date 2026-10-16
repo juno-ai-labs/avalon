@@ -103,7 +103,7 @@ describe('ComposerInput message capsule', () => {
 
   it('keeps send on screen but disabled around an empty draft', () => {
     renderInput({
-      api: { getTranscriptionSocketTicket: vi.fn() },
+      api: { getTranscriptionSocketTicket: vi.fn(), prefetchTranscriptionSocketTicket: vi.fn() },
       layout: 'message-capsule',
       submitDisabled: true,
       value: '',
@@ -121,7 +121,7 @@ describe('ComposerInput message capsule', () => {
 
   it('enables send without taking dictation away when the draft has content', () => {
     renderInput({
-      api: { getTranscriptionSocketTicket: vi.fn() },
+      api: { getTranscriptionSocketTicket: vi.fn(), prefetchTranscriptionSocketTicket: vi.fn() },
       layout: 'message-capsule',
       value: 'Hello there',
     });

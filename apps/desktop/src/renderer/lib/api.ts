@@ -2398,8 +2398,10 @@ export class RallyApi {
     const prefetched = this.prefetchedTranscriptionTicket;
     this.prefetchedTranscriptionTicket = undefined;
     const fresh = (): Promise<SocketTicket> => this.request('/realtime/transcription/socket', { schema: this.socketSchema, signal });
+    // Checked again once the prefetch resolves: a request that waited out a
+    // network recovery can land after the window it was fetched for.
     const request = prefetched && Date.now() < prefetched.usableUntil
-      ? prefetched.promise.catch(fresh)
+      ? prefetched.promise.then((ticket) => Date.now() < prefetched.usableUntil ? ticket : fresh(), fresh)
       : fresh();
     if (!signal) return request;
     // A shared credential renewal can outlive fetch cancellation. Settle this

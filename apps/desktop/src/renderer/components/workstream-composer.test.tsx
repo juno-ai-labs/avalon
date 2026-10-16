@@ -222,7 +222,7 @@ describe('WorkstreamComposer mention confirmation', () => {
       <Tooltip.Provider>
         <WorkstreamComposer
           draftKey="test-draft"
-          api={{ getTranscriptionSocketTicket: vi.fn() }}
+          api={{ getTranscriptionSocketTicket: vi.fn(), prefetchTranscriptionSocketTicket: vi.fn() }}
           attachments={[]}
           fileInputRef={createRef<HTMLInputElement>()}
           members={[creator]}
