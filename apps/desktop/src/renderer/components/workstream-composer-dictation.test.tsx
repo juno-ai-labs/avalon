@@ -7,6 +7,11 @@ import type { WorkstreamDetail } from '../lib/types';
 
 const dictationHarness = vi.hoisted(() => ({
   emit: undefined as ((transcript: string) => void) | undefined,
+  emitLevel: undefined as ((level: number) => void) | undefined,
+  prefetch: vi.fn(),
+  // Where `start` lands: the real hook sits in `requesting` until the
+  // microphone opens, and only then reaches `listening`.
+  startState: 'listening' as 'listening' | 'requesting',
   // What `stop` writes out before it settles, standing in for the tail the real
   // hook drains: it delivers the final transcript and only then finishes the
   // attempt, so a caller that submits on `stop` resolving is a render behind it.
@@ -29,20 +34,23 @@ vi.mock('../lib/use-realtime-dictation', async (importOriginal) => {
     useRealtimeDictation: (
       _api: unknown,
       onTranscript: (transcript: string) => void,
+      options?: { onLevel?: (level: number) => void },
     ) => {
-      const [state, setState] = React.useState<'idle' | 'listening' | 'transcribing' | 'finalizing' | 'error'>('idle');
+      const [state, setState] = React.useState<'idle' | 'requesting' | 'listening' | 'transcribing' | 'finalizing' | 'error'>('idle');
       const [error, setError] = React.useState<string>();
       dictationHarness.emit = onTranscript;
+      dictationHarness.emitLevel = options?.onLevel;
       dictationHarness.setError = setError;
       dictationHarness.setState = setState;
       return {
         devices: [],
         ...(error ? { error } : {}),
+        prefetch: dictationHarness.prefetch,
         selectedDeviceId: 'default',
         setSelectedDeviceId: vi.fn(),
         start: async () => {
           dictationHarness.start();
-          setState('listening');
+          setState(dictationHarness.startState);
         },
         state,
         stop: async () => {
@@ -100,6 +108,9 @@ const workstream: WorkstreamDetail = {
 
 beforeEach(() => {
   dictationHarness.emit = undefined;
+  dictationHarness.emitLevel = undefined;
+  dictationHarness.prefetch.mockReset();
+  dictationHarness.startState = 'listening';
   dictationHarness.finalTranscript = undefined;
   dictationHarness.setError = undefined;
   dictationHarness.setState = undefined;
@@ -480,6 +491,100 @@ describe('WorkstreamComposer live dictation', () => {
     now = 400;
     fireEvent.pointerUp(screen.getByRole('button', { name: 'Stop dictation' }), { button: 0, pointerId: 1 });
     await waitFor(() => expect(dictationHarness.stop).toHaveBeenCalledOnce());
+  });
+
+  it('arms the microphone on the press, and fills it only once capture is listening', async () => {
+    dictationHarness.startState = 'requesting';
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          draftKey="test-draft"
+          api={{ getTranscriptionSocketTicket: vi.fn() }}
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={async () => undefined}
+          onStop={async () => undefined}
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Start voice input' }), { button: 0, pointerId: 1 });
+    await waitFor(() => expect(dictationHarness.start).toHaveBeenCalledOnce());
+    const button = screen.getByRole('button', { name: 'Stop dictation' });
+    const control = button.closest('.microphone-control');
+    expect(control).toHaveClass('is-arming');
+    expect(control).not.toHaveClass('is-listening');
+    // The fill is the acknowledgement; a spinner would read as loading.
+    expect(button.querySelector('.spin')).toBeNull();
+
+    act(() => dictationHarness.setState?.('listening'));
+    expect(control).toHaveClass('is-listening');
+    expect(control).not.toHaveClass('is-arming');
+  });
+
+  it('asks for a ticket when the pointer or focus reaches the microphone', () => {
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          draftKey="test-draft"
+          api={{ getTranscriptionSocketTicket: vi.fn() }}
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={async () => undefined}
+          onStop={async () => undefined}
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const button = screen.getByRole('button', { name: 'Start voice input' });
+    fireEvent.pointerEnter(button);
+    expect(dictationHarness.prefetch).toHaveBeenCalledTimes(1);
+    fireEvent.focus(button);
+    expect(dictationHarness.prefetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('paints the level the hook reports onto the microphone control', () => {
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          draftKey="test-draft"
+          api={{ getTranscriptionSocketTicket: vi.fn() }}
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={async () => undefined}
+          onStop={async () => undefined}
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    act(() => dictationHarness.setState?.('listening'));
+    act(() => dictationHarness.emitLevel?.(0.6));
+    const control = screen.getByRole('button', { name: 'Stop dictation' }).closest('.microphone-control') as HTMLElement;
+    expect(control.style.getPropertyValue('--dictation-level')).toBe('0.600');
   });
 
   it('shows the dictation error when the message error prop is an empty string', () => {

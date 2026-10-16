@@ -511,6 +511,17 @@ post-confirm socket/context wait. The acceptance targets remain P50 below one
 second and P90 below two seconds; instrumentation does not establish that they
 are met.
 
+`dictation_start` is the one flow that stays device-local. It prints its line
+through the same projection but is opened with `report: false`, because the
+`renderer_perf_flow` event's schema enumerates its flows and phases and carries
+neither these phases nor this flow; adding them to the schema is what would
+make it a reported flow. Its phases are `inputs`, `capture`, `session` and
+`backlog`, the waits a recording passes through in series, and it annotates
+`captureGraphMs`, `socketTicketMs` and `sessionReadyMs` with when each parallel
+branch finished, so the line says which branch was the critical path.
+[`conversation-surfaces.md`](conversation-surfaces.md#dictation-capture-and-connection-startup)
+owns the flow.
+
 On macOS, main also writes that same closed projection to Unified Logging under
 subsystem `ai.rallywith.desktop` and category `performance`. The local write
 happens before the telemetry preference gate, is device-only, and cannot change

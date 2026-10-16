@@ -6,6 +6,9 @@ const SYSTEM_RING_CAPACITY = 384_000;
 class Pcm16CaptureProcessor extends AudioWorkletProcessor {
   buffer = new Int16Array(CHUNK_SAMPLES);
   offset = 0;
+  // Sum of squares of the samples in `buffer`, for the level each chunk
+  // reports: the renderer draws it, so nothing else has to read the audio.
+  energy = 0;
   systemRing = new Float32Array(SYSTEM_RING_CAPACITY);
   systemReadPosition = 0;
   systemWritePosition = 0;
@@ -39,6 +42,13 @@ class Pcm16CaptureProcessor extends AudioWorkletProcessor {
         this.port.postMessage({ type: 'flushed' });
         return;
       }
+      // The node is built before the inputs are known, so the mix comes by
+      // message once they are; the constructor options stay as defaults.
+      if (event.data?.type === 'gains') {
+        if (Number.isFinite(event.data.microphoneGain)) this.microphoneGain = event.data.microphoneGain;
+        if (Number.isFinite(event.data.systemGain)) this.systemGain = event.data.systemGain;
+        return;
+      }
       if (event.data?.type !== 'system-audio'
         || !(event.data.buffer instanceof ArrayBuffer)
         || !Number.isFinite(event.data.sampleRate)
@@ -56,13 +66,16 @@ class Pcm16CaptureProcessor extends AudioWorkletProcessor {
   emit(length = this.buffer.length) {
     if (length === 0) return;
     const chunk = this.buffer.slice(0, length);
-    this.port.postMessage({ type: 'audio', buffer: chunk.buffer }, [chunk.buffer]);
+    const level = Math.sqrt(this.energy / length);
+    this.port.postMessage({ type: 'audio', buffer: chunk.buffer, level }, [chunk.buffer]);
     this.offset = 0;
+    this.energy = 0;
   }
 
   appendSample(sample) {
     const clamped = Math.max(-1, Math.min(1, sample));
     this.buffer[this.offset] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+    this.energy += clamped * clamped;
     this.offset += 1;
     if (this.offset === this.buffer.length) this.emit();
   }
