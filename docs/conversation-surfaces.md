@@ -774,6 +774,8 @@ both. The prefetched-ticket window is derived rather than chosen,
 `TRANSCRIPTION_TICKET_LIFETIME_SECONDS` less the connection budget, so changing
 either moves it.
 
+Shipped in #1259.
+
 ### 2026-10-13 — The capsule keys on a host class
 
 **What changed:** The capsule rules key on `.has-message-capsule`, which the
