@@ -130,7 +130,8 @@ label; a bare switch is the label itself.
 and `packages/`. The class list lives in `eslint.config.mjs`, because which
 classes hide their input is the stylesheet's decision; add a class there when a
 new control draws over its input the same way. The rule reads class names
-spelled literally, including inside template literals and conditionals, and
+spelled literally, including inside template literals, conditionals, and the
+arguments of `clsx` or any other helper call (strings, array items, object keys), and
 looks for a `<label>` ancestor only within the same JSX tree, so a control
 whose label comes from a parent component needs restructuring or the label
 moved in.

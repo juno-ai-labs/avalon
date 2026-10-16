@@ -26,6 +26,13 @@ test("finds the class inside a template literal or a conditional", () => {
   assert.equal(lint("<span className={wide && 'settings-toggle'} />;").length, 1);
 });
 
+test("finds the class passed through clsx, as a string, an array item, or an object key", () => {
+  assert.equal(lint("<span className={clsx('row', on && 'settings-toggle')} />;").length, 1);
+  assert.equal(lint("<span className={clsx(['settings-toggle'])} />;").length, 1);
+  assert.equal(lint("<span className={clsx({ 'settings-toggle': on })} />;").length, 1);
+  assert.deepEqual(lint("<label className={clsx('settings-toggle', on && 'is-on')} />;"), []);
+});
+
 test("accepts the control as a label", () => {
   assert.deepEqual(lint(`<label className="settings-toggle"><input type="checkbox" /><span /></label>;`), []);
 });
