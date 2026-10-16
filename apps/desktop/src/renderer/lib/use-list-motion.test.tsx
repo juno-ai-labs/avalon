@@ -1,8 +1,8 @@
 import { render } from '@testing-library/react';
-import { useRef } from 'react';
+import { act, useLayoutEffect, useRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LIST_MOTION, LIST_MOTION_TOTAL_MS } from './list-motion';
-import { useListMotion } from './use-list-motion';
+import { useListMotion, useListMotionPass } from './use-list-motion';
 
 const ROW = 48;
 const CONTAINER_LEFT = 10;
@@ -451,5 +451,44 @@ describe('useListMotion', () => {
     const projectRow = animate.mock.calls.find((call) => (call[0] as HTMLElement).dataset.testid === 'project-a');
     expect(projectRow).toBeUndefined();
     expect(played('a').length + played('b').length).toBe(2);
+  });
+
+  it('runs a shared pass on a commit of any one of the parts drawing the list, and plays a move once when several call it', () => {
+    const swaps: Array<() => void> = [];
+    function Part({ motion, start }: { motion: () => void; start: string[] }): React.JSX.Element {
+      const [order, setOrder] = useState(start);
+      swaps.push(() => setOrder((current) => [...current].reverse()));
+      useLayoutEffect(() => motion());
+      return <>{order.map((key) => <div data-motion-key={key} data-testid={key} key={key}>{key}</div>)}</>;
+    }
+    function Shared({ generation }: { generation: number }): React.JSX.Element {
+      const ref = useRef<HTMLDivElement | null>(null);
+      const motion = useListMotionPass(ref);
+      return (
+        <div data-generation={generation} data-testid="list" ref={ref}>
+          <Part motion={motion} start={['a', 'b']} />
+          <Part motion={motion} start={['c', 'd']} />
+        </div>
+      );
+    }
+    const { rerender } = render(<Shared generation={0} />);
+    // The parts' first effects run before the owner's ref is attached, as a
+    // list mounted inside an existing scroll box's does; this commit measures.
+    rerender(<Shared generation={0} />);
+    // Only the second part renders; the list's owner does not.
+    act(() => swaps.at(-1)!());
+    expect(played('c')).toHaveLength(1);
+    expect(played('d')).toHaveLength(1);
+    expect(played('a')).toHaveLength(0);
+
+    // Both parts commit together and both call the pass; each move plays once.
+    swaps.length = 0;
+    rerender(<Shared generation={1} />);
+    act(() => {
+      swaps[0]!();
+      swaps[1]!();
+    });
+    expect(played('a')).toHaveLength(1);
+    expect(played('c')).toHaveLength(2);
   });
 });

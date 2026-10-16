@@ -44,7 +44,7 @@ import { latestPinWrite, reportThreadPin, usePinAction, usePinFailure, usePins, 
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation } from '../lib/telemetry';
 import type { SpaceConversationSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { useUiStore, type SidebarChannelSort, type SidebarSection } from '../lib/ui-store';
-import { useListMotion } from '../lib/use-list-motion';
+import { useListMotion, useListMotionPass } from '../lib/use-list-motion';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { openWorkstreamId } from '../lib/workstream-landing';
@@ -474,12 +474,17 @@ function usePinDrop(pinnedIds: ReadonlySet<string>, orderOf: (kind: PinKind) => 
  * accent while a row is being dragged. The whole section, heading included,
  * is the drop target, so a release in a gap between rows still counts.
  */
-function PinnedSection({ children, count, drop, heading = 'Pinned', label, noun, pinnedOnly = false, reorderable, target }: {
+function PinnedSection({ children, count, drop, heading = 'Pinned', label, loading = false, noun, pinnedOnly = false, reorderable, target }: {
   children: ReactNode;
   count: number;
   drop: PinDrop | null;
   heading?: string;
   label: string;
+  /**
+   * In the Pinned tab, where no list beside it shows its own placeholders:
+   * the rows are still being read, so placeholders stand in for them.
+   */
+  loading?: boolean;
   noun: string;
   /** In the Pinned tab, where no unpinned row sits beside it to be moved in. */
   pinnedOnly?: boolean;
@@ -491,10 +496,11 @@ function PinnedSection({ children, count, drop, heading = 'Pinned', label, noun,
   // How to reorder is said once, for the section; each row says only its
   // place (`pinnedPosition`). As a per-row description it would be repeated
   // before every title.
-  return <section aria-describedby={reorderable ? hint : undefined} aria-label={label} className="navigation-section" {...target}>
+  return <section aria-busy={loading || undefined} aria-describedby={reorderable ? hint : undefined} aria-label={label} className="navigation-section" {...target}>
     <SectionHeading motionKey={pinnedOnly ? `pinned:${noun}` : 'pinned'} trailing={<PinnedMark reorderable={reorderable} />}>{heading}</SectionHeading>
     {reorderable && <p className="sr-only" id={hint}>Hold Alt and press the up or down arrow to move a pinned {noun}.</p>}
-    {count === 0 && drop?.index == null && <div className={clsx('pinned-empty-drop-surface', drop && 'is-armed')}>
+    {loading && <SidebarSkeletonRows count={Math.max(1, count)} />}
+    {!loading && count === 0 && drop?.index == null && <div className={clsx('pinned-empty-drop-surface', drop && 'is-armed')}>
       <IconPin aria-hidden="true" size={15} stroke={1.7} />
       <span>{pinnedOnly ? `Pin a ${noun} to keep it here` : `Move a ${noun} here to pin it`}</span>
     </div>}
@@ -738,21 +744,33 @@ function withLiveThread(
   };
 }
 
-/** A list motion with nothing to watch, for a section whose tab runs one over several. */
+/** A list motion with nothing to watch, for a section drawn inside a tab that runs one over several. */
 const NO_CONTAINER: RefObject<HTMLElement | null> = { current: null };
 
 /**
  * The Pinned tab: what this person pinned, a section per kind, each the same
  * Pinned list its own tab draws above everything else, so a pin made or
  * moved in one is the same pin in the other. A guest has no Channels section
- * here either. One list motion runs over both, after their pin reveals.
+ * here either. Two motions over one scroll box would each animate every row,
+ * so the tab owns one and each section runs it on its own commits: a drag
+ * re-renders only its section.
  */
 function PinnedPanel({ guest, scroll }: { guest: boolean; scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
-  useListMotion(scroll);
+  const motion = useListMotionPass(scroll);
   return <>
-    {!guest && <ChannelsSection pinnedOnly scroll={scroll} />}
-    <ThreadsSection pinnedOnly scroll={scroll} />
+    {!guest && <ChannelsSection motion={motion} scroll={scroll} />}
+    <ThreadsSection motion={motion} scroll={scroll} />
   </>;
+}
+
+/**
+ * A section's list motion: its own over the scroll box, or, inside the Pinned
+ * tab, the tab's shared one. Call after `usePinReveal`.
+ */
+function useSectionMotion(scroll: RefObject<HTMLElement | null>, shared: (() => void) | undefined): void {
+  const own = useListMotionPass(shared ? NO_CONTAINER : scroll);
+  const run = shared ?? own;
+  useLayoutEffect(() => run());
 }
 
 /**
@@ -760,7 +778,9 @@ function PinnedPanel({ guest, scroll }: { guest: boolean; scroll: RefObject<HTML
  * they take part in. The list is the server's (`GET /navigation/threads`); a
  * thread the socket holds is drawn from the socket, so its dot moves live.
  */
-function ThreadsSection({ pinnedOnly = false, scroll }: { pinnedOnly?: boolean; scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
+/** `motion` is the Pinned tab's shared list motion; given it, only the pinned rows are drawn. */
+function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
+  const pinnedOnly = motion !== undefined;
   const { api } = useAppSession();
   const sort = useUiStore((state) => state.threadSort);
   const setSort = useUiStore((state) => state.setThreadSort);
@@ -839,8 +859,7 @@ function ThreadsSection({ pinnedOnly = false, scroll }: { pinnedOnly?: boolean; 
   });
   // A row that changes place, a pin or a re-sort, travels there. A row keeps
   // its motion key between Pinned and the list, so a pin is one row moving.
-  // The Pinned tab runs one motion over both its sections instead.
-  useListMotion(pinnedOnly ? NO_CONTAINER : scroll);
+  useSectionMotion(scroll, motion);
   const href = (row: SpaceConversationSummary): string => {
     if (row.kind === 'breakout' && row.breakoutOf) {
       const parent = live.data?.find((candidate) => candidate.id === row.breakoutOf!.workstreamId);
@@ -886,6 +905,7 @@ function ThreadsSection({ pinnedOnly = false, scroll }: { pinnedOnly?: boolean; 
       drop={drop}
       heading={pinnedOnly ? 'Threads' : undefined}
       label="Pinned threads"
+      loading={pinnedOnly && list.isPending}
       noun="thread"
       pinnedOnly={pinnedOnly}
       reorderable={threadPins.length > 1 || breakoutPins.length > 1}
@@ -1035,7 +1055,8 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
  * it open, and says how many, in red beside a bold name, with a dot.
  */
 /** Members only: a guest has no Channels section. */
-function ChannelsSection({ pinnedOnly = false, scroll }: { pinnedOnly?: boolean; scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
+function ChannelsSection({ motion, scroll }: { motion?: () => void; scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
+  const pinnedOnly = motion !== undefined;
   const { active } = useSpaceDirectories();
   const { api } = useAppSession();
   // The socket's Space snapshot seeds this; a placement nudge marks it stale
@@ -1062,7 +1083,7 @@ function ChannelsSection({ pinnedOnly = false, scroll }: { pinnedOnly?: boolean;
   const rest = channels.filter((space) => !pinned.has(space.id) && !(drop?.landed && drop.id === space.id))
     .sort(compareChannelRows(sort, statsById, openChannelId));
   const revealPin = usePinReveal(scroll, (id) => `channel:${id}`, pinned);
-  useListMotion(pinnedOnly ? NO_CONTAINER : scroll);
+  useSectionMotion(scroll, motion);
   const row = (
     space: SpaceSummary,
     rowDrag?: PinnedRowProps,
@@ -1090,6 +1111,7 @@ function ChannelsSection({ pinnedOnly = false, scroll }: { pinnedOnly?: boolean;
       drop={drop}
       heading={pinnedOnly ? 'Channels' : undefined}
       label="Pinned channels"
+      loading={pinnedOnly && active.data === undefined}
       noun="channel"
       pinnedOnly={pinnedOnly}
       reorderable={channelPins.length > 1}
