@@ -626,13 +626,21 @@ export const SPACE_MESSAGES_MIGRATION: readonly string[] = [
  * not news and for every message that predates this, read as zero.
  * `embeds_json` holds `[{id, title, kind}]` as they were when posted, so the
  * feed draws artifact cards with no lookup. `merge_operation_id` is the
- * operation that last wrote the row, so a retry of it writes nothing.
+ * operation that last wrote the row. `space_message_operations` holds every
+ * operation that ever wrote a message, so a retry of any of them, however
+ * late, writes nothing: one row per merge a person made, which is human-scale.
  */
 export const SPACE_MESSAGE_MERGES_MIGRATION: readonly string[] = [
   `ALTER TABLE space_messages ADD COLUMN source_workstream_id TEXT`,
   `ALTER TABLE space_messages ADD COLUMN attention_ordinal INTEGER CHECK (attention_ordinal IS NULL OR attention_ordinal > 0)`,
   `ALTER TABLE space_messages ADD COLUMN embeds_json TEXT CHECK (embeds_json IS NULL OR json_valid(embeds_json))`,
   `ALTER TABLE space_messages ADD COLUMN merge_operation_id TEXT`,
+  `CREATE TABLE space_message_operations (
+    message_id TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (message_id, operation_id)
+  ) STRICT`,
   // A Breakout merge is a \`merged\` Activity row read from its message's
   // activity event; this keeps that arm of the feed off a scan of every event.
   `CREATE INDEX workspace_activity_events_merged_idx ON workspace_activity_events(occurred_at, event_id)
@@ -1213,13 +1221,13 @@ export class WorkspaceSpaceStorage {
     const messageId = draft.key === undefined
       ? uuidV7()
       : stableUuidSync(["space_message", spaceId, draft.key]);
-    if (draft.operationId !== undefined) {
-      const stored = this.storage.sql.exec<{ merge_operation_id: string | null } & Record<string, SqlStorageValue>>(
-        "SELECT merge_operation_id FROM space_messages WHERE message_id = ?",
-        messageId,
-      ).toArray()[0];
-      if (stored?.merge_operation_id === draft.operationId) return { messageId, replayed: true };
-    }
+    // Every operation that ever wrote this message is a receipt, not only the
+    // last: a late retry of an older one must not overwrite a newer write.
+    if (draft.operationId !== undefined && this.storage.sql.exec(
+      "SELECT 1 FROM space_message_operations WHERE message_id = ? AND operation_id = ?",
+      messageId,
+      draft.operationId,
+    ).toArray().length > 0) return { messageId, replayed: true };
     const authorUserId = draft.author.kind === "member" ? draft.author.userId : null;
     const written = this.storage.sql.exec<{ message_id: string } & Record<string, SqlStorageValue>>(
       `INSERT INTO space_messages (
@@ -1250,6 +1258,14 @@ export class WorkspaceSpaceStorage {
       draft.operationId ?? null,
     ).toArray().length === 1;
     if (!written) return { messageId, replayed: true };
+    if (draft.operationId !== undefined) {
+      this.storage.sql.exec(
+        "INSERT INTO space_message_operations (message_id, operation_id, created_at) VALUES (?, ?, ?)",
+        messageId,
+        draft.operationId,
+        postedAt,
+      );
+    }
     if (draft.news !== false) {
       const ordinal = this.stampChannelNews(spaceId, authorUserId, postedAt);
       if (ordinal !== null) {
