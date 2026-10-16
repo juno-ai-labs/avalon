@@ -117,9 +117,8 @@ spaceReadRoutes.get(
         if (merges) return [item];
         // An older build parses both strictly: a merge reaches it as a plain
         // message from the person who merged.
-        const { attentionSequenceNumber: _ordinal, ...plain } = item;
-        const { merge: _merge, ...message } = item.message;
-        return [{ ...plain, message }];
+        const message = { id: item.message.id, author: item.message.author, body: item.message.body };
+        return [{ kind: item.kind, placedAt: item.placedAt, message }];
       }),
     }));
   },

@@ -100,10 +100,9 @@ conversationRoutes.post("/:parentId/merge",
   zValidator("param", parentParam),
   zValidator("json", ConversationMergeRequestSchema),
   async (c) => {
-    const result = ConversationMergeResultSchema.parse(
-      await new ConversationMergeService(c.env, getWorkspaceAuth(c)).merge(c.req.valid("param").parentId, c.req.valid("json")),
-    );
-    return c.json(result, result.replayed ? 200 : 201);
+    const result = await new ConversationMergeService(c.env, getWorkspaceAuth(c))
+      .merge(c.req.valid("param").parentId, c.req.valid("json"));
+    return c.json(ConversationMergeResultSchema.parse(result), result.replayed ? 200 : 201);
   });
 /**
  * Ordinary message admission for an authenticated client that does not hold a
