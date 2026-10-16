@@ -10,8 +10,8 @@ happen. The digest is the other half: whatever is still unread in your
 ## What is in it
 
 One line for each unread item in Activity, grouped the way Settings lists them:
-mentions, things you were added to, new Threads, new Breakouts, and work Rally
-finished. Each line reads as it does in the sidebar, such as "Maya started Q3
+mentions, things you were added to, new Threads, new Breakouts, work Rally
+finished, and merges. Each line reads as it does in the sidebar, such as "Maya started Q3
 plan", and links to it.
 
 - **Nothing unread, nothing sent.** No "nothing to report" messages.
@@ -43,8 +43,8 @@ Open **Settings → Notifications** and scroll to **Daily digest**. Changes save
 as you make them.
 
 1. **Start of day** and **End of day** each have a time and a switch. By
-   default the start of day digest is on at 9:00 AM and the end of day one is
-   off.
+   default the start of day digest is on at 7:45 AM on weekdays, sent to your
+   email and your Personal Channel, and the end of day one is off.
 2. **Send to** picks where it goes. In a narrow window it is one button naming
    what is on, such as **Rally and Email**; click it for a list you can tick.
 3. **Days** is **Weekdays** or **Every day**.
