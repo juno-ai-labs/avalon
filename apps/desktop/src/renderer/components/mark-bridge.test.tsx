@@ -1,9 +1,9 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { fireEvent, render as renderBare, screen } from '@testing-library/react';
 import { MarkBridge, type MarkBridgeItem } from '@rally/ui/components/mark-bridge';
-import { TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { PhoneHeaderContext, TitlePillHeader, type PhoneHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { Building, Sparkles } from 'lucide-react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // The app mounts one tooltip provider at its root; a mark's tooltip needs it.
 const render = (ui: React.ReactElement): ReturnType<typeof renderBare> => renderBare(ui, { wrapper: Tooltip.Provider });
@@ -111,5 +111,59 @@ describe('TitlePillHeader', () => {
     />);
 
     expect(screen.queryByRole('button', { name: 'Open thread: Prepare' })).toBeNull();
+  });
+
+  describe('at phone width, as the screen\'s only header', () => {
+    const phoneWidth = (matches: boolean): void => {
+      vi.stubGlobal('matchMedia', (query: string) => ({
+        matches, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      }));
+    };
+    afterEach(() => vi.unstubAllGlobals());
+    const header = (openNavigation: () => void, search: () => void): PhoneHeader => ({
+      openNavigation,
+      actions: [{ key: 'search', label: 'Search organization', icon: null, onSelect: search }],
+    });
+    const crumbs = [level('channel', 'General', { mark: channel, name: 'General', action: 'Open channel' }, vi.fn())];
+
+    it('leads the crumbs\' bridge with the menu mark, which opens the navigation', () => {
+      phoneWidth(true);
+      const openNavigation = vi.fn();
+      render(<PhoneHeaderContext value={header(openNavigation, vi.fn())}>
+        <TitlePillHeader ancestors={crumbs} current={level('thread', 'Prepare')} />
+      </PhoneHeaderContext>);
+
+      const marks = screen.getAllByRole('button', { name: /^Open/u });
+      expect(marks.map((mark) => mark.getAttribute('aria-label'))).toEqual(['Open navigation', 'Open channel: General']);
+      fireEvent.click(marks[0]!);
+      expect(openNavigation).toHaveBeenCalledOnce();
+    });
+
+    it('offers search ahead of the pane\'s own actions in its "More" menu', async () => {
+      phoneWidth(true);
+      const search = vi.fn();
+      render(<PhoneHeaderContext value={header(vi.fn(), search)}>
+        <TitlePillHeader
+          actions={[{ key: 'expand', label: 'Expand', icon: null, onSelect: vi.fn() }]}
+          current={level('thread', 'Prepare')}
+        />
+      </PhoneHeaderContext>);
+
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'More actions' }), { button: 0, ctrlKey: false, pointerType: 'mouse' });
+      const items = await screen.findAllByRole('menuitem');
+      expect(items.map((item) => item.textContent)).toEqual(['Search organization', 'Expand']);
+      fireEvent.click(items[0]!);
+      expect(search).toHaveBeenCalledOnce();
+    });
+
+    it('carries neither wider than a phone', () => {
+      phoneWidth(false);
+      render(<PhoneHeaderContext value={header(vi.fn(), vi.fn())}>
+        <TitlePillHeader ancestors={crumbs} current={level('thread', 'Prepare')} />
+      </PhoneHeaderContext>);
+
+      expect(screen.queryByRole('button', { name: 'Open navigation' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'More actions' })).toBeNull();
+    });
   });
 });

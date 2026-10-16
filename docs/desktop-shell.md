@@ -55,11 +55,17 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   icon is a two-by-two grid (`ShapeGrid`), clockwise from the top left: a
   Channel, a Thread, a Sidekick's hexagon and a Thread. The hexagon is there for
   kinds still to come; Pinned lists Channels and Threads today.
-  The choice is a device preference (`rally.sidebar-section`). **Threads**
-  carries a red count: every conversation waiting on this person and every
-  access request waiting on them, the same `attentionItems` the dock badge
-  counts. The macOS menu bar counts Activity's unread rows instead
-  ([`menu-bar.md`](menu-bar.md)). Pinned, Channels and Activity carry no badge.
+  The choice is a device preference (`rally.sidebar-section`). Every section
+  carries a red count (`RailBadge`; nothing at zero, `99+` past two digits). **Threads**: every conversation waiting on this
+  person and every access request waiting on them, the same `attentionItems`
+  the dock badge counts. **Activity**: the access requests and every unread
+  Activity row, the macOS menu bar's number ([`menu-bar.md`](menu-bar.md)),
+  read from the same cached feed the tab lists, so Mark all read clears it
+  with the dots. **Channels**: each Channel whose row says "n new threads",
+  from the same stats the list reads; a guest has no Channels section and no
+  count. **Pinned**: each pinned Channel with new threads and each pinned
+  thread or breakout whose row reads unread (a mention, never opened, or
+  unread messages), from the copies the Pinned list draws.
 - **One list**, titled with the section's name. Pinned's list is a section per
   kind, **Channels** then **Threads** (threads, then breakouts), each the same
   Pinned part its own tab draws above everything else, reorderable the same
@@ -203,13 +209,30 @@ its threads and messages, and a composer at the foot.
 
 ### At phone width
 
-The sidebar becomes a sheet behind the list's own header, which is the top
-bar with the menu button; the section switcher is a row of tabs under it, with
-the account menu as a last tab labelled Settings. The
-sheet is clipped rather than moved, for the reasons the 2026-10-06 entry gives.
-Opening anything from it closes it, as do Escape and widening past 640px;
-switching sections does not navigate, so the sheet stays open on the list just
-picked.
+The screen has one header. A pane with a `TitlePillHeader` is that header:
+the app shell provides `PhoneHeaderContext`, and at phone width the header
+leads its crumbs' glass `MarkBridge` with a menu mark that opens the sheet,
+and puts **Search organization** first in its folded "⋯" menu. Loading
+skeletons draw the mark alone (`TitlePillNavigation`).
+A right-slot panel fills the phone, so its header carries the same. Every
+pane header on a phone takes the narrow pane's columns, so a long title
+truncates in the middle and the crowding shift is off. A window surface in a
+browser tab draws no sidebar, so the app shell provides no context there.
+
+The sidebar is a sheet behind the list's own header: the close button at the
+left, the section's title centred, its actions at the right, the sides never
+narrower than their buttons. The section switcher is a row of tabs under it,
+with the account menu as a last tab labelled Settings. While a visible pane
+header carries the menu mark (`PHONE_NAVIGATION_CONTROL`), the shut sheet
+keeps no bar and is hidden whole. A screen without one (the landing, Not
+found, an access request, a Breakout draft, whose header is collapsed to
+nothing so it hands over to the created Breakout without moving) and the
+browser panel, which draws no mark, keep the sheet's header as their top bar. The sheet is clipped rather than moved,
+for the reasons the 2026-10-06 entry gives. Opening it from a pane header
+moves focus to its close button; closing hands focus back to the opener, or
+to the visible menu mark when the opener is gone (`useSheetOpener`). Opening
+anything from it closes it, as do Escape and widening past 640px; switching
+sections does not navigate, so the sheet stays open on the list just picked.
 
 ### Title pills
 
@@ -443,6 +466,47 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-16 — One header at phone width; counts on every section
+
+**What changed:** At phone width a pane's title-pill header is the screen's
+only header. It carries the menu mark, fused into the front of its crumbs'
+`MarkBridge`, and Search in its "⋯" menu, through `PhoneHeaderContext`. The
+sheet's own header now shows only while the sheet is open (close, centred
+title, actions), unless the screen has no title-pill header to stand in for
+it. `PHONE_LAYOUT_MAX_WIDTH` moved to `packages/ui/src/lib/phone-layout.ts`
+beside `usePhoneLayout`.
+
+**Why:** The product owner asked for one header on a phone. The sheet's bar
+and the pane's pill row stacked 120px of chrome, with the menu and Search in
+one row and the conversation's crumbs and actions in the other.
+
+**Considered and rejected:** Moving the pane's pill into the sheet's bar. The
+pill and its menu belong to the pane, and the Breakout and right-slot panes
+each have their own; one bar would need to know which pane is in front. A
+separate menu button beside the crumbs instead of a mark in their bridge: the
+product owner asked for one glass group holding both. Hiding the bar whenever
+a title-pill header exists: a hidden pane's header still matches, which left
+a Breakout draft and the browser panel with no way to the navigation, so the
+rule keys on a visible menu mark. Making the right-slot panel a
+`conversation-pane` container to truncate its title: under 460px it also
+re-laid out the desktop panel, which is that wide by default.
+
+A site in the right slot showed the problem worst: its three actions crowded
+the header, and the shift that keeps the pill clear of them moved its long
+title off the screen's left edge.
+
+The same change gave the Pinned, Channels and Activity buttons counts. They
+carried none before, and why was not recorded. On a phone those buttons are the first
+thing the sheet shows, and the Activity and Channel rows held red dots that
+nothing pointed to. Each count reads a query the list already holds, so no
+new request backs it: the first Activity page is 250 rows, as the menu bar's
+count is, and exact up to that.
+
+**Consequences:** Whether the bar shows is a stylesheet decision keyed on
+`.has-phone-navigation`, so a pane header drawn without `TitlePillHeader` or
+`TitlePillNavigation` keeps the bar above it, and a new full-screen panel that
+draws no mark must be excluded from that rule as the browser panel is.
 
 ### 2026-10-16 — A Pinned section in the switcher
 
