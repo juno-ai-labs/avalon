@@ -41,7 +41,7 @@ import { SidekickPicker } from '../components/sidekick-picker';
 import { workstreamSidekickRows } from '../components/sidekick-section';
 import { useChannelRail } from '../lib/channel-rails';
 import { type LaunchingSubstream, type SubstreamLaunchProps } from '../components/substream-launch';
-import { ConversationOpeningSkeleton, ConversationSurface, mergeLabel, mergeTargetFor, workspaceMemberFromSession, type ConversationHeaderContext } from './conversation-surface';
+import { ConversationOpeningSkeleton, ConversationSurface, mergeLabel, mergeTargetFor, workspaceMemberFromSession, type ConversationHeaderContext, type ScrollToTurnRequest } from './conversation-surface';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 
 // The feed, composer and rail live in `conversation-surface.tsx`, shared with
@@ -715,7 +715,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     setBreakoutWidth(width);
     writeLayout(breakoutWidthKey, String(width));
   }, [breakoutWidthKey]);
-  const [scrollToTurn, setScrollToTurn] = useState<{ turnId: string; nonce: number; arriving?: boolean } | null>(null);
+  const [scrollToTurn, setScrollToTurn] = useState<ScrollToTurnRequest | null>(null);
   const showInChannel = (turnId: string | null | undefined): void => {
     if (breakoutOwnsRail) closeRail();
     if (turnId) setScrollToTurn((current) => ({ turnId, nonce: (current?.nonce ?? 0) + 1 }));

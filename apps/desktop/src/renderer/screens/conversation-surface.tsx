@@ -1119,6 +1119,17 @@ export interface ConversationSubstreamLaunch {
 
 const NO_PENDING_ATTACHMENTS: PendingAttachment[] = [];
 
+/**
+ * Bring this turn into view; a new nonce asks again for the same turn.
+ * `arriving` is a turn just written that the feed has yet to receive: the
+ * request waits for it rather than paging back through older messages.
+ */
+export interface ScrollToTurnRequest {
+  turnId: string;
+  nonce: number;
+  arriving?: boolean;
+}
+
 /** Where this conversation's Merge goes, or null when nothing here can merge. */
 export type MergeTarget =
   | { kind: 'thread'; threadTitle: string }
@@ -1298,12 +1309,7 @@ export interface ConversationSurfaceProps {
   mergeRequest?: number | null;
   /** A merge from this conversation landed: the host opens where it went. */
   onMerged?: (result: ConversationMergeResult) => void;
-  /**
-   * Bring this turn into view; a new nonce asks again for the same turn.
-   * `arriving` is a turn just written that the feed has yet to receive: the
-   * request waits for it rather than paging back through older messages.
-   */
-  scrollToTurn?: { turnId: string; nonce: number; arriving?: boolean } | null;
+  scrollToTurn?: ScrollToTurnRequest | null;
   /**
    * A Breakout's origin in its Channel: the turn it started from, and the
    * Channel's name for the card's byline. The messages themselves are read
