@@ -1961,7 +1961,7 @@ describe('MessageBlock action tooltips', () => {
     const row = container.querySelector('.agent-message-actions');
     const controls = [...row!.querySelectorAll('button')];
     expect(controls.map((control) => control.textContent?.trim()))
-      .toEqual(['Copy', 'Speak', 'Image', 'PDF', 'New breakout']);
+      .toEqual(['New breakout', 'Copy', 'Speak', 'Image', 'PDF']);
 
     for (const control of controls) {
       const sentence = control.getAttribute('aria-label');
@@ -2777,10 +2777,11 @@ describe('MessageBlock breakout cutoff', () => {
     const row = container.querySelector('.agent-message-actions');
     expect(row).toContainElement(control);
     expect(container.querySelector('header')).not.toContainElement(control);
-    // Last, after the exports: the row reads copy, keep, then branch. Speak
-    // needs a playback provider this render does not mount.
+    // First, ahead of Merge and the rest: the row reads branch, then the
+    // actions on these words. Speak needs a playback provider this render does
+    // not mount.
     expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
-      .toEqual(['Copy', 'Image', 'PDF', 'New breakout']);
+      .toEqual(['New breakout', 'Copy', 'Image', 'PDF']);
 
     fireEvent.click(control);
 
@@ -2925,18 +2926,18 @@ describe('MessageBlock merge-back', () => {
     transcriptTurnId: 'turn-12',
   };
 
-  it('puts Merge first in Rally’s hover row and hands it the message’s words', () => {
+  it('puts Merge after New breakout in Rally’s hover row and hands it the message’s words', () => {
     const { container } = render(
       <MessageBlock {...actions} merge={{ label: 'Merge to thread', onMerge }} message={settledAgentTurn} onStartSubstream={vi.fn()} />,
     );
     const row = container.querySelector('.agent-message-actions');
     expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
-      .toEqual(['Merge to thread', 'Copy', 'Image', 'PDF', 'New breakout']);
+      .toEqual(['New breakout', 'Merge to thread', 'Copy', 'Image', 'PDF']);
     fireEvent.click(screen.getByRole('button', { name: 'Merge to thread' }));
     expect(onMerge).toHaveBeenCalledExactlyOnceWith('Sequence B is ready.');
   });
 
-  it('puts Merge first under a person’s own message too', () => {
+  it('puts Merge after New breakout under a person’s own message too', () => {
     const { container } = render(
       <MessageBlock
         {...actions}
@@ -2947,7 +2948,7 @@ describe('MessageBlock merge-back', () => {
     );
     const row = container.querySelector('.human-message-actions');
     expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
-      .toEqual(['Merge to GTM', 'New breakout']);
+      .toEqual(['New breakout', 'Merge to GTM']);
   });
 
   it('offers no Merge on a message still being sent', () => {

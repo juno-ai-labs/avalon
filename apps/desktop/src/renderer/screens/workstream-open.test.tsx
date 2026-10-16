@@ -596,12 +596,9 @@ describe('socket-first channel open', () => {
     return boot;
   }
 
-  /**
-   * A breakout starts from a message: Rally's newest reply shows the action as
-   * a line of its own rather than on hover.
-   */
+  /** A breakout starts from a message, by its hover action: the newest message's. */
   async function startBreakoutFromLatestMessage(): Promise<void> {
-    fireEvent.click(await screen.findByRole('button', { name: /Start a breakout from this message/u }));
+    fireEvent.click((await screen.findAllByRole('button', { name: 'New breakout from this message' })).at(-1)!);
   }
 
   /** The feed draws only the rows its window holds, so the window is given a size. */

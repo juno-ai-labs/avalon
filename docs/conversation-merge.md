@@ -25,7 +25,7 @@ agent tool's contract is
 | `apps/api/src/routes/spaces.ts` | The feed's contract-7 stripping, and `DELETE /spaces/:id/messages/:messageId` (Remove). |
 | `apps/api/src/services/conversation-tools.ts` | `conversation_merge`; see [`conversation-tools.md`](conversation-tools.md). |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | `mergeTargetFor` (who can merge where), the composer's merge mode, the audience line, the Breakout card's **Merged** chip. |
-| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MergeButton`, first in both hover rows, and `MergedFromLine` over a Thread merge. |
+| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MergeButton`, after New breakout in both hover rows, and `MergedFromLine` over a Thread merge. |
 | `apps/desktop/src/renderer/screens/channel.tsx` | `MergeCard`, a Channel merge in the feed, with Remove. |
 | `packages/ui/src/components/conversation-menus.tsx` | The title menu's Merge row (`ConversationRowActions.merge`). |
 
@@ -106,8 +106,8 @@ merge as a plain message from the person who merged.
 `mergeTargetFor` decides what can merge: a Breakout into its Thread; a Thread's
 Main into its Channels when it is Organization-wide, the reader is a member,
 and the Channel is in their directory. "Merge to thread" or "Merge to <first
-Channel>" is the first hover action on every settled text message, and a row in
-the title menu. Either opens the composer's merge mode with its own draft key
+Channel>" is the second hover action on every settled text message, after
+**New breakout**, and a row in the title menu. Either opens the composer's merge mode with its own draft key
 (`…:merge`), prefilled with the message's words (empty from the menu), a
 Channel picker for a thread in several, Cancel, and an audience line. Merge
 sends a fresh `clientMessageId` per attempt.
