@@ -688,10 +688,14 @@ personless; it is not duplicated into these product events.
   (`*.rallyusercontent.com`) so an agent can screenshot the active site it
   published. A site's own `index.js` runs on an anonymous `GET` and may store
   what the request carries, so a prompt-injected agent can send data to a site
-  another Rally user owns, who can then read it in that site's Data view. This
-  was accepted on 2026-10-16; the changelog records why. Narrowing it means
-  removing the wildcard, or refusing sandbox requests to sites that keep
-  storage, not adding a check in the agent.
+  another Rally user owns, who can then read it in that site's Data view.
+  This was accepted on 2026-10-16 so the building-live-sites skill can check a
+  public active site at its published URL; the help center tells
+  administrators so. Nothing may describe Trusted only as a guard against
+  data leaving through Rally sites. Narrowing it means removing the wildcard,
+  which leaves active sites unchecked in Trusted only, or having the serving
+  Worker refuse sandbox requests to sites that keep storage; a check inside
+  the agent cannot work, since the agent is what is misled.
 - **No model-facing revisions, lifecycle, directory-listing, polling, PTY,
   network, credential, or raw-Daytona tools exist.** These duplicate trained CLI
   behavior or expose control-plane authority that the task does not need. The
@@ -1258,30 +1262,6 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
-
-### 2026-10-16 — Trusted only keeps reaching every Rally site, by decision
-
-**What changed:** Nothing in code. The Invariants now say that Trusted only
-admits every Rally site, including one that stores what it receives, and that
-this is a way data can leave the sandbox.
-
-**Why:** A security review of #1248 traced the path: an agent misled by a
-repository file or fetched page sends workspace data in a request to a Rally
-site that another user owns and that saves its requests, and that user reads
-it back. Before #1246 nothing in the baseline let an anonymous caller write
-somewhere an outsider could read. Keeping the wildcard was chosen so the
-building-live-sites skill can check a public active site at its published URL.
-
-**Considered and rejected:** Removing `*.rallyusercontent.com` from the
-baseline, which would leave active sites unchecked in Trusted only (static
-sites are checked through a local server either way). Refusing sandbox
-requests to stateful sites in the serving Worker, which needs a reliable way
-to tell a sandbox request apart and was not worth building before it is
-needed.
-
-**Consequences:** Trusted only is not an exfiltration boundary against Rally
-sites, and documentation or UI copy must not describe it as one. If that
-changes, the two rejected options above are where to start.
 
 ### 2026-10-15 — The agent can look at an image it made
 

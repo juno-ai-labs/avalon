@@ -75,7 +75,7 @@ Under **Outbound access**, choose one:
 
 | Choice | What code in the Terminal can reach | Pick it when |
 | --- | --- | --- |
-| **Trusted only** | What Rally itself needs, which covers GitHub and the usual places software packages are downloaded from, plus any domains your Organization approves. | You want to know where your data could go. Code Rally runs cannot send anything to a site you have not approved. |
+| **Trusted only** | What Rally itself needs, which covers GitHub, the usual places software packages are downloaded from, and sites published with Rally, plus any domains your Organization approves. | You want to limit where your data could go. Code Rally runs cannot reach a site that is not on that list. |
 | **Full internet** | Any public website or service. Private networks stay blocked either way. | Rally's code keeps needing to fetch from sites you have not listed, and you would rather allow them all than keep adding domains. |
 
 **Trusted only** is the careful choice. If Rally writes code that tries to
@@ -83,6 +83,12 @@ reach a site not on the list, the connection fails. That protects you from
 code that would otherwise send your files somewhere unexpected, at the cost of
 the occasional "I could not download that" from Rally. **Full internet**
 removes that limit for public sites.
+
+The list includes every site published with Rally, not only your own, so
+Rally can check a site it built at its published address. A site published by
+someone outside your Organization can keep what is sent to it, so Trusted
+only narrows where data can go but does not rule out every place outside your
+Organization.
 
 Rally's built-in list of trusted places is managed by Rally and is not shown on
 the page. You only see, and edit, the domains your Organization adds.
