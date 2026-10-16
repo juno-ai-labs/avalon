@@ -174,6 +174,46 @@ describe('WorkstreamComposer live dictation', () => {
     expect(stopButton).toHaveFocus();
   });
 
+  it('keeps the newest transcript words in view once the field is at its height limit', async () => {
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          draftKey="test-draft"
+          api={{ getTranscriptionSocketTicket: vi.fn() }}
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={async () => undefined}
+          onStop={async () => undefined}
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    // jsdom lays nothing out: the content height is declared, and the scroll
+    // position is recorded as the field is told to move it.
+    const input = screen.getByRole('textbox', { name: 'Message the thread' });
+    Object.defineProperty(input, 'scrollHeight', { configurable: true, value: 400 });
+    const scrolledTo: number[] = [];
+    Object.defineProperty(input, 'scrollTop', {
+      configurable: true,
+      get: () => scrolledTo.at(-1) ?? 0,
+      set: (top: number) => { scrolledTo.push(top); },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    await waitFor(() => expect(dictationHarness.start).toHaveBeenCalledOnce());
+
+    act(() => dictationHarness.emit?.('a transcript long enough to have gone past the fold'));
+
+    expect(scrolledTo.at(-1)).toBe(400);
+  });
+
   it('lets the user cancel finalization by editing or using the microphone control', async () => {
     const onSend = vi.fn(async () => undefined);
     render(
