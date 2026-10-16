@@ -70,6 +70,7 @@ export * from "./palette";
 export * from "./projects";
 export * from "./resource-relationships";
 export * from "./spaces";
+export * from "./conversation-merge";
 export * from "./navigation";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
@@ -1246,14 +1247,19 @@ export const ChannelFeedItemSchema = z.discriminatedUnion("kind", [
     thread: WorkstreamSchema,
   }),
   /**
-   * A message in the Channel itself, outside any thread. Not unread-tracked,
-   * so it has no sequence number. Served only to a build at
-   * `CHANNEL_MESSAGES_CLIENT_CONTRACT` or later: a build before it parses a
-   * feed row as a thread. See docs/spaces.md#channel-messages.
+   * A message in the Channel itself, outside any thread. Served only to a
+   * build at `CHANNEL_MESSAGES_CLIENT_CONTRACT` or later: a build before it
+   * parses a feed row as a thread. See docs/spaces.md#channel-messages.
    */
   z.strictObject({
     kind: z.literal("message"),
     placedAt: TimestampSchema,
+    /**
+     * The message's position in the Channel's unread order, zero for one that
+     * is not news (a Channel's opening messages). Absent for a build before
+     * `CHANNEL_MERGES_CLIENT_CONTRACT`.
+     */
+    attentionSequenceNumber: z.number().int().nonnegative().optional(),
     message: ChannelMessageSchema,
   }),
 ]);
