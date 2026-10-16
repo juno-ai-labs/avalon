@@ -431,7 +431,7 @@ function connectionStatusDescription(connection: WorkstreamConnection): string {
     case 'disabled': return 'This connection is disabled and exposes no tools.';
   }
 }
-/** The Default timezone choice that follows whichever device the person is on. */
+/** The Default timezone choice that follows whichever device the person is on: the Automatic switch. */
 const AUTOMATIC_TIMEZONE = 'automatic';
 const supportedTimezones = typeof Intl.supportedValuesOf === 'function'
   ? Intl.supportedValuesOf('timeZone')
@@ -676,7 +676,7 @@ export function WorkspaceSettingsScreen({
   });
   const userTimezone = myTimezone.data?.timezone ?? workspace.currentUser.timezone;
   const timezoneOptions = useMemo(
-    () => [...new Set([...supportedTimezones, userTimezone, workspaceTimezone])].sort(),
+    () => [...new Set([...supportedTimezones, userTimezone, workspaceTimezone, deviceTimezone() ?? userTimezone])].sort(),
     [userTimezone, workspaceTimezone],
   );
   const isAdmin = workspace.currentUser.role === 'owner' || workspace.currentUser.role === 'admin';
@@ -1024,6 +1024,10 @@ export function WorkspaceSettingsScreen({
       queryClient.invalidateQueries({ queryKey: ['digest-schedule'] }),
     ]),
   });
+  // While a save is in flight, the switch shows where it is going.
+  const timezoneFollowsDevice = updateUserTimezone.isPending && updateUserTimezone.variables
+    ? updateUserTimezone.variables === AUTOMATIC_TIMEZONE
+    : myTimezone.data?.followsDevice === true;
   const updateWorkspaceTimezone = useMutation({
     mutationFn: (timezone: string) => api!.updateWorkspace({ timezone }),
     onSuccess: (updated) => setWorkspaceTimezone(updated.timezone),
@@ -1504,19 +1508,23 @@ export function WorkspaceSettingsScreen({
                 {!guest && <>
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Preferences</h2></div>
                 <div className="settings-list-card">
+                  <SettingToggle setting={settings.personalTimezoneAutomatic}
+                    checked={timezoneFollowsDevice}
+                    disabled={updateUserTimezone.isPending || !myTimezone.data}
+                    // Off fixes the zone the account is in now.
+                    onChange={(event) => updateUserTimezone.mutate(event.currentTarget.checked ? AUTOMATIC_TIMEZONE : userTimezone)}
+                    role="switch" />
                   <label className="settings-preference-row">
                     <SettingCopy setting={settings.personalTimezone} />
                     <DropdownSelect
                       ariaLabel="Personal default timezone"
-                      disabled={updateUserTimezone.isPending || !myTimezone.data}
+                      disabled={updateUserTimezone.isPending || !myTimezone.data || timezoneFollowsDevice}
                       onValueChange={(choice) => updateUserTimezone.mutate(choice)}
-                      options={[
-                        { label: `Automatic (${deviceTimezone() ?? userTimezone})`, value: AUTOMATIC_TIMEZONE },
-                        ...timezoneOptions.map((timezone) => ({ label: timezone, value: timezone })),
-                      ]}
+                      options={timezoneOptions.map((timezone) => ({ label: timezone, value: timezone }))}
                       value={updateUserTimezone.isPending && updateUserTimezone.variables
+                        && updateUserTimezone.variables !== AUTOMATIC_TIMEZONE
                         ? updateUserTimezone.variables
-                        : myTimezone.data?.followsDevice ? AUTOMATIC_TIMEZONE : userTimezone}
+                        : timezoneFollowsDevice ? deviceTimezone() ?? userTimezone : userTimezone}
                       variant="secondary"
                     />
                   </label>

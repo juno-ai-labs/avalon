@@ -1491,7 +1491,7 @@ audit, and telemetry remain valid D1 writers.
 
 - Owners and admins may change the workspace timezone. Every user may fix their personal
   timezone, which records `timezone_source = 'user'` and stops sign-in and device reports
-  moving it; choosing Automatic sets `client` again.
+  moving it; turning on Set timezone automatically sets `client` again.
 
 - Calendar automation precedence is explicit trigger timezone, then the automation **author's**
   timezone for personal scope, then the workspace timezone — resolved at acceptance, inside the

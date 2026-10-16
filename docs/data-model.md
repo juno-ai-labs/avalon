@@ -219,8 +219,8 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
   it, and every client reports its device's zone through
   `PUT /workspace/me/device-timezone` at launch and on focus whenever that zone
   differs from the last one it sent. `user` means somebody fixed a zone in
-  Account → Default timezone, and no report moves it; choosing **Automatic**
-  there sets `client` again. It is one column per region —
+  Account → Default timezone, and no report moves it; turning **Set timezone
+  automatically** back on sets `client` again. It is one column per region —
   `users` is regional — so it answers for every workspace the person belongs to
   in that region, and a second region's row keeps its own. `syncRegionalProfile`
   deliberately syncs `email`, `name`, and `avatar_url` and not `timezone`, so a
@@ -1380,9 +1380,9 @@ The dedicated stores are unchanged; no applied migration is rewritten.
 
 **What changed:** Every client (desktop and browser) now reports its device's
 zone, not only a desktop Google sign-in, so an account on `client` stays in the
-zone its person is actually in; digests are re-derived when it moves. Account →
-Default timezone gained **Automatic**, which returns a fixed account to
-`client`. `PATCH /workspace/me` also stopped answering 500 after every save: it
+zone its person is actually in; digests are re-derived when it moves. Account
+gained a **Set timezone automatically** switch above Default timezone, which
+returns a fixed account to `client`. `PATCH /workspace/me` also stopped answering 500 after every save: it
 parsed the saved user as a workspace membership.
 
 **Why:** Email and browser sign-in never sent a zone, sessions renew without a
