@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
 import { sha256 } from "../src/lib/crypto";
 import { AuthService } from "../src/services/auth-service";
-import { WorkspaceService } from "../src/services/workspace-service";
+import { reportDeviceTimezone, WorkspaceService } from "../src/services/workspace-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -189,6 +189,27 @@ describe("account timezone as a preference", () => {
       timezone: "America/Los_Angeles",
       timezone_source: "client",
     });
+  });
+
+  it("follows the device a person is on until they fix a zone, and again once they choose Automatic", async () => {
+    const database = seededDatabase();
+    const env = environment(database);
+
+    // Following by default: the device's zone replaces the stored one.
+    await expect(reportDeviceTimezone(env, newcomerId, "Europe/Berlin"))
+      .resolves.toEqual({ timezone: "Europe/Berlin", followsDevice: true });
+    expect(timezoneRow(database, newcomerId)).toEqual({ timezone: "Europe/Berlin", timezone_source: "client" });
+
+    // Fixed by hand: a device in another zone leaves it alone.
+    await new WorkspaceService(env, authFor(newcomerId)).updateMyTimezone("America/New_York");
+    await expect(reportDeviceTimezone(env, newcomerId, "Asia/Tokyo"))
+      .resolves.toEqual({ timezone: "America/New_York", followsDevice: false });
+
+    // Automatic: following again, from this device's zone.
+    await new WorkspaceService(env, authFor(newcomerId)).updateMyTimezone("Asia/Tokyo", true);
+    expect(timezoneRow(database, newcomerId)).toEqual({ timezone: "Asia/Tokyo", timezone_source: "client" });
+    await expect(reportDeviceTimezone(env, newcomerId, "Australia/Sydney"))
+      .resolves.toEqual({ timezone: "Australia/Sydney", followsDevice: true });
   });
 
   it("refuses a source outside the two the column admits", () => {
