@@ -110,7 +110,10 @@ Channel>" is the second hover action on every settled text message, after
 **New breakout**, and a row in the title menu. Either opens the composer's merge mode with its own draft key
 (`…:merge`), prefilled with the message's words (empty from the menu), a
 Channel picker for a thread in several, Cancel, and an audience line. Merge
-sends a fresh `clientMessageId` per attempt.
+keeps one `clientMessageId` for the same words and target until it succeeds,
+so a send whose response was lost is retried as a replay; new words or a new
+target are a new merge. A Channel the reader reaches only `through_channel` is
+not offered.
 
 ## Invariants
 
@@ -225,7 +228,10 @@ gives the same guarantee for free.
 
 **Consequences:** The waterline counts messages now ([`spaces.md`](spaces.md)).
 A merge's `clientMessageId` is its operation id, so a client must not reuse one
-across different words. A future message about a thread must keep the
+across different words. A Channel row remembers only the operation that last
+wrote it, so a stale retry of an older operation arriving after a newer one
+overwrites it: last write wins, accepted because a client retries only the
+attempt it is still waiting on. A future message about a thread must keep the
 openable-thread filter in both the feed and the stats arm.
 
 Design: [`PRDs/2026-10-16_merge-back/prd.md`](PRDs/2026-10-16_merge-back/prd.md).

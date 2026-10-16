@@ -1130,16 +1130,20 @@ export function mergeTargetFor(input: {
   parentKind: ConversationParentKind;
   substreamId: string;
   guest: boolean;
-  thread: WorkstreamDetail | null | undefined;
-  spaces: readonly SpaceSummary[];
+  thread: Pick<WorkstreamDetail, 'title' | 'scope' | 'spaceIds'> | null | undefined;
+  spaces: readonly Pick<SpaceSummary, 'id' | 'name' | 'scope' | 'reach'>[];
 }): MergeTarget | null {
   if (input.parentKind !== 'workstream' || !input.thread) return null;
   if (input.substreamId !== '0') return { kind: 'thread', threadTitle: input.thread.title };
   if (input.guest || input.thread.scope !== 'workspace') return null;
   const byId = new Map(input.spaces.map((space) => [space.id as string, space]));
+  // A Channel reached only through a thread in it is read-only to this
+  // person, and the server refuses a merge there.
   const channels = input.thread.spaceIds.flatMap((spaceId) => {
     const space = byId.get(spaceId);
-    return space ? [{ id: space.id as string, name: space.name, scope: space.scope }] : [];
+    return space && space.reach !== 'through_channel'
+      ? [{ id: space.id as string, name: space.name, scope: space.scope }]
+      : [];
   });
   return channels.length > 0 ? { kind: 'channel', channels } : null;
 }
@@ -1344,6 +1348,10 @@ export function ConversationSurface({
   const [mergeMode, setMergeMode] = useState<{ nonce: number; channelId: string | null } | null>(null);
   const [mergeError, setMergeError] = useState<string | undefined>();
   const [merging, setMerging] = useState(false);
+  // One operation id per merge until it succeeds: a send whose response was
+  // lost is retried with the same id, so the server answers it as a replay
+  // rather than posting it twice. New words, or a new target, are a new merge.
+  const mergeAttemptRef = useRef<{ key: string; id: string } | null>(null);
   useEffect(() => { setMergeMode(null); setMergeError(undefined); }, [id, substreamId]);
   const activeSpaces = useSpaceDirectories().active.data;
   const startMergeRef = useRef<((text: string) => void) | undefined>(undefined);
@@ -2985,12 +2993,12 @@ export function ConversationSurface({
     if (!api || !merge) return;
     setMerging(true);
     setMergeError(undefined);
+    const target = merge.kind === 'thread' ? { breakoutId: substreamId } : mergeChannel ? { channelId: mergeChannel.id } : {};
+    const attemptKey = JSON.stringify([text, target]);
+    if (mergeAttemptRef.current?.key !== attemptKey) mergeAttemptRef.current = { key: attemptKey, id: crypto.randomUUID() };
     try {
-      await api.mergeConversation(id, {
-        body: text,
-        clientMessageId: crypto.randomUUID(),
-        ...(merge.kind === 'thread' ? { breakoutId: substreamId } : mergeChannel ? { channelId: mergeChannel.id } : {}),
-      });
+      await api.mergeConversation(id, { body: text, clientMessageId: mergeAttemptRef.current.id, ...target });
+      mergeAttemptRef.current = null;
       setMergeMode(null);
       void writeDraftText(mergeDraftKey, '');
     } catch (error) {

@@ -333,6 +333,9 @@ export const MERGE_REFUSAL_SENTENCES: Record<ConversationMergeErrorCode | "inval
   conversation_access_denied: "You can no longer reach this conversation for the person you are working for. Tell them; do not retry.",
 };
 
+/** Two of the thread's Channels share the name the model passed. */
+export const MERGE_AMBIGUOUS_CHANNEL_SENTENCE = "Several of this thread's Channels have that name. Pass one of the ids in `available` as `channel`.";
+
 /**
  * A merge service refusal as the tool's typed failure, with only the
  * allowlisted details; anything else is rethrown as it is.
@@ -694,7 +697,17 @@ export function createConversationsPlugin(
         if (!inBreakout && args.channel !== undefined) {
           const wanted = args.channel.trim().toLowerCase();
           const { channels } = await ports.mergeChannels(scope.parentId);
-          const match = channels.find((channel) => channel.id === args.channel!.trim() || channel.name.toLowerCase() === wanted);
+          // An id names one Channel; a name may name several, which is refused
+          // with their ids rather than guessed.
+          const byId = channels.find((channel) => channel.id === args.channel!.trim());
+          const byName = channels.filter((channel) => channel.name.toLowerCase() === wanted);
+          if (!byId && byName.length > 1) {
+            throw new ConversationToolError("conversation_ambiguous", MERGE_AMBIGUOUS_CHANNEL_SENTENCE, {
+              field: "channel",
+              available: byName.slice(0, MAXIMUM_FAILURE_AVAILABLE_VALUES).map((channel) => channel.id),
+            });
+          }
+          const match = byId ?? byName[0];
           if (!match) {
             throw new ConversationToolError("merge_channel_not_placed", MERGE_REFUSAL_SENTENCES.merge_channel_not_placed, {
               field: "channel",
