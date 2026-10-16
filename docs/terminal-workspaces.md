@@ -1032,7 +1032,7 @@ names — built by
 as `TERMINAL_SNAPSHOT_BASE_IMAGE` in `snapshot-manifest.ts`
 (`daytonaio/sandbox:0.10.0`; the environment variable of the same name
 overrides it for a one-off build) on the Juno AI Labs Daytona organization. Owning the image means Daytona's base fixes stop arriving
-on their own, and the manifest cannot see a stale-but-working base, so
+on their own, and the manifest cannot see a stale-but-working base.
 `.github/workflows/rebuild-terminal-snapshot.yml` rebuilds every Monday at
 06:00 UTC and on dispatch: it builds a minute-stamped `rally-terminal-<date>`,
 runs `terminal:verify-provider` against it, and pushes a commit that points
@@ -1040,10 +1040,11 @@ runs `terminal:verify-provider` against it, and pushes a commit that points
 result.
 Adoption is that push, rollback is its revert, and existing sandboxes are
 untouched either way. A red Monday job means the current snapshot keeps serving
-and the gap to Daytona's base widens by a week. The pin is a fixed release tag,
-so the rebuild refreshes only the layers Rally adds; a new Daytona release
-reaches sandboxes only when someone bumps the pin, which
-`hub.docker.com/r/daytonaio/sandbox/tags` lists. Each build stamps its Dockerfile with a build time so
+and Rally's own layers go a week staler. The pin is a fixed release tag, so the
+rebuild refreshes only the layers Rally adds: the Daytona base, its OS packages
+included, moves only when someone bumps the pin, which
+`hub.docker.com/r/daytonaio/sandbox/tags` lists. How stale the base may get is
+therefore not bounded by the rebuild. Each build stamps its Dockerfile with a build time so
 Daytona cannot hand back a cached image, and the stamp is readable inside every
 sandbox as `RALLY_TERMINAL_SNAPSHOT_BUILT_AT`; a build that finishes in seconds
 is a reused image, not a rebuild.
