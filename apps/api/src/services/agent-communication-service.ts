@@ -1,7 +1,7 @@
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import { Preparation } from "./harness-preparation";
 import {
-  agentAddressForId, agentIdForAddress, AgentIdSchema, asSubstreamId,
+  agentAddressForId, agentIdForAddress, AgentIdSchema, asSubstreamId, modelAgentId,
   asUserId, asWorkstreamId, type AgentExchangeNotice, type AgentId, type AgentMessageResult, type StartAgentInput,
   type StartAgentResult, type SendAgentMessageInput, type ReplyToAgentMessageInput, type WorkstreamWorkflowInput,
 } from "@rally/contracts";
@@ -33,6 +33,8 @@ const REPLY_ARRIVES = "whether you keep working or finish your turn. There is no
 export class AgentCommunicationService {
   readonly senderId: AgentId;
   private readonly teamPreparation = new Preparation(() => this.resolveTeam());
+  private readonly threadPreparation = new Preparation(() => this.owningWorkstream());
+  private readonly guestPreparation = new Preparation(() => this.principalIsGuest());
 
   constructor(private readonly env: Env, private readonly input: WorkstreamWorkflowInput) {
     this.senderId = agentIdForAddress({ parentKind: input.parentKind, parentId: input.parentId, substreamId: input.substreamId ?? asSubstreamId("0") });
@@ -166,7 +168,7 @@ export class AgentCommunicationService {
    * messages it ever synthesizes: a failure, and a completion that sent nothing.
    */
   async notifyFailure(reason: string) {
-    await this.notifyOwner(`Agent failed due to ${reason}. Id: ${this.senderId}`, `failure:${this.input.harnessRunId}`, "failed", reason);
+    await this.notifyOwner(`Agent failed due to ${reason}. Id: ${modelAgentId(this.senderId)}`, `failure:${this.input.harnessRunId}`, "failed", reason);
   }
 
   /**
@@ -175,7 +177,7 @@ export class AgentCommunicationService {
    * exactly as a failure does; a run that sent even one message needs no notice.
    */
   async notifySilentCompletion(name: string | null) {
-    await this.notifyOwner(`Agent ${name ?? this.senderId} finished without replying. Id: ${this.senderId}. Message it if you still need its result.`, `completion:${this.input.harnessRunId}`, "finished_without_reply");
+    await this.notifyOwner(`Agent ${name ?? modelAgentId(this.senderId)} finished without replying. Id: ${modelAgentId(this.senderId)}. Message it if you still need its result.`, `completion:${this.input.harnessRunId}`, "finished_without_reply");
   }
 
   private async notifyOwner(
@@ -242,36 +244,69 @@ export class AgentCommunicationService {
     await (await this.workspace()).joinAgentTeam({ workspaceId: this.input.workspaceId, teamId, agentId });
   }
 
+  /**
+   * Whether this conversation may message a Sidekick's authoring agent, which
+   * is how a Sidekick's setup changes. Seeing the Sidekick is not enough: a
+   * Sidekick another thread owns is that thread's to change, and a model that
+   * misreads a list must not be able to rewrite it (`docs/agent-communication.md`).
+   */
   private async authorizeSidekick(agentId: AgentId) {
     const address = agentAddressForId(agentId);
     if (address.parentKind !== "automation" || address.substreamId !== "0") return;
     if (this.input.executionPrincipal.type !== "user") throw new AgentCommunicationError("sidekick_contact_user_unavailable");
-    const parent = await conversationParentStub(this.env, { workspaceId: this.input.workspaceId, ...address });
+    const userId = this.input.executionPrincipal.userId;
+    const [parent, guest, owner, thread] = await Promise.all([
+      conversationParentStub(this.env, { workspaceId: this.input.workspaceId, ...address }),
+      this.guestPreparation.get(),
+      this.workspace().then((workspace) => workspace.automationOwner({ workspaceId: this.input.workspaceId,
+        automationId: address.parentId })),
+      this.threadPreparation.get(),
+    ]);
+    // A guest reaches a Sidekick only through its grants, as every other
+    // transport admits them (`docs/authorization.md`).
     const access = await parent.authorizeViewer({ workspaceId: this.input.workspaceId, parentId: address.parentId,
-      substreamId: address.substreamId, userId: this.input.executionPrincipal.userId });
+      substreamId: address.substreamId, userId, ...(guest ? { requireGrantAuthority: true } : {}) });
     if (!access.authorized || access.archived) throw new AgentCommunicationError("sidekick_contact_forbidden");
+    if (sidekickOwnership(owner.owningWorkstreamId, thread) === "another_thread") {
+      throw new AgentCommunicationError("sidekick_owned_by_another_thread");
+    }
   }
 
-  /** The harness option is supplied by the host executor, after Bind's per-command authority check. */
-  async sidekicks(authorization: "verify_membership" | "harness_command" = "verify_membership") {
+  private async principalIsGuest(): Promise<boolean> {
+    if (this.input.executionPrincipal.type !== "user") return false;
+    const member = await this.env.DB.prepare(
+      `SELECT access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+    ).bind(this.input.workspaceId, this.input.executionPrincipal.userId).first<{ access_class: string | null }>();
+    return member?.access_class === "guest";
+  }
+
+  /** Called by the host executor after Bind's per-command authority check, so membership is not read again. */
+  async sidekicks() {
     if (this.input.executionPrincipal.type !== "user") return { sidekicks: [] };
     const workspace = await this.workspace();
-    const request = { workspaceId: this.input.workspaceId, userId: this.input.executionPrincipal.userId };
-    const listed = authorization === "harness_command"
-      ? await workspace.listSidekickDirectoryForAuthorizedMember(request)
-      : await workspace.listSidekickDirectory(request);
-    const owningWorkstreamId = await this.owningWorkstream();
-    return { sidekicks: listed.items.sort((a, b) =>
-      Number(b.owningWorkstreamId === owningWorkstreamId) - Number(a.owningWorkstreamId === owningWorkstreamId),
-    ).map((sidekick) => ({
-      sidekickId: sidekick.id, name: sidekick.name, description: sidekick.description,
-      scope: sidekick.scope, owningWorkstreamId: sidekick.owningWorkstreamId,
-      agentId: agentIdForAddress({ parentKind: "automation", parentId: sidekick.id, substreamId: asSubstreamId("0") }),
-    })) };
+    const listed = await workspace.listSidekickDirectoryForAuthorizedMember({ workspaceId: this.input.workspaceId,
+      userId: this.input.executionPrincipal.userId });
+    // The model cannot compare owner ids, so ownership is answered here, by
+    // the same rule `authorizeSidekick` enforces.
+    const thread = await this.threadPreparation.get();
+    return { sidekicks: listed.items
+      // A Sidekick's own conversation does not message itself.
+      .filter((sidekick) => !(this.input.parentKind === "automation" && sidekick.id === this.input.parentId))
+      .map((sidekick) => {
+        const ownership = sidekickOwnership(sidekick.owningWorkstreamId, thread);
+        return {
+          sidekickId: sidekick.id, name: sidekick.name, description: sidekick.description,
+          scope: sidekick.scope, ownedByThisWorkstream: ownership === "this_thread",
+          canEdit: ownership !== "another_thread",
+          agentId: agentIdForAddress({ parentKind: "automation", parentId: sidekick.id, substreamId: asSubstreamId("0") }),
+        };
+      }) };
   }
 
+  /** The thread this conversation acts for: itself, or the thread that owns its Sidekick. */
   private async owningWorkstream(): Promise<string | null> {
     if (this.input.parentKind === "workstream") return this.input.parentId;
+    if (this.input.parentKind !== "automation") return null;
     const owner = await (await this.workspace()).automationOwner({ workspaceId: this.input.workspaceId,
       automationId: this.input.parentId });
     return owner.owningWorkstreamId;
@@ -294,7 +329,7 @@ export class AgentCommunicationService {
 
   async createSidekick(scope: "personal" | "workspace" | "workstream", context: HarnessToolContext) {
     if (this.input.executionPrincipal.type !== "user") throw new AgentCommunicationError("sidekick_author_unavailable");
-    const owningWorkstreamId = scope === "workstream" ? await this.owningWorkstream() : null;
+    const owningWorkstreamId = scope === "workstream" ? await this.threadPreparation.get() : null;
     if (scope === "workstream" && !owningWorkstreamId) throw new AgentCommunicationError("sidekick_owning_workstream_unavailable");
     const owningSubstreamId = owningWorkstreamId ? await this.owningSubstream() : "0";
     if (owningWorkstreamId) {
@@ -323,7 +358,8 @@ export class AgentCommunicationService {
         await this.authorizeSidekick(agentId);
       } catch (error) {
         if (error instanceof AgentCommunicationError
-          && (error.code === "sidekick_contact_forbidden" || error.code === "sidekick_contact_user_unavailable")) return null;
+          && (error.code === "sidekick_contact_forbidden" || error.code === "sidekick_contact_user_unavailable"
+            || error.code === "sidekick_owned_by_another_thread")) return null;
         throw error;
       }
       // `status` says whether a teammate is still running, which a message
@@ -368,6 +404,7 @@ class AgentCommunicationError extends Error {
       agent_destination_unavailable: "List teammates again and choose an available agentId. This recipient is unavailable.",
       agent_destination_mismatch: "Copy the exact agentId from creation or discovery. The supplied ID does not match the recipient.",
       sidekick_contact_forbidden: "Choose a Sidekick you can access. This Sidekick is unavailable to this execution.",
+      sidekick_owned_by_another_thread: "Create a Sidekick in this thread with create_sidekick instead. This Sidekick belongs to another thread, so only that thread can change it.",
       sidekick_contact_user_unavailable: "Ask your coordinator to contact the Sidekick. This execution has no user identity for Sidekick access.",
       sidekick_author_unavailable: "Ask your coordinator to create the Sidekick. This execution has no user identity for creation.",
       sidekick_owning_workstream_unavailable: "Choose personal or workspace scope if appropriate. This conversation has no owning workstream.",
@@ -381,4 +418,22 @@ class AgentCommunicationError extends Error {
     }[code] ?? `Report this agent communication error: ${code}.`);
     this.name = "AgentCommunicationError";
   }
+}
+
+/**
+ * Who may change a Sidekick, from one conversation: the one rule behind both
+ * the `sidekicks_list` flags and the refusal in `authorizeSidekick`.
+ *
+ * A thread owns a Sidekick its own conversations created, Breakouts included:
+ * ownership is per thread, as `automation_directory.owning_workstream_id`
+ * records it. A personal or Organization Sidekick has no owning thread and is
+ * the person's to change from anywhere they can reach it. A conversation that
+ * acts for no thread owns nothing, so a `null` thread never matches.
+ */
+export function sidekickOwnership(
+  owningWorkstreamId: string | null,
+  thread: string | null,
+): "this_thread" | "another_thread" | "unowned" {
+  if (owningWorkstreamId === null) return "unowned";
+  return owningWorkstreamId === thread ? "this_thread" : "another_thread";
 }

@@ -181,9 +181,11 @@ import {
   mainAttachmentsUnreported,
   mainResourceLinksChanged,
   ownedAutomationSummaries,
+  owningThreads,
   visibleSpaceChannelIdsAfter,
   type AutomationDirectoryRow,
   type InvalidAppearanceReport,
+  type InvalidThreadAppearanceReport,
 } from './channel-rails';
 import { observeSqlWrites } from './sql-write-observer';
 import { enumerateSearchAuthorizationUniverse, type SearchAuthorizationTarget } from './search-authorization-universe';
@@ -6975,6 +6977,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
   }
 
+  /** A Thread whose stored appearance no longer parses is named on its Sidekicks without one. */
+  private invalidThreadAppearanceReporter(workspaceId: string): InvalidThreadAppearanceReport {
+    return (workstreamId, code) => logWarn(this.env, "owning_thread_appearance_invalid", {
+      workspace_id: workspaceId,
+      workstream_id: workstreamId,
+      code,
+    });
+  }
+
   /** A Sidekick directory row whose stored appearance no longer parses is listed without one. */
   private invalidAppearanceReporter(workspaceId: string): InvalidAppearanceReport {
     return (automationId, code) => logWarn(this.env, "automation_directory_appearance_invalid", {
@@ -8666,7 +8677,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ? undefined
       : request.accessClass === "guest" ? null : request.role ?? null;
     const host = this.hostedSidekickHost();
-    const items: AutomationSummary[] = [];
+    const admitted: typeof candidates = [];
     for (const row of candidates) {
       const own = row.author_user_id === request.userId || row.run_as_user_id === request.userId;
       if (actorRole === undefined && row.scope === "workspace" && !own) {
@@ -8677,10 +8688,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // A Main-homed Channel Sidekick asks `isWorkstreamParticipant`, a local
       // read; only a Breakout-homed one asks the Breakout's viewer rule.
       if (await sidekickReaderAllows({ ...row, run_as_user_id: row.run_as_user_id ?? null }, actor, host)) {
-        items.push(automationSummary(row, this.invalidAppearanceReporter(request.workspaceId)));
+        admitted.push(row);
       }
     }
-    return { items };
+    // Each Thread-owned row names its Thread to a reader who is in it, in one
+    // read for the whole list. An author who has left the Thread still reads
+    // the Sidekick, and sees "Thread" rather than the name of a room they are
+    // no longer in.
+    const threadIds = admitted.flatMap((row) => row.scope === "workstream" && row.owning_workstream_id !== null
+      && this.isWorkstreamParticipant(row.owning_workstream_id, request.userId) ? [row.owning_workstream_id] : []);
+    const threads = owningThreads(this.state.storage.sql, threadIds, this.invalidThreadAppearanceReporter(request.workspaceId));
+    const report = this.invalidAppearanceReporter(request.workspaceId);
+    return {
+      items: admitted.map((row) => automationSummary(row, report,
+        row.owning_workstream_id === null ? null : threads.get(row.owning_workstream_id) ?? null)),
+    };
   }
 
   /**

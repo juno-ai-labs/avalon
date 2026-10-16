@@ -27,7 +27,11 @@ and UI work is tracked in the [implementation plan](PRDs/2026-09-14_uninterrupte
 
 An agent ID encodes `parentKind/parentId/substreamId` within the host's workspace.
 Creation and discovery supply it; no independent agent identity is allocated.
-Different Sidekick authoring conversations can each have substream `0`.
+Different Sidekick authoring conversations can each have substream `0`. A
+Sidekick's conversations are stored under `automation`, but the agents plugin
+shows the model `sidekick/…` (`modelAgentId`) and accepts either spelling back
+(`ModelAgentIdSchema`); message envelopes and host notices use the same
+spelling.
 
 The originating conversation supplies its implicit team's stable identity.
 Ensuring a team adds its origin. A host-authorized Sidekick contact adds the
@@ -207,8 +211,13 @@ still filters personal ownership and workstream participation. Ordinary director
 callers perform their own active-member check. This is a host-selected execution
 path, not a model argument, durable grant, or run-long authorization cache.
 
-Sidekick discovery uses the existing authorized directory and ranks the current
-workstream's Sidekicks first. Minimal creation defaults to workstream ownership;
+Sidekick discovery uses the existing authorized directory. Each result carries
+`ownedByThisWorkstream` and `canEdit` rather than the owner's id, because the
+model is not given its own thread id to compare against. Both come from
+`sidekickOwnership`, the same rule `authorizeSidekick` enforces when a message
+reaches a Sidekick's authoring agent: a Sidekick another thread owns is refused,
+and a personal or organization one is not. A Sidekick's own conversation acts
+for the thread that owns it. Minimal creation defaults to workstream ownership;
 setup travels through messages. First authorized contact joins the authoring
 conversation to the team. Drafting tools are available only on a Sidekick's main
 authoring conversation, not ordinary workstreams, workers or scheduled runs.
@@ -231,11 +240,17 @@ at a later Bind boundary during a participant-started run follow the same rule.
   record an ownership edge without its membership.
 - WorkspaceDO is the sole team authority; a D1 fallback would create divergent
   membership decisions.
+- Only the owning thread may message a thread-owned Sidekick's authoring agent,
+  and ownership is per thread, Breakouts included. The host answers it; a
+  conversation that acts for no thread owns nothing. Returning a raw owner id to
+  the model, or letting a `null` thread match a `null` owner, brings back the
+  wrong-thread rewrite. Guarded by `automation-post-result.test.ts`.
 
 ## Boundary
 
-System prompts describe coordination behavior without naming tools. Exact tool
-names belong in tool definitions, so prompt guidance stays independent of the
+System prompts describe coordination behavior without naming tools, except
+`sidekicks_list` and `list_agents`, which this plugin owns and every run has.
+Exact tool names belong in tool definitions, so prompt guidance stays independent of the
 available tool inventory and wire names. Instructions lead with the action,
 use short sentences, and distinguish agent IDs from message IDs. Expected
 communication errors explain what to do next while retaining their diagnostic
@@ -268,7 +283,11 @@ missing loop capability to Bind itself rather than bypassing it in Rally.
 ## Failure modes and limits
 
 Expected membership, received-message, ownership, and route conflicts return
-typed refusals. Storage and transport errors remain failures. Tool integration
+typed refusals. A Sidekick another thread owns refuses its authoring messages
+with `sidekick_owned_by_another_thread`. Within one thread, any conversation the
+person can reach may change a Sidekick made in another of its Breakouts; that
+is the per-thread rule, not a gap. Old tool results and stored notice text
+still show `automation/…` ids, which keep parsing. Storage and transport errors remain failures. Tool integration
 must translate domain codes into actionable model-facing explanations.
 No new membership or descendant-depth caps are introduced. Message contracts
 reuse existing name, description, message and attachment bounds. Unknown input
@@ -283,9 +302,48 @@ exercises real WorkspaceDO migrations and RPCs for multi-team Sidekicks, scoped
 rosters, reply routes, replay, and descendant ownership. The latter clears only
 its own dedicated workspace's new tables between tests. The execution suite also covers hidden idempotent creation, inherited principal,
 stop/replay/continuation, a worker reply to the foreground, and independently
-owned Sidekick contact. Complete desktop behavior remains an implementation gate.
+owned Sidekick contact, the refusal from a thread that does not own a Sidekick,
+the ownership flags from a conversation that acts for no thread, and a guest's
+grant-only contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
+
+### 2026-10-15 — Only the owning thread changes a thread's Sidekick, and the model reads `sidekick/…`
+
+**What changed:** Messaging a Sidekick's authoring agent, which is how a
+Sidekick's setup changes, is refused with `sidekick_owned_by_another_thread`
+when another thread owns that Sidekick. `sidekicks_list` returns
+`ownedByThisWorkstream` and `canEdit` from the same rule
+(`sidekickOwnership`) in place of `owningWorkstreamId`, and no longer sorts.
+A Sidekick's own conversation no longer lists itself. A guest reaches a
+Sidekick's authoring agent only through grants. The model reads and writes a
+Sidekick's agent id as `sidekick/…` while storage keeps `automation/…`, and the
+agents plugin's guidance now says what a Sidekick is.
+
+**Why:** A thread asked to set up a monitor listed Sidekicks, got another
+thread's blank `"New Sidekick"` draft first with scope `"workstream"`, took it
+for its own, and rewrote it by message. The owner id was the only true signal,
+the model is not given its own thread id to compare against, and nothing on the
+server stopped the write. The draft-submission guard that did check ownership
+("not one this thread owns") sat on a room path no room could reach. A model
+also had no reason to connect an `automation/…` id to a Sidekick, which is
+where "the monitor automation" in its replies came from.
+
+**Considered and rejected:** Returning only this thread's Sidekicks, which
+would make the flag unnecessary, but would also stop a thread from changing the
+person's own personal Sidekick when asked. Ownership per Breakout, which would
+stop one Breakout taking over another's draft, but would also stop Main
+changing a Sidekick made in its own Breakout. Changing the stored id format,
+which keys four team tables and seeds delivery ids, for no gain to the model.
+
+**Consequences:** Ownership is answered by the host and enforced where a
+message is admitted, so prompt wording is a hint, not the guard. A personal or
+organization Sidekick stays changeable from any conversation that can reach it;
+the management check on save still decides whether the person may. A
+`sidekick/…` id a model writes must keep parsing, and so must the
+`automation/…` ids already in old tool results.
+
+Shipped in juno-ai-labs/avalon#1245.
 
 ### 2026-09-24 — Count background agents in the conversation that started them
 

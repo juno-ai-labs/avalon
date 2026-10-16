@@ -1,5 +1,6 @@
 import { AutomationGlyph } from './workstream-glyph';
 import { AppearancePicker } from './appearance-picker';
+import { OwningThreadLabel } from './owning-thread-label';
 import { useState } from 'react';
 import { Archive, CirclePause, Copy, Ellipsis, History, Mail, Play } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -107,7 +108,9 @@ export function AutomationHeader({
               <Badge className={`automation-lifecycle is-${automation.lifecycle}`}>
                 {lifecycleLabel[automation.lifecycle]}
               </Badge>
-              <Badge className="scope-badge">{scopeLabel(automation.scope)}</Badge>
+              {automation.scope === 'workstream' && automation.owningThread
+                ? <Badge className="scope-badge owning-thread-badge"><OwningThreadLabel thread={automation.owningThread} /></Badge>
+                : <Badge className="scope-badge">{scopeLabel(automation.scope)}</Badge>}
             </div>
             <div className="automation-description">
               {description}
