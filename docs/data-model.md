@@ -216,7 +216,7 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
 - `users` stores provider-independent identity and display information, plus the
   account's IANA `timezone` and the `timezone_source` that says who put it
   there. `client` means the account follows the device: a desktop sign-in seeds
-  it, and every client reports its device's zone through
+  it, and the desktop and browser clients report the device's zone through
   `PUT /workspace/me/device-timezone` at launch and on focus whenever that zone
   differs from the last one it sent. `user` means somebody fixed a zone in
   Account → Default timezone, and no report moves it; turning **Set timezone
@@ -1378,12 +1378,11 @@ The dedicated stores are unchanged; no applied migration is rewritten.
 
 ### 2026-10-16 — The account timezone follows the device by default
 
-**What changed:** Every client (desktop and browser) now reports its device's
+**What changed:** The desktop and browser clients now report the device's
 zone, not only a desktop Google sign-in, so an account on `client` stays in the
 zone its person is actually in; digests are re-derived when it moves. Account
 gained a **Set timezone automatically** switch above Default timezone, which
-returns a fixed account to `client`. `PATCH /workspace/me` also stopped answering 500 after every save: it
-parsed the saved user as a workspace membership.
+returns a fixed account to `client`.
 
 **Why:** Email and browser sign-in never sent a zone, sessions renew without a
 sign-in, and the column defaults to `America/Los_Angeles`, so most accounts

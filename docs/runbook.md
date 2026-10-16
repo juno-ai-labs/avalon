@@ -1485,9 +1485,8 @@ audit, and telemetry remain valid D1 writers.
   `timezone_source` is still `client` and never writes over one somebody chose in settings;
   a client that sends no zone leaves the account alone, because there is no server-side default.
 
-- Every client reports its device's zone (`PUT /workspace/me/device-timezone`) at launch and
-  on focus when it differs from the last one it sent; the server applies it only while
-  `timezone_source` is `client`.
+- Desktop and browser clients report the device's zone while the account follows it; see
+  `users` in [data-model.md](data-model.md#identity-and-tenancy).
 
 - Owners and admins may change the workspace timezone. Every user may fix their personal
   timezone, which records `timezone_source = 'user'` and stops sign-in and device reports

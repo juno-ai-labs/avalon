@@ -102,6 +102,10 @@ async function withTerminalSettingsService<T>(
  * identity layer beside the socket ticket, for the same reason: the one shell
  * both mount reads it before anything else.
  */
+export async function workspaceProfile(c: Context<HonoAppEnv>) {
+  return c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getWorkspaceAuth(c)).getWorkspace()));
+}
+
 /**
  * A client reporting its device's zone, for members and guests alike: both
  * receive digests in their own day. Mounted beside the profile for the same
@@ -111,10 +115,6 @@ export const deviceTimezoneRoutes = new Hono<HonoAppEnv>();
 deviceTimezoneRoutes.put("/", zValidator("json", DeviceTimezoneRequestSchema), async (c) =>
   c.json(UserTimezoneSchema.parse(
     await reportDeviceTimezone(c.env, getWorkspaceAuth(c).userId, c.req.valid("json").timezone))));
-
-export async function workspaceProfile(c: Context<HonoAppEnv>) {
-  return c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getWorkspaceAuth(c)).getWorkspace()));
-}
 
 workspaceRoutes.get("/attention", async (c) =>
   c.json(WorkspaceAttentionSchema.parse(await workspaceAttention(c.env, getAuth(c)))));
