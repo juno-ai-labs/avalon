@@ -207,19 +207,6 @@ describe("client feature flags", () => {
     expect(context).toMatchObject({ userEmailDomain: "juno-labs.com", userId: staffUserId });
   });
 
-  it("shows the digest section before a workspace is chosen, since there is nothing to evaluate against", async () => {
-    // `resolveDigestsEnabled` requires a `workspaceId` and cannot be called
-    // without one. Digests are always on by default, so absent evaluation
-    // reads the same as every other gap: fail open, not hidden.
-    const flags = serving(false);
-
-    await expect(resolveClientFeatureFlags(envWithAccounts(flags), auth(staffUserId, null)))
-      .resolves.toMatchObject({ digestsEnabled: true });
-    // And the flag is never even queried for this subject.
-    expect((flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls.map(([key]) => key))
-      .not.toContain("digests-enabled");
-  });
-
   it("sends no account attributes for a session whose user row is gone", async () => {
     const staffOnly = servingWhen((context) => context.userEmailDomain === "juno-labs.com");
     const env = envWithAccounts(staffOnly);
@@ -250,9 +237,6 @@ describe("client feature flags", () => {
         multipleWorkspacesEnabled: false,
         pushNotificationsEnabled: false,
         liveArtifactsEnabled: false,
-        // The one field that fails the other direction: a digest already sends
-        // by default, so a missing binding must reproduce that, not hide it.
-        digestsEnabled: true,
       });
   });
 
@@ -309,19 +293,11 @@ describe("client feature flags", () => {
 
     await resolveClientFeatureFlags(envWithAccounts(flags), auth(staffUserId));
 
-    // Order-independent: `digestsEnabled` resolves through `digest-flags.ts`,
-    // which awaits its own attribute load before calling `getBooleanDetails`.
-    // Among the boolean-flag calls, its dispatch lands after the other
-    // booleans' synchronous one rather than at its position in the
-    // `Promise.all` array —
-    // `controlTowerRefreshSeconds` is the same way (it awaits the same kind of
-    // load before its own `getNumberDetails`), just not a boolean this test
-    // collects. What this test cares about — every enabled-named key queried
-    // exactly once — does not depend on which order they arrived in.
+    // Order-independent: what this test cares about — every enabled-named key
+    // queried exactly once — does not depend on which order they arrived in.
     expect((flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls.map(([key]) => key).sort())
       .toEqual([
         "developer-settings",
-        "digests-enabled",
         "live-artifacts-enabled",
         "multiple-workspaces-enabled",
         "push-notifications-enabled",
@@ -367,7 +343,6 @@ describe("GET /feature-flags", () => {
       multipleWorkspacesEnabled: true,
       pushNotificationsEnabled: true,
       liveArtifactsEnabled: true,
-      digestsEnabled: true,
     });
   });
 
@@ -391,9 +366,6 @@ describe("GET /feature-flags", () => {
       multipleWorkspacesEnabled: false,
       pushNotificationsEnabled: false,
       liveArtifactsEnabled: false,
-      // The one field that answers `true` here: an unresolvable flag must
-      // reproduce delivery continuing, not stopping.
-      digestsEnabled: true,
     });
   });
 });

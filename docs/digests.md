@@ -16,7 +16,6 @@ mention, or changing what a connector can deliver to a person.
 | The log: writes | `apps/api/src/services/activity-event-service.ts`, backed by WorkspaceDO SQLite |
 | Digest configuration, RRULE derivation, schedule rows | `apps/api/src/services/digest-service.ts` |
 | Firing one occurrence: the unread rows, the text, the claim, the settle | `apps/api/src/services/digest-run-service.ts` |
-| The `digests-enabled` kill switch | `apps/api/src/services/digest-flags.ts` |
 | Deciding whether a connector activity may be digested (written, read by nothing today; see [Digestible](#digestible-what-a-person-should-be-told)) | `activityIsDigestible` in `apps/api/src/queues/activity-consumer.ts` |
 | Destination dispatch | `apps/api/src/services/digest-delivery-service.ts` |
 | The digest as a thread in the person's Personal Channel | `apps/api/src/services/digest-personal-channel.ts` |
@@ -300,8 +299,8 @@ names (`renderUnreadDigest`). Nothing unread, nothing sent: the occurrence
 settles as `empty`.
 
 **A digest is on by default**, for people who already exist and for anyone who
-joins later: weekdays at 09:00 in their own timezone, to their email and, for
-anyone who is not a guest, their Personal Channel.
+joins later: weekdays at 07:45 in their own timezone, to their email and, for
+anyone who is not a guest, their Personal Channel (shown as Rally).
 
 **There is no digest timezone.** A digest's times are wall-clock times in its
 owner's own day, and `users.timezone` already says when that is. The derived
@@ -319,7 +318,11 @@ the four that exist today, and repairs a half-written save instead of leaving it
 1. **An active member with no digest gets the default.** Absence is unambiguous —
    switching a digest off keeps its row with `enabled = 0` — so this can never
    resurrect something somebody turned off. A member with no account address is
-   skipped, because the default destination is that address.
+   skipped, because the default destination is that address. The one exception
+   is a digest marked `default_destinations_pending` by WorkspaceDO migration
+   108: the same call adds whichever of email and Personal Channel it lacks,
+   switches it on, and clears the mark. A save clears it too, so the reconciler
+   never overrides a choice made after the migration.
 2. **An enabled digest with days and times but no `schedules` rows gets them.**
    That is the state a fresh default lands in, and the state a save leaves if it
    fails between writing the configuration and deriving the rows.
@@ -340,10 +343,8 @@ nowhere to send it, is saved switched off. The workspace alarm is refreshed
 
 #### An occurrence
 
-`fireDigestSchedule` checks the schedule's own `enabled` bit, then
-`digests-enabled` (a Flagship Boolean that fails open; see
-[`feature-flags.md`](feature-flags.md)), then the execution principal, before
-anything is written. Then:
+`fireDigestSchedule` checks the schedule's own `enabled` bit, then the
+execution principal, before anything is written. Then:
 
 1. The occurrence's id is derived from its schedule and instant, so a retried
    alarm finds the delivery its first attempt claimed.
@@ -553,18 +554,6 @@ cannot change a saved schedule or settlement.
 - **A digest row is never deleted.** Switching one off keeps the row with
   `enabled = 0`, so absence unambiguously means "never had one" and the reconciler
   cannot resurrect it.
-- **`digests-enabled` gates firing and client visibility, never a person's own
-  configuration.** It is checked before the occurrence is claimed, so a skip
-  claims nothing and the reconciler keeps creating and repairing digest
-  defaults exactly as if the flag did not exist. It fails open to keep
-  sending — the opposite fail direction from the four presentation-only
-  client flags, even though it is now client-visible like they are — see
-  [`feature-flags.md`](feature-flags.md).
-- **The Daily digest settings group reads the identical evaluation the scheduler
-  uses.** `client-feature-flags.ts` calls the same `resolveDigestsEnabled`,
-  never a second "is it off for the workspace" check the client combines with
-  it. One evaluation, reused, so the section's visibility and the scheduler's
-  behavior can never disagree about the same person in the same workspace.
 
 ## Boundary
 
@@ -619,15 +608,6 @@ apply the audience columns the same way; see [Invariants](#invariants).
   emphasis, inline code, blockquote, and tables or fenced blocks kept verbatim in
   a `<pre>`. Other unknown syntax degrades to visible text rather than being
   passed through as HTML.
-- **`digests-enabled` resolves to enabled on every failure mode** — no binding,
-  a binding that throws, an unresolved flag, a non-boolean value — and only an
-  explicit `false` variation turns it off. `digest-flags.ts` never throws, so a
-  Flagship outage cannot stop a digest that would otherwise have sent.
-- **A resolution to disabled logs at `info`, not the `debug` every other
-  outcome uses.** No `digest_deliveries` row is written when the flag skips an
-  occurrence, by design, so the log line is the only trace an operator has
-  that the switch took effect — `debug` sits below configured deployments' configured
-  production level and would leave the skip invisible.
 
 ## Testing
 
@@ -638,7 +618,6 @@ apply the audience columns the same way; see [Invariants](#invariants).
 | `apps/api/test/email-markdown.test.ts` | The shared Markdown subset, escaping, refused link targets, and the preview line. |
 | `apps/api/test/digest-schedule.test.ts` | The day mask, one `schedules` row per time, timezone re-derivation, the reconciler's two passes, and the Personal Channel frozen as a destination and refused to a guest. |
 | `apps/api/test-workers/daily-digest.test.ts` | On real workerd: an unread start listed as the sidebar words it, nothing unread settling as `empty`, a fired-again occurrence sending nothing twice, and a claimed but unsent occurrence sending the text it kept. |
-| `apps/api/test/digest-flags.test.ts` | That `digests-enabled` fails open on every failure mode and only an explicit `false` variation turns it off. |
 | `apps/api/test/digest-delivery.test.ts` | Independent per-destination settlement, the skipped unknown target type, and `needs_input` on a permanent rejection. |
 
 Run one with
@@ -661,6 +640,38 @@ semantics. [Push notifications](push-notifications.md) owns the channels,
 device registration, provider delivery and retry receipts.
 
 ## Changelog
+
+### 2026-10-16 — The `digests-enabled` flag is removed, and every digest starts the day at 07:45
+
+**What changed:** The `digests-enabled` Flagship flag is gone from the API,
+the client flag contract, Settings, Ace's catalog, and Flagship itself (Ace's
+deploy now retires it). A digest fires on its own `enabled` bit alone, and
+Settings → Notifications always draws the Daily digest group.
+
+The default start-of-day time moves from 09:00 to 07:45, and WorkspaceDO
+migration 108 moves everyone, not only new members: each stored digest's
+morning time becomes 07:45 (an evening time is kept, no days becomes
+weekdays), and each is marked so the reconciler adds the email and Personal
+Channel destinations it lacks and switches it on. Most digests made before
+2026-10-15 had email only. A stored 09:00 could not say whether someone chose
+it, and Settings had been hidden since 2026-08-25, so nobody had a recent
+choice to keep. The derived `schedules` rows are dropped by the migration and
+rebuilt by the reconciler on the same visit, because their next instant needs
+the owner's timezone, which the object cannot compute in SQL; a digest does not
+fire between the object waking and the reconciler reaching that member. Empty
+digests still never send.
+
+**Why:** The flag was the kill switch for the agent-run digest that the
+2026-10-15 rewrite replaced, and it no longer guarded anything worth a switch.
+It also failed silently: its live default variation sat at `off`, so every
+person's Daily digest settings were hidden and no digest sent, while nothing
+in the product said why. A person who wants no digest switches both slots
+off, which is the one off this feature now needs.
+
+**Consequences:** If digests ever need an operator-wide stop again, add a new
+flag for that purpose rather than reviving this key. Older desktop builds that
+still read `digestsEnabled` get the schema default `true`, so they show the
+section too.
 
 ### 2026-10-15 — The digest is unread Activity, at the start and end of the day
 

@@ -2,7 +2,6 @@ const PUSH_NOTIFICATIONS_FLAG_KEY = "push-notifications-enabled";
 import type { ClientFeatureFlags, ProductFeatureFlagKey } from "@rally/contracts";
 import type { Env, IdentityAuthContext } from "../env";
 import { logStructuredEvent } from "../observability/logger";
-import { resolveDigestsEnabled } from "./digest-flags";
 import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
 
 /**
@@ -16,17 +15,6 @@ import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
  * the Worker variables because an agent still has to run; a feature nobody has
  * been given yet has nothing it must do, so an unbound binding, an unreachable
  * Flagship, a missing flag, and a mistyped value all resolve to off.
- *
- * Digests deliberately keep their existing default:
- *
- * - `digestsEnabled` is a feature, but one that already defaults on for every
- *   existing person — hiding the Digest settings section is what an operator
- *   opts someone *into*, not the safe answer to an outage. Resolved by
- *   `resolveDigestsEnabled` in `digest-flags.ts`, the same function
- *   `fireDigestSchedule` checks before sending — one evaluation per (user,
- *   workspace), reused here rather than a second "is it off for the
- *   workspace" check combined with this one in application code. See
- *   `docs/digests.md#the-run`.
  *
  * The value is served here because this is the one route a client asks for
  * server-decided values. Anything else added with no safe "off" belongs in a
@@ -174,22 +162,12 @@ export async function resolveClientFeatureFlagsForSubject(
     suggestedWorkEnabled,
     multipleWorkspacesEnabled,
     liveArtifactsEnabled,
-    digestsEnabled,
     pushNotificationsEnabled,
   ] = await Promise.all([
     resolveBooleanClientFlag(env, subject, DEVELOPER_SETTINGS_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, SUGGESTED_WORK_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, MULTIPLE_WORKSPACES_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, LIVE_ARTIFACTS_FLAG_KEY, context),
-    // `digests-enabled` (`DIGESTS_ENABLED_FLAG_KEY` in `digest-flags.ts`) —
-    // this is the identical one-evaluation-per-(user, workspace) call
-    // `fireDigestSchedule` makes before sending, not a separate or
-    // differently-scoped client-side check. No workspace chosen yet is not
-    // "off": there is nothing to evaluate against, so it reads as the
-    // fail-open default like every other gap.
-    subject.workspaceId
-      ? resolveDigestsEnabled(env, { userId: subject.userId, workspaceId: subject.workspaceId })
-      : Promise.resolve(true),
     resolveBooleanClientFlag(env, subject, PUSH_NOTIFICATIONS_FLAG_KEY, context),
   ]);
   return {
@@ -197,7 +175,6 @@ export async function resolveClientFeatureFlagsForSubject(
     suggestedWorkEnabled,
     multipleWorkspacesEnabled,
     liveArtifactsEnabled,
-    digestsEnabled,
     pushNotificationsEnabled,
   };
 }
