@@ -1,11 +1,15 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { IconChevronDown, IconChevronRight, IconSearch, IconX } from '@tabler/icons-react';
 
+import { Menu } from 'lucide-react';
+
 import { IconGroup, type IconGroupAction, type TooltipSide } from './icon-group';
+import type { IdentityMark } from './identity-tile';
 import { MarkBridge, type MarkBridgeItem } from './mark-bridge';
 import { IconButton } from './primitives';
 import clsx from 'clsx';
 import { isComposingKeyEvent } from '../lib/ime';
+import { usePhoneLayout } from '../lib/phone-layout';
 import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 
 /**
@@ -321,9 +325,52 @@ export function TitlePill({ level, variant = 'current' }: {
 }
 
 /**
+ * What a pane header carries at phone width, where it is the screen's only
+ * header: the app's navigation and its app-wide actions. The app shell
+ * provides it; without a provider, or wider than a phone, a header carries
+ * only its own pane's controls.
+ */
+export interface PhoneHeader {
+  /** Opens the navigation sheet. Drawn as the first mark of the header's bridge. */
+  openNavigation: () => void;
+  /** Ahead of the pane's own actions in its "More" menu, e.g. Search. */
+  actions: readonly IconGroupAction[];
+}
+
+export const PhoneHeaderContext = createContext<PhoneHeader | null>(null);
+
+const NAVIGATION_MARK: IdentityMark = {
+  shape: 'circle',
+  icon: Menu,
+  tint: 'var(--av-sys-color-surface-raised)',
+  ink: 'var(--av-sys-color-text-default)',
+};
+
+function usePhoneHeader(): PhoneHeader | null {
+  const phone = usePhoneLayout();
+  const header = useContext(PhoneHeaderContext);
+  return phone ? header : null;
+}
+
+function navigationMark(header: PhoneHeader): MarkBridgeItem {
+  return { key: 'navigation', mark: NAVIGATION_MARK, name: 'Open navigation', onSelect: header.openNavigation };
+}
+
+/**
+ * The menu mark alone, for a header drawn before its pane has loaded, so the
+ * way to the navigation is there from the first frame.
+ */
+export function TitlePillNavigation(): React.JSX.Element | null {
+  const header = usePhoneHeader();
+  return header ? <MarkBridge className="title-pill-bridge window-no-drag" items={[navigationMark(header)]} /> : null;
+}
+
+/**
  * A conversation pane's header: its own pill centered, any ancestors stacked
  * at the left in nesting order, and the pane's trailing controls at the right.
- * The centre column stays centred however many ancestors there are.
+ * The centre column stays centred however many ancestors there are. At phone
+ * width it also carries `PhoneHeader`: the menu mark leads the ancestors'
+ * bridge, and the app-wide actions lead the folded "More" menu.
  */
 export function TitlePillHeader({ actions, ancestors = [], className, current, tooltipSide, trailing }: {
   /** Round buttons ahead of `trailing`, folded into a "More" dropdown at phone width. */
@@ -342,27 +389,31 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
     if (level.bridge) bridge.push({ key: level.key, ...level.bridge, onSelect: level.onSelect });
   }
   const bridged = ancestors.length > 0 && bridge.length === ancestors.length;
+  const phoneHeader = usePhoneHeader();
+  const lead = phoneHeader ? [navigationMark(phoneHeader)] : [];
+  const shownActions = phoneHeader ? [...phoneHeader.actions, ...actions ?? []] : actions;
   const headerRef = useRef<HTMLElement>(null);
   const currentRef = useRef<HTMLDivElement>(null);
   const trailingRef = useRef<HTMLDivElement>(null);
-  const { crowded, shift } = useTrailingCrowded(headerRef, currentRef, trailingRef, actions?.length ?? 0);
+  const { crowded, shift } = useTrailingCrowded(headerRef, currentRef, trailingRef, shownActions?.length ?? 0);
   return <header
     className={clsx('title-pill-header window-drag', crowded && 'is-crowded', className)}
     ref={headerRef}
     style={shift ? { '--title-pill-shift': `${shift}px` } as React.CSSProperties : undefined}
   >
     <div className="title-pill-ancestors">
+      {!bridged && lead.length > 0 ? <MarkBridge className="title-pill-bridge window-no-drag" items={lead} /> : null}
       {bridged ? null : ancestors.map((level) => <span className="title-pill-ancestor window-no-drag" key={level.key}>
         <TitlePill level={level} variant="ancestor" />
       </span>)}
       {/* The nearest crumb keeps its name, which a bare mark does not say. A
           phone has no room for it and the stylesheet hides it there; the
           shape is measured from the name, so it closes back to a circle. */}
-      {bridged ? <MarkBridge className="title-pill-bridge window-no-drag" items={bridge} labelLast /> : null}
+      {bridged ? <MarkBridge className="title-pill-bridge window-no-drag" items={[...lead, ...bridge]} labelLast /> : null}
     </div>
     <div className="title-pill-current window-no-drag" ref={currentRef}><TitlePill level={current} /></div>
-    <div className="title-pill-trailing" ref={trailingRef}>{trailing || actions?.length
-      ? <IconGroup actions={actions} buttonClassName="title-pill-action" className="window-no-drag" folded={crowded} tooltipSide={tooltipSide}>{trailing}</IconGroup>
+    <div className="title-pill-trailing" ref={trailingRef}>{trailing || shownActions?.length
+      ? <IconGroup actions={shownActions} buttonClassName="title-pill-action" className="window-no-drag" folded={crowded} tooltipSide={tooltipSide}>{trailing}</IconGroup>
       : null}</div>
   </header>;
 }
