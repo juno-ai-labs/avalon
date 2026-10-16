@@ -157,8 +157,11 @@ export interface ConversationToolPorts {
     breakoutId?: string;
     channelId?: string;
   }): Promise<ConversationMergeResult>;
-  /** The thread's Channels this person may merge into, and the default; throws a merge refusal. */
-  mergeChannels(threadId: string): Promise<{ channels: ConversationMergeChannel[]; defaultName: string }>;
+  /**
+   * Every Channel the thread is in that this person may post in, possibly
+   * none; throws a merge refusal for a thread that cannot merge at all.
+   */
+  mergeChannels(threadId: string): Promise<ConversationMergeChannel[]>;
 }
 
 export function conversationToolPorts(env: Env, input: WorkstreamWorkflowInput): ConversationToolPorts {
@@ -188,10 +191,7 @@ export function conversationToolPorts(env: Env, input: WorkstreamWorkflowInput):
       ...(request.breakoutId ? { breakoutId: request.breakoutId } : {}),
       ...(request.channelId ? { channelId: request.channelId } : {}),
     }, { actingAgent: request.breakoutId !== undefined }),
-    mergeChannels: async (threadId) => {
-      const target = await new ConversationMergeService(env, await actingAuth(env, input)).channelTarget(threadId, null);
-      return { channels: target.channels, defaultName: target.name };
-    },
+    mergeChannels: async (threadId) => new ConversationMergeService(env, await actingAuth(env, input)).writableChannels(threadId),
   };
 }
 
@@ -309,32 +309,26 @@ export const ConversationAttachArgumentsSchema = z.strictObject({
   conversation: ConversationReferenceSchema.describe("The Rally link or id the person gave for a Thread or Breakout, or its exact title. A Channel, which holds threads, cannot be attached."),
 });
 
-const MergeBodySchema = z.string().trim().min(1).max(MESSAGE_MAX_CHARACTERS)
-  .describe("The merge, in markdown, as the target's readers should read it. Embed artifacts with [Title](resource://id).");
-
-/** A Breakout loop's merge: the words alone. The target is always its Thread. */
-export const ConversationMergeBreakoutArgumentsSchema = z.strictObject({ body: MergeBodySchema });
-
-/** A Thread Main loop's merge: the words, and which of the thread's Channels. */
-export const ConversationMergeThreadArgumentsSchema = z.strictObject({
-  body: MergeBodySchema,
-  channel: z.string().trim().min(1).optional()
-    .describe("The exact name or id of one of this thread's Channels. Leave out for the default Channel."),
+/**
+ * The merge's only argument, the same in every loop: the words. Where it goes
+ * is the loop's, never the model's: a Breakout's Thread, or every Channel the
+ * thread is in that the person can post in.
+ */
+export const ConversationMergeArgumentsSchema = z.strictObject({
+  body: z.string().trim().min(1).max(MESSAGE_MAX_CHARACTERS)
+    .describe("The merge, in markdown, as its readers should read it. Embed artifacts with [Title](resource://id)."),
 });
 
-/** The model-visible sentence for each merge refusal (agent-behavior.md, section 5). */
+/** The model-visible sentence for each merge refusal. */
 export const MERGE_REFUSAL_SENTENCES: Record<ConversationMergeErrorCode | "invalid_arguments", string> = {
-  invalid_arguments: "The merge needs a non-empty `body` and no other fields except `channel` in a thread. Fix the arguments and call once more.",
-  merge_channel_not_placed: "That Channel does not hold this thread. Use one of the Channels in `available`, or leave `channel` out for the default.",
+  invalid_arguments: "The merge needs a non-empty `body` and no other fields. Fix the arguments and call once more.",
+  merge_channel_not_placed: "This thread is in no Channel, so there is nowhere to merge it. Tell the person; do not retry.",
   merge_thread_private: "Only an Organization-wide thread can merge into a Channel. Tell the person; do not retry.",
   merge_target_not_writable: "The person you are working for cannot post there, so the merge was not made. Tell them; do not retry.",
   merge_resource_not_shareable: "The artifact at `field` cannot be shared there, so nothing was merged or shared. Remove that embed or ask the person to share it, then merge again.",
   conversation_archived: "That conversation is archived, so the merge was not made. Tell the person; do not retry.",
   conversation_access_denied: "You can no longer reach this conversation for the person you are working for. Tell them; do not retry.",
 };
-
-/** Two of the thread's Channels share the name the model passed. */
-export const MERGE_AMBIGUOUS_CHANNEL_SENTENCE = "Several of this thread's Channels have that name. Pass one of the ids in `available` as `channel`.";
 
 /**
  * A merge service refusal as the tool's typed failure, with only the
@@ -347,13 +341,6 @@ function mergeRefusalError(error: unknown, resourceId: string): unknown {
   if (!api || !code.success) return error;
   const details = api.details ?? {};
   switch (code.data) {
-    case "merge_channel_not_placed": {
-      const available = Array.isArray(details.available) ? details.available as ConversationMergeChannel[] : [];
-      return new ConversationToolError(code.data, MERGE_REFUSAL_SENTENCES[code.data], {
-        field: "channel",
-        available: available.slice(0, MAXIMUM_FAILURE_AVAILABLE_VALUES).map((channel) => channel.name),
-      });
-    }
     case "merge_resource_not_shareable":
       return new ConversationToolError(code.data, MERGE_REFUSAL_SENTENCES[code.data],
         typeof details.field === "string" ? { field: details.field } : {});
@@ -363,25 +350,6 @@ function mergeRefusalError(error: unknown, resourceId: string): unknown {
     default:
       return new ConversationToolError(code.data, MERGE_REFUSAL_SENTENCES[code.data]);
   }
-}
-
-/**
- * The field a rejected merge names: its path, or for an undeclared key
- * `channel` when that is the one (a declared name, forbidden in a Breakout
- * loop) and otherwise `arguments`, never a name the model made up.
- */
-function mergeArgumentField(error: z.ZodError): string {
-  const issue = error.issues[0];
-  if (issue?.code === "unrecognized_keys") {
-    return issue.keys.length === 1 && issue.keys[0] === "channel" ? "channel" : "arguments";
-  }
-  return describeZodIssues(error).split(":")[0] ?? "arguments";
-}
-
-/** The thread Main loop's line naming its Channels, or null when there are none to name. */
-export function mergeChannelsLine(channels: { channels: ConversationMergeChannel[]; defaultName: string } | null): string | null {
-  if (channels === null || channels.channels.length === 0) return null;
-  return `This thread's Channels: ${channels.channels.map((channel) => channel.name).join(", ")}. Without \`channel\`, a merge goes to ${channels.defaultName}.`;
 }
 
 const ListCursorSchema = z.strictObject({ offset: z.number().int().nonnegative(), limit: LimitSchema });
@@ -465,11 +433,7 @@ export function createConversationsPlugin(
   input: WorkstreamWorkflowInput,
   ports: ConversationToolPorts,
   expandPages: (tool: HarnessTool) => HarnessTool[],
-  options: {
-    home: boolean | null;
-    /** A Thread Main loop's Channels, read by the host when the loop starts; null when unknown. */
-    mergeChannels?: { channels: ConversationMergeChannel[]; defaultName: string } | null;
-  } = { home: null },
+  options: { home: boolean | null } = { home: null },
 ): HarnessPlugin | null {
   const access = conversationToolAccess(input);
   if (!access) return null;
@@ -665,69 +629,47 @@ export function createConversationsPlugin(
   };
 
   const inBreakout = scope.kind === "conversation" && scope.substreamId !== "0";
-  const mergeArguments = inBreakout ? ConversationMergeBreakoutArgumentsSchema : ConversationMergeThreadArgumentsSchema;
   const merge: HarnessTool = {
     definition: {
       name: "merge",
       description: inBreakout
         ? "Merge this breakout's result into its thread: post a short markdown message there for the thread's readers. Embed artifacts with `[Title](resource://id)`; they become readable by the thread's readers. Call once, only when a person asked."
-        : "Merge this thread's result into one of its Channels: post a short markdown message at the bottom of the Channel. Embed artifacts with `[Title](resource://id)`; they become readable by everyone who can open this thread. Merging again replaces the earlier merge in that Channel. Call once, only when a person asked.",
+        : "Merge this thread's result into every Channel it is in: post a short markdown message at the bottom of each. Embed artifacts with `[Title](resource://id)`; they become readable by everyone who can open this thread. Merging again replaces the earlier merge. Call once, only when a person asked.",
       capability: "rally.conversation.merge",
       mode: "write",
       idempotency: "provider_key",
-      inputSchema: inputSchema(mergeArguments),
+      inputSchema: inputSchema(ConversationMergeArgumentsSchema),
     },
     execute: async (raw, context: HarnessToolContext) => {
-      const parsed = mergeArguments.safeParse(raw);
+      const parsed = ConversationMergeArgumentsSchema.safeParse(raw);
       if (!parsed.success) {
         throw new ConversationToolError("invalid_arguments", MERGE_REFUSAL_SENTENCES.invalid_arguments, {
-          field: mergeArgumentField(parsed.error),
-          expected: inBreakout ? "{ body }" : "{ body, channel? }",
+          field: parsed.error.issues[0]?.code === "unrecognized_keys" ? "arguments" : describeZodIssues(parsed.error).split(":")[0] ?? "arguments",
+          expected: "{ body }",
         });
       }
-      const args: { body: string; channel?: string | undefined } = parsed.data;
       if (scope.kind !== "conversation") throw new Error("conversation_merge_requires_conversation");
       if (!context.effectIntentId) throw new Error("conversation_merge_receipt_missing");
       // Host-derived, as conversation_post's: a retried receipt is the same
-      // key, and the merge answers a replay with what it already wrote.
+      // key, and each target answers a replay with what it already wrote, so
+      // a call that failed part way through finishes on its retry.
       const clientMessageId = `conversation-merge:${input.harnessRunId}:${context.effectIntentId}`;
       const sourceId = inBreakout ? scope.substreamId : scope.parentId;
       try {
-        let channelId: string | undefined;
-        if (!inBreakout && args.channel !== undefined) {
-          const wanted = args.channel.trim().toLowerCase();
-          const { channels } = await ports.mergeChannels(scope.parentId);
-          // An id names one Channel; a name may name several, which is refused
-          // with their ids rather than guessed.
-          const byId = channels.find((channel) => channel.id === args.channel!.trim());
-          const byName = channels.filter((channel) => channel.name.toLowerCase() === wanted);
-          if (!byId && byName.length > 1) {
-            throw new ConversationToolError("conversation_ambiguous", MERGE_AMBIGUOUS_CHANNEL_SENTENCE, {
-              field: "channel",
-              available: byName.slice(0, MAXIMUM_FAILURE_AVAILABLE_VALUES).map((channel) => channel.id),
-            });
-          }
-          const match = byId ?? byName[0];
-          if (!match) {
-            throw new ConversationToolError("merge_channel_not_placed", MERGE_REFUSAL_SENTENCES.merge_channel_not_placed, {
-              field: "channel",
-              available: channels.slice(0, MAXIMUM_FAILURE_AVAILABLE_VALUES).map((channel) => channel.name),
-            });
-          }
-          channelId = match.id;
+        const targets: Array<{ breakoutId?: string; channelId?: string }> = inBreakout
+          ? [{ breakoutId: scope.substreamId }]
+          : (await ports.mergeChannels(scope.parentId)).map((channel) => ({ channelId: channel.id }));
+        if (targets.length === 0) {
+          throw new ConversationToolError("merge_target_not_writable", MERGE_REFUSAL_SENTENCES.merge_target_not_writable);
         }
-        const merged = await ports.merge({
-          threadId: scope.parentId,
-          body: args.body,
-          clientMessageId,
-          ...(inBreakout ? { breakoutId: scope.substreamId } : {}),
-          ...(channelId ? { channelId } : {}),
-        });
+        const merges: ConversationMergeResult[] = [];
+        for (const target of targets) {
+          merges.push(await ports.merge({ threadId: scope.parentId, body: parsed.data.body, clientMessageId, ...target }));
+        }
+        const names = merges.map((merged) => merged.mergedInto.title || "the target").join(", ");
         return {
-          output: merged,
-          summary: merged.replayed
-            ? `Already merged into ${merged.mergedInto.title || "the target"}`
-            : `Merged into ${merged.mergedInto.title || "the target"}`,
+          output: { merges },
+          summary: merges.every((merged) => merged.replayed) ? `Already merged into ${names}` : `Merged into ${names}`,
         };
       } catch (error) {
         throw mergeRefusalError(error, sourceId);
@@ -749,8 +691,7 @@ export function createConversationsPlugin(
     systemMessage: conversationsSystemMessage({ posts, attaches, run: input.automationRun !== undefined,
       home: options.home, breakout: inBreakout,
       reads: access.tools.includes("read"),
-      merges: !access.tools.includes("merge") ? null : inBreakout ? "thread" : "channel",
-      mergeChannels: mergeChannelsLine(options.mergeChannels ?? null) }),
+      merges: !access.tools.includes("merge") ? null : inBreakout ? "thread" : "channels" }),
     tools,
     preload: true,
     explicit: true,
@@ -778,9 +719,10 @@ export const RUN_POST_INSTRUCTION = "Your final message stays in this run; when 
  */
 export const BREAKOUT_CHANNEL_INSTRUCTION = "This conversation is a Breakout of a Thread. When you need more than the summary you started with, conversation_read the Thread's Main conversation; its resources are in list_resources too.";
 
-/** When to merge, for a Breakout loop (into "the thread") or a Thread Main loop (into "the channel"). */
-export function mergeInstruction(target: "thread" | "channel"): string {
-  return `When a person asks you to merge, merge it back, or send the result to the ${target}, call conversation_merge once with a short message for the ${target}'s readers. Merge only when a person asked; never on your own judgement.`;
+/** When to merge, for a Breakout loop (into its thread) or a Thread Main loop (into every Channel it is in). */
+export function mergeInstruction(target: "thread" | "channels"): string {
+  const where = target === "thread" ? "the thread" : "its Channels";
+  return `When a person asks you to merge, merge it back, or send the result to ${where}, call conversation_merge once with a short message for ${target === "thread" ? "the thread's" : "their"} readers. Merge only when a person asked; never on your own judgement.`;
 }
 
 /** The plugin's standing instructions; the tool-naming lines are pinned by a test. */
@@ -794,9 +736,7 @@ export function conversationsSystemMessage(options: {
   /** Whether the loop lists and reads; a Thread Main loop only merges. Defaults to true. */
   reads?: boolean;
   /** Where this loop's merge goes, or null when it has no merge. */
-  merges?: "thread" | "channel" | null;
-  /** The Thread Main loop's host-derived line naming its Channels. */
-  mergeChannels?: string | null;
+  merges?: "thread" | "channels" | null;
 }): string {
   return [
     ...(options.reads !== false
@@ -814,7 +754,7 @@ export function conversationsSystemMessage(options: {
       ? ["Use conversation_attach when the person asks this Sidekick to read or post somewhere new; pass the link or id they give you."]
       : []),
     ...(options.merges
-      ? [mergeInstruction(options.merges), ...(options.merges === "channel" && options.mergeChannels ? [options.mergeChannels] : [])]
+      ? [mergeInstruction(options.merges)]
       : []),
   ].join(" ");
 }
