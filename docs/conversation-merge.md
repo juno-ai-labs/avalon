@@ -20,7 +20,7 @@ holds it.
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/conversation-merge.ts` | The request, result, error codes, the Thread merge's `structuredContent` (`ConversationMergeV1`), a Channel merge's feed shape, and `mergeResourceIds`, the one parser of a body's embeds. |
-| `apps/api/src/routes/conversations.ts` | `POST /conversations/:parentId/merge`. |
+| `apps/api/src/routes/conversations.ts` | `POST /conversations/:parentId/merge`, and `GET …/merge-channels` (the Channels this person can merge into, earliest placement first). |
 | `apps/api/src/services/conversation-merge-service.ts` | The one admission and write order both the route and the tool use: check, attach, post. `ConversationMergeRefusal` carries the code. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | `attachResources` (all or none) and the `merge` input on `createMessageWithAuthority`, which starts no run. |
 | `apps/api/src/durable-objects/workspace-space-storage.ts` | `channelMergeTarget`, `mergeThreadIntoChannel`, `postMessage` with replace, news and operation id, `stampChannelNews`, `removeMessage`, `breakoutMergeTitles`. Migration 108 (`SPACE_MESSAGE_MERGES_MIGRATION`). |
@@ -165,7 +165,12 @@ target are a new merge. A merge that finishes after its composer was cancelled
 and another opened leaves the newer one and its draft alone. A Channel the
 reader reaches only `through_channel` is not offered. The thread's Channels
 come from its directory row, which keeps placements current, not from the
-conversation detail, which a socket install leaves without them. The merge
+conversation detail, which a socket install leaves without them. Their order
+is the server's: `GET /conversations/:parentId/merge-channels` lists the
+Channels this person can merge into, earliest placement first, read in the
+background (`useMergeChannelOrder`). The Merge label, the title menu and the
+picker therefore lead with the Channel the server would choose, as the PRD
+sets the default. Until that read lands, the directory's order stands in. The merge
 composer has no attach control: a merge embeds artifacts by link. Stop still
 stops the run. A title-menu request opens merge mode once; returning to the
 pane does not reopen it. A Channel merge card's artifact opens in its thread

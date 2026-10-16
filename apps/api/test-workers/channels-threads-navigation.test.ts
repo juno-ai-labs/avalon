@@ -1027,6 +1027,17 @@ describe("Channel merges", () => {
     return result.page.items.flatMap((item) => (item.kind === "message" ? [item] : []));
   }
 
+  it("given a thread placed in two Channels, when its merge Channels are read, then the earliest placement comes first, whatever the ids", async () => {
+    // Reserved first, so its id sorts first; placed second.
+    const board = await reserveChannel("Board");
+    const outbound = await channelWithThreads();
+    await place(board, OPEN_THREAD);
+
+    const target = await workspace().channelMergeTarget({ auth: auth(OWNER), workstreamId: OPEN_THREAD, spaceId: null });
+    expect(target).toMatchObject({ ok: true, spaceId: outbound, name: "Outbound" });
+    expect(target.channels).toEqual([{ id: outbound, name: "Outbound" }, { id: board, name: "Board" }]);
+  });
+
   it("given a member read through the placements, when the owner merges a thread, then it is the newest item, names its thread, and is news to the member alone", async () => {
     const channelId = await channelWithThreads();
     await workspace().acknowledgeSpaceRead({ workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId, readThroughSequenceNumber: 2 });

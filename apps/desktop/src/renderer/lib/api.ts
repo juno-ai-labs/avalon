@@ -6,7 +6,9 @@ import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepart
 import {
   ActivityPageSchema,
   ChannelFeedItemSchema,
+  ConversationMergeChannelsSchema,
   ConversationMergeResultSchema,
+  type ConversationMergeChannels,
   type ConversationMergeRequest,
   type ConversationMergeResult,
   ChannelFeedPageSchema,
@@ -2121,6 +2123,13 @@ export class RallyApi {
    * result into this Thread; without it, this Thread's result into one of its
    * Channels. A retry with the same `clientMessageId` writes nothing again.
    */
+  /** The Channels this thread can merge into, earliest placement first. */
+  async mergeChannels(threadId: string): Promise<ConversationMergeChannels> {
+    return this.request(`/conversations/${encodeURIComponent(threadId)}/merge-channels`, {
+      schema: ConversationMergeChannelsSchema,
+    });
+  }
+
   async mergeConversation(
     threadId: string,
     { mentions: selected, ...request }: Omit<ConversationMergeRequest, 'mentions'> & { mentions?: MentionIdentity[] },
