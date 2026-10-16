@@ -1458,6 +1458,9 @@ export function ConversationSurface({
   // The merge composer on screen now, so a merge that finishes after it was
   // cancelled and another opened leaves the newer one and its draft alone.
   const mergeNonceRef = useRef<number | null>(null);
+  // A pane closed mid-merge has no composer on screen: its merge still lands
+  // but moves nobody.
+  useEffect(() => () => { mergeNonceRef.current = null; }, []);
   // Declared up here because sending clears it, and the composer's send is
   // defined long before the fold below that maintains it.
   const [carriedStopAcknowledgement, setCarriedStopAcknowledgement] = useState(NO_STOP_ACKNOWLEDGEMENT);
