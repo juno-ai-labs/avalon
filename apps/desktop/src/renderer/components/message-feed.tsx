@@ -4,7 +4,7 @@ import { ConversationCard } from '@rally/ui/components/conversation-card';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { AttachmentPreview } from './attachments';
 import type { CitationContext } from './markdown-citations';
-import type { Message } from '../lib/types';
+import type { Message, MessageMergedInto } from '../lib/types';
 import { MessageBlock, type MessageMergeAction, type RowDisclosure } from './workstream-blocks';
 
 /**
@@ -49,6 +49,8 @@ interface MessageFeedProps {
   merge?: MessageMergeAction;
   /** Opens a Breakout a merge names. */
   onOpenBreakout?: (breakoutId: string) => void;
+  /** Opens the merge a source's Merged chip names, where it landed. */
+  onOpenMerge?: (merge: MessageMergedInto) => void;
   /**
    * The Breakouts started from each turn, drawn as cards under the last row of
    * that turn. Absent on a surface that has no Breakouts of its own.
@@ -189,6 +191,7 @@ export function MessageFeed({
   onStartSubstream,
   merge,
   onOpenBreakout,
+  onOpenMerge,
   breakoutCards,
   onAcceptDraft,
   acceptingDraftFor,
@@ -317,6 +320,7 @@ export function MessageFeed({
           onStartSubstream={onStartSubstream}
           {...(merge ? { merge } : {})}
           {...(onOpenBreakout ? { onOpenBreakout } : {})}
+          {...(onOpenMerge ? { onOpenMerge } : {})}
           rowDisclosure={rowDisclosure}
           {...(onAcceptDraft ? { onAcceptDraft } : {})}
           acceptingDraftFor={acceptingDraftFor ?? null}

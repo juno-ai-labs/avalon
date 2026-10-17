@@ -633,6 +633,12 @@ export interface Message {
     title: string;
     actingAgent: boolean;
   };
+  /**
+   * Set on the marker a merge leaves in its source: where the result went
+   * (a Thread, or a Channel), the merge there, and who merged it.
+   * Server-written; see docs/conversation-merge.md.
+   */
+  mergedInto?: MessageMergedInto;
   automationActivation?: {
     automationId: string;
     automationName: string;
@@ -865,4 +871,17 @@ export interface DigestDeliveryTarget {
   displayName: string;
   status: 'active' | 'needs_input' | 'disabled';
   lastDeliveredAt: string | null;
+}
+
+/** Where a source's result was merged, and the merge there to open. */
+export interface MessageMergedInto {
+  kind: 'thread' | 'channel';
+  /** The Thread's id, or the Channel's (the storage Space's) id. */
+  id: string;
+  title: string;
+  /** The merge in the target: a Thread's transcript turn, or a Channel message. */
+  messageId: string;
+  mergedByUserId: string;
+  /** Rally merged it, at this person's request. */
+  actingAgent: boolean;
 }
