@@ -691,6 +691,8 @@ the one place that can still step over an address inside a code span.
 way one with no room for a bibliography passes `sources: "none"`. The default
 stays the email one.
 
+Shipped in [#1278](https://github.com/juno-ai-labs/avalon/pull/1278).
+
 ### 2026-10-16 — The email is light and says Rally, and old rows are counted, not repeated
 
 The digest still said Avalon in its wordmark, button and footer, and was drawn
