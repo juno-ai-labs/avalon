@@ -30,7 +30,7 @@ the audit database keeps who actually acted.
 | `apps/api/src/routes/workspace.ts`, `auth.ts`, `browser.ts` | `GET/PUT/DELETE /workspace/support-access`; `/auth/support/*` for the Mac app's identity credential; `/browser/support/*` for the browser cookie. |
 | `apps/desktop/src/main/index.ts`, `stored-auth.ts` | The support credential stored like any Organization credential and marked by its profile's `impersonator`; dropped whenever another Organization is selected; never registered for push. |
 | `apps/desktop/src/renderer/components/support-access-setting.tsx` | **Allow Rally access** under Organization preferences. |
-| `apps/desktop/src/renderer/components/support-workspace-menu.tsx`, `workspace-account-menu.tsx` | A granting Organization's row in the account menu and its submenu of people; **End impersonation** in place of signing out. |
+| `apps/desktop/src/renderer/components/support-workspace-menu.tsx`, `workspace-account-menu.tsx` | A granting Organization's row in the account menu and its submenu of people; **End impersonation** in place of signing out; the account tile in the section switcher shows the staff member's avatar over its corner. |
 | `packages/ui/src/components/account-trigger.tsx` | The account footer shows the staff member's avatar on the right of a support session. |
 
 ## How it works
