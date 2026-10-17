@@ -405,6 +405,61 @@ describe('the navigation sidebar', () => {
     expect(toggle).toHaveFocus();
   });
 
+  describe('at phone width, as a row of tabs', () => {
+    const phoneWidth = (matches: boolean): void => {
+      vi.stubGlobal('matchMedia', (query: string) => ({
+        matches: matches && query === '(max-width: 640px)', media: query, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      }));
+    };
+    afterEach(() => vi.unstubAllGlobals());
+    /** The row's tiles, by label. */
+    const tabs = (): string[] => [...screen.getByRole('navigation', { name: 'Sections' }).querySelectorAll('.navigation-rail-label')]
+      .map((label) => label.textContent ?? '');
+
+    it('folds the sections past the fourth into a More tab, whose menu carries their counts and opens one', async () => {
+      phoneWidth(true);
+      renderSidebar((client) => client.setQueryData(ARTIFACT_PINS_QUERY_KEY, [
+        artifactPin('summary', 'Incident summary', 'text/markdown', { currentVersion: 3, unread: true }),
+        artifactPin('chart', 'Failure rate', 'image/png', { currentVersion: 2, unread: true }),
+      ]));
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+
+      expect(tabs()).toEqual(['Pinned', 'Channels', 'Threads', 'Activity', 'More']);
+      const more = screen.getByRole('button', { name: /More$/u });
+      expect(within(more).getByRole('img', { name: '2 updated' })).toHaveTextContent('2');
+      expect(more).not.toHaveClass('is-active');
+
+      fireEvent.pointerDown(more, { button: 0, ctrlKey: false });
+      const artifacts = await screen.findByRole('menuitemradio', { name: /Artifacts/u });
+      expect(artifacts).toHaveAttribute('aria-checked', 'false');
+      expect(within(artifacts).getByRole('img', { name: '2 updated' })).toHaveTextContent('2');
+      fireEvent.click(artifacts);
+
+      expect(screen.getByRole('heading', { name: 'Artifacts' })).toBeInTheDocument();
+      expect(screen.getByRole('region', { name: 'Pinned artifacts' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /More$/u })).toHaveClass('is-active');
+      // Switching sections does not navigate, so the sheet stays open on the list just picked.
+      expect(screen.getByRole('button', { name: 'Close navigation' })).toHaveAttribute('aria-expanded', 'true');
+
+      fireEvent.pointerDown(screen.getByRole('button', { name: /More$/u }), { button: 0, ctrlKey: false });
+      expect(await screen.findByRole('menuitemradio', { name: /Artifacts/u })).toHaveAttribute('aria-checked', 'true');
+    });
+
+    it('gives a guest, whose four sections all fit, no More tab', () => {
+      phoneWidth(true);
+      renderSidebar(() => undefined, 0, { person: { ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } } });
+      expect(tabs()).toEqual(['Pinned', 'Threads', 'Activity', 'Artifacts']);
+      expect(screen.queryByRole('button', { name: /More$/u })).toBeNull();
+    });
+
+    it('draws every section as a tab on a wide window', () => {
+      phoneWidth(false);
+      renderSidebar(() => undefined);
+      expect(tabs()).toEqual(['Pinned', 'Channels', 'Threads', 'Activity', 'Artifacts']);
+      expect(screen.queryByRole('button', { name: /More$/u })).toBeNull();
+    });
+  });
+
   it('counts what is waiting on the Threads button', () => {
     renderSidebar(() => undefined, 3);
     expect(screen.getByRole('img', { name: '3 waiting' })).toHaveTextContent('3');
