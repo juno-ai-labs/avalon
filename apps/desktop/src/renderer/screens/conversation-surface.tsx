@@ -1,7 +1,7 @@
 import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
 import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, NO_INVITEES, useWorkspaceInvitees } from "../lib/workspace-invitees";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
-import { conversationActivitySubject, reportActivityEvent } from '../lib/activity-events';
+import { artifactActivitySubject, conversationActivitySubject, reportActivityEvent } from '../lib/activity-events';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { skipToken, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -23,7 +23,8 @@ import {
 } from 'lucide-react';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { openResourceRequest } from '../lib/navigation-routes';
+import { openResourceRequest, useChannelPane, usePaneExpansion } from '../lib/navigation-routes';
+import { expandToggle } from '../components/pane-expand-toggle';
 import {
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
@@ -52,7 +53,8 @@ import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useBrowserRailLinks } from '../lib/browser-rail-links';
 import { BreakoutTickBar, breakoutsByOrigin, orderBreakoutsForTicks, type BreakoutMark } from '@rally/ui/components/breakout-marks';
 import type { TitleMenuPeople } from '@rally/ui/components/conversation-menus';
-import { TitlePillNavigation } from '@rally/ui/components/title-pill';
+import { TitlePillNavigation, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
 import { RelativeTime } from '../components/relative-time';
 import { BreakoutOrigin, breakoutOriginMessages, originExcerpt } from '../components/breakout-origin';
 import { formatDateTime } from '../lib/format';
@@ -125,7 +127,6 @@ import { AgentCompactionIndicator, AgentWorkTiming, RunStopAcknowledgement, type
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentPanel } from '../components/attachment-panel';
-import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
 import { ConversationAccessRequest } from '../components/conversation-access-request';
@@ -1494,17 +1495,7 @@ export function ConversationSurface({
   // conversation opens lands here rather than in a modal. Closing keeps the
   // occupant so the panel has something to draw while it fades out.
   const [panel, setPanel] = useState<ConversationPanel | null>(null);
-  // The panel's item shown full-window, over the panel, which stays open under it.
-  const [expanded, setExpanded] = useState<AttachmentPreview | null>(null);
-  // Closing the lightbox hands focus back to Expand, not to whatever opened the panel.
-  const expand = useCallback((preview: AttachmentPreview): void => {
-    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
-    setExpanded(returnFocus ? { ...preview, returnFocus } : preview);
-  }, []);
   const openPanel = useCallback((next: ConversationPanel): void => {
-    // Opened from the lightbox (Resource details, Return to current), the new
-    // item is the point: the expanded view of the old one gives way to it.
-    setExpanded(null);
     setPanel(next);
     // Every attachment and artifact opens at an even split with the conversation.
     openRailAtEvenSplit(railScopeKey, () => openOwnRail('context'));
@@ -1565,7 +1556,6 @@ export function ConversationSurface({
       ? { resourceId: requestedResourceId, workstreamScoped: false }
       : readArtifactPanel(artifactPanelKey);
     setPanel(savedPanel ? { kind: 'resource', ...savedPanel } : null);
-    setExpanded(null);
     setResourceDialogOpen(false);
     // Claimed on arrival when there is a panel to restore, or when nobody holds
     // the slot; a Breakout opening beside its Channel must not take a panel
@@ -1881,6 +1871,51 @@ export function ConversationSurface({
   useEffect(() => {
     if (panel && !railOpen && !railLeaving) setPanel(null);
   }, [panel, railLeaving, railOpen]);
+  // A pinned artifact on screen is seen at its current version: its pin's
+  // unread state and its Activity rows settle on the same waterline.
+  const shownResourceId = !railOpen || !panel ? null
+    : panel.kind === 'resource' ? panel.resourceId : panel.preview.resourceId ?? null;
+  const unseenPin = shownResourceId === null ? undefined
+    : artifactPins.find((pin) => pin.id === shownResourceId && pin.unread);
+  useEffect(() => {
+    if (!api || !unseenPin) return;
+    reportActivityEvent(api, queryClient, {
+      kind: 'read', subject: artifactActivitySubject(unseenPin.id), through: unseenPin.currentVersion,
+    });
+  }, [api, queryClient, unseenPin?.id, unseenPin?.currentVersion]);
+  // The panel is the stack's last level: expanded over its conversation, as a
+  // thread is over its Channel, or beside it. A navigation onto an artifact
+  // (its pinned row, its Activity row) asks for it expanded; an artifact
+  // opened from the transcript opens beside. Only the requested artifact
+  // honours the request, so another opened after it opens beside.
+  const panelKey = !railOpen || !panel ? null
+    : panel.kind === 'resource' ? `resource:${panel.resourceId}` : `attachment:${panel.preview.resourceId ?? panel.preview.name}`;
+  const { expanded: panelExpanded, setExpanded: setPanelExpanded } = usePaneExpansion(
+    panelKey,
+    requestedResourceId !== null && panelKey === `resource:${requestedResourceId}`,
+  );
+  const ownsRail = railScope === railScopeKey;
+  const setRailExpanded = useUiStore((state) => state.setRailExpanded);
+  useEffect(() => {
+    if (!ownsRail) return undefined;
+    setRailExpanded(panelExpanded);
+    return () => setRailExpanded(false);
+  }, [ownsRail, panelExpanded, setRailExpanded]);
+  const channelPane = useChannelPane();
+  const panelExpandAction = expandToggle(panelExpanded, true, setPanelExpanded);
+  // Expanded, the panel's header carries what it covers, as an expanded
+  // breakout's does: the Channel when it has stepped off, then this
+  // conversation, which collapses the panel back beside it.
+  const panelAncestors: TitlePillLevel[] | undefined = !panelExpanded ? undefined : [
+    ...(channelPane?.shifted ? [channelPane.crumb] : []),
+    {
+      key: `panel-conversation:${conversationAddress}`,
+      icon: <WorkstreamGlyph appearance={routedDetail?.appearance} id={id} size={24} />,
+      title: routedDetail?.title ?? '',
+      label: `Show ${routedDetail?.title ?? 'the conversation'}`,
+      onSelect: () => setPanelExpanded(false),
+    },
+  ];
   const members = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
@@ -3679,11 +3714,8 @@ export function ConversationSurface({
         panel={{
           resourceId: resourcePanel.resourceId,
           onClose: closeOwnRail,
-          ...(api ? { onExpand: (resource: WorkstreamResource) => expand({
-            name: resource.title,
-            ...(resource.mimeType ? { mimeType: resource.mimeType } : {}),
-            loadContent: (signal?: AbortSignal) => loadAttachmentContent(resource.id, signal),
-          }) } : {}),
+          expandAction: panelExpandAction,
+          ancestors: panelAncestors,
         }}
         dropTarget={railDrop}
         {...(api ? { loadResourceContent: loadResourceContent } : {})}
@@ -3722,14 +3754,13 @@ export function ConversationSurface({
 
       {railVariant === 'context' && panel?.kind === 'attachment' && (railOpen || railLeaving) && <AttachmentPanel
         leaving={railLeaving}
+        ancestors={panelAncestors}
+        expandAction={panelExpandAction}
         onClose={closeOwnRail}
-        onExpand={expand}
         onResize={setRailWidth}
         preview={panel.preview}
         width={railWidth}
       />}
-
-      <AttachmentLightbox onClose={() => setExpanded(null)} preview={expanded} />
 
       <AddParticipantDialog
         sharing={participantDialogOpen && parentKind === 'workstream' && api && session?.workspace ?

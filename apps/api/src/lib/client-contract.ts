@@ -1,4 +1,5 @@
 import {
+  ARTIFACT_UPDATES_CLIENT_CONTRACT,
   CHANNEL_MERGES_CLIENT_CONTRACT,
   CHANNEL_MESSAGES_CLIENT_CONTRACT,
   GUEST_WORKSPACES_CLIENT_CONTRACT,
@@ -110,6 +111,11 @@ export function clientReadsChannelMessages(header: ClientRequestHeaders): boolea
 /** Whether this client reads a Channel message's `merge` and a message item's ordinal; the same rule. */
 export function clientReadsChannelMerges(header: ClientRequestHeaders): boolean {
   return clientReads(header, CHANNEL_MERGES_CLIENT_CONTRACT);
+}
+
+/** Whether this client reads an Activity row of kind `artifact_updated`; the same rule. */
+export function clientReadsArtifactUpdates(header: ClientRequestHeaders): boolean {
+  return clientReads(header, ARTIFACT_UPDATES_CLIENT_CONTRACT);
 }
 
 function clientReads(header: ClientRequestHeaders, contract: number): boolean {

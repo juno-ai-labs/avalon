@@ -74,6 +74,7 @@ export const NOTIFICATION_KIND_FOR_PUSH: Record<PushNotificationData["kind"], No
   breakout_started: "newBreakouts",
   run_finished: "runFinished",
   merged: "merges",
+  artifact_updated: "artifactUpdates",
 };
 
 /** `changes` over `base`, switch by switch; a switch `changes` does not name keeps its value. */
@@ -102,7 +103,10 @@ type ChosenNotify = { [Kind in NotificationKind]?: NotificationChannel[] | undef
  * kind the person never set stays absent rather than reading as its default.
  */
 const StoredNotifySchema = NotificationChannelsSchema
-  .extend({ merges: NotificationChannelsSchema.shape.merges.unwrap() })
+  .extend({
+    merges: NotificationChannelsSchema.shape.merges.unwrap(),
+    artifactUpdates: NotificationChannelsSchema.shape.artifactUpdates.unwrap(),
+  })
   .partial();
 
 /** The kinds this person has set, as stored. */

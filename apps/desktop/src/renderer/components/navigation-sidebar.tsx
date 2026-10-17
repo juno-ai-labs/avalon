@@ -24,7 +24,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
-import type { LucideIcon } from 'lucide-react';
+import { File, type LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Link, matchPath, useLocation, useNavigate } from 'react-router-dom';
@@ -223,12 +223,13 @@ export function NavigationSidebar({
   const unreadActivity = useUnreadActivityCount() + accessRequests.length;
   const channelNews = useChannelsWithNews(!guest);
   const unreadPinnedThreads = useUnreadPinnedThreadCount();
+  const unreadArtifacts = useArtifactPins().filter((pin) => pin.unread).length;
   const badges: Record<SidebarSection, number> = {
-    pinned: channelNews.pinned + unreadPinnedThreads,
+    pinned: channelNews.pinned + unreadPinnedThreads + unreadArtifacts,
     channels: channelNews.all,
     threads: waiting,
-    // A pinned artifact has no unread state, so the section carries no count.
-    artifacts: 0,
+    // Each pinned artifact with a version this person has not seen.
+    artifacts: unreadArtifacts,
     activity: unreadActivity,
   };
   const title = SECTIONS.find((candidate) => candidate.id === section)?.label ?? 'Threads';
@@ -315,7 +316,7 @@ export function NavigationSidebar({
 }
 
 /** What a section's count says it counts, for its accessible name. */
-const BADGE_NOUNS: Record<SidebarSection, string> = { pinned: 'pinned with news', channels: 'with new threads', threads: 'waiting', artifacts: 'new', activity: 'unread' };
+const BADGE_NOUNS: Record<SidebarSection, string> = { pinned: 'pinned with news', channels: 'with new threads', threads: 'waiting', artifacts: 'updated', activity: 'unread' };
 
 /** A section button's red count; nothing at zero, `99+` past two digits. */
 function RailBadge({ count, section }: { count: number; section: SidebarSection }): React.JSX.Element | null {
@@ -1215,6 +1216,9 @@ function ArtifactsSection({ motion, scroll }: { motion?: () => void; scroll: Ref
   </PinnedSection>;
 }
 
+/** An artifact's tile is neutral: an artifact has no hue of its own, as its card's badge has none. */
+const ARTIFACT_TILE = { ink: 'var(--av-ref-color-neutral-11)', tint: 'var(--av-sys-color-surface-elevated-hover)' } as const;
+
 /** A pinned artifact: its sheet tile badged with its thread, its title, and its kind and thread. */
 function ArtifactRow({ appearance, drag, href, moves, onUnpin, pin, position }: {
   appearance: WorkstreamAppearance | undefined;
@@ -1230,7 +1234,7 @@ function ArtifactRow({ appearance, drag, href, moves, onUnpin, pin, position }: 
   return <ContextMenu.Root>
     <ContextMenu.Trigger asChild>
       <Link
-        className="navigation-row navigation-artifact-row"
+        className={clsx('navigation-row navigation-artifact-row', pin.unread && 'is-unread')}
         data-motion-key={`artifact:${pin.id}`}
         replace={route === href}
         state={openThreadResourceState(pin.threadId, pin.id)}
@@ -1243,13 +1247,13 @@ function ArtifactRow({ appearance, drag, href, moves, onUnpin, pin, position }: 
             // The thread alone: a nested Channel badge would push it over the glyph.
             badges={[threadBadge(pin.threadId, pin.thread.title, appearance, undefined)]}
             icon={resourceGlyph(resource)}
-            ink="var(--av-ref-color-neutral-11)"
+            ink={ARTIFACT_TILE.ink}
             shape="sheet"
-            tint="var(--av-sys-color-surface-elevated-hover)"
+            tint={ARTIFACT_TILE.tint}
           />}
           time={<RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={pin.updatedAt} />}
           title={pin.title}
-          unread={false}
+          unread={pin.unread}
         />
         <span className="sr-only">{position}</span>
       </Link>
@@ -1460,6 +1464,7 @@ const ACTIVITY_VERBS: Record<ActivityItem['kind'], string> = {
   breakout_started: 'started a breakout on',
   run_finished: 'finished',
   merged: 'merged',
+  artifact_updated: 'updated',
 };
 
 /** The Activity tab's chips; see `docs/digests.md#the-activity-tab`. */
@@ -1550,9 +1555,19 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
       ? <RallyAvatar />
       : <Avatar member={member ?? { id: item.actorUserId, name, email: '', timezone: '' }} title={null} />,
   });
+  const pinnedArtifacts = useArtifactPins();
+  const artifactGlyph = (resourceId: string): LucideIcon => {
+    const pin = pinnedArtifacts.find((candidate) => candidate.id === resourceId);
+    return pin ? resourceGlyph({ resourceType: pin.resourceType, mimeType: pin.mimeType, title: pin.title }) : File;
+  };
   const feed = useActivityFeed(only);
   const fetched = useMemo(() => (feed.data?.pages ?? []).flatMap((page) => page.items), [feed.data]);
   const items = chip === 'unread' ? fetched.filter((item) => item.unread) : fetched;
+  // An artifact's row opens its thread onto the artifact, expanded; every
+  // other row asks for its pane expanded.
+  const linkState = (item: ActivityItem) => (item.kind === 'artifact_updated' && item.artifact
+    ? openThreadResourceState(item.threadId, item.artifact.resourceId)
+    : OPEN_EXPANDED);
   const href = (item: ActivityItem): string => {
     // A merge opens where it landed: the Channel, or the thread a breakout
     // merged into.
@@ -1621,16 +1636,20 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
           className={clsx('activity-row', item.unread && 'is-unread')}
           data-motion-key={`activity:${item.id}`}
           key={item.id}
-          state={OPEN_EXPANDED}
+          state={linkState(item)}
           to={href(item)}
         >
-          {channel
+          {item.kind === 'artifact_updated' && item.artifact
+            ? <IdentityTile badges={[actor]} icon={artifactGlyph(item.artifact.resourceId)} ink={ARTIFACT_TILE.ink} shape="sheet" tint={ARTIFACT_TILE.tint} />
+            : channel
             ? <ChannelTile badges={[actor]} space={channel} />
             : <IdentityTile badges={[actor]} icon={thread.Icon} ink={thread.ink} shape="circle" tint={thread.tint} />}
           <span className="activity-row-body">
             <span className="activity-row-text">
               <strong>{name}</strong> {ACTIVITY_VERBS[item.kind]}{' '}
-              {item.kind === 'merged' ? <>
+              {item.kind === 'artifact_updated' ? <>
+                <strong>{item.artifact?.title ?? 'an artifact'}</strong> in <strong>{item.threadTitle}</strong>
+              </> : item.kind === 'merged' ? <>
                 <strong>{item.breakout ? item.breakout.title : item.threadTitle}</strong> into{' '}
                 <strong>{item.breakout ? item.threadTitle : item.mergedInto?.name ?? 'a channel'}</strong>
               </> : <strong>{item.breakout && item.kind !== 'breakout_started' ? item.breakout.title : item.threadTitle}</strong>}

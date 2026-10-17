@@ -96,6 +96,7 @@ async function activityContent(env: Env, workspace: WorkspaceStub, message: Push
   const words = item.kind === "thread_started" ? { title: `${actor} started ${thread}`, body: "" }
     : item.kind === "breakout_started" ? { title: `${actor} started a breakout on ${thread}`, body: breakout ?? "" }
     : item.kind === "merged" ? mergedWords(actor, thread, breakout, item.mergedInto?.name)
+    : item.kind === "artifact_updated" ? { title: `${actor || "Someone"} updated ${item.artifact?.title.trim() || "an artifact"}`, body: `in ${thread}` }
     : { title: `${actor} finished ${breakout ?? thread}`, body: breakout ? `in ${thread}` : "" };
   return {
     outcome: "ready",

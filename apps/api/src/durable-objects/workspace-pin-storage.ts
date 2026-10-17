@@ -106,6 +106,70 @@ export const WORKSPACE_ARTIFACT_PINS_MIGRATION: readonly string[] = [
 ];
 
 /**
+ * Whether one `resource_versions` row is news to the person who pinned the
+ * artifact: a republish or a replacement (never the first version, a refetch,
+ * or the bookkeeping captures that carry no cause), made after they pinned it,
+ * by somebody other than them. `version` and `pin` are the aliases in scope.
+ * One definition, read by the trigger that queues a push, the Artifacts list's
+ * unread state, and the Activity row, so the three cannot disagree.
+ */
+export function artifactUpdateSql(version: string, pin: string): string {
+  return `${version}.version > 1
+    AND ${version}.cause IN ('published', 'replaced')
+    AND (${version}.author_user_id IS NULL OR ${version}.author_user_id <> ${pin}.user_id)
+    AND CAST(unixepoch(${version}.captured_at, 'subsec') * 1000 AS INTEGER) > ${pin}.created_at`;
+}
+
+/** The waterline key a pinned artifact's reads move (`activitySubjectKey`). */
+export function artifactSubjectKeySql(resourceId: string): string {
+  return `'artifact:' || ${resourceId}`;
+}
+
+/**
+ * Migration 111: a ledger of new versions of pinned artifacts, filled by a
+ * trigger on `resource_versions` and drained after the write that filled it,
+ * the way the Channel rail's ledger is (`channel-rails.ts`). Versions are only
+ * ever written by `resources` triggers, from many producers (a Terminal
+ * republish, an image edit), so the ledger is the one place every one of them
+ * passes. The trigger's test is coarser than {@link artifactUpdateSql}: the
+ * drain applies the per-person part when it reads each pinner's Activity.
+ * The index is the trigger's and the drain's lookup from an artifact to the
+ * people who pinned it.
+ */
+export const WORKSPACE_ARTIFACT_UPDATES_MIGRATION: readonly string[] = [
+  `CREATE TABLE workspace_artifact_updates (
+    resource_id TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK (version > 1),
+    PRIMARY KEY (resource_id, version)
+  ) STRICT`,
+  `CREATE INDEX workspace_pins_item_idx ON workspace_pins(item_kind, item_id)`,
+  `CREATE TRIGGER resource_versions_queue_artifact_update
+     AFTER INSERT ON resource_versions
+     WHEN NEW.version > 1 AND NEW.cause IN ('published', 'replaced')
+      AND EXISTS (SELECT 1 FROM workspace_pins WHERE item_kind = 'artifact' AND item_id = NEW.resource_id)
+   BEGIN
+     INSERT OR IGNORE INTO workspace_artifact_updates (resource_id, version) VALUES (NEW.resource_id, NEW.version);
+   END`,
+];
+
+/** One new version of a pinned artifact the ledger held. */
+export interface ArtifactUpdate {
+  resourceId: string;
+  version: number;
+}
+
+/** Empty the ledger, answering what it held; nothing before migration 111. */
+export function drainArtifactUpdates(sql: SqlStorage): ArtifactUpdate[] {
+  const ready = sql.exec(
+    `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_artifact_updates'`,
+  ).toArray().length === 1;
+  if (!ready) return [];
+  return sql.exec<{ resource_id: string; version: number }>(
+    `DELETE FROM workspace_artifact_updates RETURNING resource_id, version`,
+  ).toArray().map((row) => ({ resourceId: row.resource_id, version: Number(row.version) }));
+}
+
+/**
  * Every kind the table stores. `artifact` is not a `PinKind`: it travels in a
  * list of its own (`ArtifactPinSchema` says why), so `list` never returns it.
  */
@@ -149,6 +213,14 @@ export class WorkspacePinStorage {
       id: row.item_id,
       parentId: row.parent_id,
     }) as Pin);
+  }
+
+  /** Everyone who pinned this artifact, and the thread each pinned it under. */
+  artifactPinners(resourceId: string): Array<{ userId: string; threadId: string }> {
+    return this.storage.sql.exec<{ user_id: string; parent_id: string }>(
+      `SELECT user_id, parent_id FROM workspace_pins WHERE item_kind = 'artifact' AND item_id = ?`,
+      resourceId,
+    ).toArray().map((row) => ({ userId: row.user_id, threadId: row.parent_id }));
   }
 
   /** This person's artifact pins in their order, whether or not the artifact is still visible. */

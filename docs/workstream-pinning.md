@@ -124,13 +124,25 @@ table's order rules and the one per-person limit, but not the wire list:
   in that Main, or whose Main the person can no longer open, is left out of the
   list, not deleted. It returns if access does, and an unpin tidies it.
 
+**Updates.** A pinned artifact is unread while somebody else has made a
+version of it, since it was pinned, that the person has not seen
+(`artifactUpdateSql`: a republish or a replacement, never the first version,
+a refetch or a bookkeeping capture). What they have seen is their Activity
+waterline on the subject `artifact:<id>`, moved when the artifact is on screen
+in a panel, so the pin's unread state and its `artifact_updated` Activity rows
+settle together. The Artifacts button counts the unread pins, and so does
+Pinned. A trigger on `resource_versions` (migration 111) queues each new
+version of a pinned artifact in `workspace_artifact_updates`; the drain after
+the write sends each pinner their pin list and an Activity re-read, and pushes
+the row ([`push-notifications.md`](push-notifications.md#activity-rows)).
+
 On a card, **Pin** and **Unpin** sit behind a `⋯` button that shows while the
 card is hovered or focused, and in its right-click menu: one list of actions
 (`ResourceAction`) drawn by both. A file card reads "Pinned · Markdown"; an
 image or media tile carries a pin in its corner. The **Artifacts** tab lists
 the pins alone for now, and the **Pinned** tab draws them as a third part,
-**Artifacts**. A row opens its thread with the artifact's panel open
-(`openThreadResourceState`).
+**Artifacts**. A row opens its thread with the artifact's panel expanded
+(`openThreadResourceState`; [`pane-stack.md`](pane-stack.md)).
 
 ### Older desktops' per-Space pins
 
@@ -385,13 +397,21 @@ placements, so the migration intentionally clears all existing pins.
 from its card's new `⋯` menu or its right-click menu. Migration 110 rebuilds
 `workspace_pins` so `item_kind` admits `artifact`, carrying its thread as
 `parent_id`. The pins travel as `artifactPins` with routes of their own, and
-the sidebar gains an **Artifacts** tab and an Artifacts part in Pinned.
+the sidebar gains an **Artifacts** tab and an Artifacts part in Pinned. A new
+version somebody else makes of a pinned artifact makes it unread, counts on
+the Artifacts and Pinned buttons, is an `artifact_updated` Activity row and a
+push; migration 111 adds the ledger and trigger that notice it.
 
 **Why:** People wanted a generated deliverable at hand without finding the
 message it came in. Pinning was already one person's ordered list of things
 to hand, so an artifact joins it rather than starting a second mechanism.
 
-**Considered and rejected:** A fourth `PinKind` in `pins`. A shipped desktop
+**Considered and rejected:** A seen-version column on the pin. The Activity
+feed already keeps one waterline per person per subject; an artifact as a
+subject, its version as the ordinal, gives the pin and its rows one answer and
+reuses the read event, sync topic and clear-rule language as they stand.
+Logging an Activity event per version: the version history is already the
+log, as the directory is for starts and finishes. A fourth `PinKind` in `pins`. A shipped desktop
 parses `Pin` strictly, so the first artifact pin would empty its Pinned lists;
 a separate key costs a second list in the client and nothing on the old one.
 A table of its own: the order, limit and write paths are the same, and the

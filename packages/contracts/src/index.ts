@@ -1927,7 +1927,7 @@ export const DEFAULT_PUSH_PREFERENCES: PushPreferences = {
 export const NotificationChannelSchema = z.union([z.literal("push"), AutomationDeliveryTargetTypeSchema]);
 export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
 /** The kinds of Activity row a person chooses channels for, one per row in Settings. */
-export const NotificationKindSchema = z.enum(["mentions", "added", "newThreads", "newBreakouts", "runFinished", "merges"]);
+export const NotificationKindSchema = z.enum(["mentions", "added", "newThreads", "newBreakouts", "runFinished", "merges", "artifactUpdates"]);
 export type NotificationKind = z.infer<typeof NotificationKindSchema>;
 /**
  * Lenient on read: a channel this build does not know (a newer server's, or
@@ -1949,6 +1949,8 @@ export const NotificationChannelsSchema = z.object({
   runFinished: NotificationChannelListSchema,
   /** Defaulted: a server older than merges does not send it. */
   merges: NotificationChannelListSchema.default(["push"]),
+  /** Defaulted: a server older than artifact pins does not send it. */
+  artifactUpdates: NotificationChannelListSchema.default(["push"]),
 });
 export type NotificationChannels = z.infer<typeof NotificationChannelsSchema>;
 export const DEFAULT_NOTIFICATION_CHANNELS: NotificationChannels = {
@@ -1958,6 +1960,7 @@ export const DEFAULT_NOTIFICATION_CHANNELS: NotificationChannels = {
   newBreakouts: ["push"],
   runFinished: ["push"],
   merges: ["push"],
+  artifactUpdates: ["push"],
 };
 export const MemberPreferencesSchema = z.object({
   /** Whether the transcript shows the agent's work: its thinking and its tool and plugin calls. */
