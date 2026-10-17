@@ -69,6 +69,7 @@ export async function fireDigestSchedule(
   const digest = WorkspaceDigestFireScheduleSchema.parse(await workspace.digestScheduleForFire({
     workspaceId: input.workspaceId,
     scheduleId: input.scheduleId,
+    plannedFor: input.plannedFor,
   })).schedule;
   const identity = digest ? await workspaceRegionalDatabase(env).prepare(
     `SELECT u.timezone, u.name AS user_name, w.name AS workspace_name
@@ -98,8 +99,14 @@ export async function fireDigestSchedule(
 
   let delivery = existing;
   if (!delivery) {
-    const items = await unreadActivity(env, input.workspaceId, digest.userId);
-    const markdown = items.length ? await renderUnreadDigest(env, input.workspaceId, items) : null;
+    const { items, olderCount } = splitByAge(
+      await unreadActivity(env, input.workspaceId, digest.userId),
+      input.plannedFor,
+      digest.lastDeliveredFor,
+    );
+    // Only rows older than the window left: earlier digests listed them, so
+    // this occurrence has nothing new and sends nothing.
+    const markdown = items.length ? await renderUnreadDigest(env, input.workspaceId, items, olderCount) : null;
     const claimed = WorkspaceDigestClaimResultSchema.parse(await workspace.claimDigestDelivery({
       workspaceId: input.workspaceId,
       deliveryId,
@@ -171,6 +178,30 @@ async function unreadActivity(env: Env, workspaceId: string, userId: string): Pr
 }
 
 /**
+ * How long an unread row keeps being listed. A row stays unread until it is
+ * read, so without this every digest repeats everything the person has not
+ * opened; past the window it is only counted. The number is the team's choice.
+ * The window always reaches back to the last delivered digest too, so a gap
+ * longer than this (a weekend, a weekly schedule) never hides a row that no
+ * digest has listed yet.
+ */
+const LISTED_FOR_DAYS = 2;
+const LISTED_FOR_MS = LISTED_FOR_DAYS * 24 * 60 * 60 * 1000;
+
+/** Unread rows within the window of the occurrence, and how many fell outside it. */
+export function splitByAge(
+  items: readonly ActivityItem[],
+  plannedFor: string,
+  lastDeliveredFor: string | null,
+): { items: ActivityItem[]; olderCount: number } {
+  // Measured from the occurrence, not the clock, so a retry reaches the same split.
+  const window = Date.parse(plannedFor) - LISTED_FOR_MS;
+  const cutoff = lastDeliveredFor === null ? window : Math.min(window, Date.parse(lastDeliveredFor));
+  const recent = items.filter((item) => Date.parse(item.occurredAt) >= cutoff);
+  return { items: recent, olderCount: items.length - recent.length };
+}
+
+/**
  * The heading of each kind's section, in the order Settings lists the kinds.
  * Every kind must have one: a kind without a section would be counted in the
  * digest's opening line and then never listed.
@@ -191,7 +222,12 @@ const UNNAMED_BREAKOUT = "Untitled breakout";
  * the sidebar words it and linked to what it names. Markdown, because every
  * destination already renders it: the email, a Slack message, a thread.
  */
-export async function renderUnreadDigest(env: Env, workspaceId: string, items: readonly ActivityItem[]): Promise<string> {
+export async function renderUnreadDigest(
+  env: Env,
+  workspaceId: string,
+  items: readonly ActivityItem[],
+  olderCount = 0,
+): Promise<string> {
   const actorIds = [...new Set(items.flatMap((item) => item.actorUserId ? [item.actorUserId] : []))];
   const names = new Map<string, string>();
   if (actorIds.length) {
@@ -229,7 +265,8 @@ export async function renderUnreadDigest(env: Env, workspaceId: string, items: r
     sections.push([`## ${heading}`, ...lines].join("\n"));
   }
   const count = items.length;
-  return [`${count} unread item${count === 1 ? "" : "s"} in your Activity.`, ...sections].join("\n\n");
+  const older = olderCount ? [`${olderCount} more older than ${LISTED_FOR_DAYS} days.`] : [];
+  return [`${count} unread item${count === 1 ? "" : "s"} in your Activity.`, ...sections, ...older].join("\n\n");
 }
 
 /**

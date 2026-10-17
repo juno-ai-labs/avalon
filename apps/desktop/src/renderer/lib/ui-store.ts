@@ -16,6 +16,12 @@ export interface RailInspector {
 
 interface UiState {
   sidebarOpen: boolean;
+  /**
+   * Open the phone sheet once the navigation under way lands. The sidebar
+   * closes the sheet on every mount and route change; a deep link that both
+   * navigates and wants the sheet open sets this instead, and that reset reads it.
+   */
+  sheetAfterNavigation: boolean;
   sidebarWidth: number;
   sidebarSection: SidebarSection;
   /** How the Threads tab orders the threads nobody pinned; Recent until changed. */
@@ -29,6 +35,7 @@ interface UiState {
   railLeaving: boolean;
   railScope: string | null;
   setSidebarOpen: (open: boolean) => void;
+  setSheetAfterNavigation: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
   setSidebarSection: (section: SidebarSection) => void;
   setThreadSort: (sort: SidebarChannelSort) => void;
@@ -114,6 +121,7 @@ function saveRailWidth(prefix: string, scope: string | null, width: number): voi
 
 export const useUiStore = create<UiState>((set, get) => ({
   sidebarOpen: false,
+  sheetAfterNavigation: false,
   sidebarWidth: loadSidebarWidth(SIDEBAR_WIDTH_STORAGE_KEY, SINGLE_SIDEBAR_DEFAULT_WIDTH),
   sidebarSection: loadPreference<SidebarSection>(SIDEBAR_SECTION_STORAGE_KEY, ['pinned', 'channels', 'threads', 'activity'], 'channels'),
   threadSort: loadPreference<SidebarChannelSort>(THREAD_SORT_STORAGE_KEY, ['alphabetical', 'recent', 'needs_you'], 'recent'),
@@ -125,6 +133,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   railLeaving: false,
   railScope: null,
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
+  setSheetAfterNavigation: (sheetAfterNavigation) => set({ sheetAfterNavigation }),
   setSidebarWidth: (width) => {
     const sidebarWidth = clampSidebarWidth(width);
     saveSidebarPreference(SIDEBAR_WIDTH_STORAGE_KEY, sidebarWidth);
