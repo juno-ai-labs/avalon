@@ -51,8 +51,6 @@ interface RailSurfaceProps {
   /** Names the sidebar itself; the panel inside it owns the heading. */
   label: string;
   className?: string;
-  /** Distinct from the header's close control, so the two do not read alike. */
-  scrimLabel: string;
   resizeLabel: string;
   width: number;
   onResize: (width: number) => void;
@@ -80,7 +78,6 @@ interface RailSurfaceProps {
 export function RailSurface({
   label,
   className,
-  scrimLabel,
   resizeLabel,
   width,
   onResize,
@@ -112,7 +109,6 @@ export function RailSurface({
 
   return (
     <>
-      {!leaving && <button aria-label={scrimLabel} className="rail-scrim" onClick={onClose} type="button" />}
       {!leaving && <RailResizeHandle label={resizeLabel} onResize={onResize} width={width} />}
       <aside
         aria-label={label}

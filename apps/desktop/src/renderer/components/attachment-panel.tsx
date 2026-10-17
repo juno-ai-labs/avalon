@@ -46,7 +46,6 @@ export function AttachmentPanel({ preview, leaving = false, onClose, onExpand, o
       }}
       onResize={onResize}
       resizeLabel="Resize attachment panel"
-      scrimLabel="Close attachment panel"
       width={width}
     >
       <TitlePillHeader

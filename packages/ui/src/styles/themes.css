@@ -326,7 +326,6 @@
   --av-sys-elevation-shadow-md: 0 8px 26px rgba(30, 28, 22, 0.13);
   --av-sys-elevation-shadow-lg: 0 20px 60px rgba(30, 28, 22, 0.18);
   --av-sys-elevation-shadow-rail: -8px 0 28px rgba(30, 28, 22, 0.08);
-  --av-sys-elevation-shadow-rail-strong: -14px 0 42px rgba(30, 28, 22, 0.14);
   --av-sys-elevation-shadow-drawer: 12px 0 40px rgba(30, 28, 22, 0.16);
 
   /* Whole box-shadow values for a focus ring, so a theme controls its spread
@@ -781,7 +780,6 @@
   --av-sys-elevation-shadow-md: 0 18px 60px rgba(0, 0, 0, 0.62);
   --av-sys-elevation-shadow-lg: 0 30px 90px rgba(0, 0, 0, 0.7);
   --av-sys-elevation-shadow-rail: -10px 0 44px rgba(0, 0, 0, 0.5);
-  --av-sys-elevation-shadow-rail-strong: -16px 0 60px rgba(0, 0, 0, 0.66);
   --av-sys-elevation-shadow-drawer: 16px 0 56px rgba(0, 0, 0, 0.6);
 
   --av-sys-focus-ring-default: 0 0 0 2px var(--av-sys-color-focus-default);
