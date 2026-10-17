@@ -4322,6 +4322,20 @@ export type SlackOriginAttachment = z.infer<typeof SlackOriginAttachmentSchema>;
 export type SlackOriginNearbyMessage = z.infer<typeof SlackOriginNearbyMessageSchema>;
 export type SlackOriginContext = z.infer<typeof SlackOriginContextSchema>;
 export type WorkstreamWorkflowInput = z.infer<typeof WorkstreamWorkflowInputSchema>;
+/**
+ * The person who asked for this run, or null when nobody did. A Sidekick run
+ * carries a person as its principal too, but only as who it runs as: what a
+ * scheduled or inbound run does nobody asked for, and a run started by hand
+ * was asked for by whoever started it.
+ */
+export function runRequesterUserId(
+  input: Pick<WorkstreamWorkflowInput, "executionPrincipal" | "automationRun">,
+): string | null {
+  if (input.automationRun) {
+    return input.automationRun.trigger.kind === "manual" ? input.automationRun.trigger.requestedByUserId : null;
+  }
+  return input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null;
+}
 
 export const TerminalNetworkModeSchema = z.enum(["trusted_only", "full_internet"]);
 export const TerminalNetworkVerificationStateSchema = z.enum(["pending", "verified", "failed"]);
