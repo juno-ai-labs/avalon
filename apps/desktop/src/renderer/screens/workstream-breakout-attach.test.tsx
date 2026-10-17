@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -73,6 +73,7 @@ import type { ClientSession } from '@rally/contracts/client-session';
 import type { SubstreamId } from '@rally/contracts';
 import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
 import { conversationDirectoryQueryKey } from '../lib/conversation-directory';
+import { desktopBridge } from '../lib/platform';
 
 const channelId = '00000000-0000-7000-8000-000000000801';
 
@@ -262,5 +263,61 @@ describe('attaching a breakout artifact to its channel', () => {
     } });
     await openCardMenu();
     expect(screen.queryByRole('menuitem', { name: 'Attach to thread' })).toBeNull();
+  });
+});
+
+describe('importing a conversation as a breakout from the thread composer', () => {
+  const openBrowserImport = vi.fn(async () => undefined);
+  /** The Mac app's bridge: the browser fallback's methods, plus the import window only the app has. */
+  const stubMacBridge = (): void => { vi.stubGlobal('rally', { ...desktopBridge(), openBrowserImport }); };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    session.current = { user: { id: 'member', email: 'member@example.test' }, workspace: { id: 'workspace', region: 'global', accessClass: 'member' } };
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800);
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(800);
+    useUiStore.setState({ railOpen: false, railVariant: 'context', inspector: null });
+    api.getWorkspaceMembers.mockResolvedValue([]);
+    api.getConnections.mockResolvedValue([]);
+    retainedSocket.mockReturnValue({
+      activeCompaction: null, createMessage: vi.fn(), requestSnapshot: vi.fn(), retryOpening: vi.fn(),
+      sendReady: true, state: 'connected', workspaceSocketState: 'connected',
+    });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  async function composerMenu(): Promise<string[]> {
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Composer actions' }), { button: 0, ctrlKey: false });
+    return screen.getAllByRole('menuitem').map((item) => item.textContent ?? '');
+  }
+
+  it('opens the import window aimed at a new breakout of this thread', async () => {
+    stubMacBridge();
+    renderScreen({ breakout: false });
+    expect(await composerMenu()).toEqual(['Attach files', 'Import from Claude or ChatGPT']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Import from Claude or ChatGPT' }));
+    expect(openBrowserImport).toHaveBeenCalledWith({ spaces: [], breakout: { workstreamId: channelId, title: 'Channel' } });
+  });
+
+  it('shows the entry disabled where there is no embedded browser to import through', async () => {
+    renderScreen({ breakout: false });
+    await composerMenu();
+    expect(screen.getByRole('menuitem', { name: 'Import from Claude or ChatGPT' })).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('offers a guest no import, which the API refuses them', async () => {
+    stubMacBridge();
+    session.current = { user: { id: 'guest', email: 'guest@example.test' }, workspace: { id: 'workspace', region: 'global', accessClass: 'guest' } };
+    renderScreen({ breakout: false });
+    expect(await composerMenu()).toEqual(['Attach files']);
+  });
+
+  it('offers no import in a breakout’s composer, which cannot hold breakouts of its own', async () => {
+    stubMacBridge();
+    renderScreen({ breakout: true });
+    const reply = await screen.findByRole('textbox', { name: 'Reply in Breakout' });
+    const breakoutComposer = within(reply.closest<HTMLElement>('.workstream-composer')!);
+    fireEvent.pointerDown(breakoutComposer.getByRole('button', { name: 'Composer actions' }), { button: 0, ctrlKey: false });
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Attach files']);
   });
 });

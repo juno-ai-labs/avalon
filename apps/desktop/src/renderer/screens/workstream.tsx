@@ -26,7 +26,7 @@ import { IconPalette } from '@tabler/icons-react';
 import { RelativeTime } from '../components/relative-time';
 
 import type { WorkstreamChildDirectory } from '../lib/channel-viewer-state';
-import type { WorkstreamDetail, WorkstreamSummary } from '../lib/types';
+import type { MessageMergedInto, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
 import { Button, InlineError, Modal, TitleSkeleton } from '../components/primitives';
 import { SessionImportUpdateDialog, importedSourceUpdatable } from '../components/session-import-update-dialog';
@@ -341,8 +341,11 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   useEffect(() => {
     if (!children.data && !(conversationScoped && conversationDirectory)) return;
     const ids = new Set<string>((directoryChildren ?? []).map((child) => child.substreamId));
+    // A list seeded from the device carries no version and may predate the
+    // restored breakout, so only a live one may say it is gone.
+    const live = sharedParent !== undefined || children.data?.stateVersion !== undefined;
     if ((previousChildren.current.parentId === id && previousChildren.current.ids.has(selectedSubstreamId)
-      || restoredBreakout === selectedSubstreamId) && !ids.has(selectedSubstreamId)) {
+      || live && restoredBreakout === selectedSubstreamId) && !ids.has(selectedSubstreamId)) {
       setSearchParams((current) => {
         const next = new URLSearchParams(current);
         next.delete('substream'); next.delete('turn'); next.delete('sequence');
@@ -350,7 +353,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       }, { replace: true });
     }
     previousChildren.current = { parentId: id, ids };
-  }, [children.data, conversationDirectory, conversationScoped, id, selectedSubstreamId, restoredBreakout, setSearchParams]);
+  }, [children.data, conversationDirectory, conversationScoped, id, selectedSubstreamId, restoredBreakout, setSearchParams, sharedParent]);
   // A link that names no conversation opens Main, which a Channel reached only
   // through some of its conversations does not offer: open the first it lists,
   // as its sidebar row does.
@@ -737,6 +740,20 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     // searched for like any other.
     setScrollToTurn((current) => ({ turnId: result.messageId, nonce: (current?.nonce ?? 0) + 1, arriving: !result.replayed }));
   };
+  /**
+   * A source's merge divider: the merge where it landed, written some time
+   * ago. A Breakout's is in this thread, so the Breakout closes and the thread
+   * scrolls to it; a thread's is in a Channel, which opens onto it wherever it
+   * is in the feed.
+   */
+  const openMerge = (merge: MessageMergedInto): void => {
+    if (merge.kind === 'channel') {
+      void navigate(channelRoute(merge.id), { state: revealChannelMessageState(merge.messageId, { searchHistory: true }) });
+      return;
+    }
+    openThreadAlone();
+    showInChannel(merge.messageId);
+  };
   const openBreakout = (substreamId: string): void => {
     // A panel the Channel has open would hide the Breakout being asked for.
     if (mainOwnsRail) closeRail();
@@ -919,6 +936,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     onMerged={showMerge}
     honorsSearchTarget={openBreakoutId === null}
     onOpenBreakout={openBreakout}
+    onOpenMerge={openMerge}
     onStartSubstream={startCreation}
     openBreakoutId={openBreakoutId}
     parentId={id}
@@ -957,6 +975,9 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   /> : <ConversationSurface
     mergeRequest={mergeRequest && mergeRequest.substreamId === openBreakoutId ? mergeRequest.nonce : null}
     onMerged={showMerge}
+    // A reader who reaches only this Breakout cannot open the thread its merge
+    // went to, so its divider stays a label.
+    {...(conversationScoped ? {} : { onOpenMerge: openMerge })}
     parentId={id}
     parentKind="workstream"
     renderHeader={(context) => <TitlePillHeader

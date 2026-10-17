@@ -1,5 +1,7 @@
 import { prepareSessionImport } from "../services/session-import-files";
 import {
+  SessionImportBreakoutRequestSchema,
+  SessionImportBreakoutStartRequestSchema,
   SessionImportDiscardRequestSchema,
   SessionImportRequestSchema,
   SessionImportRunSchema,
@@ -8,6 +10,7 @@ import {
   SessionImportUpdateRequestSchema,
   SessionImportUpdateResponseSchema,
 } from "@rally/contracts";
+import { SubstreamCreationResultSchema } from "@rally/contracts/substream-creation";
 import { SessionImportRunService, assertImportIdentity } from "../services/session-import-run-service";
 import { SidekickAttachmentsSchema } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
@@ -195,11 +198,28 @@ workstreamRoutes.post("/:id/import/complete", zValidator("param", idParam), zVal
     .complete(c.req.valid("param").id, c.req.valid("json"));
   return c.json(CreatedWorkstreamSchema.parse(result), 201);
 });
+/**
+ * Start importing a conversation as a Breakout of this thread: reserve the
+ * Breakout and start the agent, exactly as a new-thread import does.
+ */
+workstreamRoutes.post("/:id/import/breakouts/runs", zValidator("param", idParam), zValidator("json", SessionImportBreakoutStartRequestSchema), async (c) => {
+  requireSessionImportClientContract((name) => c.req.header(name));
+  const result = await new SessionImportRunService(c.env, getAuth(c), requestDeferral(c))
+    .startBreakout(c.req.valid("param").id, c.req.valid("json"));
+  return c.json(SessionImportRunSchema.parse(result), 201);
+});
+/** Open the reserved Breakout with the conversation the agent read. */
+workstreamRoutes.post("/:id/import/breakouts/complete", zValidator("param", idParam), zValidator("json", SessionImportBreakoutRequestSchema), async (c) => {
+  const result = await new SessionImportRunService(c.env, getAuth(c), requestDeferral(c))
+    .completeBreakout(c.req.valid("param").id, c.req.valid("json"));
+  return c.json(SubstreamCreationResultSchema.parse(result), 201);
+});
 /** Stop an import's agent; for a Channel that never opened, archive it too. */
 workstreamRoutes.post("/:id/import/discard", zValidator("param", idParam), zValidator("json", SessionImportDiscardRequestSchema), async (c) => {
   const body = c.req.valid("json");
   await new SessionImportRunService(c.env, getAuth(c), requestDeferral(c)).discard({
     workstreamId: c.req.valid("param").id, substreamId: body.substreamId, clientMessageId: body.clientMessageId,
+    ...(body.breakout ? { breakout: true } : {}),
   });
   return c.body(null, 204);
 });
