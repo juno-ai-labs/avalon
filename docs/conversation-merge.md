@@ -291,11 +291,14 @@ and its authorization stay.
 **Why:** A product call to take the control out of the feed; the reasoning
 was not recorded.
 
-**Considered and rejected:** Removing the route too. It is cheap to keep, its
-workerd test still covers it, and bringing the link back needs only the client.
+**Considered and rejected:** Removing the route too. It is cheap to keep, and
+bringing the link back needs only the client. It has no caller in the app, but
+it is not dead code.
 
-**Consequences:** A merge in a Channel can be removed only through the API. A
-merge that should go away is replaced by merging the thread again.
+**Consequences:** No one can retract a Channel merge in the app, an owner or
+admin included. Merging the thread again overwrites the `merge:<threadId>` row
+rather than removing it, so the only way to take a merge down is the `DELETE`
+route.
 
 ### 2026-10-16 — A merge opens where it landed
 
