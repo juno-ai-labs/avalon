@@ -254,6 +254,17 @@
       .sline .q { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--t4); padding-left: 24px; min-width: 0; }
       .sline .q span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .bchip.ghost { box-shadow: none; border: 1px dashed var(--t5); background: transparent; color: var(--t3); }
+      .schip { display: flex; align-items: flex-start; gap: 10px; padding: 9px 12px 9px 10px; max-width: 600px; border-radius: 14px; border: 1px dashed var(--t5); background: transparent; }
+      .schip .av { margin-top: 1px; }
+      .schip .st { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+      .schip .t { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--t2); }
+      .schip .t b { font-weight: 600; color: var(--t); }
+      .schip .d { font-size: 12px; line-height: 17px; color: var(--t3); }
+      .schip .d i { font-style: normal; color: var(--t4); }
+      .schip .ctl2 { display: flex; align-items: center; gap: 8px; flex: none; margin-top: 1px; }
+      .schip .act { display: inline-flex; align-items: center; gap: 5px; color: var(--ok); font-weight: 600; background: var(--ok-wash); padding: 4px 10px 4px 8px; border-radius: 999px; font-size: 12px; white-space: nowrap; }
+      .schip .act.v { color: var(--ink3); background: var(--tint3); }
+      .schip .dis { color: var(--t4); display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; }
       .bchip.ghost b { font-weight: 600; color: var(--t2); }
       .bchip.ghost .x { color: var(--t4); margin-left: 2px; }
       .acts.on { color: var(--t4); }
@@ -263,6 +274,29 @@
       .count { position: absolute; right: 16px; font: 600 10px/1 var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--t5); }
       .tr .turn { position: relative; }
       .turn.hum .count { right: auto; left: 0; top: 2px; }
+
+      /* the response card: the merge as the parent will draw it, editable,
+         where the merge was asked for */
+      .rcard { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; padding: 12px 14px 10px; max-width: 600px; background: var(--white); border-radius: 16px; box-shadow: inset 0 0 0 1px var(--ring), 0 2px 8px rgba(0, 0, 0, 0.03); }
+      .rcard .rc-tag { display: flex; align-items: center; gap: 6px; font: 600 10.5px/16px var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--t4); }
+      .rcard .rc-tag .av { margin-right: 0; }
+      .rcard .mm { padding-top: 0; }
+      .rcard .rc-body { font-size: 14.5px; line-height: 22px; color: var(--t); position: relative; }
+      .rcard .rc-body b { font-weight: 700; }
+      .rcard .rc-body.ph { color: var(--t5); }
+      .rcard .caret { display: inline-block; width: 1.5px; height: 16px; background: var(--t); vertical-align: -3px; margin-left: 1px; }
+      .rcard .rc-embeds { display: flex; gap: 8px; flex-wrap: wrap; }
+      .rcard .doc.sm .rm { color: var(--t4); margin-left: 2px; }
+      .rcard .rc-ctl { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--t4); flex-wrap: wrap; padding-top: 2px; border-top: 1px solid var(--rule); margin-top: 2px; padding-top: 10px; }
+      .rcard .rc-ctl .sp { flex: 1; }
+      .rcard .cancel { font: 500 12.5px/1 var(--sans); padding: 8px 12px; border-radius: 999px; color: var(--t2); background: var(--fill); }
+      .mm { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--t4); flex-wrap: wrap; }
+      .mm .src { display: inline-flex; align-items: center; gap: 5px; }
+      .mm .t16 { width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; background: var(--fill); color: var(--t3); }
+      .mm .t16.o { background: var(--tint); color: var(--ink); }
+      .mm .who { display: inline-flex; align-items: center; gap: 4px; }
+      .mq { display: flex; align-items: center; gap: 6px; max-width: 520px; font-size: 12.5px; color: var(--t4); min-width: 0; }
+      .mq span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
       /* the launch pane: the branched-from turn and what came before it,
          faded upward and inert */
@@ -319,10 +353,12 @@
       <header class="top">
         <h1>Merge and Breakout suggestions</h1>
         <p>
-          After Rally's turn settles, one quiet line can appear under that turn:
-          merge this result up, or start a Breakout on the side question. It is
-          drawn only while the turn is one of the newest three messages, then it
-          hides for good. Never in the composer. Drawn in the same
+          After Rally's turn settles, one quiet chip can appear under that turn:
+          merge this up, or start a Breakout on the side question. It is drawn
+          only while the turn is one of the newest three messages, then it
+          hides for good. Accepting a merge opens a response card in the feed,
+          and every merge is made in that card now: the composer is never
+          involved. Drawn in the same
           <b>5c Thread-first, no bubble</b> language as
           <a href="../2026-10-16_merge-back/design.html">the merge-back design</a>,
           with the app's own hover row, breakout chips, merge mode and launch
@@ -336,14 +372,14 @@
         <h2>Where it sits</h2>
         <p class="lead">
           Under the turn it is about, after the turn's attachments and its hover
-          row, in the row where "Breakouts from this message" chips are drawn.
-          One line, one action, one dismiss. Two shapes for that line; the
-          first is recommended.
+          row, in the row where "Breakouts from this message" chips are drawn: a
+          dashed chip with Rally's mark, a title, one sentence of context, one
+          action and a dismiss.
         </p>
         <div class="boards">
           <div class="board">
             <div class="label">
-              <span class="code">N·1</span><span class="lname">Under the turn, as a line</span><span class="rec">Recommended</span>
+              <span class="code">N·1</span><span class="lname">Under the turn, as a suggestion chip</span><span class="rec">Recommended</span>
             </div>
             <div class="scroll">
               <div class="card">
@@ -363,12 +399,13 @@
                     <div class="doc sm" style="max-width: 260px">
                       <span class="ic"><svg class="i i16"><use href="#file" /></svg></span><span class="tx"><b>Sequence B</b></span><span class="open">Open</span>
                     </div>
-                    <div class="sline">
-                      <div class="row">
-                        <span class="say"><span class="av s r">R</span><b>Cold Outreach</b> should see this.</span>
-                        <span class="act"><svg class="i i12"><use href="#bend" /></svg>Merge to thread</span>
-                        <span class="dis">Dismiss<svg class="i i11"><use href="#x" /></svg></span>
+                    <div class="schip">
+                      <span class="av s r">R</span>
+                      <div class="st">
+                        <div class="t"><svg class="i i13"><use href="#bend" /></svg>Merge to <b>Cold Outreach</b></div>
+                        <div class="d">Rally thinks the thread should see this. You'll edit a short note before it posts there.</div>
                       </div>
+                      <div class="ctl2"><span class="act"><svg class="i i12"><use href="#bend" /></svg>Merge</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                     </div>
                   </div>
                 </div>
@@ -383,23 +420,23 @@
               </div>
             </div>
             <p class="why">
-              One line under Rally's turn, where the outcomes of a turn already
-              live: breakout chips sit in this row once a Breakout exists.
-              Rally's mark says whose idea it is, the sentence names where it
-              would go and claims nothing about what kind of thing it is (a
-              merge carries a decision or a question as often as a result), and
-              the green pill is the same control as the <b>Merge to thread</b>
-              target pill in merge mode, so pressing it reads as a step into
-              that mode rather than a new thing. <b>Dismiss</b> is quiet and
-              last. The composer below is untouched. The sentence is a fixed
-              string with one slot for the name; a typed form ("This reads as
-              a decision for Cold Outreach") waits on a second classifier label
-              proving itself in shadow.
+              A dashed chip under Rally's turn, in the row where the outcomes of a
+              turn already live: breakout chips sit here once a Breakout exists,
+              and the dashed edge says this one does not exist yet. It answers
+              the three things a new person needs: whose idea it is (Rally's
+              mark), what it is and where it goes (the title), and what happens
+              if they press it (the sentence: a note they edit first, nothing
+              posts on its own). The title claims nothing about the kind of
+              thing carried; a merge is a decision or a question as often as a
+              result. The green pill is the merge target pill's own style, so
+              <b>Merge</b> reads as the same act as the hover row's. The × is
+              quiet and last. Title and sentence are fixed strings with one
+              slot for a name.
             </p>
           </div>
           <div class="board">
             <div class="label">
-              <span class="code">N·2</span><span class="lname">As a ghost chip beside the breakout chips</span><span class="alt">Alternative</span>
+              <span class="code">N·2</span><span class="lname">Beside the breakout chips, in a Thread</span>
             </div>
             <div class="scroll">
               <div class="card">
@@ -424,8 +461,13 @@
                   <div class="ag">
                     <div class="by"><b>Rally</b> just now</div>
                     <p>Yes, and it is a different sequence: a fund wants portfolio reach and a co-investment angle, not a teardown. The three founder sequences stand as they are; the fund version is its own piece of work.</p>
-                    <div class="bchips">
-                      <span class="bchip ghost"><span class="av s r">R</span><svg class="i ar"><use href="#brk" /></svg><b>Fund outreach</b><span class="x">·</span>Start?<svg class="i i11 x"><use href="#x" /></svg></span>
+                    <div class="schip">
+                      <span class="av s r">R</span>
+                      <div class="st">
+                        <div class="t"><svg class="i i13"><use href="#brk" /></svg>Breakout: <b>Fund outreach</b></div>
+                        <div class="d">Rally thinks this is its own piece of work. You'll edit the opening prompt before it starts.</div>
+                      </div>
+                      <div class="ctl2"><span class="act v"><svg class="i i12"><use href="#brk" /></svg>Start</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                     </div>
                   </div>
                 </div>
@@ -440,14 +482,14 @@
               </div>
             </div>
             <p class="why">
-              The suggestion drawn as the chip it would become: a dashed outline
-              in the breakout chip row, with Rally's mark and a question. It is
-              the most literal placement, and it is tempting because a chip row
-              already means "what came out of this message". Against it: a chip
-              cannot carry the judgement ("this reads as the result"), a merge
-              has no chip to become, and a dashed chip beside a real one invites
-              a click that creates something. Kept here as the fallback if the
-              line proves too wide in a narrow pane.
+              The same chip in a Thread that already has Breakouts: the dashed
+              suggestion sits under the turn it is about, in the row the real
+              chips use, and becomes a real chip (<b>Fund outreach</b>) if the
+              person starts it. An earlier draft of this chip read "Fund
+              outreach · Start?" and nothing else, which is fine for someone who
+              knows what a Breakout is and why Rally would propose one, and
+              nothing for someone who does not; the title and the sentence are
+              what the chip gained.
             </p>
           </div>
           <div class="board">
@@ -480,12 +522,13 @@
                       <span><svg class="i i13"><use href="#img" /></svg>Image</span>
                       <span><svg class="i i13"><use href="#pdf" /></svg>PDF</span>
                     </div>
-                    <div class="sline">
-                      <div class="row">
-                        <span class="say"><span class="av s r">R</span><b>Cold Outreach</b> should see this.</span>
-                        <span class="act"><svg class="i i12"><use href="#bend" /></svg>Merge to thread</span>
-                        <span class="dis">Dismiss<svg class="i i11"><use href="#x" /></svg></span>
+                    <div class="schip">
+                      <span class="av s r">R</span>
+                      <div class="st">
+                        <div class="t"><svg class="i i13"><use href="#bend" /></svg>Merge to <b>Cold Outreach</b></div>
+                        <div class="d">Rally thinks the thread should see this. You'll edit a short note before it posts there.</div>
                       </div>
+                      <div class="ctl2"><span class="act"><svg class="i i12"><use href="#bend" /></svg>Merge</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                     </div>
                   </div>
                 </div>
@@ -500,11 +543,10 @@
               </div>
             </div>
             <p class="why">
-              Hovering the turn shows the action row above the line, as it does on
-              every settled turn. The row's <b>Merge to thread</b> and the line's
-              pill do the same thing, and the line does not move when the row
-              appears, because the row has its own space. Pointing at the
-              line's pill lights nothing in the row.
+              Hovering the turn shows the action row above the chip, as it does on
+              every settled turn. The row's <b>Merge to thread</b> and the chip's
+              <b>Merge</b> do the same thing, and the chip does not move when the
+              row appears, because the row has its own space.
             </p>
           </div>
         </div>
@@ -513,7 +555,7 @@
       <section class="sec">
         <h2>The three suggestions</h2>
         <p class="lead">
-          One line, three sentences. Which one appears is the classifier's
+          One chip, three titles. Which one appears is the classifier's
           answer; where the action goes is the host's. A Breakout only ever gets
           the first.
         </p>
@@ -540,12 +582,13 @@
                     <div class="doc sm" style="max-width: 300px">
                       <span class="ic"><svg class="i i16"><use href="#file" /></svg></span><span class="tx"><b>Outreach sequences</b></span><span class="open">Open</span>
                     </div>
-                    <div class="sline">
-                      <div class="row">
-                        <span class="say"><span class="av s r">R</span><b>GTM</b> should see this.</span>
-                        <span class="act"><svg class="i i12"><use href="#bend" /></svg>Merge to GTM<svg class="i i9"><use href="#cd" /></svg></span>
-                        <span class="dis">Dismiss<svg class="i i11"><use href="#x" /></svg></span>
+                    <div class="schip">
+                      <span class="av s r">R</span>
+                      <div class="st">
+                        <div class="t"><svg class="i i13"><use href="#bend" /></svg>Merge to <b>GTM</b><svg class="i i11" style="color: var(--t4)"><use href="#cd" /></svg></div>
+                        <div class="d">Rally thinks the Channel should see this. You'll edit a short note before it posts there.</div>
                       </div>
+                      <div class="ctl2"><span class="act"><svg class="i i12"><use href="#bend" /></svg>Merge</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                     </div>
                   </div>
                 </div>
@@ -560,12 +603,11 @@
               </div>
             </div>
             <p class="why">
-              One level up, the same sentence names the Channel the Merge button
-              would choose, and the pill carries the caret the merge target pill
-              already has when a thread sits in several Channels. Only an Organization-wide
-              thread gets this one, and only a member who could press
-              <b>Merge to GTM</b> sees it. A private thread, or a guest, sees
-              nothing.
+              One level up, the title names the Channel the Merge button would
+              choose, with the caret the merge target pill already has when a
+              thread sits in several Channels. Only an Organization-wide thread
+              gets this one, and only a member who could press <b>Merge to
+              GTM</b> sees it. A private thread, or a guest, sees nothing.
             </p>
           </div>
           <div class="board">
@@ -588,13 +630,13 @@
                     <div class="by"><b>Rally</b> just now</div>
                     <p>Annual at $96 a seat holds: it sits within 5% of the two closest competitors and keeps the 38% discount sales asked for.</p>
                     <p>Whether Starter survives is a separate question. It needs the last two quarters of usage by tier and a look at both competitors' entry plans, and it would bury this thread. I can work it through on its own.</p>
-                    <div class="sline">
-                      <div class="row">
-                        <span class="say"><span class="av s r">R</span><b>Starter tier</b> reads as its own piece of work.</span>
-                        <span class="act v"><svg class="i i12"><use href="#brk" /></svg>Start a breakout</span>
-                        <span class="dis">Dismiss<svg class="i i11"><use href="#x" /></svg></span>
+                    <div class="schip">
+                      <span class="av s r">R</span>
+                      <div class="st">
+                        <div class="t"><svg class="i i13"><use href="#brk" /></svg>Breakout: <b>Starter tier</b></div>
+                        <div class="d">Rally thinks this is its own piece of work. You'll edit the opening prompt before it starts. <i>Decide whether a Starter tier survives the $96 annual plan: pull the last two quarters of usage by tier…</i></div>
                       </div>
-                      <div class="q"><svg class="i i12"><use href="#quote" /></svg><span>Decide whether a Starter tier survives the $96 annual plan: pull the last two quarters of usage by tier, compare both competitors' entry plans, and recommend keep, fold into Team, or drop.</span></div>
+                      <div class="ctl2"><span class="act v"><svg class="i i12"><use href="#brk" /></svg>Start</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                     </div>
                   </div>
                 </div>
@@ -609,13 +651,13 @@
               </div>
             </div>
             <p class="why">
-              The breakout line carries a second row: the first line of the
-              drafted prompt, cut with an ellipsis, so a person can judge the
+              The breakout chip adds the first line of the drafted prompt after
+              its sentence, cut with an ellipsis, so a person can judge the
               suggestion without opening anything. The pill takes the Breakout's
               own mark and tint, as the breakout chips do, so merge and breakout
-              never read as the same action. The subject in bold comes from the
-              draft, not from the classifier; without a draft the line reads
-              "This reads as its own piece of work."
+              never read as the same action. The subject in the title comes from
+              the draft, not from the classifier; without a draft the title is
+              "Breakout" alone.
             </p>
           </div>
         </div>
@@ -624,8 +666,8 @@
       <section class="sec">
         <h2>The newest three</h2>
         <p class="lead">
-          A suggestion is drawn only while its turn is one of the newest three
-          messages in the conversation. After three newer messages it hides for
+          A suggestion chip is drawn only while its turn is one of the newest
+          three messages in the conversation. After three newer messages it hides for
           good, acted on or not. The hover row's own Merge and New breakout stay
           on the turn forever.
         </p>
@@ -649,12 +691,13 @@
                     <div class="doc sm" style="max-width: 260px">
                       <span class="ic"><svg class="i i16"><use href="#file" /></svg></span><span class="tx"><b>Sequence B</b></span><span class="open">Open</span>
                     </div>
-                    <div class="sline">
-                      <div class="row">
-                        <span class="say"><span class="av s r">R</span><b>Cold Outreach</b> should see this.</span>
-                        <span class="act"><svg class="i i12"><use href="#bend" /></svg>Merge to thread</span>
-                        <span class="dis">Dismiss<svg class="i i11"><use href="#x" /></svg></span>
+                    <div class="schip">
+                      <span class="av s r">R</span>
+                      <div class="st">
+                        <div class="t"><svg class="i i13"><use href="#bend" /></svg>Merge to <b>Cold Outreach</b></div>
+                        <div class="d">Rally thinks the thread should see this. You'll edit a short note before it posts there.</div>
                       </div>
+                      <div class="ctl2"><span class="act"><svg class="i i12"><use href="#bend" /></svg>Merge</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                     </div>
                   </div>
                   <div class="turn hum">
@@ -679,9 +722,9 @@
             </div>
             <p class="why">
               Alex asked a follow-up and Rally answered it. The result is now the
-              third newest message, so its line is still drawn, and Rally's short
-              answer gets no line of its own: the classifier called it
-              <i>continue here</i>. Two or even three lines can be visible at
+              third newest message, so its chip is still drawn, and Rally's short
+              answer gets no chip of its own: the classifier called it
+              <i>continue here</i>. Two or even three chips can be visible at
               once if the newest three turns are all results; each stays on its
               own turn.
             </p>
@@ -733,7 +776,7 @@
             </div>
             <p class="why">
               One more message from Samantha and the result is the fourth newest.
-              The line is gone, whatever the classifier still thinks, and it does
+              The chip is gone, whatever the classifier still thinks, and it does
               not come back. The turn is unchanged otherwise: the document, the
               hover row and its <b>Merge to thread</b> are where they were, so
               nothing has been taken away, only the prompt to look. The row that
@@ -746,13 +789,17 @@
       <section class="sec">
         <h2>Accepting</h2>
         <p class="lead">
-          Pressing the pill opens a surface that exists. Nothing is posted and
-          nothing is created until the person sends.
+          Pressing the merge pill opens a response card in the feed, under the
+          turn: the merge as the parent will draw it, editable in place. The
+          same card is how every merge is made now, from the hover action and
+          the title menu too, so the composer's merge mode goes. Pressing the
+          breakout pill opens the launch pane that exists. Nothing is posted
+          and nothing is created until the person confirms.
         </p>
         <div class="boards">
           <div class="board">
             <div class="label">
-              <span class="code">N·8</span><span class="lname">Merge: the composer in merge mode, prefilled</span>
+              <span class="code">N·8</span><span class="lname">Merge: a response card in the feed, under the turn</span><span class="rec">Every merge</span>
             </div>
             <div class="scroll">
               <div class="card">
@@ -761,45 +808,181 @@
                   <span class="cpill"><span class="sq c b"><svg class="i i12"><use href="#brk" /></svg></span>Sequence B <span class="mut">14 replies</span><svg class="i i12 car"><use href="#cd" /></svg></span>
                   <span class="xb"><svg class="i"><use href="#x" /></svg></span>
                 </div>
-                <div class="tr fadeup">
-                  <div class="hum">
+                <div class="tr">
+                  <div class="hum fadeup">
                     <div class="by">20 min ago · <b>Alex</b></div>
                     <div class="bub">Can it lead with the teardown offer instead?</div>
                   </div>
-                  <div class="ag">
+                  <div class="ag" style="max-width: 600px">
                     <div class="by"><b>Rally</b> just now</div>
-                    <p>Sequence B now opens with the teardown offer. Four emails, each under 90 words…</p>
+                    <p><b>Sequence B now opens with the teardown offer.</b> Four emails, each under 90 words; the second cites the founder's launch post. Nothing else changed.</p>
+                    <div class="doc sm" style="max-width: 260px">
+                      <span class="ic"><svg class="i i16"><use href="#file" /></svg></span><span class="tx"><b>Sequence B</b></span><span class="open">Open</span>
+                    </div>
+                    <div class="rcard">
+                      <div class="rc-tag"><svg class="i i12"><use href="#bend" /></svg>Merge, as Cold Outreach will see it</div>
+                      <div class="mm"><span class="src"><span class="t16"><svg class="i i9"><use href="#brk" /></svg></span>Sequence B</span>· merged by <span class="who"><span class="av s at">AT</span>Alex</span>· now</div>
+                      <div class="rc-body"><b>Sequence B now opens with the teardown offer.</b> Four emails, each under 90 words; the second cites the founder's launch post. Nothing else changed.<span class="caret"></span></div>
+                      <div class="rc-embeds">
+                        <div class="doc sm" style="max-width: 280px"><span class="ic"><svg class="i i16"><use href="#file" /></svg></span><span class="tx"><b>Sequence B</b></span><svg class="i i11 rm"><use href="#x" /></svg></div>
+                      </div>
+                      <div class="aud"><svg class="i"><use href="#ppl" /></svg>The 6 people in Cold Outreach will see this and can open Sequence B.</div>
+                      <div class="rc-ctl">
+                        <span class="mode on" style="display: inline-flex; align-items: center; gap: 5px; color: var(--ok); font-weight: 600; background: var(--ok-wash); padding: 3px 8px 3px 6px; border-radius: 999px"><svg class="i i12"><use href="#bend" /></svg>Merge to thread</span>
+                        <span>Enter to merge · Esc to cancel</span>
+                        <span class="sp"></span>
+                        <span class="cancel">Cancel</span>
+                        <span class="sendb go"><svg class="i i12"><use href="#bend" /></svg>Merge</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div class="dock" style="padding-bottom: 18px">
                   <div class="comp">
-                    <div class="val"><b>Sequence B now opens with the teardown offer.</b> Four emails, each under 90 words; the second cites the founder's launch post. Nothing else changed.</div>
-                    <div class="doc sm" style="max-width: 280px">
-                      <span class="ic"><svg class="i i16"><use href="#file" /></svg></span><span class="tx"><b>Sequence B</b></span>
-                    </div>
-                    <div class="aud"><svg class="i"><use href="#ppl" /></svg>The 6 people in Cold Outreach will see this and can open Sequence B.</div>
+                    <div class="ph">Message Sequence B</div>
                     <div class="ctl">
-                      <svg class="i i16 g"><use href="#plus" /></svg>
-                      <span class="mode on"><svg class="i i12"><use href="#bend" /></svg>Merge to thread<svg class="i i9"><use href="#cd" /></svg></span>
-                      <span>Enter to merge · Esc to cancel</span>
-                      <span class="sp"></span>
-                      <span class="sendb go"><svg class="i i12"><use href="#bend" /></svg>Merge</span>
+                      <svg class="i i16 g"><use href="#plus" /></svg><span class="sp"></span><svg class="i i16 g"><use href="#mic" /></svg><span class="sendb"><svg class="i"><use href="#up" /></svg></span>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
             <p class="why">
-              Exactly the merge mode the hover action opens, with the judged
-              turn's words and its document: 5c·6 of the merge-back design, with
-              nothing added. Esc puts the plain composer back and the line stays
-              on the turn; a merge that lands resolves the suggestion on the
-              server, and the Thread shows the merge as it does today.
+              The suggestion chip becomes the card, in its place. It is the merge as
+              Cold Outreach will draw it: the same <i>MergeMessage</i> block the
+              Thread shows once a merge lands, with the byline, the words and
+              the document, except that the words are editable and the document
+              can be taken out. One line says who will see it. Enter merges, Esc
+              puts the chip back. The composer below is untouched, and merge
+              mode no longer exists there.
             </p>
           </div>
           <div class="board">
             <div class="label">
-              <span class="code">N·9</span><span class="lname">Breakout: the launch pane, with the draft in the composer</span>
+              <span class="code">N·10</span><span class="lname">The same card from the Merge hover action, one level up</span>
+            </div>
+            <div class="scroll">
+              <div class="card">
+                <div class="head split">
+                  <span class="cpill anc"><span class="sq"><svg class="i i12"><use href="#rocket" /></svg></span>GTM</span>
+                  <span class="cpill"><span class="sq c"><svg class="i i12"><use href="#plane" /></svg></span>Cold Outreach<svg class="i i12 car"><use href="#cd" /></svg></span>
+                  <span class="xb"><svg class="i"><use href="#x" /></svg></span>
+                </div>
+                <div class="tr">
+                  <div class="hum fadeup">
+                    <div class="by">15 min ago · <b>Samantha Lee</b></div>
+                    <div class="bub" style="background: var(--sl); color: var(--sl-ink)">Approved. Ship all three.</div>
+                  </div>
+                  <div class="ag" style="max-width: 600px">
+                    <div class="by"><b>Rally</b> 12 min ago</div>
+                    <p><b>After four days of back-and-forth, three sequences are final.</b> The strongest opens with the founder's own launch post and asks for a 15-minute teardown rather than a demo. All three are in the document.</p>
+                    <div class="doc sm" style="max-width: 300px">
+                      <span class="ic"><svg class="i i16"><use href="#file" /></svg></span><span class="tx"><b>Outreach sequences</b></span><span class="open">Open</span>
+                    </div>
+                    <div class="acts on">
+                      <span><svg class="i i13"><use href="#brk" /></svg>New breakout</span>
+                      <span class="hv"><svg class="i i13"><use href="#bend" /></svg>Merge to GTM</span>
+                      <span><svg class="i i13"><use href="#copy" /></svg>Copy</span>
+                      <span><svg class="i i13"><use href="#spk" /></svg>Speak</span>
+                      <span><svg class="i i13"><use href="#img" /></svg>Image</span>
+                      <span><svg class="i i13"><use href="#pdf" /></svg>PDF</span>
+                    </div>
+                    <div class="rcard">
+                      <div class="rc-tag"><svg class="i i12"><use href="#bend" /></svg>Merge, as GTM will see it</div>
+                      <div class="mm"><span class="src"><span class="t16 o"><svg class="i i9"><use href="#plane" /></svg></span>Cold Outreach</span>· merged by <span class="who"><span class="av s at">AT</span>Alex</span>· now</div>
+                      <div class="mq"><svg class="i i12"><use href="#quote" /></svg><span>Pull together three cold-outreach sequences for seed-stage founders based on this video and our ICP doc…</span></div>
+                      <div class="rc-body"><b>After four days of back-and-forth, three sequences are final.</b> The strongest opens with the founder's own launch post and asks for a 15-minute teardown rather than a demo. All three are in the document.<span class="caret"></span></div>
+                      <div class="rc-embeds">
+                        <div class="doc sm" style="max-width: 300px"><span class="ic"><svg class="i i16"><use href="#file" /></svg></span><span class="tx"><b>Outreach sequences</b></span><svg class="i i11 rm"><use href="#x" /></svg></div>
+                      </div>
+                      <div class="aud"><svg class="i"><use href="#ppl" /></svg>Visible in GTM. Everyone in Acme can open Outreach sequences.</div>
+                      <div class="rc-ctl">
+                        <span class="mode on" style="display: inline-flex; align-items: center; gap: 5px; color: var(--ok); font-weight: 600; background: var(--ok-wash); padding: 3px 8px 3px 6px; border-radius: 999px"><svg class="i i12"><use href="#bend" /></svg>Merge to GTM<svg class="i i9"><use href="#cd" /></svg></span>
+                        <span>Enter to merge · Esc to cancel</span>
+                        <span class="sp"></span>
+                        <span class="cancel">Cancel</span>
+                        <span class="sendb go"><svg class="i i12"><use href="#bend" /></svg>Merge</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="dock" style="padding-bottom: 18px">
+                  <div class="comp">
+                    <div class="ph">Message Cold Outreach</div>
+                    <div class="ctl">
+                      <svg class="i i16 g"><use href="#plus" /></svg><span class="sp"></span><svg class="i i16 g"><use href="#mic" /></svg><span class="sendb"><svg class="i"><use href="#up" /></svg></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              No suggestion here: Alex pressed <b>Merge to GTM</b> on the turn. The
+              card opens under that turn, with the Channel's quote line the
+              Channel merge will carry, the target pill with its Channel menu,
+              and the wider audience the Channel merge has. What the card shows
+              is what the GTM feed will show.
+            </p>
+          </div>
+          <div class="board">
+            <div class="label">
+              <span class="code">N·11</span><span class="lname">From the title menu: the card at the end of the feed, empty</span>
+            </div>
+            <div class="scroll">
+              <div class="card">
+                <div class="head split">
+                  <span class="cpill anc"><span class="sq c"><svg class="i i12"><use href="#plane" /></svg></span>Cold Outreach</span>
+                  <span class="cpill"><span class="sq c b"><svg class="i i12"><use href="#brk" /></svg></span>Sequence B <span class="mut">14 replies</span><svg class="i i12 car"><use href="#cd" /></svg></span>
+                  <span class="xb"><svg class="i"><use href="#x" /></svg></span>
+                </div>
+                <div class="tr">
+                  <div class="ag fadeup">
+                    <div class="by"><b>Rally</b> 25 min ago</div>
+                    <p>Sequence B now opens with the teardown offer. Four emails, each under 90 words…</p>
+                  </div>
+                  <div class="hum fadeup">
+                    <div class="by">20 min ago · <b>Alex</b></div>
+                    <div class="bub">Where did the 38% reply rate come from?</div>
+                  </div>
+                  <div class="ag fadeup">
+                    <div class="by"><b>Rally</b> 19 min ago</div>
+                    <p>It's from Lemlist's 2025 benchmark for founder-led outreach under 90 words.</p>
+                  </div>
+                  <div class="rcard" style="margin-top: 0">
+                    <div class="rc-tag"><svg class="i i12"><use href="#bend" /></svg>Merge, as Cold Outreach will see it</div>
+                    <div class="mm"><span class="src"><span class="t16"><svg class="i i9"><use href="#brk" /></svg></span>Sequence B</span>· merged by <span class="who"><span class="av s at">AT</span>Alex</span>· now</div>
+                    <div class="rc-body ph"><span class="caret"></span>Write what Cold Outreach should know. Embed an artifact with [Title](resource://id).</div>
+                    <div class="aud"><svg class="i"><use href="#ppl" /></svg>The 6 people in Cold Outreach will see this.</div>
+                    <div class="rc-ctl">
+                      <span class="mode on" style="display: inline-flex; align-items: center; gap: 5px; color: var(--ok); font-weight: 600; background: var(--ok-wash); padding: 3px 8px 3px 6px; border-radius: 999px"><svg class="i i12"><use href="#bend" /></svg>Merge to thread</span>
+                      <span>Enter to merge · Esc to cancel</span>
+                      <span class="sp"></span>
+                      <span class="cancel">Cancel</span>
+                      <span class="sendb go" style="opacity: 0.45"><svg class="i i12"><use href="#bend" /></svg>Merge</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="dock" style="padding-bottom: 18px">
+                  <div class="comp">
+                    <div class="ph">Message Sequence B</div>
+                    <div class="ctl">
+                      <svg class="i i16 g"><use href="#plus" /></svg><span class="sp"></span><svg class="i i16 g"><use href="#mic" /></svg><span class="sendb"><svg class="i"><use href="#up" /></svg></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              Merge from the Breakout's title menu names no message, so the card
+              opens after the newest turn with nothing in it and Merge disabled
+              until there are words. Artifacts are embedded by link, as in merge
+              mode before. Summarize, phase 2 of merge-back, becomes a button on
+              this card when it comes.
+            </p>
+          </div>
+          <div class="board">
+            <div class="label">
+              <span class="code">N·9</span><span class="lname">Breakout: the launch pane, with the draft in its composer</span>
             </div>
             <div class="scroll">
               <div class="card">
@@ -844,12 +1027,13 @@
           What a suggestion does not do is most of the design.
         </p>
         <div class="states">
-          <div class="state"><h3>Open</h3><p>One line under the turn, for the people who can act, while the turn is among the newest three. Nothing in the composer, no unread, no Activity row, no push.</p></div>
-          <div class="state"><h3>Accepted</h3><p>The merge lands or the Breakout is created, through the same admission as today. The line resolves on its own.</p></div>
+          <div class="state"><h3>Open</h3><p>One chip under the turn, for the people who can act, while the turn is among the newest three. Nothing in the composer, no unread, no Activity row, no push.</p></div>
+          <div class="state"><h3>Accepting</h3><p>The response card is open in the feed where the chip was, or the launch pane is open. Nothing is posted yet.</p></div>
+          <div class="state"><h3>Accepted</h3><p>The merge lands or the Breakout is created, through the same admission as today. The chip resolves on its own.</p></div>
           <div class="state"><h3>Dismissed</h3><p>Gone for everyone in the conversation, at once. Recorded with who, so the same kind rests here for a while.</p></div>
           <div class="state"><h3>Aged out</h3><p>Three newer messages arrived. Hidden for good, whatever the classifier still thinks. Nobody acted: recorded as ignored.</p></div>
-          <div class="state"><h3>Cannot act</h3><p>A viewer who cannot merge or cannot post sees no line. A private thread never gets the Channel one.</p></div>
-          <div class="state"><h3>Shadow</h3><p>Phase 1. Every decision is recorded; no line is drawn anywhere until the threshold is measured.</p></div>
+          <div class="state"><h3>Cannot act</h3><p>A viewer who cannot merge or cannot post sees no chip. A private thread never gets the Channel one.</p></div>
+          <div class="state"><h3>Shadow</h3><p>Phase 1. Every decision is recorded; no chip is drawn anywhere until the threshold is measured.</p></div>
         </div>
       </section>
     </div>
