@@ -100,7 +100,7 @@ import { resolveFeedOpenSource, useWorkstreamFeedOpenTelemetry } from '../lib/us
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { ActivityPresence, InferenceDelayNotice, JumpToLatestButton } from '../components/conversation-follow';
-import { openRailAtEvenSplit } from '../lib/rail-split';
+import { openRailAtEvenSplit, useRailFillsPane } from '../lib/rail-split';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   orderedTranscriptQueryKey,
@@ -1923,18 +1923,25 @@ export function ConversationSurface({
     return () => setRailExpanded(false);
   }, [ownsRail, panelExpanded, setRailExpanded]);
   const channelPane = useChannelPane();
-  const panelExpandAction = expandToggle(panelExpanded, true, setPanelExpanded);
-  // Expanded, the panel's header carries what it covers, as an expanded
-  // breakout's does: the Channel when it has stepped off, then this
-  // conversation, which collapses the panel back beside it.
-  const panelAncestors: TitlePillLevel[] | undefined = !panelExpanded ? undefined : [
+  // Too narrow for the panel beside its conversation, a phone included, the
+  // panel covers the pane whether or not it was expanded.
+  const panelFillsPane = useRailFillsPane(useUiStore((state) => state.sidebarWidth));
+  const panelExpandAction = expandToggle(panelExpanded, !panelFillsPane, setPanelExpanded);
+  // Covering its conversation, the panel's header carries what it covers, as
+  // an expanded breakout's does: the Channel when it has stepped off, then
+  // this conversation, which puts the panel back beside it or, where it
+  // cannot sit beside, closes it.
+  const panelAncestors: TitlePillLevel[] | undefined = !panelExpanded && !panelFillsPane ? undefined : [
     ...(channelPane?.shifted ? [channelPane.crumb] : []),
     {
       key: `panel-conversation:${conversationAddress}`,
       icon: <WorkstreamGlyph appearance={routedDetail?.appearance} id={id} size={24} />,
       title: routedDetail?.title ?? '',
       label: `Show ${routedDetail?.title ?? 'the conversation'}`,
-      onSelect: () => setPanelExpanded(false),
+      onSelect: () => {
+        setPanelExpanded(false);
+        if (panelFillsPane) closeOwnRail();
+      },
     },
   ];
   const members = useQuery({
