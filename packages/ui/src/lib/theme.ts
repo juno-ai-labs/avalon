@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { appearanceOf, defaultThemeChoice, parseAppearanceMode, parseResolvedTheme, resolveTheme, sameThemeChoice, type ResolvedTheme, type ThemeChoice } from '../themes';
+import { appearanceOf, defaultThemeChoice, parseAppearanceMode, parseResolvedTheme, resolveTheme, sameThemeChoice, themeWindowBackground, type ResolvedTheme, type ThemeChoice } from '../themes';
 import { readDevicePreferences, setDeviceTheme } from './device-preferences';
 
 
@@ -82,12 +82,37 @@ export function resolvedThemeFor(choice: ThemeChoice): ResolvedTheme {
 let reportTheme: ((choice: ThemeChoice) => void) | undefined;
 export function setThemeReporter(report: (choice: ThemeChoice) => void): void { reportTheme = report; }
 
+/**
+ * Tells the host what colour the page is drawn on, for the chrome the host
+ * paints itself.
+ *
+ * An iOS Home Screen app's status bar is not part of the page. iOS paints it
+ * from the document's `theme-color` meta, and with none it falls back to a
+ * white bar whatever the canvas below it is. The colour written is the one
+ * main hands a new window as its `backgroundColor`, for the same reason: the
+ * host's own chrome has to match the canvas before anything in it can.
+ *
+ * Every `theme-color` tag is written, not the first. The browser's entry
+ * document carries a media-qualified light and dark pair so the paint before
+ * this runs is right for the `system` choice, and once a choice is applied both
+ * have to say the same thing: the choice is pinned per device and need not
+ * agree with the phone. A document without a tag gets none added; the entry
+ * HTML decides whether a host is told at all.
+ */
+function writeThemeColor(resolved: ResolvedTheme): void {
+  const colour = themeWindowBackground[resolved];
+  for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+    meta.content = colour;
+  }
+}
+
 /** Stamps the resolved appearance onto the document and announces it. */
 export function applyTheme(choice: ThemeChoice): ThemeState {
   const resolved = resolvedThemeFor(choice);
   const root = document.documentElement;
   root.dataset['theme'] = resolved;
   root.dataset['themeMode'] = choice;
+  writeThemeColor(resolved);
   const state: ThemeState = { choice, resolved };
   reportTheme?.(choice);
   for (const listener of listeners) listener(state);
