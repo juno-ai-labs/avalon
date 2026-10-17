@@ -73,3 +73,42 @@ describe("migrations 97 and 98", () => {
     });
   });
 });
+
+describe("migration 110", () => {
+  it("upgrades a populated Organization at 109, keeping every pin in place and admitting an artifact with its thread", async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName("artifact-pins-v109");
+    await stub.ping();
+    await runInDurableObject(stub, (_instance, state) => {
+      const before = WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 109);
+      expect(before.at(-1)?.version).toBe(109);
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage, migrations: before, component: "workspace_do", workerVersionId: "before-artifact-pins", now: 1,
+      });
+      const sql = state.storage.sql;
+      sql.exec(`INSERT INTO workspace_pins (user_id, item_kind, item_id, parent_id, position, created_at, updated_at)
+        VALUES (?, 'thread', ?, NULL, 0, 5, 6)`, OWNER, NEWER);
+      sql.exec(`INSERT INTO workspace_pins (user_id, item_kind, item_id, parent_id, position, created_at, updated_at)
+        VALUES (?, 'breakout', ?, ?, 0, 7, 8)`, OWNER, REMOVED, OLDER);
+    });
+
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS, component: "workspace_do",
+        workerVersionId: "with-artifact-pins", now: 2,
+      });
+      const sql = state.storage.sql;
+      expect(sql.exec(`SELECT item_kind, item_id, parent_id, position, created_at, updated_at FROM workspace_pins ORDER BY item_kind`).toArray())
+        .toEqual([
+          { item_kind: "breakout", item_id: REMOVED, parent_id: OLDER, position: 0, created_at: 7, updated_at: 8 },
+          { item_kind: "thread", item_id: NEWER, parent_id: null, position: 0, created_at: 5, updated_at: 6 },
+        ]);
+      sql.exec(`INSERT INTO workspace_pins (user_id, item_kind, item_id, parent_id, position, created_at, updated_at)
+        VALUES (?, 'artifact', ?, ?, 0, 9, 9)`, OWNER, SPACE, NEWER);
+      // An artifact names its thread, as a breakout does.
+      expect(() => sql.exec(`INSERT INTO workspace_pins (user_id, item_kind, item_id, parent_id, position, created_at, updated_at)
+        VALUES (?, 'artifact', ?, NULL, 1, 9, 9)`, OWNER, OLDER)).toThrow(/CHECK constraint failed/u);
+      expect(sql.exec(`SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'workspace_pins' AND name = 'workspace_pins_order_idx'`).toArray())
+        .toEqual([{ name: "workspace_pins_order_idx" }]);
+    });
+  });
+});

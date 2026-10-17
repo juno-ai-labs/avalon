@@ -46,7 +46,7 @@ import { DeepLinkErrorScreen } from './screens/deep-link-error';
 import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/guided-onboarding';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
 import { ChannelScreen } from './screens/channel';
-import { channelRoute, homeChannelId, threadRoute } from './lib/navigation-routes';
+import { channelRoute, homeChannelId, openThreadResourceState, threadRoute } from './lib/navigation-routes';
 import { useCachedWorkstreamSummary } from './lib/use-workstreams-query';
 import { SidekicksLibraryRoute, SidekicksWindow } from './screens/sidekicks-library';
 import { BrowserImportWindow } from './screens/browser-import';
@@ -380,7 +380,16 @@ function LoneThreadRoute(): React.JSX.Element {
   const location = useLocation();
   const row = useCachedWorkstreamSummary(id);
   const channelId = row && !row.pending ? homeChannelId(row.spaceIds) : null;
-  if (channelId) return <Navigate replace state={location.state} to={`${threadRoute(id, channelId)}${location.search}`} />;
+  // A link onto an artifact (a pinned artifact's push) arrives as `?artifact=`,
+  // because a deep link sets only the hash; it becomes the same request the
+  // sidebar's artifact row makes, so the thread opens with it expanded.
+  const search = new URLSearchParams(location.search);
+  const artifactId = search.get('artifact');
+  search.delete('artifact');
+  const state = artifactId ? openThreadResourceState(id, artifactId) : location.state;
+  const rest = search.size ? `?${search}` : '';
+  if (channelId) return <Navigate replace state={state} to={`${threadRoute(id, channelId)}${rest}`} />;
+  if (artifactId) return <Navigate replace state={state} to={`/workstreams/${id}${rest}`} />;
   return <WorkstreamScreen />;
 }
 

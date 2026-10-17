@@ -213,6 +213,7 @@ const SECTION_HEADINGS = {
   breakout_started: "New breakouts",
   run_finished: "Rally finished",
   merged: "Merges",
+  artifact_updated: "Pinned artifacts",
 } as const satisfies Record<ActivityItemKind, string>;
 const UNNAMED_THREAD = "Untitled thread";
 const UNNAMED_BREAKOUT = "Untitled breakout";
@@ -260,6 +261,7 @@ export async function renderUnreadDigest(
         case "merged": return item.breakout
           ? `- ${actor} merged ${escapeMarkdown(item.breakout.title.trim() || UNNAMED_BREAKOUT)} into ${thread}`
           : `- ${actor} merged ${thread} into ${escapeMarkdown(item.mergedInto?.name.trim() || "a channel")}`;
+        case "artifact_updated": return `- ${actor} updated ${escapeMarkdown(item.artifact?.title.trim() || "an artifact")} in ${thread}`;
       }
     }));
     sections.push([`## ${heading}`, ...lines].join("\n"));

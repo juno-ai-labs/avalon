@@ -34,6 +34,7 @@ The routes are the stack:
 | `/channels/:c/threads/:t` | Channel, thread | — |
 | `/channels/:c/threads/:t?substream=:b` | thread, breakout | Channel |
 | …and the breakout opens a panel | breakout, panel | Channel, thread |
+| …a thread's panel, expanded | panel | Channel, thread |
 | `/workstreams/:t` (a thread with no Channel the person may see) | thread | — |
 
 `ChannelStack` renders the Channel in the left slot and the thread screen in the
@@ -53,8 +54,21 @@ a breakout or a panel open: the two split the window as they would have, and
 closing what the thread opened returns to the thread expanded. A breakout's
 expansion ends when the breakout opens a panel.
 
+A **panel** is the last level. An artifact or attachment a conversation opens
+sits beside it with the same **Expand**; expanded it covers the pane (the shell's
+`rail-expanded`, which reuses the narrow window's full-pane rules) and its
+header carries the Channel, when it has stepped off, and the conversation, whose
+crumb collapses it. There is no lightbox over a panel any more: a full-window
+view of an artifact is the panel expanded. `expandToggle`
+(`components/pane-expand-toggle.tsx`) draws the control at every level.
+
 Navigation asks for it too, through location state (`OPEN_EXPANDED`), which
-both levels read with `usePaneExpansion`. The sidebar's Threads and Activity
+every level reads with `usePaneExpansion`. A navigation onto an artifact
+(`openThreadResourceState`, from a pinned artifact's row or its Activity row)
+is the panel's request: only the requested artifact honours it, and only once,
+so an artifact opened afterwards from the transcript comes up beside, the
+requested one included once it has been closed. Behind the browser rail the
+panel is not on screen, so it is not expanded and its artifact is not seen. The sidebar's Threads and Activity
 rows ask for it, so does the root landing when it reopens the saved thread,
 and so does a Channel opening one of its threads, from a feed
 row or by starting one in its composer: a thread opened from its Channel takes
@@ -146,6 +160,30 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
   window under Xvfb, per [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-17 — A panel expands like a pane, and the lightbox goes
+
+**What changed:** An artifact or attachment panel has the stack's
+Expand/Collapse. Expanded it covers the pane with the Channel and thread as
+crumbs; the artifact's pinned row and its Activity row open it that way. The
+panel's old Expand, which opened a full-window lightbox over the panel, is gone.
+
+**Why:** Opening an artifact from the sidebar should read like opening a
+thread from it: one pane, expanded, with the same control to put it back.
+Two ways to see an artifact full-window, a lightbox and an expanded pane,
+would be one too many.
+
+**Considered and rejected:** A route of its own for an artifact. It would need
+its own link format on the Mac, the web and iOS; the artifact already opens
+through its thread's route (`openResource`), which keeps the thread's access
+the gate. The lightbox stays only where there is no panel to expand: search
+results and the Channel composer's unsent attachments.
+
+**Consequences:** The expansion is held per panel in component state, as a
+thread's is, and is not restored after a relaunch. The shell learns of it
+through `useUiStore.railExpanded`, set by the surface that owns the rail. A
+request now counts once per navigation at every level: before, a pane closed
+and opened again under the same navigation came back expanded.
 
 ### 2026-10-17 — A saved thread reopens expanded
 

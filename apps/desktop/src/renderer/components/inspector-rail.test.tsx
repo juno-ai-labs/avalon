@@ -804,6 +804,24 @@ describe('resource detail content preview', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it('renders an HTML artifact in a sandboxed frame, not as text', async () => {
+    const page: WorkstreamResource = { ...note, id: 'resource-page', title: 'Launch page.html', mimeType: 'text/html' };
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          loadResourceContent={vi.fn(async () => new Blob(['<h1>Launch</h1>'], { type: 'text/html' }))}
+          panel={{ resourceId: page.id, onClose: vi.fn() }}
+          workstream={{ ...workstream, resources: [page] }}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const frame = await screen.findByTitle('Preview of Launch page.html');
+    expect(frame.getAttribute('sandbox')).toBe('');
+    expect(frame.getAttribute('srcdoc')).toContain('<body><h1>Launch</h1></body>');
+    expect(screen.queryByText('<h1>Launch</h1>')).toBeNull();
+  });
+
   it('offers the resource panel actions from its title pill menu', async () => {
     const onOpenResourceVersion = vi.fn();
     const version: ResourceVersion = { version: 1, title: note.title, mimeType: 'text/markdown', capturedAt: '2026-10-01T00:00:00.000Z', author: null, cause: null, contentAvailable: true };
@@ -826,23 +844,24 @@ describe('resource detail content preview', () => {
     expect(onOpenResourceVersion).toHaveBeenCalledWith(note, version);
   });
 
-  it('expands a resource with readable content, and not a live site', () => {
-    const onExpand = vi.fn();
+  it('draws the Expand it is given for any artifact, a live site included', () => {
+    const onSelect = vi.fn();
+    const expandAction = [{ key: 'expand', label: 'Expand', icon: null, onSelect }];
     const { unmount } = render(
       <Tooltip.Provider>
-        <InspectorRail panel={{ resourceId: note.id, onClose: vi.fn(), onExpand }} workstream={{ ...workstream, resources: [note] }} />
+        <InspectorRail panel={{ resourceId: note.id, onClose: vi.fn(), expandAction }} workstream={{ ...workstream, resources: [note] }} />
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
-    expect(onExpand).toHaveBeenCalledWith(note);
+    expect(onSelect).toHaveBeenCalledOnce();
     unmount();
 
     render(
       <Tooltip.Provider>
-        <InspectorRail panel={{ resourceId: site.id, onClose: vi.fn(), onExpand }} workstream={{ ...workstream, resources: [site] }} />
+        <InspectorRail panel={{ resourceId: site.id, onClose: vi.fn(), expandAction }} workstream={{ ...workstream, resources: [site] }} />
       </Tooltip.Provider>,
     );
-    expect(screen.queryByRole('button', { name: 'Expand' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Expand' })).toBeInTheDocument();
   });
 
   it('hands focus back to what opened the panel once an archive closes it', async () => {

@@ -3,6 +3,9 @@ import {
   ActivityPageSchema,
   ActivityEventsRequestSchema,
   ActivitySeenRequestSchema,
+  ArtifactPinListSchema,
+  ArtifactPinOrderRequestSchema,
+  ArtifactPinRequestSchema,
   ChannelStatsListSchema,
   IdSchema,
   MyThreadsPageSchema,
@@ -14,7 +17,7 @@ import {
 import { Hono } from "hono";
 import { z } from "zod";
 
-import { clientReadsChannelMerges } from "../lib/client-contract";
+import { clientReadsArtifactUpdates, clientReadsChannelMerges } from "../lib/client-contract";
 import type { HonoAppEnv } from "../env";
 import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
@@ -23,6 +26,7 @@ import { SpaceService } from "../services/space-service";
 const pageQuery = z.strictObject({ cursor: z.string().min(1).max(200).optional() });
 const activityQuery = pageQuery.extend({ only: ActivityFilterSchema.optional() });
 const pinParam = z.strictObject({ kind: PinKindSchema, id: IdSchema });
+const artifactPinParam = z.strictObject({ id: IdSchema });
 
 /**
  * The person's own navigation: the threads and breakouts they take part in,
@@ -68,14 +72,42 @@ navigationRoutes.delete("/pins/:kind/:id", zValidator("param", pinParam), async 
   ));
 });
 
+// Artifact pins have routes of their own because they have a list of their
+// own; see `ArtifactPinSchema` and docs/workstream-pinning.md.
+navigationRoutes.get("/artifact-pins", async (c) =>
+  c.json(ArtifactPinListSchema.parse(await new SpaceService(c.env, getWorkspaceAuth(c)).listArtifactPins())),
+);
+
+navigationRoutes.put("/artifact-pins", zValidator("json", ArtifactPinOrderRequestSchema), async (c) =>
+  c.json(ArtifactPinListSchema.parse(
+    await new SpaceService(c.env, getWorkspaceAuth(c)).reorderArtifactPins(c.req.valid("json").ids),
+  )),
+);
+
+navigationRoutes.put("/artifact-pins/:id", zValidator("param", artifactPinParam), zValidator("json", ArtifactPinRequestSchema), async (c) =>
+  c.json(ArtifactPinListSchema.parse(
+    await new SpaceService(c.env, getWorkspaceAuth(c)).changeArtifactPin(c.req.valid("param").id, c.req.valid("json").threadId, true),
+  )),
+);
+
+navigationRoutes.delete("/artifact-pins/:id", zValidator("param", artifactPinParam), async (c) =>
+  c.json(ArtifactPinListSchema.parse(
+    await new SpaceService(c.env, getWorkspaceAuth(c)).changeArtifactPin(c.req.valid("param").id, null, false),
+  )),
+);
+
 navigationRoutes.get("/activity", zValidator("query", activityQuery), async (c) => {
   const { cursor, only } = c.req.valid("query");
   const page = await new SpaceService(c.env, getWorkspaceAuth(c)).listActivity(cursor ?? null, only ?? null);
-  // A build before merges parses the kind strictly: it is served the page
-  // without its `merged` rows, whose cursor still continues correctly.
-  const merges = clientReadsChannelMerges((name) => c.req.header(name));
-  return c.json(ActivityPageSchema.parse(merges ? page : {
-    ...page, items: page.items.filter((item) => item.kind !== "merged"),
+  // A build before merges or artifact pins parses the kind strictly: it is
+  // served the page without those rows, whose cursor still continues correctly.
+  const header = (name: string) => c.req.header(name);
+  const merges = clientReadsChannelMerges(header);
+  const artifactUpdates = clientReadsArtifactUpdates(header);
+  return c.json(ActivityPageSchema.parse(merges && artifactUpdates ? page : {
+    ...page,
+    items: page.items.filter((item) => (merges || item.kind !== "merged")
+      && (artifactUpdates || item.kind !== "artifact_updated")),
   }));
 });
 

@@ -36,7 +36,10 @@ import {
 } from "@rally/contracts/conversation-effects";
 
 import { WORKSPACE_CHANNEL_READS_MIGRATION } from "../src/durable-objects/workspace-channel-read-storage";
-import { WORKSPACE_PINS_MIGRATION } from "../src/durable-objects/workspace-pin-storage";
+import { drainArtifactUpdates, WORKSPACE_PINS_MIGRATION } from "../src/durable-objects/workspace-pin-storage";
+import { WorkspaceActivityFeed } from "../src/durable-objects/workspace-activity-feed";
+import { WorkspaceActivityPushes } from "../src/durable-objects/workspace-activity-push";
+import { WorkspaceSpaceStorage } from "../src/durable-objects/workspace-space-storage";
 import { WorkspaceRegionalEffectApplyRequestSchema } from "../src/durable-objects/workspace-directory-protocol";
 import { applyWorkstreamRegionalEnvelope } from "../src/durable-objects/workspace-regional-effect-storage";
 import { hostedParentStub } from "./helpers/hosted-parent";
@@ -679,6 +682,257 @@ describe("pins", () => {
     });
 
     expect(copied).toEqual([MEMBER_THREAD, OPEN_THREAD, PRIVATE_THREAD]);
+  });
+});
+
+/** A resource row in the Organization's store, as a published file leaves one. */
+async function storeResource(id: string, title: string, metadata: Record<string, unknown> = {}): Promise<void> {
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(
+      `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, title, mime_type, metadata_json, created_at, updated_at)
+       VALUES (?, ?, 'generated_file', 'avalon', ?, 'text/markdown', ?, '2026-10-03T00:00:00.000Z', '2026-10-03T00:00:00.000Z')`,
+      id, WORKSPACE_ID, title, JSON.stringify(metadata),
+    );
+  });
+}
+
+const ARTIFACT = "00000000-0000-7000-8000-00000000e1a1";
+const OTHER_ARTIFACT = "00000000-0000-7000-8000-00000000e1a2";
+const UPLOAD = "00000000-0000-7000-8000-00000000e1a3";
+
+describe("artifact pins", () => {
+  /** The open thread's Main holds two artifacts it generated and a file somebody attached. */
+  async function threadWithArtifacts(): Promise<void> {
+    await channelWithThreads();
+    await storeResource(ARTIFACT, "Incident summary");
+    await storeResource(OTHER_ARTIFACT, "Payloads");
+    await storeResource(UPLOAD, "Brief");
+    await publish(OPEN_THREAD, [{
+      ...threadEffect("Cold outreach"),
+      resourceLinks: [
+        { resourceId: ARTIFACT, watchEnabled: false, relationshipType: "generated" },
+        { resourceId: OTHER_ARTIFACT, watchEnabled: false, relationshipType: "generated" },
+        { resourceId: UPLOAD, watchEnabled: false, relationshipType: "attachment" },
+      ],
+    } as ParentEffect], undefined, 2);
+  }
+
+  const pinArtifact = (itemId: string, threadId: WorkstreamId, userId: UserId = MEMBER) => workspace().changeArtifactPin({
+    workspaceId: WORKSPACE_ID, userId, itemId, threadId, pinned: true,
+  });
+
+  it("given an artifact generated in a Main the member may open, when they pin it, then it lists with its thread and stays out of the other pins", async () => {
+    await threadWithArtifacts();
+
+    const pinned = await pinArtifact(ARTIFACT, OPEN_THREAD);
+
+    expect(pinned).toEqual({ ok: true, artifactPins: [{
+      id: ARTIFACT,
+      threadId: OPEN_THREAD,
+      title: "Incident summary",
+      resourceType: "generated_file",
+      mimeType: "text/markdown",
+      updatedAt: "2026-10-03T00:00:00.000Z",
+      currentVersion: 1,
+      unread: false,
+      thread: { title: "Cold outreach", appearance: null, spaceIds: [expect.any(String)] },
+    }] });
+    // The thread, Channel and breakout list a shipped desktop parses never carries one.
+    await expect(workspace().listPins({ workspaceId: WORKSPACE_ID, userId: MEMBER })).resolves.toEqual({ ok: true, pins: [] });
+  });
+
+  it("given a file that was attached rather than generated, or named under another thread, when the member pins it, then it is refused and nothing is stored", async () => {
+    await threadWithArtifacts();
+
+    await expect(pinArtifact(UPLOAD, OPEN_THREAD)).resolves.toEqual({ ok: false, code: "pin_target_not_found" });
+    await expect(pinArtifact(ARTIFACT, PRIVATE_THREAD, OWNER)).resolves.toEqual({ ok: false, code: "pin_target_not_found" });
+    await expect(workspace().listArtifactPins({ workspaceId: WORKSPACE_ID, userId: MEMBER }))
+      .resolves.toEqual({ ok: true, artifactPins: [] });
+  });
+
+  it("given an artifact in a private thread, when a member who cannot open it pins it, then it is refused", async () => {
+    await channelWithThreads();
+    await storeResource(ARTIFACT, "Comp table");
+    await publish(PRIVATE_THREAD, [{
+      ...threadEffect("Comp bands", { scope: "personal" }),
+      resourceLinks: [{ resourceId: ARTIFACT, watchEnabled: false, relationshipType: "generated" }],
+    } as ParentEffect], undefined, 2);
+
+    await expect(pinArtifact(ARTIFACT, PRIVATE_THREAD)).resolves.toEqual({ ok: false, code: "pin_target_not_found" });
+    await expect(pinArtifact(ARTIFACT, PRIVATE_THREAD, OWNER)).resolves.toMatchObject({ ok: true, artifactPins: [{ id: ARTIFACT }] });
+  });
+
+  it("given a pinned artifact whose thread is made private, when the member reads their artifact pins, then it is left out until they unpin it", async () => {
+    await threadWithArtifacts();
+    await pinArtifact(ARTIFACT, OPEN_THREAD);
+
+    await publish(OPEN_THREAD, [{
+      ...threadEffect("Cold outreach", { scope: "personal" }),
+      resourceLinks: [{ resourceId: ARTIFACT, watchEnabled: false, relationshipType: "generated" }],
+    } as ParentEffect], undefined, 3);
+
+    await expect(workspace().listArtifactPins({ workspaceId: WORKSPACE_ID, userId: MEMBER }))
+      .resolves.toEqual({ ok: true, artifactPins: [] });
+    // An unpin is never refused, so a pin the member can no longer see can still be tidied.
+    await workspace().changeArtifactPin({ workspaceId: WORKSPACE_ID, userId: MEMBER, itemId: ARTIFACT, threadId: null, pinned: false });
+    const stored = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      `SELECT COUNT(*) AS count FROM workspace_pins WHERE user_id = ? AND item_kind = 'artifact'`, MEMBER,
+    ).one().count);
+    expect(stored).toBe(0);
+  });
+
+  /** A new version of a stored artifact, staged the way a producer stages one. */
+  async function republish(
+    id: string,
+    author: { kind: "agent" } | { kind: "member"; userId: UserId } | { kind: "connector" },
+    cause: "published" | "refetched" = "published",
+  ): Promise<void> {
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE resources
+            SET revision_author_kind = ?, revision_author_run_id = ?, revision_author_user_id = ?,
+                revision_author_connection_id = ?, revision_cause = ?,
+                content_sha256 = lower(hex(randomblob(8))), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+1 second')
+          WHERE id = ?`,
+        author.kind,
+        author.kind === "agent" ? "00000000-0000-7000-8000-00000000e1f1" : null,
+        author.kind === "member" ? author.userId : null,
+        author.kind === "connector" ? "00000000-0000-7000-8000-00000000e1f2" : null,
+        cause,
+        id,
+      );
+    });
+  }
+
+  async function artifactRows(userId: UserId) {
+    return (await activity(userId)).items.filter((item) => item.kind === "artifact_updated");
+  }
+
+  async function artifactPinState(userId: UserId) {
+    const result = await workspace().listArtifactPins({ workspaceId: WORKSPACE_ID, userId });
+    if (!result.ok) throw new Error(`listArtifactPins refused: ${result.code}`);
+    return result.artifactPins.map((pin) => [pin.id, pin.currentVersion, pin.unread]);
+  }
+
+  it("given a pinned artifact Rally republishes, when the member reads Activity and their pins, then both say it was updated until they see that version", async () => {
+    await threadWithArtifacts();
+    await pinArtifact(ARTIFACT, OPEN_THREAD);
+    expect(await artifactPinState(MEMBER)).toEqual([[ARTIFACT, 1, false]]);
+
+    await republish(ARTIFACT, { kind: "agent" });
+
+    const [row] = await artifactRows(MEMBER);
+    expect(row).toMatchObject({
+      id: `artifact:${ARTIFACT}:2`, actorUserId: null, actorLabel: "Rally", threadId: OPEN_THREAD,
+      threadTitle: "Cold outreach", artifact: { resourceId: ARTIFACT, title: "Incident summary", version: 2 }, unread: true,
+    });
+    expect(await artifactPinState(MEMBER)).toEqual([[ARTIFACT, 2, true]]);
+    // Nobody else pinned it, so nobody else is told.
+    expect(await artifactRows(OWNER)).toEqual([]);
+
+    await workspace().recordActivityEvents({
+      workspaceId: WORKSPACE_ID, userId: MEMBER,
+      events: [{ kind: "read", subject: { kind: "artifact", resourceId: ARTIFACT }, through: 2 }],
+    });
+
+    expect((await artifactRows(MEMBER)).map((item) => item.unread)).toEqual([false]);
+    expect(await artifactPinState(MEMBER)).toEqual([[ARTIFACT, 2, false]]);
+  });
+
+  it("given an update to a pinned artifact, when the member marks all Activity read, then the pin is read too", async () => {
+    await threadWithArtifacts();
+    await pinArtifact(ARTIFACT, OPEN_THREAD);
+    await republish(ARTIFACT, { kind: "agent" });
+    const [row] = await artifactRows(MEMBER);
+    expect(await artifactPinState(MEMBER)).toEqual([[ARTIFACT, 2, true]]);
+
+    await workspace().markActivitySeen({ workspaceId: WORKSPACE_ID, userId: MEMBER, seenThrough: Date.parse(row!.occurredAt) });
+
+    expect((await artifactRows(MEMBER)).map((item) => item.unread)).toEqual([false]);
+    expect(await artifactPinState(MEMBER)).toEqual([[ARTIFACT, 2, false]]);
+  });
+
+  it("given the member's own edit or a connector refetch, when they read Activity, then neither is news to them", async () => {
+    await threadWithArtifacts();
+    await pinArtifact(ARTIFACT, OPEN_THREAD);
+
+    await republish(ARTIFACT, { kind: "member", userId: MEMBER });
+    await republish(ARTIFACT, { kind: "connector" }, "refetched");
+
+    expect(await artifactRows(MEMBER)).toEqual([]);
+    expect(await artifactPinState(MEMBER)).toEqual([[ARTIFACT, 3, false]]);
+  });
+
+  it("given a pinned artifact whose thread the member can no longer open, when Rally republishes it, then no row names it", async () => {
+    await threadWithArtifacts();
+    await pinArtifact(ARTIFACT, OPEN_THREAD);
+    await publish(OPEN_THREAD, [{
+      ...threadEffect("Cold outreach", { scope: "personal" }),
+      resourceLinks: [{ resourceId: ARTIFACT, watchEnabled: false, relationshipType: "generated" }],
+    } as ParentEffect], undefined, 3);
+
+    await republish(ARTIFACT, { kind: "agent" });
+
+    expect(await artifactRows(MEMBER)).toEqual([]);
+  });
+
+  it("given a republish of a pinned artifact, when the pushes are decided, then its pinner is sent that row and nobody else", async () => {
+    await threadWithArtifacts();
+    await pinArtifact(ARTIFACT, OPEN_THREAD);
+    await republish(ARTIFACT, { kind: "agent" });
+
+    const decided = await runInDurableObject(workspace(), (_instance, state) => {
+      // The ledger the trigger filled names the version; the drain empties it.
+      const updates = drainArtifactUpdates(state.storage.sql);
+      const subjects = updates.map((update) => ({
+        kind: "artifact" as const, threadId: OPEN_THREAD, substreamId: null, userId: MEMBER,
+        itemId: `artifact:${update.resourceId}:${update.version}`,
+      }));
+      const pushes = new WorkspaceActivityPushes(state.storage, new WorkspaceActivityFeed(state.storage, new WorkspaceSpaceStorage(state.storage)));
+      return {
+        updates,
+        audience: pushes.audience(subjects),
+        member: pushes.pending({ userId: MEMBER, accessClass: "member" }, subjects, new Set()).map((item) => item.id),
+        owner: pushes.pending({ userId: OWNER, accessClass: "member" }, subjects, new Set()).map((item) => item.id),
+        again: drainArtifactUpdates(state.storage.sql),
+      };
+    });
+
+    expect(decided).toEqual({
+      updates: [{ resourceId: ARTIFACT, version: 2 }],
+      audience: { everyone: false, userIds: [MEMBER] },
+      member: [`artifact:${ARTIFACT}:2`],
+      owner: [],
+      again: [],
+    });
+  });
+
+  it("given an unpin, then the member's sockets alone are told to read Activity again, since its rows went with the pin", async () => {
+    await threadWithArtifacts();
+    await pinArtifact(ARTIFACT, OPEN_THREAD);
+    await republish(ARTIFACT, { kind: "agent" });
+    const latest = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
+      topics_json: string; audience_json: string | null;
+    }>("SELECT topics_json, audience_json FROM workspace_sync_events ORDER BY waterline DESC LIMIT 1").toArray());
+    const before = await latest();
+
+    await workspace().changeArtifactPin({ workspaceId: WORKSPACE_ID, userId: MEMBER, itemId: ARTIFACT, threadId: null, pinned: false });
+
+    expect(await artifactRows(MEMBER)).toEqual([]);
+    const after = await latest();
+    expect(after).not.toEqual(before);
+    expect(after).toEqual([{ topics_json: JSON.stringify(["activity"]), audience_json: JSON.stringify([MEMBER]) }]);
+  });
+
+  it("given two pinned artifacts, when the member moves the second up, then they list in the new order", async () => {
+    await threadWithArtifacts();
+    await pinArtifact(ARTIFACT, OPEN_THREAD);
+    await pinArtifact(OTHER_ARTIFACT, OPEN_THREAD);
+
+    const moved = await workspace().reorderArtifactPins({ workspaceId: WORKSPACE_ID, userId: MEMBER, ids: [OTHER_ARTIFACT, ARTIFACT] });
+
+    expect(moved.ok && moved.artifactPins.map((pin) => pin.id)).toEqual([OTHER_ARTIFACT, ARTIFACT]);
   });
 });
 

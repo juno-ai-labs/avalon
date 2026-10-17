@@ -8,6 +8,8 @@ enum RallyDeepLink {
         var spaceId: String? = nil
         var workstreamId: String
         var substreamId: String
+        /// The artifact a desktop opens the thread onto; this app opens the thread.
+        var artifactId: String? = nil
     }
 
     static func authTicket(from url: URL) -> String? {
@@ -37,12 +39,17 @@ enum RallyDeepLink {
            parts.count == 7 || parts.count == 9,
            let workstreamId = uuidFromBase58(parts[6]) {
             var substreamId = SubstreamAddress.main
+            var artifactId: String? = nil
             if parts.count == 9 {
-                guard parts[7] == "b", let decoded = uuidFromBase58(parts[8]) else { return nil }
-                substreamId = decoded
+                guard let decoded = uuidFromBase58(parts[8]) else { return nil }
+                switch parts[7] {
+                case "b": substreamId = decoded
+                case "a": artifactId = decoded
+                default: return nil
+                }
             }
             return WorkstreamTarget(region: region, workspaceId: workspaceId, spaceId: spaceId,
-                                    workstreamId: workstreamId, substreamId: substreamId)
+                                    workstreamId: workstreamId, substreamId: substreamId, artifactId: artifactId)
         }
         if url.scheme == "rallywithai", url.host == "workspace",
            parts.count == 6 || parts.count == 8,
@@ -51,12 +58,17 @@ enum RallyDeepLink {
            parts[2] == "spaces", let spaceId = uuidFromBase58(parts[3]),
            parts[4] == "channels", let workstreamId = uuidFromBase58(parts[5]) {
             var substreamId = SubstreamAddress.main
+            var artifactId: String? = nil
             if parts.count == 8 {
-                guard parts[6] == "breakouts", let decoded = uuidFromBase58(parts[7]) else { return nil }
-                substreamId = decoded
+                guard let decoded = uuidFromBase58(parts[7]) else { return nil }
+                switch parts[6] {
+                case "breakouts": substreamId = decoded
+                case "artifacts": artifactId = decoded
+                default: return nil
+                }
             }
             return WorkstreamTarget(region: region, workspaceId: workspaceId, spaceId: spaceId,
-                                    workstreamId: workstreamId, substreamId: substreamId)
+                                    workstreamId: workstreamId, substreamId: substreamId, artifactId: artifactId)
         }
         if url.scheme == "rallywithai", url.host == "workstreams" {
             guard let workstreamId = parts.first, !workstreamId.isEmpty, workstreamId != "new" else {

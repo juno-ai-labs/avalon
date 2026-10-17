@@ -18,6 +18,7 @@ import {
   type MyThreadsPage,
   type PinKind,
   type PinList,
+  type ArtifactPinList,
   type SpaceDefaultKind,
   type SpaceErrorCode,
   type SpaceId,
@@ -40,6 +41,8 @@ import {
   WorkspaceMyThreadsResultSchema,
   WorkspacePinResultSchema,
   type WorkspacePinResult,
+  WorkspaceArtifactPinResultSchema,
+  type WorkspaceArtifactPinResult,
   WorkspaceSpaceChannelPageResultSchema,
   WorkspaceSpaceDefaultResultSchema,
   WorkspaceContainerOrderResultSchema,
@@ -363,10 +366,46 @@ export class SpaceService {
   private pins(result: WorkspacePinResult): PinList {
     const parsed = WorkspacePinResultSchema.parse(result);
     if (parsed.ok) return parsed.pins;
-    if (parsed.code === "pin_limit_reached") {
-      return this.refusePin(409, parsed.code, "You have pinned as many items as Rally allows");
+    return this.refusePinCode(parsed.code);
+  }
+
+  private refusePinCode(code: "pin_target_not_found" | "pin_limit_reached"): never {
+    if (code === "pin_limit_reached") {
+      return this.refusePin(409, code, "You have pinned as many items as Rally allows");
     }
-    return this.refusePin(404, parsed.code, "Nothing you can see has that id");
+    return this.refusePin(404, code, "Nothing you can see has that id");
+  }
+
+  async listArtifactPins(): Promise<ArtifactPinList> {
+    return this.artifactPins(await (await this.workspace()).listArtifactPins({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+    }));
+  }
+
+  async changeArtifactPin(itemId: string, threadId: WorkstreamId | null, pinned: boolean): Promise<ArtifactPinList> {
+    return this.artifactPins(await (await this.workspace()).changeArtifactPin({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      itemId,
+      threadId,
+      pinned,
+    }));
+  }
+
+  async reorderArtifactPins(ids: string[]): Promise<ArtifactPinList> {
+    return this.artifactPins(await (await this.workspace()).reorderArtifactPins({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      ids,
+    }));
+  }
+
+  private artifactPins(result: WorkspaceArtifactPinResult): ArtifactPinList {
+    const parsed = WorkspaceArtifactPinResultSchema.parse(result);
+    if (parsed.ok) return parsed.artifactPins;
+    if (parsed.code === "space_access_denied") throw spaceRefusal(parsed.code, "");
+    return this.refusePinCode(parsed.code);
   }
 
   private refusePin(status: 404 | 409, code: string, message: string): never {

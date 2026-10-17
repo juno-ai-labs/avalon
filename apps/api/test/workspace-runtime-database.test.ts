@@ -225,6 +225,7 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_container_order",
   "workspace_pinned_order", // All's Pinned order; read and written only by the Space authority.
   "workspace_pins", // Every pin; read and written only by the pin RPCs.
+  "workspace_artifact_updates", // Filled by a resource_versions trigger, drained by the object after each write.
   "workspace_activity_seen", // How far each person read Activity; only the Activity RPCs.
   "workspace_activity_reads", // How far each person read each subject for Activity; only the Activity RPCs.
   "workspace_activity_pushes", // Which Activity rows went to whom as a push; only the directory follow-up.

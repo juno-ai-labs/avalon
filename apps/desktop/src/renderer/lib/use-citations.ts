@@ -53,9 +53,11 @@ function documentVerdict(error: unknown): boolean {
   return error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
 }
 
-export function useCitations({ actions, loadResourceContent, onOpenPreview, onOpenResourceDetails, resources }: {
+export function useCitations({ actions, loadResourceContent, onOpenPreview, onOpenResourceDetails, pinned, resources }: {
   /** The host's right-click actions for a cited resource; absent offers none. */
   actions?: CitationContext['actions'];
+  /** Whether this person pinned a cited resource; absent reads as none. */
+  pinned?: CitationContext['pinned'];
   /**
    * The preview route, or absent on a surface that has none. It is the same
    * read the rail's detail makes, deliberately: the embed card's excerpt and
@@ -222,6 +224,7 @@ export function useCitations({ actions, loadResourceContent, onOpenPreview, onOp
     if (!entry || entry.citation.resourceType === 'generated_site') return undefined;
     return {
       name: entry.citation.title,
+      resourceId: entry.citation.id,
       ...(entry.citation.mimeType ? { mimeType: entry.citation.mimeType } : {}),
       ...(entry.contentAvailable && loadResourceContent ? {
         loadContent: (signal?: AbortSignal) => loadResourceContent(entry.citation.id, signal),
@@ -270,6 +273,6 @@ export function useCitations({ actions, loadResourceContent, onOpenPreview, onOp
     openPreview(target.resourceId, document.activeElement instanceof HTMLElement ? document.activeElement : document.body);
   }, [openPreview]);
 
-  return useMemo(() => ({ open, openPreview, preview, resolve, loadContent, ...(actions ? { actions } : {}) }),
-    [actions, open, openPreview, preview, resolve, loadContent]);
+  return useMemo(() => ({ open, openPreview, preview, resolve, loadContent, ...(actions ? { actions } : {}), ...(pinned ? { pinned } : {}) }),
+    [actions, open, openPreview, pinned, preview, resolve, loadContent]);
 }

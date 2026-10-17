@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, type PropsWithChildren } from 're
 /**
  * How a detail hands the actions that belong to *it* to its host's header.
  *
- * A rail or lightbox header already owns the surface's own controls: the title,
+ * A panel header already owns the surface's own controls: the title,
  * versions, archive, close. What it cannot know is that the thing it is showing
  * has controls of its own, and a detail that draws them in its body puts chrome
  * inside the content — which, for a live artifact, means a row of buttons that
