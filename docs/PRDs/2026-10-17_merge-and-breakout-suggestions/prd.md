@@ -23,12 +23,19 @@
   the result up, branching a side question out, or nothing. Most answers are
   nothing, and nothing is the default the design protects.
 - **A positive is one suggestion on that turn**, of kind `merge_up` or
-  `start_breakout`, drawn as a quiet line under Rally's message for the people
-  who can act on it, never in the composer. Accepting a merge opens the
-  composer's existing merge mode prefilled with that turn. Accepting a
-  Breakout opens the existing launch pane at that turn with a drafted opening
-  prompt. The person edits and sends. **Rally never merges or starts a
-  Breakout on its own.**
+  `start_breakout`, drawn as a dashed chip under Rally's message for the
+  people who can act on it, never in the composer: Rally's mark, a title
+  naming the action and its target, one sentence saying what happens next,
+  the action, and a dismiss. Accepting a merge opens a
+  **response card** in the feed, in the line's place: the merge as the parent
+  will draw it, prefilled with the turn and editable. Accepting a Breakout
+  opens the existing launch pane at that turn with a drafted opening prompt.
+  The person edits and confirms. **Rally never merges or starts a Breakout on
+  its own.**
+- **Every merge moves to the response card.** The Merge hover action and the
+  title menu open the same card, under the turn or at the end of the feed.
+  The composer's merge mode from merge-back is retired; the composer is for
+  messages.
 - **Quiet by construction.** A suggestion is drawn only while its turn is one
   of the newest three messages in the conversation; after that it hides for
   good, acted on or not. A dismissal removes it for everyone, and it never
@@ -79,7 +86,7 @@ phase measures before it shows.
 1. After a settled Rally turn that holds something the parent's readers need
    now (a deliverable, a decision, an answer, a milestone, or a question only
    they can settle), the people who can merge see one suggestion under that
-   turn to merge it up, and accepting it opens the existing merge composer
+   turn to merge it up, and accepting it opens a response card in the feed
    prefilled with the turn's text and target.
 2. After a settled Rally turn in a Thread that opened a distinct piece of work
    beside the purpose, the people who can post see one suggestion under that
@@ -97,6 +104,9 @@ phase measures before it shows.
 6. The run itself is unchanged: the final turn, `stream_completed` and the
    run's terminal state land exactly as today, and the judgement runs after
    them.
+7. Every merge, from a suggestion, the Merge hover action or the title menu,
+   is made in the response card. The composer's merge mode is gone, and the
+   merge route, its admission and what lands in the parent are unchanged.
 
 ## Non-goals
 
@@ -139,24 +149,33 @@ gates in [design.md](design.md#the-gates) pass. The judgement runs in the run's
 settlement lane, after the final turn is visible, so a person reading the
 answer sees the suggestion arrive a moment later, never before.
 
-**What they see.** One line under Rally's turn, after its attachments and
-its hover action row, in the row where "Breakouts from this message" chips
-are drawn, with Rally's mark, the action and a dismiss:
+**What they see.** A suggestion chip under Rally's turn, after its
+attachments and its hover action row, in the row where "Breakouts from this
+message" chips are drawn: a dashed outline, because the thing it names does
+not exist yet, with Rally's mark, a title, one sentence of context for
+someone who has never seen one, the action, and a dismiss:
 
-- `merge_up` in a Breakout: "**Cold Outreach** should see this. **Merge to
-  thread** · Dismiss"
-- `merge_up` in a Thread: the same, naming the default Channel the Merge
-  button would pick: "**GTM** should see this. **Merge to GTM** · Dismiss"
-- `start_breakout` in a Thread: "**Starter tier** reads as its own piece of
-  work. **Start a breakout** · Dismiss"
+- `merge_up` in a Breakout: title "Merge to **Cold Outreach**"; sentence
+  "Rally thinks the thread should see this. You'll edit a short note before
+  it posts there."; action **Merge**.
+- `merge_up` in a Thread: title "Merge to **GTM**" with the Channel menu's
+  caret; sentence "Rally thinks the Channel should see this. You'll edit a
+  short note before it posts there."; action **Merge**.
+- `start_breakout` in a Thread: title "Breakout: **Starter tier**"; sentence
+  "Rally thinks this is its own piece of work. You'll edit the opening prompt
+  before it starts.", followed by the first line of the drafted prompt;
+  action **Start**.
 
-The sentences are fixed strings per kind with one slot for a name; nothing
-in them is generated. What a merge carries is not always a result, so the
-merge sentence names the target and claims nothing about the kind of thing.
-A typed form ("This reads as a decision for Cold Outreach") is possible from
-a second classifier label the design records from the first shadow run, and
-is shown only once that label has proved accurate. The wording is a draft
-for design to settle. The shape is fixed: one line
+The title and the sentence are fixed strings per kind with one slot for a
+name; nothing in them is generated except a Breakout's subject, which the
+drafter returns beside the prompt. The sentence exists for a new person: it
+says whose idea this is, what pressing it does, and that nothing posts or
+starts without them. What a merge carries is not always a result, so the
+merge title names the target and claims nothing about the kind of thing. A
+typed form ("Rally thinks this is a decision Cold Outreach should see") is
+possible from a second classifier label the design records from the first
+shadow run, and is shown only once that label has proved accurate. The
+wording is a draft for design to settle. The shape is fixed: one line
 under the turn, one action, one dismiss, nothing in the composer and no card
 in the feed. The mockups are in [design-mockups.html](design-mockups.html).
 
@@ -170,10 +189,27 @@ and the constant that holds it cites this PRD. Two or three lines can be
 visible at once when the newest three turns are all results; each stays on
 its own turn.
 
-**Accepting a merge** opens the composer in merge mode, prefilled with the
-judged turn's text and the default target, exactly as pressing that turn's
-Merge hover action does. The person edits and merges, or cancels. When the
-merge lands in this conversation, the suggestion resolves as `accepted`.
+**Accepting a merge** opens the response card in the feed, in the line's
+place under the turn, prefilled with the judged turn's text, its embedded
+artifacts and the default target. The person edits and merges, or cancels,
+and the line comes back. When the merge lands in this conversation, the
+suggestion resolves as `accepted`.
+
+**The response card.** The merge as the parent will draw it, editable in
+place: the same block the Thread or the Channel shows once a merge lands
+(the source's mark and name, "merged by" and the person, the words, the
+embeds, and in a Channel the thread's quote line), in a card where the words
+can be edited and an embed taken out. Under it, the audience line merge mode
+used to carry ("The 6 people in Cold Outreach will see this and can open
+Sequence B."), the target pill with its Channel menu for a Thread, Cancel and
+Merge. Enter merges, Shift+Enter breaks a line, Esc cancels. It opens where
+the merge was asked for: under a turn from a suggestion or that turn's Merge
+hover action, and at the end of the feed, empty, from the title menu. There
+is one card open at a time, and the composer below it stays an ordinary
+composer. The merge route, the admission, the retry on a kept
+`clientMessageId` and the reveal of the landed merge are unchanged from
+merge-back; only the editor moved. Summarize, merge-back's phase 2, becomes
+a button on the card.
 
 **Accepting a Breakout** opens the launch pane with the judged turn as the
 cutoff, exactly as that turn's New breakout action does, with the drafted
@@ -194,10 +230,10 @@ Main; a member who can post in an Organization-wide Thread's Channel); for
 `start_breakout`, a viewer who can post. Everyone else sees nothing.
 
 **States.** Nothing on the turn: no line. Open: the line, while the turn is
-among the newest three. Accepting: the composer is in merge mode or the
-launch pane is open, and the line stays on the turn until the merge or the
-Breakout lands. Dismissed, accepted or aged out: no line. Offline: the client
-shows what it last knew and the socket reconciles.
+among the newest three. Accepting: the response card is open in the line's
+place, or the launch pane is open, until the merge or the Breakout lands or
+the person cancels. Dismissed, accepted or aged out: no line. Offline: the
+client shows what it last knew and the socket reconciles.
 
 **Rally's own voice.** Rally does not mention the suggestion in the transcript,
 and the suggestion does not enter the model's history. If a person asks Rally
@@ -207,10 +243,16 @@ to merge, `conversation_merge` works as it does today.
 
 ## Impact on the product contract
 
-None. Rally proposes and a person acts, which is the relationship the merge-back
-PRD set. This is not a tool confirmation: Rally's own tool calls run without
-asking, as the tool execution product policy requires; the suggestion is about
-what the person might do next, not about letting Rally proceed.
+None to the brief. Rally proposes and a person acts, which is the
+relationship the merge-back PRD set. This is not a tool confirmation: Rally's
+own tool calls run without asking, as the tool execution product policy
+requires; the suggestion is about what the person might do next, not about
+letting Rally proceed.
+
+One shipped behavior does change: merge-back's composer merge mode is
+replaced by the response card for every merge. That PRD is complete and
+frozen, so the change is recorded here and, when it ships, in
+[`conversation-merge.md`](../../conversation-merge.md), per `prds.md`.
 
 ## Decision log
 
@@ -289,7 +331,17 @@ None yet.
    person's dismissals" was about suppressing future suggestions across a
    workspace, and that is not done here: pacing is per conversation and its
    numbers are the team's.
-10. **Every pacing number is defined open.** A cooldown after a dismissal is a
+10. **Merging happens in a response card in the feed, not in the composer.**
+    The product owner's call, and it holds for every merge: the composer is
+    for what a person is writing to the conversation, and a merge is written
+    to the parent. The card is the parent's own merge block made editable,
+    so what the person sees is what lands, which merge mode's plain text box
+    could not promise. It opens where the merge was asked for, so a person
+    merging a turn is looking at that turn while they write. Rejected:
+    keeping merge mode for the hover action and the title menu and using the
+    card only for suggestions, which is two editors for one write and the
+    thing a person would have to learn twice.
+11. **Every pacing number is defined open.** A cooldown after a dismissal is a
     limit under `adding-security-defensive-and-other-limits.md`: the mechanism
     is built and tested, the value is `0` until the team sets it from the
     shadow data, and the handover table in [design.md](design.md#limits-handed-back)
@@ -349,8 +401,9 @@ structured-inference gateway; neither is a tool.
   person can see: the settlement step, the classifier, the diagnostics role,
   the eval scaffold. No flag, because there is no surface to flag.
 - **Phase 2, the surface.** Ships the slot, the socket event under a new
-  client contract, the composer line and both accept paths, and the drafting
-  role on its own model flag, `agent-model-breakout-suggestion`, defaulting to
+  client contract, the line under the turn, the response card for every
+  merge with the composer's merge mode removed, the breakout accept path,
+  and the drafting role on its own model flag, `agent-model-breakout-suggestion`, defaulting to
   `OPENROUTER_STRUCTURED_MODEL`. The default for a visible feature is to ship
   to everybody on merge. **This PRD recommends a flag instead**, and records
   that an engineer has to ask for one: `conversationSuggestionsEnabled`,
@@ -368,9 +421,12 @@ structured-inference gateway; neither is a tool.
 ## Acceptance
 
 - In a Breakout, Rally's final turn is a finished deliverable: within a few
-  seconds the composer shows the merge line; pressing it opens merge mode
-  prefilled with that turn; merging resolves the line and the Thread shows the
-  merge as today.
+  seconds the merge line appears under it; pressing it opens the response card
+  in its place, prefilled with that turn; merging resolves the line and the
+  Thread shows the merge as today.
+- The Merge hover action and the title menu's Merge row open the same card,
+  under the turn and at the end of the feed; the composer never enters merge
+  mode.
 - In a Thread, Rally's final turn proposes to work a sub-problem separately:
   the breakout line appears; pressing it opens the launch pane at that turn
   with a drafted prompt; submitting creates the Breakout and resolves the line.
@@ -387,8 +443,9 @@ structured-inference gateway; neither is a tool.
 
 ## Open questions
 
-- **The wording of the line.** The placement is settled: under the turn,
-  never in the composer. The sentences in the mockups are a draft.
+- **The wording of the chip.** The placement and shape are settled: a
+  suggestion chip under the turn, never in the composer. The titles and
+  sentences in the mockups are a draft.
 - **Whether a Thread to Channel suggestion is wanted in the first visible
   version.** It is the sparser class and the one whose false positive is
   shown to more people. The recommendation is to run both kinds in shadow and

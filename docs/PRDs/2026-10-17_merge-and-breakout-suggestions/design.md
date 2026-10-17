@@ -47,8 +47,10 @@ overlay is their composition.
 | Conversation suggestion slot | `SubstreamAgent` table `conversation_suggestions`, a socket event, a dismiss route | One suggestion per judged turn, its lifecycle, its resolution record, and the newest-three rule that retires it | Who produced it or why |
 | Breakout prompt drafter | `apps/api/src/services/breakout-suggestion-service.ts`, a `runStructuredInference` role | Writing an opening prompt a person edits | Whether the prompt is ever shown |
 
-The client adds one block that reads the slot and performs its two actions
-through code that exists: the merge composer mode and the launch pane.
+The client adds two blocks: the line, which reads the slot, and the
+response card, which replaces the composer's merge mode for every merge and
+calls the merge route merge mode called. The breakout action opens the launch
+pane that exists.
 
 ### The settlement observer
 
@@ -308,28 +310,50 @@ positives. It does not run in shadow.
 
 ### The client
 
-- **The line.** Drawn under the judged turn by `MessageBlock` in
+- **The chip.** Drawn under the judged turn by `MessageBlock` in
   `workstream-blocks.tsx`, in the `cardsAfter` row of `message-feed.tsx` where
   "Breakouts from this message" chips already sit, after the turn's
-  attachments and its hover action row: Rally's mark, the sentence, the action
-  pill (the merge target pill's style for `merge_up`, the breakout tint for
-  `start_breakout`), Dismiss, and for a Breakout the draft's first line. Drawn
+  attachments and its hover action row: a dashed outline, Rally's mark, the
+  title, the sentence, the action pill (the merge target pill's style for
+  `merge_up`, the breakout tint for `start_breakout`), a dismiss, and for a
+  Breakout the draft's first line. Drawn
   only while the turn is among the newest three messages the feed holds, and
   only when the viewer passes `mergeTargetFor` (for `merge_up`) or can post
   (for `start_breakout`). Never in the composer: `ComposerInput`'s notice slot
   stays merge mode's.
 - **The words** are fixed strings chosen by the kind, with one slot for a
   name, pinned by a test. JEV returns a label, never prose, so nothing is
-  generated for the merge line. `merge_up`: "{target} should see this.", the
-  target being the Thread for a Breakout and the default Channel for a Thread.
-  Once `carried_item_kind` has earned it, the typed form "This reads as a
-  {kind} for {target}." replaces it. `start_breakout`: "{subject} reads as its
-  own piece of work.", the subject being a short label the drafter returns
-  beside the prompt, and "This reads as its own piece of work." when there is
-  no draft.
-- **Accept merge** calls the existing merge-mode opener with the judged turn's
-  text and the suggestion's target, which is what the turn's `MergeButton`
-  calls.
+  generated for the merge chip. `merge_up`: title "Merge to {target}", the
+  target being the Thread for a Breakout and the default Channel for a
+  Thread; sentence "Rally thinks the thread should see this. You'll edit a
+  short note before it posts there." (or "the Channel"). Once
+  `carried_item_kind` has earned it, the typed sentence "Rally thinks this is
+  a {kind} the thread should see." replaces the first clause.
+  `start_breakout`: title "Breakout: {subject}", the subject being a short
+  label the drafter returns beside the prompt, and "Breakout" alone when
+  there is no draft; sentence "Rally thinks this is its own piece of work.
+  You'll edit the opening prompt before it starts.", followed by the draft's
+  first line. The second clause of each sentence is there for a person who
+  has never seen the chip: it says nothing posts or starts without them.
+- **Accept merge** opens the response card in the line's place, prefilled
+  with the judged turn's text and the suggestion's target.
+- **The response card** is `MergeResponseCard` in `packages/ui`, beside
+  `MergeMessage` and built from its layout, so the editable preview and the
+  landed merge are one block in two states. Its state lives on
+  `ConversationSurface` as one open merge draft: the anchor turn (or none,
+  from the title menu), the target, the words, and the embeds parsed from
+  them with `mergeResourceIds`. `MergeButton`, the title menu's Merge row and
+  the suggestion pill all open it; `mergeTargetFor` still decides who may.
+  It is drawn in the `cardsAfter` row under the anchor turn, or after the
+  newest turn when there is none. Merge calls `POST
+  /conversations/:parentId/merge` exactly as merge mode did, keeping one
+  `clientMessageId` for the same words and target so a lost response is
+  retried as a replay, and `onMerged` reveals the landed merge as today. The
+  draft persists under the existing `…:merge` draft key until merged or
+  cancelled. The composer's merge mode is removed: the `notice`,
+  `toolsAccessory` and `submitContent` slots stay on `ComposerInput` for
+  other modes, and `mergeDraftKey`, the audience line and the target pill
+  move into the card.
 - **Accept breakout** calls `onStartSubstream(judgedTurnId)` and seeds the
   launch composer's draft with `draftText`. `ConversationSubstreamLaunch` gains
   an optional `initialDraft`, written to the launch composer's draft key once
@@ -337,8 +361,9 @@ positives. It does not run in shadow.
 - **Dismiss** calls the route and hides the line at once; the event confirms.
 - **Verification** per the rule for visible changes: the desktop under Xvfb,
   Playwright over DevTools, screenshots of the line in a Breakout, in a Thread,
-  on the third newest turn and gone on the fourth, in merge mode after
-  accepting, and in the launch pane after accepting.
+  on the third newest turn and gone on the fourth, the response card under a
+  turn and at the end of the feed, a Channel card with its quote line, and the
+  launch pane after accepting.
 
 ## Shadow mode and the corpus
 
@@ -468,7 +493,7 @@ open-value test.
 | `apps/api/test-workers/turn-disposition-settlement.test.ts` (workerd) | A completed Breakout run with a fetch double answering `worth_carrying_up` leaves one open `merge_up` row and one event; a Thread run answering the breakout outcome leaves `start_breakout`; `continue_here` leaves nothing; a failed run and an unreachable provider leave settlement, naming and description untouched; a replayed settlement writes once; a merge marker resolves the row `accepted`; a capture at the judged turn resolves it; the third newer message expires it as `ignored` and the second does not; unread and the directory are unchanged | Skip the expiry write (the open row survives a fourth message); skip the idempotency gate (two rows); move the step before the terminal commit (the turn is not yet final) |
 | `apps/api/test/conversation-suggestions-route.test.ts` (Node, typed double) | The dismiss route's admission and refusal codes; the snapshot field under contract 8 and its absence under 7 | Return the field to a contract-7 build |
 | `apps/api/test/agent-model-flags.test.ts` | The new role is routed, flagged and metered; the exhaustiveness checks on `AGENT_MODEL_FLAG_KEYS` and `ORGANIZATION_PAYS` compile | Type-level |
-| Renderer (`screens/workstream.test.tsx`, `components/workstream-blocks.test.tsx`) | The line draws under the judged turn for a viewer who can act and not for one who cannot; it draws on the third newest turn and not on the fourth; the composer carries nothing; accept opens merge mode with the judged text; accept opens the launch pane with the draft; dismiss hides at once | Component-level |
+| Renderer (`screens/workstream.test.tsx`, `components/workstream-blocks.test.tsx`, a new `merge-response-card.test.tsx` in `packages/ui`) | The line draws under the judged turn for a viewer who can act and not for one who cannot; it draws on the third newest turn and not on the fourth; the composer carries nothing and never enters merge mode; accept opens the card in the line's place with the judged text and embeds; the hover action and the title menu open the same card, under the turn and at the end of the feed; Merge calls the route with the kept `clientMessageId`; Esc restores the line; accept opens the launch pane with the draft; dismiss hides at once | Component-level |
 | `packages/agent-harness/evals/turn-disposition/` | The runner on the synthetic fixture; the corpus is never committed | Not a test; the eval |
 
 The prompt's golden hash and the pinned question bytes are the regression
@@ -486,8 +511,9 @@ moved, as `semantic-trigger-gate.ts` records.
   deleted when the classifier ships, per that file's rule.
 - `docs/workstream-durable-object.md`: migration v75, the socket event, the
   snapshot field, contract 8.
-- `docs/conversation-merge.md`: merge mode opened from a suggestion;
-  `markSource` resolving a row.
+- `docs/conversation-merge.md`: the response card replaces the composer's
+  merge mode for every merge (the drift from the frozen merge-back PRD is
+  recorded there, per `prds.md`); `markSource` resolving a row.
 - `docs/substream-creation.md`: the launch pane's `initialDraft`; the capture
   resolving a row.
 - `docs/feature-flags.md`: the `breakout_suggestion` role and flag, and
@@ -515,8 +541,9 @@ Each phase is a pull request or two with its own acceptance gate. The
 3. **Surface.** Migration v75 and the slot; the socket event and snapshot field
    under contract 8; the dismiss route; resolution from `markSource` and from
    the capture; supersession; gate 6 with its open constants and both tests;
-   the line under the turn with the newest-three rule, and both accept paths;
-   `initialDraft` on the launch pane;
+   the line under the turn with the newest-three rule; the response card for
+   every merge, with the composer's merge mode removed; the breakout accept
+   path and `initialDraft` on the launch pane;
    the drafter role, flag and prompt; the product flag if asked for, registered
    in Ace in this phase. Gate: the workerd suite above; the four screenshots;
    the acceptance flows in the PRD walked on staging.
