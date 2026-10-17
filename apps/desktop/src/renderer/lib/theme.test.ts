@@ -1,6 +1,6 @@
 import "../../../../../tests/isolated-region";
 import { renderHook } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DEVICE_PREFERENCES_STORAGE_KEY, readDevicePreferences } from './device-preferences';
 import {
@@ -232,6 +232,56 @@ describe('theme', () => {
 
       vi.stubGlobal('rally', undefined);
       expect(() => watchThemeBroadcast()()).not.toThrow();
+    });
+  });
+
+  describe('what the host is told', () => {
+    // The pair the browser's entry document carries, so the paint before the
+    // script runs follows the phone. Both start on a colour neither appearance
+    // uses, so a tag the apply skipped is told apart from one it wrote.
+    function installThemeColorPair(): HTMLMetaElement[] {
+      return ['(prefers-color-scheme: light)', '(prefers-color-scheme: dark)'].map((media) => {
+        const meta = document.createElement('meta');
+        meta.name = 'theme-color';
+        meta.setAttribute('media', media);
+        meta.content = '#123456';
+        document.head.append(meta);
+        return meta;
+      });
+    }
+
+    afterEach(() => {
+      for (const meta of document.head.querySelectorAll('meta[name="theme-color"]')) meta.remove();
+    });
+
+    it('writes the applied canvas into every theme-color tag', () => {
+      installMatchMedia(false);
+      const [light, dark] = installThemeColorPair();
+
+      applyTheme('dark');
+      expect(light?.content).toBe('#070707');
+      expect(dark?.content).toBe('#070707');
+
+      applyTheme('light');
+      expect(light?.content).toBe('#fcfcfc');
+      expect(dark?.content).toBe('#fcfcfc');
+    });
+
+    it('resolves system against the phone before writing it', () => {
+      installMatchMedia(true);
+      const [light] = installThemeColorPair();
+
+      applyTheme('system');
+
+      expect(light?.content).toBe('#070707');
+    });
+
+    it('adds no tag to a document that carries none', () => {
+      installMatchMedia(true);
+
+      applyTheme('dark');
+
+      expect(document.head.querySelector('meta[name="theme-color"]')).toBeNull();
     });
   });
 
