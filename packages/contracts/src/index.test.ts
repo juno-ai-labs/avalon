@@ -46,6 +46,9 @@ import {
   WORKSTREAM_SIDEBAR_FACEPILE_LIMIT,
   workstreamParticipantPreview,
   MemberPreferencesUpdateSchema,
+  runRequesterUserId,
+  asUserId,
+  AutomationRunReferenceV1Schema,
 } from "./index";
 
 const id = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0";
@@ -1673,5 +1676,43 @@ describe("member preference saves", () => {
   it("leaves out every kind a save does not name, defaulted kinds included", () => {
     expect(MemberPreferencesUpdateSchema.parse({ notify: { mentions: ["email"] } }))
       .toEqual({ notify: { mentions: ["email"] } });
+  });
+});
+
+describe("who asked for a run", () => {
+  const person = { type: "user" as const, userId: asUserId("00000000-0000-7000-8000-000000000001") };
+  const sidekickRun = (trigger: unknown) => AutomationRunReferenceV1Schema.parse({
+    schemaVersion: 1,
+    automationId: "00000000-0000-7000-8000-000000000002",
+    runId: "00000000-0000-7000-8000-000000000003",
+    definitionRevision: 1,
+    trigger,
+  });
+
+  it("is the person a run acts for, whoever started a Sidekick by hand, and nobody for a scheduled Sidekick", () => {
+    expect(runRequesterUserId({ executionPrincipal: person, automationRun: undefined, automationContinuation: undefined }))
+      .toBe("00000000-0000-7000-8000-000000000001");
+    expect(runRequesterUserId({
+      executionPrincipal: person,
+      automationRun: sidekickRun({ kind: "manual", requestedByUserId: "00000000-0000-7000-8000-000000000004" }),
+    })).toBe("00000000-0000-7000-8000-000000000004");
+    expect(runRequesterUserId({
+      executionPrincipal: person,
+      automationRun: sidekickRun({
+        kind: "schedule", scheduleId: "00000000-0000-7000-8000-000000000005", scheduleKind: "interval", plannedFor: 0,
+      }),
+    })).toBeNull();
+    // A turn continuing a Sidekick run was asked for by whoever sent it, or nobody.
+    const scheduled = sidekickRun({
+      kind: "schedule", scheduleId: "00000000-0000-7000-8000-000000000005", scheduleKind: "interval", plannedFor: 0,
+    });
+    const continuation = { stopGeneration: 0, senderName: "Theo", source: { kind: "run" as const } };
+    expect(runRequesterUserId({
+      executionPrincipal: person,
+      automationRun: scheduled,
+      automationContinuation: { ...continuation, senderUserId: asUserId("00000000-0000-7000-8000-000000000006") },
+    })).toBe("00000000-0000-7000-8000-000000000006");
+    expect(runRequesterUserId({ executionPrincipal: person, automationRun: scheduled, automationContinuation: continuation }))
+      .toBeNull();
   });
 });

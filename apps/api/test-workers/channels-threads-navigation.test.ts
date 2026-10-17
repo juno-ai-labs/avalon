@@ -785,14 +785,14 @@ describe("artifact pins", () => {
   /** A new version of a stored artifact, staged the way a producer stages one. */
   async function republish(
     id: string,
-    author: { kind: "agent" } | { kind: "member"; userId: UserId } | { kind: "connector" },
+    author: { kind: "agent"; onBehalfOf?: UserId } | { kind: "member"; userId: UserId } | { kind: "connector" },
     cause: "published" | "refetched" = "published",
   ): Promise<void> {
     await runInDurableObject(workspace(), (_instance, state) => {
       state.storage.sql.exec(
         `UPDATE resources
             SET revision_author_kind = ?, revision_author_run_id = ?, revision_author_user_id = ?,
-                revision_author_connection_id = ?, revision_cause = ?,
+                revision_author_connection_id = ?, revision_cause = ?, revision_on_behalf_of_user_id = ?,
                 content_sha256 = lower(hex(randomblob(8))), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+1 second')
           WHERE id = ?`,
         author.kind,
@@ -800,6 +800,7 @@ describe("artifact pins", () => {
         author.kind === "member" ? author.userId : null,
         author.kind === "connector" ? "00000000-0000-7000-8000-00000000e1f2" : null,
         cause,
+        author.kind === "agent" ? author.onBehalfOf ?? null : null,
         id,
       );
     });
@@ -862,6 +863,30 @@ describe("artifact pins", () => {
 
     expect(await artifactRows(MEMBER)).toEqual([]);
     expect(await artifactPinState(MEMBER)).toEqual([[ARTIFACT, 3, false]]);
+  });
+
+  it("given Rally revising a pinned artifact for one pinner, then it is news to another pinner and not to them, pushes included", async () => {
+    await threadWithArtifacts();
+    await pinArtifact(ARTIFACT, OPEN_THREAD);
+    await pinArtifact(ARTIFACT, OPEN_THREAD, OWNER);
+
+    await republish(ARTIFACT, { kind: "agent", onBehalfOf: MEMBER });
+
+    expect(await artifactRows(MEMBER)).toEqual([]);
+    expect(await artifactPinState(MEMBER)).toEqual([[ARTIFACT, 2, false]]);
+    expect((await artifactRows(OWNER)).map((item) => item.id)).toEqual([`artifact:${ARTIFACT}:2`]);
+    expect(await artifactPinState(OWNER)).toEqual([[ARTIFACT, 2, true]]);
+    const pending = await runInDurableObject(workspace(), (_instance, state) => {
+      const pushes = new WorkspaceActivityPushes(state.storage, new WorkspaceActivityFeed(state.storage, new WorkspaceSpaceStorage(state.storage)));
+      const subject = (userId: UserId) => [{
+        kind: "artifact" as const, threadId: OPEN_THREAD, substreamId: null, userId, itemId: `artifact:${ARTIFACT}:2`,
+      }];
+      return {
+        member: pushes.pending({ userId: MEMBER, accessClass: "member" }, subject(MEMBER), new Set()).map((item) => item.id),
+        owner: pushes.pending({ userId: OWNER, accessClass: "member" }, subject(OWNER), new Set()).map((item) => item.id),
+      };
+    });
+    expect(pending).toEqual({ member: [], owner: [`artifact:${ARTIFACT}:2`] });
   });
 
   it("given a pinned artifact whose thread the member can no longer open, when Rally republishes it, then no row names it", async () => {

@@ -657,7 +657,10 @@ SQL joins.
   `revision_author_*` and `revision_cause` on `resources`, set by the same
   statement that swaps the pointers; a trigger refuses a version whose identity
   does not match its kind, which aborts that swap rather than storing a wrong
-  attribution. Rows captured before provenance existed carry none. Inserts create version 1. Writes to identity, display,
+  attribution. An agent version also names the person its run acted for
+  (`on_behalf_of_user_id`, staged as `revision_on_behalf_of_user_id`), so a
+  reader can tell whose change it was; NULL when nobody started the run or the
+  row predates the column. Rows captured before provenance existed carry none. Inserts create version 1. Writes to identity, display,
   content, hash, or hydration fields increment it; derivative claim/processing
   writes enrich that same version. A successful external refresh increments the
   version through `last_hydrated_at`, even when the provider returns the same bytes.
@@ -1375,6 +1378,33 @@ inactive legacy tables after deploying the Worker that no longer reaps them.
 The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
+
+### 2026-10-17 — An agent's resource version names the person it acted for
+
+**What changed:** WorkspaceDO migration 112 adds `on_behalf_of_user_id` to
+`resource_versions`, staged through `resources.revision_on_behalf_of_user_id`
+and copied and cleared by both capture triggers like the rest of provenance.
+The Terminal republish and the image edit fill it with the person who asked for
+the run (`runRequesterUserId`): for a Sidekick, the member who sent the turn's
+input or started the run by hand, never its run-as user for a scheduled or
+inbound one.
+
+**Why:** A pinned artifact's updates (Activity rows, pushes, the pin's unread
+state) must never come from the person's own change. An agent version named
+only its run, and the run's person lives in the thread's object, so nothing in
+WorkspaceDO could tell a revision someone asked for from one somebody else
+did.
+
+**Considered and rejected:** Putting the person in `author_user_id`. The
+provenance fence admits a user only for a member's version, and the rail reads
+that column as who wrote it; the run still wrote it. Looking the run up in the
+thread's object at read time would add a hop to every pin and Activity read.
+
+**Consequences:** Versions from before the migration name nobody, and a writer
+that never sets the column records nobody: both read as somebody else's change.
+A new agent writer of a later version should set it from
+`runRequesterUserId`, not the principal, which a Sidekick run fills with a
+person nobody asked.
 
 ### 2026-10-16 — The account timezone follows the device by default
 
