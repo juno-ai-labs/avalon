@@ -19,7 +19,6 @@ const api = vi.hoisted(() => ({
   updateSpacePresentation: vi.fn(),
   updateSpaceAudience: vi.fn(),
   acknowledgeChannelRead: vi.fn(),
-  removeChannelMessage: vi.fn(async () => undefined),
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session: null }) }));
 const spaces = vi.hoisted(() => ({ data: undefined as unknown }));
@@ -270,7 +269,7 @@ describe('a Channel', () => {
     expect(within(rows[2]!).getByText('Q4', { selector: 'strong' })).toBeInTheDocument();
   });
 
-  it('draws a thread’s merge with its thread, a quote, its embeds, and Remove for its author', async () => {
+  it('draws a thread’s merge with its thread, a quote, and its embeds', async () => {
     const mergeId = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a62';
     api.getWorkspaceMembers.mockResolvedValueOnce([workspace.currentUser] as never);
     api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 3, items: [
@@ -297,8 +296,7 @@ describe('a Channel', () => {
     expect(merge.getByText('Price model')).toBeVisible();
     await waitFor(() => expect(merge.getByRole('article', { name: 'Q4 plan, merged by Me' })).toHaveTextContent(/merged by\s*Me/u));
     expect(merge.getByRole('article', { name: 'Q4 plan, merged by Me' })).toHaveClass('merge-message');
-    fireEvent.click(merge.getByRole('button', { name: 'Remove' }));
-    await waitFor(() => expect(api.removeChannelMessage).toHaveBeenCalledExactlyOnceWith('outbound', mergeId));
+    expect(merge.queryByRole('button', { name: 'Remove' })).toBeNull();
   });
 
   it('scrolls and moves focus to a merged thread’s card from the merge’s quote, and opens the thread when the card is not loaded', async () => {

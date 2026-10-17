@@ -8916,6 +8916,3 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .merge-message-body .markdown-body { color: inherit; font-size: inherit; line-height: inherit; }
 .merge-message-body .markdown-body > :first-child { margin-top: 0; }
 .merge-message-body .markdown-body > :last-child { margin-bottom: 0; }
-.merge-message-actions { display: flex; gap: 8px; }
-.channel-feed-merge-remove { background: transparent; color: var(--av-sys-color-text-subtle); font-size: 12px; padding: 0; }
-.channel-feed-merge-remove:hover { color: var(--av-sys-color-text-default); text-decoration: underline; }
