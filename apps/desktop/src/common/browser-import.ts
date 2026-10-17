@@ -18,11 +18,21 @@ export const BrowserImportContextSchema = z.strictObject({
     workstreamId: z.string().min(1),
     sourceUrl: HttpsUrlSchema,
   }).optional(),
+  /**
+   * Opened from a thread's composer: the conversation becomes a new Breakout
+   * of that thread rather than a new thread, so no Channel is offered.
+   */
+  breakout: z.strictObject({
+    workstreamId: z.string().min(1),
+    title: z.string(),
+  }).optional(),
 });
 export type BrowserImportContext = z.infer<typeof BrowserImportContextSchema>;
 
 /** Checked before it becomes part of a deep link; the deep-link parser checks the rest. */
 export const BrowserImportedWorkstreamIdSchema = z.string().regex(/^[A-Za-z0-9-]{1,64}$/u);
+/** A Breakout id, which the deep link requires to be a UUID. */
+export const BrowserImportedBreakoutIdSchema = z.string().uuid();
 
 /**
  * The import window's create, as the main window lists it: `importing` before

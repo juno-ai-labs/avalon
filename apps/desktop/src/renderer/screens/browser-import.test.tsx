@@ -135,6 +135,32 @@ describe('browser import window', () => {
     expect(screen.getByRole('button', { name: 'Import' })).toBeEnabled();
   });
 
+  it('imports as a breakout of the thread it was opened from, and opens that breakout', async () => {
+    harness.startSessionImportRun.mockClear();
+    harness.bridge.reportBrowserImport.mockClear();
+    harness.state.context = { spaces: [], breakout: { workstreamId: 'w-thread', title: 'Garden' } };
+    render(<Tooltip.Provider><BrowserImportWindow /></Tooltip.Provider>);
+    await waitFor(() => expect(harness.bridge.getBrowserImportContext).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Import as breakout' });
+    // Where the Breakout lands is the thread it was opened from, not a choice here.
+    expect(within(sheet).queryByRole('combobox', { name: 'Channel' })).toBeNull();
+    expect(within(sheet).getByRole('textbox', { name: 'Thread' })).toHaveValue('Garden');
+    expect(within(sheet).getByRole('textbox', { name: 'Name of breakout' })).toHaveValue('Launch plan');
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Import' }));
+    await waitFor(() => expect(harness.startSessionImportRun).toHaveBeenCalledWith(expect.objectContaining({
+      mode: { kind: 'breakout', workstreamId: 'w-thread', title: 'Launch plan', clientMessageId: expect.any(String) },
+    })));
+    const { onStarted } = (harness.startSessionImportRun.mock.lastCall as unknown as [{ onStarted: (run: { workstreamId: string; substreamId: string }) => void }])[0];
+    await act(async () => { onStarted({ workstreamId: 'w-thread', substreamId: 'c-agent' }); });
+    // The thread already exists, so the main window lists nothing as importing.
+    expect(harness.bridge.reportBrowserImport).not.toHaveBeenCalled();
+
+    await act(async () => { harness.settle({ kind: 'imported', workstreamId: 'w-thread', substreamId: 'b-new' }); });
+    expect(harness.bridge.completeBrowserImport).toHaveBeenLastCalledWith('w-thread', 'b-new');
+  });
+
   it('copies the running import’s address for a bug report', async () => {
     harness.state.context = { spaces: [{ id: 'space-a', name: 'Alpha' }] };
     render(<Tooltip.Provider><BrowserImportWindow /></Tooltip.Provider>);

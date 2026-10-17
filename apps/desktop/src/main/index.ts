@@ -3,7 +3,7 @@ import { clampWindowBounds, readMainWindowState, writeMainWindowState } from './
 import { macosMajorVersion } from './macos-version';
 import { EmbeddedBrowser, isEmbeddedBrowserWebContents } from './embedded-browser';
 import { EmbeddedBrowserBoundsSchema, EmbeddedBrowserCommandSchema, type EmbeddedBrowserCommand } from '../common/embedded-browser';
-import { BrowserImportContextSchema, BrowserImportedWorkstreamIdSchema, BrowserImportProgressSchema, type BrowserImportContext, type BrowserImportProgress } from '../common/browser-import';
+import { BrowserImportContextSchema, BrowserImportedBreakoutIdSchema, BrowserImportedWorkstreamIdSchema, BrowserImportProgressSchema, type BrowserImportContext, type BrowserImportProgress } from '../common/browser-import';
 import { describeZodIssues, zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { watchWorkspaceSocket, type ReachWatchDiagnostic } from '@rally/contracts/workspace-reach-watch';
@@ -3823,14 +3823,18 @@ function registerIpc(): void {
     // opens the Channel; here it only settles the row when that hand-off failed.
     relayBrowserImportProgress(parseBrowserIpc(BrowserImportProgressSchema, raw, 'browser_import_progress'));
   });
-  ipcMain.handle('browser-import:imported', (event, raw: unknown) => {
+  ipcMain.handle('browser-import:imported', (event, raw: unknown, rawSubstream: unknown) => {
     assertBrowserImportIpcSender(event);
     const workstreamId = parseBrowserIpc(BrowserImportedWorkstreamIdSchema, raw, 'browser_import_workstream');
-    // Before the deep link, so the row is confirmed by the time the route opens it.
-    relayBrowserImportProgress({ phase: 'imported', workstreamId });
+    const substreamId = rawSubstream === undefined || rawSubstream === null
+      ? null
+      : parseBrowserIpc(BrowserImportedBreakoutIdSchema, rawSubstream, 'browser_import_breakout');
+    // Before the deep link, so the row is confirmed by the time the route opens
+    // it. A Breakout's thread was never a pending row, so it has none to confirm.
+    if (!substreamId) relayBrowserImportProgress({ phase: 'imported', workstreamId });
     // The same route a menu-bar pick takes, so the main window opens the new
-    // Channel whether or not it was ready, and is brought forward to show it.
-    emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'in_app_link');
+    // Channel or Breakout whether or not it was ready, and is brought forward to show it.
+    emitDeepLink(`${customProtocol}://workstreams/${workstreamId}${substreamId ? `/substreams/${substreamId}` : ''}`, 'in_app_link');
     browserImportWindow?.close();
   });
   ipcMain.handle('application:foreground-get', (event) => {
