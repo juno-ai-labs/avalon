@@ -48,7 +48,7 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
 - **The section switcher**, a 76px rail under the macOS window controls,
   which the main window centers over it per macOS version (the width is
   `--navigation-rail-width`; change it and the light position together):
-  **Pinned**, **Channels**, **Threads**, **Artifacts** and **Activity**, each an outline over
+  **Pinned**, **Channels**, **Threads**, **Activity** and **Artifacts**, each an outline over
   its name, and the account menu at the bottom, labelled Settings. Every
   entry, the account menu's trigger included, is one `RailItem`: a 34px tile
   around a 22px shape, so they share size, hover and the active tint, which a

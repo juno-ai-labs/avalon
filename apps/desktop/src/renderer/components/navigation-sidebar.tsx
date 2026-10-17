@@ -77,8 +77,8 @@ const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNo
   { id: 'pinned', label: 'Pinned', icon: <IconPin aria-hidden="true" size={22} stroke={1.8} /> },
   { id: 'channels', label: 'Channels', icon: <ShapeOutline shape="squircle" /> },
   { id: 'threads', label: 'Threads', icon: <ShapeOutline shape="circle" /> },
-  { id: 'artifacts', label: 'Artifacts', icon: <ShapeOutline shape="sheet" /> },
   { id: 'activity', label: 'Activity', icon: <ShapeOutline shape="triangle" /> },
+  { id: 'artifacts', label: 'Artifacts', icon: <ShapeOutline shape="sheet" /> },
 ];
 
 const THREAD_SORTS: ReadonlyArray<{ sort: SidebarChannelSort; label: string }> = [
@@ -133,7 +133,7 @@ export function compareChannelRows(
 export type AccessDecision = 'approve' | 'decline';
 
 /**
- * The sidebar: a section switcher (Pinned, Channels, Threads, Artifacts, Activity) beside one
+ * The sidebar: a section switcher (Pinned, Channels, Threads, Activity, Artifacts) beside one
  * list. One list column with a tab switcher, never stacked hierarchy rails —
  * the reason the 2026-10-01 change removed three of them still holds
  * (`docs/desktop-shell.md`). Shared by the Mac app and the browser.
