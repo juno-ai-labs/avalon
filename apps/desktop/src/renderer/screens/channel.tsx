@@ -373,8 +373,6 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
             : row.message.merge
               ? <MergeCard
                 author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
-                channelId={channelId}
-                currentUser={workspace.currentUser}
                 key={row.message.id}
                 members={members.data ?? NO_MEMBERS}
                 merge={row.message.merge}
@@ -504,20 +502,14 @@ function MessageCard({ author, members, message, placedAt }: {
  * from the titles stored with the merge. An artifact opens in its thread,
  * where it is attached and so readable by everyone who sees this.
  */
-function MergeCard({ author, channelId, currentUser, members, merge, message, onOpenThread, placedAt }: {
+function MergeCard({ author, members, merge, message, onOpenThread, placedAt }: {
   author: WorkspaceMember | undefined;
-  channelId: string;
-  currentUser: WorkspaceMember;
   members: readonly WorkspaceMember[];
   merge: NonNullable<ChannelMessage['merge']>;
   message: ChannelMessage;
   onOpenThread: (threadId: string, resourceId?: string) => void;
   placedAt: string;
 }): React.JSX.Element {
-  const { api } = useAppSession();
-  const queryClient = useQueryClient();
-  const [removing, setRemoving] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
   const body = useMemo(() => typedMentionRendering(message.body, members), [members, message.body]);
   const citations = useMemo<CitationContext>(() => {
     const embeds = new Map(merge.embeds.flatMap((embed) => [[embed.id, embed] as const, ...(embed.slug ? [[embed.slug, embed] as const] : [])]));
@@ -535,21 +527,6 @@ function MergeCard({ author, channelId, currentUser, members, merge, message, on
       },
     };
   }, [merge.embeds, merge.threadId, onOpenThread]);
-  const removable = message.author.kind === 'member'
-    && (message.author.userId === currentUser.id || currentUser.role === 'owner' || currentUser.role === 'admin');
-  const remove = async (): Promise<void> => {
-    if (!api) return;
-    setRemoving(true);
-    setFailure(null);
-    try {
-      await api.removeChannelMessage(channelId, message.id);
-      await queryClient.invalidateQueries({ queryKey: channelFeedQueryKey(channelId) });
-    } catch {
-      setFailure('The merge couldn’t be removed. Try again.');
-    } finally {
-      setRemoving(false);
-    }
-  };
   const quote = merge.summary?.split('\n').find((line) => line.trim() !== '')?.trim();
   const appearance = useCachedWorkstreamAppearance(merge.threadId);
   const { Icon, tint, ink } = resolveWorkstreamAppearance(merge.threadId, appearance);
@@ -565,12 +542,6 @@ function MergeCard({ author, channelId, currentUser, members, merge, message, on
   };
   return <li className="channel-feed-item is-message is-merge" data-message-id={message.id}>
     <MergeMessage
-      actions={<>
-        {removable && <footer className="merge-message-actions">
-          <button className="channel-feed-merge-remove" disabled={removing} onClick={() => void remove()} type="button">Remove</button>
-        </footer>}
-        {failure && <InlineError>{failure}</InlineError>}
-      </>}
       label={`${merge.title || 'A thread'}, merged by ${merger}`}
       mergedBy={<>{author && <Avatar member={author} size="small" title={null} />}{merger}</>}
       onQuote={showThread}

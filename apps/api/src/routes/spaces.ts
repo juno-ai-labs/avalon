@@ -217,7 +217,7 @@ spaceRoutes.delete(
   ))),
 );
 
-/** Remove one Channel message: a merge's **Remove**, by its author or an admin. */
+/** Remove one Channel message, by its author or an admin. The app offers no control for it. */
 spaceRoutes.delete(
   "/:id/messages/:messageId",
   zValidator("param", z.strictObject({ id: SpaceIdSchema, messageId: z.string().uuid() })),
