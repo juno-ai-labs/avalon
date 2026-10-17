@@ -318,14 +318,14 @@ export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview,
               src={settled.src}
             />
           )}
-          {isImage && pinned && <span aria-hidden="true" className="citation-card-pin"><IconPin size={14} stroke={2} /></span>}
+          {isImage && pinned && <span aria-hidden="true" className="resource-card-pin"><IconPin size={14} stroke={2} /></span>}
           {!isImage && (
             <>
               <span aria-hidden="true" className="citation-card-badge"><ResourceIcon resource={resource} /></span>
               <span className="citation-card-text">
                 <strong className="citation-card-title">{label}</strong>
                 <small className="citation-card-kind">
-                  {pinned && <><span className="citation-card-pinned"><IconPin aria-hidden="true" size={12} stroke={1.8} />Pinned</span>{' · '}</>}
+                  {pinned && <><span className="resource-card-pinned"><IconPin aria-hidden="true" size={12} stroke={1.8} />Pinned</span>{' · '}</>}
                   {resourceKindLabel(resource)}
                 </small>
               </span>

@@ -33,6 +33,7 @@ export function shellLocation(pathname: string, hash: string): string | null {
     const query = new URLSearchParams();
     if (workstream.substreamId) query.set("substream", workstream.substreamId);
     if ("spaceId" in workstream && workstream.spaceId) query.set("space", workstream.spaceId);
+    if ("artifactId" in workstream && workstream.artifactId) query.set("artifact", workstream.artifactId);
     return `/app/workspaces/${workstream.region}/${workstream.workspaceId}#/workstreams/${workstream.workstreamId}${query.size ? `?${query}` : ""}`;
   }
   const space = parseSpaceLinkPathTarget(pathname);

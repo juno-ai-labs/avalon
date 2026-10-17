@@ -49,6 +49,8 @@ type PushContent =
     body: string;
     workstreamId: string;
     substreamId: string | null;
+    /** The artifact the notification opens its thread onto, expanded. */
+    artifactId?: string;
   };
 
 type WorkspaceStub = DurableObjectStub<WorkspaceDO>;
@@ -106,6 +108,8 @@ async function activityContent(env: Env, workspace: WorkspaceStub, message: Push
     workstreamId: item.threadId,
     // A merge opens where it landed: a breakout's merge is in its thread.
     substreamId: item.kind === "merged" ? null : item.breakout?.substreamId ?? null,
+    // A pinned artifact's update opens the artifact, not just its thread.
+    ...(item.kind === "artifact_updated" && item.artifact ? { artifactId: item.artifact.resourceId } : {}),
   };
 }
 
@@ -234,7 +238,8 @@ export async function deliverPush(
     workspaceId: id, userId: message.recipientUserId, accessClass: member?.access_class ?? "member",
   }));
   const url = await canonicalWorkstreamUrl(env, { region: env.AVALON_REGION, workspaceId: message.workspaceId,
-    workstreamId: content.workstreamId, ...(content.substreamId ? { substreamId: content.substreamId } : {}) });
+    workstreamId: content.workstreamId, ...(content.substreamId ? { substreamId: content.substreamId } : {}),
+    ...(content.artifactId ? { artifactId: content.artifactId } : {}) });
   const data = { v: 1 as const, kind: content.kind, region: env.AVALON_REGION, workspaceId: message.workspaceId, url };
   const collapseId = await pushCollapseId(message.workspaceId, content.deliveryKey);
   const { title, body } = content;

@@ -895,6 +895,23 @@ describe("artifact pins", () => {
     });
   });
 
+  it("given an unpin, then the member's sockets alone are told to read Activity again, since its rows went with the pin", async () => {
+    await threadWithArtifacts();
+    await pinArtifact(ARTIFACT, OPEN_THREAD);
+    await republish(ARTIFACT, { kind: "agent" });
+    const latest = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
+      topics_json: string; audience_json: string | null;
+    }>("SELECT topics_json, audience_json FROM workspace_sync_events ORDER BY waterline DESC LIMIT 1").toArray());
+    const before = await latest();
+
+    await workspace().changeArtifactPin({ workspaceId: WORKSPACE_ID, userId: MEMBER, itemId: ARTIFACT, threadId: null, pinned: false });
+
+    expect(await artifactRows(MEMBER)).toEqual([]);
+    const after = await latest();
+    expect(after).not.toEqual(before);
+    expect(after).toEqual([{ topics_json: JSON.stringify(["activity"]), audience_json: JSON.stringify([MEMBER]) }]);
+  });
+
   it("given two pinned artifacts, when the member moves the second up, then they list in the new order", async () => {
     await threadWithArtifacts();
     await pinArtifact(ARTIFACT, OPEN_THREAD);
