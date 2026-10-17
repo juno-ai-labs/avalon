@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { IdSchema, WorkstreamIdSchema } from "./identifiers";
+import { WorkstreamAppearanceSchema } from "./workstream-appearance";
 
 /**
  * What a person can pin: a thread (storage `workstream`), a Channel (storage
@@ -38,6 +39,50 @@ export const PinRequestSchema = z.strictObject({
   parentId: WorkstreamIdSchema.optional(),
 });
 export type PinRequest = z.infer<typeof PinRequestSchema>;
+
+/**
+ * A pinned artifact: a resource Rally generated in a thread's Main, with what
+ * the Artifacts list draws for it, read when the list is.
+ *
+ * Not a fourth `PinKind`. A shipped desktop parses `Pin` strictly, so one
+ * unknown kind in `pins` would fail the whole list; artifact pins travel as a
+ * list of their own instead, beside `pins` on the same socket messages, where
+ * an older build drops the key it does not know. They share the stored table,
+ * order rules and limit with the other kinds (`docs/workstream-pinning.md`).
+ */
+export const ArtifactPinSchema = z.strictObject({
+  /** The resource. */
+  id: IdSchema,
+  /** The thread whose Main the artifact was generated in, which opens it. */
+  threadId: WorkstreamIdSchema,
+  title: z.string().min(1).max(300),
+  resourceType: z.string().min(1).max(80),
+  mimeType: z.string().max(160).nullable(),
+  updatedAt: z.string().datetime({ offset: true }),
+  /** The thread as its row draws it: a badge on the artifact's tile, and its name. */
+  thread: z.strictObject({
+    title: z.string().min(1).max(180),
+    appearance: WorkstreamAppearanceSchema.nullable(),
+    spaceIds: z.array(IdSchema),
+  }),
+});
+export type ArtifactPin = z.infer<typeof ArtifactPinSchema>;
+
+/** Every artifact a person pinned that they can still see, in their order. */
+export const ArtifactPinListSchema = z.array(ArtifactPinSchema);
+export type ArtifactPinList = z.infer<typeof ArtifactPinListSchema>;
+
+/** Pin one artifact, named with the thread it was generated in. */
+export const ArtifactPinRequestSchema = z.strictObject({
+  threadId: WorkstreamIdSchema,
+});
+export type ArtifactPinRequest = z.infer<typeof ArtifactPinRequestSchema>;
+
+/** Save the artifact pins' order: ids, first to last. Unknown ids are dropped. */
+export const ArtifactPinOrderRequestSchema = z.strictObject({
+  ids: z.array(IdSchema),
+});
+export type ArtifactPinOrderRequest = z.infer<typeof ArtifactPinOrderRequestSchema>;
 
 /** Save one kind's order: ids, first to last. Unknown ids are dropped. */
 export const PinOrderRequestSchema = z.strictObject({

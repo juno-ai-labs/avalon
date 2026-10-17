@@ -583,7 +583,7 @@ export function WorkspaceSocketProvider({
           sidebar.automations.items.map(mapAutomationSummary),
         );
         if (sidebar.spaces) {
-          applyVersionedSpaceSnapshot(queryClient, sidebar.spaces, sidebar.ordering ?? [], sidebar.spacesReady ?? true, sidebar.pinnedOrder, { pins: sidebar.pins, channelStats: sidebar.channelStats });
+          applyVersionedSpaceSnapshot(queryClient, sidebar.spaces, sidebar.ordering ?? [], sidebar.spacesReady ?? true, sidebar.pinnedOrder, { pins: sidebar.pins, artifactPins: sidebar.artifactPins, channelStats: sidebar.channelStats });
         }
         directoryLive = true;
         setSidebarConnect((current) => ({
@@ -625,7 +625,7 @@ export function WorkspaceSocketProvider({
           sidebar.ordering ?? [],
           sidebar.spacesReady ?? true,
           sidebar.pinnedOrder,
-          { pins: sidebar.pins, channelStats: sidebar.channelStats },
+          { pins: sidebar.pins, artifactPins: sidebar.artifactPins, channelStats: sidebar.channelStats },
         );
       }
       directoryLive = true;

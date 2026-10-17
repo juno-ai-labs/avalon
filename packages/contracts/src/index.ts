@@ -26,7 +26,7 @@ import {
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { PersonalPresentationSchema } from './onboarding';
 import { ChannelMessageSchema, PersonalOrderSchema, PinnedOrderSchema, SpaceIdSchema, SpaceSnapshotSchema } from "./spaces";
-import { ChannelStatsSchema, PinListSchema } from "./navigation";
+import { ArtifactPinListSchema, ChannelStatsSchema, PinListSchema } from "./navigation";
 import {
   ResourceDirectionSchema,
   WireResourceRelationshipTypeSchema,
@@ -2813,6 +2813,8 @@ export const WorkspaceSidebarSchema = z.strictObject({
    * server that predates it, for the reason `pinnedOrder` is.
    */
   pins: PinListSchema.optional(),
+  /** This viewer's pinned artifacts in their order; its own key for the reason `ArtifactPinSchema` gives. */
+  artifactPins: ArtifactPinListSchema.optional(),
   /** Each listed Channel's thread count and last activity, for the Channels tab. */
   channelStats: z.array(ChannelStatsSchema).optional(),
   /**
@@ -3009,6 +3011,7 @@ export const WorkspaceSpaceSnapshotEventSchema = z.strictObject({
   pinnedOrder: PinnedOrderSchema.optional(),
   /** Every pin, beside `pinnedOrder` for the reason the sidebar payload gives. */
   pins: PinListSchema.optional(),
+  artifactPins: ArtifactPinListSchema.optional(),
   channelStats: z.array(ChannelStatsSchema).optional(),
   spacesReady: z.boolean(),
 });
@@ -3018,13 +3021,14 @@ export const WorkspaceSpaceSnapshotEventSchema = z.strictObject({
  * list, or their read state in one Channel. Sent to that person's sockets
  * alone, so a second window follows a pin or a read without the whole Space
  * snapshot being rebuilt for every socket they have. Each field present
- * replaces what is held: `pins` the whole list, each `channelStats` row the
- * row for its Channel. A client that does not know this event ignores it.
+ * replaces what is held: `pins` and `artifactPins` each the whole list, each
+ * `channelStats` row the row for its Channel. A client that does not know this event ignores it.
  */
 export const WorkspaceNavigationStateEventSchema = z.strictObject({
   type: z.literal("workspace_navigation_state"),
   occurredAt: TimestampSchema,
   pins: PinListSchema.optional(),
+  artifactPins: ArtifactPinListSchema.optional(),
   channelStats: z.array(ChannelStatsSchema).optional(),
 });
 

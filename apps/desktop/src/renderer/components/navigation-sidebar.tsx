@@ -1,6 +1,7 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import type { ActivityFilter, ActivityItem, ActivityPage, ConversationAccessRequestItem, PinKind, SpaceSummary, WorkstreamAppearance } from '@rally/contracts';
+import type { ActivityFilter, ActivityItem, ActivityPage, ArtifactPin, ConversationAccessRequestItem, PinKind, SpaceSummary, WorkstreamAppearance } from '@rally/contracts';
 import { IdentityTile, ShapeOutline, type TileBadge } from '@rally/ui/components/identity-tile';
+import { resourceGlyph } from '@rally/ui/components/resource-icon';
 import { resolveWorkstreamAppearance, WORKSTREAM_ICON_COMPONENTS } from '@rally/ui/components/workstream-glyph';
 import { markColors } from '@rally/ui/lib/project-palette';
 import {
@@ -34,12 +35,12 @@ import { consumeDeepLinkWorkstreamNavigation, useDeepLinkWorkstreamNavigation } 
 import { desktopBridge } from '../lib/platform';
 import { formatDateTime, formatSidebarActivityTime, formatTime, readerMarkerStatus } from '../lib/format';
 import { layoutInsertIndex, layoutRowAt } from '../lib/list-motion';
-import { OPEN_EXPANDED, channelRoute, homeChannelId, threadRoute } from '../lib/navigation-routes';
+import { OPEN_EXPANDED, channelRoute, homeChannelId, openThreadResourceState, threadRoute } from '../lib/navigation-routes';
 import { moveWithin } from '../lib/personal-order';
 import { compareChannels } from '../lib/sidebar-channel-order';
 import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, MY_THREADS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
-import { latestPinWrite, reportThreadPin, usePinAction, usePinFailure, usePinnedIds, usePins, usePinWrite, type PinnedThread } from '../lib/pins';
+import { latestPinWrite, reportThreadPin, useArtifactPinAction, useArtifactPins, useArtifactPinWrite, usePinAction, usePinFailure, usePinnedIds, usePins, usePinWrite, type PinnedThread } from '../lib/pins';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation } from '../lib/telemetry';
 import type { SpaceConversationSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { useUiStore, type SidebarChannelSort, type SidebarSection } from '../lib/ui-store';
@@ -48,6 +49,7 @@ import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { openWorkstreamId } from '../lib/workstream-landing';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
+import { resourceKindLabel } from './markdown-citations';
 import { Avatar, Button, IconButton, InlineError, Modal, RallyAvatar, TitleSkeleton, Tip } from './primitives';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import { RailItem } from './rail-item';
@@ -66,7 +68,8 @@ const REVEAL_DEADLINE_MS = 2_000;
 /**
  * Each section's button is the outline of what its list holds: a Channel is a
  * squircle and a Thread a circle, as their rows draw them. Activity holds
- * neither, so it takes the triangle no object uses. Pinned holds every kind
+ * neither, so it takes the triangle no object uses. Artifacts takes a page,
+ * the outline its rows' sheet tiles stand for. Pinned holds every kind
  * that can be pinned, so it takes the pin a row's pin button draws, at the
  * outlines' stroke.
  */
@@ -74,6 +77,7 @@ const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNo
   { id: 'pinned', label: 'Pinned', icon: <IconPin aria-hidden="true" size={22} stroke={1.8} /> },
   { id: 'channels', label: 'Channels', icon: <ShapeOutline shape="squircle" /> },
   { id: 'threads', label: 'Threads', icon: <ShapeOutline shape="circle" /> },
+  { id: 'artifacts', label: 'Artifacts', icon: <ShapeOutline shape="sheet" /> },
   { id: 'activity', label: 'Activity', icon: <ShapeOutline shape="triangle" /> },
 ];
 
@@ -129,7 +133,7 @@ export function compareChannelRows(
 export type AccessDecision = 'approve' | 'decline';
 
 /**
- * The sidebar: a section switcher (Pinned, Channels, Threads, Activity) beside one
+ * The sidebar: a section switcher (Pinned, Channels, Threads, Artifacts, Activity) beside one
  * list. One list column with a tab switcher, never stacked hierarchy rails —
  * the reason the 2026-10-01 change removed three of them still holds
  * (`docs/desktop-shell.md`). Shared by the Mac app and the browser.
@@ -223,6 +227,8 @@ export function NavigationSidebar({
     pinned: channelNews.pinned + unreadPinnedThreads,
     channels: channelNews.all,
     threads: waiting,
+    // A pinned artifact has no unread state, so the section carries no count.
+    artifacts: 0,
     activity: unreadActivity,
   };
   const title = SECTIONS.find((candidate) => candidate.id === section)?.label ?? 'Threads';
@@ -289,6 +295,7 @@ export function NavigationSidebar({
           {pinFailure && <InlineError>{pinFailure}</InlineError>}
           {section === 'pinned' && <PinnedPanel guest={guest} scroll={scroll} />}
           {section === 'threads' && <ThreadsSection scroll={scroll} />}
+          {section === 'artifacts' && <ArtifactsSection scroll={scroll} />}
           {section === 'channels' && <ChannelsSection scroll={scroll} />}
           {section === 'activity' && <ActivitySection
             accessDecisionFailed={accessDecisionFailed}
@@ -308,7 +315,7 @@ export function NavigationSidebar({
 }
 
 /** What a section's count says it counts, for its accessible name. */
-const BADGE_NOUNS: Record<SidebarSection, string> = { pinned: 'pinned with news', channels: 'with new threads', threads: 'waiting', activity: 'unread' };
+const BADGE_NOUNS: Record<SidebarSection, string> = { pinned: 'pinned with news', channels: 'with new threads', threads: 'waiting', artifacts: 'new', activity: 'unread' };
 
 /** A section button's red count; nothing at zero, `99+` past two digits. */
 function RailBadge({ count, section }: { count: number; section: SidebarSection }): React.JSX.Element | null {
@@ -420,20 +427,27 @@ function useOpenThreadId(): string | null {
  * row laid out under the pointer, not the one drawn there mid-motion, or rows
  * in motion would trade places (`docs/list-motion.md`).
  */
-function usePinnedDrag(kind: PinKind, ids: readonly string[]): {
+function usePinnedDrag(kind: SidebarPinKind, ids: readonly string[]): {
   order: readonly string[];
   rowProps: (id: string, index: number) => PinnedRowProps;
   moves: (id: string, index: number) => PinMoves;
 } {
   const { api } = useAppSession();
   const write = usePinWrite();
+  const writeArtifacts = useArtifactPinWrite();
   const [drag, setDrag] = useState<{ id: string; order: string[] } | null>(null);
   const order = drag?.order ?? ids;
+  // Artifact pins are a list of their own, saved through their own route.
+  const save = (next: string[]): void => {
+    if (!api) return;
+    if (kind === 'artifact') writeArtifacts(api.reorderArtifactPins(next));
+    else write(api.reorderPins(kind, next));
+  };
   // Dragging has a keyboard and a menu path too: Option/Alt with an arrow on
   // a focused row, or Move up / Move down in its menu.
   const moveTo = (id: string, target: number): (() => void) | null => (
     api && target >= 0 && target < ids.length
-      ? () => write(api.reorderPins(kind, moveWithin([...ids], id, target)))
+      ? () => save(moveWithin([...ids], id, target))
       : null
   );
   return {
@@ -473,7 +487,7 @@ function usePinnedDrag(kind: PinKind, ids: readonly string[]): {
         const next = drag.order;
         setDrag(null);
         if (next.join() === ids.join()) return;
-        write(api.reorderPins(kind, next));
+        save(next);
       },
       onDragEnd: () => setDrag(null),
     }),
@@ -485,8 +499,11 @@ type PinnedRowProps = React.HTMLAttributes<HTMLElement> & {
   draggable: boolean;
   'data-motion-hold'?: string | undefined;
   'data-pin-id'?: string;
-  'data-pin-kind'?: PinKind;
+  'data-pin-kind'?: SidebarPinKind;
 };
+
+/** Every kind a sidebar row can be pinned as: the shared list's kinds, and an artifact. */
+type SidebarPinKind = PinKind | 'artifact';
 
 /** An unpinned row being dragged toward Pinned: the slot it would take, and whether it was let go there. */
 interface PinDrop {
@@ -574,11 +591,13 @@ function usePinDrop(pinnedIds: ReadonlySet<string>, orderOf: (kind: PinKind) => 
  * accent while a row is being dragged. The whole section, heading included,
  * is the drop target, so a release in a gap between rows still counts.
  */
-function PinnedSection({ children, count, drop, heading = 'Pinned', label, loading = false, noun, pinnedOnly = false, reorderable, target }: {
+function PinnedSection({ children, count, drop, heading = 'Pinned', howToPin, label, loading = false, noun, pinnedOnly = false, reorderable, target }: {
   children: ReactNode;
   count: number;
   drop: PinDrop | null;
   heading?: string;
+  /** The heading mark's tip while there is nothing to arrange, where dragging a row in is not how this kind is pinned. */
+  howToPin?: string;
   label: string;
   /**
    * In the Pinned tab, where no list beside it shows its own placeholders:
@@ -597,12 +616,12 @@ function PinnedSection({ children, count, drop, heading = 'Pinned', label, loadi
   // place (`pinnedPosition`). As a per-row description it would be repeated
   // before every title.
   return <section aria-busy={loading || undefined} aria-describedby={reorderable ? hint : undefined} aria-label={label} className="navigation-section" {...target}>
-    <SectionHeading motionKey={pinnedOnly ? `pinned:${noun}` : 'pinned'} trailing={<PinnedMark reorderable={reorderable} />}>{heading}</SectionHeading>
+    <SectionHeading motionKey={pinnedOnly ? `pinned:${noun}` : 'pinned'} trailing={<PinnedMark howToPin={howToPin} reorderable={reorderable} />}>{heading}</SectionHeading>
     {reorderable && <p className="sr-only" id={hint}>Hold Alt and press the up or down arrow to move a pinned {noun}.</p>}
     {loading && <SidebarSkeletonRows count={Math.max(1, count)} />}
     {!loading && count === 0 && drop?.index == null && <div className={clsx('pinned-empty-drop-surface', drop && 'is-armed')}>
       <IconPin aria-hidden="true" size={15} stroke={1.7} />
-      <span>{pinnedOnly ? `Pin a ${noun} to keep it here` : `Move a ${noun} here to pin it`}</span>
+      <span>{pinnedOnly ? `Pin ${/^[aeiou]/u.test(noun) ? 'an' : 'a'} ${noun} to keep it here` : `Move a ${noun} here to pin it`}</span>
     </div>}
     {children}
   </section>;
@@ -746,11 +765,11 @@ function SectionHeading({ children, motionKey, trailing }: {
 }
 
 /** The Pinned heading's pin; its tooltip says how to pin, then how to arrange once there is something to arrange. */
-function PinnedMark({ reorderable }: { reorderable: boolean }): React.JSX.Element {
+function PinnedMark({ howToPin = 'Drag a row here or right-click it to pin', reorderable }: { howToPin?: string | undefined; reorderable: boolean }): React.JSX.Element {
   const mark = <span aria-hidden="true" className="navigation-section-mark">
     <IconPin size={14} stroke={1.8} />
   </span>;
-  return <Tip label={reorderable ? 'Drag to reorder' : 'Drag a row here or right-click it to pin'}>{mark}</Tip>;
+  return <Tip label={reorderable ? 'Drag to reorder' : howToPin}>{mark}</Tip>;
 }
 
 /** A Channel's identity as a tile: its glyph on its hue's pastel pair. */
@@ -860,6 +879,7 @@ function PinnedPanel({ guest, scroll }: { guest: boolean; scroll: RefObject<HTML
   return <>
     {!guest && <ChannelsSection motion={motion} scroll={scroll} />}
     <ThreadsSection motion={motion} scroll={scroll} />
+    <ArtifactsSection motion={motion} scroll={scroll} />
   </>;
 }
 
@@ -1135,6 +1155,110 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
         <ContextMenu.Item className="menu-item" onSelect={() => onPin(!pinned)}>
           {pinned ? <IconPinnedOff aria-hidden="true" size={15} stroke={1.8} /> : <IconPin aria-hidden="true" size={15} stroke={1.8} />}
           {pinned ? 'Unpin' : 'Pin'}
+        </ContextMenu.Item>
+        <PinMoveItems moves={moves} />
+      </ContextMenu.Content>
+    </ContextMenu.Portal>
+  </ContextMenu.Root>;
+}
+
+/**
+ * The Artifacts tab, and the Pinned tab's Artifacts part: the artifacts this
+ * person pinned, in their order. Only pinned ones for now, so the tab draws
+ * its Pinned part alone; an artifact is pinned from its card's `⋯` or
+ * right-click menu, not by dragging a row in. A row opens its thread with the
+ * artifact's panel open (`openThreadResourceState`).
+ */
+function ArtifactsSection({ motion, scroll }: { motion?: () => void; scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
+  const inPinnedTab = motion !== undefined;
+  const { api } = useAppSession();
+  const pins = useArtifactPins();
+  const setPinned = useArtifactPinAction(api);
+  const live = useWorkstreamsQuery();
+  const openChannelId = useOpenChannelId();
+  const ids = useMemo(() => pins.map((pin) => pin.id), [pins]);
+  const pinnedIds = useMemo(() => new Set(ids), [ids]);
+  const drag = usePinnedDrag('artifact', ids);
+  const revealPin = usePinReveal(scroll, (id) => `artifact:${id}`, pinnedIds);
+  useSectionMotion(scroll, motion);
+  const byId = new Map(pins.map((pin) => [pin.id, pin]));
+  return <PinnedSection
+    count={pins.length}
+    drop={null}
+    heading={inPinnedTab ? 'Artifacts' : undefined}
+    howToPin="Pin an artifact from its ⋯ menu"
+    label="Pinned artifacts"
+    noun="artifact"
+    pinnedOnly
+    reorderable={pins.length > 1}
+    target={{}}
+  >
+    {drag.order.map((id, index) => {
+      const pin = byId.get(id);
+      if (!pin) return null;
+      // The live copy of the thread draws a recolour before the list is read again.
+      const appearance = live.data?.find((row) => row.id === pin.threadId)?.appearance ?? pin.thread.appearance ?? undefined;
+      return <ArtifactRow
+        appearance={appearance}
+        drag={drag.rowProps(id, index)}
+        href={threadRoute(pin.threadId, homeChannelId(pin.thread.spaceIds, openChannelId))}
+        key={id}
+        moves={drag.moves(id, index)}
+        onUnpin={() => {
+          revealPin(id, false);
+          setPinned(id, false, pin.threadId);
+        }}
+        pin={pin}
+        position={pinnedPosition(index, pins.length)}
+      />;
+    })}
+  </PinnedSection>;
+}
+
+/** A pinned artifact: its sheet tile badged with its thread, its title, and its kind and thread. */
+function ArtifactRow({ appearance, drag, href, moves, onUnpin, pin, position }: {
+  appearance: WorkstreamAppearance | undefined;
+  drag: PinnedRowProps;
+  href: string;
+  moves: PinMoves;
+  onUnpin: () => void;
+  pin: ArtifactPin;
+  position: string;
+}): React.JSX.Element {
+  const route = useCurrentRoute();
+  const resource = { resourceType: pin.resourceType, title: pin.title, ...(pin.mimeType ? { mimeType: pin.mimeType } : {}) };
+  return <ContextMenu.Root>
+    <ContextMenu.Trigger asChild>
+      <Link
+        className="navigation-row navigation-artifact-row"
+        data-motion-key={`artifact:${pin.id}`}
+        replace={route === href}
+        state={openThreadResourceState(pin.threadId, pin.id)}
+        to={href}
+        {...drag}
+      >
+        <RowLayout
+          detail={`${resourceKindLabel(resource)} · ${pin.thread.title}`}
+          tile={<IdentityTile
+            // The thread alone: a nested Channel badge would push it over the glyph.
+            badges={[threadBadge(pin.threadId, pin.thread.title, appearance, undefined)]}
+            icon={resourceGlyph(resource)}
+            ink="var(--av-ref-color-neutral-11)"
+            shape="sheet"
+            tint="var(--av-sys-color-surface-elevated-hover)"
+          />}
+          time={<RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={pin.updatedAt} />}
+          title={pin.title}
+          unread={false}
+        />
+        <span className="sr-only">{position}</span>
+      </Link>
+    </ContextMenu.Trigger>
+    <ContextMenu.Portal>
+      <ContextMenu.Content className="menu-content">
+        <ContextMenu.Item className="menu-item" onSelect={onUnpin}>
+          <IconPinnedOff aria-hidden="true" size={15} stroke={1.8} />
+          Unpin
         </ContextMenu.Item>
         <PinMoveItems moves={moves} />
       </ContextMenu.Content>

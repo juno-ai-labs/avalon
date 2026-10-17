@@ -19,11 +19,13 @@ import {
   type ChannelStats,
   type ChannelStatsList,
   PinListSchema,
+  ArtifactPinListSchema,
   type ActivityEvent,
   type ActivityFilter,
   type ActivityPage,
   type PinKind,
   type PinList,
+  type ArtifactPinList,
 } from "@rally/contracts";
 import { WebPushConfigurationSchema, type RegisterPushDeviceRequest } from "@rally/contracts/push-notifications";
 import { AccountOnboardingSchema, OrganizationNameSuggestionSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type OrganizationNameSuggestion, type UpdateAccountOnboarding } from "@rally/contracts";
@@ -1580,6 +1582,18 @@ export class RallyApi {
 
   reorderPins(kind: PinKind, ids: readonly string[]): Promise<PinList> {
     return this.request('/navigation/pins', { method: 'PUT', body: { kind, ids }, schema: PinListSchema });
+  }
+
+  /** Pin an artifact generated in a thread's Main, or unpin it; answered with every artifact pin. */
+  setArtifactPinned(id: string, pinned: boolean, threadId?: string): Promise<ArtifactPinList> {
+    const path = `/navigation/artifact-pins/${encodeURIComponent(id)}`;
+    return pinned
+      ? this.request(path, { method: 'PUT', body: { threadId }, schema: ArtifactPinListSchema })
+      : this.request(path, { method: 'DELETE', schema: ArtifactPinListSchema });
+  }
+
+  reorderArtifactPins(ids: readonly string[]): Promise<ArtifactPinList> {
+    return this.request('/navigation/artifact-pins', { method: 'PUT', body: { ids }, schema: ArtifactPinListSchema });
   }
 
   getActivity(cursor: string | null, only: ActivityFilter | null = null, signal?: AbortSignal): Promise<ActivityPage> {

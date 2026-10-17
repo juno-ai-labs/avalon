@@ -5,8 +5,8 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '../lib/api';
-import { CHANNEL_STATS_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
-import type { ChannelStats } from '@rally/contracts';
+import { ARTIFACT_PINS_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
+import type { ArtifactPin, ChannelStats } from '@rally/contracts';
 import type { SpaceConversationSummary, Workspace } from '../lib/types';
 import { markDeepLinkWorkstreamNavigation } from '../lib/deep-link-navigation';
 import type * as TelemetryModule from '../lib/telemetry';
@@ -19,6 +19,8 @@ const api = vi.hoisted(() => ({
   markActivitySeen: vi.fn(async () => undefined),
   setPinned: vi.fn(),
   reorderPins: vi.fn(),
+  setArtifactPinned: vi.fn(),
+  reorderArtifactPins: vi.fn(),
   getChannelStats: vi.fn(async () => []),
   getWorkspaceMembers: vi.fn(async () => [{ id: 'maya', name: 'Maya K', email: 'maya@rally.test', timezone: 'UTC' }]),
 }));
@@ -74,6 +76,13 @@ function thread(id: string, title: string, overrides: Partial<SpaceConversationS
     lastActivityAt: '2026-10-01T00:00:00.000Z', kind: 'channel', breakoutOf: null,
     ...overrides,
   } as SpaceConversationSummary;
+}
+
+function artifactPin(id: string, title: string, mimeType = 'text/markdown'): ArtifactPin {
+  return {
+    id, threadId: 'launch' as ArtifactPin['threadId'], title, resourceType: 'generated_file', mimeType,
+    updatedAt: '2026-10-01T00:00:00.000Z', thread: { title: 'Launch', appearance: null, spaceIds: ['outbound'] },
+  };
 }
 
 /** Each thread row's name and second line. */
@@ -235,6 +244,45 @@ describe('the navigation sidebar', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Unpin' }));
     await waitFor(() => expect(screen.queryByRole('link', { name: /Growth/u })).not.toBeInTheDocument());
     await waitFor(() => expect(screen.getByRole('button', { name: 'Pinned' })).toHaveFocus());
+  });
+
+  it('lists pinned artifacts on the Artifacts tab and opens one onto its panel in its thread', () => {
+    useUiStore.getState().setSidebarSection('artifacts');
+    renderSidebar((client) => {
+      client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] });
+      client.setQueryData(ARTIFACT_PINS_QUERY_KEY, [artifactPin('summary', 'Incident summary'), artifactPin('chart', 'Failure rate', 'image/png')]);
+    });
+
+    expect(screen.getByRole('heading', { name: 'Artifacts' })).toBeInTheDocument();
+    const pinned = within(screen.getByRole('region', { name: 'Pinned artifacts' }));
+    expect(pinned.getAllByRole('link').map((row) => [row.querySelector('.navigation-row-title')?.textContent, row.querySelector('.navigation-row-detail')?.textContent]))
+      .toEqual([['Incident summary', 'Markdown · Launch'], ['Failure rate', 'Image · Launch']]);
+    fireEvent.click(pinned.getByRole('link', { name: /Incident summary/u }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/launch');
+    expect(JSON.parse(screen.getByTestId('location').dataset.state ?? 'null'))
+      .toMatchObject({ openResource: { threadId: 'launch', resourceId: 'summary' } });
+  });
+
+  it('unpins an artifact from its row, and says how to pin one once none is left', async () => {
+    useUiStore.getState().setSidebarSection('artifacts');
+    api.setArtifactPinned.mockResolvedValue([]);
+    renderSidebar((client) => client.setQueryData(ARTIFACT_PINS_QUERY_KEY, [artifactPin('summary', 'Incident summary')]));
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Incident summary/u }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Unpin' }));
+
+    expect(api.setArtifactPinned).toHaveBeenCalledWith('summary', false, 'launch');
+    expect(await screen.findByText('Pin an artifact to keep it here')).toBeInTheDocument();
+  });
+
+  it('gathers pinned artifacts in the Pinned tab under their own heading', () => {
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [] });
+    useUiStore.getState().setSidebarSection('pinned');
+    renderSidebar((client) => client.setQueryData(ARTIFACT_PINS_QUERY_KEY, [artifactPin('summary', 'Incident summary')]));
+
+    const artifacts = within(screen.getByRole('region', { name: 'Pinned artifacts' }));
+    expect(artifacts.getByText('Artifacts')).toBeInTheDocument();
+    expect(artifacts.getByRole('link', { name: /Incident summary/u })).toBeInTheDocument();
   });
 
   it('holds placeholders in the Pinned tab while its rows are read, rather than saying nothing is pinned', () => {
