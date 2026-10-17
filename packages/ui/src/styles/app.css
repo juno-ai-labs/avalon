@@ -6053,9 +6053,12 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   /* Too narrow for the conversation's minimum beside the narrowest panel
      (`railFillsPane`): the panel covers the whole pane and the pane keeps its
      width under it, with no scrim and no edge to drag. */
-  .workspace-shell.rail-fills-pane { --rail-slot: calc(100vw - var(--av-cmp-sidebar-width)); }
-  .workspace-shell.rail-open.rail-fills-pane .main-pane { padding-right: 0; }
-  .workspace-shell.rail-fills-pane .rail-resizer { display: none; }
+  .workspace-shell.rail-fills-pane,
+  .workspace-shell.rail-expanded { --rail-slot: calc(100vw - var(--av-cmp-sidebar-width)); }
+  .workspace-shell.rail-open.rail-fills-pane .main-pane,
+  .workspace-shell.rail-open.rail-expanded .main-pane { padding-right: 0; }
+  .workspace-shell.rail-fills-pane .rail-resizer,
+  .workspace-shell.rail-expanded .rail-resizer { display: none; }
 }
 .rail-surface {
   animation: rail-open 240ms cubic-bezier(.22, 1, .36, 1);

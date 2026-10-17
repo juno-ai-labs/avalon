@@ -202,6 +202,13 @@ for one person, newest first:
   a thread's into a Channel they may list, about a thread they may open, read
   from `space_messages`. Both are `merged`; a thread's carries `mergedInto`.
   A build before client contract 7 is served the page without them.
+- every new **version of an artifact they pinned** that somebody else made
+  after they pinned it, while it is generated in a Main they may open
+  (`artifact_updated`), read from `resource_versions` against their pin
+  ([`workstream-pinning.md`](workstream-pinning.md#artifact-pins)). It is
+  settled by reading the artifact through that version, the subject
+  `{ kind: "artifact" }` whose waterline is the version seen. A build before
+  client contract 8 is served the page without them.
 
 The listing rules apply inside each SQL arm, a breakout through both of the
 conversation page's gates, so a row the person may not list now is never read

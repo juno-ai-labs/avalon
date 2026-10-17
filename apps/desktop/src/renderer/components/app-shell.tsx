@@ -209,6 +209,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // The main pane keeps room for a sidebar that is still fading out.
   const showShellRail = railOpen || railLeaving;
   const railFillsPane = useRailFillsPane(sidebarWidth);
+  const railExpanded = useUiStore((state) => state.railExpanded);
   // Nothing here loads the sidebar. Subscribing to the workspace socket is
   // answered with the whole of it — the first page of work streams, the
   // Sidekicks and the notes — and WorkspaceDO pushes each list again whenever
@@ -391,6 +392,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     windowControlsShellClass(runtime?.platform),
     showShellRail ? 'rail-open' : '',
     railFillsPane ? 'rail-fills-pane' : '',
+    // A panel expanded over its conversation covers the pane as a narrow
+    // window's does, by choice rather than for want of room.
+    showShellRail && railExpanded ? 'rail-expanded' : '',
     // Where there is no window to open, a window surface takes the whole tab.
     host === 'browser' && isWindowSurfaceRoute(location.pathname) ? 'is-window-surface' : '',
     switchingWorkspaceKey !== null ? 'is-switching-workspace' : '',

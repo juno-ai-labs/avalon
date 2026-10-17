@@ -18,9 +18,11 @@ import type { ActivityItemKind } from "@rally/contracts";
  *          | { all: rule[] }          -- every one holds
  * role    := "conversation"           -- the thread, or the breakout the row names
  *          | "placement"              -- each Channel the row's thread is placed in
+ *          | "artifact"               -- the pinned artifact the row is about
  * ordinal := "opened"                 -- 0: the subject was opened at all
  *          | "message"                -- the row's own message
  *          | "placement"              -- the Channel placement that put the thread there
+ *          | "version"                -- the artifact version the row is about
  * time    := "occurred"               -- when the row happened
  * ```
  *
@@ -40,8 +42,8 @@ import type { ActivityItemKind } from "@rally/contracts";
  * again, whose placement takes a fresh ordinal
  * (`WorkspaceSpaceStorage.placementOrdinals`).
  */
-export type ActivityRole = "conversation" | "placement";
-export type ActivityOrdinal = "opened" | "message" | "placement";
+export type ActivityRole = "conversation" | "placement" | "artifact";
+export type ActivityOrdinal = "opened" | "message" | "placement" | "version";
 export type ActivityTime = "occurred";
 
 export type ActivityClearRule =
@@ -90,6 +92,8 @@ export interface ActivityWaterline {
  *   is when the result is on screen. Its own ordinal is not kept by the
  *   directory, and comparing with the newest message instead let a later
  *   message make a cleared row unread again.
+ * - **artifact_updated**: seeing the artifact at that version or later. Its
+ *   pin's unread state reads the same waterline.
  */
 export const ACTIVITY_CLEAR_RULES: Readonly<Record<ActivityItemKind, ActivityClearRule>> = {
   mentioned: { read: "conversation", through: ["message", "opened"] },
@@ -103,6 +107,7 @@ export const ACTIVITY_CLEAR_RULES: Readonly<Record<ActivityItemKind, ActivityCle
   },
   run_finished: { read: "conversation", through: "opened", since: "occurred" },
   merged: { read: "conversation", through: ["message", "opened"] },
+  artifact_updated: { read: "artifact", through: "version" },
 };
 
 /** Whether a rule reads a role anywhere in it: what decides whether that role is worth binding. */

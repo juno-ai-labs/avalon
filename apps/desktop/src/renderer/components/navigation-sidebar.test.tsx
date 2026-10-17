@@ -78,10 +78,12 @@ function thread(id: string, title: string, overrides: Partial<SpaceConversationS
   } as SpaceConversationSummary;
 }
 
-function artifactPin(id: string, title: string, mimeType = 'text/markdown'): ArtifactPin {
+function artifactPin(id: string, title: string, mimeType = 'text/markdown', overrides: Partial<ArtifactPin> = {}): ArtifactPin {
   return {
     id, threadId: 'launch' as ArtifactPin['threadId'], title, resourceType: 'generated_file', mimeType,
-    updatedAt: '2026-10-01T00:00:00.000Z', thread: { title: 'Launch', appearance: null, spaceIds: ['outbound'] },
+    updatedAt: '2026-10-01T00:00:00.000Z', currentVersion: 1, unread: false,
+    thread: { title: 'Launch', appearance: null, spaceIds: ['outbound'] },
+    ...overrides,
   };
 }
 
@@ -273,6 +275,35 @@ describe('the navigation sidebar', () => {
 
     expect(api.setArtifactPinned).toHaveBeenCalledWith('summary', false, 'launch');
     expect(await screen.findByText('Pin an artifact to keep it here')).toBeInTheDocument();
+  });
+
+  it('counts pinned artifacts with an unseen version on the Artifacts and Pinned buttons, and marks their rows unread', () => {
+    useUiStore.getState().setSidebarSection('artifacts');
+    renderSidebar((client) => client.setQueryData(ARTIFACT_PINS_QUERY_KEY, [
+      artifactPin('summary', 'Incident summary', 'text/markdown', { currentVersion: 3, unread: true }),
+      artifactPin('chart', 'Failure rate', 'image/png'),
+    ]));
+
+    expect(screen.getByRole('img', { name: '1 updated' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: '1 pinned with news' })).toBeInTheDocument();
+    const rows = within(screen.getByRole('region', { name: 'Pinned artifacts' })).getAllByRole('link');
+    expect(rows.map((row) => row.querySelector('[aria-label="Unread"]') !== null)).toEqual([true, false]);
+  });
+
+  it('says who updated a pinned artifact in Activity, and opens it onto the artifact in its thread', async () => {
+    useUiStore.getState().setSidebarSection('activity');
+    api.getActivity.mockResolvedValue({ nextCursor: null, items: [{
+      id: 'artifact:summary:3', kind: 'artifact_updated', occurredAt: new Date().toISOString(),
+      actorUserId: null, actorLabel: 'Rally', threadId: 'launch', threadTitle: 'Launch', breakout: null,
+      artifact: { resourceId: 'summary', title: 'Incident summary', version: 3 }, channelIds: ['outbound'], unread: true,
+    }] });
+    renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
+
+    const row = await screen.findByRole('link', { name: /updated Incident summary in Launch/u });
+    fireEvent.click(row);
+    expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/launch');
+    expect(JSON.parse(screen.getByTestId('location').dataset.state ?? 'null'))
+      .toMatchObject({ openExpanded: true, openResource: { threadId: 'launch', resourceId: 'summary' } });
   });
 
   it('gathers pinned artifacts in the Pinned tab under their own heading', () => {

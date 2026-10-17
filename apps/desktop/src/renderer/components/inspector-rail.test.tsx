@@ -826,23 +826,24 @@ describe('resource detail content preview', () => {
     expect(onOpenResourceVersion).toHaveBeenCalledWith(note, version);
   });
 
-  it('expands a resource with readable content, and not a live site', () => {
-    const onExpand = vi.fn();
+  it('draws the Expand it is given for any artifact, a live site included', () => {
+    const onSelect = vi.fn();
+    const expandAction = [{ key: 'expand', label: 'Expand', icon: null, onSelect }];
     const { unmount } = render(
       <Tooltip.Provider>
-        <InspectorRail panel={{ resourceId: note.id, onClose: vi.fn(), onExpand }} workstream={{ ...workstream, resources: [note] }} />
+        <InspectorRail panel={{ resourceId: note.id, onClose: vi.fn(), expandAction }} workstream={{ ...workstream, resources: [note] }} />
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
-    expect(onExpand).toHaveBeenCalledWith(note);
+    expect(onSelect).toHaveBeenCalledOnce();
     unmount();
 
     render(
       <Tooltip.Provider>
-        <InspectorRail panel={{ resourceId: site.id, onClose: vi.fn(), onExpand }} workstream={{ ...workstream, resources: [site] }} />
+        <InspectorRail panel={{ resourceId: site.id, onClose: vi.fn(), expandAction }} workstream={{ ...workstream, resources: [site] }} />
       </Tooltip.Provider>,
     );
-    expect(screen.queryByRole('button', { name: 'Expand' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Expand' })).toBeInTheDocument();
   });
 
   it('hands focus back to what opened the panel once an archive closes it', async () => {

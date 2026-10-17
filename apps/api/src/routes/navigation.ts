@@ -17,7 +17,7 @@ import {
 import { Hono } from "hono";
 import { z } from "zod";
 
-import { clientReadsChannelMerges } from "../lib/client-contract";
+import { clientReadsArtifactUpdates, clientReadsChannelMerges } from "../lib/client-contract";
 import type { HonoAppEnv } from "../env";
 import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
@@ -99,11 +99,15 @@ navigationRoutes.delete("/artifact-pins/:id", zValidator("param", artifactPinPar
 navigationRoutes.get("/activity", zValidator("query", activityQuery), async (c) => {
   const { cursor, only } = c.req.valid("query");
   const page = await new SpaceService(c.env, getWorkspaceAuth(c)).listActivity(cursor ?? null, only ?? null);
-  // A build before merges parses the kind strictly: it is served the page
-  // without its `merged` rows, whose cursor still continues correctly.
-  const merges = clientReadsChannelMerges((name) => c.req.header(name));
-  return c.json(ActivityPageSchema.parse(merges ? page : {
-    ...page, items: page.items.filter((item) => item.kind !== "merged"),
+  // A build before merges or artifact pins parses the kind strictly: it is
+  // served the page without those rows, whose cursor still continues correctly.
+  const header = (name: string) => c.req.header(name);
+  const merges = clientReadsChannelMerges(header);
+  const artifactUpdates = clientReadsArtifactUpdates(header);
+  return c.json(ActivityPageSchema.parse(merges && artifactUpdates ? page : {
+    ...page,
+    items: page.items.filter((item) => (merges || item.kind !== "merged")
+      && (artifactUpdates || item.kind !== "artifact_updated")),
   }));
 });
 
