@@ -1384,7 +1384,9 @@ The dedicated stores are unchanged; no applied migration is rewritten.
 **What changed:** WorkspaceDO migration 112 adds `on_behalf_of_user_id` to
 `resource_versions`, staged through `resources.revision_on_behalf_of_user_id`
 and copied and cleared by both capture triggers like the rest of provenance.
-The Terminal republish and the image edit fill it from the run's principal.
+The Terminal republish and the image edit fill it with the person who asked for
+the run (`runRequesterUserId`): a Sidekick's run-as user only when they started
+that run by hand, never for a scheduled or inbound one.
 
 **Why:** A pinned artifact's updates (Activity rows, pushes, the pin's unread
 state) must never come from the person's own change. An agent version named
@@ -1399,7 +1401,9 @@ thread's object at read time would add a hop to every pin and Activity read.
 
 **Consequences:** Versions from before the migration name nobody, and a writer
 that never sets the column records nobody: both read as somebody else's change.
-A new agent writer of a later version should set it from its principal.
+A new agent writer of a later version should set it from
+`runRequesterUserId`, not the principal, which a Sidekick run fills with a
+person nobody asked.
 
 ### 2026-10-16 — The account timezone follows the device by default
 

@@ -380,6 +380,12 @@ export function createTerminalResourceBridge(
    * which is this run's own, rather than from the sandbox's.
    */
   importingSubstreamId?: string | null,
+  /**
+   * The person who asked for this run (`runRequesterUserId`), recorded on each
+   * revision it publishes so the revision is never news to them. Null for a
+   * Sidekick run, whose principal nobody asked to act.
+   */
+  onBehalfOfUserId: string | null = null,
 ): TerminalResourceBridge {
   // The layered runtime database routes resource rows to WorkspaceDO and
   // tool/link rows to SubstreamAgent. Keep every statement single-authority;
@@ -1001,7 +1007,7 @@ export function createTerminalResourceBridge(
           contentMode,
           derivativeStatus,
           harnessRunId: context.harnessRunId,
-          onBehalfOfUserId: context.executionPrincipal.type === "user" ? context.executionPrincipal.userId : null,
+          onBehalfOfUserId,
           effectIntentId,
           publicationEventType: "resource_updated",
         });
@@ -1263,7 +1269,7 @@ export function createTerminalResourceBridge(
           contentMode: "unsupported",
           derivativeStatus: "unsupported",
           harnessRunId: context.harnessRunId,
-          onBehalfOfUserId: context.executionPrincipal.type === "user" ? context.executionPrincipal.userId : null,
+          onBehalfOfUserId,
           effectIntentId,
           publicationEventType: "resource_updated",
         });

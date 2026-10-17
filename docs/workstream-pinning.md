@@ -130,7 +130,8 @@ version of it, since it was pinned, that the person has not seen
 a refetch or a bookkeeping capture). A change the pinner
 made is never news to them: neither their own edit (`author_user_id`) nor a
 revision by a run acting for them (`on_behalf_of_user_id`, which the Terminal
-republish and the image edit record from the run's principal). What they have seen is their Activity
+republish and the image edit record as the person who asked for the run; a
+scheduled or inbound Sidekick run asks for nobody, so its changes stay news). What they have seen is their Activity
 waterline on the subject `artifact:<id>`, moved to the version that was
 current when the artifact was opened in a panel, so the pin's unread state and
 its `artifact_updated` Activity rows settle together. Mark all read covers the

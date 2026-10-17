@@ -78,6 +78,8 @@ export interface ResourceContext {
   harnessRunId: string;
   effectIntentId: string;
   executionPrincipal: ExecutionPrincipal;
+  /** The person who asked for this run (`runRequesterUserId`); null for a Sidekick run. */
+  onBehalfOfUserId: string | null;
 }
 
 export interface PublishImageInput {
@@ -347,7 +349,7 @@ async function publishEditedVersion(
       timestamp,
       timestamp,
       context.harnessRunId,
-      context.executionPrincipal.type === "user" ? context.executionPrincipal.userId : null,
+      context.onBehalfOfUserId,
       existing.id,
       context.workspaceId,
       input.sourceContentRef,
