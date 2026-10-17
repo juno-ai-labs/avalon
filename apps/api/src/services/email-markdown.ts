@@ -114,8 +114,24 @@ function forEmail(markdown: string): string {
   return normalizeModelMarkdown(rewriteCitationsAsPlainText(markdown));
 }
 
+export interface MarkdownTextOptions {
+  /**
+   * What becomes of a labelled link's target.
+   *
+   * `keep`, the default, writes it after the label in parentheses: a text-only
+   * mail client has no other way to follow the link. `drop` keeps the label
+   * alone, for a surface where the address is noise rather than a way to
+   * follow it — the speech route reads this output aloud, and a voice spelling
+   * out `https://example.com/plan` after "the plan" is the defect this option
+   * exists to remove. A URL written bare, with no label, is the text and stays
+   * under either setting.
+   */
+  readonly linkTargets?: "keep" | "drop";
+}
+
 /**
- * The plain-text alternative, which is what a text-only client receives.
+ * The plain-text alternative, which is what a text-only client receives — and,
+ * with `linkTargets: "drop"`, what the speech route reads aloud.
  *
  * It converts rather than passes through. A client showing this part is the one
  * client that will never render markup, so leaving `## Heading` and `**bold**`
@@ -123,7 +139,8 @@ function forEmail(markdown: string): string {
  * to cope with it. Structure that survives as text — the bullet, the rank, a
  * link's target in parentheses — is kept.
  */
-export function markdownToEmailText(markdown: string): string {
+export function markdownToEmailText(markdown: string, options: MarkdownTextOptions = {}): string {
+  const keepLinkTargets = options.linkTargets !== "drop";
   // The plain-text entry point, deliberately: nothing below parses Markdown,
   // so an escape manufactured by `normalizeModelMarkdown` would reach the
   // reader as a literal backslash. The citation rewrite still runs first — its
@@ -152,22 +169,22 @@ export function markdownToEmailText(markdown: string): string {
       continue;
     }
     if (PIPE_TABLE_ROW_PATTERN.test(line)) {
-      lines.push(stripInlineMarks(line, true, false));
+      lines.push(stripInlineMarks(line, keepLinkTargets, false));
       continue;
     }
     const heading = /^(#{1,6})\s+(.*)$/u.exec(line);
     if (heading) {
-      lines.push(stripInlineMarks(heading[2]!, true));
+      lines.push(stripInlineMarks(heading[2]!, keepLinkTargets));
       continue;
     }
     const bullet = /^(\s*)([-*+]|\d{1,3}[.)])\s+(.*)$/u.exec(line);
     if (bullet) {
       const indent = indentWidth(bullet[1]!) >= 2 ? "    " : "  ";
       const marker = /\d/u.test(bullet[2]!) ? bullet[2]! : "-";
-      lines.push(`${indent}${marker} ${stripInlineMarks(bullet[3]!, true)}`);
+      lines.push(`${indent}${marker} ${stripInlineMarks(bullet[3]!, keepLinkTargets)}`);
       continue;
     }
-    lines.push(stripInlineMarks(line, true));
+    lines.push(stripInlineMarks(line, keepLinkTargets));
   }
   return lines.join("\n").replace(/\n{3,}/gu, "\n\n").trim();
 }
@@ -207,7 +224,8 @@ export function markdownToEmailPreheader(markdown: string, limit = 160): string 
  * formatting — they did, while one stripped `__bold__` and the other did not.
  * They differ deliberately where their surfaces do: the text part keeps a
  * link's target because it is the reader's only way to follow it, while the
- * preheader spends no space on URLs; and a preformatted pipe row keeps a break
+ * preheader spends no space on URLs and the spoken text drops them because a
+ * voice reading an address is noise; and a preformatted pipe row keeps a break
  * tag as characters rather than splitting the row.
  */
 function stripInlineMarks(value: string, keepLinkTargets = false, rewriteBreakTags = true): string {
