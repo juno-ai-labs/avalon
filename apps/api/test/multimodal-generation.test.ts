@@ -493,6 +493,10 @@ describe("multimodal generation runtime", () => {
     expect(editReplay?.resourceId).toBe(created.resourceId);
     expect(database.prepare("SELECT COUNT(*) AS count FROM resources").get()).toEqual({ count: 1 });
     expect(Number((database.prepare("SELECT COUNT(*) AS count FROM resource_versions").get() as { count: number }).count)).toBeGreaterThan(0);
+    // The edit names the person whose run made it, so it is not news to them.
+    expect(database.prepare(
+      "SELECT cause, on_behalf_of_user_id FROM resource_versions WHERE cause = 'replaced'",
+    ).all()).toEqual([{ cause: "replaced", on_behalf_of_user_id: USER_ID }]);
   });
 
   it("stores a generated MP3 once under the durable effect identity and reuses it on replay", async () => {
