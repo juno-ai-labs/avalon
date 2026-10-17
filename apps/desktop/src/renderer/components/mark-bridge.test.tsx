@@ -48,6 +48,14 @@ describe('MarkBridge', () => {
     expect(tooltip).toHaveTextContent('Open channel');
   });
 
+  it('gives a mark that opens a menu its tooltip too', async () => {
+    render(<MarkBridge items={[{ key: 'folded', mark: thread, name: 'Show path', menu: items(vi.fn(), vi.fn()) }]} />);
+
+    fireEvent.pointerMove(screen.getByRole('button', { name: 'Show path' }), { pointerType: 'mouse' });
+
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Show path');
+  });
+
   it('names only the last mark when asked to', () => {
     render(<MarkBridge items={items(vi.fn(), vi.fn())} labelLast />);
 

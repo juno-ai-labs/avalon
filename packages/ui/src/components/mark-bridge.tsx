@@ -215,15 +215,16 @@ export function MarkBridge({ className, items, labelLast = false }: {
       const style = { color: item.mark.ink, left: index * SPAN, ...(named ? { paddingRight: LABEL_END, width: 2 * RADIUS + extra } : {}) };
       const markClass = clsx('mark-bridge-mark', named && 'is-labelled');
       const accessibleName = item.action ? `${item.action}: ${item.name}` : item.name;
-      const mark = item.menu ? <MarkBridgeMenu
-        items={item.menu}
-        trigger={<button aria-label={accessibleName} className={markClass} style={style} type="button">{content}</button>}
-      /> : item.onSelect
-        ? <button aria-label={accessibleName} className={markClass} onClick={item.onSelect} style={style} type="button">{content}</button>
-        : <span aria-label={accessibleName} className={markClass} role="img" style={style}>{content}</span>;
+      const mark = item.menu
+        ? <DropdownMenu.Trigger asChild>
+          <button aria-label={accessibleName} className={markClass} style={style} type="button">{content}</button>
+        </DropdownMenu.Trigger>
+        : item.onSelect
+          ? <button aria-label={accessibleName} className={markClass} onClick={item.onSelect} style={style} type="button">{content}</button>
+          : <span aria-label={accessibleName} className={markClass} role="img" style={style}>{content}</span>;
       // Not hoverable: the next mark sits 6px away, and the pointer's path
       // into an open tip would keep it up over the mark being aimed at.
-      return <Tip
+      const tipped = <Tip
         className="tooltip-hint"
         describesTrigger={false}
         disableHoverableContent
@@ -233,17 +234,22 @@ export function MarkBridge({ className, items, labelLast = false }: {
           {item.action ? <small>{item.action}</small> : null}
         </>}
       >{mark}</Tip>;
+      // The tip's trigger sits directly on the menu's, so both reach the button.
+      return item.menu ? <MarkBridgeMenu items={item.menu} key={item.key}>{tipped}</MarkBridgeMenu> : tipped;
     })}
   </span>;
 }
 
-/** A mark that opens a menu of the objects it stands for, each with its own mark. */
-function MarkBridgeMenu({ items, trigger }: {
+/**
+ * The menu a mark opens, listing the objects it stands for, each with its own
+ * mark. `children` holds the mark, its button inside a `DropdownMenu.Trigger`.
+ */
+function MarkBridgeMenu({ children, items }: {
+  children: React.ReactNode;
   items: readonly MarkBridgeItem[];
-  trigger: React.ReactElement;
 }): React.JSX.Element {
   return <DropdownMenu.Root modal={false}>
-    <DropdownMenu.Trigger asChild>{trigger}</DropdownMenu.Trigger>
+    {children}
     <DropdownMenu.Portal>
       <DropdownMenu.Content align="start" className="menu-content mark-bridge-menu" collisionPadding={12} sideOffset={8}>
         {items.map((item) => {
