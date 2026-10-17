@@ -7,7 +7,7 @@ export type RailVariant = 'context' | 'browser';
 /** How the sidebar orders the Channels nobody pinned. */
 export type SidebarChannelSort = 'alphabetical' | 'recent' | 'needs_you';
 /** Which list the sidebar's section switcher shows. */
-export type SidebarSection = 'pinned' | 'channels' | 'threads' | 'activity';
+export type SidebarSection = 'pinned' | 'channels' | 'threads' | 'artifacts' | 'activity';
 /** The panel occupying the right sidebar slot. */
 export interface RailInspector {
   type: 'resource' | 'connection' | 'task' | 'run';
@@ -123,7 +123,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   sidebarOpen: false,
   sheetAfterNavigation: false,
   sidebarWidth: loadSidebarWidth(SIDEBAR_WIDTH_STORAGE_KEY, SINGLE_SIDEBAR_DEFAULT_WIDTH),
-  sidebarSection: loadPreference<SidebarSection>(SIDEBAR_SECTION_STORAGE_KEY, ['pinned', 'channels', 'threads', 'activity'], 'channels'),
+  sidebarSection: loadPreference<SidebarSection>(SIDEBAR_SECTION_STORAGE_KEY, ['pinned', 'channels', 'threads', 'artifacts', 'activity'], 'channels'),
   threadSort: loadPreference<SidebarChannelSort>(THREAD_SORT_STORAGE_KEY, ['alphabetical', 'recent', 'needs_you'], 'recent'),
   channelSort: loadPreference<SidebarChannelSort>(CHANNEL_SORT_STORAGE_KEY, ['alphabetical', 'recent', 'needs_you'], 'alphabetical'),
   railOpen: false,

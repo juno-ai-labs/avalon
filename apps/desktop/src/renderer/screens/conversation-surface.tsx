@@ -6,7 +6,7 @@ import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { skipToken, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchThroughOwner } from '../lib/fetch-through-owner';
-import { usePinnedIds } from '../lib/pins';
+import { useArtifactPinAction, useArtifactPins, usePinnedIds } from '../lib/pins';
 import clsx from 'clsx';
 import { personalColor, personalColorInk } from '../components/personal-avatar';
 import { MemberPresentationContext } from '../lib/member-presentation';
@@ -40,6 +40,7 @@ import type { SubstreamInitialContext } from '@rally/contracts/substream-creatio
 import type { ClientSession } from '@rally/contracts/client-session';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { useCitations } from '../lib/use-citations';
+import { artifactPinActions, combineResourceActions } from '../lib/artifact-pin-actions';
 import { breakoutResourceActions } from '../lib/breakout-resource-actions';
 import { ApiError, type MentionIdentity } from '../lib/api';
 import { useChannelRail } from '../lib/channel-rails';
@@ -1813,9 +1814,26 @@ export function ConversationSurface({
     breakoutResources?.map((resource) => [resource.id, resource.direction]),
     channelResources?.map((resource) => resource.id),
   ]);
-  const citationActions = useMemo(() => breakoutResources && channelResources
-    ? breakoutResourceActions({ attach: attachResourceToChannel, breakoutResources, channelResources, pending: attachPending })
-    : undefined, [attachPending, attachResourceToChannel, citationActionsIdentity]);
+  // Pin and Unpin on what the thread's Main holds as an artifact: Main's own
+  // list there, and in a breakout what was attached to its thread.
+  const artifactPins = useArtifactPins();
+  const setArtifactPinned = useArtifactPinAction(api);
+  const pinnedArtifactIds = useMemo(() => new Set(artifactPins.map((pin) => pin.id)), [artifactPins]);
+  const pinnableResources = parentKind !== 'workstream' ? undefined
+    : substreamId === '0' ? routedDetail?.resources : channelResources;
+  const pinActionsIdentity = JSON.stringify([
+    pinnableResources?.map((resource) => [resource.id, resource.direction]),
+    [...pinnedArtifactIds],
+  ]);
+  const citationActions = useMemo(() => combineResourceActions(
+    breakoutResources && channelResources
+      ? breakoutResourceActions({ attach: attachResourceToChannel, breakoutResources, channelResources, pending: attachPending })
+      : undefined,
+    pinnableResources
+      ? artifactPinActions({ pinnedIds: pinnedArtifactIds, setPinned: setArtifactPinned, threadId: id, threadResources: pinnableResources })
+      : undefined,
+  ), [attachPending, attachResourceToChannel, citationActionsIdentity, pinActionsIdentity]);
+  const citationPinned = useCallback((resourceId: string) => pinnedArtifactIds.has(resourceId), [pinnedArtifactIds]);
   // Citations resolve against the loaded work stream's resources, and the
   // transcript needs this before the screen has decided it has a work stream to
   // draw at all — hence `routedDetail?`, and hence the hoisted empty array,
@@ -1825,6 +1843,7 @@ export function ConversationSurface({
   const citations = useCitations({
     actions: citationActions,
     loadResourceContent,
+    pinned: citationPinned,
     onOpenPreview: openAttachment,
     onOpenResourceDetails: openResourceDetails,
     resources: routedDetail?.resources ?? NO_RESOURCES,
