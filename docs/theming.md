@@ -45,9 +45,13 @@ preferences and reports it to the main process. Main stores the scalar in
 `application-settings.json`, uses its resolved value for a new BrowserWindow's
 initial `backgroundColor`, and broadcasts changes so every open window repaints.
 Every apply also writes that value into each `theme-color` meta the document
-carries, which is what an iOS Home Screen app paints its status bar from;
-`apps/browser/index.html` holds a media-qualified light and dark pair so the
-paint before the script runs is right for the `system` choice.
+carries, which is what iOS 15 to 18 paint a Home Screen app's status bar from
+and Chromium an installed app's title bar; `apps/browser/index.html` holds a
+media-qualified light and dark pair so the paint before the script runs is
+right for the `system` choice. iOS 26 reads the page instead of the meta: the
+root element's own background, or a fixed container at the top edge. So `html`
+paints `sys.backdrop.color` as `body` does; a root with no background of its
+own is reported to read as transparent there, and the bar falls back to white.
 A previous object-shaped preference is accepted only as a migration input: its
 `mode` becomes the scalar preference and its former family value is ignored.
 
@@ -114,11 +118,13 @@ serves it through `rally-font://`.
   size.
 - **The main-process window background matches the canvas token.** A mismatch
   flashes the wrong colour before the renderer's first frame.
-- **So does the `theme-color` meta.** iOS paints a Home Screen app's status
-  bar from it and from nothing else, so a document without the tag, or with a
-  stale one, shows a white bar over a dark canvas. `applyTheme` writes
-  `themeWindowBackground` into every tag on every apply and adds none, and the
-  browser entry's pre-script pair holds the same two values.
+- **So do the root's own background and the `theme-color` meta.** iOS 26
+  paints a Home Screen app's status bar from the page, the root's background
+  or a fixed container at its top edge, and iOS 15 to 18 from the meta. A root
+  with no background of its own, or a document without the tag or with a stale
+  one, shows a white bar over a dark canvas. `html` paints `sys.backdrop.color`,
+  `applyTheme` writes `themeWindowBackground` into every tag on every apply and
+  adds none, and the browser entry's pre-script pair holds the same two values.
 - **A palette fill's ink is decided by APCA, not by the WCAG 2 ratio, and it is
   checked in.** `PALETTE_INK` is the table; sixteen of the nineteen fills take
   the near-white ink and `amber`, `lime` and `green` take the near-black one.
@@ -232,33 +238,45 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ### 2026-10-17 — The status bar follows the canvas in an iOS Home Screen app
 
-**What changed:** `applyTheme` writes the resolved appearance's canvas colour,
+**What changed:** `html` paints `sys.backdrop.color`, the colour `body`
+already painted. `applyTheme` writes the resolved appearance's canvas colour,
 `themeWindowBackground`, into every `theme-color` meta in the document, and
 `apps/browser/index.html` carries a media-qualified light and dark pair so the
 paint before the script runs is right for the `system` choice.
 
 **Why:** On an iPhone in dark mode the Home Screen app showed a white status
-bar over the dark canvas. iOS paints that strip itself, from the `theme-color`
-meta, and the browser entry had none, so it fell back to white. A
-`media`-qualified pair alone would follow the phone rather than the choice:
-the appearance is pinned per device, so a person on Dark with a light phone
-would still get the wrong bar. The apply step already tells the Mac main
-process what to paint beside the page, and this is the same report to a
-different host.
+bar over the dark canvas. iOS paints that strip itself. Through iOS 18 it took
+the `theme-color` meta, and the browser entry had none. iOS 26 no longer reads
+the meta at all: it takes the page's own colour, the root element's background
+or a fixed container at the top edge (WebKit bug 305546, and the field reports
+the bug's reporter and Apple's developer forum give). `body` painted the
+canvas, which reaches the viewport by propagation, but `html` had no
+background of its own, and a transparent root is reported to fall back to
+white there. Both are set now, one per generation of iOS. A `media`-qualified
+meta pair alone would follow the phone rather than the choice: the appearance
+is pinned per device, so a person on Dark with a light phone would still get
+the wrong bar. The apply step already tells the Mac main process what to paint
+beside the page, and the meta is the same report to a different host.
 
 **Considered and rejected:** `apple-mobile-web-app-status-bar-style:
 black-translucent` with `viewport-fit=cover`, so the page draws under the bar.
 Nothing in the client handles safe areas yet, the bar's text turns white in
-both appearances unless `theme-color` is set anyway, and the home indicator
-would need the same work. Reading the canvas back through `getComputedStyle`
-at apply time was rejected too: `themeWindowBackground` already duplicates the
-token and is checked against the stylesheet, and a style read costs a recalc
-for nothing.
+both appearances unless the bar's colour is set anyway, and the home indicator
+would need the same work. A 6 px fixed strip at the top edge in the canvas
+colour, the workaround a Safari 26 note proposes for browser tabs, was
+rejected as a hack that depends on scroll-driven animation and is untested on
+iOS. Reading the canvas back through `getComputedStyle` at apply time was
+rejected too: `themeWindowBackground` already duplicates the token and is
+checked against the stylesheet, and a style read costs a recalc for nothing.
 
-**Consequences:** An entry document that wants its host told carries its own
-`theme-color` tag; `applyTheme` writes every tag it finds and adds none. The
-pair in `index.html` is a third copy of the two canvas values, beside
-`themes.ts` and the generated stylesheet, and moves with them.
+**Consequences:** On iOS 26 the bar shows whatever is fixed at the top edge,
+so a fixed container there paints the canvas or nothing. At phone width the
+navigation sheet is fixed at the top and paints `cmp.sidebar.background-solid`,
+a step off the canvas, while it is open. An entry document that wants its host
+told carries its own `theme-color` tag; `applyTheme` writes every tag it finds
+and adds none. The pair in `index.html` is a third copy of the two canvas
+values, beside `themes.ts` and the generated stylesheet, and moves with them.
+None of this was verified on a device; the pull request records what was.
 
 Shipped in #1277.
 
