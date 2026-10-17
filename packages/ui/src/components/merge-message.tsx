@@ -11,7 +11,7 @@ import type { ReactNode } from 'react';
  * offers under it.
  */
 export function MergeMessage({ actions, children, className, id, label, mergedBy, onQuote, quote, source, time }: {
-  /** The host's controls under the result: hover actions, Remove. */
+  /** The host's controls under the result, such as a Thread's hover actions. */
   actions?: ReactNode;
   /** The result itself, rendered by the host. */
   children: ReactNode;

@@ -2145,13 +2145,6 @@ export class RallyApi {
     });
   }
 
-  /** Remove a Channel message: a merge's Remove, by its author or an admin. */
-  async removeChannelMessage(channelId: string, messageId: string): Promise<void> {
-    await this.requestVoid(`/spaces/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}`, {
-      method: 'DELETE',
-    });
-  }
-
   async attachResource(parentId: string, resourceId: string): Promise<WorkstreamDetail> {
     await this.request(`/conversations/${encodeURIComponent(parentId)}/resources`, {
       method: 'POST',
