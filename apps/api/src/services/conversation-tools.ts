@@ -190,7 +190,7 @@ export function conversationToolPorts(env: Env, input: WorkstreamWorkflowInput):
       clientMessageId: request.clientMessageId,
       ...(request.breakoutId ? { breakoutId: request.breakoutId } : {}),
       ...(request.channelId ? { channelId: request.channelId } : {}),
-    }, { actingAgent: request.breakoutId !== undefined }),
+    }, { actingAgent: true }),
     mergeChannels: async (threadId) => new ConversationMergeService(env, await actingAuth(env, input)).writableChannels(threadId),
   };
 }

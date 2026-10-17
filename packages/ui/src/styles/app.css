@@ -8916,3 +8916,17 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .merge-message-body .markdown-body { color: inherit; font-size: inherit; line-height: inherit; }
 .merge-message-body .markdown-body > :first-child { margin-top: 0; }
 .merge-message-body .markdown-body > :last-child { margin-bottom: 0; }
+/* The source's mark of a merge: a divider across the feed, as a day separator
+   is, with the merge's line at its centre. */
+.merged-into { align-items: center; display: flex; gap: 12px; margin: 14px 0; }
+.merged-into::before, .merged-into::after { background: var(--av-sys-color-border-strong); content: ""; flex: 1 1 0; height: var(--av-sys-size-border-hairline); }
+.merged-into-label { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: inline-flex; flex: none; font: inherit; font-size: 12.5px; gap: 6px; max-width: 80%; padding: 0; }
+button.merged-into-label { cursor: pointer; }
+button.merged-into-label:hover { color: var(--av-sys-color-text-default); }
+.merged-into-target { color: var(--av-sys-color-text-default); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A Channel row a link asked for, lit briefly where the feed scrolled to it. */
+.channel-feed-item.is-focused { animation: channel-feed-focus 2.4s ease-out; border-radius: 18px; }
+@keyframes channel-feed-focus {
+  0%, 40% { background: var(--av-sys-color-surface-sunken); box-shadow: 0 0 0 10px var(--av-sys-color-surface-sunken); }
+  100% { background: transparent; box-shadow: 0 0 0 10px transparent; }
+}
