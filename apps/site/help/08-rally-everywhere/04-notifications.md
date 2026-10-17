@@ -12,6 +12,8 @@ Rally can tell you about anything in your **Activity** list:
 - **New breakouts.** Someone starts a Breakout you can open.
 - **Rally finished.** Rally finishes working in a Thread or Breakout you take
   part in.
+- **Merges.** Someone merges a Breakout into a Thread you can open, or a
+  Thread into a Channel you can see.
 
 ## Choosing how each one reaches you
 
