@@ -76,6 +76,47 @@ export const WORKSPACE_PINS_MIGRATION: readonly string[] = [
   ) STRICT`,
 ];
 
+/**
+ * Migration 110: `workspace_pins` admits an `artifact`, which carries the
+ * thread it was generated in as its `parent_id`, the way a breakout carries its
+ * thread. A CHECK cannot be altered in place, so the table is rebuilt; nothing
+ * references it by foreign key, so the copy, drop and rename need no
+ * hold-and-restore (`docs/durable-object-sqlite.md`).
+ */
+export const WORKSPACE_ARTIFACT_PINS_MIGRATION: readonly string[] = [
+  `CREATE TABLE workspace_pins_v110 (
+    user_id TEXT NOT NULL,
+    item_kind TEXT NOT NULL CHECK (item_kind IN ('thread', 'channel', 'breakout', 'artifact')),
+    item_id TEXT NOT NULL,
+    parent_id TEXT,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    CHECK ((item_kind IN ('breakout', 'artifact')) = (parent_id IS NOT NULL)),
+    PRIMARY KEY (user_id, item_kind, item_id)
+  ) STRICT`,
+  `INSERT INTO workspace_pins_v110
+     (user_id, item_kind, item_id, parent_id, position, created_at, updated_at)
+   SELECT user_id, item_kind, item_id, parent_id, position, created_at, updated_at
+     FROM workspace_pins`,
+  `DROP TABLE workspace_pins`,
+  `ALTER TABLE workspace_pins_v110 RENAME TO workspace_pins`,
+  `CREATE INDEX workspace_pins_order_idx
+    ON workspace_pins(user_id, item_kind, position, item_id)`,
+];
+
+/**
+ * Every kind the table stores. `artifact` is not a `PinKind`: it travels in a
+ * list of its own (`ArtifactPinSchema` says why), so `list` never returns it.
+ */
+export type StoredPinKind = PinKind | "artifact";
+
+/** One stored artifact pin: the resource and the thread it was generated in. */
+export interface StoredArtifactPin {
+  itemId: string;
+  threadId: string;
+}
+
 interface PinRow extends Record<string, SqlStorageValue> {
   item_kind: PinKind;
   item_id: string;
@@ -96,18 +137,28 @@ export class WorkspacePinStorage {
     ).toArray().length === 1;
   }
 
-  /** Every pin this person has, kind by kind, each in their order. */
+  /** Every thread, Channel and breakout pin this person has, kind by kind, each in their order. */
   list(userId: string): Pin[] {
     if (!this.ready()) return [];
     return this.storage.sql.exec<PinRow>(
       `SELECT item_kind, item_id, parent_id FROM workspace_pins
-        WHERE user_id = ? ORDER BY item_kind, position, item_id`,
+        WHERE user_id = ? AND item_kind != 'artifact' ORDER BY item_kind, position, item_id`,
       userId,
     ).toArray().map((row) => ({
       kind: row.item_kind,
       id: row.item_id,
       parentId: row.parent_id,
     }) as Pin);
+  }
+
+  /** This person's artifact pins in their order, whether or not the artifact is still visible. */
+  listArtifacts(userId: string): StoredArtifactPin[] {
+    if (!this.ready()) return [];
+    return this.storage.sql.exec<{ item_id: string; parent_id: string }>(
+      `SELECT item_id, parent_id FROM workspace_pins
+        WHERE user_id = ? AND item_kind = 'artifact' ORDER BY position, item_id`,
+      userId,
+    ).toArray().map((row) => ({ itemId: row.item_id, threadId: row.parent_id }));
   }
 
   count(userId: string): number {
@@ -118,7 +169,7 @@ export class WorkspacePinStorage {
   }
 
   /** Pin at the end of the person's list of that kind. True when it was not pinned before. */
-  pin(userId: string, kind: PinKind, itemId: string, parentId: string | null, now: number): boolean {
+  pin(userId: string, kind: StoredPinKind, itemId: string, parentId: string | null, now: number): boolean {
     return this.storage.sql.exec<{ item_id: string }>(
       `INSERT INTO workspace_pins
          (user_id, item_kind, item_id, parent_id, position, created_at, updated_at)
@@ -137,7 +188,7 @@ export class WorkspacePinStorage {
   }
 
   /** True when the item was pinned. */
-  unpin(userId: string, kind: PinKind, itemId: string): boolean {
+  unpin(userId: string, kind: StoredPinKind, itemId: string): boolean {
     return this.storage.sql.exec<{ item_id: string }>(
       `DELETE FROM workspace_pins WHERE user_id = ? AND item_kind = ? AND item_id = ? RETURNING item_id`,
       userId,
@@ -151,7 +202,7 @@ export class WorkspacePinStorage {
    * ignored, and pins the request leaves out keep their order after the ones it
    * names, so a client holding a stale list cannot drop a pin by reordering.
    */
-  reorder(userId: string, kind: PinKind, requestedIds: readonly string[], now: number): void {
+  reorder(userId: string, kind: StoredPinKind, requestedIds: readonly string[], now: number): void {
     const current = this.storage.sql.exec<{ item_id: string }>(
       `SELECT item_id FROM workspace_pins WHERE user_id = ? AND item_kind = ? ORDER BY position, item_id`,
       userId,

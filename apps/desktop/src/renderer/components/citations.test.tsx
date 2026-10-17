@@ -439,6 +439,28 @@ describe('resource citations', () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
+  it('puts the host\'s actions behind a card\'s More button and says when the card is pinned', async () => {
+    const onSelect = vi.fn();
+    render(
+      <MarkdownBody citations={context({
+        actions: () => [{ id: 'pin', label: 'Unpin', icon: 'unpin', onSelect }],
+        pinned: (resourceId) => resourceId === 'board-deck',
+      })}>
+        {'![Q3 board deck](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+    expect(screen.getByRole('button', { name: 'Open Q3 board deck, pinned' })).toHaveTextContent('Pinned · Document');
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More for Q3 board deck' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Unpin' }));
+    expect(onSelect).toHaveBeenCalledOnce();
+  });
+
+  it('draws no More button on a card the host offers nothing for', () => {
+    render(<MarkdownBody citations={context({ actions: () => undefined })}>{'![Q3 board deck](resource://board-deck)'}</MarkdownBody>);
+    expect(screen.getByRole('button', { name: 'Open Q3 board deck' })).toHaveTextContent('Document');
+    expect(screen.queryByRole('button', { name: /^More for/u })).toBeNull();
+  });
+
   it('never lets an unknown scheme reach the DOM as a destination', () => {
     render(
       <MarkdownBody citations={context()}>
