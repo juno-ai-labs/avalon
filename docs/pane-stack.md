@@ -56,12 +56,13 @@ expansion ends when the breakout opens a panel.
 
 A **panel** is the last level. An artifact or attachment a conversation opens
 sits beside it with the same **Expand**; expanded it covers the pane (the shell's
-`rail-expanded`, which reuses the narrow window's full-pane rules). Its header
-always carries its crumbs, beside or expanded: the Channel, when it has stepped
-off, and the conversation, as one `MarkBridge`. The conversation's crumb
-collapses an expanded panel and otherwise closes it. Where the window is too
-narrow for the panel beside its conversation (`railFillsPane`, which every
-phone width is), the panel covers the pane unexpanded and offers no Expand.
+`rail-expanded`, which reuses the narrow window's full-pane rules). While it stands
+alone, expanded or in a window too narrow for it beside its conversation
+(`railFillsPane`, which every phone width is), its header carries the crumbs
+as one `MarkBridge`: the Channel, when it has stepped off, and the
+conversation. That crumb collapses an expanded panel, and closes one that
+cannot sit beside, which also offers no Expand. Beside its conversation the
+panel has no crumbs: with two panes on screen only the left one carries them.
 There is no lightbox over a panel any more: a full-window
 view of an artifact is the panel expanded. `expandToggle`
 (`components/pane-expand-toggle.tsx`) draws the control at every level.
@@ -114,9 +115,9 @@ Widths are stored per pair: the thread beside its Channel under
   `/channels/:channelId/*` route; verified in a real window.
 - **The crumb is the Channel's, and only when it is off screen.** A crumb for a
   pane on screen is a second way to the same place that looks like a different
-  one. Guard: `shifted` in `ChannelStack`. A panel's crumb for its own
-  conversation is the exception the product chose: the panel always says what
-  it sits in, and beside that conversation its crumb closes the panel.
+  one. With two panes on screen only the left
+  one carries crumbs. Guard: `shifted` in `ChannelStack`, and a panel draws
+  crumbs only while it stands alone.
 - **A hidden pane acknowledges no read.** Both slots stay mounted, so a Channel
   behind its thread or a thread behind its breakout is still rendered. Each is
   wrapped in `PaneVisibility`, which turns the conversation visibility off
@@ -167,19 +168,21 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
 
 ## Changelog
 
-### 2026-10-17 — A panel always carries its crumbs, as one glass bridge
+### 2026-10-17 — A panel standing alone carries its crumbs, as one glass bridge
 
 A panel drew its crumbs only while expanded, but at phone width, and in any
 window too narrow for the panel beside its conversation, it covers the pane
 without being expanded, which left a lone artifact header with no way back but
-close. The product asked for the crumbs at all times, so the panel's header now
-carries them beside its conversation too. Its conversation crumb had no mark,
-so `TitlePillHeader` fell back to loose round pills instead of the fused
-`MarkBridge` every other header draws; it now carries its `workstreamMark`.
-The conversation crumb closes the panel unless the panel is expanded beside
-room to collapse into, since collapsing would otherwise change nothing.
-`panelFillsPane` reuses the shell's `useRailFillsPane`, so the header and the
-`rail-fills-pane` layout read the same rule.
+close. The crumbs now follow whether the panel stands alone, not whether it
+was asked to expand: `panelFillsPane` reuses the shell's `useRailFillsPane`,
+so the header and the `rail-fills-pane` layout read the same rule. There the
+conversation crumb closes the panel, since collapsing would change nothing,
+and Expand is withheld. Beside its conversation the panel still has none: the
+product wants crumbs on the left pane only when two are on screen.
+
+The conversation crumb also had no mark, so `TitlePillHeader` fell back to
+loose round pills instead of the fused `MarkBridge` every other header draws;
+it now carries its `workstreamMark`.
 
 ### 2026-10-17 — A panel expands like a pane, and the lightbox goes
 
