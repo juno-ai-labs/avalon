@@ -126,7 +126,11 @@ export const SessionImportBreakoutStartRequestSchema = z.strictObject({
   title: z.string().trim().min(1).max(180),
   clientMessageId: z.string().uuid(),
 });
-/** Open the reserved Breakout with what the agent read. */
+/**
+ * Open the reserved Breakout with what the agent read. The Breakout keeps the
+ * title it was reserved under at start; `title` here is the preview's and does
+ * not rename it.
+ */
 export const SessionImportBreakoutRequestSchema = SessionImportPreviewSchema.extend({
   title: z.string().min(1).max(180),
   clientMessageId: z.string().uuid(),

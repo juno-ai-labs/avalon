@@ -177,26 +177,51 @@ export class SessionImportRunService {
   async startBreakout(workstreamId: string, input: { sourceUrl: string; title: string; clientMessageId: string }) {
     const source = browserConversationSource(input.sourceUrl);
     const breakouts = new SubstreamCreationService(this.env, this.auth, this.defer);
-    await breakouts.prepare(workstreamId, { operationId: input.clientMessageId, title: input.title, throughTurnId: null });
     const childId = await breakoutImportChildId(workstreamId, input.clientMessageId, source.url);
     const runId = await nameDerivedUuid(`${childId}:run`);
+    // Who may start a Breakout here is decided before anything is launched in the thread.
+    await breakouts.assertCanCreate(workstreamId);
+    // Preparation captures and summarizes the thread's context, a model round
+    // trip the agent does not depend on, so the agent starts alongside it
+    // rather than after it. It is ready long before the agent finishes reading.
+    const preparing = breakouts.prepare(workstreamId, { operationId: input.clientMessageId, title: input.title, throughTurnId: null });
+    preparing.catch(() => undefined);
     const parent = await this.parent();
     if (await parent.ownsHiddenChild({ workspaceId: this.auth.workspaceId, parentId: workstreamId, substreamId: childId, userId: this.auth.userId })) {
+      await preparing;
       return { workstreamId, substreamId: childId };
     }
     let admitted: "admitted" | "exists" | null = null;
-    try {
-      await this.launch(workstreamId, source, [], childId, runId, (outcome) => { admitted = outcome; });
-    } catch (error) {
+    const [prepared, launched] = await Promise.allSettled([
+      preparing,
+      this.launch(workstreamId, source, [], childId, runId, (outcome) => { admitted = outcome; }),
+    ]);
+    if (prepared.status === "rejected") {
+      // No Breakout for the agent to fill. Best effort: a loop not yet executing
+      // misses the stop, and its finish is then refused instead.
+      if (launched.status === "fulfilled") await this.stopAgent(workstreamId, childId).catch(() => undefined);
+      throw prepared.reason;
+    }
+    if (launched.status === "rejected") {
       // As `start`: a concurrent start that admitted the run owns the
       // reservation now; only a launch with no run admitted takes it back.
       const othersRun = admitted === "exists" || (admitted === null && await createHarnessRunObjectPort(
         this.env, this.auth.workspaceId, workstreamId, undefined, childId,
       ).run({ runId }).then((found) => found != null, () => false));
       if (!othersRun) await breakouts.cancel(workstreamId, input.clientMessageId).catch(() => undefined);
-      throw error;
+      throw launched.reason;
     }
     return { workstreamId, substreamId: childId };
+  }
+
+  /** Stop the import agent running in the caller's hidden child. */
+  private async stopAgent(workstreamId: string, substreamId: string): Promise<void> {
+    const workspaceId = this.auth.workspaceId;
+    const child = await durableObjectStubForWorkspace(
+      this.env, this.env.SUBSTREAM_AGENTS, workspaceId,
+      conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(workstreamId), asSubstreamId(substreamId)),
+    );
+    await child.stopOwnedAgent();
   }
 
   /** Confirm the reserved Breakout with the conversation the agent read. */
@@ -211,7 +236,10 @@ export class SessionImportRunService {
     if (!await (await this.parent()).ownsHiddenChild({ workspaceId: this.auth.workspaceId, parentId: workstreamId, substreamId: childId, userId: this.auth.userId })) {
       throw new ApiError(409, "session_import_source_mismatch", "This import was started on another conversation");
     }
-    await breakouts.assertConfirmable(workstreamId, body.clientMessageId);
+    // Only files are uploaded ahead of `confirm`, which checks the preparation itself.
+    if (body.content.messages.some((message) => message.files?.length)) {
+      await breakouts.assertConfirmable(workstreamId, body.clientMessageId);
+    }
     // Files are named from this operation; the thread scopes it as the preparation is scoped.
     const conversation = await prepareSessionImport(this.env, this.auth, body, `breakout:${workstreamId}:${body.clientMessageId}`);
     return breakouts.confirm(workstreamId, body.clientMessageId, null, null, conversation);
@@ -377,11 +405,7 @@ export class SessionImportRunService {
     if (!await parent.ownsHiddenChild({ workspaceId, parentId: input.workstreamId, substreamId: input.substreamId, userId: this.auth.userId })) {
       throw new ApiError(404, "session_import_not_found", "No import of yours runs in that conversation");
     }
-    const child = await durableObjectStubForWorkspace(
-      this.env, this.env.SUBSTREAM_AGENTS, workspaceId,
-      conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(input.workstreamId), asSubstreamId(input.substreamId)),
-    );
-    await child.stopOwnedAgent();
+    await this.stopAgent(input.workstreamId, input.substreamId);
     if (input.clientMessageId === null) return { discarded: false };
     if (input.breakout) {
       // A Breakout the finish already confirmed stays; `cancel` refuses it.

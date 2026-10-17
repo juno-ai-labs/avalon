@@ -178,14 +178,18 @@ different reservation and opening:
 - **Reserve.** `POST /workstreams/:id/import/breakouts/runs` calls the ordinary
   Breakout `prepare` (`SubstreamCreationService`) with the create key as its
   operation id and no source turn, so the Breakout captures the thread's
-  context like any other. A prepared Breakout is in no listing. The agent's
+  context like any other. A prepared Breakout is in no listing. The agent is
+  launched alongside `prepare`, not after it: the context summary is a model
+  round trip the agent does not need, and it is done long before the agent
+  finishes reading. A failed `prepare` stops the agent. The agent's
   hidden child and run are named from the thread, the key and the canonical
   source URL, so a replayed start finds the agent it launched, and a replay on
   another conversation names a different one.
 - **Finish.** `POST /workstreams/:id/import/breakouts/complete` first checks,
   before any upload, that the caller started an import of this conversation
-  under this key (its hidden child, `session_import_source_mismatch`) and that
-  the preparation is still theirs and live (`assertConfirmable`). It then runs
+  under this key (its hidden child, `session_import_source_mismatch`) and,
+  when the import carries files, that the preparation is still theirs and live
+  (`assertConfirmable`); `confirm` checks the preparation itself otherwise. It then runs
   the same `prepareSessionImport` as a new thread, with the thread in the
   operation id so file ids are scoped as the preparation is, and hands the
   result to `confirm` as

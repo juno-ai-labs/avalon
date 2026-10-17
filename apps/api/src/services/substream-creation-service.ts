@@ -475,6 +475,11 @@ export class SubstreamCreationService {
     }
   }
 
+  /** Refuse a caller who may not start a Breakout in this thread, as `prepare` would first. */
+  async assertCanCreate(parentId: string): Promise<void> {
+    await this.parent(parentId);
+  }
+
   /**
    * Refuse, before any costly work, a confirmation `confirm` would refuse:
    * no preparation of the caller's under this key, or one already cancelled.
