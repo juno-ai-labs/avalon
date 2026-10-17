@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { assemblePreview, startSessionImportRun, type SessionImportApi, type SessionImportStep } from './session-import-run';
+import { assemblePreview, startSessionImportRun, type SessionImportApi, type SessionImportMode, type SessionImportStep } from './session-import-run';
 import { DesktopActionStore } from '../../common/desktop-actions/store';
 import type { RallyDesktopBridge } from '../../common/desktop';
 
@@ -104,16 +104,21 @@ describe('running an import', () => {
       onStarted?: (run: { workstreamId: string; substreamId: string }) => void;
       bridge?: Pick<RallyDesktopBridge, 'getEmbeddedBrowserState' | 'commandEmbeddedBrowser'>;
       completeSessionImport?: SessionImportApi['completeSessionImport'];
+      breakout?: Pick<SessionImportApi, 'startBreakoutImport' | 'completeBreakoutImport'>;
+      mode?: SessionImportMode;
     } = {},
   ) {
     const discards: string[] = [];
+    const discardBodies: unknown[] = [];
     const unused = async (): Promise<never> => { throw new Error('not used by this run'); };
     const api = {
       startSessionImport: () => options.reservation ?? Promise.resolve({ workstreamId: 'w1', substreamId: 's1' }),
       confirmSocketTicket: vi.fn(),
       getSocketTicket: async () => ({ url: 'wss://rally.test/feed', ticket: 't', protocols: ['rally', 't'] as [string, string] }),
-      discardSessionImport: async (workstreamId: string) => { discards.push(workstreamId); },
+      discardSessionImport: async (workstreamId: string, body: unknown) => { discards.push(workstreamId); discardBodies.push(body); },
       startSessionImportUpdate: unused,
+      startBreakoutImport: options.breakout?.startBreakoutImport ?? unused,
+      completeBreakoutImport: options.breakout?.completeBreakoutImport ?? unused,
       completeSessionImport: options.completeSessionImport ?? unused,
       updateImportedSession: unused,
       importedSessionSource: unused,
@@ -121,12 +126,51 @@ describe('running an import', () => {
     const bridge = options.bridge ?? { getEmbeddedBrowserState: async () => ({ tabs: [] }), commandEmbeddedBrowser: async () => undefined } as never;
     const run = startSessionImportRun({
       api, bridge, tabId: 't1', sourceUrl: source.url,
-      mode: { kind: 'create', title: 'Garden plan', spaceIds: [], clientMessageId: 'c1' },
+      mode: options.mode ?? { kind: 'create', title: 'Garden plan', spaceIds: [], clientMessageId: 'c1' },
       ...(onSteps ? { onSteps } : {}),
       ...(options.onStarted ? { onStarted: options.onStarted } : {}),
     });
-    return { run, discards, api };
+    return { run, discards, discardBodies, api };
   }
+
+  it('imports into a new Breakout of the thread and ends naming it', async () => {
+    sockets.length = 0;
+    const startBreakoutImport = vi.fn(async () => ({ workstreamId: 'thread', substreamId: 'agent' }));
+    const completeBreakoutImport = vi.fn(async () => 'breakout-1');
+    const data = JSON.stringify([{ role: 'user', text: 'Question', sourceMessageId: 'm0' },
+      { role: 'assistant', text: 'Answer', sourceMessageId: 'm1' }]);
+    const bridge = {
+      getEmbeddedBrowserState: async () => ({ tabs: [{ id: 't1', url: source.url, title: 'Chat' }] }),
+      commandEmbeddedBrowser: async () => ({ kind: 'value' as const, value: { ok: true, value: 1,
+        url: source.url, title: 'Chat', stored: [{ handle: 'messages', kind: 'json', name: 'messages',
+          mimeType: 'application/json', size: data.length, data }] } }),
+    } as never;
+    const { run } = started(undefined, { bridge, breakout: { startBreakoutImport, completeBreakoutImport },
+      mode: { kind: 'breakout', workstreamId: 'thread', title: 'Watering notes', clientMessageId: 'c2' } });
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    expect(startBreakoutImport).toHaveBeenCalledWith('thread', { sourceUrl: source.url, title: 'Watering notes', clientMessageId: 'c2' });
+    const socket = sockets[0]!;
+    socket.emit('open');
+    socket.emit('message', wire('harness_status_changed', { status: 'running' }));
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'read', action: { kind: 'browser.evaluate', script: 'return 1' } } }));
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'finish', action: { kind: 'session_import.finish',
+      title: 'Chat', messages: 'messages', verification } } }));
+    await vi.waitFor(() => expect(completeBreakoutImport).toHaveBeenCalledOnce());
+    expect(completeBreakoutImport).toHaveBeenCalledWith('thread', expect.objectContaining({ title: 'Watering notes' }), { clientMessageId: 'c2' });
+    socket.emit('message', wire('harness_status_changed', { status: 'completed' }));
+    await expect(run.done).resolves.toEqual({ kind: 'imported', workstreamId: 'thread', substreamId: 'breakout-1' });
+  });
+
+  it('cancels a Breakout import’s reservation, not a thread’s', async () => {
+    sockets.length = 0;
+    const { run, discardBodies } = started(undefined, {
+      breakout: { startBreakoutImport: async () => ({ workstreamId: 'thread', substreamId: 'agent' }), completeBreakoutImport: async () => 'b' },
+      mode: { kind: 'breakout', workstreamId: 'thread', title: 'Watering notes', clientMessageId: 'c3' },
+    });
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    await run.cancel();
+    expect(discardBodies).toEqual([{ substreamId: 'agent', clientMessageId: 'c3', breakout: true }]);
+  });
 
   it('confirms recovery only after a valid import feed frame', async () => {
     sockets.length = 0;
@@ -355,6 +399,8 @@ describe('running an import', () => {
       discardSessionImport: async (workstreamId: string) => { discards.push(workstreamId); },
       completeSessionImport: async () => 'w1',
       startSessionImportUpdate: unused,
+      startBreakoutImport: unused,
+      completeBreakoutImport: unused,
       updateImportedSession: unused,
       importedSessionSource: unused,
     } satisfies SessionImportApi;
@@ -396,6 +442,8 @@ describe('running an import', () => {
       discardSessionImport: async () => undefined,
       completeSessionImport: async (workstreamId: string) => { completions.push(workstreamId); return workstreamId; },
       startSessionImportUpdate: unused,
+      startBreakoutImport: unused,
+      completeBreakoutImport: unused,
       updateImportedSession: unused,
       importedSessionSource: unused,
     } satisfies SessionImportApi;
@@ -448,6 +496,8 @@ describe('running an import', () => {
       discardSessionImport: async () => undefined,
       completeSessionImport: async () => { throw new Error('This import key belongs to another thread'); },
       startSessionImportUpdate: unused,
+      startBreakoutImport: unused,
+      completeBreakoutImport: unused,
       updateImportedSession: unused,
       importedSessionSource: unused,
     } satisfies SessionImportApi;
