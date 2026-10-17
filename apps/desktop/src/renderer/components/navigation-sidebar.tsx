@@ -356,8 +356,11 @@ function RailBadge({ className = 'navigation-rail-badge', count, label }: { clas
 /**
  * The phone tab row's More tab: a menu of the sections the row has no room
  * for, each a radio row with its own count. The tile reads as selected while
- * one of them is the open section, and its count is theirs added up, named
- * count by count, so nothing a folded section counts is lost from the row.
+ * one of them is the open section, `aria-current` included, so assistive
+ * technology hears where the open section is and `usePinReveal` finds it as
+ * its last focus target as it would the section's own tab. Its count is the
+ * folded counts added up, named count by count, so nothing a folded section
+ * counts is lost from the row.
  * Choosing one switches the section as its own tab would, so the sheet stays
  * open on the list just picked.
  */
@@ -368,10 +371,12 @@ function MoreSections({ active, badges, onChoose, sections }: {
   sections: readonly Section[];
 }): React.JSX.Element {
   const counted = sections.filter((candidate) => badges[candidate.id] > 0);
+  const holdsActive = sections.some((candidate) => candidate.id === active);
   return <DropdownMenu.Root>
     <DropdownMenu.Trigger asChild>
       <RailItem
-        active={sections.some((candidate) => candidate.id === active)}
+        active={holdsActive}
+        aria-current={holdsActive ? 'page' : undefined}
         badge={<RailBadge
           count={counted.reduce((total, candidate) => total + badges[candidate.id], 0)}
           label={counted.map((candidate) => badgeLabel(candidate.id, badges[candidate.id])).join(', ')}

@@ -428,6 +428,7 @@ describe('the navigation sidebar', () => {
       const more = screen.getByRole('button', { name: /More$/u });
       expect(within(more).getByRole('img', { name: '2 updated' })).toHaveTextContent('2');
       expect(more).not.toHaveClass('is-active');
+      expect(more).not.toHaveAttribute('aria-current');
 
       fireEvent.pointerDown(more, { button: 0, ctrlKey: false });
       const artifacts = await screen.findByRole('menuitemradio', { name: /Artifacts/u });
@@ -438,6 +439,8 @@ describe('the navigation sidebar', () => {
       expect(screen.getByRole('heading', { name: 'Artifacts' })).toBeInTheDocument();
       expect(screen.getByRole('region', { name: 'Pinned artifacts' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /More$/u })).toHaveClass('is-active');
+      // Current as a section's own tab is, so the pin reveal's focus fallback finds it.
+      expect(screen.getByRole('button', { name: /More$/u })).toHaveAttribute('aria-current', 'page');
       // Switching sections does not navigate, so the sheet stays open on the list just picked.
       expect(screen.getByRole('button', { name: 'Close navigation' })).toHaveAttribute('aria-expanded', 'true');
 
