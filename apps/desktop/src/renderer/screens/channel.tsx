@@ -539,12 +539,14 @@ function MergeCard({ author, channelId, currentUser, members, merge, message, on
   const appearance = useCachedWorkstreamAppearance(merge.threadId);
   const { Icon, tint, ink } = resolveWorkstreamAppearance(merge.threadId, appearance);
   const merger = author?.name ?? 'Someone';
-  // The quote scrolls to the thread's card when that card is loaded; an
-  // older one is pages away, so the quote opens the thread instead.
+  // The quote scrolls to the thread's card when that card is loaded, and
+  // focus goes with it, so the next Tab starts from the card; an older one is
+  // pages away, so the quote opens the thread instead.
   const showThread = (): void => {
     const card = document.getElementById(feedThreadElementId(merge.threadId));
-    if (card) card.scrollIntoView({ block: 'center' });
-    else onOpenThread(merge.threadId);
+    if (!card) return onOpenThread(merge.threadId);
+    card.scrollIntoView({ block: 'center' });
+    card.querySelector('button')?.focus({ preventScroll: true });
   };
   return <li className="channel-feed-item is-message is-merge">
     <MergeMessage
