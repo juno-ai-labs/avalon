@@ -83,8 +83,8 @@ throws and returns a decision with a code.
 | | |
 | --- | --- |
 | Entity | One settled Rally turn, the last of a completed run, in one conversation |
-| Outcomes | `result_ready_to_merge` → offer `merge_up`; `side_question_worth_a_breakout` → offer `start_breakout`; `continue_here` → nothing |
-| Evidence between adjacent outcomes | Whether the turn closes the purpose or is a step of it; whether the turn opened work beside the purpose or about it |
+| Outcomes | `worth_carrying_up` → offer `merge_up`; `side_question_worth_a_breakout` → offer `start_breakout`; `continue_here` → nothing |
+| Evidence between adjacent outcomes | Whether the turn holds something the parent's readers need now, or is a step of the work here; whether the turn opened work beside the purpose or about it |
 | Insufficient confidence | Nothing, recorded as `confidence_below_threshold` |
 | Cannot answer | Nothing, recorded as `classifier_unavailable` with the provider's failure kind |
 
@@ -129,9 +129,9 @@ Nothing else goes in: every extra field is one JEV can over-weight.
 
 | Outcome | Meaning | Include | Exclude |
 | --- | --- | --- | --- |
-| `result_ready_to_merge` | The turn states a finished result that closes the purpose, in words a reader outside this conversation could use without the transcript | A final deliverable, decision or answer with nothing left open to the people here; a result the people here confirmed | A draft the turn itself calls preliminary or asks the people here to review; a partial result whose next step is still here; an answer to a narrow question that is not the purpose |
+| `worth_carrying_up` | The turn holds something the parent conversation's readers need now, in words they could use without this transcript: a deliverable, a decision, an answer to what they asked, a recommendation, a milestone, or a question only they can settle | A finished deliverable or draft; a decision the people here reached; the answer to the purpose; a question this conversation cannot settle and the parent can; a milestone the parent is waiting on | A draft the turn itself calls preliminary or asks the people here to review; routine progress, however long; a question to the people here; an answer to a narrow question that is not the purpose |
 | `side_question_worth_a_breakout` | The turn, or the exchange that led to it, opened a distinct piece of work beside the purpose: large enough to need its own conversation, likely to crowd this one | A sub-problem the turn proposes to work separately; a second deliverable the people asked for that the purpose does not cover; a line of questions on another subject that has run for several turns | A clarification or follow-up about the purpose itself; a one-line aside; the next step of the purpose |
-| `continue_here` | The turn is a step of the purpose, and the purpose is still in motion here | Partial work, a question to a person, a status update; a result that answers a small part of the purpose | A finished result that closes the purpose; a distinct piece of work beside the purpose |
+| `continue_here` | The turn is a step of the work here, and nothing in it is for the parent's readers yet | Partial work, a question to a person here, a status update; a result that answers a small part of the purpose | Something the parent's readers need now; a distinct piece of work beside the purpose |
 
 The exclusions are symmetric on purpose: what one outcome excludes, its
 neighbour includes, so no case falls between them for the model to settle
@@ -153,9 +153,21 @@ conversation kind:
 
 | Choice | In a Breakout | In a Thread's Main |
 | --- | --- | --- |
-| `result_ready_to_merge` | `merge_up` into the Thread | `merge_up` into the default Channel |
+| `worth_carrying_up` | `merge_up` into the Thread | `merge_up` into the default Channel |
 | `side_question_worth_a_breakout` | nothing (no nested Breakouts) | `start_breakout` from this turn |
 | `continue_here` | nothing | nothing |
+
+**A second question, for the words and not the decision.** What a merge
+carries is not always a result: a decision, an answer, a draft, a milestone
+or a question for the parent are all things people merge. The action is the
+same for all of them, so they are one outcome above, as the contract rule
+requires. The line's sentence may still want the noun. A second Choice in the
+same request, `carried_item_kind` over `deliverable`, `decision`, `answer`,
+`update`, `question`, answers in the same round trip at no extra latency and
+feeds nothing but the wording. It is asked and recorded from the first shadow
+run; whether it is shown depends on its measured accuracy, since a wrong noun
+in front of a whole Thread costs more than no noun. Until then the line uses
+the neutral template below.
 
 The question is the same in both kinds; the mapping discards what the host
 cannot offer. The alternative, two question documents, is two candidates to
@@ -306,6 +318,15 @@ positives. It does not run in shadow.
   only when the viewer passes `mergeTargetFor` (for `merge_up`) or can post
   (for `start_breakout`). Never in the composer: `ComposerInput`'s notice slot
   stays merge mode's.
+- **The words** are fixed strings chosen by the kind, with one slot for a
+  name, pinned by a test. JEV returns a label, never prose, so nothing is
+  generated for the merge line. `merge_up`: "{target} should see this.", the
+  target being the Thread for a Breakout and the default Channel for a Thread.
+  Once `carried_item_kind` has earned it, the typed form "This reads as a
+  {kind} for {target}." replaces it. `start_breakout`: "{subject} reads as its
+  own piece of work.", the subject being a short label the drafter returns
+  beside the prompt, and "This reads as its own piece of work." when there is
+  no draft.
 - **Accept merge** calls the existing merge-mode opener with the judged turn's
   text and the suggestion's target, which is what the turn's `MergeButton`
   calls.
@@ -444,7 +465,7 @@ open-value test.
 | Suite | Covers | Proved by breaking |
 | --- | --- | --- |
 | `packages/agent-harness/src/turn-disposition.test.ts` (Node, stubbed provider) | The request bytes and key order; every outcome's mapping per conversation kind; the threshold's equality semantics; one case per way of not getting an answer; cancellation propagating | Unit-level; the literal is the only break available |
-| `apps/api/test-workers/turn-disposition-settlement.test.ts` (workerd) | A completed Breakout run with a fetch double answering `result_ready_to_merge` leaves one open `merge_up` row and one event; a Thread run answering the breakout outcome leaves `start_breakout`; `continue_here` leaves nothing; a failed run and an unreachable provider leave settlement, naming and description untouched; a replayed settlement writes once; a merge marker resolves the row `accepted`; a capture at the judged turn resolves it; the third newer message expires it as `ignored` and the second does not; unread and the directory are unchanged | Skip the expiry write (the open row survives a fourth message); skip the idempotency gate (two rows); move the step before the terminal commit (the turn is not yet final) |
+| `apps/api/test-workers/turn-disposition-settlement.test.ts` (workerd) | A completed Breakout run with a fetch double answering `worth_carrying_up` leaves one open `merge_up` row and one event; a Thread run answering the breakout outcome leaves `start_breakout`; `continue_here` leaves nothing; a failed run and an unreachable provider leave settlement, naming and description untouched; a replayed settlement writes once; a merge marker resolves the row `accepted`; a capture at the judged turn resolves it; the third newer message expires it as `ignored` and the second does not; unread and the directory are unchanged | Skip the expiry write (the open row survives a fourth message); skip the idempotency gate (two rows); move the step before the terminal commit (the turn is not yet final) |
 | `apps/api/test/conversation-suggestions-route.test.ts` (Node, typed double) | The dismiss route's admission and refusal codes; the snapshot field under contract 8 and its absence under 7 | Return the field to a contract-7 build |
 | `apps/api/test/agent-model-flags.test.ts` | The new role is routed, flagged and metered; the exhaustiveness checks on `AGENT_MODEL_FLAG_KEYS` and `ORGANIZATION_PAYS` compile | Type-level |
 | Renderer (`screens/workstream.test.tsx`, `components/workstream-blocks.test.tsx`) | The line draws under the judged turn for a viewer who can act and not for one who cannot; it draws on the third newest turn and not on the fourth; the composer carries nothing; accept opens merge mode with the judged text; accept opens the launch pane with the draft; dismiss hides at once | Component-level |
