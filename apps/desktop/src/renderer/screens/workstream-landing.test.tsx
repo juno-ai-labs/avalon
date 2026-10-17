@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { layoutKey } from '../lib/desktop-layout';
+import { expandRequest } from '../lib/navigation-routes';
 import { PINS_QUERY_KEY } from '../lib/sidebar-list-store';
 import { WorkstreamLandingScreen } from './workstream-landing';
 
@@ -22,7 +23,7 @@ vi.mock('../lib/workspace-socket', () => ({ useWorkspaceSocket: () => socket }))
 
 function Destination(): React.JSX.Element {
   const location = useLocation();
-  return <div data-testid="destination">{location.pathname}{location.search}</div>;
+  return <div data-expanded={expandRequest(location) !== null} data-testid="destination">{location.pathname}{location.search}</div>;
 }
 
 function Router({ initial = '/', pins = [] }: {
@@ -52,7 +53,17 @@ describe('the root landing', () => {
   it('reopens the thread and breakout this device last had open', async () => {
     localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/channels/outbound/threads/plan?substream=child');
     render(<Router />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent('/channels/outbound/threads/plan?substream=child');
+    const destination = await screen.findByTestId('destination');
+    expect(destination).toHaveTextContent('/channels/outbound/threads/plan?substream=child');
+    expect(destination).toHaveAttribute('data-expanded', 'false');
+  });
+
+  it('reopens a thread under its Channel expanded', async () => {
+    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/channels/outbound/threads/plan');
+    render(<Router />);
+    const destination = await screen.findByTestId('destination');
+    expect(destination).toHaveTextContent(/^\/channels\/outbound\/threads\/plan$/u);
+    expect(destination).toHaveAttribute('data-expanded', 'true');
   });
 
   it('does not reopen a thread a leaving screen names, and lands on a Channel instead', async () => {
