@@ -110,6 +110,8 @@ export function BrowserImportWindow(): React.JSX.Element {
 
   const conversation = active ? browserConversation(active) : null;
   const update = context?.update ?? null;
+  // Opened from a thread's composer: the import becomes a Breakout of that thread.
+  const breakout = context?.breakout ?? null;
   // An update reads only the conversation the Channel was imported from.
   const updatable = update !== null && conversation !== null && conversation.url === conversationAt(update.sourceUrl, '')?.url;
   const starting = active === undefined || active.url === 'about:blank';
@@ -182,14 +184,16 @@ export function BrowserImportWindow(): React.JSX.Element {
       if (result.kind === 'imported') {
         if (workstreamId) await bridge.reportBrowserImport({ phase: 'imported', workstreamId }).catch(() => undefined);
         try {
-          await bridge.completeBrowserImport(result.workstreamId);
+          await bridge.completeBrowserImport(result.workstreamId, result.substreamId);
           return;
         } catch {
           // The Channel is imported and listed; only opening it failed, so the
           // window lets go of the page rather than holding the modal forever.
           setRun(null);
           setMirror(null);
-          setFailure('The conversation was imported, but Rally could not open it. Find it in your Threads.');
+          setFailure(result.substreamId
+            ? 'The conversation was imported, but Rally could not open it. Find it in the thread’s breakouts.'
+            : 'The conversation was imported, but Rally could not open it. Find it in your Threads.');
           return;
         }
       }
@@ -223,7 +227,16 @@ export function BrowserImportWindow(): React.JSX.Element {
   };
 
   const startChannel = (): void => {
-    if (!pending || !api || !conversation || !active || run || !name.trim() || !context?.spaces.some((space) => space.id === spaceId)) return;
+    if (!pending || !api || !conversation || !active || run || !name.trim()) return;
+    if (breakout) {
+      setPending(null);
+      watch(startSessionImportRun({ api, bridge, tabId: active.id, sourceUrl: conversation.url,
+        mode: { kind: 'breakout', workstreamId: breakout.workstreamId, title: name.trim(), clientMessageId: pending.clientMessageId },
+        onSteps: setSteps,
+        onStarted: setImportRun }));
+      return;
+    }
+    if (!context?.spaces.some((space) => space.id === spaceId)) return;
     setPending(null);
     const title = name.trim();
     watch(startSessionImportRun({ api, bridge, tabId: active.id, sourceUrl: conversation.url,
@@ -305,23 +318,27 @@ export function BrowserImportWindow(): React.JSX.Element {
     <Modal
       footer={<>
         <Button onClick={() => setPending(null)}>Cancel</Button>
-        <Button className="button-primary" disabled={!name.trim() || !spaceId} onClick={startChannel}>Import</Button>
+        <Button className="button-primary" disabled={!name.trim() || (!breakout && !spaceId)} onClick={startChannel}>Import</Button>
       </>}
       onOpenChange={(open) => { if (!open) setPending(null); }}
       open={pending !== null}
-      title="Import thread"
+      title={breakout ? 'Import as breakout' : 'Import thread'}
     >
       <form className="space-create-form" onSubmit={(event) => { event.preventDefault(); startChannel(); }}>
-        <label className="form-field">
+        {breakout ? <label className="form-field">
+          <span>Thread</span>
+          {/* Opened from this thread's composer: where the Breakout lands is not a choice made here. */}
+          <input disabled value={breakout.title} />
+        </label> : <label className="form-field">
           <span>Channel</span>
           <DropdownSelect ariaLabel="Channel" disabled={context?.spaceLocked === true} onValueChange={(value) => { setSpaceId(value); renewRequest(); }}
             options={spaces.map((space) => ({ label: space.name, value: space.id }))} value={spaceId} />
-        </label>
+        </label>}
         <label className="form-field" htmlFor={nameId}>
-          <span>Name of thread</span>
+          <span>{breakout ? 'Name of breakout' : 'Name of thread'}</span>
           <input autoFocus id={nameId} maxLength={180} onChange={(event) => { setName(event.target.value); renewRequest(); }} required value={name} />
         </label>
-        {spaces.length === 0 && <InlineError>There is no channel to import into. Create one in Rally first.</InlineError>}
+        {!breakout && spaces.length === 0 && <InlineError>There is no channel to import into. Create one in Rally first.</InlineError>}
       </form>
     </Modal>
   </div>;

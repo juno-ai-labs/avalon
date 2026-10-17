@@ -45,7 +45,7 @@ import { ApiError, type MentionIdentity } from '../lib/api';
 import { useChannelRail } from '../lib/channel-rails';
 import { writeDraftText } from '../lib/draft-cache';
 import type { PendingAttachment } from '../lib/use-file-attachments';
-import { IconCheck, IconChevronDown, IconCornerUpLeft, IconUsers } from '@tabler/icons-react';
+import { IconCheck, IconChevronDown, IconCloudDownload, IconCornerUpLeft, IconUsers } from '@tabler/icons-react';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useBrowserRailLinks } from '../lib/browser-rail-links';
@@ -136,6 +136,7 @@ import {
   connectorConnectionCardInput,
   connectorResourceAuthorizationRequest,
 } from '../components/connector-mentions';
+import type { ComposerMenuAction } from '../components/composer-input';
 import { WorkstreamComposer } from '../components/workstream-composer';
 import { useRailExitFade } from '../components/rail-surface';
 import { EmbeddedBrowserRail } from '../components/embedded-browser-rail';
@@ -2712,6 +2713,18 @@ export function ConversationSurface({
     }
   };
 
+  // A thread's own composer imports a conversation as a new Breakout of it.
+  // Imports are a member's, as a new thread's import is: the API refuses a
+  // guest, so a guest is not offered one. Only the Mac app has the embedded
+  // browser the import runs in; the browser shows the entry disabled, saying so.
+  const openBrowserImport = typeof window === 'undefined' ? undefined : window.rally?.openBrowserImport;
+  const composerMenuActions: ComposerMenuAction[] | undefined = parentKind === 'workstream' && substreamId === '0' && !guest ? [{
+    ...(openBrowserImport ? {} : { disabledReason: 'Importing needs the Rally Mac app' }),
+    icon: <IconCloudDownload aria-hidden="true" />,
+    label: 'Import from Claude or ChatGPT',
+    onSelect: () => void openBrowserImport?.({ spaces: [], breakout: { workstreamId: id, title: displayedDetail.title } }),
+  }] : undefined;
+
   const sendMessage = async (
     text: string,
     mentions: MentionIdentity[],
@@ -3655,6 +3668,7 @@ export function ConversationSurface({
             workstream={displayedDetail}
             draftKey={workstreamDraftKey(workspaceRegion, workspaceId, displayedDetail.id, substreamId)}
             substreamId={substreamId}
+            {...(composerMenuActions ? { menuActions: composerMenuActions } : {})}
           />}
         </div>
       </div>
