@@ -143,7 +143,8 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
   linking where its pill would. Above phone width the nearest crumb's name ends
   in an ellipsis rather than run under the pill, so the pane's own pill keeps
   its room and truncates last; at 640px and below the bridge shows marks
-  alone.
+  alone, and past two crumbs folds all but the nearest into a "…" menu
+  ([`shared-ui.md`](shared-ui.md)).
 - **Collapse in a narrow window** clears the expansion, but the pane still
   stands alone, as it would unexpanded; Collapse then simply goes away.
 - **A thread with no visible Channel** opens on `/workstreams/:id`, alone; it
