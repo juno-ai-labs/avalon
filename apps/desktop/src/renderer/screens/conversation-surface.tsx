@@ -1927,13 +1927,13 @@ export function ConversationSurface({
   // panel covers the pane whether or not it was expanded.
   const panelFillsPane = useRailFillsPane(useUiStore((state) => state.sidebarWidth));
   const panelExpandAction = expandToggle(panelExpanded, !panelFillsPane, setPanelExpanded);
-  // The panel's header always carries what it sits in, as a breakout's does:
-  // the Channel when it has stepped off, then this conversation. That crumb
-  // collapses an expanded panel back beside it, and otherwise closes the
-  // panel: beside, the conversation is already on screen, and where the
-  // panel cannot sit beside, collapsing would change nothing.
+  // Alone on screen, expanded or with no room beside, the panel's header
+  // carries what it covers, as a breakout's does: the Channel when it has
+  // stepped off, then this conversation. Beside it, the conversation's own
+  // header holds the crumbs. The conversation crumb collapses an expanded
+  // panel back beside it, or closes the panel where it cannot sit beside.
   const conversationTitle = routedDetail?.title ?? '';
-  const panelAncestors: TitlePillLevel[] = [
+  const panelAncestors: TitlePillLevel[] | undefined = !panelExpanded && !panelFillsPane ? undefined : [
     ...(channelPane?.shifted ? [channelPane.crumb] : []),
     {
       key: `panel-conversation:${conversationAddress}`,
@@ -1946,8 +1946,8 @@ export function ConversationSurface({
       title: conversationTitle,
       label: `Show ${conversationTitle || 'the conversation'}`,
       onSelect: () => {
-        if (panelExpanded && !panelFillsPane) setPanelExpanded(false);
-        else closeOwnRail();
+        if (panelFillsPane) closeOwnRail();
+        else setPanelExpanded(false);
       },
     },
   ];
