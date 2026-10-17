@@ -503,6 +503,18 @@ describe("a conversation import run", () => {
     await service.discard({ workstreamId: threadId, substreamId: run.substreamId, clientMessageId: null });
   }, 60_000);
 
+  it("refuses a Breakout import into a thread the caller cannot see before launching any agent in it", async () => {
+    const threadId = await openedThread(new SessionImportRunService(creationEnv(), AUTH));
+    const outsiderId = asUserId("00000000-0000-7000-8000-000000000f24");
+    // A member of the Organization who is not in this private thread.
+    await env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+      VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`).bind(WORKSPACE_ID, outsiderId).run();
+    const outsider = new SessionImportRunService(creationEnv(), { ...AUTH, userId: outsiderId });
+    await expect(outsider.startBreakout(threadId, { sourceUrl: BREAKOUT_URL, title: "Not mine", clientMessageId: crypto.randomUUID() }))
+      .rejects.toMatchObject({ status: 404 });
+    expect(await workspace().hiddenChildren({ workspaceId: WORKSPACE_ID, parentId: threadId, userId: outsiderId })).toEqual([]);
+  }, 60_000);
+
   it("discarding a Breakout import cancels its reservation, so a late finish cannot open it", async () => {
     const service = new SessionImportRunService(creationEnv(), AUTH);
     const threadId = await openedThread(service);
