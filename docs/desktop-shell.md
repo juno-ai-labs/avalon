@@ -145,8 +145,10 @@ further pages until its row is listed.
 **Artifacts**: the artifacts this person pinned, in their order, and nothing
 else yet. A row is a neutral sheet tile with the artifact's kind glyph,
 badged with its thread, its title and last update, and "kind · thread" below.
-It has no unread state, so the section carries no count. A row opens its
-thread with the artifact's panel open; right-click unpins or moves it.
+A pin with a version this person has not seen is unread (bold, a dot), and the
+section's count is how many are. A row opens its thread with the artifact's
+panel expanded ([`pane-stack.md`](pane-stack.md)); right-click unpins or
+moves it.
 [`workstream-pinning.md`](workstream-pinning.md#artifact-pins) owns the pin.
 
 **Activity**: requests to join waiting on this person (approve or decline in

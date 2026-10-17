@@ -59,6 +59,13 @@ export const ArtifactPinSchema = z.strictObject({
   resourceType: z.string().min(1).max(80),
   mimeType: z.string().max(160).nullable(),
   updatedAt: z.string().datetime({ offset: true }),
+  currentVersion: z.number().int().positive(),
+  /**
+   * Somebody else made a version since this person pinned it that they have
+   * not seen: the same fact that keeps its `artifact_updated` Activity row
+   * unread, cleared by the same read event.
+   */
+  unread: z.boolean(),
   /** The thread as its row draws it: a badge on the artifact's tile, and its name. */
   thread: z.strictObject({
     title: z.string().min(1).max(180),
@@ -150,6 +157,11 @@ export type ChannelStatsList = z.infer<typeof ChannelStatsListSchema>;
  *   its Channels (`mergedInto` is the Channel). Served only to builds at
  *   `CHANNEL_MERGES_CLIENT_CONTRACT` or later; see docs/conversation-merge.md.
  *
+ * - `artifact_updated`: an artifact the viewer pinned has a new version that
+ *   somebody else made (`artifact` names it; `threadId` is the thread it was
+ *   generated in). Served only to builds at `ARTIFACT_UPDATES_CLIENT_CONTRACT`
+ *   or later; see docs/workstream-pinning.md#artifact-pins.
+ *
  * `breakout` is set when the row is about a breakout rather than its thread.
  * Titles are the conversation's current ones, read when the page is.
  */
@@ -160,6 +172,7 @@ export const ActivityItemKindSchema = z.enum([
   "breakout_started",
   "run_finished",
   "merged",
+  "artifact_updated",
 ]);
 export type ActivityItemKind = z.infer<typeof ActivityItemKindSchema>;
 
@@ -178,6 +191,12 @@ export const ActivityItemSchema = z.strictObject({
   breakout: z.strictObject({ substreamId: IdSchema, title: z.string() }).nullable(),
   /** On a thread's `merged` row: the Channel it merged into. */
   mergedInto: z.strictObject({ channelId: IdSchema, name: z.string() }).optional(),
+  /** On an `artifact_updated` row: the artifact, its current title, and the version the row is about. */
+  artifact: z.strictObject({
+    resourceId: IdSchema,
+    title: z.string(),
+    version: z.number().int().positive(),
+  }).optional(),
   /** The Channels the thread sits in that the viewer may list. */
   channelIds: z.array(IdSchema),
   /** Until Mark all read covers it, or an event settles it; see `ActivityEventSchema`. */
@@ -198,11 +217,13 @@ export const ActivitySeenRequestSchema = z.strictObject({
 });
 export type ActivitySeenRequest = z.infer<typeof ActivitySeenRequestSchema>;
 
-/** What an Activity event is about: a thread, one of its breakouts, or a Channel. */
+/** What an Activity event is about: a thread, one of its breakouts, a Channel, or an artifact. */
 export const ActivitySubjectSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("thread"), threadId: WorkstreamIdSchema }),
   z.strictObject({ kind: z.literal("breakout"), threadId: WorkstreamIdSchema, substreamId: IdSchema }),
   z.strictObject({ kind: z.literal("channel"), channelId: IdSchema }),
+  /** A pinned artifact; `through` is the version the person has seen. */
+  z.strictObject({ kind: z.literal("artifact"), resourceId: IdSchema }),
 ]);
 export type ActivitySubject = z.infer<typeof ActivitySubjectSchema>;
 

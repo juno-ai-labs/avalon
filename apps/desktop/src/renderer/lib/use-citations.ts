@@ -224,6 +224,7 @@ export function useCitations({ actions, loadResourceContent, onOpenPreview, onOp
     if (!entry || entry.citation.resourceType === 'generated_site') return undefined;
     return {
       name: entry.citation.title,
+      resourceId: entry.citation.id,
       ...(entry.citation.mimeType ? { mimeType: entry.citation.mimeType } : {}),
       ...(entry.contentAvailable && loadResourceContent ? {
         loadContent: (signal?: AbortSignal) => loadResourceContent(entry.citation.id, signal),
