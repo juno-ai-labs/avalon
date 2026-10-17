@@ -1326,6 +1326,12 @@ export interface ConversationSurfaceProps {
    */
   breakoutOrigin?: { turnId: string | null | undefined; channelTitle: string } | undefined;
   /**
+   * The levels this conversation sits in, as crumbs, for a panel it opens
+   * that stands alone: a breakout's Channel and thread. Without it, the
+   * Channel's crumb while the Channel is off screen.
+   */
+  parentCrumbs?: readonly TitlePillLevel[] | undefined;
+  /**
    * Whether the `?turn=&sequence=` search target names this conversation. Two
    * conversations share the route when a Breakout is open beside its Channel,
    * and the target is only ever in one of them.
@@ -1376,6 +1382,7 @@ export function ConversationSurface({
   honorsSearchTarget = true,
   paneKey,
   breakoutOrigin,
+  parentCrumbs,
 }: ConversationSurfaceProps): React.JSX.Element {
   const detailQueryKey = useMemo(() => workstreamDetailQueryKey(id, substreamId), [id, substreamId]);
   const parentDetailQueryKey = useMemo(() => workstreamDetailQueryKey(id, '0'), [id]);
@@ -1929,12 +1936,12 @@ export function ConversationSurface({
   const panelExpandAction = expandToggle(panelExpanded, !panelFillsPane, setPanelExpanded);
   // Alone on screen, expanded or with no room beside, the panel's header
   // carries what it covers, as a breakout's does: the Channel when it has
-  // stepped off, then this conversation. Beside it, the conversation's own
-  // header holds the crumbs. The conversation crumb collapses an expanded
+  // stepped off (and a breakout's thread), then this conversation. Beside
+  // it, the conversation's own header holds the crumbs. The conversation crumb collapses an expanded
   // panel back beside it, or closes the panel where it cannot sit beside.
   const conversationTitle = routedDetail?.title ?? '';
   const panelAncestors: TitlePillLevel[] | undefined = !panelExpanded && !panelFillsPane ? undefined : [
-    ...(channelPane?.shifted ? [channelPane.crumb] : []),
+    ...(parentCrumbs ?? (channelPane?.shifted ? [channelPane.crumb] : [])),
     {
       key: `panel-conversation:${conversationAddress}`,
       icon: <WorkstreamGlyph appearance={routedDetail?.appearance} id={id} size={24} />,
