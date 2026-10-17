@@ -116,6 +116,25 @@ export const ConversationMergeV1Schema = z.strictObject({
 });
 export type ConversationMergeV1 = z.infer<typeof ConversationMergeV1Schema>;
 
+/**
+ * The `structuredContent` of the system row a merge leaves in its source: the
+ * Breakout, or the Thread's Main. It says where the result went, so the source
+ * can show it was merged and open the merge where it landed. Written by the
+ * server only, after the merge itself; system rows never reach the model's
+ * history.
+ */
+export const ConversationMergedIntoV1Schema = z.strictObject({
+  type: z.literal("conversation_merged_into"),
+  schemaVersion: z.literal(1),
+  mergedInto: ConversationMergeTargetSchema,
+  /** The merge in the target: a Thread's transcript turn, or a Channel message. */
+  messageId: z.string().min(1),
+  mergedByUserId: UserIdSchema,
+  /** Rally merged on the person's request, through `conversation_merge`. */
+  actingAgent: z.boolean(),
+});
+export type ConversationMergedIntoV1 = z.infer<typeof ConversationMergedIntoV1Schema>;
+
 /** An artifact a merge embeds, as it was when merged: enough to draw its card. */
 /**
  * How a citation names a resource: its UUID or its alias. A merge attaches

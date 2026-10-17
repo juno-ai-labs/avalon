@@ -118,7 +118,7 @@ import {
 } from '../components/substream-launch';
 import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
-import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, MessageMergedInto, Participant, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { workstreamSidekickRows, type SidekickRow, type SidekickSectionFailure } from '../components/sidekick-section';
 import { AgentCompactionIndicator, AgentWorkTiming, RunStopAcknowledgement, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
@@ -1308,6 +1308,8 @@ export interface ConversationSurfaceProps {
   /** The Breakout open beside this conversation, if any. */
   openBreakoutId?: string | null;
   onOpenBreakout?: (substreamId: string) => void;
+  /** Opens the merge a Merged chip in this feed names, where it landed. */
+  onOpenMerge?: (merge: MessageMergedInto) => void;
   /** Open the composer's merge mode, empty: the title menu's Merge. A new nonce asks again. */
   mergeRequest?: number | null;
   /** A merge from this conversation landed: the host opens where it went. */
@@ -1364,6 +1366,7 @@ export function ConversationSurface({
   breakouts,
   openBreakoutId = null,
   onOpenBreakout,
+  onOpenMerge,
   mergeRequest = null,
   onMerged,
   scrollToTurn = null,
@@ -3509,6 +3512,7 @@ export function ConversationSurface({
                 onMerge: startMerge,
               } } : {})}
               {...(onOpenBreakout ? { onOpenBreakout } : {})}
+              {...(onOpenMerge ? { onOpenMerge } : {})}
               {...(breakoutCards ? { breakoutCards } : {})}
               {...(api ? { onAcceptDraft: (automationId: string) => {
                 acceptProposedAutomation.mutate(automationId);
