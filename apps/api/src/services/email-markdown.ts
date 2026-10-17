@@ -118,23 +118,20 @@ function forEmail(markdown: string): string {
 
 export interface MarkdownTextOptions {
   /**
-   * What becomes of a link's address.
-   *
-   * `keep`, the default, writes a named link's address after its label in
-   * parentheses and leaves a bare one as written: a text-only mail client has
-   * no other way to follow either. `drop` keeps a named link's label alone and
-   * still leaves a bare address as written; it is what the inbox preheader
-   * does, since a label is the shorter spelling and a bare address is the only
-   * text there is. `spoken` is for output a voice reads: a named link is its
-   * label, and a bare address becomes "link to" and its registrable domain, so
-   * `https://www.apple.com/iphone/compare` is heard as *link to apple.com*
-   * rather than spelled out character by character. An address inside a code
-   * span is code, not a link, and is read as written under every setting.
+   * What becomes of a link's address. `keep`, the default, writes a named
+   * link's address after its label in parentheses and leaves a bare one as
+   * written: a text-only mail client has no other way to follow either.
+   * `spoken` is for output a voice reads: a named link is its label alone, a
+   * bare address is "link to" and its registrable domain, and an image with no
+   * alt text is "image". An address inside a code span is code and is read as
+   * written under either. The reasoning is the speech module's
+   * (`docs/message-speech.md`).
    */
-  readonly linkTargets?: LinkTargets;
+  readonly linkTargets?: "keep" | "spoken";
 }
 
-type LinkTargets = "keep" | "drop" | "spoken";
+/** The reducer's own states: the preheader takes `drop`, a label alone with a bare address as written. */
+type LinkTargets = NonNullable<MarkdownTextOptions["linkTargets"]> | "drop";
 
 /**
  * The plain-text alternative, which is what a text-only client receives — and,
@@ -230,15 +227,15 @@ export function markdownToEmailPreheader(markdown: string, limit = 160): string 
  * text body cannot disagree about which marks are punctuation and which are
  * formatting — they did, while one stripped `__bold__` and the other did not.
  * They differ deliberately where their surfaces do: the text part keeps a
- * link's target because it is the reader's only way to follow it, while the
- * preheader spends no space on URLs and the spoken text announces a bare one
- * as a link to its domain because a voice reading an address is noise; and a
- * preformatted pipe row keeps a break tag as characters rather than splitting
- * the row.
+ * link's target because it is the reader's only way to follow it, the
+ * preheader spends no space on URLs, and the spoken text announces a bare one
+ * as a link to its domain; and a preformatted pipe row keeps a break tag as
+ * characters rather than splitting the row.
  */
 function stripInlineMarks(value: string, linkTargets: LinkTargets = "drop", rewriteBreakTags = true): string {
   let stripped = value
-    .replace(/!\[([^\]]*)\]\(([^)]*)\)/gu, (_match, alt: string, href: string) => alt || href)
+    .replace(/!\[([^\]]*)\]\(([^)]*)\)/gu, (_match, alt: string, href: string) =>
+      alt || (linkTargets === "spoken" ? "image" : href))
     .replace(/\[([^\][]+)\]\(([^)]*)\)/gu, (_match, label: string, href: string) =>
       linkTargets === "keep" && href ? `${label} (${href})` : label)
     .replace(/(\*\*|__)([^*_]+)\1/gu, "$2")
@@ -269,7 +266,7 @@ function stripInlineMarks(value: string, linkTargets: LinkTargets = "drop", rewr
  */
 function announceBareLinks(value: string): string {
   return value.replace(
-    /`[^`]+`|<((?:https?:\/\/|www\.)[^\s<>`[\]]+)>|(?<![\w.])((?:https?:\/\/|www\.)[^\s<>`[\]]+)/giu,
+    /`[^`]+`|<((?:https?:\/\/|www\.)[^\s<>`[\]]+)>|(?<![\w.@])((?:https?:\/\/|www\.)[^\s<>`[\]]+)/giu,
     (match, bracketed: string | undefined, bare: string | undefined) => {
       if (bare === undefined && bracketed === undefined) return match;
       if (bracketed !== undefined) return `link to ${spokenDomain(bracketed)}`;

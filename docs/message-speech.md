@@ -54,7 +54,8 @@ context, and restores the button.
   nothing else of the address. A listener cannot follow a spoken address, and
   a voice spelling one out is noise between the words that matter; the
   text-only email part keeps the address because a reader there can follow it.
-  An address inside a code span is code and is read as written.
+  An image with no alt text is spoken as *image*. An address inside a code span
+  is code and is read as written.
 - **Audio is never buffered into a complete file.** Waiting for MP3 generation
   or the full response would turn a listening action into a generation wait and
   destroy time-to-first-audio.
@@ -178,7 +179,8 @@ its abandoned cost grows with message length.
 `linkTargets: "spoken"`. `[the plan](https://example.com/plan)` reaches
 `gpt-4o-mini-tts` as *the plan*, a footnote's external source line as its title
 alone, and a bare `https://www.apple.com/iphone/compare`, `<https://…>` or
-`www.…` as *link to apple.com*; before, every address was read out in full.
+`www.…` as *link to apple.com*, and an image with no alt text as *image*;
+before, every address was read out in full.
 
 **Why:** The reducer was written for the text-only email part, where the address
 beside a label is the reader's only way to follow the link. A listener cannot
@@ -198,15 +200,16 @@ choice the citation rewrite already offers for the same reason. For the domain,
 the full host (*docs dot github dot com*) and a guess at the last two labels
 were both rejected: a listener gains nothing from a subdomain, and `bbc.co.uk`
 defeats the guess. `tldts`, which the favicon and terminal network-policy
-services already use, answers it.
+services already use, answers it. Speaking an unnamed image's full address, so
+that two images on one host stay distinguishable, was rejected too: a path
+spelled out is the noise this change removes.
 
 **Consequences:** A new spoken surface passes the same option. An address inside
 a code span is read as written, because it is code. Any scheme other than
-`http(s)` is read as written too. An image with no alt text still speaks its
-address, because there is no name to speak instead; dropping it entirely is a
-separate decision about whether an unnamed image is announced at all. The iOS
-client's Speak hands the raw message text to the system synthesizer and is not
-on this path.
+`http(s)` is read as written too. An image with no alt text is spoken as
+*image*, as a screen reader names an unlabelled graphic; its address was all it
+had. The iOS client's Speak hands the raw message text to the system
+synthesizer and is not on this path.
 
 Shipped in [#1278](https://github.com/juno-ai-labs/avalon/pull/1278).
 

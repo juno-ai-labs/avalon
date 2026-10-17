@@ -25,11 +25,7 @@ export async function streamMessageSpeech(input: {
   signal: AbortSignal;
   client?: AzureAudioClient;
 }): Promise<MessageSpeechStream> {
-  // A link is spoken by its name alone, and a bare address as "link to" its
-  // domain. The text-only email part keeps addresses because a reader there
-  // has no other way to follow them; a listener cannot follow a spoken
-  // address, and a voice reading one out character by character is noise
-  // between the words that matter.
+  // Spoken, not read: a link is its name and a bare address its domain (docs/message-speech.md).
   const speech = markdownToEmailText(input.markdown, { linkTargets: "spoken" });
   if (!speech) throw new ApiError(422, "speech_text_required", "This message has no text to speak.");
 
