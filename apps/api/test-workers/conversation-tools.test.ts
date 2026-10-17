@@ -708,6 +708,37 @@ describe("a Breakout's merge into its Thread", () => {
     expect(await merged(AUTHOR_ID)).toEqual([]);
   });
 
+  it("leaves one Merged marker in the Breakout naming the merge, however often it is retried", async () => {
+    const breakout = await seedBreakout("Sequence B");
+    const service = new ConversationMergeService(TEST_ENV, AUTH);
+    const request = { body: "Sequence B is approved.", clientMessageId: "merge-marked", breakoutId: breakout };
+    const markers = () => runInDurableObject(conversation(ROOM_ID, breakout), (_instance, state) =>
+      state.storage.sql.exec<{ content: string; structured_content_json: string; author_type: string }>(
+        `SELECT content, structured_content_json, author_type FROM canonical_conversation_turn_details
+          WHERE client_message_id LIKE 'merged-into:%' ORDER BY sequence_number`,
+      ).toArray().map((row) => ({ ...row, structured_content_json: JSON.parse(row.structured_content_json) as unknown })));
+
+    const merged = await service.merge(ROOM_ID, request);
+    await service.merge(ROOM_ID, request);
+
+    expect(await markers()).toEqual([{
+      content: "Merged into Investors",
+      author_type: "system",
+      structured_content_json: {
+        type: "conversation_merged_into", schemaVersion: 1,
+        mergedInto: { kind: "thread", id: ROOM_ID, title: "Investors" },
+        messageId: merged.messageId, mergedByUserId: AUTHOR_ID, actingAgent: false,
+      },
+    }]);
+    // Rally's merge, for the same person, is marked as Rally's.
+    await service.merge(ROOM_ID, { ...request, clientMessageId: "merge-marked-by-rally" }, { actingAgent: true });
+    expect((await markers()).map((marker) => (marker.structured_content_json as { actingAgent: boolean }).actingAgent))
+      .toEqual([false, true]);
+    // The Thread gains only the merges; the markers are the Breakout's.
+    expect((await mainState()).merges).toHaveLength(2);
+    await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID));
+  });
+
   it("refuses the whole merge when one embed cannot be shared, attaching nothing; then attaches what it embeds", async () => {
     await seedResources();
     const breakout = await seedBreakout("Sequence B");

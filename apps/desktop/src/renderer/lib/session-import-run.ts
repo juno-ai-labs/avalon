@@ -75,15 +75,19 @@ export function assemblePreview(
 
 export type SessionImportApi = Pick<RallyApi,
   'startSessionImport' | 'startSessionImportUpdate' | 'completeSessionImport' | 'discardSessionImport'
+  | 'startBreakoutImport' | 'completeBreakoutImport'
   | 'updateImportedSession' | 'importedSessionSource' | 'getSocketTicket'>
   & Partial<Pick<RallyApi, 'confirmSocketTicket'>>;
 
 export type SessionImportMode =
   | { kind: 'create'; title: string; spaceIds: string[]; clientMessageId: string }
-  | { kind: 'update'; workstreamId: string };
+  | { kind: 'update'; workstreamId: string }
+  /** A new Breakout of an existing thread. */
+  | { kind: 'breakout'; workstreamId: string; title: string; clientMessageId: string };
 
 export type SessionImportRunResult =
-  | { kind: 'imported'; workstreamId: string }
+  /** `substreamId` names the Breakout a breakout import opened. */
+  | { kind: 'imported'; workstreamId: string; substreamId?: string }
   | { kind: 'failed'; reason: SessionImportFailureReason }
   /** The run ended without a finish; `refusal` is Rally's last answer to one it tried, if any. */
   | { kind: 'unfinished'; refusal?: string }
@@ -212,7 +216,7 @@ export function startSessionImportRun(input: {
             return { ok: false, code: 'import_rejected', message: 'This thread has no source conversation to update.' };
           }
           preview = assemblePreview(store, {
-            title: input.mode.kind === 'create' ? input.mode.title : action.title,
+            title: input.mode.kind === 'update' ? action.title : input.mode.title,
             messagesHandle: action.messages,
             source: { provider: source.provider, url: source.url, sessionId: source.sessionId },
           });
@@ -222,8 +226,11 @@ export function startSessionImportRun(input: {
         }
         if (finished || cancelled || runEnded) return { ok: false, code: 'import_rejected', message: 'The import run has ended.' };
         completingImport = true;
+        let breakoutId: string | undefined;
         try {
-          if (input.mode.kind === 'create') {
+          if (input.mode.kind === 'breakout') {
+            breakoutId = await input.api.completeBreakoutImport(run.workstreamId, preview, { clientMessageId: input.mode.clientMessageId });
+          } else if (input.mode.kind === 'create') {
             await input.api.completeSessionImport(run.workstreamId, preview, {
               clientMessageId: input.mode.clientMessageId, spaceIds: input.mode.spaceIds,
             });
@@ -236,7 +243,7 @@ export function startSessionImportRun(input: {
         } finally {
           completingImport = false;
         }
-        ending = { kind: 'imported', workstreamId: run.workstreamId };
+        ending = { kind: 'imported', workstreamId: run.workstreamId, ...(breakoutId ? { substreamId: breakoutId } : {}) };
         imported = { workstreamId: run.workstreamId, messages: preview.content.messages.length };
         return { ok: true, result: imported };
       },
@@ -363,7 +370,8 @@ export function startSessionImportRun(input: {
     if (!run) return;
     await input.api.discardSessionImport(run.workstreamId, {
       substreamId: run.substreamId,
-      clientMessageId: input.mode.kind === 'create' ? input.mode.clientMessageId : null,
+      clientMessageId: input.mode.kind === 'update' ? null : input.mode.clientMessageId,
+      ...(input.mode.kind === 'breakout' ? { breakout: true } : {}),
     }).catch(() => undefined);
   }
 
@@ -372,7 +380,10 @@ export function startSessionImportRun(input: {
       run = input.mode.kind === 'create'
         ? await input.api.startSessionImport({ sourceUrl: input.sourceUrl, title: input.mode.title, spaceIds: input.mode.spaceIds,
           clientMessageId: input.mode.clientMessageId })
-        : await input.api.startSessionImportUpdate(input.mode.workstreamId);
+        : input.mode.kind === 'breakout'
+          ? await input.api.startBreakoutImport(input.mode.workstreamId, { sourceUrl: input.sourceUrl, title: input.mode.title,
+            clientMessageId: input.mode.clientMessageId })
+          : await input.api.startSessionImportUpdate(input.mode.workstreamId);
       // Cancelled while the reservation was in flight: the run has already
       // ended, so the Channel is discarded without ever being reported.
       if (cancelled) {

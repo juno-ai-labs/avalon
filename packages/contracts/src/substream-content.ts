@@ -112,4 +112,27 @@ export const SessionImportDiscardRequestSchema = z.strictObject({
   substreamId: z.string().min(1).refine((id) => id !== "0", "An import never runs in the main conversation"),
   /** The create key of a new import; null for an update, whose Channel stays. */
   clientMessageId: z.string().uuid().nullable(),
+  /** The create key names a Breakout reservation in this thread rather than a new thread. */
+  breakout: z.boolean().optional(),
 });
+
+/**
+ * Start importing a conversation as a Breakout of an existing thread. The
+ * create key is also the Breakout's preparation id, so a retried start
+ * reserves the same Breakout and finds the agent it already launched.
+ */
+export const SessionImportBreakoutStartRequestSchema = z.strictObject({
+  sourceUrl: HttpsUrlSchema,
+  title: z.string().trim().min(1).max(180),
+  clientMessageId: z.string().uuid(),
+});
+/**
+ * Open the reserved Breakout with what the agent read. The Breakout keeps the
+ * title it was reserved under at start; `title` here is the preview's and does
+ * not rename it.
+ */
+export const SessionImportBreakoutRequestSchema = SessionImportPreviewSchema.extend({
+  title: z.string().min(1).max(180),
+  clientMessageId: z.string().uuid(),
+});
+export type SessionImportBreakoutRequest = z.infer<typeof SessionImportBreakoutRequestSchema>;

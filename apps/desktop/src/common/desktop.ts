@@ -508,8 +508,11 @@ export interface RallyDesktopBridge {
   onBrowserImportContextChanged: (listener: () => void) => () => void;
   /** View → Refresh Organization List: reread the account menu's Organizations. */
   onOrganizationListRefreshRequested: (listener: () => void) => () => void;
-  /** The import window's hand-off: the main window opens the Channel and this window closes. */
-  completeBrowserImport: (workstreamId: string) => Promise<void>;
+  /**
+   * The import window's hand-off: the main window opens the Channel, or the
+   * Breakout `substreamId` names in it, and this window closes.
+   */
+  completeBrowserImport: (workstreamId: string, substreamId?: string) => Promise<void>;
   /**
    * The import window's create starting or failing, relayed to the main
    * window. `completeBrowserImport` relays its success and opens the Channel;
