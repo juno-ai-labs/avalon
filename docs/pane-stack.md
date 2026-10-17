@@ -65,7 +65,9 @@ expanded is the breakout's alone: the Channel level ignores a request whose
 route names a `substream`, so the thread keeps what it had, and closing the
 breakout returns to it. The landing therefore asks nothing of a saved breakout;
 it names it `restoredBreakout`, so a breakout merged or removed since the route
-was saved returns its thread to Main, beside the Channel.
+was saved returns its thread to Main, beside the Channel. Only a live breakout
+list may say so: the list seeded from the device at launch can predate the
+breakout, so a restored breakout it omits stays open.
 
 Each step is drawn as movement, by `SplitConversationLayout` itself so both
 levels share it. A pane that opens beside another slides in from the right; a
