@@ -111,7 +111,10 @@ person's own words go out on the trailing side. It is drawn as the design's
   the time. The source's name opens it. A Breakout's mark is the unrotated
   breakout mark on the neutral fill. A Thread's mark is its own icon on its
   own tint.
-- **A quote line,** in a Channel only, of the thread's first line.
+- **A quote line,** in a Channel only, of the thread's first line. It links
+  to the thread's card in the same feed, scrolls to it and moves focus to it; when that card is
+  on a page not yet loaded, it opens the thread instead of fetching pages
+  until the card turns up.
 - **The body,** as markdown with its embeds.
 - **The host's actions** under it: the hover row in a Thread, Remove in a
   Channel.

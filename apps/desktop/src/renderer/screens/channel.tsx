@@ -141,6 +141,11 @@ type FeedRow =
   | { kind: 'thread'; placedAt: string; thread: WorkstreamSummary }
   | { kind: 'message'; placedAt: string; message: ChannelMessage };
 
+/** A thread card's element id in the feed, so a merge can bring its thread into view. */
+function feedThreadElementId(threadId: string): string {
+  return `channel-feed-thread-${threadId}`;
+}
+
 function feedRowId(row: FeedRow): string {
   return row.kind === 'thread' ? row.thread.id : row.message.id;
 }
@@ -430,7 +435,7 @@ function ThreadCard({ author, members, onOpen, open, placedAt, thread }: {
   // names in it are found again the way the send path found them, and drawn
   // by the renderer the message itself uses.
   const summary = useMemo(() => typedMentionRendering(thread.objective ?? '', members), [members, thread.objective]);
-  return <li className="channel-feed-item">
+  return <li className="channel-feed-item" id={feedThreadElementId(thread.id)}>
     <ConversationCard
       conversation={mark}
       meta={<>
@@ -534,6 +539,15 @@ function MergeCard({ author, channelId, currentUser, members, merge, message, on
   const appearance = useCachedWorkstreamAppearance(merge.threadId);
   const { Icon, tint, ink } = resolveWorkstreamAppearance(merge.threadId, appearance);
   const merger = author?.name ?? 'Someone';
+  // The quote scrolls to the thread's card when that card is loaded, and
+  // focus goes with it, so the next Tab starts from the card; an older one is
+  // pages away, so the quote opens the thread instead.
+  const showThread = (): void => {
+    const card = document.getElementById(feedThreadElementId(merge.threadId));
+    if (!card) return onOpenThread(merge.threadId);
+    card.scrollIntoView({ block: 'center' });
+    card.querySelector('button')?.focus({ preventScroll: true });
+  };
   return <li className="channel-feed-item is-message is-merge">
     <MergeMessage
       actions={<>
@@ -544,6 +558,7 @@ function MergeCard({ author, channelId, currentUser, members, merge, message, on
       </>}
       label={`${merge.title || 'A thread'}, merged by ${merger}`}
       mergedBy={<>{author && <Avatar member={author} size="small" title={null} />}{merger}</>}
+      onQuote={showThread}
       quote={quote}
       source={{
         mark: <Icon size={10} strokeWidth={2} />,
