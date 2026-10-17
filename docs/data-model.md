@@ -1385,8 +1385,9 @@ The dedicated stores are unchanged; no applied migration is rewritten.
 `resource_versions`, staged through `resources.revision_on_behalf_of_user_id`
 and copied and cleared by both capture triggers like the rest of provenance.
 The Terminal republish and the image edit fill it with the person who asked for
-the run (`runRequesterUserId`): a Sidekick's run-as user only when they started
-that run by hand, never for a scheduled or inbound one.
+the run (`runRequesterUserId`): for a Sidekick, the member who sent the turn's
+input or started the run by hand, never its run-as user for a scheduled or
+inbound one.
 
 **Why:** A pinned artifact's updates (Activity rows, pushes, the pin's unread
 state) must never come from the person's own change. An agent version named
