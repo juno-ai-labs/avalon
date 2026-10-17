@@ -23,7 +23,7 @@ properties without knowing which appearance is active.
 | `packages/ui/src/styles/themes.css` | Generated light and dark custom-property blocks. |
 | `packages/ui/src/styles/app.css` | Component and layout rules expressed through semantic tokens. |
 | `packages/ui/src/themes.ts` | The shared appearance preference, resolver, and initial window backgrounds; desktop common imports re-export it. |
-| `packages/ui/src/lib/theme.ts` | Shared appearance, device preference, and system appearance watcher. |
+| `packages/ui/src/lib/theme.ts` | Shared appearance, device preference, system appearance watcher, and the `theme-color` meta an iOS Home Screen app paints its status bar from. |
 | `apps/desktop/src/renderer/lib/theme.ts` | Desktop native reporting and window synchronization adapter. |
 | `apps/desktop/src/renderer/components/theme-picker.tsx` | The Appearance setting, drawn with the shared `SegmentedControl` from `components/primitives.tsx`. |
 | `apps/desktop/src/main/theme-assets.ts` | The private cache for a remote font declared by an appearance. |
@@ -44,6 +44,10 @@ The preference is device-local. `theme.ts` writes it beside the other device
 preferences and reports it to the main process. Main stores the scalar in
 `application-settings.json`, uses its resolved value for a new BrowserWindow's
 initial `backgroundColor`, and broadcasts changes so every open window repaints.
+Every apply also writes that value into each `theme-color` meta the document
+carries, which is what an iOS Home Screen app paints its status bar from;
+`apps/browser/index.html` holds a media-qualified light and dark pair so the
+paint before the script runs is right for the `system` choice.
 A previous object-shaped preference is accepted only as a migration input: its
 `mode` becomes the scalar preference and its former family value is ignored.
 
@@ -110,6 +114,11 @@ serves it through `rally-font://`.
   size.
 - **The main-process window background matches the canvas token.** A mismatch
   flashes the wrong colour before the renderer's first frame.
+- **So does the `theme-color` meta.** iOS paints a Home Screen app's status
+  bar from it and from nothing else, so a document without the tag, or with a
+  stale one, shows a white bar over a dark canvas. `applyTheme` writes
+  `themeWindowBackground` into every tag on every apply and adds none, and the
+  browser entry's pre-script pair holds the same two values.
 - **A palette fill's ink is decided by APCA, not by the WCAG 2 ratio, and it is
   checked in.** `PALETTE_INK` is the table; sixteen of the nineteen fills take
   the near-white ink and `amber`, `lime` and `green` take the near-black one.
@@ -220,6 +229,36 @@ registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
+
+### 2026-10-17 — The status bar follows the canvas in an iOS Home Screen app
+
+**What changed:** `applyTheme` writes the resolved appearance's canvas colour,
+`themeWindowBackground`, into every `theme-color` meta in the document, and
+`apps/browser/index.html` carries a media-qualified light and dark pair so the
+paint before the script runs is right for the `system` choice.
+
+**Why:** On an iPhone in dark mode the Home Screen app showed a white status
+bar over the dark canvas. iOS paints that strip itself, from the `theme-color`
+meta, and the browser entry had none, so it fell back to white. A
+`media`-qualified pair alone would follow the phone rather than the choice:
+the appearance is pinned per device, so a person on Dark with a light phone
+would still get the wrong bar. The apply step already tells the Mac main
+process what to paint beside the page, and this is the same report to a
+different host.
+
+**Considered and rejected:** `apple-mobile-web-app-status-bar-style:
+black-translucent` with `viewport-fit=cover`, so the page draws under the bar.
+Nothing in the client handles safe areas yet, the bar's text turns white in
+both appearances unless `theme-color` is set anyway, and the home indicator
+would need the same work. Reading the canvas back through `getComputedStyle`
+at apply time was rejected too: `themeWindowBackground` already duplicates the
+token and is checked against the stylesheet, and a style read costs a recalc
+for nothing.
+
+**Consequences:** An entry document that wants its host told carries its own
+`theme-color` tag; `applyTheme` writes every tag it finds and adds none. The
+pair in `index.html` is a third copy of the two canvas values, beside
+`themes.ts` and the generated stylesheet, and moves with them.
 
 ### 2026-10-13 — `sys.color.glass.shine` lights a glass shape
 
