@@ -1758,8 +1758,30 @@ export class RallyApi {
     return result.workstream.id;
   }
 
-  /** Stop an import's agent; a new Channel that never opened is discarded with it. */
-  async discardSessionImport(workstreamId: string, input: { substreamId: string; clientMessageId: string | null }): Promise<void> {
+  /** Reserve a Breakout of a thread for a conversation import and start the agent that reads it. */
+  async startBreakoutImport(workstreamId: string, input: { sourceUrl: string; title: string; clientMessageId: string }): Promise<SessionImportRun> {
+    return this.request(`/workstreams/${encodeURIComponent(workstreamId)}/import/breakouts/runs`, {
+      method: 'POST', body: input, schema: SessionImportRunSchema,
+    });
+  }
+
+  /** Open the reserved Breakout with the conversation the agent read; resolves with its id. */
+  async completeBreakoutImport(
+    workstreamId: string,
+    preview: SessionImportPreview,
+    input: { clientMessageId: string },
+  ): Promise<string> {
+    const result = await this.request(`/workstreams/${encodeURIComponent(workstreamId)}/import/breakouts/complete`, {
+      method: 'POST', body: { ...preview, ...input }, schema: SubstreamCreationResultSchema,
+    });
+    return result.substreamId;
+  }
+
+  /**
+   * Stop an import's agent; a new Channel that never opened is discarded with
+   * it, and a new Breakout's reservation is cancelled (`breakout`).
+   */
+  async discardSessionImport(workstreamId: string, input: { substreamId: string; clientMessageId: string | null; breakout?: boolean }): Promise<void> {
     await this.requestVoid(`/workstreams/${encodeURIComponent(workstreamId)}/import/discard`, {
       method: 'POST', body: input,
     });

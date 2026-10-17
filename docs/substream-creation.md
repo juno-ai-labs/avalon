@@ -12,7 +12,10 @@ The platform currently uses summary-based context with
 `google/gemini-2.5-flash-lite` and creator-only membership. These are shared
 platform policies, not controls offered to the user.
 
-Prepared history may be supplied by the internal coordinator on confirmation.
+Prepared history may be supplied by the internal coordinator on confirmation;
+a [conversation import](session-import.md#importing-as-a-breakout) is the one
+product caller, confirming with no opening message so the child starts idle
+under the title it was reserved with.
 It uses the same canonical preparation/materialization and resource-reservation
 owner as a root conversation, before the parent publishes readiness. The durable
 preparation receipt rejects changed replay. The parent freezes the prepared-history

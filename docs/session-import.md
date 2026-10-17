@@ -11,7 +11,7 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 | --- | --- |
 | `packages/contracts/src/substream-content.ts` | Source content/files, resolved prepared conversations, initialization modes and import provenance. |
 | `apps/api/src/services/session-import.ts` | Which conversation a source URL names and which provider owns it (`browserConversationSource`, `sessionSourceUrlProvider`). |
-| `apps/api/src/services/session-import-run-service.ts` | An import run: reserve the Channel, launch the agent's hidden child, complete, discard. |
+| `apps/api/src/services/session-import-run-service.ts` | An import run: reserve the Channel (or a Breakout of an existing thread), launch the agent's hidden child, complete, discard. |
 | `apps/api/src/services/session-import-reclaim.ts` | Archive a new import's Channel its run ended without opening (the `session_import` profile's `ended` hook). |
 | `apps/api/src/services/session-import-files.ts` | Upload reconciliation of the files an import carries, unavailable outcomes, and trusted attribution. |
 | `apps/api/src/services/workstream-object-creation-service.ts` | `reserveImport` / `openReservedImport`: the Channel is placed first and initialized when the import completes. |
@@ -27,7 +27,7 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 | `apps/desktop/src/renderer/screens/browser-import.tsx` | The import window: Import, the name-and-Space sheet, the run's progress modal and Cancel. |
 | `apps/desktop/src/renderer/lib/browser-import-progress.tsx` | The main window's half: lists the Channel as pending, shows "Importing conversation…", and settles or discards it. |
 | `packages/agent-harness/src/evaluation.ts` | Scenario/checkpoint evaluation using the production Rally runtime. |
-| `apps/desktop/src/renderer/screens/channel.tsx`, `components/channel-composer.tsx`, `components/session-import-update-dialog.tsx` | The two **Import from Claude or ChatGPT** entry points that open the import window (the Channel header's button and the Channel composer's plus menu), and the explicit update control. |
+| `apps/desktop/src/renderer/screens/channel.tsx`, `components/channel-composer.tsx`, `screens/conversation-surface.tsx`, `components/session-import-update-dialog.tsx` | The **Import from Claude or ChatGPT** entry points that open the import window (the Channel header's button and the Channel composer's plus menu for a new thread; a thread composer's plus menu for a new Breakout), and the explicit update control. |
 
 ## How it works
 
@@ -39,6 +39,9 @@ Channel's composer, beside **Attach files**. Only the desktop host has that
 browser: the header button appears only there, and in the browser the plus-menu
 item shows disabled with a tooltip saying it needs the Mac app. Both appear only
 to someone who may start a thread in that Channel; a guest never sees them.
+A thread's own composer has the same plus-menu item, which imports the
+conversation as a new Breakout of that thread instead
+([below](#importing-as-a-breakout)); the thread's header has no import button.
 The person opens a conversation in the window — their own, signed in, or a
 shared link — and clicks Import. A sheet asks for a thread
 name, prefilled with the tab's title, and shows the Channel without letting it
@@ -164,6 +167,38 @@ contract 1.
    desktop opens the Channel inside the finish tool, before the run's final
    turn, so a reservation still unopened at the end never will be; an update's
    Channel has a completed receipt and is untouched.
+
+### Importing as a Breakout
+
+The plus menu of a thread's main composer opens the import window aimed at that
+thread (`BrowserImportContext.breakout`). The name sheet shows the thread,
+locked, and asks only for the Breakout's name. The run is the one above with a
+different reservation and opening:
+
+- **Reserve.** `POST /workstreams/:id/import/breakouts/runs` calls the ordinary
+  Breakout `prepare` (`SubstreamCreationService`) with the create key as its
+  operation id and no source turn, so the Breakout captures the thread's
+  context like any other. A prepared Breakout is in no listing. The agent's
+  hidden child and run are named from the thread and the key, so a replayed
+  start finds the agent it launched.
+- **Finish.** `POST /workstreams/:id/import/breakouts/complete` runs the same
+  `prepareSessionImport` as a new thread and hands the result to `confirm` as
+  prepared history, with no opening message: the Breakout starts idle, under
+  the name from the sheet, and records its source checkpoint as a thread does.
+  Readiness is confirmation's last step, so it appears holding the history.
+  The import window hands the Breakout's id to the main window, which opens
+  `rally://workstreams/<thread>/substreams/<breakout>`. The thread was never a
+  pending row, so nothing is reported as importing.
+- **Fail or cancel.** `discard` with `breakout: true` stops the agent and
+  cancels the preparation, so a late finish is refused
+  (`substream_creation_cancelled`). A run that ends with no discard (the window
+  crashed) leaves the preparation unconfirmed. That is the same state as a
+  Breakout someone started and walked away from: invisible, and never
+  reclaimed, so the `ended` hook has nothing to do for it.
+
+Anyone who may start a Breakout in the thread may import into it; the API's
+`prepare` decides. There is no update control for an imported Breakout yet, but
+its checkpoint is recorded, so adding one needs routes, not storage.
 
 The agent decides what to copy: visible user and assistant text, citations as
 Markdown links, uploads and generated files, published artifacts; not
@@ -425,6 +460,16 @@ These deterministic checks do not measure model compliance: live runs across
 these variations are still required to establish it.
 
 ## Changelog
+
+### 2026-10-17 — Import a conversation as a Breakout of an existing thread
+
+**What changed:** A thread composer's plus menu offers **Import from Claude or ChatGPT**, which reads the conversation with the same agent and opens it as a new Breakout of that thread. The API gained `/import/breakouts/runs` and `/import/breakouts/complete`, and `discard` cancels a Breakout reservation. There is no button in the thread's header.
+
+**Why:** Importing could only start a new thread, so a conversation that belonged to work already under way landed beside it rather than in it. Breakout confirmation already accepted prepared history and recorded the source checkpoint, so the destination needed wiring, not new storage.
+
+**Considered and rejected:** Reserving the Breakout as a listed pending row, as a new thread is. A Breakout publishes only when it is ready, so there is nothing to list or take away. Also rejected: reclaiming an unfinished Breakout reservation from the `ended` hook; an unconfirmed preparation is invisible, exactly like an abandoned manual one, and nothing reclaims those either.
+
+**Consequences:** An imported Breakout carries the thread's context and its own source checkpoint. Its access follows Breakout creation, not thread creation.
 
 ### 2026-10-16 — Import also offered from the Channel composer's plus menu
 
