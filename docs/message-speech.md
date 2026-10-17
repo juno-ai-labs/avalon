@@ -25,7 +25,8 @@ with the interactive latency hint. In parallel, `RallyApi` sends the complete
 stored markdown to the selected regional Worker with the current Rally session.
 The Worker reduces markdown to readable plain text, preserving headings, lists,
 code content, each link's name, and every collapsed section while dropping
-formatting punctuation and every named link's address.
+formatting punctuation and every address: a named link is its name, and a bare
+address is *link to* its registrable domain.
 
 Azure accepts at most 4,096 characters in one speech request, so longer text is
 split at paragraphs, sentences, lines, or words within that provider limit. The
@@ -46,12 +47,14 @@ context, and restores the button.
   a heading changes only presentation; otherwise Speak would silently omit the
   content the reader asked it to play.
 - **A link is spoken by its name, never its address.** The reducer runs with
-  `linkTargets: "drop"`, so `[the plan](https://example.com/plan)` and a
+  `linkTargets: "spoken"`, so `[the plan](https://example.com/plan)` and a
   footnote's external source line both reach the provider as the words the
-  model wrote. A listener cannot follow a spoken address, and a voice spelling
-  one out is noise between the words that matter; the text-only email part
-  keeps the address because a reader there can follow it. A URL written bare,
-  with no name, is the text and is still spoken.
+  model wrote, and a bare `https://www.apple.com/iphone/compare` reaches it as
+  *link to apple.com*: the registrable domain, which `tldts` resolves, and
+  nothing else of the address. A listener cannot follow a spoken address, and
+  a voice spelling one out is noise between the words that matter; the
+  text-only email part keeps the address because a reader there can follow it.
+  An address inside a code span is code and is read as written.
 - **Audio is never buffered into a complete file.** Waiting for MP3 generation
   or the full response would turn a listening action into a generation wait and
   destroy time-to-first-audio.
@@ -172,30 +175,38 @@ its abandoned cost grows with message length.
 ### 2026-10-17 — Speak reads a link's name and not its address
 
 **What changed:** The speech service asks the shared plain-text reducer for
-`linkTargets: "drop"`. `[the plan](https://example.com/plan)` reaches
-`gpt-4o-mini-tts` as *the plan*, and a footnote's external source line as its
-title alone; before, both carried the address in parentheses and the voice read
-it out. A URL written bare in the prose is unchanged, because there is no name
-to speak in its place.
+`linkTargets: "spoken"`. `[the plan](https://example.com/plan)` reaches
+`gpt-4o-mini-tts` as *the plan*, a footnote's external source line as its title
+alone, and a bare `https://www.apple.com/iphone/compare`, `<https://…>` or
+`www.…` as *link to apple.com*; before, every address was read out in full.
 
 **Why:** The reducer was written for the text-only email part, where the address
 beside a label is the reader's only way to follow the link. A listener cannot
 follow a spoken address, and a voice reading one out is long, unintelligible,
-and sits between the words that matter.
+and sits between the words that matter. A bare address has no name to speak in
+its place, so it is announced as a link and named by the one part of it a
+listener recognizes, the domain.
 
 **Considered and rejected:** Stripping the parentheses in the speech service
 after the reduction. That is a second regular expression that has to agree with
 the reducer about what a link is, and the Sources list the citation pass appends
-would have needed it too. Also rejected: a speech-only reducer, which duplicates
-the heading, list, fence and citation handling to change one choice. The option
-sits on the primitive, beside the `sources` choice the citation rewrite already
-offers for the same reason.
+would have needed it too; it also could not tell an address in prose from one
+inside a code span once the backticks are gone. Also rejected: a speech-only
+reducer, which duplicates the heading, list, fence and citation handling to
+change one choice. The option sits on the primitive, beside the `sources`
+choice the citation rewrite already offers for the same reason. For the domain,
+the full host (*docs dot github dot com*) and a guess at the last two labels
+were both rejected: a listener gains nothing from a subdomain, and `bbc.co.uk`
+defeats the guess. `tldts`, which the favicon and terminal network-policy
+services already use, answers it.
 
-**Consequences:** A new spoken surface passes the same option. An image with no
-alt text still speaks its address, because there is no name to speak instead;
-dropping it entirely is a separate decision about whether an unnamed image is
-announced at all. The iOS client's Speak hands the raw message text to the
-system synthesizer and is not on this path.
+**Consequences:** A new spoken surface passes the same option. An address inside
+a code span is read as written, because it is code. Any scheme other than
+`http(s)` is read as written too. An image with no alt text still speaks its
+address, because there is no name to speak instead; dropping it entirely is a
+separate decision about whether an unnamed image is announced at all. The iOS
+client's Speak hands the raw message text to the system synthesizer and is not
+on this path.
 
 Shipped in the pull request for this change.
 

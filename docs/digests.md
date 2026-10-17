@@ -480,10 +480,14 @@ manufactured would stop looking like the link the citation pass has to find.
 **The plain-text part is also what Speak reads aloud.** `markdownToEmailText`
 takes a `linkTargets` option. `keep`, the default, writes a named link's
 address after its label in parentheses, which is a text-only mail client's only
-way to follow it; `drop`, which the speech route passes, keeps the label alone,
-in the body and in the appended Sources list alike. The decision is
-[`message-speech.md`](message-speech.md)'s; the option lives here because this
-reducer is the one parser that knows what a link is.
+way to follow it, and leaves a bare address as written. `drop` keeps the label
+alone and is what the preheader does. `spoken`, which the speech route passes,
+keeps the label alone, in the body and in the appended Sources list alike, and
+announces a bare address as *link to* its registrable domain, resolved through
+`tldts`. The decision is [`message-speech.md`](message-speech.md)'s; the option
+lives here because this reducer is the one parser that knows what a link is,
+and the one place that can still tell an address in prose from one in a code
+span.
 
 The digest's own text uses only `##` sections, bullets and links, so it never
 reaches the parts of that list a model's answer needs.
@@ -669,16 +673,19 @@ device registration, provider delivery and retry receipts.
 
 ## Changelog
 
-### 2026-10-17 — The text reducer can drop a link's address
+### 2026-10-17 — The text reducer can write a link for a listener
 
-**What changed:** `markdownToEmailText` takes `{ linkTargets: "drop" }`, which
+**What changed:** `markdownToEmailText` takes a `linkTargets` option. `spoken`
 keeps a named link's label and discards its address, in the body and in the
-Sources list alike. Email passes nothing and is unchanged.
+Sources list alike, and announces a bare address as *link to* its registrable
+domain through `tldts`. `drop` is the preheader's middle: the label alone, a
+bare address as written. Email passes nothing and is unchanged.
 
 **Why:** Speak reads this reducer's output aloud, and a voice reading an address
 is noise. The reasoning is [`message-speech.md`](message-speech.md)'s entry of
 the same date; the option sits here rather than as a second pass in the speech
-service because this reducer is the one parser that knows what a link is.
+service because this reducer is the one parser that knows what a link is, and
+the one place that can still step over an address inside a code span.
 
 **Consequences:** A caller whose reader cannot follow an address says so, the
 way one with no room for a bibliography passes `sources: "none"`. The default
