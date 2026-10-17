@@ -224,7 +224,7 @@ describe("email markdown rendering", () => {
     ].join("\n"));
 
     expect(html).not.toContain('href="https://example.com/<');
-    expect(html).not.toContain("<strong style=\"color:#ecebe5;font-weight:650\">b</strong>c\"");
+    expect(html).not.toContain("<strong style=\"color:#141414;font-weight:600\">b</strong>c\"");
     expect(html).toContain('href="https://example.com/&#42;&#42;b&#42;&#42;c"');
     expect(html).toContain("&#95;x&#95;");
     expect(html).toContain("&#96;q&#96;");

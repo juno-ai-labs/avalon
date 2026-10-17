@@ -9,7 +9,7 @@
  */
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   asSubstreamId,
   asUserId,
@@ -28,6 +28,8 @@ import { hostedParentStub } from "./helpers/hosted-parent";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000d0001");
 const thread = asWorkstreamId("00000000-0000-4000-8000-0000000d00a0");
+/** A second thread, for a digest that holds two rows. */
+const otherThread = asWorkstreamId("00000000-0000-4000-8000-0000000d00a1");
 /** Starts the thread. */
 const owner = asUserId("00000000-0000-4000-8000-0000000d0011");
 /** Gets the digest. */
@@ -38,7 +40,7 @@ const plannedFor = "2026-10-15T16:00:00.000Z";
 const organization = () => hostedParentStub(env, workspaceId);
 
 let messageSeq = 0;
-function envelope(effect: ConversationEffect): ConversationEffectEnvelope {
+function envelope(effect: ConversationEffect, parentId = thread): ConversationEffectEnvelope {
   messageSeq += 1;
   return {
     kind: "conversation_effect",
@@ -46,7 +48,7 @@ function envelope(effect: ConversationEffect): ConversationEffectEnvelope {
     region: "global",
     workspaceId,
     parentKind: "workstream",
-    parentId: thread,
+    parentId,
     substreamId: asSubstreamId("0"),
     generation: 1,
     messageId: `00000000-0000-7000-8000-${String(messageSeq).padStart(12, "0")}`,
@@ -94,17 +96,17 @@ function viewer(userId: UserId): ConversationEffect {
   };
 }
 
-async function startThread(title: string): Promise<void> {
+async function startThread(title: string, parentId = thread): Promise<void> {
   await organization().receiveChildEffects({
     substreamId: asSubstreamId("0"),
-    envelopes: [envelope(common(title)), envelope(viewer(owner))],
+    envelopes: [envelope(common(title), parentId), envelope(viewer(owner), parentId)],
   });
 }
 
 async function occurrence(): Promise<{ status: string; event_count: number; summary_markdown: string | null } | undefined> {
   return runInDurableObject(organization(), (_instance, state) => state.storage.sql.exec<{
     status: string; event_count: number; summary_markdown: string | null;
-  }>(`SELECT status, event_count, summary_markdown FROM digest_deliveries WHERE digest_schedule_id = ?`, scheduleId).toArray()[0]);
+  }>(`SELECT status, event_count, summary_markdown FROM digest_deliveries WHERE digest_schedule_id = ? AND planned_for = ?`, scheduleId, plannedFor).toArray()[0]);
 }
 
 beforeEach(async () => {
@@ -132,11 +134,13 @@ beforeEach(async () => {
   ]);
   await organization().initializeWorkspace(workspaceId, "wnam");
   await runInDurableObject(organization(), (_instance, state) => {
-    state.storage.sql.exec(`INSERT INTO parent_metadata
-      (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
-      VALUES (?, 'workstream', ?, 'global', 1, 0, 0)`, thread, workspaceId);
-    state.storage.sql.exec(`INSERT INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at, title)
-      VALUES (?, '0', 'main', ?, 0, 'Main')`, thread, owner);
+    for (const parentId of [thread, otherThread]) {
+      state.storage.sql.exec(`INSERT INTO parent_metadata
+        (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
+        VALUES (?, 'workstream', ?, 'global', 1, 0, 0)`, parentId, workspaceId);
+      state.storage.sql.exec(`INSERT INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at, title)
+        VALUES (?, '0', 'main', ?, 0, 'Main')`, parentId, owner);
+    }
     state.storage.sql.exec(`INSERT INTO digest_schedules
       (id, workspace_id, user_id, day_mask, enabled, execution_principal_json, version, created_at, updated_at)
       VALUES (?, ?, ?, 62, 1, ?, 1, '2026-01-01', '2026-01-01')`,
@@ -147,6 +151,12 @@ beforeEach(async () => {
     workspaceId, scheduleId, member);
   });
 });
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 describe("the daily digest", () => {
   it("given a thread someone started that the member has not read, then the digest lists it, worded as the sidebar words it", async () => {
@@ -166,6 +176,49 @@ describe("the daily digest", () => {
     expect(await fireDigestSchedule(env, { scheduleId, workspaceId, plannedFor }))
       .toEqual({ sent: false, reason: "empty" });
     expect(await occurrence()).toMatchObject({ status: "empty", event_count: 0, summary_markdown: null });
+  });
+
+  it("given an unread row older than two days beside a new one, then the old one is counted at the bottom rather than listed again", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse(plannedFor) - 3 * DAY_MS);
+    await startThread("Old plan");
+    vi.setSystemTime(Date.parse(plannedFor) - DAY_MS);
+    await startThread("Q3 plan", otherThread);
+    vi.useRealTimers();
+
+    expect(await fireDigestSchedule(env, { scheduleId, workspaceId, plannedFor }))
+      .toMatchObject({ sent: true, itemCount: 1 });
+    const kept = await occurrence();
+    expect(kept!.summary_markdown).toMatch(/^1 unread item in your Activity\.\n\n## New threads\n- Maya started \[Q3 plan\]\([^)]+\)\n\n1 more older than 2 days\.$/u);
+  });
+
+  it("given a gap since the last delivered digest longer than two days, then a row no digest has listed yet is still listed", async () => {
+    // A weekday schedule's Monday: the last digest went out Friday morning, and
+    // the row arrived after it, more than two days before Monday's.
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO digest_deliveries
+        (id, workspace_id, digest_schedule_id, user_id, planned_for, cursor_through, event_count, highlight_count,
+         status, summary_markdown, created_at, updated_at)
+        VALUES ('00000000-0000-4000-8000-0000000d00d1', ?, ?, ?, ?, 0, 1, 0, 'delivered', 'Friday.', '2026-01-01', '2026-01-01')`,
+      workspaceId, scheduleId, member, new Date(Date.parse(plannedFor) - 4 * DAY_MS).toISOString());
+    });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse(plannedFor) - 3 * DAY_MS);
+    await startThread("Q3 plan");
+    vi.useRealTimers();
+
+    expect(await fireDigestSchedule(env, { scheduleId, workspaceId, plannedFor }))
+      .toMatchObject({ sent: true, itemCount: 1 });
+    expect((await occurrence())!.summary_markdown)
+      .toMatch(/^1 unread item in your Activity\.\n\n## New threads\n- Maya started \[Q3 plan\]\([^)]+\)$/u);
+  });
+
+  it("given only unread rows older than two days, then nothing is sent and the occurrence is settled as empty", async () => {
+    await startThread("Q3 plan");
+    const later = new Date(Date.now() + 3 * DAY_MS).toISOString();
+
+    expect(await fireDigestSchedule(env, { scheduleId, workspaceId, plannedFor: later }))
+      .toEqual({ sent: false, reason: "empty" });
   });
 
   it("given an occurrence already sent, when its alarm fires again, then nothing is sent twice", async () => {

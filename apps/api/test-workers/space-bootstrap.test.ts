@@ -549,10 +549,11 @@ describe("the Space cutover", () => {
     // unstarted cutover's `not_before` is zero and an overdue candidate is
     // parked one millisecond out, so the alarm is due now — unless the wake has
     // already run it, in which case the claim advanced the cutover's gate and
-    // the alarm stands on that instant instead. Both readings are this row and
-    // nothing else, which is what makes the assertion exact rather than a race
-    // against the clock.
-    expect(woke.armed! <= Date.now() + 1 || woke.armed === woke.cutover.not_before).toBe(true);
+    // the alarm stands no later than that instant. Not exactly on it: another
+    // derived lane due sooner arms the alarm first, which under load is how
+    // this used to fail. Either reading bounds the alarm by the cutover's row,
+    // which the sweep is not.
+    expect(woke.armed! <= Date.now() + 1 || woke.armed! <= woke.cutover.not_before).toBe(true);
 
     await runWholeCutover();
     await evictDurableObject(workspace());

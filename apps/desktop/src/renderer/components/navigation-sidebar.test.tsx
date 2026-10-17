@@ -120,6 +120,7 @@ describe('the navigation sidebar', () => {
     useUiStore.getState().setThreadSort('recent');
     useUiStore.getState().setChannelSort('alphabetical');
     useUiStore.getState().setSidebarOpen(false);
+    useUiStore.getState().setSheetAfterNavigation(false);
   });
 
   it('lists pinned Channels in the person’s order, then every other Channel A–Z, counting only new threads', () => {
@@ -297,6 +298,20 @@ describe('the navigation sidebar', () => {
 
     fireEvent.click(screen.getByRole('link', { name: /Outbound/u }));
 
+    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('opens the phone sheet once, after its own reset, when a navigation asked for it', () => {
+    // A deep link into another organization remounts the sidebar and changes
+    // the route; both reset the sheet, so the link asks for it this way.
+    useUiStore.getState().setSheetAfterNavigation(true);
+    renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
+
+    expect(screen.getByRole('button', { name: 'Close navigation' })).toHaveAttribute('aria-expanded', 'true');
+    expect(useUiStore.getState().sheetAfterNavigation).toBe(false);
+
+    // Spent: the next navigation closes the sheet as any other does.
+    fireEvent.click(screen.getByRole('link', { name: /Outbound/u }));
     expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
   });
 

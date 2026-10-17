@@ -8,7 +8,7 @@ import { escapeHtml } from "./resend";
  * The Markdown a model wrote, rendered into the HTML a mail client will
  * actually show.
  *
- * Every email Avalon sends carries model-authored Markdown — a digest, an
+ * Every email Rally sends carries model-authored Markdown — a digest, an
  * automation's result — and a mail client renders none of it. The text has to
  * become real elements here or the reader gets `## Heading` and `**bold**` on
  * screen, which is what an automation result looked like before this was
@@ -25,39 +25,47 @@ import { escapeHtml } from "./resend";
  * paragraph, because a briefing's table read as one run-on line of pipes is
  * worse than a plain one.
  *
- * Styling is inline and dark. Rally ships light and dark appearances, but a
+ * Styling is inline and light. Rally ships light and dark appearances, but a
  * mail client cannot tell this renderer which one the reader chose, so email is
- * rendered in one fixed palette, stated on the elements themselves: a client will strip a
- * `<style>` block, and several rewrite a page that declares a light scheme. A
- * light variant behind `prefers-color-scheme` is the open question, not a
- * decision this file has already settled.
+ * rendered in one fixed palette, the app's light theme, stated on the elements
+ * themselves: a client will strip a `<style>` block. A dark variant behind
+ * `prefers-color-scheme` is the open question, not a decision this file has
+ * already settled.
  */
 
-/** The application's palette, so the email and the app are the same product. */
+/**
+ * The application's light theme (`packages/ui/src/styles/themes.css`), so the
+ * email and the app are the same product. The canvas is the app's sunken
+ * surface, so the card reads as the app's own surface laid on it.
+ */
 export const COLOR = {
-  canvas: "#111210",
-  surface: "#1d1e1b",
-  surfaceRaised: "#22231f",
-  line: "#32332e",
-  lineSoft: "#292a26",
-  ink: "#ecebe5",
-  inkSoft: "#cac9c2",
-  muted: "#94948c",
-  mutedDeep: "#706f69",
-  brand: "#cedc00",
-  onBrand: "#141507",
+  canvas: "#f3f3f3",
+  surface: "#fcfcfc",
+  /** The theme's sunken surface, not its raised one: pills and code must stand off the card. */
+  surfaceRaised: "#f3f3f3",
+  line: "#e5e5e5",
+  lineSoft: "#f0f0f0",
+  ink: "#141414",
+  inkSoft: "#3d3d3d",
+  muted: "#696969",
+  mutedDeep: "#777777",
+  brand: "#ccff00",
+  onBrand: "#141414",
+  link: "#55689b",
+  primary: "#070707",
+  onPrimary: "#fcfcfc",
 } as const;
 
-const TITLE_STYLE = `margin:28px 0 14px;font-size:21px;line-height:1.25;font-weight:700;letter-spacing:-.02em;color:${COLOR.ink}`;
-const SECTION_STYLE = `margin:30px 0 12px;padding:0 0 0 12px;border-left:3px solid ${COLOR.brand};font-size:17px;line-height:1.3;font-weight:700;color:${COLOR.ink};letter-spacing:-.01em`;
-const SUBSECTION_STYLE = `margin:22px 0 8px;font-size:13px;line-height:1.4;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${COLOR.muted}`;
+const TITLE_STYLE = `margin:28px 0 14px;font-size:21px;line-height:1.25;font-weight:600;letter-spacing:-.02em;color:${COLOR.ink}`;
+const SECTION_STYLE = `margin:28px 0 10px;font-size:17px;line-height:1.3;font-weight:600;color:${COLOR.ink};letter-spacing:-.01em`;
+const SUBSECTION_STYLE = `margin:22px 0 8px;font-size:13px;line-height:1.4;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:${COLOR.muted}`;
 const PARAGRAPH_STYLE = `margin:0 0 13px;font-size:15px;line-height:1.65;color:${COLOR.inkSoft}`;
 const LIST_STYLE = `margin:0 0 16px;padding-left:20px;font-size:15px;line-height:1.6;color:${COLOR.inkSoft}`;
 const LIST_ITEM_STYLE = "margin:0 0 9px;padding-left:3px";
 const NESTED_LIST_STYLE = `margin:9px 0 0;padding-left:18px;font-size:14px;line-height:1.55;color:${COLOR.muted}`;
-const QUOTE_STYLE = `margin:0 0 16px;padding:12px 16px;background:${COLOR.surfaceRaised};border-left:3px solid ${COLOR.mutedDeep};border-radius:0 8px 8px 0;font-size:14px;line-height:1.6;color:${COLOR.muted}`;
-const PRE_STYLE = `margin:0 0 16px;padding:14px 16px;background:${COLOR.surfaceRaised};border:1px solid ${COLOR.line};border-radius:8px;overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.5;color:${COLOR.inkSoft}`;
-const CODE_STYLE = `padding:2px 6px;border-radius:5px;background:${COLOR.surfaceRaised};border:1px solid ${COLOR.line};font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:${COLOR.inkSoft}`;
+const QUOTE_STYLE = `margin:0 0 16px;padding:12px 16px;background:${COLOR.surfaceRaised};border-left:3px solid ${COLOR.mutedDeep};border-radius:0 6px 6px 0;font-size:14px;line-height:1.6;color:${COLOR.muted}`;
+const PRE_STYLE = `margin:0 0 16px;padding:14px 16px;background:${COLOR.surfaceRaised};border:1px solid ${COLOR.line};border-radius:6px;overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.5;color:${COLOR.inkSoft}`;
+const CODE_STYLE = `padding:2px 6px;border-radius:4px;background:${COLOR.surfaceRaised};border:1px solid ${COLOR.line};font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:${COLOR.inkSoft}`;
 export const RULE_STYLE = `border:0;border-top:1px solid ${COLOR.lineSoft};margin:26px 0`;
 const PIPE_TABLE_ROW_PATTERN = /^\s{0,3}\|.*\|\s*$/u;
 
@@ -431,7 +439,7 @@ function renderInline(value: string): string {
   html = html.replace(
     /\[([^\][]+)\]\((https?:\/\/[^\s)]+)\)/gu,
     (_match, label: string, href: string) =>
-      `<a href="${encodeLinkTarget(href)}" style="color:${COLOR.brand};text-decoration:none;border-bottom:1px solid rgba(206,220,0,.35)">${label}</a>`,
+      `<a href="${encodeLinkTarget(href)}" style="color:${COLOR.link};text-decoration:underline;text-decoration-color:${COLOR.line};text-underline-offset:2px">${label}</a>`,
   );
   html = html.replace(/`([^`\n]+)`/gu, (_match, code: string) => {
     codeSpans.push(`<code style="${CODE_STYLE}">${code}</code>`);
@@ -442,7 +450,7 @@ function renderInline(value: string): string {
   // other tag is already an entity from `escapeHtml` and stays one.
   html = html.replace(/&lt;br\s*\/?&gt;/giu, "<br>");
   html = html.replace(/\*\*([^*]+)\*\*/gu, (_match, bold: string) =>
-    `<strong style="color:${COLOR.ink};font-weight:650">${bold}</strong>`);
+    `<strong style="color:${COLOR.ink};font-weight:600">${bold}</strong>`);
   // Both emphasis marks, and asterisks only after bold has consumed its pairs.
   // A model writes `*a quoted claim*` far more often than `_this_`, and an
   // unrendered pair is exactly the raw punctuation this renderer exists to

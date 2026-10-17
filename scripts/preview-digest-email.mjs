@@ -147,7 +147,7 @@ async function main() {
     database = new DatabaseSync(databasePath, { readOnly: true });
   }
   const { digestEmailHtml } = await import("../apps/api/src/services/digest-email-content.ts");
-  const { digestSettingsUrl, occurrenceLabel } = await import("../apps/api/src/services/digest-delivery-service.ts");
+  const { digestHandoffUrl, occurrenceLabel } = await import("../apps/api/src/services/digest-delivery-service.ts");
 
   const members = database.prepare(
     `SELECT u.id, u.name, u.email, u.timezone, w.id AS workspace_id, w.name AS workspace_name
@@ -172,6 +172,7 @@ async function main() {
     });
     const plannedFor = new Date().toISOString();
 
+    const PREVIEW_ENV = { AVALON_REGION: "global", PUBLIC_WEB_BASE_URL: "https://rallywith.ai" };
     const html = digestEmailHtml({
       recipientName: member.name,
       workspaceName: member.workspace_name,
@@ -179,11 +180,8 @@ async function main() {
       bodyMarkdown,
       itemCount: SAMPLE_WORKSTREAMS.length * 2,
       highlightCount,
-      appUrl: "https://rallywith.ai",
-      settingsUrl: digestSettingsUrl({
-        AVALON_REGION: "global",
-        PUBLIC_WEB_BASE_URL: "https://rallywith.ai",
-      }, member.workspace_id),
+      appUrl: digestHandoffUrl(PREVIEW_ENV, member.workspace_id, "rallywithai://activity"),
+      settingsUrl: digestHandoffUrl(PREVIEW_ENV, member.workspace_id, "rallywithai://settings/digest"),
     });
     const file = join(options.out, `${member.email.replace(/[^a-z0-9]+/giu, "-")}.html`);
     writeFileSync(file, html);

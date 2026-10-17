@@ -29,6 +29,7 @@ import { RallyApi } from './api';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { accountOnboardingQueryKey } from './account-onboarding-query';
 import { readDevicePreferences } from './device-preferences';
+import { useUiStore } from './ui-store';
 import {
   consumeSurfaceEntrypoint,
   markWorkstreamFeedOpenStarted,
@@ -675,6 +676,23 @@ describe('single-platform desktop identity routing', () => {
 
     await dispatchDeepLink('avalon://settings/workspace');
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('workspace'));
+  });
+
+  it.each([
+    { width: 1280, sheetOpen: false },
+    { width: 390, sheetOpen: true },
+  ])('opens the sidebar on Activity from the digest\'s link at $width px, opening the sheet only at phone width', async ({ width, sheetOpen }) => {
+    const innerWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+    useUiStore.setState({ sidebarSection: 'channels', sidebarOpen: false });
+    bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
+    renderProvider();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
+
+    await dispatchDeepLink('rallywithai://activity');
+
+    expect(useUiStore.getState()).toMatchObject({ sidebarSection: 'activity', sidebarOpen: sheetOpen });
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: innerWidth });
   });
 
   it('does not drain a cold-start OAuth callback until runtime endpoints are loaded', async () => {
@@ -1375,6 +1393,29 @@ describe('single-platform desktop identity routing', () => {
       assertDestination: async () => expect(window.location.hash).toBe('#/'),
     },
     {
+      name: 'Activity',
+      url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/activity',
+      // A changed organization parks the pane on `/opening`; Activity names no
+      // route of its own, so it must leave for the default landing.
+      assertDestination: async () => {
+        await waitFor(() => expect(window.location.hash).toBe('#/'));
+        expect(useUiStore.getState().sidebarSection).toBe('activity');
+      },
+    },
+    {
+      name: 'Activity at phone width',
+      url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/activity',
+      width: 390,
+      // The sidebar resets the sheet when the switch remounts it and moves the
+      // route, so the link leaves the opening to that reset.
+      assertDestination: async () => {
+        await waitFor(() => expect(window.location.hash).toBe('#/'));
+        expect(useUiStore.getState()).toMatchObject({
+          sidebarSection: 'activity', sidebarOpen: false, sheetAfterNavigation: true,
+        });
+      },
+    },
+    {
       name: 'Sidekick',
       url: sidekickDeepLink({
         region: 'enterprise',
@@ -1389,7 +1430,11 @@ describe('single-platform desktop identity routing', () => {
       url: `rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/auth/complete?connection=00000000-0000-7000-8000-000000000032&status=connected&attempt=${'a'.repeat(43)}&provider=google`,
       assertDestination: async () => waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections')),
     },
-  ])('activates an addressed $name link from an identity-only session', async ({ url, assertDestination }) => {
+  ])('activates an addressed $name link from an identity-only session', async (testCase) => {
+    const { url, assertDestination } = testCase;
+    const innerWidth = window.innerWidth;
+    if ('width' in testCase) Object.defineProperty(window, 'innerWidth', { configurable: true, value: testCase.width });
+    useUiStore.setState({ sidebarSection: 'channels', sidebarOpen: false, sheetAfterNavigation: false });
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000030';
     bridge.getSession.mockResolvedValueOnce({ ...globalIdentitySession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockResolvedValue({
@@ -1413,6 +1458,7 @@ describe('single-platform desktop identity routing', () => {
     }));
     await assertDestination();
     expect(lastDeepLinkFailure()).toBeNull();
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: innerWidth });
   });
 
   it('serializes addressed resource links in delivery order', async () => {
