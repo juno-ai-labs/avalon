@@ -234,6 +234,9 @@ moves focus to its close button; closing hands focus back to the opener, or
 to the visible menu mark when the opener is gone (`useSheetOpener`). Opening
 anything from it closes it, as do Escape and widening past 640px; switching
 sections does not navigate, so the sheet stays open on the list just picked.
+Code that navigates and wants the sheet open afterwards sets
+`sheetAfterNavigation` instead of `sidebarOpen`: the sidebar's reset on mount
+and route change reads it and opens the sheet once.
 
 ### Title pills
 
@@ -467,6 +470,24 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-16 — A navigation can ask for the phone sheet
+
+**What changed:** `useUiStore` has `sheetAfterNavigation`, a one-shot request
+that the sidebar's mount-and-route reset reads in place of closing the sheet.
+
+**Why:** The digest's Activity link, opened at phone width in an organization
+that is not the active one, switches organization and moves the route. The
+sidebar remounts and resets the sheet after the link has set it, so the sheet
+it opened closed again.
+
+**Considered and rejected:** Opening the sheet on a timer after the route
+change, which races the remount; and exempting deep links from the reset,
+which would break "opening anything closes the sheet".
+
+**Consequences:** The reset is still the only place the sheet's state changes
+on navigation. Set the request only at phone width: an open sheet makes the
+pane inert (the 2026-10-06 entry, "The sidebar is a top bar and sheet").
 
 ### 2026-10-16 — The account menu is a rail tile like the sections
 

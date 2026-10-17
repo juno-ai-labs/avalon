@@ -368,7 +368,7 @@ export function replaceWorkspaceDigestScheduleRows(
 /** What the scheduler needs before it may fire an occurrence. */
 export function workspaceDigestScheduleForFire(
   storage: DurableObjectStorage,
-  request: { workspaceId: string; scheduleId: string },
+  request: { workspaceId: string; scheduleId: string; plannedFor: string },
 ): WorkspaceDigestFireSchedule {
   const row = storage.sql.exec<{
     id: string;
@@ -381,6 +381,14 @@ export function workspaceDigestScheduleForFire(
     request.scheduleId,
     request.workspaceId,
   ).toArray()[0];
+  // Seeks the (digest_schedule_id, planned_for) unique index from the top.
+  const lastDelivered = row ? storage.sql.exec<{ planned_for: string }>(
+    `SELECT planned_for FROM digest_deliveries
+      WHERE digest_schedule_id = ? AND planned_for < ? AND status = 'delivered'
+      ORDER BY planned_for DESC LIMIT 1`,
+    row.id,
+    request.plannedFor,
+  ).toArray()[0] : undefined;
   return WorkspaceDigestFireScheduleSchema.parse({
     schedule: row
       ? {
@@ -388,6 +396,7 @@ export function workspaceDigestScheduleForFire(
         userId: row.user_id,
         enabled: row.enabled === 1,
         executionPrincipalJson: row.execution_principal_json,
+        lastDeliveredFor: lastDelivered?.planned_for ?? null,
       }
       : null,
   });

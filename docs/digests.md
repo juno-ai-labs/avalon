@@ -303,8 +303,14 @@ it. At each occurrence the scheduler reads the person's first Activity page
 (`listActivity`, the same read the sidebar makes), keeps the rows that are
 `unread`, and lists them under one `##` section per kind, in the order Settings
 lists the kinds, each worded as the sidebar words it and linked to what it
-names (`renderUnreadDigest`). Nothing unread, nothing sent: the occurrence
-settles as `empty`.
+names (`renderUnreadDigest`). A row is listed while it is less than two days
+older than the occurrence, or newer than the last delivered digest, whichever
+reaches further back (`splitByAge`); older unread rows are counted in one
+closing line, "N more older than 2 days.", rather than listed again. The second
+bound is for gaps longer than two days, such as a weekday schedule's Monday: a
+row from Friday after Friday's digest has not been listed yet, so it is. Nothing
+unread inside the window, nothing sent: the occurrence settles as `empty`, even
+when older rows remain.
 
 **A digest is on by default**, for people who already exist and for anyone who
 joins later: weekdays at 07:45 in their own timezone, to their email and, for
@@ -373,7 +379,9 @@ execution principal, before anything is written. Then:
 **Digests never touch the read state.** Sending a digest does not mark anything
 read: a row stays in Activity, and in the next digest, until the person reads
 it or marks Activity read. Someone who reads nothing between the start and end
-of their day gets the same rows twice, which is what "unread" means.
+of their day gets the same rows again, which is what "unread" means, but only
+for two days: after that a row is a count, not a line, so an inbox ignored for a
+week does not get the same list every morning.
 
 #### Delivery
 
@@ -403,11 +411,12 @@ than failing silently forever.
 
 `digest-email-content.ts` wraps the digest's Markdown, rendered to email-safe HTML by the shared `email-markdown.ts`, in the digest's own shell.
 
-It is dark, and deliberately only dark: the email is a copy of a Rally surface
-and the app has one appearance. Every colour is the app's own token from
-`app.css`, written inline — a mail client will strip a `<style>` block, and
-several repaint a page that declares a light scheme, so the palette is stated on
-the elements themselves and `color-scheme: dark` is declared three ways.
+It is light, and only light: the email is a copy of a Rally surface in the
+app's light theme, because a mail client cannot report which appearance the
+reader chose. Every colour is a light token from
+`packages/ui/src/styles/themes.css`, written inline — a mail client will strip a
+`<style>` block — and `color-scheme: light only` is declared three ways so a
+client in dark mode leaves the page as drawn.
 
 The canvas runs the height of the reading pane rather than stopping at the last
 line, so a short digest does not end in a hard edge with the client's own white
@@ -422,7 +431,7 @@ The percentage is load-bearing and a viewport unit would be wrong. A webmail
 client strips `<body>` and injects the markup into its own page, where the
 percentage meets an auto-height ancestor and collapses — leaving the message the
 height of its content, which is what a thread card wants. `100vh` would measure
-the browser window there and hang a tall dark tail off the bottom of the card.
+the browser window there and hang a tall tail off the bottom of the card.
 Nothing carries a height on a layout table for the same reason: the Word engine
 reads that as a minimum against the page box.
 
@@ -434,13 +443,17 @@ a taller page reproduces the third.
 The structure is: preheader (what a phone shows beside the subject, leading with
 the count that decides whether this gets opened now), wordmark, title and
 occurrence, count pills with the "for you" pill in brand, the body, a primary
-action, and a footer. Layout is tables and inline styles only — no flexbox, no
+action, and a footer holding only the link to change the schedule. Both links
+go through the site's `/open` desktop handoff, addressed to the recipient's
+organization (`digestHandoffUrl`): the button to `rallywithai://activity`, which
+opens the main window with the sidebar on Activity, where every row the digest
+listed lives; the footer to `rallywithai://settings/digest`. Layout is tables and inline styles only — no flexbox, no
 grid, nothing a 2007 renderer has to guess at.
 
 A general Markdown library is the wrong tool here: clients ignore most of what
 one emits, and rendering raw HTML would mean rendering whatever a thread title or
-a model's answer holds into an email. The renderer covers `#` document titles, `##` sections with a brand
-rule, `###` subheads, bullets one level deep, numbered lists, links, bold,
+a model's answer holds into an email. The renderer covers `#` document titles, `##` sections,
+`###` subheads, bullets one level deep, numbered lists, links, bold,
 `*` or `_` emphasis, inline code, and blockquote, and escapes everything before
 a single tag is added, so an `href` can only ever be one it built itself — with
 `*`, `_` and backticks encoded inside it, so the emphasis passes that follow
@@ -609,9 +622,8 @@ apply the audience columns the same way; see [Invariants](#invariants).
   than failing silently forever.
 - **A member with no account address is skipped by the reconciler**, because the
   default destination is that address.
-- **The email is dark only** — not because the app has one appearance, which it
-  does not, but because a mail client cannot report the reader's chosen theme, so
-  it renders in the shipped default. It renders a Markdown subset: titles,
+- **The email is light only**, because a mail client cannot report the reader's
+  chosen theme, so it renders in the app's light theme. It renders a Markdown subset: titles,
   sections, subheads, bullets one level deep, numbered lists, links, bold,
   emphasis, inline code, blockquote, and tables or fenced blocks kept verbatim in
   a `<pre>`. Other unknown syntax degrades to visible text rather than being
@@ -648,6 +660,35 @@ semantics. [Push notifications](push-notifications.md) owns the channels,
 device registration, provider delivery and retry receipts.
 
 ## Changelog
+
+### 2026-10-16 — The email is light and says Rally, and old rows are counted, not repeated
+
+The digest still said Avalon in its wordmark, button and footer, and was drawn
+in a dark palette that matched neither of the app's current themes: a muted
+volt, large radii, and a volt rule on every section. It now uses the app's light
+theme tokens and its quieter look. Light was chosen over dark because a mail
+client cannot report the reader's appearance and light is what most inboxes
+show around the message. `light only` asks dark-mode clients not to repaint it;
+Apple Mail honours that, while some apps (Gmail on a phone) may still adjust it.
+A dark variant behind `prefers-color-scheme` was not attempted: a `<style>`
+block is stripped by several clients, so it would only reach some readers. The
+palette lives in `email-markdown.ts`, so any future email shares it. The
+workspace name and the AI notice left the shell; the settings link stayed.
+"Open Rally" used to open the bare site root; it now opens Activity through a
+new `activity` deep link, since that is where the listed rows are. Desktop
+builds older than that link drop it, so for them the button does nothing until
+they update; the product accepted that gap rather than hold the API change.
+
+A digest is still unread Activity, but a row past two days old is now one count
+at the bottom instead of a line. Unread rows never expire, so every digest
+repeated everything a person had not opened, twice a day. Marking rows read on
+send was rejected: the digest would then change what Activity shows. Tracking
+which rows each digest already listed was rejected as more state than the
+problem needs, but the window always reaches back to the last delivered digest,
+read from `digest_deliveries`, so a weekend or a weekly schedule never hides a
+row that no digest has listed. The age is measured from the occurrence, not the
+clock, so a retried occurrence splits the same way. Two days was the product's call; a
+digest with only older rows sends nothing, so the count never arrives alone.
 
 ### 2026-10-16 — A merge is an Activity row
 

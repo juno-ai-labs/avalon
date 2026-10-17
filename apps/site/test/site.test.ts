@@ -104,6 +104,9 @@ describe('public Rally site', () => {
     expect(classifyDesktopHandoffTarget('avalon://workstreams/not-a-uuid')).toEqual({
       handoffType: 'workstream', validity: 'invalid',
     });
+    expect(classifyDesktopHandoffTarget('rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000009/activity')).toEqual({
+      handoffType: 'activity', validity: 'valid',
+    });
     expect(classifyDesktopHandoffTarget(null)).toEqual({
       handoffType: 'unknown', validity: 'invalid',
     });
