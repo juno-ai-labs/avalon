@@ -78,6 +78,8 @@ export interface ResourceContext {
   harnessRunId: string;
   effectIntentId: string;
   executionPrincipal: ExecutionPrincipal;
+  /** The person who asked for this run (`runRequesterUserId`); null for a Sidekick run. */
+  onBehalfOfUserId: string | null;
 }
 
 export interface PublishImageInput {
@@ -334,7 +336,7 @@ async function publishEditedVersion(
               model_content_claim_id = NULL, model_content_error_code = NULL,
               revision_author_kind = 'agent', revision_author_run_id = ?,
               revision_author_user_id = NULL, revision_author_connection_id = NULL,
-              revision_cause = 'replaced'
+              revision_cause = 'replaced', revision_on_behalf_of_user_id = ?
         WHERE id = ? AND workspace_id = ? AND content_ref = ? AND content_sha256 IS ?
       RETURNING id, resource_type, provider, title, mime_type, content_ref, content_sha256, metadata_json,
                 model_content_status, created_at`,
@@ -347,6 +349,7 @@ async function publishEditedVersion(
       timestamp,
       timestamp,
       context.harnessRunId,
+      context.onBehalfOfUserId,
       existing.id,
       context.workspaceId,
       input.sourceContentRef,

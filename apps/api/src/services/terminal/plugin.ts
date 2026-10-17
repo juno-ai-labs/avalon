@@ -3,7 +3,7 @@ import {
   type HarnessPluginActivationContext,
   type HarnessToolContext,
 } from "@rally/agent-harness";
-import { asWorkspaceId, type WorkstreamWorkflowInput } from "@rally/contracts";
+import { asWorkspaceId, runRequesterUserId, type WorkstreamWorkflowInput } from "@rally/contracts";
 import { newId } from "@rally/db";
 
 import type { Env } from "../../env";
@@ -267,6 +267,7 @@ export async function createAvalonTerminalPlugin(
       // its owner's sandbox; the import records that conversation so the
       // revocation check asks it, not the owner's.
       scope.runSubstreamId === scope.authoritySubstreamId ? null : scope.runSubstreamId,
+      runRequesterUserId(input),
   );
   const runtime = createDaytonaTerminalRuntime(
     terminalPort,
