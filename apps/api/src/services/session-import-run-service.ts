@@ -188,9 +188,12 @@ export class SessionImportRunService {
   async completeBreakout(workstreamId: string, body: SessionImportBreakoutRequest) {
     assertImportIdentity(body);
     if (!body.source.url) throw new ApiError(422, "session_import_source_missing", "The import names no source conversation");
+    const breakouts = new SubstreamCreationService(this.env, this.auth, this.defer);
+    // Before any file is uploaded: a key that names no live reservation of the
+    // caller's must not leave drafts behind, as `complete` checks its receipt first.
+    await breakouts.assertConfirmable(workstreamId, body.clientMessageId);
     const conversation = await prepareSessionImport(this.env, this.auth, body, body.clientMessageId);
-    return new SubstreamCreationService(this.env, this.auth, this.defer)
-      .confirm(workstreamId, body.clientMessageId, null, null, conversation);
+    return breakouts.confirm(workstreamId, body.clientMessageId, null, null, conversation);
   }
 
   /** Start the agent again on a Channel imported before, keeping its recorded messages first. */
