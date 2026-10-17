@@ -26,7 +26,7 @@ a thread or a breakout opens, or who owns the right panel.
 | `packages/ui/src/components/breakout-marks.tsx` | `BreakoutMark`, `breakoutsByOrigin`, `orderBreakoutsForTicks`, `breakoutHasActivity`, `BreakoutTickBar`. |
 | `packages/ui/src/components/conversation-card.tsx` | `ConversationCard`: one thread or Breakout as a feed entry. The Channel feed draws its threads with it, and a thread's feed its Breakouts. |
 | `packages/ui/src/components/split-conversation.tsx` | `SplitConversationLayout`, `SplitConversationMode`, `clampBreakoutWidth`. |
-| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the section switcher (Pinned, Channels, Threads, Activity), the account menu under it, and the lists with their Pinned sections, sort, and drag to reorder. |
+| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the section switcher (Pinned, Channels, Threads, Activity, Artifacts), the account menu under it, the phone row's More tab (`MoreSections`), and the lists with their Pinned sections, sort, and drag to reorder. |
 | `apps/desktop/src/renderer/components/rail-item.tsx` | `RailItem`: one tile of the section switcher, the account menu's trigger included. |
 | `apps/desktop/src/renderer/screens/channel.tsx` | The Channel screen: its pill and menu, the feed of threads, the composer, and `ChannelStack`, the first two panes of the stack ([`pane-stack.md`](pane-stack.md)). |
 | `apps/desktop/src/renderer/components/channel-composer.tsx` | Starting a thread from a Channel. |
@@ -232,8 +232,14 @@ browser tab draws no sidebar, so the app shell provides no context there.
 
 The sidebar is a sheet behind the list's own header: the close button at the
 left, the section's title centred, its actions at the right, the sides never
-narrower than their buttons. The section switcher is a row of tabs under it,
-with the account menu as a last tab labelled Settings. While a visible pane
+narrower than their buttons. The section switcher is a row of tabs under it:
+the first four sections (`PHONE_RAIL_SECTIONS`), then **More**, a "⋯" tab
+whose dropdown holds the rest (Artifacts, for a member) as radio rows, each
+with its own count and a check on the open one (`MoreSections`), then the
+account menu as a last tab labelled Settings. More carries the folded
+sections' counts added up, named count by count, and reads as selected while
+one of them is the open section; choosing one switches the section as its own
+tab would. A guest's four sections all fit, so no More is drawn. While a visible pane
 header carries the menu mark (`PHONE_NAVIGATION_CONTROL`), the shut sheet
 keeps no bar and is hidden whole. A screen without one (the landing, Not
 found, an access request, a Breakout draft, whose header is collapsed to
@@ -480,6 +486,31 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-17 — The phone row folds its fifth section into More
+
+**What changed:** At phone width the section switcher draws four sections,
+then a **More** "⋯" tab, then Settings. The sections past the fourth
+(Artifacts, for a member) are a dropdown under More: radio rows with their own
+counts and a check on the open one. More's tile carries their counts added up
+and takes the active tint while one of them is open. A guest, whose four
+sections all fit, gets no More. The wide rail is unchanged.
+
+**Why:** Six tiles across a phone crowded the row, and the product owner asked
+for five elements and a "⋯" menu holding the rest. The count of four is theirs
+(`PHONE_RAIL_SECTIONS`), a layout choice rather than a measured limit.
+
+**Considered and rejected:** Folding in CSS as `IconGroup` does, with every
+section and a More tile always rendered and the stylesheet hiding one set at
+each width. Which sections fold depends on the person (a guest has nothing to
+fold), and More's count and selected state are computed from them, so the
+sidebar decides with `usePhoneLayout`, as the title pills decide how many marks
+to draw.
+
+**Consequences:** A section added to `SECTIONS` past the fourth lands in More
+on a phone without further work, and the order of `SECTIONS` is the order of
+the row and the menu. More is a `RailItem` wrapped by a Radix trigger, as the
+account menu is, so it takes the open tint the rail already gives a trigger.
 
 ### 2026-10-16 — A navigation can ask for the phone sheet
 
