@@ -183,7 +183,9 @@ A merge that lands takes the reader to it, through `onMerged` on
 `ConversationSurface`: a Breakout's merge closes the Breakout and scrolls its
 Thread to the new message; a Thread's merge opens the Channel it landed in and
 scrolls the feed to it once it is the newest row. Only the merge whose
-composer is still open moves the reader; a pane closed mid-merge moves nobody.
+composer is still open moves the reader; a pane closed mid-merge moves nobody,
+and a Thread scroll still waiting for its message is dropped once the reader
+scrolls.
 
 ## Invariants
 
@@ -301,9 +303,12 @@ merge keeps its message id and moves to the bottom, and the cached feed still
 holds the old card where it was, so the reveal waits for it to be the newest
 row.
 
-**Consequences:** An `arriving` request that never arrives stays pending until
-the next request replaces it; a merge queued behind input waiting for Rally
-scrolls when it lands, not before.
+**Consequences:** An `arriving` request stays pending until its turn lands,
+the next request replaces it, or the reader takes the transcript: a wheel, a
+touch, a scrollbar drag or a scrolling key drops it, so a merge queued behind
+input waiting for Rally never pulls a reader who has moved on. It reads input,
+not scroll events, because the virtualizer moves the viewport on its own as
+rows measure.
 
 ### 2026-10-16 — Merge-back ships
 

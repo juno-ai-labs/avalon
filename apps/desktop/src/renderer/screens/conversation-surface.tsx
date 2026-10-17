@@ -1130,6 +1130,9 @@ export interface ScrollToTurnRequest {
   arriving?: boolean;
 }
 
+/** The keys that scroll a focused transcript. */
+const TRANSCRIPT_SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+
 /** Where this conversation's Merge goes, or null when nothing here can merge. */
 export type MergeTarget =
   | { kind: 'thread'; threadTitle: string }
@@ -2190,6 +2193,12 @@ export function ConversationSurface({
     void loadOlderMessages();
   }, [loadOlderMessages, loadingOlder, olderMessagesError, orderedTranscript.data, revealTurn, scrollToTurn,
     scrollTranscriptToEnd, transcript]);
+  // A turn on its way scrolls only while the reader waits for it: their own
+  // input on the transcript drops it. Input, not scroll events, because the
+  // virtualizer moves the viewport on its own as rows measure.
+  const dropArrivingScroll = (): void => {
+    if (scrollToTurn?.arriving) handledScrollNonce.current = scrollToTurn.nonce;
+  };
 
   const nearHistoryEdge = useTranscriptHistory({
     scrollRef: transcriptRef,
@@ -3403,8 +3412,13 @@ export function ConversationSurface({
         // to latest in the middle of a streaming turn.
         onWheel={(event) => {
           if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+          dropArrivingScroll();
           onTranscriptWheel(event.currentTarget, event.deltaY);
         }}
+        onTouchMove={dropArrivingScroll}
+        // On the container itself is its scrollbar; on a message is a click.
+        onPointerDown={(event) => { if (event.target === event.currentTarget) dropArrivingScroll(); }}
+        onKeyDown={(event) => { if (TRANSCRIPT_SCROLL_KEYS.has(event.key)) dropArrivingScroll(); }}
         onScroll={(event) => {
           const element = event.currentTarget;
           onTranscriptScroll(element);
