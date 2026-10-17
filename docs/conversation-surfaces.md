@@ -787,6 +787,8 @@ so the two never draw at once. Under `prefers-reduced-motion` the arc stands
 still. A state drawn red on this control is a claim that audio is being saved,
 and a future state that is not one must find another colour.
 
+Shipped in #1276.
+
 ### 2026-10-16 — Dictation startup overlaps the microphone with everything else
 
 **What changed:** A press starts the inputs, the capture graph and the
