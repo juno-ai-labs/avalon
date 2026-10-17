@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
+import { uuidToBase58 } from '@rally/contracts/uuid-base58';
+
 import {
   acceptedDeepLink,
   isConnectorOAuthResult,
   shouldDeliverConnectorResultToSettings,
+  workstreamHttpsDeepLink,
 } from './deep-links';
 
 const WORKSPACE_ID = '00000000-0000-7000-8000-000000000019';
@@ -54,5 +57,14 @@ describe('main-process organization deep-link boundary', () => {
     expect(shouldDeliverConnectorResultToSettings(
       `rallywithai://workspace/global/${WORKSPACE_ID}/settings/connections`,
     )).toBe(false);
+  });
+});
+
+describe('an HTTPS link onto an artifact', () => {
+  it('becomes a deep link the main process accepts, naming the artifact under its thread', () => {
+    const [workspace, space, thread, artifact] = [WORKSPACE_ID, CONNECTION_ID, WORKSTREAM_ID, '00000000-0000-7000-8000-000000000023'].map(uuidToBase58);
+    const deepLink = workstreamHttpsDeepLink(`https://rallywith.ai/app/global/${workspace}/s/${space}/c/${thread}/a/${artifact}`);
+    expect(deepLink).toBe(`rallywithai://workspace/global/${workspace}/spaces/${space}/channels/${thread}/artifacts/${artifact}`);
+    expect(acceptedDeepLink(deepLink!)).toBe(deepLink);
   });
 });

@@ -36,6 +36,8 @@ it("rewrites canonical links into the shell's hash routes", () => {
     .toBe(`/app/workspaces/global/${workspaceId}#/workstreams/${workstreamId}?space=${spaceId}`);
   expect(shellLocation(`${base}/c/${uuidToBase58(workstreamId)}/b/${uuidToBase58(substreamId)}`, ""))
     .toBe(`/app/workspaces/global/${workspaceId}#/workstreams/${workstreamId}?substream=${substreamId}&space=${spaceId}`);
+  expect(shellLocation(`${base}/c/${uuidToBase58(workstreamId)}/a/${uuidToBase58(substreamId)}`, ""))
+    .toBe(`/app/workspaces/global/${workspaceId}#/workstreams/${workstreamId}?space=${spaceId}&artifact=${substreamId}`);
   expect(shellLocation(base, "")).toBe(`/app/workspaces/global/${workspaceId}#/spaces/${spaceId}`);
   expect(shellLocation(`/app/global/${uuidToBase58(workspaceId)}/sk/${uuidToBase58(workstreamId)}/`, ""))
     .toBe(`/app/workspaces/global/${workspaceId}#/automations/${workstreamId}`);

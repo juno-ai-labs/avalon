@@ -89,6 +89,15 @@ describe('menu bar content', () => {
     ]);
   });
 
+  it('leads a pinned artifact\'s update with the artifact, naming its thread, and opens the thread', () => {
+    const content = menuBarContent(quietDirectory, activity([activityItem('artifact:summary:3', {
+      kind: 'artifact_updated', artifact: { resourceId: 'summary', title: 'Incident summary', version: 3 },
+    })]));
+    expect(content.attention.map(({ key, workstreamId, substreamId, title, detail }) => ({ key, workstreamId, substreamId, title, detail }))).toEqual([
+      { key: 'artifact:summary:3', workstreamId: THREAD, substreamId: null, title: 'Incident summary', detail: 'Rally updated it in GTM review' },
+    ]);
+  });
+
   it('is not whole until Activity has been read once', () => {
     expect(menuBarContent(quietDirectory, { items: [], complete: false }).attentionComplete).toBe(false);
   });

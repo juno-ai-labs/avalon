@@ -3810,6 +3810,27 @@ pre {
 .citation-card-row .citation-card { margin: 0; }
 .citation-file-attachment { display: flex; flex-direction: column; max-width: 100%; }
 .citation-card-row .message-attachment-image-cell .citation-card.is-image { min-height: 0; }
+/* A resource card's `⋯`: the card's own actions behind a button, beside the
+   card because the card is itself a button. Shown while the card is hovered,
+   focused within, or its menu is open; a file card makes room for it at the
+   end of its row, an image or media tile carries it in its corner. */
+.resource-more-shell { display: block; max-width: 100%; position: relative; }
+.message-attachment-image-cell > .resource-more-shell { height: 100%; width: 100%; }
+.resource-more-button { align-items: center; background: var(--av-sys-color-surface-elevated); border: .5px solid var(--av-cmp-composer-border-color); border-radius: 7px; box-shadow: 0 1px 2px color-mix(in srgb, var(--av-sys-color-text-default) 8%, transparent); color: var(--av-sys-color-text-subtle); cursor: pointer; display: inline-flex; height: 26px; justify-content: center; opacity: 0; position: absolute; transition: opacity 120ms ease; width: 26px; z-index: 2; }
+.resource-more-shell:hover .resource-more-button,
+.resource-more-shell:focus-within .resource-more-button,
+.resource-more-shell.is-open .resource-more-button { opacity: 1; }
+.resource-more-button:hover, .resource-more-shell.is-open .resource-more-button { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
+.resource-more-shell.is-row .resource-more-button { right: 10px; top: 50%; transform: translateY(-50%); }
+.resource-more-shell.is-corner .resource-more-button { background: color-mix(in srgb, var(--av-sys-color-surface-elevated) 88%, transparent); backdrop-filter: blur(6px); right: 6px; top: 6px; }
+.resource-more-shell.is-row:hover .citation-card.is-file,
+.resource-more-shell.is-row:focus-within .citation-card.is-file,
+.resource-more-shell.is-row.is-open .citation-card.is-file { background-image: var(--hover-layer); padding-right: 44px; }
+@media (prefers-reduced-motion: reduce) { .resource-more-button { transition: none; } }
+/* A pinned card's marks. Not `citation-`: a still never draws pinned state,
+   so the exported document has nothing of them to style. */
+.resource-card-pinned { align-items: center; display: inline-flex; gap: 3px; }
+.resource-card-pin { align-items: center; background: color-mix(in srgb, var(--av-sys-color-surface-elevated) 88%, transparent); border-radius: 7px; box-shadow: 0 1px 2px color-mix(in srgb, var(--av-sys-color-text-default) 8%, transparent); color: var(--av-sys-color-text-default); display: inline-flex; height: 26px; justify-content: center; left: 6px; position: absolute; top: 6px; width: 26px; z-index: 1; }
 
 /* The grounding pill. It costs one character of line width and no vertical
    space at all, which is the whole reason the trailing source list is not
@@ -4968,6 +4989,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    scroller clips the unwrapped lines. */
 .inspector-detail-document { max-width: 100%; min-width: 0; }
 .inspector-detail-document .markdown-body { font-size: 13px; }
+.inspector-detail-document.is-html iframe { background: var(--av-sys-color-surface-default); border: 0; display: block; height: calc(100vh - 160px); width: 100%; }
 .inspector-detail-image { display: block; height: auto; max-width: 100%; }
 .inspector-detail-audio { display: block; width: 100%; }
 .inspector-detail-preview-status { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 11.5px; gap: 6px; margin-bottom: 18px; }
@@ -6060,9 +6082,12 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   /* Too narrow for the conversation's minimum beside the narrowest panel
      (`railFillsPane`): the panel covers the whole pane and the pane keeps its
      width under it, with no scrim and no edge to drag. */
-  .workspace-shell.rail-fills-pane { --rail-slot: calc(100vw - var(--av-cmp-sidebar-width)); }
-  .workspace-shell.rail-open.rail-fills-pane .main-pane { padding-right: 0; }
-  .workspace-shell.rail-fills-pane .rail-resizer { display: none; }
+  .workspace-shell.rail-fills-pane,
+  .workspace-shell.rail-expanded { --rail-slot: calc(100vw - var(--av-cmp-sidebar-width)); }
+  .workspace-shell.rail-open.rail-fills-pane .main-pane,
+  .workspace-shell.rail-open.rail-expanded .main-pane { padding-right: 0; }
+  .workspace-shell.rail-fills-pane .rail-resizer,
+  .workspace-shell.rail-expanded .rail-resizer { display: none; }
 }
 .rail-surface {
   animation: rail-open 240ms cubic-bezier(.22, 1, .36, 1);
@@ -8676,6 +8701,9 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .identity-tile-shape.is-circle,
 .identity-tile-badge.is-circle,
 .identity-tile-badge-fill.is-circle { border-radius: 50%; }
+.identity-tile-shape.is-sheet,
+.identity-tile-badge.is-sheet,
+.identity-tile-badge-fill.is-sheet { border-radius: 25%; }
 .identity-tile-badge {
   align-items: center;
   background: var(--tile-ring, var(--av-sys-color-surface-default));

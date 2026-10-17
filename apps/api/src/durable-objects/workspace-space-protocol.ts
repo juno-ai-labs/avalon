@@ -19,6 +19,7 @@ import {
   MyThreadsPageSchema,
   PinKindSchema,
   PinListSchema,
+  ArtifactPinListSchema,
   SpaceChannelPageSchema,
   SpaceErrorCodeSchema,
   SpaceIconKeySchema,
@@ -492,6 +493,29 @@ export const WorkspacePinResultSchema = z.union([
   z.strictObject({ ok: z.literal(false), code: z.enum(["pin_target_not_found", "pin_limit_reached"]) }),
 ]);
 export type WorkspacePinResult = z.infer<typeof WorkspacePinResultSchema>;
+
+/**
+ * Pin or unpin one artifact. `threadId` names the thread whose Main it was
+ * generated in; an unpin needs none.
+ */
+export const WorkspaceArtifactPinChangeRequestSchema = SpaceActorSchema.extend({
+  itemId: IdSchema,
+  threadId: WorkstreamIdSchema.nullable(),
+  pinned: z.boolean(),
+}).strict();
+export type WorkspaceArtifactPinChangeRequest = z.infer<typeof WorkspaceArtifactPinChangeRequestSchema>;
+
+export const WorkspaceArtifactPinOrderRequestSchema = SpaceActorSchema.extend({
+  ids: z.array(IdSchema),
+}).strict();
+export type WorkspaceArtifactPinOrderRequest = z.infer<typeof WorkspaceArtifactPinOrderRequestSchema>;
+
+/** Every artifact pin after the change, or why it was refused, as `WorkspacePinResultSchema` says. */
+export const WorkspaceArtifactPinResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), artifactPins: ArtifactPinListSchema }),
+  z.strictObject({ ok: z.literal(false), code: z.enum(["pin_target_not_found", "pin_limit_reached", "space_access_denied"]) }),
+]);
+export type WorkspaceArtifactPinResult = z.infer<typeof WorkspaceArtifactPinResultSchema>;
 
 export const WorkspaceChannelStatsResultSchema = z.union([
   z.strictObject({ ok: z.literal(true), stats: ChannelStatsListSchema }),

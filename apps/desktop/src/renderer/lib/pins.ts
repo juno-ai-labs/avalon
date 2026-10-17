@@ -1,4 +1,4 @@
-import type { PinKind, PinList } from '@rally/contracts';
+import type { ArtifactPinList, PinKind, PinList } from '@rally/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 
@@ -6,7 +6,7 @@ import { ApiError, type RallyApi } from './api';
 import { fetchThroughOwner } from './fetch-through-owner';
 import { reportTelemetryProductIntent, telemetryVisibility } from './telemetry';
 import type { WorkstreamSummary } from './types';
-import { MY_THREADS_QUERY_KEY, PINS_QUERY_KEY } from './sidebar-list-store';
+import { ARTIFACT_PINS_QUERY_KEY, MY_THREADS_QUERY_KEY, PINS_QUERY_KEY } from './sidebar-list-store';
 
 /**
  * This person's pins, as one list for every surface that shows or acts on
@@ -17,6 +17,15 @@ import { MY_THREADS_QUERY_KEY, PINS_QUERY_KEY } from './sidebar-list-store';
  */
 export function usePins(): PinList {
   return useQuery<PinList>({ queryKey: PINS_QUERY_KEY, queryFn: fetchThroughOwner, enabled: false }).data ?? [];
+}
+
+/**
+ * This person's pinned artifacts, in their order. A list of its own beside
+ * `usePins`, arriving the same ways: the connect payload and each write's
+ * answer (`ArtifactPinSchema` says why it is separate).
+ */
+export function useArtifactPins(): ArtifactPinList {
+  return useQuery<ArtifactPinList>({ queryKey: ARTIFACT_PINS_QUERY_KEY, queryFn: fetchThroughOwner, enabled: false }).data ?? [];
 }
 
 /** The ids pinned under one kind. */
@@ -73,6 +82,37 @@ export function usePinWrite(): (write: Promise<PinList>) => void {
       if (issued !== pinWritesStarted) return;
       queryClient.setQueryData(PIN_FAILURE_QUERY_KEY, pinFailureCopy(error));
     });
+  };
+}
+
+/** How many artifact pin writes this window has started, counted apart: the two lists never answer for each other. */
+let artifactPinWritesStarted = 0;
+
+/** `usePinWrite` for the artifact pin list, on the same terms. */
+export function useArtifactPinWrite(): (write: Promise<ArtifactPinList>) => void {
+  const queryClient = useQueryClient();
+  return (write) => {
+    const issued = ++artifactPinWritesStarted;
+    void write.then((list) => {
+      if (issued !== artifactPinWritesStarted) return;
+      queryClient.setQueryData(ARTIFACT_PINS_QUERY_KEY, list);
+      queryClient.setQueryData(PIN_FAILURE_QUERY_KEY, null);
+    }, (error: unknown) => {
+      if (issued !== artifactPinWritesStarted) return;
+      queryClient.setQueryData(PIN_FAILURE_QUERY_KEY, pinFailureCopy(error));
+    });
+  };
+}
+
+/**
+ * Pin an artifact generated in `threadId`'s Main, or unpin it. The caller
+ * passes its API client, as `usePinAction`'s does.
+ */
+export function useArtifactPinAction(api: RallyApi | null): (id: string, pinned: boolean, threadId: string) => void {
+  const write = useArtifactPinWrite();
+  return (id, pinned, threadId) => {
+    if (!api) return;
+    write(api.setArtifactPinned(id, pinned, threadId));
   };
 }
 

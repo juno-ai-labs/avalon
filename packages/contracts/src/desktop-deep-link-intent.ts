@@ -19,7 +19,7 @@ type Targeted = { target: WorkspaceTarget | null };
 
 export type DesktopDeepLinkIntent =
   | ({ kind: "space"; spaceId: string } & Targeted)
-  | ({ kind: "workstream"; workstreamId: string; spaceId?: string; substreamId?: string } & Targeted)
+  | ({ kind: "workstream"; workstreamId: string; spaceId?: string; substreamId?: string; artifactId?: string } & Targeted)
   | { kind: "new-workstream" }
   /** The menu bar's request row: open the main window on this request's approve-or-decline dialog. */
   | ({ kind: "access-request"; requestId: string } & Targeted)
@@ -172,15 +172,20 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
   }
   if (url.hostname === "spaces") {
     if (!target || url.search) return null;
-    const [encodedSpaceId = "", channelSegment, encodedWorkstreamId, breakoutSegment, encodedSubstreamId, ...extra] = url.pathname.slice(1).split("/");
+    const [encodedSpaceId = "", channelSegment, encodedWorkstreamId, childKind, encodedChildId, ...extra] = url.pathname.slice(1).split("/");
     const spaceId = uuidFromBase58(encodedSpaceId);
     if (!spaceId || extra.length) return null;
     if (channelSegment === undefined) return { kind: "space", spaceId, target };
     const workstreamId = encodedWorkstreamId ? uuidFromBase58(encodedWorkstreamId) : null;
-    const substreamId = encodedSubstreamId ? uuidFromBase58(encodedSubstreamId) : null;
+    const childId = encodedChildId ? uuidFromBase58(encodedChildId) : null;
     if (channelSegment !== "channels" || !workstreamId
-      || (breakoutSegment !== undefined && (breakoutSegment !== "breakouts" || !substreamId))) return null;
-    return { kind: "workstream", workstreamId, spaceId, target, ...(substreamId ? { substreamId } : {}) };
+      || (childKind !== undefined && ((childKind !== "breakouts" && childKind !== "artifacts") || !childId))) return null;
+    // A breakout opens beside its thread; an artifact opens its thread onto it.
+    return {
+      kind: "workstream", workstreamId, spaceId, target,
+      ...(childKind === "breakouts" && childId ? { substreamId: childId } : {}),
+      ...(childKind === "artifacts" && childId ? { artifactId: childId } : {}),
+    };
   }
   if (url.hostname === "workstreams") {
     const [workstreamId = "", segment, substreamId, ...extra] = url.pathname.slice(1).split("/");

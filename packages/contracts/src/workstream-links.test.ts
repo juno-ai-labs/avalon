@@ -50,6 +50,20 @@ describe("canonical work-stream links", () => {
     expect(parseDesktopDeepLinkIntent(workstreamDeepLink(target))).toMatchObject({ kind: "workstream", spaceId: target.spaceId, workstreamId: target.workstreamId, substreamId: target.substreamId });
   });
 
+  it("carries an artifact the thread opens onto through HTTPS, the desktop handoff and its intent", () => {
+    const target = { ...TARGET, artifactId: CHILD_ID };
+    const url = workstreamCanonicalUrl(WEB_BASE_URL, target);
+    expect(url).toBe(`${WEB_BASE_URL}/app/enterprise/${ENCODED_WORKSPACE_ID}/s/${ENCODED_SPACE_ID}/c/${ENCODED_WORKSTREAM_ID}/a/${uuidToBase58(CHILD_ID)}`);
+    expect(parseWorkstreamLinkTarget(url, { webBaseUrl: WEB_BASE_URL })).toEqual(target);
+    expect(workstreamDeepLink(target)).toBe(`rallywithai://workspace/enterprise/${ENCODED_WORKSPACE_ID}/spaces/${ENCODED_SPACE_ID}/channels/${ENCODED_WORKSTREAM_ID}/artifacts/${uuidToBase58(CHILD_ID)}`);
+    expect(parseWorkstreamLinkTarget(workstreamDeepLink(target), { webBaseUrl: WEB_BASE_URL })).toEqual(target);
+    expect(parseDesktopDeepLinkIntent(workstreamDeepLink(target))).toMatchObject({ kind: "workstream", workstreamId: WORKSTREAM_ID, artifactId: CHILD_ID });
+    expect(parseDesktopDeepLinkIntent(workstreamDeepLink(target))).not.toHaveProperty("substreamId");
+    // An artifact belongs to a thread's Main, never to a breakout.
+    expect(() => workstreamCanonicalUrl(WEB_BASE_URL, { ...target, substreamId: CHILD_ID })).toThrow();
+    expect(parseWorkstreamLinkTarget(`${url}/b/${uuidToBase58(CHILD_ID)}`, { webBaseUrl: WEB_BASE_URL })).toBeNull();
+  });
+
   it("mints one workspace-addressed canonical and desktop shape", () => {
     expect(workstreamCanonicalUrl(WEB_BASE_URL, TARGET))
       .toBe(`${WEB_BASE_URL}/app/enterprise/${ENCODED_WORKSPACE_ID}/s/${ENCODED_SPACE_ID}/c/${ENCODED_WORKSTREAM_ID}`);

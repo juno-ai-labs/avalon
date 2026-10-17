@@ -5,7 +5,7 @@ import {
   IdSchema,
   MemberPreferencesUpdateSchema,
   NotificationChannelSchema,
-  NotificationChannelsSchema,
+  NotificationChannelsChoiceSchema,
   NotificationKindSchema,
   PushPreferencesSchema,
   WorkspaceIdSchema,
@@ -74,6 +74,7 @@ export const NOTIFICATION_KIND_FOR_PUSH: Record<PushNotificationData["kind"], No
   breakout_started: "newBreakouts",
   run_finished: "runFinished",
   merged: "merges",
+  artifact_updated: "artifactUpdates",
 };
 
 /** `changes` over `base`, switch by switch; a switch `changes` does not name keeps its value. */
@@ -101,9 +102,7 @@ type ChosenNotify = { [Kind in NotificationKind]?: NotificationChannel[] | undef
  * The stored record's shape: every kind optional and none defaulted, so a
  * kind the person never set stays absent rather than reading as its default.
  */
-const StoredNotifySchema = NotificationChannelsSchema
-  .extend({ merges: NotificationChannelsSchema.shape.merges.unwrap() })
-  .partial();
+const StoredNotifySchema = NotificationChannelsChoiceSchema;
 
 /** The kinds this person has set, as stored. */
 function storedNotify(json: string | null | undefined): ChosenNotify {

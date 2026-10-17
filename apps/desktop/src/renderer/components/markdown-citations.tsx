@@ -1,13 +1,14 @@
 import { type AttachmentKind, classifyAttachmentKind } from '@rally/contracts';
 import { type CitationScheme, type CitationTarget, type FootnoteCitation, citationScheme, isConnectorHref, parseCitationHref } from '@rally/contracts/citations';
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { IconPin } from '@tabler/icons-react';
 
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 import { httpHostname, useHostFavicon } from '../lib/host-favicon';
 
 import { AttachmentMediaTile } from './attachments';
-import { type ResourceAction, ResourceActionMenu } from './resource-action-menu';
+import { type ResourceAction, ResourceActionMenu, ResourceMoreMenu } from './resource-action-menu';
 import { isVideoAttachment } from '../lib/attachment-media';
 
 /**
@@ -80,6 +81,8 @@ export interface CitationContext {
    * list, so a surface with nothing to offer omits it and keeps no menu.
    */
   actions?: (resourceId: string) => readonly ResourceAction[] | undefined;
+  /** Whether this person pinned the resource, which its card says beside its kind. */
+  pinned?: (resourceId: string) => boolean;
 }
 
 /**
@@ -188,6 +191,12 @@ function useResourceActions(resourceId: string): readonly ResourceAction[] | und
   return still ? undefined : citations?.actions?.(resourceId);
 }
 
+/** Whether the host says this person pinned the resource; never on a still. */
+function useResourcePinned(resourceId: string): boolean {
+  const { citations, still } = useCitationRender();
+  return !still && citations?.pinned?.(resourceId) === true;
+}
+
 /** A reference inside a sentence: icon, the model's words, and a click. */
 function ResourceChip({ label, resource, onOpen }: {
   label: React.ReactNode;
@@ -235,6 +244,7 @@ export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview,
   const kind = resourceIconType(resource);
   const isImage = kind === 'image' && !still;
   const actions = useResourceActions(resource.id);
+  const pinned = useResourcePinned(resource.id);
   const [excerpt, setExcerpt] = useState<{ for: string; src?: string; open?: boolean }>({ for: '' });
   useEffect(() => {
     const request = isImage ? preview?.(resource.id) : undefined;
@@ -277,47 +287,53 @@ export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview,
   // re-runs; matching on the id keeps the old resource's text off the new one.
   const settled = excerpt.for === resource.id ? excerpt : { for: resource.id };
   return (
-    <ResourceActionMenu actions={actions}>
-      <button
-        aria-label={`Open ${resource.title}`}
-        className={`citation-card ${isImage ? 'is-image' : 'is-file'}`}
-        data-resource-type={resource.resourceType}
-        onClick={(event) => onPreview ? onPreview(event.currentTarget) : onOpen()}
-        style={isImage ? {
-          aspectRatio: '1',
-          width: grouped ? '100%' : 'var(--attachment-media-size)',
-        } : undefined}
-        type="button"
-      >
-        {isImage && settled.open && <span aria-hidden="true" className="citation-card-preview-skeleton" />}
-        {isImage && settled.src && (
-          <img
-            alt=""
-            aria-hidden="true"
-            className="citation-card-image-preview"
-            loading="lazy"
-            onError={() => {
-              // MIME metadata can be stale and valid image bytes can still be
-              // corrupt. A decode failure returns to the ordinary empty card
-              // instead of leaving Chromium's broken-image rendering behind.
-              setExcerpt((current) => current.for === resource.id && current.src === settled.src
-                ? { for: resource.id }
-                : current);
-            }}
-            src={settled.src}
-          />
-        )}
-        {!isImage && (
-          <>
-            <span aria-hidden="true" className="citation-card-badge"><ResourceIcon resource={resource} /></span>
-            <span className="citation-card-text">
-              <strong className="citation-card-title">{label}</strong>
-              <small className="citation-card-kind">{resourceKindLabel(resource)}</small>
-            </span>
-          </>
-        )}
-      </button>
-    </ResourceActionMenu>
+    <ResourceMoreMenu actions={actions} label={resource.title} placement={isImage ? 'corner' : 'row'}>
+      <ResourceActionMenu actions={actions}>
+        <button
+          aria-label={pinned ? `Open ${resource.title}, pinned` : `Open ${resource.title}`}
+          className={`citation-card ${isImage ? 'is-image' : 'is-file'}`}
+          data-resource-type={resource.resourceType}
+          onClick={(event) => onPreview ? onPreview(event.currentTarget) : onOpen()}
+          style={isImage ? {
+            aspectRatio: '1',
+            width: grouped ? '100%' : 'var(--attachment-media-size)',
+          } : undefined}
+          type="button"
+        >
+          {isImage && settled.open && <span aria-hidden="true" className="citation-card-preview-skeleton" />}
+          {isImage && settled.src && (
+            <img
+              alt=""
+              aria-hidden="true"
+              className="citation-card-image-preview"
+              loading="lazy"
+              onError={() => {
+                // MIME metadata can be stale and valid image bytes can still be
+                // corrupt. A decode failure returns to the ordinary empty card
+                // instead of leaving Chromium's broken-image rendering behind.
+                setExcerpt((current) => current.for === resource.id && current.src === settled.src
+                  ? { for: resource.id }
+                  : current);
+              }}
+              src={settled.src}
+            />
+          )}
+          {isImage && pinned && <span aria-hidden="true" className="resource-card-pin"><IconPin size={14} stroke={2} /></span>}
+          {!isImage && (
+            <>
+              <span aria-hidden="true" className="citation-card-badge"><ResourceIcon resource={resource} /></span>
+              <span className="citation-card-text">
+                <strong className="citation-card-title">{label}</strong>
+                <small className="citation-card-kind">
+                  {pinned && <><span className="resource-card-pinned"><IconPin aria-hidden="true" size={12} stroke={1.8} />Pinned</span>{' · '}</>}
+                  {resourceKindLabel(resource)}
+                </small>
+              </span>
+            </>
+          )}
+        </button>
+      </ResourceActionMenu>
+    </ResourceMoreMenu>
   );
 }
 
@@ -356,8 +372,8 @@ function CitationFileEmbed({ resource, children }: { resource: CitationResource;
   const loadContent = useMemo(() => loader ? (signal?: AbortSignal) => loader(resource.id, signal) : undefined, [loader, resource.id]);
   const actions = useResourceActions(resource.id);
   if (!still && (resourceIconType(resource) === 'audio' || isVideoAttachment(resource.mimeType ?? '', resource.title))) {
-    return <ResourceActionMenu actions={actions}><span style={{ display: 'contents' }}><AttachmentMediaTile name={resource.title} mimeType={resource.mimeType} loadContent={loadContent}
-      onOpen={(focus) => citations?.openPreview ? citations.openPreview(resource.id, focus) : citations?.open({ scheme: 'resource', resourceId: resource.id })} /></span></ResourceActionMenu>;
+    return <ResourceMoreMenu actions={actions} label={resource.title} placement="corner"><ResourceActionMenu actions={actions}><span style={{ display: 'contents' }}><AttachmentMediaTile name={resource.title} mimeType={resource.mimeType} loadContent={loadContent}
+      onOpen={(focus) => citations?.openPreview ? citations.openPreview(resource.id, focus) : citations?.open({ scheme: 'resource', resourceId: resource.id })} /></span></ResourceActionMenu></ResourceMoreMenu>;
   }
   return <span className="citation-file-attachment">{children}</span>;
 }

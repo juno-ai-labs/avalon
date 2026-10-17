@@ -79,6 +79,7 @@ import {
   automationTriggersAdmitResourceType,
   IdSchema,
   SpaceConversationSchema,
+  type ArtifactPin,
   type ChannelStats,
   type Pin,
   type PinKind,
@@ -150,6 +151,7 @@ import {
   type StoredAccessRequest,
 } from "./conversation-access-request-storage";
 import { truncateUtf16Safe } from "@rally/contracts/text";
+import { listedResourceVisibilitySql } from "../services/resource-listing";
 import { z } from "zod";
 import {
   RevokeImpersonationRelationshipsRequestSchema,
@@ -667,6 +669,12 @@ import {
   WorkspacePinChangeRequestSchema,
   WorkspacePinOrderRequestSchema,
   WorkspacePinResultSchema,
+  WorkspaceArtifactPinChangeRequestSchema,
+  WorkspaceArtifactPinOrderRequestSchema,
+  WorkspaceArtifactPinResultSchema,
+  type WorkspaceArtifactPinChangeRequest,
+  type WorkspaceArtifactPinOrderRequest,
+  type WorkspaceArtifactPinResult,
   WorkspaceChannelStatsResultSchema,
   WorkspaceSpaceReadRequestSchema,
   type WorkspaceSpaceReadRequest,
@@ -792,7 +800,16 @@ import {
   type WorkspaceSpaceIntentClaim,
   type SpaceConversationKey,
 } from "./workspace-space-storage";
-import { WorkspacePinStorage, WORKSPACE_PINS_MIGRATION } from "./workspace-pin-storage";
+import {
+  artifactSubjectKeySql,
+  artifactUpdateSql,
+  drainArtifactUpdates,
+  type ArtifactUpdate,
+  WorkspacePinStorage,
+  WORKSPACE_ARTIFACT_PINS_MIGRATION,
+  WORKSPACE_ARTIFACT_UPDATES_MIGRATION,
+  WORKSPACE_PINS_MIGRATION,
+} from "./workspace-pin-storage";
 import { type ChannelReadState, WORKSPACE_CHANNEL_READS_MIGRATION } from "./workspace-channel-read-storage";
 import {
   CHANNEL_COLOR_SYNC_MIGRATION,
@@ -818,7 +835,7 @@ import {
   type ThreadBackfillWork,
 } from "./thread-backfill";
 import { unreadState } from "./unread-state";
-import { WorkspaceActivityFeed, WORKSPACE_ACTIVITY_READS_MIGRATION } from "./workspace-activity-feed";
+import { artifactActivityId, WorkspaceActivityFeed, WORKSPACE_ACTIVITY_READS_MIGRATION } from "./workspace-activity-feed";
 import { ACTIVITY_PUSH_KINDS, WorkspaceActivityPushes, WORKSPACE_ACTIVITY_PUSH_MIGRATION, type ActivityPushSubject } from "./workspace-activity-push";
 import {
   PersonalSystemPromptReadRequestSchema,
@@ -4386,6 +4403,16 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "a Channel message can be a thread's merged result and Channel news",
   // See SPACE_MESSAGE_MERGES_MIGRATION and docs/conversation-merge.md.
   statements: SPACE_MESSAGE_MERGES_MIGRATION,
+}, {
+  version: 110,
+  description: "a pin can be an artifact, carrying the thread it was generated in",
+  // See WORKSPACE_ARTIFACT_PINS_MIGRATION and docs/workstream-pinning.md.
+  statements: WORKSPACE_ARTIFACT_PINS_MIGRATION,
+}, {
+  version: 111,
+  description: "a ledger of new versions of pinned artifacts, for their Activity rows and pushes",
+  // See WORKSPACE_ARTIFACT_UPDATES_MIGRATION and docs/workstream-pinning.md#artifact-pins.
+  statements: WORKSPACE_ARTIFACT_UPDATES_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -5023,7 +5050,7 @@ const DirectoryFollowUpSchema = z.strictObject({
   activityPushSubjects: z.array(z.strictObject({
     threadId: z.string(),
     substreamId: z.string().nullable(),
-    kind: z.enum(["start", "finish", "joined", "merge"]),
+    kind: z.enum(["start", "finish", "joined", "merge", "artifact"]),
     userId: z.string().optional(),
     itemId: z.string().optional(),
   })).default([]),
@@ -5210,6 +5237,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * held at schema 57 has no Channels, and so no rails to push.
    */
   private railLedger = false;
+  /** Whether this object has the pinned-artifact update ledger (migration 111). */
+  private artifactLedger = false;
   /**
    * Channels a directory batch drained from the rail ledger for its own
    * follow-up pass to send (`applyDirectoryBatch`). In memory: a pass that
@@ -5237,14 +5266,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // itself is refused once the workspace is retired, which is right.
     let railDrainScheduled = false;
     this.state = observeSqlWrites(state, () => {
-      if (!this.railLedger || railDrainScheduled) return;
+      if ((!this.railLedger && !this.artifactLedger) || railDrainScheduled) return;
       railDrainScheduled = true;
       queueMicrotask(() => {
         try {
           // The ledger only: what a directory batch holds is its pass's to send.
-          const rows = new ChannelRowPlan();
-          for (const workstreamId of drainChannelRailChanges(this.state.storage.sql)) rows.readers(workstreamId);
-          this.publishChannelRows(rows);
+          if (this.railLedger) {
+            const rows = new ChannelRowPlan();
+            for (const workstreamId of drainChannelRailChanges(this.state.storage.sql)) rows.readers(workstreamId);
+            this.publishChannelRows(rows);
+          }
+          // A new version of a pinned artifact, from whichever producer wrote
+          // it. The announcement leaves the object, so it runs on its own,
+          // held to the object's lifetime. It is best effort, as every
+          // Activity push is: a failure is logged and the Activity row, the
+          // pin's unread state and the digest stand regardless.
+          const updates = this.artifactLedger ? drainArtifactUpdates(this.state.storage.sql) : [];
+          if (updates.length > 0) {
+            this.state.waitUntil(this.announceArtifactUpdates(updates).catch((error: unknown) => logWarn(this.env, "artifact_update_announce_failed", {
+              code: diagnosticErrorCode(error, "artifact_update_announce_failed"),
+            })));
+          }
         } catch (error) {
           // Nothing here may throw: this runs outside every entry point.
           if (!isRetirementRefusal(error)) {
@@ -7343,6 +7385,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).toArray().length > 0;
     this.railLedger = this.state.storage.sql.exec(
       `SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'channel_rail_changes'`,
+    ).toArray().length > 0;
+    this.artifactLedger = this.state.storage.sql.exec(
+      `SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_artifact_updates'`,
     ).toArray().length > 0;
   }
 
@@ -9814,6 +9859,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const feed = new WorkspaceActivityFeed(this.state.storage, this.spaceStorage());
     if (!feed.ready()) return;
     feed.markSeen(request.userId, request.seenThrough, Date.now());
+    // The artifact pins' unread state honours the same mark.
+    if (this.artifactLedger) {
+      try {
+        this.publishArtifactPins(request.userId, request.workspaceId);
+      } catch (error) {
+        logWarn(this.env, "artifact_pins_publish_failed", {
+          workspace_id: request.workspaceId, code: diagnosticErrorCode(error, "artifact_pins_publish_failed"),
+        });
+      }
+    }
     // The mark is this person's alone, so only their sockets re-read Activity:
     // another window, and the menu bar, which lists the unread rows.
     try {
@@ -9840,6 +9895,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // read. A read that moved nothing tells nobody: the sending window already
     // re-reads Activity itself when it holds a row the read could clear.
     if (!feed.record(request.userId, request.events, Date.now())) return;
+    // A read of an artifact settles its pin's unread state as well as its row.
+    if (request.events.some((event) => event.subject.kind === "artifact")) {
+      this.publishArtifactPins(request.userId, request.workspaceId);
+    }
     try {
       await this.publishSync(["activity"], request.workspaceId,
         this.placementAffinity() ?? await workspacePlacementAffinity(this.env, request.workspaceId),
@@ -9909,7 +9968,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private publishNavigationState(
     userId: string,
-    state: { pins?: Pin[]; channelStats?: ChannelStats[] },
+    state: { pins?: Pin[]; artifactPins?: ArtifactPin[]; channelStats?: ChannelStats[] },
   ): void {
     const message = JSON.stringify(WorkspaceNavigationStateEventSchema.parse({
       type: "workspace_navigation_state",
@@ -9968,6 +10027,204 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const list = pins.list(request.userId);
     this.publishNavigationState(request.userId, { pins: list });
     return WorkspacePinResultSchema.parse({ ok: true, pins: list });
+  }
+
+  /** This person's pinned artifacts that they can still see. */
+  async listArtifactPins(input: WorkspaceSpaceListRequest): Promise<WorkspaceArtifactPinResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceListRequestSchema, input, "list_artifact_pins");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return { ok: false, code: "space_access_denied" };
+    return WorkspaceArtifactPinResultSchema.parse({ ok: true, artifactPins: this.artifactPinsFor(viewer, request.workspaceId) });
+  }
+
+  /**
+   * Pin or unpin an artifact. A pin is refused unless the artifact was
+   * generated in the named thread's Main and this person may open that Main,
+   * so, as with the other kinds, a pin cannot tell anybody an artifact exists.
+   * Only Main's links are projected here, which is why a breakout's artifact
+   * cannot be pinned until it is attached to its thread. An unpin is never
+   * refused.
+   */
+  async changeArtifactPin(input: WorkspaceArtifactPinChangeRequest): Promise<WorkspaceArtifactPinResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceArtifactPinChangeRequestSchema, input, "change_artifact_pin");
+    this.assertWorkspace(request.workspaceId);
+    const pins = new WorkspacePinStorage(this.state.storage);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (request.pinned && (!viewer || request.threadId === null
+      || !this.artifactPinTargetListed(viewer, request.itemId, request.threadId))) {
+      return { ok: false, code: "pin_target_not_found" };
+    }
+    const now = Date.now();
+    const outcome = this.state.storage.transactionSync((): "changed" | "unchanged" | "limit" => {
+      if (!request.pinned) return pins.unpin(request.userId, "artifact", request.itemId) ? "changed" : "unchanged";
+      if (pins.count(request.userId) >= MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER) return "limit";
+      return pins.pin(request.userId, "artifact", request.itemId, request.threadId, now) ? "changed" : "unchanged";
+    });
+    if (outcome === "limit") return { ok: false, code: "pin_limit_reached" };
+    const list = viewer ? this.artifactPinsFor(viewer, request.workspaceId) : [];
+    if (outcome === "changed") {
+      this.publishNavigationState(request.userId, { artifactPins: list });
+      // An artifact's Activity rows are read through its pin, so an unpin
+      // takes them away; this person's windows read Activity again.
+      if (!request.pinned) {
+        await this.publishSync(["activity"], request.workspaceId,
+          this.placementAffinity() ?? await workspacePlacementAffinity(this.env, request.workspaceId),
+          { audienceUserIds: [request.userId] }).catch((error: unknown) => logWarn(this.env, "artifact_unpin_sync_failed", {
+          workspace_id: request.workspaceId, code: diagnosticErrorCode(error, "artifact_unpin_sync_failed"),
+        }));
+      }
+    }
+    return WorkspaceArtifactPinResultSchema.parse({ ok: true, artifactPins: list });
+  }
+
+  /** Put this person's artifact pins in their order. */
+  async reorderArtifactPins(input: WorkspaceArtifactPinOrderRequest): Promise<WorkspaceArtifactPinResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceArtifactPinOrderRequestSchema, input, "reorder_artifact_pins");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return { ok: false, code: "space_access_denied" };
+    const pins = new WorkspacePinStorage(this.state.storage);
+    const now = Date.now();
+    this.state.storage.transactionSync(() => pins.reorder(request.userId, "artifact", request.ids, now));
+    const list = this.artifactPinsFor(viewer, request.workspaceId);
+    this.publishNavigationState(request.userId, { artifactPins: list });
+    return WorkspaceArtifactPinResultSchema.parse({ ok: true, artifactPins: list });
+  }
+
+  /**
+   * The stored artifact pins as the Artifacts list draws them. A pin whose
+   * artifact is gone, unlisted, no longer linked as generated in its thread's
+   * Main, or whose Main this person can no longer open is left out, not
+   * deleted: it comes back if access does, and an unpin tidies it.
+   */
+  private artifactPinsFor(viewer: Viewer, workspaceId: string): ArtifactPin[] {
+    const stored = new WorkspacePinStorage(this.state.storage).listArtifacts(viewer.userId);
+    if (stored.length === 0) return [];
+    const updatesReady = this.artifactLedger;
+    const resources = new Map(this.state.storage.sql.exec<{
+      item_id: string; title: string; resource_type: string; mime_type: string | null; updated_at: string;
+      current_version: number; unread: number;
+    }>(
+      `SELECT pin.item_id, r.title, r.resource_type, r.mime_type, r.updated_at, r.current_version,
+              ${updatesReady ? `EXISTS (SELECT 1 FROM resource_versions version
+                 WHERE version.resource_id = pin.item_id
+                   AND ${artifactUpdateSql("version", "pin")}
+                   AND version.version > COALESCE((SELECT reads.read_through FROM workspace_activity_reads reads
+                     WHERE reads.user_id = pin.user_id AND reads.subject_key = ${artifactSubjectKeySql("pin.item_id")}), 0)
+                   -- Mark all read covers it as it covers the Activity row.
+                   AND CAST(unixepoch(version.captured_at, 'subsec') * 1000 AS INTEGER) > COALESCE((SELECT seen.seen_through
+                     FROM workspace_activity_seen seen WHERE seen.user_id = pin.user_id), 0))`
+                : "0"} AS unread
+         FROM workspace_pins pin
+         JOIN workspace_workstream_resource_links link
+           ON link.workstream_id = pin.parent_id
+          AND link.resource_id = pin.item_id
+          AND link.relationship_type = 'generated'
+         JOIN resources r ON r.id = pin.item_id AND r.workspace_id = ?
+        WHERE pin.user_id = ? AND pin.item_kind = 'artifact'
+          AND ${listedResourceVisibilitySql("r")}`,
+      workspaceId,
+      viewer.userId,
+    ).toArray().map((row) => [row.item_id, row]));
+    const threadIds = [...new Set(stored.map((pin) => pin.threadId))];
+    const threads = new Map(this.conversationRows(viewer, workspaceId, threadIds.map((workstreamId) => ({
+      kind: "channel" as const, workstreamId, substreamId: null,
+    }))).map((thread) => [thread.id as string, thread]));
+    return stored.flatMap((pin) => {
+      const resource = resources.get(pin.itemId);
+      const thread = threads.get(pin.threadId);
+      if (!resource || !thread) return [];
+      return [{
+        id: pin.itemId,
+        // Read back from the row a pin wrote after checking it named a thread.
+        threadId: asWorkstreamId(pin.threadId),
+        title: truncateUtf16Safe(resource.title, 300),
+        resourceType: resource.resource_type,
+        mimeType: resource.mime_type === null ? null : truncateUtf16Safe(resource.mime_type, 160),
+        updatedAt: new Date(resource.updated_at).toISOString(),
+        currentVersion: Math.max(1, Number(resource.current_version)),
+        unread: Number(resource.unread) === 1,
+        thread: { title: thread.title, appearance: thread.appearance ?? null, spaceIds: thread.spaceIds },
+      }];
+    });
+  }
+
+  /**
+   * Tell the people who pinned an artifact that it has new versions: their
+   * windows get the pin list with its new unread state and re-read Activity,
+   * and each version is pushed through the Activity path, which decides per
+   * person whether it is a row they may see and have not been sent.
+   */
+  private async announceArtifactUpdates(updates: readonly ArtifactUpdate[]): Promise<void> {
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) return;
+    const pins = new WorkspacePinStorage(this.state.storage);
+    const subjects: ActivityPushSubject[] = [];
+    const pinners = new Set<string>();
+    for (const update of updates) {
+      for (const pinner of pins.artifactPinners(update.resourceId)) {
+        pinners.add(pinner.userId);
+        subjects.push({
+          kind: "artifact",
+          threadId: pinner.threadId,
+          substreamId: null,
+          userId: pinner.userId,
+          itemId: artifactActivityId(update.resourceId, update.version),
+        });
+      }
+    }
+    if (pinners.size === 0) return;
+    // One pinner's list failing to build must not cost the others theirs, or
+    // anyone their push.
+    for (const userId of pinners) {
+      try {
+        this.publishArtifactPins(userId, workspaceId);
+      } catch (error) {
+        logWarn(this.env, "artifact_pins_publish_failed", {
+          workspace_id: workspaceId, code: diagnosticErrorCode(error, "artifact_pins_publish_failed"),
+        });
+      }
+    }
+    try {
+      await this.publishSync(["activity"], workspaceId,
+        this.placementAffinity() ?? await workspacePlacementAffinity(this.env, workspaceId),
+        { audienceUserIds: [...pinners] });
+    } catch (error) {
+      logWarn(this.env, "artifact_update_sync_failed", {
+        workspace_id: workspaceId, code: diagnosticErrorCode(error, "artifact_update_sync_failed"),
+      });
+    }
+    await this.pushActivity(workspaceId, subjects).catch((error: unknown) => logWarn(this.env, "activity_push_failed", {
+      workspace_id: workspaceId, code: diagnosticErrorCode(error, "activity_push_failed"),
+    }));
+  }
+
+  /**
+   * Send one person's windows their artifact pins as they stand, read under
+   * the relationship one of their sockets was admitted with. Nobody connected
+   * is nobody to tell: the connect payload carries the list.
+   */
+  private publishArtifactPins(userId: string, workspaceId: string): void {
+    const socket = this.state.getWebSockets().map(readAttachment)
+      .find((attachment) => attachment?.subscribed && attachment.userId === userId);
+    if (!socket) return;
+    this.publishNavigationState(userId, { artifactPins: this.artifactPinsFor(viewerOf(socket), workspaceId) });
+  }
+
+  private artifactPinTargetListed(viewer: Viewer, itemId: string, threadId: string): boolean {
+    if (!this.mainOpenable(viewer, threadId)) return false;
+    return this.state.storage.sql.exec(
+      `SELECT 1 AS one FROM workspace_workstream_resource_links link
+         JOIN resources r ON r.id = link.resource_id
+        WHERE link.workstream_id = ? AND link.resource_id = ? AND link.relationship_type = 'generated'
+          AND ${listedResourceVisibilitySql("r")}`,
+      threadId,
+      itemId,
+    ).toArray().length === 1;
   }
 
   private pinTargetListed(viewer: Viewer, kind: PinKind, itemId: string, parentId: string | null): boolean {
@@ -17462,6 +17719,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ordering: PersonalOrder;
     pinnedOrder: string[];
     pins: Pin[];
+    artifactPins?: ArtifactPin[];
     channelStats?: ChannelStats[];
     spacesReady: boolean;
   } {
@@ -17481,7 +17739,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ordering: spaces.readOrders(attachment.workspaceId, viewer),
       pinnedOrder: spaces.readPinnedOrder(viewer),
       pins: new WorkspacePinStorage(this.state.storage).list(viewer.userId),
-      ...(options.channelStats ? { channelStats: this.channelStatsFor(viewer) } : {}),
+      // With the Channel stats, for the same reason: the Space snapshot goes
+      // to every socket in the Organization, and a pinned artifact does not
+      // change with a Space. The connect payload carries them, and a pin write
+      // sends that person's sockets the new list.
+      ...(options.channelStats ? {
+        artifactPins: this.artifactPinsFor(viewer, attachment.workspaceId),
+        channelStats: this.channelStatsFor(viewer),
+      } : {}),
       spacesReady: spaces.bootstrapStatus().ready,
     };
   }
