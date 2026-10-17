@@ -114,7 +114,9 @@ export function applyWorkspaceResourceSchema(database: DatabaseSync, workspaceId
       if (dropped && !database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(dropped)) continue;
       const sources = [...statement.matchAll(/\b(?:FROM|JOIN)\s+(\w+)\b(?!\s*\()/gu)].map((match) => match[1]!);
       if (triggerTable) {
-        const body = statement.slice(statement.search(/\bBEGIN\b/u));
+        // From the WHEN clause on, which can read a table as much as the body
+        // can; the header before it names the watched table and its columns.
+        const body = statement.slice(statement.search(/\b(?:WHEN|BEGIN)\b/u));
         const named = [...body.matchAll(/\b(?:UPDATE|INTO|FROM|JOIN)\s+(\w+)\b(?!\s*\()/gu)].map((match) => match[1]!);
         if (named.some((table) => !exists(table))) continue;
       }

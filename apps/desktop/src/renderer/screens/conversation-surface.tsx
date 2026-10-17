@@ -1520,6 +1520,9 @@ export function ConversationSurface({
   const location = useLocation();
   const resourceRequest = openResourceRequest(location.state);
   const requestedResourceId = resourceRequest?.threadId === id && substreamId === '0' ? resourceRequest.resourceId : null;
+  // Each navigation onto an artifact is a request of its own: selecting the
+  // same pinned row again, after closing its panel, opens it again.
+  const resourceRequestKey = requestedResourceId === null ? null : location.key;
   const workspaceId = session?.workspace?.id ?? 'unbound';
   // Requests to join waiting on this reader, kept by the workspace socket; the
   // People level lists the ones for the conversation on screen.
@@ -1575,7 +1578,7 @@ export function ConversationSurface({
         setRailScope(null);
       }
     };
-  }, [artifactPanelKey, closeRail, inspect, railScopeKey, requestedResourceId, setRailScope]);
+  }, [artifactPanelKey, closeRail, inspect, railScopeKey, requestedResourceId, resourceRequestKey, setRailScope]);
   // Only a Channel draws the browser rail; a Sidekick's links stay external.
   useBrowserRailLinks(parentKind === 'workstream', layoutElement, claimRail);
 
@@ -1875,18 +1878,23 @@ export function ConversationSurface({
   useEffect(() => {
     if (panel && !railOpen && !railLeaving) setPanel(null);
   }, [panel, railLeaving, railOpen]);
-  // A pinned artifact on screen is seen at its current version: its pin's
-  // unread state and its Activity rows settle on the same waterline.
+  // A pinned artifact on screen is seen at the version it was opened at: its
+  // pin's unread state and its Activity rows settle on the same waterline. A
+  // version that arrives while it is open is not the one on screen, so it
+  // stays unread until the artifact is opened again.
   const shownResourceId = !railOpen || !panel ? null
     : panel.kind === 'resource' ? panel.resourceId : panel.preview.resourceId ?? null;
-  const unseenPin = shownResourceId === null ? undefined
-    : artifactPins.find((pin) => pin.id === shownResourceId && pin.unread);
+  const shownPin = shownResourceId === null ? undefined : artifactPins.find((pin) => pin.id === shownResourceId);
+  const [openedAt, setOpenedAt] = useState<{ id: string | null; version: number | null }>({ id: null, version: null });
+  if (openedAt.id !== shownResourceId) setOpenedAt({ id: shownResourceId, version: shownPin?.currentVersion ?? null });
+  else if (openedAt.version === null && shownPin) setOpenedAt({ id: shownResourceId, version: shownPin.currentVersion });
+  const seenVersion = shownPin?.unread && openedAt.id === shownPin.id ? openedAt.version : null;
   useEffect(() => {
-    if (!api || !unseenPin) return;
+    if (!api || !shownPin || seenVersion === null) return;
     reportActivityEvent(api, queryClient, {
-      kind: 'read', subject: artifactActivitySubject(unseenPin.id), through: unseenPin.currentVersion,
+      kind: 'read', subject: artifactActivitySubject(shownPin.id), through: seenVersion,
     });
-  }, [api, queryClient, unseenPin?.id, unseenPin?.currentVersion]);
+  }, [api, queryClient, shownPin?.id, seenVersion]);
   // The panel is the stack's last level: expanded over its conversation, as a
   // thread is over its Channel, or beside it. A navigation onto an artifact
   // (its pinned row, its Activity row) asks for it expanded; an artifact

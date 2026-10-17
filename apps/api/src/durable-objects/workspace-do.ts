@@ -5277,10 +5277,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             this.publishChannelRows(rows);
           }
           // A new version of a pinned artifact, from whichever producer wrote
-          // it. The announcement leaves the object, so it runs on its own;
-          // a failure there is logged and the Activity row stands regardless.
+          // it. The announcement leaves the object, so it runs on its own,
+          // held to the object's lifetime. It is best effort, as every
+          // Activity push is: a failure is logged and the Activity row, the
+          // pin's unread state and the digest stand regardless.
           const updates = this.artifactLedger ? drainArtifactUpdates(this.state.storage.sql) : [];
-          if (updates.length > 0) void this.announceArtifactUpdates(updates);
+          if (updates.length > 0) this.state.waitUntil(this.announceArtifactUpdates(updates));
         } catch (error) {
           // Nothing here may throw: this runs outside every entry point.
           if (!isRetirementRefusal(error)) {
@@ -10049,7 +10051,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
     if (outcome === "limit") return { ok: false, code: "pin_limit_reached" };
     const list = viewer ? this.artifactPinsFor(viewer, request.workspaceId) : [];
-    if (outcome === "changed") this.publishNavigationState(request.userId, { artifactPins: list });
+    if (outcome === "changed") {
+      this.publishNavigationState(request.userId, { artifactPins: list });
+      // An artifact's Activity rows are read through its pin, so an unpin
+      // takes them away; this person's windows read Activity again.
+      if (!request.pinned) {
+        await this.publishSync(["activity"], request.workspaceId,
+          this.placementAffinity() ?? await workspacePlacementAffinity(this.env, request.workspaceId),
+          { audienceUserIds: [request.userId] }).catch((error: unknown) => logWarn(this.env, "artifact_unpin_sync_failed", {
+          workspace_id: request.workspaceId, code: diagnosticErrorCode(error, "artifact_unpin_sync_failed"),
+        }));
+      }
+    }
     return WorkspaceArtifactPinResultSchema.parse({ ok: true, artifactPins: list });
   }
 

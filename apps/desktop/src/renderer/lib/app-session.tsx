@@ -1062,6 +1062,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           const query = new URLSearchParams();
           if (intent.substreamId) query.set('substream', intent.substreamId);
           if (intent.spaceId) query.set('space', intent.spaceId);
+          if (intent.artifactId) query.set('artifact', intent.artifactId);
           window.location.hash = `/workstreams/${intent.workstreamId}${query.size ? `?${query}` : ''}`;
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openWorkstream);
