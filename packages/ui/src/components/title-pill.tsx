@@ -1,7 +1,7 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { IconChevronDown, IconChevronRight, IconSearch, IconX } from '@tabler/icons-react';
 
-import { Menu } from 'lucide-react';
+import { Ellipsis, Menu } from 'lucide-react';
 
 import { IconGroup, type IconGroupAction, type TooltipSide } from './icon-group';
 import type { IdentityMark } from './identity-tile';
@@ -353,6 +353,23 @@ const NAVIGATION_MARK: IdentityMark = {
   ink: 'var(--av-sys-color-text-default)',
 };
 
+const FOLDED_MARK: IdentityMark = {
+  shape: 'circle',
+  icon: Ellipsis,
+  tint: 'var(--av-sys-color-surface-raised)',
+  ink: 'var(--av-sys-color-text-default)',
+};
+
+/**
+ * A phone's crumbs: past two, every crumb but the nearest folds into one
+ * "…" mark that lists them, so the row stays two marks wide.
+ */
+function foldCrumbs(crumbs: MarkBridgeItem[]): MarkBridgeItem[] {
+  if (crumbs.length <= 2) return crumbs;
+  const nearest = crumbs.at(-1)!;
+  return [{ key: 'folded', mark: FOLDED_MARK, name: 'Show path', menu: crumbs.slice(0, -1) }, nearest];
+}
+
 function usePhoneHeader(): PhoneHeader | null {
   const phone = usePhoneLayout();
   const header = useContext(PhoneHeaderContext);
@@ -396,6 +413,7 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
     if (level.bridge) bridge.push({ key: level.key, ...level.bridge, onSelect: level.onSelect });
   }
   const bridged = ancestors.length > 0 && bridge.length === ancestors.length;
+  const phone = usePhoneLayout();
   const phoneHeader = usePhoneHeader();
   const lead = phoneHeader ? [navigationMark(phoneHeader)] : [];
   const shownActions = phoneHeader ? [...phoneHeader.actions, ...actions ?? []] : actions;
@@ -416,7 +434,7 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
       {/* The nearest crumb keeps its name, which a bare mark does not say. A
           phone has no room for it and the stylesheet hides it there; the
           shape is measured from the name, so it closes back to a circle. */}
-      {bridged ? <MarkBridge className={clsx('title-pill-bridge window-no-drag', lead.length > 0 && 'has-phone-navigation')} items={[...lead, ...bridge]} labelLast /> : null}
+      {bridged ? <MarkBridge className={clsx('title-pill-bridge window-no-drag', lead.length > 0 && 'has-phone-navigation')} items={[...lead, ...phone ? foldCrumbs(bridge) : bridge]} labelLast /> : null}
     </div>
     <div className="title-pill-current window-no-drag" ref={currentRef}><TitlePill level={current} /></div>
     <div className="title-pill-trailing" ref={trailingRef}>{trailing || shownActions?.length

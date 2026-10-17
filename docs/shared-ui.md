@@ -92,6 +92,10 @@ mark into a pill fitted to the measured name. The header sets it on every
 bridge so the nearest crumb is named on desktop; at phone width (640px and
 below) the stylesheet hides the name, the measured width drops to nothing, and
 the mark closes back to a circle.
+A mark may carry a `menu` of the objects it stands for and open it in place of
+`onSelect`. The header uses that at phone width: past two crumbs, all but the
+nearest fold into one "…" mark (`Show path`) that lists them, so the bridge
+stays two crumbs wide after the menu mark.
 
 A title pill's menu always opens below the pill. Its bottom edge never counts
 as a Radix collision, so the menu never flips above; its sides still do, so it
@@ -174,6 +178,25 @@ is off centre.
 bottom of the screen rather than flipping; its `max-height` is what bounds it.
 
 Shipped in #1222.
+
+### 2026-10-17 — A phone folds crumbs past two into "…"
+
+**What changed:** `MarkBridgeItem` can carry a `menu`, which the mark opens as
+a dropdown instead of running `onSelect`. At phone width `TitlePillHeader`
+folds a bridge of more than two crumbs into a "…" mark listing all but the
+nearest, then the nearest.
+
+**Why:** A panel opened from a breakout stands alone on a phone and carries
+Channel, thread and breakout. Beside the menu mark, the title pill and the
+trailing buttons, three crumbs left the panel's name a few letters wide. The
+product asked for at most two items: "…" with a dropdown, and the last.
+
+**Considered and rejected:** A separate "…" button beside the bridge, which
+would have been a second shape where one glass row reads as one path.
+
+**Consequences:** The fold is phone-only; wider headers keep every crumb, the
+nearest named. A folded crumb is reached by its menu row, which shows its
+symbol and name; its tooltip is gone with its mark.
 
 ### 2026-10-13 — Crumbs are always a `MarkBridge`
 

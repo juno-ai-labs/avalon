@@ -1,3 +1,4 @@
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import clsx from 'clsx';
 import { useId, useLayoutEffect, useRef, useState } from 'react';
 
@@ -14,6 +15,11 @@ export interface MarkBridgeItem {
   action?: string | undefined;
   /** Without it the mark is a picture, not a control. */
   onSelect?: (() => void) | undefined;
+  /**
+   * Objects this mark stands for, listed in a menu it opens instead of
+   * `onSelect`: a bridge too long for its room folds its leading marks here.
+   */
+  menu?: readonly MarkBridgeItem[] | undefined;
 }
 
 /*
@@ -209,7 +215,10 @@ export function MarkBridge({ className, items, labelLast = false }: {
       const style = { color: item.mark.ink, left: index * SPAN, ...(named ? { paddingRight: LABEL_END, width: 2 * RADIUS + extra } : {}) };
       const markClass = clsx('mark-bridge-mark', named && 'is-labelled');
       const accessibleName = item.action ? `${item.action}: ${item.name}` : item.name;
-      const mark = item.onSelect
+      const mark = item.menu ? <MarkBridgeMenu
+        items={item.menu}
+        trigger={<button aria-label={accessibleName} className={markClass} style={style} type="button">{content}</button>}
+      /> : item.onSelect
         ? <button aria-label={accessibleName} className={markClass} onClick={item.onSelect} style={style} type="button">{content}</button>
         : <span aria-label={accessibleName} className={markClass} role="img" style={style}>{content}</span>;
       // Not hoverable: the next mark sits 6px away, and the pointer's path
@@ -226,4 +235,30 @@ export function MarkBridge({ className, items, labelLast = false }: {
       >{mark}</Tip>;
     })}
   </span>;
+}
+
+/** A mark that opens a menu of the objects it stands for, each with its own mark. */
+function MarkBridgeMenu({ items, trigger }: {
+  items: readonly MarkBridgeItem[];
+  trigger: React.ReactElement;
+}): React.JSX.Element {
+  return <DropdownMenu.Root modal={false}>
+    <DropdownMenu.Trigger asChild>{trigger}</DropdownMenu.Trigger>
+    <DropdownMenu.Portal>
+      <DropdownMenu.Content align="start" className="menu-content mark-bridge-menu" collisionPadding={12} sideOffset={8}>
+        {items.map((item) => {
+          const Icon = item.mark.icon;
+          return <DropdownMenu.Item
+            className="menu-item"
+            disabled={!item.onSelect}
+            key={item.key}
+            onSelect={() => item.onSelect?.()}
+          >
+            <Icon aria-hidden="true" size={16} strokeWidth={1.9} />
+            {item.name}
+          </DropdownMenu.Item>;
+        })}
+      </DropdownMenu.Content>
+    </DropdownMenu.Portal>
+  </DropdownMenu.Root>;
 }
