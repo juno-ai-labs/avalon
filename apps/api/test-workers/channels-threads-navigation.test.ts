@@ -840,6 +840,19 @@ describe("artifact pins", () => {
     expect(await artifactPinState(MEMBER)).toEqual([[ARTIFACT, 2, false]]);
   });
 
+  it("given an update to a pinned artifact, when the member marks all Activity read, then the pin is read too", async () => {
+    await threadWithArtifacts();
+    await pinArtifact(ARTIFACT, OPEN_THREAD);
+    await republish(ARTIFACT, { kind: "agent" });
+    const [row] = await artifactRows(MEMBER);
+    expect(await artifactPinState(MEMBER)).toEqual([[ARTIFACT, 2, true]]);
+
+    await workspace().markActivitySeen({ workspaceId: WORKSPACE_ID, userId: MEMBER, seenThrough: Date.parse(row!.occurredAt) });
+
+    expect((await artifactRows(MEMBER)).map((item) => item.unread)).toEqual([false]);
+    expect(await artifactPinState(MEMBER)).toEqual([[ARTIFACT, 2, false]]);
+  });
+
   it("given the member's own edit or a connector refetch, when they read Activity, then neither is news to them", async () => {
     await threadWithArtifacts();
     await pinArtifact(ARTIFACT, OPEN_THREAD);

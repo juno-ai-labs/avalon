@@ -142,13 +142,15 @@ export function BrowserImportWindow(): React.JSX.Element {
   // Main reuses an open window and replaces its context, so a choice the new
   // Spaces no longer hold, or a Space the new context locks away, moves to the
   // first one it offers. A different Space is a different Channel, so an open
-  // sheet takes a new request identity with it.
+  // sheet takes a new request identity with it. A sheet opened before the
+  // window learned its Spaces has no choice yet, and takes the first too.
   useEffect(() => {
     const offered = context?.spaces ?? [];
-    if (run || spaceId === '' || offered.some((space) => space.id === spaceId)) return;
+    if (run || offered.some((space) => space.id === spaceId)) return;
+    if (spaceId === '' && (!pending || offered.length === 0)) return;
     setSpaceId(offered[0]?.id ?? '');
     setPending((current) => current && { ...current, clientMessageId: crypto.randomUUID() });
-  }, [context, spaceId, run]);
+  }, [context, pending, spaceId, run]);
 
   // A failure names the chat it was about; it does not follow the person to the next one.
   useEffect(() => { setFailure(null); }, [conversation?.url]);

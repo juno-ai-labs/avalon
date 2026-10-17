@@ -84,7 +84,7 @@ describe('browser import window', () => {
     expect(screen.getByRole('button', { name: 'Import', hidden: true })).toBeDisabled();
 
     // Each step is listed in the harness's words, then in the tool's summary of what it did.
-    const { onSteps } = (harness.startSessionImportRun.mock.calls[0] as unknown as [{ onSteps: (steps: unknown[]) => void }])[0];
+    const { onSteps } = (harness.startSessionImportRun.mock.lastCall as unknown as [{ onSteps: (steps: unknown[]) => void }])[0];
     await act(async () => {
       onSteps([
         { id: 'call-1', label: 'Read the page outline', status: 'done' },
@@ -123,7 +123,7 @@ describe('browser import window', () => {
     await waitFor(() => expect(document.querySelector('.browser-import-mirror')).toHaveAttribute('src', 'data:image/jpeg;base64,cGFnZQ=='));
 
     // The API reserved the Channel: the main window lists it as importing.
-    const { onStarted } = (harness.startSessionImportRun.mock.calls[0] as unknown as [{ onStarted: (run: { workstreamId: string; substreamId: string }) => void }])[0];
+    const { onStarted } = (harness.startSessionImportRun.mock.lastCall as unknown as [{ onStarted: (run: { workstreamId: string; substreamId: string }) => void }])[0];
     await act(async () => { onStarted({ workstreamId: 'w-reserved', substreamId: 'c-agent' }); });
     expect(harness.bridge.reportBrowserImport).toHaveBeenLastCalledWith({ phase: 'importing', workstreamId: 'w-reserved', title: 'Launch plan', spaceId: 'space-b' });
 
@@ -159,6 +159,22 @@ describe('browser import window', () => {
 
     await act(async () => { harness.settle({ kind: 'imported', workstreamId: 'w-thread', substreamId: 'b-new' }); });
     expect(harness.bridge.completeBrowserImport).toHaveBeenLastCalledWith('w-thread', 'b-new');
+  });
+
+  it('chooses the first Channel for a sheet opened before the window learned its Channels', async () => {
+    harness.state.context = { spaces: [{ id: 'space-a', name: 'Alpha' }] };
+    let deliver!: (context: typeof harness.state.context) => void;
+    harness.bridge.getBrowserImportContext.mockImplementationOnce(() => new Promise((resolve) => { deliver = resolve; }));
+    render(<Tooltip.Provider><BrowserImportWindow /></Tooltip.Provider>);
+    await waitFor(() => expect(harness.bridge.getBrowserImportContext).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Import thread' });
+    expect(within(sheet).getByRole('button', { name: 'Import' })).toBeDisabled();
+
+    await act(async () => { deliver(harness.state.context); });
+
+    expect(within(sheet).getByRole('combobox', { name: 'Channel' })).toHaveTextContent('Alpha');
+    expect(within(sheet).getByRole('button', { name: 'Import' })).toBeEnabled();
   });
 
   it('copies the running import’s address for a bug report', async () => {

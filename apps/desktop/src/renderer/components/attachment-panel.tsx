@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { ResourceIcon } from '@rally/ui/components/resource-icon';
 import type { IconGroupAction } from '@rally/ui/components/icon-group';
 import { ActionTile, ActionTiles, TitleMenuHeader, TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
@@ -17,8 +18,10 @@ import { RailSurface } from './rail-surface';
  * stack's own Expand. The lightbox stays only for the surfaces that have no
  * panel of their own: search and the Channel composer.
  */
-export function AttachmentPanel({ ancestors, expandAction, preview, leaving = false, onClose, onResize, width }: {
+export function AttachmentPanel({ ancestors, expandAction, preview, leaving = false, onClose, onResize, onShow, width }: {
   preview: AttachmentPreview;
+  /** The resource on screen, which a gallery changes as the reader steps through it. */
+  onShow?: ((preview: AttachmentPreview, resourceId: string | null) => void) | undefined;
   leaving?: boolean;
   onClose: () => void;
   /** Expand the panel over its conversation, or put it back. */
@@ -30,6 +33,10 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
 }): React.JSX.Element | null {
   const view = useAttachmentView(preview);
   const { gallery, active, mode, src, error, step } = view;
+  const shownId = active?.resourceId ?? null;
+  useEffect(() => {
+    onShow?.(preview, shownId);
+  }, [onShow, preview, shownId]);
   if (!active || !mode) return null;
   const many = gallery.length > 1;
   const icon = <ResourceIcon resource={{ resourceType: 'uploaded_file', mimeType: active.mimeType ?? null, title: active.name }} />;

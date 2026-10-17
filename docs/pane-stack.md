@@ -65,8 +65,10 @@ view of an artifact is the panel expanded. `expandToggle`
 Navigation asks for it too, through location state (`OPEN_EXPANDED`), which
 every level reads with `usePaneExpansion`. A navigation onto an artifact
 (`openThreadResourceState`, from a pinned artifact's row or its Activity row)
-is the panel's request: only the requested artifact honours it, so an artifact
-opened afterwards from the transcript comes up beside. The sidebar's Threads and Activity
+is the panel's request: only the requested artifact honours it, and only once,
+so an artifact opened afterwards from the transcript comes up beside, the
+requested one included once it has been closed. Behind the browser rail the
+panel is not on screen, so it is not expanded and its artifact is not seen. The sidebar's Threads and Activity
 rows ask for it, so does the root landing when it reopens the saved thread,
 and so does a Channel opening one of its threads, from a feed
 row or by starting one in its composer: a thread opened from its Channel takes
@@ -179,7 +181,9 @@ results and the Channel composer's unsent attachments.
 
 **Consequences:** The expansion is held per panel in component state, as a
 thread's is, and is not restored after a relaunch. The shell learns of it
-through `useUiStore.railExpanded`, set by the surface that owns the rail.
+through `useUiStore.railExpanded`, set by the surface that owns the rail. A
+request now counts once per navigation at every level: before, a pane closed
+and opened again under the same navigation came back expanded.
 
 ### 2026-10-17 — A saved thread reopens expanded
 

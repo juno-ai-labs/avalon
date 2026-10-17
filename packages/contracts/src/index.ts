@@ -1953,6 +1953,17 @@ export const NotificationChannelsSchema = z.object({
   artifactUpdates: NotificationChannelListSchema.default(["push"]),
 });
 export type NotificationChannels = z.infer<typeof NotificationChannelsSchema>;
+/**
+ * Some kinds' channels, as a save names them or a row stores them. The
+ * defaults are unwrapped: a partial field still fills in its default, so a
+ * save of one kind would otherwise reset every defaulted kind it left out.
+ */
+export const NotificationChannelsChoiceSchema = NotificationChannelsSchema
+  .extend({
+    merges: NotificationChannelsSchema.shape.merges.unwrap(),
+    artifactUpdates: NotificationChannelsSchema.shape.artifactUpdates.unwrap(),
+  })
+  .partial();
 export const DEFAULT_NOTIFICATION_CHANNELS: NotificationChannels = {
   mentions: ["push", "slack_agent_dm"],
   added: ["push", "slack_agent_dm"],
@@ -1991,7 +2002,7 @@ export const MemberPreferencesUpdateSchema = z.object({
   showAgentWork: z.boolean().optional(),
   push: PushPreferencesSchema.partial().optional(),
   /** Each kind named replaces that kind's channels whole. */
-  notify: NotificationChannelsSchema.partial().optional(),
+  notify: NotificationChannelsChoiceSchema.optional(),
 }).refine((value) => value.showAgentWork !== undefined
   || Object.values(value.push ?? {}).some((switched) => switched !== undefined)
   || Object.values(value.notify ?? {}).some((channels) => channels !== undefined), {
