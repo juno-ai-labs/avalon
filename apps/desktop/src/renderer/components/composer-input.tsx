@@ -633,8 +633,9 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
         : <Mic size={15} />}
     </IconButton>
   );
-  // `is-arming` answers the press before the microphone has opened;
-  // `is-listening` is reserved for capture that is running.
+  // `is-arming` answers the press before the microphone has opened: the
+  // stylesheet turns an arc around the glyph and paints no red. `is-listening`
+  // is reserved for capture that is running, and is the only red state.
   const microphoneControlClassName = clsx(
     'microphone-control',
     dictation.state === 'requesting' && 'is-arming',
