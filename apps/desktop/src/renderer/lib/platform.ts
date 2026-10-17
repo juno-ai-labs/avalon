@@ -512,10 +512,6 @@ const browserBridge: RallyDesktopBridge = {
   async shareText() {
     // The system share sheet is a macOS main-process affordance; a tab has none.
   },
-  async setConversationDetailsOpen() {
-    // A browser tab cannot resize its own top-level window. The attached rail
-    // still opens inside the viewport, which is the browser-safe fallback.
-  },
   async getEmbeddedBrowserState() {
     return { tabs: [], activeTabId: null };
   },
