@@ -30,7 +30,7 @@ holds it.
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | `mergeTargetFor` (who can merge where), the composer's merge mode, the audience line, the Breakout card's **Merged** chip. |
 | `packages/ui/src/components/merge-message.tsx` | `MergeMessage`, the one block every merge is drawn with, in a Thread and in a Channel. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MergeButton`, after New breakout in both hover rows, and a Thread merge drawn as `MergeMessage`. |
-| `apps/desktop/src/renderer/screens/channel.tsx` | `MergeCard`, a Channel merge in the feed as `MergeMessage`, with Remove. |
+| `apps/desktop/src/renderer/screens/channel.tsx` | `MergeCard`, a Channel merge in the feed as `MergeMessage`. |
 | `packages/ui/src/components/conversation-menus.tsx` | The title menu's Merge row (`ConversationRowActions.merge`). |
 
 ## How it works
@@ -97,8 +97,9 @@ The feed shows a merge only to who can open its thread, through the placement
 seek's own `mainOpenableSql`, and joins the thread's current title and
 description for the card. The card draws its embeds from the stored titles: the
 feed does no per-viewer resource lookup, and opening an artifact opens the
-thread it is attached to. **Remove** deletes the row; its author or an
-Organization owner or admin may.
+thread it is attached to. `DELETE /spaces/:id/messages/:messageId` deletes
+the row; its author or an Organization owner or admin may. The client offers
+no control for it.
 
 ### Every merge looks the same
 
@@ -116,7 +117,7 @@ person's own words go out on the trailing side. It is drawn as the design's
   on a page not yet loaded, it opens the thread instead of fetching pages
   until the card turns up.
 - **The body,** as markdown with its embeds.
-- **The host's actions** under it: the hover row in a Thread, Remove in a
+- **The host's actions** under it: the hover row in a Thread; none in a
   Channel.
 
 ### The waterline
@@ -280,6 +281,21 @@ connection's resource can be embedded only by its owner. Removing a merge
 leaves its attachments, since people may already rely on them.
 
 ## Changelog
+
+### 2026-10-16 — The Channel merge card loses Remove
+
+**What changed:** The Channel feed's merge card no longer shows a Remove link,
+and the desktop API client drops `removeChannelMessage`. The `DELETE` route
+and its authorization stay.
+
+**Why:** A product call to take the control out of the feed; the reasoning
+was not recorded.
+
+**Considered and rejected:** Removing the route too. It is cheap to keep, its
+workerd test still covers it, and bringing the link back needs only the client.
+
+**Consequences:** A merge in a Channel can be removed only through the API. A
+merge that should go away is replaced by merging the thread again.
 
 ### 2026-10-16 — A merge opens where it landed
 
