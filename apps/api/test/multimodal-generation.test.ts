@@ -451,6 +451,7 @@ describe("multimodal generation runtime", () => {
       harnessRunId: RUN_ID,
       effectIntentId: EFFECT_ID,
       executionPrincipal: context.executionPrincipal,
+      onBehalfOfUserId: USER_ID,
     };
 
     const created = await store.publish(resourceContext, {
@@ -537,6 +538,7 @@ describe("multimodal generation runtime", () => {
       harnessRunId: RUN_ID,
       effectIntentId: EFFECT_ID,
       executionPrincipal: context.executionPrincipal,
+      onBehalfOfUserId: USER_ID,
     };
 
     const created = await store.publish(resourceContext, {

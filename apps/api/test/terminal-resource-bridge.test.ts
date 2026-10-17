@@ -206,6 +206,9 @@ function fixture(
       env,
       testTerminalPortFactory(objectStore),
       inObjectResourceAttacher,
+      null,
+      null,
+      U,
     ),
     /** A bridge whose publications land in `publicationWorkstreamId`. */
     bridgeFor: (publicationWorkstreamId: string | null) => createTerminalResourceBridge(
