@@ -128,13 +128,20 @@ table's order rules and the one per-person limit, but not the wire list:
 version of it, since it was pinned, that the person has not seen
 (`artifactUpdateSql`: a republish or a replacement, never the first version,
 a refetch or a bookkeeping capture). What they have seen is their Activity
-waterline on the subject `artifact:<id>`, moved when the artifact is on screen
-in a panel, so the pin's unread state and its `artifact_updated` Activity rows
-settle together. The Artifacts button counts the unread pins, and so does
+waterline on the subject `artifact:<id>`, moved to the version that was
+current when the artifact was opened in a panel, so the pin's unread state and
+its `artifact_updated` Activity rows settle together. A version that arrives
+while the panel is open is not the one on screen and stays unread until the
+artifact is opened again. An unpin takes the artifact's rows out of Activity,
+so it tells the person's windows to read Activity again. The Artifacts button counts the unread pins, and so does
 Pinned. A trigger on `resource_versions` (migration 111) queues each new
 version of a pinned artifact in `workspace_artifact_updates`; the drain after
 the write sends each pinner their pin list and an Activity re-read, and pushes
-the row ([`push-notifications.md`](push-notifications.md#activity-rows)).
+the row ([`push-notifications.md`](push-notifications.md#activity-rows)). The
+announcement is held to the object's lifetime (`waitUntil`) and is best effort,
+as every Activity push is: the ledger row is gone once drained, so a failed
+member lookup or Queue send loses that push, logged, while the row, the unread
+pin and the digest stand.
 
 On a card, **Pin** and **Unpin** sit behind a `⋯` button that shows while the
 card is hovered or focused, and in its right-click menu: one list of actions

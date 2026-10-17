@@ -3818,8 +3818,10 @@ pre {
 .resource-more-shell.is-row:focus-within .citation-card.is-file,
 .resource-more-shell.is-row.is-open .citation-card.is-file { background-image: var(--hover-layer); padding-right: 44px; }
 @media (prefers-reduced-motion: reduce) { .resource-more-button { transition: none; } }
-.citation-card-pinned { align-items: center; display: inline-flex; gap: 3px; }
-.citation-card-pin { align-items: center; background: color-mix(in srgb, var(--av-sys-color-surface-elevated) 88%, transparent); border-radius: 7px; box-shadow: 0 1px 2px color-mix(in srgb, var(--av-sys-color-text-default) 8%, transparent); color: var(--av-sys-color-text-default); display: inline-flex; height: 26px; justify-content: center; left: 6px; position: absolute; top: 6px; width: 26px; z-index: 1; }
+/* A pinned card's marks. Not `citation-`: a still never draws pinned state,
+   so the exported document has nothing of them to style. */
+.resource-card-pinned { align-items: center; display: inline-flex; gap: 3px; }
+.resource-card-pin { align-items: center; background: color-mix(in srgb, var(--av-sys-color-surface-elevated) 88%, transparent); border-radius: 7px; box-shadow: 0 1px 2px color-mix(in srgb, var(--av-sys-color-text-default) 8%, transparent); color: var(--av-sys-color-text-default); display: inline-flex; height: 26px; justify-content: center; left: 6px; position: absolute; top: 6px; width: 26px; z-index: 1; }
 
 /* The grounding pill. It costs one character of line width and no vertical
    space at all, which is the whole reason the trailing source list is not

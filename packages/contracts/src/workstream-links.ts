@@ -45,6 +45,14 @@ export interface WorkstreamLinkTarget extends WorkspaceTarget {
   spaceId: string;
   workstreamId: string;
   substreamId?: string;
+  /**
+   * An artifact to open the thread onto, expanded. Only on a thread's own
+   * link, never a breakout's: an artifact is pinned in, and opened from, its
+   * thread's Main. An app that does not know the segment refuses the link, so
+   * it is minted only where the receiver is known to read it (a pinned
+   * artifact's push, whose kind an older app already drops).
+   */
+  artifactId?: string;
 }
 
 export interface SpaceLinkTarget extends WorkspaceTarget {
@@ -83,12 +91,22 @@ function assertWorkstreamLinkTarget(target: WorkstreamLinkTarget): void {
   assertWorkstreamId(target.spaceId);
   assertWorkstreamId(target.workstreamId);
   if (target.substreamId) assertWorkstreamId(target.substreamId);
+  if (target.artifactId) {
+    assertWorkstreamId(target.artifactId);
+    if (target.substreamId) throw new Error("An artifact link names a thread, not a breakout");
+  }
+}
+
+/** The path segment after a thread's: its breakout, or the artifact it opens onto. */
+function childSegment(target: WorkstreamLinkTarget, breakout: string, artifact: string): string {
+  if (target.substreamId) return `/${breakout}/${uuidToBase58(target.substreamId)}`;
+  return target.artifactId ? `/${artifact}/${uuidToBase58(target.artifactId)}` : "";
 }
 
 /** The workspace-addressed desktop deep link every new canonical link resolves to. */
 export function workstreamDeepLink(target: WorkstreamLinkTarget): string {
   assertWorkstreamLinkTarget(target);
-  const deepLink = new URL(`${DESKTOP_DEEP_LINK_PROTOCOL}//spaces/${uuidToBase58(target.spaceId)}/channels/${uuidToBase58(target.workstreamId)}${target.substreamId ? `/breakouts/${uuidToBase58(target.substreamId)}` : ""}`);
+  const deepLink = new URL(`${DESKTOP_DEEP_LINK_PROTOCOL}//spaces/${uuidToBase58(target.spaceId)}/channels/${uuidToBase58(target.workstreamId)}${childSegment(target, "breakouts", "artifacts")}`);
   return addWorkspaceTarget(deepLink, target, { base58: true }).toString();
 }
 
@@ -122,7 +140,7 @@ export function workstreamDeepLinkFromParsedTarget(target: ParsedWorkstreamLinkT
 /** The canonical shareable link emitted by every current surface. */
 export function workstreamCanonicalUrl(webBaseUrl: string, target: WorkstreamLinkTarget): string {
   assertWorkstreamLinkTarget(target);
-  const path = `${WORKSTREAM_LINK_PATH_PREFIX}${target.region}/${uuidToBase58(target.workspaceId)}/s/${uuidToBase58(target.spaceId)}/c/${uuidToBase58(target.workstreamId)}${target.substreamId ? `/b/${uuidToBase58(target.substreamId)}` : ""}`;
+  const path = `${WORKSTREAM_LINK_PATH_PREFIX}${target.region}/${uuidToBase58(target.workspaceId)}/s/${uuidToBase58(target.spaceId)}/c/${uuidToBase58(target.workstreamId)}${childSegment(target, "b", "a")}`;
   return new URL(path, webBaseUrl).toString();
 }
 
@@ -220,16 +238,18 @@ export function parseSpaceLinkPathTarget(pathname: string): SpaceLinkTarget | nu
 /** Read a work-stream target out of either current or legacy canonical path. */
 export function parseWorkstreamLinkPathTarget(pathname: string): ParsedWorkstreamLinkTarget | null {
   const normalized = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
-  const canonical = /^\/app\/([a-z][a-z0-9-]*)\/([^/]+)\/s\/([^/]+)\/c\/([^/]+)(?:\/b\/([^/]+))?$/u.exec(normalized);
+  const canonical = /^\/app\/([a-z][a-z0-9-]*)\/([^/]+)\/s\/([^/]+)\/c\/([^/]+)(?:\/b\/([^/]+)|\/a\/([^/]+))?$/u.exec(normalized);
   if (canonical) {
-    const [, region, encodedWorkspaceId, encodedSpaceId, encodedWorkstreamId, encodedSubstreamId] = canonical;
+    const [, region, encodedWorkspaceId, encodedSpaceId, encodedWorkstreamId, encodedSubstreamId, encodedArtifactId] = canonical;
     const workspaceId = uuidFromBase58(encodedWorkspaceId!);
     const spaceId = uuidFromBase58(encodedSpaceId!);
     const workstreamId = uuidFromBase58(encodedWorkstreamId!);
     const substreamId = encodedSubstreamId ? uuidFromBase58(encodedSubstreamId) : null;
+    const artifactId = encodedArtifactId ? uuidFromBase58(encodedArtifactId) : null;
     const target = { region: region!, workspaceId: workspaceId!, spaceId: spaceId!, workstreamId: workstreamId!,
-      ...(substreamId ? { substreamId } : {}) };
-    return workspaceId && spaceId && workstreamId && (!encodedSubstreamId || substreamId) && isWorkspaceTarget(target)
+      ...(substreamId ? { substreamId } : {}), ...(artifactId ? { artifactId } : {}) };
+    return workspaceId && spaceId && workstreamId && (!encodedSubstreamId || substreamId)
+      && (!encodedArtifactId || artifactId) && isWorkspaceTarget(target)
       ? target as WorkstreamLinkTarget
       : null;
   }
@@ -263,13 +283,17 @@ function parseDeepLink(url: URL): ParsedWorkstreamLinkTarget | null {
   const destination = addressed?.destination ?? url;
   if (destination.hash || destination.username || destination.password || destination.port) return null;
   if (destination.hostname === "spaces") {
-    const [encodedSpaceId = "", channelSegment, encodedWorkstreamId, breakoutSegment, encodedSubstreamId, ...extra] = destination.pathname.slice(1).split("/");
+    const [encodedSpaceId = "", channelSegment, encodedWorkstreamId, childKind, encodedChildId, ...extra] = destination.pathname.slice(1).split("/");
     const spaceId = uuidFromBase58(encodedSpaceId);
     const workstreamId = encodedWorkstreamId ? uuidFromBase58(encodedWorkstreamId) : null;
-    const substreamId = encodedSubstreamId ? uuidFromBase58(encodedSubstreamId) : null;
+    const childId = encodedChildId ? uuidFromBase58(encodedChildId) : null;
     if (!addressed || !spaceId || channelSegment !== "channels" || !workstreamId || extra.length
-      || (breakoutSegment !== undefined && (breakoutSegment !== "breakouts" || !substreamId))) return null;
-    return { ...addressed.target, spaceId, workstreamId, ...(substreamId ? { substreamId } : {}) };
+      || (childKind !== undefined && ((childKind !== "breakouts" && childKind !== "artifacts") || !childId))) return null;
+    return {
+      ...addressed.target, spaceId, workstreamId,
+      ...(childKind === "breakouts" && childId ? { substreamId: childId } : {}),
+      ...(childKind === "artifacts" && childId ? { artifactId: childId } : {}),
+    };
   }
   if (destination.hostname !== DEEP_LINK_HOST) return null;
   const [workstreamId = "", childSegment, substreamId, ...extra] = destination.pathname.slice(1).split("/");

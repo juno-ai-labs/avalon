@@ -126,8 +126,9 @@ rather than from an event ([`digests.md`](digests.md#the-activity-tab)), and
 alone: its trigger is a new version reaching the pinned-artifact ledger
 (migration 111), drained after the write that filled it, and the person's
 **Pinned artifact updates** setting (`artifactUpdates`) chooses its channels.
-It reads "Rally updated launch-checklist.md" and opens the thread; a link onto
-the artifact itself would need an artifact in the link format.
+It reads "Rally updated launch-checklist.md" and opens the artifact, expanded
+over its thread, through the link's artifact segment
+([`workstream-links.md`](workstream-links.md#the-two-forms)).
 
 **The trigger is the directory write.** `applyDirectoryBatch` reads each
 conversation's row either side of its common effect and names what moved in
