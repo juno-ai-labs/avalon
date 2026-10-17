@@ -260,6 +260,8 @@ for nothing.
 pair in `index.html` is a third copy of the two canvas values, beside
 `themes.ts` and the generated stylesheet, and moves with them.
 
+Shipped in #1277.
+
 ### 2026-10-13 — `sys.color.glass.shine` lights a glass shape
 
 **What changed:** A new themed token, `sys.color.glass.shine`: white at 75% in
