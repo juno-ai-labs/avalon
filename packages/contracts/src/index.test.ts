@@ -1690,7 +1690,7 @@ describe("who asked for a run", () => {
   });
 
   it("is the person a run acts for, whoever started a Sidekick by hand, and nobody for a scheduled Sidekick", () => {
-    expect(runRequesterUserId({ executionPrincipal: person, automationRun: undefined }))
+    expect(runRequesterUserId({ executionPrincipal: person, automationRun: undefined, automationContinuation: undefined }))
       .toBe("00000000-0000-7000-8000-000000000001");
     expect(runRequesterUserId({
       executionPrincipal: person,
@@ -1702,5 +1702,17 @@ describe("who asked for a run", () => {
         kind: "schedule", scheduleId: "00000000-0000-7000-8000-000000000005", scheduleKind: "interval", plannedFor: 0,
       }),
     })).toBeNull();
+    // A turn continuing a Sidekick run was asked for by whoever sent it, or nobody.
+    const scheduled = sidekickRun({
+      kind: "schedule", scheduleId: "00000000-0000-7000-8000-000000000005", scheduleKind: "interval", plannedFor: 0,
+    });
+    const continuation = { stopGeneration: 0, senderName: "Theo", source: { kind: "run" as const } };
+    expect(runRequesterUserId({
+      executionPrincipal: person,
+      automationRun: scheduled,
+      automationContinuation: { ...continuation, senderUserId: asUserId("00000000-0000-7000-8000-000000000006") },
+    })).toBe("00000000-0000-7000-8000-000000000006");
+    expect(runRequesterUserId({ executionPrincipal: person, automationRun: scheduled, automationContinuation: continuation }))
+      .toBeNull();
   });
 });

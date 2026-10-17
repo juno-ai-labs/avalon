@@ -112,3 +112,56 @@ describe("migration 110", () => {
     });
   });
 });
+
+describe("migration 112", () => {
+  it("upgrades a populated Organization at 111, keeping version history and capturing who a revision was for", async () => {
+    const workspaceId = "00000000-0000-7000-8000-0000000000d1";
+    const resource = "00000000-0000-7000-8000-0000000000d2";
+    const run = "00000000-0000-7000-8000-0000000000d3";
+    const stub = env.MIGRATION_PROBE_DO!.getByName("on-behalf-of-v111");
+    await stub.ping();
+    await runInDurableObject(stub, (_instance, state) => {
+      const before = WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 111);
+      expect(before.at(-1)?.version).toBe(111);
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage, migrations: before, component: "workspace_do", workerVersionId: "before-on-behalf-of", now: 1,
+      });
+      const sql = state.storage.sql;
+      sql.exec(`INSERT INTO workspace_identity (id, workspace_id, region, placement_affinity, created_at, updated_at)
+        VALUES (1, ?, 'global', 'wnam', 0, 0)`, workspaceId);
+      sql.exec(`INSERT INTO resources
+          (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
+           content_ref, content_sha256, metadata_json, attachment_status, model_content_status,
+           created_at, updated_at, revision_author_kind, revision_author_run_id, revision_cause)
+        VALUES (?, ?, 'generated_file', 'avalon_generated', 'terminal:plan.md', 'Plan', 'text/markdown',
+                'global/v1', 'a', '{}', 'attached', 'pending', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z',
+                'agent', ?, 'created')`, resource, workspaceId, run);
+      sql.exec(`UPDATE resources SET content_ref = 'global/v2', content_sha256 = 'b',
+          revision_author_kind = 'agent', revision_author_run_id = ?, revision_cause = 'published'
+        WHERE id = ?`, run, resource);
+    });
+
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS, component: "workspace_do",
+        workerVersionId: "with-on-behalf-of", now: 2,
+      });
+      const sql = state.storage.sql;
+      // A revision staged for a person records them; the next write, staged by nobody, does not inherit it.
+      sql.exec(`UPDATE resources SET content_ref = 'global/v3', content_sha256 = 'c',
+          revision_author_kind = 'agent', revision_author_run_id = ?, revision_cause = 'published',
+          revision_on_behalf_of_user_id = ?
+        WHERE id = ?`, run, OWNER, resource);
+      sql.exec(`UPDATE resources SET title = 'Plan, renamed' WHERE id = ?`, resource);
+      expect(sql.exec(`SELECT version, content_ref, cause, on_behalf_of_user_id FROM resource_versions
+          WHERE resource_id = ? ORDER BY version`, resource).toArray()).toEqual([
+        { version: 1, content_ref: "global/v1", cause: "created", on_behalf_of_user_id: null },
+        { version: 2, content_ref: "global/v2", cause: "published", on_behalf_of_user_id: null },
+        { version: 3, content_ref: "global/v3", cause: "published", on_behalf_of_user_id: OWNER },
+        { version: 4, content_ref: "global/v3", cause: null, on_behalf_of_user_id: null },
+      ]);
+      expect(sql.exec(`SELECT revision_on_behalf_of_user_id FROM resources WHERE id = ?`, resource).one())
+        .toEqual({ revision_on_behalf_of_user_id: null });
+    });
+  });
+});
