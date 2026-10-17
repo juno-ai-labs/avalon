@@ -301,7 +301,7 @@ describe('a Channel', () => {
     await waitFor(() => expect(api.removeChannelMessage).toHaveBeenCalledExactlyOnceWith('outbound', mergeId));
   });
 
-  it('scrolls to a merged thread’s card from the merge’s quote, and opens the thread when the card is not loaded', async () => {
+  it('scrolls and moves focus to a merged thread’s card from the merge’s quote, and opens the thread when the card is not loaded', async () => {
     const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView');
     api.getWorkspaceMembers.mockResolvedValueOnce([workspace.currentUser] as never);
     const mergeOf = (id: string, threadId: string, summary: string) => ({ id, author: { kind: 'member', userId: 'me' }, body: 'Done.', merge: { threadId, title: 'Q4 plan', summary, embeds: [] } });
@@ -316,6 +316,7 @@ describe('a Channel', () => {
     // Oldest first: the thread's card is the first row.
     expect(scrollIntoView.mock.contexts).toEqual([feed.getAllByRole('listitem')[0]]);
     expect(scrollIntoView.mock.contexts[0]).toHaveTextContent('A four-week outbound setup plan.');
+    expect(within(feed.getAllByRole('listitem')[0]!).getByRole('button', { name: /Q4 plan/u })).toHaveFocus();
     fireEvent.click(feed.getByRole('button', { name: 'An older thread' }));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/older'));
     expect(scrollIntoView).toHaveBeenCalledOnce();
