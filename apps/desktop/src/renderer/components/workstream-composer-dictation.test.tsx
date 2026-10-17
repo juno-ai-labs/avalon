@@ -604,7 +604,8 @@ describe('WorkstreamComposer live dictation', () => {
     const control = button.closest('.microphone-control');
     expect(control).toHaveClass('is-arming');
     expect(control).not.toHaveClass('is-listening');
-    // The fill is the acknowledgement; a spinner would read as loading.
+    // The glyph stays while the stylesheet turns an arc around it; a spinner
+    // in its place would read as loading rather than as the microphone opening.
     expect(button.querySelector('.spin')).toBeNull();
 
     act(() => dictationHarness.setState?.('listening'));

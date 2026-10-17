@@ -630,11 +630,16 @@ acknowledgement, and the microphone is the only thing it waits for. OS
 permission and device startup remain prerequisites for capture.
 
 The press itself is answered before any of that. The microphone control takes
-`is-arming` while the hook is `requesting` (the danger wash, with the glyph in
-danger ink) and `is-listening` once capture runs (the full danger fill). The two
-are kept apart deliberately: the fill means capture is running, and a word
-spoken into the arming state is one the person was never told was heard. While
-listening, the worklet reports each chunk's RMS beside its samples and the hook
+`is-arming` while the hook is `requesting` (an arc in the button's own ink
+turning around the microphone glyph, over the composer shape's resting paint,
+with nothing on the control red) and `is-listening` once capture runs (the full
+danger fill, the only red the control ever wears). The two are kept apart
+deliberately: red means audio is being captured and saved, and a word spoken
+into the arming state is one the person was never told was heard. Red does not
+wait for the transcription socket: `listening` is entered when the capture graph
+is running and buffering, whether or not the provider has acknowledged the
+session yet, and any audio buffered before it has drains in order once it has.
+While listening, the worklet reports each chunk's RMS beside its samples and the hook
 maps it to a 0 to 1 meter position (`meterLevel`: a dB scale whose floor,
 -50 dBFS, is where suppressed room noise sits, with speech under automatic gain
 control reading around 0.6); the composer writes it onto the control as
@@ -739,6 +744,38 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-10-17 — Arming turns an arc; red is only for capture that is running
+
+**What changed:** While the hook is `requesting`, the microphone control draws
+an arc in the button's own ink turning around the microphone glyph, over the
+composer shape's resting paint; the danger wash the arming state wore is gone.
+`is-listening` keeps the full danger fill and is now the only state painted
+red. It is entered, as before, once the capture graph is buffering audio,
+without waiting for the transcription socket.
+
+**Why:** The arming wash is `sys.color.danger.wash`, a dark red in the dark
+appearance. A button that turns red on the press says the microphone is on,
+and it is not: the inputs are still opening and nothing spoken into that state
+is captured. The wash was chosen on 2026-10-16 so the press would read as
+acknowledged rather than as loading, which the spinner it replaced had done;
+it borrowed the recording colour to do it, and the colour was the stronger
+signal. The arc keeps the acknowledgement without the colour.
+
+**Considered and rejected:** The `LoaderCircle` spinner in the glyph's place,
+as `transcribing` and `finalizing` use: there the recording is over or paused
+and text is awaited, here the microphone itself is opening and the glyph is
+what says so. Also rejected: delaying `listening` until the provider
+acknowledges the session, so red would mean the service has the audio. Red is
+for capture, which starts well before the socket is ready, and the audio in
+between is buffered and drained in order.
+
+**Consequences:** A state drawn red on this control is a claim that audio is
+being saved. Arming paints no fill, so a composer shape's resting fill excludes
+`.is-listening` alone and must not start excluding `.is-arming`; the 2026-10-16
+entry's rule that both fills paint alone now holds for `.is-listening` only.
+
+Shipped in #1276.
 
 ### 2026-10-16 — Dictation startup overlaps the microphone with everything else
 
