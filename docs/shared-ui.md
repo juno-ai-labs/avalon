@@ -98,7 +98,8 @@ as a Radix collision, so the menu never flips above; its sides still do, so it
 shifts to fit a phone's width. Opening it blurs any focused input, textarea or
 editable region first, so a phone's keyboard drops.
 
-Theme application stamps the same `data-theme` attribute before rendering. Desktop
+Theme application stamps the same `data-theme` attribute before rendering, and writes
+the applied canvas into any `theme-color` meta the host document carries. Desktop
 installs the native theme reporter/broadcast adapter; browser and Sideline install system
 appearance observation. Visual primitives share the same theme subscription.
 
