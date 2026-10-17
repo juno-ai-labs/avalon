@@ -171,7 +171,7 @@ export async function rebuildDigestSchedulesForTimezone(
     .map((workspaceId) => refreshWorkspaceSchedule(env, workspaceId)));
 }
 
-/** What a person gets before they have chosen anything: weekdays at 07:45, by email. */
+/** What a person gets before they have chosen anything: weekdays at 07:45, by email and, unless a guest, to their Personal Channel. */
 const DEFAULT_DAYS = [1, 2, 3, 4, 5];
 const PERSONAL_CHANNEL_NAME = "Personal Channel";
 const DEFAULT_MINUTE_OF_DAY = 7 * 60 + 45;
