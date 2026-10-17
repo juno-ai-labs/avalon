@@ -4413,6 +4413,80 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "a ledger of new versions of pinned artifacts, for their Activity rows and pushes",
   // See WORKSPACE_ARTIFACT_UPDATES_MIGRATION and docs/workstream-pinning.md#artifact-pins.
   statements: WORKSPACE_ARTIFACT_UPDATES_MIGRATION,
+}, {
+  version: 112,
+  description: "an agent's resource version names the person its run acted for",
+  statements: [
+    // An agent version names its run, and the run's person lives in the
+    // thread's object, out of reach of anything here that asks whose change a
+    // version was. Staged and consumed like the rest of the provenance, so a
+    // later write by somebody else never inherits it. NULL is "not recorded":
+    // a run nobody started, or a version from before this migration.
+    `ALTER TABLE resources ADD COLUMN revision_on_behalf_of_user_id TEXT`,
+    `ALTER TABLE resource_versions ADD COLUMN on_behalf_of_user_id TEXT`,
+    `DROP TRIGGER resources_create_initial_version`,
+    `CREATE TRIGGER resources_create_initial_version
+       AFTER INSERT ON resources BEGIN
+         INSERT INTO resource_versions
+           (resource_id, workspace_id, version, connection_id, resource_type, provider,
+            provider_resource_id, title, mime_type, content_ref, canonical_url, metadata_json,
+            last_hydrated_at, uploaded_by_user_id, attachment_status, model_content_ref,
+            model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
+            model_content_status, model_content_extractor_version, model_content_character_count,
+            model_content_extracted_at, model_content_error_code, captured_at,
+            author_kind, author_run_id, author_user_id, author_connection_id, cause,
+            storage_kind, on_behalf_of_user_id)
+         VALUES
+           (NEW.id, NEW.workspace_id, NEW.current_version, NEW.connection_id, NEW.resource_type, NEW.provider,
+            NEW.provider_resource_id, NEW.title, NEW.mime_type, NEW.content_ref, NEW.canonical_url, NEW.metadata_json,
+            NEW.last_hydrated_at, NEW.uploaded_by_user_id, NEW.attachment_status, NEW.model_content_ref,
+            NEW.model_mime_type, NEW.model_content_sha256, NEW.model_metadata_json, NEW.content_sha256,
+            NEW.model_content_status, NEW.model_content_extractor_version, NEW.model_content_character_count,
+            NEW.model_content_extracted_at, NEW.model_content_error_code, NEW.updated_at,
+            NEW.revision_author_kind, NEW.revision_author_run_id, NEW.revision_author_user_id,
+            NEW.revision_author_connection_id, NEW.revision_cause,
+            NEW.revision_storage_kind, NEW.revision_on_behalf_of_user_id);
+         UPDATE resources
+            SET revision_author_kind = NULL, revision_author_run_id = NULL,
+                revision_author_user_id = NULL, revision_author_connection_id = NULL,
+                revision_cause = NULL, revision_storage_kind = 'object',
+                revision_on_behalf_of_user_id = NULL
+          WHERE id = NEW.id;
+       END`,
+    `DROP TRIGGER resources_create_semantic_version`,
+    `CREATE TRIGGER resources_create_semantic_version
+       AFTER UPDATE OF connection_id, resource_type, provider, provider_resource_id, title,
+         mime_type, content_ref, canonical_url, metadata_json, last_hydrated_at,
+         uploaded_by_user_id, attachment_status, content_sha256 ON resources
+       WHEN NEW.current_version = OLD.current_version BEGIN
+         UPDATE resources SET current_version = OLD.current_version + 1 WHERE id = NEW.id;
+         INSERT INTO resource_versions
+           (resource_id, workspace_id, version, connection_id, resource_type, provider,
+            provider_resource_id, title, mime_type, content_ref, canonical_url, metadata_json,
+            last_hydrated_at, uploaded_by_user_id, attachment_status, model_content_ref,
+            model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
+            model_content_status, model_content_extractor_version, model_content_character_count,
+            model_content_extracted_at, model_content_error_code, captured_at,
+            author_kind, author_run_id, author_user_id, author_connection_id, cause,
+            storage_kind, on_behalf_of_user_id)
+         SELECT id, workspace_id, current_version, connection_id, resource_type, provider,
+                provider_resource_id, title, mime_type, content_ref, canonical_url, metadata_json,
+                last_hydrated_at, uploaded_by_user_id, attachment_status, model_content_ref,
+                model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
+                model_content_status, model_content_extractor_version, model_content_character_count,
+                model_content_extracted_at, model_content_error_code, updated_at,
+                revision_author_kind, revision_author_run_id, revision_author_user_id,
+                revision_author_connection_id, revision_cause, revision_storage_kind,
+                revision_on_behalf_of_user_id
+           FROM resources WHERE id = NEW.id;
+         UPDATE resources
+            SET revision_author_kind = NULL, revision_author_run_id = NULL,
+                revision_author_user_id = NULL, revision_author_connection_id = NULL,
+                revision_cause = NULL, revision_storage_kind = 'object',
+                revision_on_behalf_of_user_id = NULL
+          WHERE id = NEW.id;
+       END`,
+  ],
 }];
 
 function conversationToolEntry(conversation: {
