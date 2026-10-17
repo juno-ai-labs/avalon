@@ -475,6 +475,22 @@ export class SubstreamCreationService {
     }
   }
 
+  /**
+   * Refuse, before any costly work, a confirmation `confirm` would refuse:
+   * no preparation of the caller's under this key, or one already cancelled.
+   * A caller that uploads before confirming asks this first.
+   */
+  async assertConfirmable(parentId: string, operationId: string): Promise<void> {
+    const parent = await this.parent(parentId);
+    const existing = PrivateChildPreparationOperationSchema.nullable().parse(
+      await parent.readPrivateChildPreparation({ workspaceId: this.auth.workspaceId, parentId, operationId }),
+    );
+    if (!existing || existing.creatorUserId !== this.auth.userId) {
+      throw new ApiError(404, "substream_preparation_not_found", "Creation request not found.");
+    }
+    if (existing.status === "failed") throw new ApiError(409, "substream_creation_cancelled", "This creation request was cancelled.");
+  }
+
   async cancel(parentId: string, operationId: string): Promise<void> {
     const parent = await this.parent(parentId);
     const address = { workspaceId: this.auth.workspaceId, parentId, operationId };
