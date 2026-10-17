@@ -155,16 +155,18 @@ export function markdownToEmailText(markdown: string, options: MarkdownTextOptio
   const source = markdown.replace(/\r\n/gu, "\n").split("\n");
   // Fenced blocks come from `@rally/contracts/markdown-code`, so this pass and
   // the rewrites that ran over the same string above cannot disagree about
-  // where one ends. Only the fence kinds are read here: an indented block is
-  // already four columns in, which is exactly what this pass would give it.
+  // where one ends. An indented block is already four columns in, which is
+  // what this pass would give it; the text part has always reduced its inline
+  // marks and is left that way, and only the spoken text, which must not
+  // announce an address inside code, takes it verbatim.
   const kinds = markdownLineKinds(source);
   for (const [index, raw] of source.entries()) {
     const kind = kinds[index]!;
     // The delimiters are dropped and the body is indented instead: four columns
     // is what a plain-text reader has for "this was code".
     if (kind === "fence-open" || kind === "fence-close") continue;
-    if (kind === "fence-content") {
-      lines.push(`    ${raw.trimEnd()}`);
+    if (kind === "fence-content" || (kind === "indented-code" && linkTargets === "spoken")) {
+      lines.push(kind === "fence-content" ? `    ${raw.trimEnd()}` : raw.trimEnd());
       continue;
     }
     const line = raw.trimEnd();
@@ -259,14 +261,17 @@ function stripInlineMarks(value: string, linkTargets: LinkTargets = "drop", rewr
  * A bare address as a voice should read it: "link to" and the registrable
  * domain, so `https://www.apple.com/iphone/compare` and `<https://apple.com>`
  * are both heard as *link to apple.com*. The `www.` spelling GFM also
- * autolinks is announced the same way; any other scheme is read as written.
- * Code spans are stepped over — an address inside backticks is code, not a
- * link — and the punctuation a sentence hangs on the end of an address stays
- * in the sentence, the way GFM's autolink rule leaves it there.
+ * autolinks is announced the same way; any other scheme is read as written,
+ * which is what the lookbehind is for: a `www.` or `https://` that follows a
+ * word, a dot, or URL punctuation is part of something else. Code spans are
+ * stepped over — an address inside backticks is code, not a link — and the
+ * punctuation a sentence hangs on the end of an address stays in the sentence,
+ * the way GFM's autolink rule leaves it there. A pipe ends an address too,
+ * since a table row reaches this pass as one line.
  */
 function announceBareLinks(value: string): string {
   return value.replace(
-    /`[^`]+`|<((?:https?:\/\/|www\.)[^\s<>`[\]]+)>|(?<![\w.@])((?:https?:\/\/|www\.)[^\s<>`[\]]+)/giu,
+    /`[^`]+`|<((?:https?:\/\/|www\.)[^\s<>`[\]|]+)>|(?<![\w.@/:+-])((?:https?:\/\/|www\.)[^\s<>`[\]|]+)/giu,
     (match, bracketed: string | undefined, bare: string | undefined) => {
       if (bare === undefined && bracketed === undefined) return match;
       if (bracketed !== undefined) return `link to ${spokenDomain(bracketed)}`;
@@ -282,25 +287,19 @@ function announceBareLinks(value: string): string {
  * the sentence and not to the link.
  */
 function splitTrailingPunctuation(address: string): [string, string] {
+  let unmatchedClosers = 0;
+  for (const each of address) {
+    if (each === "(") unmatchedClosers -= 1;
+    else if (each === ")") unmatchedClosers += 1;
+  }
   let end = address.length;
   while (end > 0) {
     const character = address[end - 1]!;
-    if (".,:;!?'\"*_~".includes(character)) {
+    if (".,:;!?'\"*_~".includes(character)) end -= 1;
+    else if (character === ")" && unmatchedClosers > 0) {
       end -= 1;
-      continue;
-    }
-    if (character === ")") {
-      let depth = 0;
-      for (const each of address.slice(0, end)) {
-        if (each === "(") depth += 1;
-        else if (each === ")") depth -= 1;
-      }
-      if (depth < 0) {
-        end -= 1;
-        continue;
-      }
-    }
-    break;
+      unmatchedClosers -= 1;
+    } else break;
   }
   return [address.slice(0, end), address.slice(end)];
 }
@@ -309,8 +308,10 @@ function splitTrailingPunctuation(address: string): [string, string] {
  * The registrable domain of an address — `www.apple.com/iphone` and
  * `docs.github.com` are `apple.com` and `github.com` — through the same
  * public-suffix data the favicon and terminal network-policy services use, so
- * `bbc.co.uk` keeps its three labels. A host with no public suffix (an IP, a
- * local name) is spoken whole.
+ * `bbc.co.uk` keeps its three labels. Unlike those two, this honours the
+ * list's private section: `rally.github.io` names a site, and a listener
+ * recognizes the site, not the platform. A host with no public suffix (an IP,
+ * a local name) is spoken whole.
  */
 function spokenDomain(address: string): string {
   const host = address
@@ -319,7 +320,7 @@ function spokenDomain(address: string): string {
     .replace(/[/?#:].*$/u, "")
     .replace(/\.+$/u, "")
     .toLowerCase();
-  return parseDomain(host).domain ?? host;
+  return parseDomain(host, { allowPrivateDomains: true }).domain ?? host;
 }
 
 function blocksFromMarkdown(markdown: string): Block[] {

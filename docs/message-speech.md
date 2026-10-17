@@ -54,8 +54,9 @@ context, and restores the button.
   nothing else of the address. A listener cannot follow a spoken address, and
   a voice spelling one out is noise between the words that matter; the
   text-only email part keeps the address because a reader there can follow it.
-  An image with no alt text is spoken as *image*. An address inside a code span
-  is code and is read as written.
+  An image with no alt text is spoken as *image*. An address inside a code
+  span or an indented code block is code and is read as written, as fenced
+  code already was.
 - **Audio is never buffered into a complete file.** Waiting for MP3 generation
   or the full response would turn a listening action into a generation wait and
   destroy time-to-first-audio.
@@ -205,8 +206,12 @@ that two images on one host stay distinguishable, was rejected too: a path
 spelled out is the noise this change removes.
 
 **Consequences:** A new spoken surface passes the same option. An address inside
-a code span is read as written, because it is code. Any scheme other than
-`http(s)` is read as written too. An image with no alt text is spoken as
+a code span or an indented code block is read as written, because it is code;
+the spoken text is the one mode that takes an indented block verbatim, since
+the email text part has always reduced its inline marks and is left that way.
+Any scheme other than `http(s)` is read as written too. The domain honours the
+Public Suffix List's private section, unlike the favicon and network-policy
+callers, so `rally.github.io` is heard as the site and not as `github.io`. An image with no alt text is spoken as
 *image*, as a screen reader names an unlabelled graphic; its address was all it
 had. The iOS client's Speak hands the raw message text to the system
 synthesizer and is not on this path.
