@@ -55,7 +55,8 @@ expansion ends when the breakout opens a panel.
 
 Navigation asks for it too, through location state (`OPEN_EXPANDED`), which
 both levels read with `usePaneExpansion`. The sidebar's Threads and Activity
-rows ask for it, and so does a Channel opening one of its threads, from a feed
+rows ask for it, so does the root landing when it reopens the saved thread,
+and so does a Channel opening one of its threads, from a feed
 row or by starting one in its composer: a thread opened from its Channel takes
 the whole window, and Collapse puts it beside the Channel. Other links inside a
 pane don't ask, so a breakout or a panel opened from a thread comes up beside
@@ -141,6 +142,21 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
   window under Xvfb, per [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-17 — A saved thread reopens expanded
+
+**What changed:** When the root landing (`screens/workstream-landing.tsx`)
+reopens a saved thread under a Channel, on launch or on a navigation to `/`
+that carries no state, it asks for it expanded, so it takes the whole window with the Channel as its crumb. A saved breakout route does not
+ask: the request would be the breakout's, so its thread keeps what it had.
+
+**Why:** The saved route held only the path, and expansion lives in location
+state, so a thread that was last open came back beside its Channel. The product
+asked that a thread left open reopen as it opens from a Channel or the sidebar.
+
+**Considered and rejected:** Saving the expansion beside the route. The product
+asked for a reopened thread to be expanded every time, not to reopen as it was
+left, so there is nothing to save.
 
 ### 2026-10-15 — A Channel opens its threads expanded
 
