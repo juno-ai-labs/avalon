@@ -32,6 +32,7 @@ import {
   type WorkstreamMessageDeliveryState,
   type WorkstreamTranscriptSnapshot,
   type SpaceSummary,
+  type ConversationMergeResult,
   mergeResourceIds,
 } from '@rally/contracts';
 import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
@@ -1118,6 +1119,20 @@ export interface ConversationSubstreamLaunch {
 
 const NO_PENDING_ATTACHMENTS: PendingAttachment[] = [];
 
+/**
+ * Bring this turn into view; a new nonce asks again for the same turn.
+ * `arriving` is a turn just written that the feed has yet to receive: the
+ * request waits for it rather than paging back through older messages.
+ */
+export interface ScrollToTurnRequest {
+  turnId: string;
+  nonce: number;
+  arriving?: boolean;
+}
+
+/** The keys that scroll a focused transcript. */
+const TRANSCRIPT_SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+
 /** Where this conversation's Merge goes, or null when nothing here can merge. */
 export type MergeTarget =
   | { kind: 'thread'; threadTitle: string }
@@ -1295,8 +1310,9 @@ export interface ConversationSurfaceProps {
   onOpenBreakout?: (substreamId: string) => void;
   /** Open the composer's merge mode, empty: the title menu's Merge. A new nonce asks again. */
   mergeRequest?: number | null;
-  /** Bring this turn into view; a new nonce asks again for the same turn. */
-  scrollToTurn?: { turnId: string; nonce: number } | null;
+  /** A merge from this conversation landed: the host opens where it went. */
+  onMerged?: (result: ConversationMergeResult) => void;
+  scrollToTurn?: ScrollToTurnRequest | null;
   /**
    * A Breakout's origin in its Channel: the turn it started from, and the
    * Channel's name for the card's byline. The messages themselves are read
@@ -1349,6 +1365,7 @@ export function ConversationSurface({
   openBreakoutId = null,
   onOpenBreakout,
   mergeRequest = null,
+  onMerged,
   scrollToTurn = null,
   honorsSearchTarget = true,
   paneKey,
@@ -1450,6 +1467,9 @@ export function ConversationSurface({
   // The merge composer on screen now, so a merge that finishes after it was
   // cancelled and another opened leaves the newer one and its draft alone.
   const mergeNonceRef = useRef<number | null>(null);
+  // A pane closed mid-merge has no composer on screen: its merge still lands
+  // but moves nobody.
+  useEffect(() => () => { mergeNonceRef.current = null; }, []);
   // Declared up here because sending clears it, and the composer's send is
   // defined long before the fold below that maintains it.
   const [carriedStopAcknowledgement, setCarriedStopAcknowledgement] = useState(NO_STOP_ACKNOWLEDGEMENT);
@@ -2149,10 +2169,20 @@ export function ConversationSurface({
   }, [conversationAddress, feedLive, loadTranscriptRange, queryClient, transcriptQueryKey]);
   useEffect(() => {
     if (scrollToTurn === null || handledScrollNonce.current === scrollToTurn.nonce) return;
+    // The newest row, as a turn just written usually is, is the end: not
+    // `scrollToIndex`, which aimed at the last row lands short of it while
+    // the rows above are still estimates.
+    if (transcript.at(-1)?.transcriptTurnId === scrollToTurn.turnId) {
+      handledScrollNonce.current = scrollToTurn.nonce;
+      window.requestAnimationFrame(() => scrollTranscriptToEnd({ smooth: true }));
+      return;
+    }
     if (revealTurn(scrollToTurn.turnId)) {
       handledScrollNonce.current = scrollToTurn.nonce;
       return;
     }
+    // A turn on its way waits for the feed to deliver it.
+    if (scrollToTurn.arriving) return;
     // An origin older than the loaded pages: page back toward it. Each page
     // re-runs this, and reaching the oldest page ends the search.
     if (loadingOlder || olderMessagesError || !orderedTranscript.data) return;
@@ -2161,7 +2191,14 @@ export function ConversationSurface({
       return;
     }
     void loadOlderMessages();
-  }, [loadOlderMessages, loadingOlder, olderMessagesError, orderedTranscript.data, revealTurn, scrollToTurn]);
+  }, [loadOlderMessages, loadingOlder, olderMessagesError, orderedTranscript.data, revealTurn, scrollToTurn,
+    scrollTranscriptToEnd, transcript]);
+  // A turn on its way scrolls only while the reader waits for it: their own
+  // input on the transcript drops it. Input, not scroll events, because the
+  // virtualizer moves the viewport on its own as rows measure.
+  const dropArrivingScroll = (): void => {
+    if (scrollToTurn?.arriving) handledScrollNonce.current = scrollToTurn.nonce;
+  };
 
   const nearHistoryEdge = useTranscriptHistory({
     scrollRef: transcriptRef,
@@ -3108,13 +3145,15 @@ export function ConversationSurface({
     const attemptKey = JSON.stringify([text, target]);
     if (mergeAttemptRef.current?.key !== attemptKey) mergeAttemptRef.current = { key: attemptKey, id: crypto.randomUUID() };
     try {
-      await api.mergeConversation(id, { body: text, clientMessageId: mergeAttemptRef.current.id, ...target });
+      const result = await api.mergeConversation(id, { body: text, clientMessageId: mergeAttemptRef.current.id, ...target });
       mergeAttemptRef.current = null;
       const current = mergeNonceRef.current;
       if (current === nonce) setMergeMode(null);
       // Cancelled and not reopened, the draft is these words; reopened, it is
       // the newer merge's.
       if (current === nonce || current === null) void writeDraftText(draftKey, '');
+      // Only the merge still on screen moves the reader; a newer one is theirs.
+      if (current === nonce) onMerged?.(result);
     } catch (error) {
       if (mergeNonceRef.current === nonce) setMergeError(mergeFailureMessage(error));
       // The composer keeps the words when a send throws.
@@ -3373,8 +3412,13 @@ export function ConversationSurface({
         // to latest in the middle of a streaming turn.
         onWheel={(event) => {
           if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+          dropArrivingScroll();
           onTranscriptWheel(event.currentTarget, event.deltaY);
         }}
+        onTouchMove={dropArrivingScroll}
+        // On the container itself is its scrollbar; on a message is a click.
+        onPointerDown={(event) => { if (event.target === event.currentTarget) dropArrivingScroll(); }}
+        onKeyDown={(event) => { if (TRANSCRIPT_SCROLL_KEYS.has(event.key)) dropArrivingScroll(); }}
         onScroll={(event) => {
           const element = event.currentTarget;
           onTranscriptScroll(element);
