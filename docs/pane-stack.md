@@ -35,6 +35,7 @@ The routes are the stack:
 | `/channels/:c/threads/:t?substream=:b` | thread, breakout | Channel |
 | …and the breakout opens a panel | breakout, panel | Channel, thread |
 | …a thread's panel, expanded | panel | Channel, thread |
+| …a breakout's panel, expanded or on a phone | panel | Channel, thread, breakout |
 | `/workstreams/:t` (a thread with no Channel the person may see) | thread | — |
 
 `ChannelStack` renders the Channel in the left slot and the thread screen in the
@@ -59,8 +60,8 @@ sits beside it with the same **Expand**; expanded it covers the pane (the shell'
 `rail-expanded`, which reuses the narrow window's full-pane rules). While it stands
 alone, expanded or in a window too narrow for it beside its conversation
 (`railFillsPane`, which every phone width is), its header carries the crumbs
-as one `MarkBridge`: the Channel, when it has stepped off, and the
-conversation. That crumb collapses an expanded panel, and closes one that
+as one `MarkBridge`: the Channel, when it has stepped off, a breakout's thread
+(handed down as `parentCrumbs`), and the conversation. That crumb collapses an expanded panel, and closes one that
 cannot sit beside, which also offers no Expand. Beside its conversation the
 panel has no crumbs: with two panes on screen only the left one carries them.
 There is no lightbox over a panel any more: a full-window
@@ -179,6 +180,10 @@ so the header and the `rail-fills-pane` layout read the same rule. There the
 conversation crumb closes the panel, since collapsing would change nothing,
 and Expand is withheld. Beside its conversation the panel still has none: the
 product wants crumbs on the left pane only when two are on screen.
+
+A breakout's panel dropped the thread from that path, since the surface
+only knew the Channel's crumb; the thread screen now hands the breakout's
+crumbs down as `parentCrumbs`, the same list its own header draws.
 
 The conversation crumb also had no mark, so `TitlePillHeader` fell back to
 loose round pills instead of the fused `MarkBridge` every other header draws;
