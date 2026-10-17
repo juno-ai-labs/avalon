@@ -22,14 +22,16 @@
   measured against this conversation's purpose, does the turn call for merging
   the result up, branching a side question out, or nothing. Most answers are
   nothing, and nothing is the default the design protects.
-- **A positive is one standing suggestion on the conversation**, of kind
-  `merge_up` or `start_breakout`, drawn as a quiet line above the composer for
-  the people who can act on it. Accepting a merge opens the composer's existing
-  merge mode prefilled with that turn. Accepting a Breakout opens the existing
-  launch pane at that turn with a drafted opening prompt. The person edits and
-  sends. **Rally never merges or starts a Breakout on its own.**
-- **Quiet by construction.** At most one suggestion stands per conversation. A
-  new turn replaces it, a dismissal removes it for everyone, and it never
+- **A positive is one suggestion on that turn**, of kind `merge_up` or
+  `start_breakout`, drawn as a quiet line under Rally's message for the people
+  who can act on it, never in the composer. Accepting a merge opens the
+  composer's existing merge mode prefilled with that turn. Accepting a
+  Breakout opens the existing launch pane at that turn with a drafted opening
+  prompt. The person edits and sends. **Rally never merges or starts a
+  Breakout on its own.**
+- **Quiet by construction.** A suggestion is drawn only while its turn is one
+  of the newest three messages in the conversation; after that it hides for
+  good, acted on or not. A dismissal removes it for everyone, and it never
   lights unread, posts to Activity, pushes, or enters the model's history.
 - **Shadow first.** Phase 1 runs the classifier and records every decision
   without showing anything. The threshold, the question wording and whether
@@ -75,16 +77,17 @@ phase measures before it shows.
 ## Goals
 
 1. After a settled Rally turn whose result closes the conversation's purpose,
-   the people who can merge see one suggestion to merge that turn up, and
-   accepting it opens the existing merge composer prefilled with the turn's
-   text and target.
+   the people who can merge see one suggestion under that turn to merge it
+   up, and accepting it opens the existing merge composer prefilled with the
+   turn's text and target.
 2. After a settled Rally turn in a Thread that opened a distinct piece of work
-   beside the purpose, the people who can post see one suggestion to start a
-   Breakout from that turn, with a drafted opening prompt they edit before
-   sending.
-3. At most one suggestion stands in a conversation. It is replaced by the next
-   judgement, removed by a dismissal, and never produces a notification, an
-   Activity row, or an unread mark.
+   beside the purpose, the people who can post see one suggestion under that
+   turn to start a Breakout from it, with a drafted opening prompt they edit
+   before sending.
+3. A suggestion stays on its turn and is visible only while that turn is one
+   of the newest three messages. It is removed by a dismissal, hidden for good
+   once three newer messages exist, and never produces a notification, an
+   Activity row, or an unread mark. The composer is never touched.
 4. Every decision the classifier makes, shown or not, is recorded with its
    answer, confidence and what the people did afterwards, so the threshold
    and the question are tuned against outcomes rather than impressions.
@@ -135,8 +138,9 @@ gates in [design.md](design.md#the-gates) pass. The judgement runs in the run's
 settlement lane, after the final turn is visible, so a person reading the
 answer sees the suggestion arrive a moment later, never before.
 
-**What they see.** One line in the composer's notice slot, the same slot the
-merge mode's audience line uses, with the action and a dismiss:
+**What they see.** One line under Rally's turn, after its attachments and
+its hover action row, in the row where "Breakouts from this message" chips
+are drawn, with Rally's mark, the action and a dismiss:
 
 - `merge_up` in a Breakout: "Rally thinks this is the result for **Cold
   Outreach**. **Merge to thread** · Dismiss"
@@ -145,8 +149,19 @@ merge mode's audience line uses, with the action and a dismiss:
 - `start_breakout` in a Thread: "This looks like its own piece of work.
   **Start a breakout** · Dismiss"
 
-The wording is a draft for design to settle. The shape is fixed: one line,
-one action, one dismiss, no card in the feed.
+The wording is a draft for design to settle. The shape is fixed: one line
+under the turn, one action, one dismiss, nothing in the composer and no card
+in the feed. The mockups are in [design-mockups.html](design-mockups.html).
+
+**How long it shows.** Only while the turn is one of the newest three
+messages in the conversation, counting people's messages and Rally's replies
+and not tool cards or system rows. Once three newer messages exist the line
+is hidden for good, whether or not anyone acted and whatever the classifier
+would still say. The turn keeps its hover row, so Merge and New breakout are
+where they always were. Three is a product number, set by the product owner,
+and the constant that holds it cites this PRD. Two or three lines can be
+visible at once when the newest three turns are all results; each stays on
+its own turn.
 
 **Accepting a merge** opens the composer in merge mode, prefilled with the
 judged turn's text and the default target, exactly as pressing that turn's
@@ -161,19 +176,21 @@ Breakout is created from that turn, the suggestion resolves as `accepted`.
 **Dismissing** removes the line for everyone in the conversation and records
 who dismissed it. Nothing else happens.
 
-**Superseding.** The next human message or the next completed run replaces the
-standing suggestion with whatever the new judgement says, which is usually
-nothing. A suggestion nobody acted on before that is recorded as `ignored`.
+**Aging out.** The third newer message hides the line. A suggestion nobody
+acted on by then is recorded as `ignored`. A new judgement on a later turn
+does not touch an earlier one; the newest-three rule is the only thing that
+retires it.
 
 **Who sees it.** Only a viewer who can perform the action: for `merge_up`, the
 client's existing `mergeTargetFor` check (a Breakout member who can post in
 Main; a member who can post in an Organization-wide Thread's Channel); for
 `start_breakout`, a viewer who can post. Everyone else sees nothing.
 
-**States.** Nothing standing: no line. Open: the line. Accepting: the composer
-is in merge mode or the launch pane is open, and the line is gone for that
-viewer. Dismissed, accepted or superseded: no line. Offline: the client shows
-what it last knew and the socket reconciles.
+**States.** Nothing on the turn: no line. Open: the line, while the turn is
+among the newest three. Accepting: the composer is in merge mode or the
+launch pane is open, and the line stays on the turn until the merge or the
+Breakout lands. Dismissed, accepted or aged out: no line. Offline: the client
+shows what it last knew and the socket reconciles.
 
 **Rally's own voice.** Rally does not mention the suggestion in the transcript,
 and the suggestion does not enter the model's history. If a person asks Rally
@@ -218,16 +235,23 @@ None yet.
    misses, and the suggestion rate a threshold would produce, before a person
    sees a line. Rejected: shipping a threshold copied from the other two
    classifiers; their 0.5 was measured on their own corpora.
-4. **A suggestion is conversation state, not a message.** One row in the
-   conversation object, with a status, replaced in place. Rejected: a system
-   row in the transcript with structured content, the shape merge markers and
-   proposed drafts use. Transcript turns are immutable, so a dismissal would
-   be another row; rows accumulate, which is the 2026-08-12 failure; every
-   row takes an attention ordinal and lights unread; and an older client would
-   draw its fallback text as a system line in the feed.
-5. **One standing slot per conversation.** The newest judgement is the only
-   one that matters, so there is nothing to stack. A conversation that keeps
-   producing results gets a fresh suggestion each time, never a pile.
+4. **A suggestion is conversation state keyed to a turn, not a message.** One
+   row per judged turn in the conversation object, with a status, resolved in
+   place. Rejected: a system row in the transcript with structured content,
+   the shape merge markers and proposed drafts use. Transcript turns are
+   immutable, so a dismissal would be another row; rows accumulate, which is
+   the 2026-08-12 failure; every row takes an attention ordinal and lights
+   unread; and an older client would draw its fallback text as a system line
+   in the feed. Also rejected: the composer's notice slot, which merge mode
+   uses for its audience line. The product owner ruled it out: the suggestion
+   belongs beside the message it is about, and the composer is for what the
+   person is writing.
+5. **Visible only on the newest three turns.** A suggestion stays on its turn
+   and the feed's recency retires it: three newer messages and it is gone for
+   good. That is what keeps a busy conversation from accumulating lines
+   without a supersession write, and it matches how people read a thread: the
+   newest few turns are what they are looking at. The number is the product
+   owner's.
 6. **The observer runs in the existing settlement lane**, as a step beside
    naming and the description loop in `settleAgentRun`. That lane is already
    the platform's "something finished, look at the conversation" hook: durable
@@ -265,9 +289,9 @@ None yet.
 One table in the conversation object (`SubstreamAgent`), migration v75 after
 `channel_color_revision`: `conversation_suggestions`, one row per judgement
 that produced a suggestion, with `kind`, the judged turn and run, `status`
-(`open`, `accepted`, `dismissed`, `superseded`), the drafted text for a
+(`open`, `accepted`, `dismissed`, `expired`), the drafted text for a
 Breakout, the decision's choice, confidence and model, and who resolved it. A
-partial unique index allows one `open` row. Pacing reads the newest
+unique index allows one row per judged turn. Pacing reads the newest
 `dismissed` row per kind. The sketch is in [design.md](design.md#the-suggestion-slot);
 the authoritative record is the migration and `data-model.md`.
 
@@ -352,10 +376,8 @@ structured-inference gateway; neither is a tool.
 
 ## Open questions
 
-- **The wording and placement of the line.** The composer notice slot is the
-  proposal because it is the quietest existing surface that is still beside
-  the action. Design may prefer a line under the judged turn, next to its
-  hover actions. Either is one client change; the slot is the same.
+- **The wording of the line.** The placement is settled: under the turn,
+  never in the composer. The sentences in the mockups are a draft.
 - **Whether a Thread to Channel suggestion is wanted in the first visible
   version.** It is the sparser class and the one whose false positive is
   shown to more people. The recommendation is to run both kinds in shadow and
