@@ -58,7 +58,10 @@ A **panel** is the last level. An artifact or attachment a conversation opens
 sits beside it with the same **Expand**; expanded it covers the pane (the shell's
 `rail-expanded`, which reuses the narrow window's full-pane rules) and its
 header carries the Channel, when it has stepped off, and the conversation, whose
-crumb collapses it. There is no lightbox over a panel any more: a full-window
+crumb collapses it. Where the window is too narrow for the panel beside its
+conversation (`railFillsPane`, which every phone width is), the panel covers the
+pane unexpanded, so it carries the same crumbs there, offers no Expand, and its
+conversation's crumb closes it. There is no lightbox over a panel any more: a full-window
 view of an artifact is the panel expanded. `expandToggle`
 (`components/pane-expand-toggle.tsx`) draws the control at every level.
 
@@ -160,6 +163,18 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
   window under Xvfb, per [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-17 — A panel that fills the pane carries its crumbs
+
+A panel only drew its crumbs while expanded, but at phone width, and in any
+window too narrow for the panel beside its conversation, it covers the pane
+without being expanded. On a phone that left a lone artifact header with no
+way back but the close button and no sign of where it sat. The crumbs now
+follow whether the panel covers the pane, not whether it was asked to expand:
+`panelFillsPane` reuses the shell's `useRailFillsPane`, so the header and the
+`rail-fills-pane` layout read the same rule. There the conversation crumb
+closes the panel, since collapsing would change nothing on screen, and Expand
+is withheld, as it is at the other levels when the pane already stands alone.
 
 ### 2026-10-17 — A panel expands like a pane, and the lightbox goes
 

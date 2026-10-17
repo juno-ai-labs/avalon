@@ -26,7 +26,7 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
   onClose: () => void;
   /** Expand the panel over its conversation, or put it back. */
   expandAction?: readonly IconGroupAction[] | undefined;
-  /** What the panel sits in, as breadcrumbs, while it is expanded. */
+  /** What the panel sits in, as breadcrumbs, while it covers its conversation. */
   ancestors?: readonly TitlePillLevel[] | undefined;
   onResize: (width: number) => void;
   width: number;
