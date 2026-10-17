@@ -10,7 +10,7 @@ import type { ReactNode } from 'react';
  * what the source was asked; then the result, and whatever actions the host
  * offers under it.
  */
-export function MergeMessage({ actions, children, className, id, label, mergedBy, quote, source, time }: {
+export function MergeMessage({ actions, children, className, id, label, mergedBy, onQuote, quote, source, time }: {
   /** The host's controls under the result: hover actions, Remove. */
   actions?: ReactNode;
   /** The result itself, rendered by the host. */
@@ -24,6 +24,8 @@ export function MergeMessage({ actions, children, className, id, label, mergedBy
   mergedBy: ReactNode;
   /** The source's first line, when the host has one. */
   quote?: string | null | undefined;
+  /** Shows where the quote came from, when the host can: the line becomes a button. */
+  onQuote?: (() => void) | undefined;
   source: {
     /** The source's own mark: a Breakout's or the Thread's. */
     mark: ReactNode;
@@ -55,7 +57,9 @@ export function MergeMessage({ actions, children, className, id, label, mergedBy
       {quote && (
         <div className="merge-message-quote">
           <IconCornerUpLeft aria-hidden="true" size={13} stroke={1.9} />
-          <span>{quote}</span>
+          {onQuote
+            ? <button onClick={onQuote} type="button">{quote}</button>
+            : <span>{quote}</span>}
         </div>
       )}
       <div className="merge-message-body">{children}</div>
