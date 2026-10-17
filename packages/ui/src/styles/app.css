@@ -929,6 +929,11 @@ pre {
   z-index: 120;
 }
 .new-workstream-menu { max-width: calc(100vw - 20px); }
+/* A folded crumb's name runs to 180 characters: the menu keeps to the room
+   beside its mark and wraps a name too long for it. */
+.mark-bridge-menu { max-width: var(--radix-dropdown-menu-content-available-width); }
+.mark-bridge-menu .menu-item { overflow-wrap: anywhere; }
+.mark-bridge-menu .menu-item > svg { flex: 0 0 auto; }
 
 .menu-label { color: var(--av-sys-color-text-subtle); display: flex; flex-direction: column; font-size: var(--av-cmp-control-font-size); padding: 7px 10px; }
 .menu-label small { color: var(--av-sys-color-text-muted); margin-top: 2px; }

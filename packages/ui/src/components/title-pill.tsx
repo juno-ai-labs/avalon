@@ -370,10 +370,10 @@ function foldCrumbs(crumbs: MarkBridgeItem[]): MarkBridgeItem[] {
   return [{ key: 'folded', mark: FOLDED_MARK, name: 'Show path', menu: crumbs.slice(0, -1) }, nearest];
 }
 
-function usePhoneHeader(): PhoneHeader | null {
+function usePhoneHeader(): { phone: boolean; header: PhoneHeader | null } {
   const phone = usePhoneLayout();
   const header = useContext(PhoneHeaderContext);
-  return phone ? header : null;
+  return { phone, header: phone ? header : null };
 }
 
 function navigationMark(header: PhoneHeader): MarkBridgeItem {
@@ -385,7 +385,7 @@ function navigationMark(header: PhoneHeader): MarkBridgeItem {
  * way to the navigation is there from the first frame.
  */
 export function TitlePillNavigation(): React.JSX.Element | null {
-  const header = usePhoneHeader();
+  const { header } = usePhoneHeader();
   return header ? <MarkBridge className="title-pill-bridge has-phone-navigation window-no-drag" items={[navigationMark(header)]} /> : null;
 }
 
@@ -413,8 +413,7 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
     if (level.bridge) bridge.push({ key: level.key, ...level.bridge, onSelect: level.onSelect });
   }
   const bridged = ancestors.length > 0 && bridge.length === ancestors.length;
-  const phone = usePhoneLayout();
-  const phoneHeader = usePhoneHeader();
+  const { phone, header: phoneHeader } = usePhoneHeader();
   const lead = phoneHeader ? [navigationMark(phoneHeader)] : [];
   const shownActions = phoneHeader ? [...phoneHeader.actions, ...actions ?? []] : actions;
   const headerRef = useRef<HTMLElement>(null);
