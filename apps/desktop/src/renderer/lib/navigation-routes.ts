@@ -75,6 +75,21 @@ export function openResourceRequest(state: unknown): { threadId: string; resourc
 }
 
 /**
+ * A navigation that opens a Channel onto the message just posted there: the
+ * feed brings it into view once it is the newest row.
+ */
+export function revealChannelMessageState(messageId: string): { revealMessageId: string } {
+  return { revealMessageId: messageId };
+}
+
+/** The Channel message a navigation asked to bring into view, or null when it asked for none. */
+export function revealChannelMessageRequest(state: unknown): string | null {
+  return typeof state === 'object' && state !== null && 'revealMessageId' in state && typeof state.revealMessageId === 'string'
+    ? state.revealMessageId
+    : null;
+}
+
+/**
  * Whether the pane open on one level of the stack (a thread over its Channel,
  * a breakout over its thread) is expanded. Held for the pane it was asked on,
  * so it drops when that pane closes or another opens, which then opens beside,
