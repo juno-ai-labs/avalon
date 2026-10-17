@@ -81,7 +81,7 @@ import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import { httpHostname, useHostFavicon } from '../lib/host-favicon';
 import { isThinkingEvent, thoughtVerb } from '../lib/transcript';
-import type { ElicitationData, Message, MessageMention, WorkTotal } from '../lib/types';
+import type { ElicitationData, Message, MessageMention, MessageMergedInto, WorkTotal } from '../lib/types';
 import { useTextClamped } from '../lib/use-text-clamped';
 import { AgentWorkTiming } from './agent-work-timing';
 import { MessageByline } from './message-byline';
@@ -110,7 +110,7 @@ import {
   type CitationRender,
 } from './markdown-citations';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
-import { MergeMessage } from '@rally/ui/components/merge-message';
+import { MergedIntoDivider, MergeMessage } from '@rally/ui/components/merge-message';
 import { Avatar, Button, ConnectorMark, InlineError, RallyAvatar, RallyMark, Tip, TipGroup } from './primitives';
 import { RelativeTime } from './relative-time';
 import { useSpeechPlayback } from './speech-playback';
@@ -2668,6 +2668,8 @@ interface MessageBlockProps {
   merge?: MessageMergeAction;
   /** Opens a Breakout a merge names. */
   onOpenBreakout?: (breakoutId: string) => void;
+  /** Opens the merge a source's Merged chip names, where it landed. */
+  onOpenMerge?: (merge: MessageMergedInto) => void;
   /**
    * How this transcript resolves and opens a citation. Absent on a surface
    * without a work stream behind it, which is exactly when every citation in a
@@ -2708,6 +2710,7 @@ export function MessageBlock({
   onStartSubstream,
   merge,
   onOpenBreakout,
+  onOpenMerge,
   citations,
   collapseHeadings = false,
   currentUserId,
@@ -2858,6 +2861,22 @@ export function MessageBlock({
   // label rather than showing a blank author.
   const automationName = message.automationActivation?.automationName;
   const automationAuthor = automationName ?? 'Sidekick';
+  // A merge's mark in its source: a divider whose line opens the merge where
+  // it landed, ahead of the system branch it would otherwise read as a note in.
+  const mergedInto = message.mergedInto;
+  if (mergedInto) {
+    const merger = presentations.get(mergedInto.mergedByUserId)?.displayName;
+    return (
+      <MergedIntoDivider
+        byRally={mergedInto.actingAgent}
+        id={`message-${message.id}`}
+        mergedBy={merger}
+        onOpen={onOpenMerge ? () => onOpenMerge(mergedInto) : undefined}
+        target={mergedInto.title || (mergedInto.kind === 'thread' ? 'the thread' : 'the channel')}
+        time={<RelativeTime value={message.createdAt} />}
+      />
+    );
+  }
   if (!automation && (message.authorType === 'system' || message.messageType === 'system')) {
     return <SystemMessageBlock disclosure={rowDisclosure} message={message} />;
   }

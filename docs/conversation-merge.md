@@ -28,7 +28,7 @@ holds it.
 | `apps/api/src/routes/spaces.ts` | The feed's contract-7 stripping, and `DELETE /spaces/:id/messages/:messageId` (Remove). |
 | `apps/api/src/services/conversation-tools.ts` | `conversation_merge`; see [`conversation-tools.md`](conversation-tools.md). |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | `mergeTargetFor` (who can merge where), the composer's merge mode, the audience line, the Breakout card's **Merged** chip. |
-| `packages/ui/src/components/merge-message.tsx` | `MergeMessage`, the one block every merge is drawn with, in a Thread and in a Channel. |
+| `packages/ui/src/components/merge-message.tsx` | `MergeMessage`, the one block every merge is drawn with, in a Thread and in a Channel; `MergedIntoDivider`, the source's mark of a merge. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MergeButton`, after New breakout in both hover rows, and a Thread merge drawn as `MergeMessage`. |
 | `apps/desktop/src/renderer/screens/channel.tsx` | `MergeCard`, a Channel merge in the feed as `MergeMessage`. |
 | `packages/ui/src/components/conversation-menus.tsx` | The title menu's Merge row (`ConversationRowActions.merge`). |
@@ -100,6 +100,39 @@ feed does no per-viewer resource lookup, and opening an artifact opens the
 thread it is attached to. `DELETE /spaces/:id/messages/:messageId` deletes
 the row; its author or an Organization owner or admin may. The client offers
 no control for it.
+
+### The source's merge divider
+
+After either merge lands, `ConversationMergeService.markSource` appends a
+system row to the source (the Breakout, or the Thread's Main) through the
+message port, with `structuredContent` `{ type: "conversation_merged_into",
+mergedInto: { kind, id, title }, messageId, mergedByUserId, actingAgent }`
+(`ConversationMergedIntoV1`) and the text "Merged into <target>". Its client
+id is a hash of the target and the merge's `clientMessageId`, so a retried
+merge replays the row too, and a retry after a lost marker writes it. The
+client draws it as `MergedIntoDivider`, a line across the feed like a day
+separator: "↰ Adam merged this into **General** · just now", or "↰ Rally
+merged this into **General** for Adam" when Rally merged it through
+`conversation_merge`. The line opens the merge where it landed: a Channel
+merge opens the Channel with `revealChannelMessageState(messageId,
+{ searchHistory: true })`, and the feed pages back until the row is loaded,
+scrolls it to the middle and lights it briefly; a Breakout merge closes the
+Breakout and scrolls the Thread to the merge's turn (`scrollToTurn`). It is
+the same reveal the merge itself uses to show what was just posted, which
+instead waits for the message to be the Channel's newest row, and the same
+brief light.
+
+A system row is UI state: it never enters the model's history and starts no
+run. It does count toward the source's unread, as any new row does. A merge
+Rally makes mid-run gets its row the same way, and it draws where the merge
+happened: after the tool step, before Rally's reply.
+
+The merge lands before its marker is written, so a marker that cannot be
+written is logged as `conversation_merge_source_marker_failed`, naming the
+source, the target and the reason. It does not fail the merge: a reader told
+"failed" about a merge everyone can already see would send it again. A reader
+who reaches only the Breakout, not its thread, sees the divider as a label,
+since there is nowhere for them to go.
 
 ### Every merge looks the same
 
@@ -247,6 +280,9 @@ admission's own insert flag. The body's limit is the send path's
 
 ## Testing
 
+- `apps/api/test-workers/conversation-tools.test.ts`, "leaves one Merged
+  marker in the Breakout" (workerd): the marker's tags, and one row however
+  often the merge is retried.
 - `apps/api/test-workers/channels-threads-navigation.test.ts`, "Channel
   merges" (workerd): bottom of the feed with its thread named, news to the
   member and not the merger, replay and replace, refusals for a private thread
@@ -280,7 +316,42 @@ composer's audience line says before anything is attached. A personal
 connection's resource can be embedded only by its owner. Removing a merge
 leaves its attachments, since people may already rely on them.
 
+The source's divider names its target to everyone who reads the source. A
+thread merged into a private or Personal Channel therefore shows that
+Channel's name, and its id in the row, to every member who can read the
+thread, which `listing-rules.md` otherwise keeps from them. This is a product
+choice, made in review: a source that always says where its work went is worth
+more than keeping a private Channel's name hidden.
+
 ## Changelog
+
+### 2026-10-16 — The source shows it was merged
+
+**What changed:** A merge leaves a system row in its source, drawn as a
+divider across the feed ("Adam merged this into **General**") that opens the
+merge where it landed.
+
+**Why:** After a merge, the Breakout or Thread it came from showed nothing.
+People reading the source could not tell its result had gone up, or find
+it.
+
+**Considered and rejected:** Deriving the divider on the client from the
+target's merges. The source's feed never loads the Channel's feed or the
+Thread's transcript, so it would mean a second read on every open. Also
+rejected: a new column or table, since a system row with structured content
+already exists and stays out of the model's history. For the look, six
+options were drawn: a pill chip, a quiet line, a green status pill, a preview
+card, this divider, and a state on the merged message itself. The divider won
+because a merge closes a chapter of the source, and the feed already marks
+breaks in time with a line of this shape. The state on the message would also
+need the merged message's id stored.
+
+**Consequences:** A Channel merge's message id is stable for the thread and
+Channel, so an older divider opens the current merge there, which is the right
+one. A Breakout's divider names the merge it made. The marker raises the source's
+unread like any row. Rally's merges leave one too, marked as Rally's for the
+person it served. The Channel merge itself still names only that person: a
+Channel message carries no `actingAgent`.
 
 ### 2026-10-16 — The Channel merge card loses Remove
 

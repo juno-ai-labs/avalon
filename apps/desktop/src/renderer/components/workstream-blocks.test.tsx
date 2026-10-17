@@ -2951,6 +2951,27 @@ describe('MessageBlock merge-back', () => {
       .toEqual(['New breakout', 'Merge to GTM']);
   });
 
+  it('draws a source’s merge marker as a chip that opens the merge where it landed', () => {
+    const onOpenMerge = vi.fn();
+    const mergedInto = { kind: 'channel' as const, id: 'space-general', title: 'General', messageId: 'channel-message-1', mergedByUserId: 'user-alex', actingAgent: false };
+    render(<MessageBlock {...actions} message={{
+      ...baseMessage, id: 'marker-1', authorType: 'system', author: undefined, messageType: 'system',
+      text: 'Merged into General', mergedInto,
+    }} onOpenMerge={onOpenMerge} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Merged into General. Open the merge' }));
+    expect(onOpenMerge).toHaveBeenCalledExactlyOnceWith(mergedInto);
+  });
+
+  it('names Rally on a merge it made for someone', () => {
+    render(<MessageBlock {...actions} message={{
+      ...baseMessage, id: 'marker-2', authorType: 'system', author: undefined, messageType: 'system',
+      text: 'Merged into General',
+      mergedInto: { kind: 'channel', id: 'space-general', title: 'General', messageId: 'channel-message-1', mergedByUserId: 'user-alex', actingAgent: true },
+    }} onOpenMerge={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Merged into General. Open the merge' }).textContent)
+      .toContain('Rally merged this into');
+  });
+
   it('offers no Merge on a message still being sent', () => {
     render(<MessageBlock {...actions} merge={{ label: 'Merge to thread', onMerge }}
       message={{ ...baseMessage, deliveryState: 'sending' }} />);

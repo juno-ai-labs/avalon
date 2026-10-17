@@ -10,13 +10,18 @@ import {
   type ConversationMergeRequest,
   type ConversationMergeResult,
   type ConversationMergeV1,
+  type ConversationMergedIntoV1,
 } from "@rally/contracts";
 
 import { workspaceDOName } from "../durable-objects/names";
 import type { SpaceActorAuth } from "../durable-objects/workspace-space-protocol";
 import type { AuthContext, Env } from "../env";
 import { ApiError, asApiError } from "../lib/api-error";
+import { sha256Hex } from "../lib/crypto";
+import { uuidV7 } from "../lib/uuid-v7";
+import { logError } from "../observability/logger";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { createMessageObjectPort } from "../runtime/message-port";
 import { ConversationService } from "./conversation-service";
 import type { WorkstreamObjectClient } from "./workstream-object-client";
 
@@ -73,9 +78,62 @@ export class ConversationMergeService {
     request: ConversationMergeRequest,
     options: { actingAgent?: boolean } = {},
   ): Promise<ConversationMergeResult> {
-    return request.breakoutId === undefined
-      ? this.mergeIntoChannel(threadId, request)
-      : this.mergeIntoThread(threadId, request.breakoutId, request, options.actingAgent === true);
+    const actingAgent = options.actingAgent === true;
+    const result = request.breakoutId === undefined
+      ? await this.mergeIntoChannel(threadId, request)
+      : await this.mergeIntoThread(threadId, request.breakoutId, request, actingAgent);
+    // The merge has landed: a marker that cannot be written is logged, not
+    // reported as a failed merge the reader would then send again.
+    await this.markSource(threadId, request, result, actingAgent).catch((error: unknown) => {
+      logError(this.env, "conversation_merge_source_marker_failed", {
+        workspace_id: this.auth.workspaceId,
+        thread_id: threadId,
+        breakout_id: request.breakoutId ?? null,
+        target_kind: result.mergedInto.kind,
+        target_id: result.mergedInto.id,
+        reason: asApiError(error)?.code ?? (error instanceof Error ? error.message : String(error)),
+      });
+    });
+    return result;
+  }
+
+  /**
+   * Leave a system row in the source saying where the result went, which the
+   * client draws as a divider that opens the merge. Keyed by the merge's
+   * operation and target, so a retry, which replays the merge, writes no
+   * second row, and finishes one a failed attempt left unwritten. Rally's
+   * merges leave one too, marked as Rally's for the person it served. A
+   * merge into a private or Personal Channel leaves one as well, naming that
+   * Channel to every reader of the thread: a product choice, for a source
+   * that always says where its work went.
+   */
+  private async markSource(
+    threadId: string,
+    request: ConversationMergeRequest,
+    result: ConversationMergeResult,
+    actingAgent: boolean,
+  ): Promise<void> {
+    const marker: ConversationMergedIntoV1 = {
+      type: "conversation_merged_into",
+      schemaVersion: 1,
+      mergedInto: result.mergedInto,
+      messageId: result.messageId,
+      mergedByUserId: asUserId(this.auth.userId),
+      actingAgent,
+    };
+    const key = await sha256Hex(`${result.mergedInto.kind}:${result.mergedInto.id}:${request.clientMessageId}`);
+    await createMessageObjectPort(this.env, this.auth.workspaceId, threadId, undefined, request.breakoutId).appendMessage({
+      messageId: uuidV7(Date.now()),
+      clientMessageId: `merged-into:${key.slice(0, 48)}`,
+      authorType: "system",
+      authorUserId: null,
+      externalActorJson: null,
+      messageType: "system",
+      text: `Merged into ${result.mergedInto.title || (result.mergedInto.kind === "thread" ? "the thread" : "the channel")}`,
+      structuredContentJson: JSON.stringify(marker),
+      producedByRunId: null,
+      now: Date.now(),
+    });
   }
 
   /** The Channels this thread could merge into for this person, and the default. */
