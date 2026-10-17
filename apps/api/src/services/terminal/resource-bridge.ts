@@ -232,6 +232,8 @@ async function swapPublishedContent(input: {
   contentMode: string;
   derivativeStatus: string;
   harnessRunId: string;
+  /** The person the run acts for, when a person started it. */
+  onBehalfOfUserId: string | null;
   effectIntentId: string;
   publicationEventType: "resource_attached" | "resource_updated";
 }): Promise<PublishedRow> {
@@ -285,7 +287,7 @@ async function swapPublishedContent(input: {
               model_content_claim_id = NULL, model_content_error_code = NULL,
               revision_author_kind = 'agent', revision_author_run_id = ?,
               revision_author_user_id = NULL, revision_author_connection_id = NULL,
-              revision_cause = 'published'
+              revision_cause = 'published', revision_on_behalf_of_user_id = ?
         WHERE id = ? AND workspace_id = ? AND content_ref IS ? AND content_sha256 IS ?
       RETURNING id, title, mime_type, content_ref, content_sha256, metadata_json,
                 model_content_status, created_at`,
@@ -298,6 +300,7 @@ async function swapPublishedContent(input: {
       timestamp,
       input.derivativeStatus,
       input.harnessRunId,
+      input.onBehalfOfUserId,
       existing.id,
       workspaceId,
       existing.content_ref,
@@ -377,6 +380,12 @@ export function createTerminalResourceBridge(
    * which is this run's own, rather than from the sandbox's.
    */
   importingSubstreamId?: string | null,
+  /**
+   * The person who asked for this run (`runRequesterUserId`), recorded on each
+   * revision it publishes so the revision is never news to them. Null for a
+   * Sidekick run, whose principal nobody asked to act.
+   */
+  onBehalfOfUserId: string | null = null,
 ): TerminalResourceBridge {
   // The layered runtime database routes resource rows to WorkspaceDO and
   // tool/link rows to SubstreamAgent. Keep every statement single-authority;
@@ -998,6 +1007,7 @@ export function createTerminalResourceBridge(
           contentMode,
           derivativeStatus,
           harnessRunId: context.harnessRunId,
+          onBehalfOfUserId,
           effectIntentId,
           publicationEventType: "resource_updated",
         });
@@ -1259,6 +1269,7 @@ export function createTerminalResourceBridge(
           contentMode: "unsupported",
           derivativeStatus: "unsupported",
           harnessRunId: context.harnessRunId,
+          onBehalfOfUserId,
           effectIntentId,
           publicationEventType: "resource_updated",
         });

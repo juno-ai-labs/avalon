@@ -3,7 +3,7 @@ import type {
   HarnessToolContext,
   HarnessToolResult,
 } from "@rally/agent-harness";
-import type { WorkstreamWorkflowInput } from "@rally/contracts";
+import { runRequesterUserId, type WorkstreamWorkflowInput } from "@rally/contracts";
 
 import type { Env } from "../../env";
 import { numericEnv } from "../../env";
@@ -98,7 +98,7 @@ export function createAvalonMultimodalGenerationPlugin(
   ): Promise<HarnessToolResult> => {
     const startedAt = Date.now();
     try {
-      const resourceContext = requireResourceContext(context);
+      const resourceContext = requireResourceContext(context, runRequesterUserId(input));
       const edit = operation === "edit" ? arguments_ as EditImageArguments : null;
       const replay = await resources.findPublished(resourceContext, operation, edit?.resourceId);
       if (replay) return toolResult(replay, operation);
@@ -189,7 +189,7 @@ export function createAvalonMultimodalGenerationPlugin(
   ): Promise<HarnessToolResult> => {
     const startedAt = Date.now();
     try {
-      const resourceContext = requireResourceContext(context);
+      const resourceContext = requireResourceContext(context, runRequesterUserId(input));
       const replay = await audioResources.findPublished(resourceContext);
       if (replay) return audioToolResult(replay);
 
@@ -258,7 +258,7 @@ export function createAvalonMultimodalGenerationPlugin(
   });
 }
 
-function requireResourceContext(context: HarnessToolContext): ResourceContext {
+function requireResourceContext(context: HarnessToolContext, onBehalfOfUserId: string | null): ResourceContext {
   if (!context.effectIntentId) {
     throw new MultimodalGenerationError(
       "effect_intent_required",
@@ -272,6 +272,7 @@ function requireResourceContext(context: HarnessToolContext): ResourceContext {
     harnessRunId: context.harnessRunId,
     effectIntentId: context.effectIntentId,
     executionPrincipal: context.executionPrincipal,
+    onBehalfOfUserId,
   };
 }
 

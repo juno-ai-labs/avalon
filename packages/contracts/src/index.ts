@@ -3737,6 +3737,8 @@ export const WorkstreamWorkflowInputSchema = z.object({
   automationContinuation: z.strictObject({
     stopGeneration: z.number().int().nonnegative(),
     senderName: z.string().min(1).max(200),
+    /** The member who sent the input, when a member did: who asked for this turn. */
+    senderUserId: UserIdSchema.optional(),
     source: z.discriminatedUnion("kind", [
       z.strictObject({ kind: z.literal("run") }),
       z.strictObject({ kind: z.literal("provider_thread"), provider: z.string().min(1).max(100) }),
@@ -4322,6 +4324,21 @@ export type SlackOriginAttachment = z.infer<typeof SlackOriginAttachmentSchema>;
 export type SlackOriginNearbyMessage = z.infer<typeof SlackOriginNearbyMessageSchema>;
 export type SlackOriginContext = z.infer<typeof SlackOriginContextSchema>;
 export type WorkstreamWorkflowInput = z.infer<typeof WorkstreamWorkflowInputSchema>;
+/**
+ * The person who asked for this run, or null when nobody did. A Sidekick run
+ * carries a person as its principal too, but only as who it runs as: a turn
+ * continuing it was asked for by the member who sent the input, a run started
+ * by hand by whoever started it, and a scheduled or inbound run by nobody.
+ */
+export function runRequesterUserId(
+  input: Pick<WorkstreamWorkflowInput, "executionPrincipal" | "automationRun" | "automationContinuation">,
+): string | null {
+  if (input.automationContinuation) return input.automationContinuation.senderUserId ?? null;
+  if (input.automationRun) {
+    return input.automationRun.trigger.kind === "manual" ? input.automationRun.trigger.requestedByUserId : null;
+  }
+  return input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null;
+}
 
 export const TerminalNetworkModeSchema = z.enum(["trusted_only", "full_internet"]);
 export const TerminalNetworkVerificationStateSchema = z.enum(["pending", "verified", "failed"]);
