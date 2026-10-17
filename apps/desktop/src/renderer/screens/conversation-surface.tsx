@@ -54,7 +54,7 @@ import { useBrowserRailLinks } from '../lib/browser-rail-links';
 import { BreakoutTickBar, breakoutsByOrigin, orderBreakoutsForTicks, type BreakoutMark } from '@rally/ui/components/breakout-marks';
 import type { TitleMenuPeople } from '@rally/ui/components/conversation-menus';
 import { TitlePillNavigation, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
+import { WorkstreamGlyph, workstreamMark } from '@rally/ui/components/workstream-glyph';
 import { RelativeTime } from '../components/relative-time';
 import { BreakoutOrigin, breakoutOriginMessages, originExcerpt } from '../components/breakout-origin';
 import { formatDateTime } from '../lib/format';
@@ -1927,20 +1927,27 @@ export function ConversationSurface({
   // panel covers the pane whether or not it was expanded.
   const panelFillsPane = useRailFillsPane(useUiStore((state) => state.sidebarWidth));
   const panelExpandAction = expandToggle(panelExpanded, !panelFillsPane, setPanelExpanded);
-  // Covering its conversation, the panel's header carries what it covers, as
-  // an expanded breakout's does: the Channel when it has stepped off, then
-  // this conversation, which puts the panel back beside it or, where it
-  // cannot sit beside, closes it.
-  const panelAncestors: TitlePillLevel[] | undefined = !panelExpanded && !panelFillsPane ? undefined : [
+  // The panel's header always carries what it sits in, as a breakout's does:
+  // the Channel when it has stepped off, then this conversation. That crumb
+  // collapses an expanded panel back beside it, and otherwise closes the
+  // panel: beside, the conversation is already on screen, and where the
+  // panel cannot sit beside, collapsing would change nothing.
+  const conversationTitle = routedDetail?.title ?? '';
+  const panelAncestors: TitlePillLevel[] = [
     ...(channelPane?.shifted ? [channelPane.crumb] : []),
     {
       key: `panel-conversation:${conversationAddress}`,
       icon: <WorkstreamGlyph appearance={routedDetail?.appearance} id={id} size={24} />,
-      title: routedDetail?.title ?? '',
-      label: `Show ${routedDetail?.title ?? 'the conversation'}`,
+      bridge: {
+        mark: workstreamMark(id, routedDetail?.appearance ?? undefined),
+        name: conversationTitle,
+        action: parentKind === 'automation' ? 'Open Sidekick' : substreamId === '0' ? 'Open thread' : 'Open breakout',
+      },
+      title: conversationTitle,
+      label: `Show ${conversationTitle || 'the conversation'}`,
       onSelect: () => {
-        setPanelExpanded(false);
-        if (panelFillsPane) closeOwnRail();
+        if (panelExpanded && !panelFillsPane) setPanelExpanded(false);
+        else closeOwnRail();
       },
     },
   ];
