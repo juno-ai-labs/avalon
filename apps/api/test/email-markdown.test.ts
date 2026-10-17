@@ -116,25 +116,30 @@ describe("email markdown rendering", () => {
     ].join("\n"));
   });
 
-  it("drops a labelled link's target on request and keeps a bare address", () => {
+  it("speaks a named link as its label and a bare address as a link to its domain", () => {
     const source = [
-      "Read [the plan](https://example.com/plan), then https://example.com/raw.",
+      "Read [the plan](https://example.com/plan), then <https://docs.github.com/en/actions> or www.bbc.co.uk/news.",
+      "",
+      "Run `curl https://api.example.com/health` (see https://www.apple.com/iphone/compare).",
       "",
       "| Doc | Where |",
       "| --- | --- |",
-      "| Plan | [the plan](https://example.com/plan) |",
+      "| Plan | [https://example.com/plan](https://example.com/plan) |",
     ].join("\n");
 
-    expect(markdownToEmailText(source, { linkTargets: "drop" })).toBe([
-      "Read the plan, then https://example.com/raw.",
+    expect(markdownToEmailText(source, { linkTargets: "spoken" })).toBe([
+      "Read the plan, then link to github.com or link to bbc.co.uk.",
+      "",
+      "Run curl https://api.example.com/health (see link to apple.com).",
       "",
       "| Doc | Where |",
       "| --- | --- |",
-      "| Plan | the plan |",
+      "| Plan | link to example.com |",
     ].join("\n"));
     // The default is unchanged: a text-only mail client has no other way to
-    // follow the link than the address written beside it.
-    expect(markdownToEmailText(source)).toContain("Read the plan (https://example.com/plan), then");
+    // follow a link than the address written beside it.
+    expect(markdownToEmailText(source))
+      .toContain("Read the plan (https://example.com/plan), then <https://docs.github.com/en/actions> or www.bbc.co.uk/news.");
   });
 
   it("strips markdown out of the inbox preview line", () => {
