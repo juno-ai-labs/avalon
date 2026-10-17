@@ -15,8 +15,9 @@ import { landingSpaceId, skippedWorkstreamIds } from '../lib/workstream-landing'
  * their first pinned Channel, else General, else the first
  * Channel A–Z. A thread a screen just left (archived, made unread) is never
  * reopened from the saved route. A saved thread under a Channel reopens
- * expanded, as the Channel and the sidebar open one; a saved breakout leaves
- * its thread as it was, since that request would expand the breakout.
+ * expanded, as the Channel and the sidebar open one. A saved breakout is
+ * named as restored instead, so its thread returns to Main when the breakout
+ * was merged or removed since; an expand request would expand the breakout.
  */
 export function WorkstreamLandingScreen(): React.JSX.Element {
   const { session } = useAppSession();
@@ -29,8 +30,11 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
     ? readLayout(layoutKey(session.workspace.id, session.user.id, 'last-route')) : null;
   const savedThreadId = /\/(?:threads|workstreams)\/([^/?]+)/.exec(savedRoute ?? '')?.[1] ?? null;
   if (savedRoute && /^\/(channels|workstreams)\//.test(savedRoute) && (savedThreadId === null || !skipped.has(savedThreadId))) {
-    const expandsThread = savedThreadId !== null && savedRoute.startsWith('/channels/') && !savedRoute.includes('?substream=');
-    return <Navigate replace state={expandsThread ? OPEN_EXPANDED : null} to={savedRoute} />;
+    const savedBreakoutId = new URLSearchParams(savedRoute.split('?')[1] ?? '').get('substream');
+    const expandsThread = savedThreadId !== null && savedRoute.startsWith('/channels/') && savedBreakoutId === null;
+    const restoreState = savedBreakoutId !== null ? { restoredBreakout: savedBreakoutId }
+      : expandsThread ? OPEN_EXPANDED : null;
+    return <Navigate replace state={restoreState} to={savedRoute} />;
   }
   const channels = active.data?.items;
   if (!channels) {

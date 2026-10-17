@@ -23,7 +23,9 @@ vi.mock('../lib/workspace-socket', () => ({ useWorkspaceSocket: () => socket }))
 
 function Destination(): React.JSX.Element {
   const location = useLocation();
-  return <div data-expanded={expandRequest(location) !== null} data-testid="destination">{location.pathname}{location.search}</div>;
+  const restored = typeof location.state === 'object' && location.state !== null && 'restoredBreakout' in location.state
+    ? String(location.state.restoredBreakout) : '';
+  return <div data-expanded={expandRequest(location) !== null} data-restored={restored} data-testid="destination">{location.pathname}{location.search}</div>;
 }
 
 function Router({ initial = '/', pins = [] }: {
@@ -50,12 +52,13 @@ describe('the root landing', () => {
     socket.sidebarConnect = null;
   });
 
-  it('reopens the thread and breakout this device last had open', async () => {
+  it('reopens the thread and breakout this device last had open, naming the breakout restored', async () => {
     localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/channels/outbound/threads/plan?substream=child');
     render(<Router />);
     const destination = await screen.findByTestId('destination');
     expect(destination).toHaveTextContent('/channels/outbound/threads/plan?substream=child');
     expect(destination).toHaveAttribute('data-expanded', 'false');
+    expect(destination).toHaveAttribute('data-restored', 'child');
   });
 
   it('reopens a thread under its Channel expanded', async () => {
