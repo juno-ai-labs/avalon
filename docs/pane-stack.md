@@ -62,8 +62,7 @@ alone, expanded or in a window too narrow for it beside its conversation
 (`railFillsPane`, which every phone width is), its header carries the crumbs
 as one `MarkBridge`: the Channel, when it has stepped off, a breakout's thread
 (handed down as `parentCrumbs`), and the conversation. That crumb collapses an expanded panel, and closes one that
-cannot sit beside, which also offers no Expand. Beside its conversation the
-panel has no crumbs: with two panes on screen only the left one carries them.
+cannot sit beside, which also offers no Expand.
 There is no lightbox over a panel any more: a full-window
 view of an artifact is the panel expanded. `expandToggle`
 (`components/pane-expand-toggle.tsx`) draws the control at every level.
@@ -185,10 +184,6 @@ product wants crumbs on the left pane only when two are on screen.
 A breakout's panel dropped the thread from that path, since the surface
 only knew the Channel's crumb; the thread screen now hands the breakout's
 crumbs down as `parentCrumbs`, the same list its own header draws.
-
-The conversation crumb also had no mark, so `TitlePillHeader` fell back to
-loose round pills instead of the fused `MarkBridge` every other header draws;
-it now carries its `workstreamMark`.
 
 ### 2026-10-17 — A panel expands like a pane, and the lightbox goes
 

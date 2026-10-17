@@ -1934,19 +1934,17 @@ export function ConversationSurface({
   // panel covers the pane whether or not it was expanded.
   const panelFillsPane = useRailFillsPane(useUiStore((state) => state.sidebarWidth));
   const panelExpandAction = expandToggle(panelExpanded, !panelFillsPane, setPanelExpanded);
-  // Alone on screen, expanded or with no room beside, the panel's header
-  // carries what it covers, as a breakout's does: the Channel when it has
-  // stepped off (and a breakout's thread), then this conversation. Beside
-  // it, the conversation's own header holds the crumbs. The conversation crumb collapses an expanded
-  // panel back beside it, or closes the panel where it cannot sit beside.
+  // Alone on screen, the panel carries the crumbs of what it covers
+  // (`docs/pane-stack.md`). A breakout's mark is seeded by its own id.
   const conversationTitle = routedDetail?.title ?? '';
+  const conversationMarkId = substreamId === '0' ? id : substreamId;
   const panelAncestors: TitlePillLevel[] | undefined = !panelExpanded && !panelFillsPane ? undefined : [
     ...(parentCrumbs ?? (channelPane?.shifted ? [channelPane.crumb] : [])),
     {
       key: `panel-conversation:${conversationAddress}`,
-      icon: <WorkstreamGlyph appearance={routedDetail?.appearance} id={id} size={24} />,
+      icon: <WorkstreamGlyph appearance={routedDetail?.appearance} id={conversationMarkId} size={24} />,
       bridge: {
-        mark: workstreamMark(id, routedDetail?.appearance ?? undefined),
+        mark: workstreamMark(conversationMarkId, routedDetail?.appearance ?? undefined),
         name: conversationTitle,
         action: parentKind === 'automation' ? 'Open Sidekick' : substreamId === '0' ? 'Open thread' : 'Open breakout',
       },
