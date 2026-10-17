@@ -109,7 +109,10 @@ export const WORKSPACE_ARTIFACT_PINS_MIGRATION: readonly string[] = [
  * Whether one `resource_versions` row is news to the person who pinned the
  * artifact: a republish or a replacement (never the first version, a refetch,
  * or the bookkeeping captures that carry no cause), made after they pinned it,
- * by somebody other than them. `version` and `pin` are the aliases in scope.
+ * and not by them. Today only agents write those causes, and an agent's version
+ * names its run rather than a person, so a revision the pinner asked Rally for
+ * counts too: telling it apart needs the run's requester on the version, which
+ * nothing records yet. `version` and `pin` are the aliases in scope.
  * One definition, read by the trigger that queues a push, the Artifacts list's
  * unread state, and the Activity row, so the three cannot disagree.
  */

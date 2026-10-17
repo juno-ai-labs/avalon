@@ -5,7 +5,7 @@ import {
   IdSchema,
   MemberPreferencesUpdateSchema,
   NotificationChannelSchema,
-  NotificationChannelsSchema,
+  NotificationChannelsChoiceSchema,
   NotificationKindSchema,
   PushPreferencesSchema,
   WorkspaceIdSchema,
@@ -102,12 +102,7 @@ type ChosenNotify = { [Kind in NotificationKind]?: NotificationChannel[] | undef
  * The stored record's shape: every kind optional and none defaulted, so a
  * kind the person never set stays absent rather than reading as its default.
  */
-const StoredNotifySchema = NotificationChannelsSchema
-  .extend({
-    merges: NotificationChannelsSchema.shape.merges.unwrap(),
-    artifactUpdates: NotificationChannelsSchema.shape.artifactUpdates.unwrap(),
-  })
-  .partial();
+const StoredNotifySchema = NotificationChannelsChoiceSchema;
 
 /** The kinds this person has set, as stored. */
 function storedNotify(json: string | null | undefined): ChosenNotify {

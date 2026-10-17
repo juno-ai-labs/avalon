@@ -127,10 +127,15 @@ table's order rules and the one per-person limit, but not the wire list:
 **Updates.** A pinned artifact is unread while somebody else has made a
 version of it, since it was pinned, that the person has not seen
 (`artifactUpdateSql`: a republish or a replacement, never the first version,
-a refetch or a bookkeeping capture). What they have seen is their Activity
+a refetch or a bookkeeping capture). Only agents write those versions today,
+and an agent's version names its run rather than a person, so a revision the
+pinner asked Rally for counts as news too; excluding it needs the run's
+requester recorded on the version. What they have seen is their Activity
 waterline on the subject `artifact:<id>`, moved to the version that was
 current when the artifact was opened in a panel, so the pin's unread state and
-its `artifact_updated` Activity rows settle together. A version that arrives
+its `artifact_updated` Activity rows settle together. Mark all read covers the
+pins as it covers the rows. A panel behind the browser rail is not on screen,
+and in a gallery only the image shown is seen. A version that arrives
 while the panel is open is not the one on screen and stays unread until the
 artifact is opened again. An unpin takes the artifact's rows out of Activity,
 so it tells the person's windows to read Activity again. The Artifacts button counts the unread pins, and so does

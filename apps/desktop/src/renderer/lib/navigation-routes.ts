@@ -100,7 +100,8 @@ export function revealChannelMessageRequest(state: unknown): { messageId: string
  * so it drops when that pane closes or another opens, which then opens beside,
  * unless the navigation that opened it asked for it expanded. A request counts
  * once per navigation, so one onto the pane already open expands it again
- * after a Collapse. A level passes `honorsRequest` false for a navigation
+ * after a Collapse, and a pane closed and opened again under the same
+ * navigation opens beside. A level passes `honorsRequest` false for a navigation
  * whose request is aimed at the level below it.
  */
 export function usePaneExpansion(paneId: string | null, honorsRequest = true): {
@@ -109,12 +110,18 @@ export function usePaneExpansion(paneId: string | null, honorsRequest = true): {
 } {
   const location = useLocation();
   const request = honorsRequest ? expandRequest(location) : null;
-  const [expandedId, setExpandedId] = useState<string | null>(request === null ? null : paneId);
+  const asked = request !== null && paneId !== null;
+  const [expandedId, setExpandedId] = useState<string | null>(asked ? paneId : null);
+  // The request a pane already took: one that closes and opens again under
+  // the same navigation opens beside, as it would from anywhere else.
+  const [consumed, setConsumed] = useState<string | null>(asked ? request : null);
   const [heldFor, setHeldFor] = useState({ paneId, request });
   if (heldFor.paneId !== paneId || heldFor.request !== request) {
     setHeldFor({ paneId, request });
-    if (request !== null) setExpandedId(paneId);
-    else if (heldFor.paneId !== paneId) setExpandedId(null);
+    if (request !== null && paneId !== null && request !== consumed) {
+      setExpandedId(paneId);
+      setConsumed(request);
+    } else if (heldFor.paneId !== paneId) setExpandedId(null);
   }
   const setExpanded = useCallback((expand: boolean): void => setExpandedId(expand ? paneId : null), [paneId]);
   return { expanded: paneId !== null && expandedId === paneId, setExpanded };

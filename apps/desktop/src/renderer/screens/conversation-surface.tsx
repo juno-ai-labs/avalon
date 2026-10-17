@@ -1882,8 +1882,17 @@ export function ConversationSurface({
   // pin's unread state and its Activity rows settle on the same waterline. A
   // version that arrives while it is open is not the one on screen, so it
   // stays unread until the artifact is opened again.
-  const shownResourceId = !railOpen || !panel ? null
-    : panel.kind === 'resource' ? panel.resourceId : panel.preview.resourceId ?? null;
+  // Behind the browser rail it is not on screen.
+  const panelShown = railOpen && railVariant === 'context' && Boolean(panel);
+  // A gallery says which of its images is on screen, for the preview it was
+  // opened with; until it has, nothing in it is.
+  const [galleryShown, setGalleryShown] = useState<{ preview: AttachmentPreview; resourceId: string | null } | null>(null);
+  const reportGalleryShown = useCallback((preview: AttachmentPreview, resourceId: string | null) => {
+    setGalleryShown({ preview, resourceId });
+  }, []);
+  const shownResourceId = !panelShown || !panel ? null
+    : panel.kind === 'resource' ? panel.resourceId
+      : galleryShown?.preview === panel.preview ? galleryShown.resourceId : null;
   const shownPin = shownResourceId === null ? undefined : artifactPins.find((pin) => pin.id === shownResourceId);
   const [openedAt, setOpenedAt] = useState<{ id: string | null; version: number | null }>({ id: null, version: null });
   if (openedAt.id !== shownResourceId) setOpenedAt({ id: shownResourceId, version: shownPin?.currentVersion ?? null });
@@ -1900,7 +1909,7 @@ export function ConversationSurface({
   // (its pinned row, its Activity row) asks for it expanded; an artifact
   // opened from the transcript opens beside. Only the requested artifact
   // honours the request, so another opened after it opens beside.
-  const panelKey = !railOpen || !panel ? null
+  const panelKey = !panelShown || !panel ? null
     : panel.kind === 'resource' ? `resource:${panel.resourceId}` : `attachment:${panel.preview.resourceId ?? panel.preview.name}`;
   const { expanded: panelExpanded, setExpanded: setPanelExpanded } = usePaneExpansion(
     panelKey,
@@ -3784,6 +3793,7 @@ export function ConversationSurface({
         expandAction={panelExpandAction}
         onClose={closeOwnRail}
         onResize={setRailWidth}
+        onShow={reportGalleryShown}
         preview={panel.preview}
         width={railWidth}
       />}
