@@ -335,8 +335,11 @@ of this idea, with a self-reported confidence and a feed card, and were removed
 as "an unsolicited interruption".
 
 **Contract.** Entity: the last turn of a completed run. Outcomes:
-`result_ready_to_merge`, `side_question_worth_a_breakout`, `continue_here`,
-one question because both boundaries sit against the same purpose.
+`worth_carrying_up`, `side_question_worth_a_breakout`, `continue_here`,
+one question because both boundaries sit against the same purpose. What is
+carried is not always a result, so a second Choice in the same request names
+the kind (deliverable, decision, answer, update, question) for the line's
+wording alone.
 Insufficient confidence: nothing. The host maps the breakout outcome to
 nothing inside a Breakout.
 

@@ -76,10 +76,11 @@ phase measures before it shows.
 
 ## Goals
 
-1. After a settled Rally turn whose result closes the conversation's purpose,
-   the people who can merge see one suggestion under that turn to merge it
-   up, and accepting it opens the existing merge composer prefilled with the
-   turn's text and target.
+1. After a settled Rally turn that holds something the parent's readers need
+   now (a deliverable, a decision, an answer, a milestone, or a question only
+   they can settle), the people who can merge see one suggestion under that
+   turn to merge it up, and accepting it opens the existing merge composer
+   prefilled with the turn's text and target.
 2. After a settled Rally turn in a Thread that opened a distinct piece of work
    beside the purpose, the people who can post see one suggestion under that
    turn to start a Breakout from it, with a drafted opening prompt they edit
@@ -142,14 +143,20 @@ answer sees the suggestion arrive a moment later, never before.
 its hover action row, in the row where "Breakouts from this message" chips
 are drawn, with Rally's mark, the action and a dismiss:
 
-- `merge_up` in a Breakout: "Rally thinks this is the result for **Cold
-  Outreach**. **Merge to thread** · Dismiss"
+- `merge_up` in a Breakout: "**Cold Outreach** should see this. **Merge to
+  thread** · Dismiss"
 - `merge_up` in a Thread: the same, naming the default Channel the Merge
-  button would pick: "**Merge to GTM** · Dismiss"
-- `start_breakout` in a Thread: "This looks like its own piece of work.
-  **Start a breakout** · Dismiss"
+  button would pick: "**GTM** should see this. **Merge to GTM** · Dismiss"
+- `start_breakout` in a Thread: "**Starter tier** reads as its own piece of
+  work. **Start a breakout** · Dismiss"
 
-The wording is a draft for design to settle. The shape is fixed: one line
+The sentences are fixed strings per kind with one slot for a name; nothing
+in them is generated. What a merge carries is not always a result, so the
+merge sentence names the target and claims nothing about the kind of thing.
+A typed form ("This reads as a decision for Cold Outreach") is possible from
+a second classifier label the design records from the first shadow run, and
+is shown only once that label has proved accurate. The wording is a draft
+for design to settle. The shape is fixed: one line
 under the turn, one action, one dismiss, nothing in the composer and no card
 in the feed. The mockups are in [design-mockups.html](design-mockups.html).
 
@@ -219,15 +226,19 @@ None yet.
    quarter of a second. Rejected: asking the run's model to end each turn with
    `{ readyToMerge, breakoutWorthy }`, which is the same self-report in a new
    place and costs output tokens on every turn.
-2. **Three action-shaped outcomes in one question**: `result_ready_to_merge`,
+2. **Three action-shaped outcomes in one question**: `worth_carrying_up`,
    `side_question_worth_a_breakout`, `continue_here`. Two outcomes that lead to
-   the same action are one outcome, and the merge and breakout boundaries both
-   sit against the same purpose, so splitting them into two independent
-   questions would lose the shared boundary the way addressing's two-question
-   decomposition did. Rejected: a fourth outcome for "settled, nothing worth
-   carrying up", which maps to the same no-op today; it is the first ablation
-   to try if the shadow corpus shows `continue_here` absorbing settled turns
-   and blurring the merge boundary.
+   the same action are one outcome, so a deliverable, a decision, an answer, a
+   milestone and a question for the parent are all `worth_carrying_up` rather
+   than five classes; and the merge and breakout boundaries both sit against
+   the same purpose, so splitting them into two independent questions would
+   lose the shared boundary the way addressing's two-question decomposition
+   did. A second Choice in the same request names the kind of thing carried,
+   for the sentence alone, and is recorded before it is shown. Rejected: a
+   fourth outcome for "settled, nothing worth carrying up", which maps to the
+   same no-op today; it is the first ablation to try if the shadow corpus
+   shows `continue_here` absorbing settled turns and blurring the merge
+   boundary.
 3. **Shadow before surface.** A classifier with no corpus is a guess, and the
    corpus here can be built from what Rally retains: every merge names the turn
    it carried, and every Breakout names the turn it was cut from. Running the
