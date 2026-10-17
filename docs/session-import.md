@@ -179,10 +179,16 @@ different reservation and opening:
   Breakout `prepare` (`SubstreamCreationService`) with the create key as its
   operation id and no source turn, so the Breakout captures the thread's
   context like any other. A prepared Breakout is in no listing. The agent's
-  hidden child and run are named from the thread and the key, so a replayed
-  start finds the agent it launched.
-- **Finish.** `POST /workstreams/:id/import/breakouts/complete` runs the same
-  `prepareSessionImport` as a new thread and hands the result to `confirm` as
+  hidden child and run are named from the thread, the key and the canonical
+  source URL, so a replayed start finds the agent it launched, and a replay on
+  another conversation names a different one.
+- **Finish.** `POST /workstreams/:id/import/breakouts/complete` first checks,
+  before any upload, that the caller started an import of this conversation
+  under this key (its hidden child, `session_import_source_mismatch`) and that
+  the preparation is still theirs and live (`assertConfirmable`). It then runs
+  the same `prepareSessionImport` as a new thread, with the thread in the
+  operation id so file ids are scoped as the preparation is, and hands the
+  result to `confirm` as
   prepared history, with no opening message: the Breakout starts idle, under
   the name from the sheet, and records its source checkpoint as a thread does.
   Readiness is confirmation's last step, so it appears holding the history.
@@ -196,8 +202,10 @@ different reservation and opening:
   Breakout someone started and walked away from: invisible, and never
   reclaimed, so the `ended` hook has nothing to do for it.
 
-Anyone who may start a Breakout in the thread may import into it; the API's
-`prepare` decides. There is no update control for an imported Breakout yet, but
+Importing is a member's, as a new thread's import is: the routes sit behind
+`requireAuth`, which refuses guests, so a guest's composer does not offer it.
+Opening it to guests would mean moving the agent launch and uploads behind
+guest authentication, a decision of its own. There is no update control for an imported Breakout yet, but
 its checkpoint is recorded, so adding one needs routes, not storage.
 
 The agent decides what to copy: visible user and assistant text, citations as
@@ -469,7 +477,7 @@ these variations are still required to establish it.
 
 **Considered and rejected:** Reserving the Breakout as a listed pending row, as a new thread is. A Breakout publishes only when it is ready, so there is nothing to list or take away. Also rejected: reclaiming an unfinished Breakout reservation from the `ended` hook; an unconfirmed preparation is invisible, exactly like an abandoned manual one, and nothing reclaims those either.
 
-**Consequences:** An imported Breakout carries the thread's context and its own source checkpoint. Its access follows Breakout creation, not thread creation.
+**Consequences:** An imported Breakout carries the thread's context and its own source checkpoint. Guests are not offered it: the import routes are member-only, and opening them to guests is a separate decision.
 
 ### 2026-10-16 — Import also offered from the Channel composer's plus menu
 
