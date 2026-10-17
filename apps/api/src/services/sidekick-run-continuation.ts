@@ -1,4 +1,5 @@
 import {
+  asUserId,
   asWorkspaceId,
   ExternalActorSchema,
   type WorkstreamWorkflowInput,
@@ -49,6 +50,7 @@ export async function continueSidekickRun(
  */
 export function continuationSource(pending: {
   actor: string;
+  author_user_id: string | null;
   author_name_snapshot: string | null;
   external_actor_json: string | null;
 }): Omit<NonNullable<WorkstreamWorkflowInput["automationContinuation"]>, "stopGeneration"> {
@@ -61,7 +63,11 @@ export function continuationSource(pending: {
       };
     }
   }
-  return { senderName: boundedName(pending.author_name_snapshot), source: { kind: "run" } };
+  return {
+    senderName: boundedName(pending.author_name_snapshot),
+    ...(pending.actor === "human" && pending.author_user_id ? { senderUserId: asUserId(pending.author_user_id) } : {}),
+    source: { kind: "run" },
+  };
 }
 
 function boundedName(name: string | null): string {

@@ -348,7 +348,8 @@ describe("Sidekick run continuation", () => {
         definitionRevision: 2,
         trigger: { kind: "manual", requestedByUserId: AUTHOR_ID },
       },
-      automationContinuation: { senderName: "Member", source: { kind: "run" } },
+      // Who asked for this turn, which a revision it makes records.
+      automationContinuation: { senderName: "Member", senderUserId: AUTHOR_ID, source: { kind: "run" } },
     });
 
     const call = callThatSaw("Here is my update: shipped the beta.");
