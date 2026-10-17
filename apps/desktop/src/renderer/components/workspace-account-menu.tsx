@@ -1,4 +1,3 @@
-import { AccountTrigger } from '@rally/ui/components/account-trigger';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { IconDeviceDesktopDown, IconHexagons, IconLogout, IconSettings } from '@tabler/icons-react';
@@ -14,7 +13,8 @@ import { AccountSignInSupersededError, FINISH_SIGN_IN_IN_BROWSER, type AccountAc
 import { useShellCapabilities } from '../lib/collaboration-session';
 import type { WorkspaceMember } from '../lib/types';
 import { uuidV7 } from '../lib/telemetry';
-import { ActivityCountBadge, Button, Modal, activityCountLabel } from './primitives';
+import { ActivityCountBadge, Avatar, Button, Modal, activityCountLabel } from './primitives';
+import { RailItem } from './rail-item';
 import { RelativeTime } from './relative-time';
 import { SupportWorkspaceMenuRow } from './support-workspace-menu';
 
@@ -239,8 +239,13 @@ export function WorkspaceAccountMenu({
         open={menuOpen}
       >
         <DropdownMenu.Trigger asChild>
-          <AccountTrigger currentUser={currentUser} workspaceName={activeWorkspace.name} impersonator={impersonator}
-            description={backgroundAttentionDescription} presentation={presentation} hasAttention={backgroundHasAttention} />
+          <RailItem
+            aria-label={['Settings', currentUser.name, activeWorkspace.name,
+              impersonator && `impersonated by ${impersonator.name}`, backgroundAttentionDescription].filter(Boolean).join(', ')}
+            badge={impersonator && <span className="navigation-rail-impersonator"><Avatar member={impersonator} size="small" title={`Impersonated by ${impersonator.name}`} /></span>}
+            icon={<Avatar member={currentUser} size="small" />}
+            label="Settings"
+          />
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
           <DropdownMenu.Content

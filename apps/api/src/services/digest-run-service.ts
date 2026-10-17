@@ -201,15 +201,19 @@ export function splitByAge(
   return { items: recent, olderCount: items.length - recent.length };
 }
 
-/** The sections of a digest, in the order Settings lists the kinds. */
-const SECTIONS: ReadonlyArray<{ kinds: readonly ActivityItemKind[]; heading: string }> = [
-  { kinds: ["mentioned"], heading: "Mentions" },
-  { kinds: ["added"], heading: "Added to a thread" },
-  { kinds: ["thread_started"], heading: "New threads" },
-  { kinds: ["breakout_started"], heading: "New breakouts" },
-  { kinds: ["run_finished"], heading: "Rally finished" },
-  { kinds: ["merged"], heading: "Merges" },
-];
+/**
+ * The heading of each kind's section, in the order Settings lists the kinds.
+ * Every kind must have one: a kind without a section would be counted in the
+ * digest's opening line and then never listed.
+ */
+const SECTION_HEADINGS = {
+  mentioned: "Mentions",
+  added: "Added to a thread",
+  thread_started: "New threads",
+  breakout_started: "New breakouts",
+  run_finished: "Rally finished",
+  merged: "Merges",
+} as const satisfies Record<ActivityItemKind, string>;
 const UNNAMED_THREAD = "Untitled thread";
 const UNNAMED_BREAKOUT = "Untitled breakout";
 
@@ -233,8 +237,8 @@ export async function renderUnreadDigest(
     for (const row of rows.results) if (row.name?.trim()) names.set(row.id, row.name.trim());
   }
   const sections: string[] = [];
-  for (const section of SECTIONS) {
-    const rows = items.filter((item) => section.kinds.includes(item.kind));
+  for (const [kind, heading] of Object.entries(SECTION_HEADINGS) as Array<[ActivityItemKind, string]>) {
+    const rows = items.filter((item) => item.kind === kind);
     if (!rows.length) continue;
     const lines = await Promise.all(rows.map(async (item) => {
       const url = await canonicalWorkstreamUrl(env, {
@@ -258,7 +262,7 @@ export async function renderUnreadDigest(
           : `- ${actor} merged ${thread} into ${escapeMarkdown(item.mergedInto?.name.trim() || "a channel")}`;
       }
     }));
-    sections.push([`## ${section.heading}`, ...lines].join("\n"));
+    sections.push([`## ${heading}`, ...lines].join("\n"));
   }
   const count = items.length;
   const older = olderCount ? [`${olderCount} more older than ${LISTED_FOR_DAYS} days.`] : [];
