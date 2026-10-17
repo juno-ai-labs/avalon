@@ -1,3 +1,5 @@
+import { parse as parseDomain } from "tldts";
+
 import { rewriteCitationsAsPlainText } from "@rally/contracts/citations";
 import { markdownLineKinds } from "@rally/contracts/markdown-code";
 import { normalizeModelMarkdown, normalizeModelText } from "@rally/contracts/model-markdown";
@@ -114,8 +116,26 @@ function forEmail(markdown: string): string {
   return normalizeModelMarkdown(rewriteCitationsAsPlainText(markdown));
 }
 
+export interface MarkdownTextOptions {
+  /**
+   * What becomes of a link's address. `keep`, the default, writes a named
+   * link's address after its label in parentheses and leaves a bare one as
+   * written: a text-only mail client has no other way to follow either.
+   * `spoken` is for output a voice reads: a named link is its label alone, a
+   * bare address is "link to" and its registrable domain, and an image with no
+   * alt text is "image". An address inside a code span is code and is read as
+   * written under either. The reasoning is the speech module's
+   * (`docs/message-speech.md`).
+   */
+  readonly linkTargets?: "keep" | "spoken";
+}
+
+/** The reducer's own states: the preheader takes `drop`, a label alone with a bare address as written. */
+type LinkTargets = NonNullable<MarkdownTextOptions["linkTargets"]> | "drop";
+
 /**
- * The plain-text alternative, which is what a text-only client receives.
+ * The plain-text alternative, which is what a text-only client receives — and,
+ * with `linkTargets: "spoken"`, what the speech route reads aloud.
  *
  * It converts rather than passes through. A client showing this part is the one
  * client that will never render markup, so leaving `## Heading` and `**bold**`
@@ -123,7 +143,8 @@ function forEmail(markdown: string): string {
  * to cope with it. Structure that survives as text — the bullet, the rank, a
  * link's target in parentheses — is kept.
  */
-export function markdownToEmailText(markdown: string): string {
+export function markdownToEmailText(markdown: string, options: MarkdownTextOptions = {}): string {
+  const linkTargets = options.linkTargets ?? "keep";
   // The plain-text entry point, deliberately: nothing below parses Markdown,
   // so an escape manufactured by `normalizeModelMarkdown` would reach the
   // reader as a literal backslash. The citation rewrite still runs first — its
@@ -134,16 +155,18 @@ export function markdownToEmailText(markdown: string): string {
   const source = markdown.replace(/\r\n/gu, "\n").split("\n");
   // Fenced blocks come from `@rally/contracts/markdown-code`, so this pass and
   // the rewrites that ran over the same string above cannot disagree about
-  // where one ends. Only the fence kinds are read here: an indented block is
-  // already four columns in, which is exactly what this pass would give it.
+  // where one ends. An indented block is already four columns in, which is
+  // what this pass would give it; the text part has always reduced its inline
+  // marks and is left that way, and only the spoken text, which must not
+  // announce an address inside code, takes it verbatim.
   const kinds = markdownLineKinds(source);
   for (const [index, raw] of source.entries()) {
     const kind = kinds[index]!;
     // The delimiters are dropped and the body is indented instead: four columns
     // is what a plain-text reader has for "this was code".
     if (kind === "fence-open" || kind === "fence-close") continue;
-    if (kind === "fence-content") {
-      lines.push(`    ${raw.trimEnd()}`);
+    if (kind === "fence-content" || (kind === "indented-code" && linkTargets === "spoken")) {
+      lines.push(kind === "fence-content" ? `    ${raw.trimEnd()}` : raw.trimEnd());
       continue;
     }
     const line = raw.trimEnd();
@@ -152,22 +175,22 @@ export function markdownToEmailText(markdown: string): string {
       continue;
     }
     if (PIPE_TABLE_ROW_PATTERN.test(line)) {
-      lines.push(stripInlineMarks(line, true, false));
+      lines.push(stripInlineMarks(line, linkTargets, false));
       continue;
     }
     const heading = /^(#{1,6})\s+(.*)$/u.exec(line);
     if (heading) {
-      lines.push(stripInlineMarks(heading[2]!, true));
+      lines.push(stripInlineMarks(heading[2]!, linkTargets));
       continue;
     }
     const bullet = /^(\s*)([-*+]|\d{1,3}[.)])\s+(.*)$/u.exec(line);
     if (bullet) {
       const indent = indentWidth(bullet[1]!) >= 2 ? "    " : "  ";
       const marker = /\d/u.test(bullet[2]!) ? bullet[2]! : "-";
-      lines.push(`${indent}${marker} ${stripInlineMarks(bullet[3]!, true)}`);
+      lines.push(`${indent}${marker} ${stripInlineMarks(bullet[3]!, linkTargets)}`);
       continue;
     }
-    lines.push(stripInlineMarks(line, true));
+    lines.push(stripInlineMarks(line, linkTargets));
   }
   return lines.join("\n").replace(/\n{3,}/gu, "\n\n").trim();
 }
@@ -206,18 +229,24 @@ export function markdownToEmailPreheader(markdown: string, limit = 160): string 
  * text body cannot disagree about which marks are punctuation and which are
  * formatting — they did, while one stripped `__bold__` and the other did not.
  * They differ deliberately where their surfaces do: the text part keeps a
- * link's target because it is the reader's only way to follow it, while the
- * preheader spends no space on URLs; and a preformatted pipe row keeps a break
- * tag as characters rather than splitting the row.
+ * link's target because it is the reader's only way to follow it, the
+ * preheader spends no space on URLs, and the spoken text announces a bare one
+ * as a link to its domain; and a preformatted pipe row keeps a break tag as
+ * characters rather than splitting the row.
  */
-function stripInlineMarks(value: string, keepLinkTargets = false, rewriteBreakTags = true): string {
+function stripInlineMarks(value: string, linkTargets: LinkTargets = "drop", rewriteBreakTags = true): string {
   let stripped = value
-    .replace(/!\[([^\]]*)\]\(([^)]*)\)/gu, (_match, alt: string, href: string) => alt || href)
+    .replace(/!\[([^\]]*)\]\(([^)]*)\)/gu, (_match, alt: string, href: string) =>
+      alt || (linkTargets === "spoken" ? "image" : href))
     .replace(/\[([^\][]+)\]\(([^)]*)\)/gu, (_match, label: string, href: string) =>
-      keepLinkTargets && href ? `${label} (${href})` : label)
+      linkTargets === "keep" && href ? `${label} (${href})` : label)
     .replace(/(\*\*|__)([^*_]+)\1/gu, "$2")
     .replace(/(^|[\s(])([*_])([^\s*_][^*_]*[^\s*_]|[^\s*_])\2(?=[\s.,;:)!?]|$)/gu, "$1$3")
     .replace(/~~([^~]+)~~/gu, "$1");
+  // After emphasis, so `*https://…*` has lost its marks before the address is
+  // read; before code is unwrapped, so an address inside backticks can still
+  // be recognized as code and stepped over.
+  if (linkTargets === "spoken") stripped = announceBareLinks(stripped);
   if (rewriteBreakTags) {
     // Break tags become newlines, except inside a code span that is showing
     // the tag. The code pass has to run first or `` `a<br/>b` `` would split.
@@ -226,6 +255,72 @@ function stripInlineMarks(value: string, keepLinkTargets = false, rewriteBreakTa
   return stripped
     .replace(/`([^`]+)`/gu, "$1")
     .trimEnd();
+}
+
+/**
+ * A bare address as a voice should read it: "link to" and the registrable
+ * domain, so `https://www.apple.com/iphone/compare` and `<https://apple.com>`
+ * are both heard as *link to apple.com*. The `www.` spelling GFM also
+ * autolinks is announced the same way; any other scheme is read as written,
+ * which is what the lookbehind is for: a `www.` or `https://` that follows a
+ * word, a dot, or URL punctuation is part of something else. Code spans are
+ * stepped over — an address inside backticks is code, not a link — and the
+ * punctuation a sentence hangs on the end of an address stays in the sentence,
+ * the way GFM's autolink rule leaves it there. A pipe ends an address too,
+ * since a table row reaches this pass as one line.
+ */
+function announceBareLinks(value: string): string {
+  return value.replace(
+    /`[^`]+`|<((?:https?:\/\/|www\.)[^\s<>`[\]|]+)>|(?<![\w.@/:+-])((?:https?:\/\/|www\.)[^\s<>`[\]|]+)/giu,
+    (match, bracketed: string | undefined, bare: string | undefined) => {
+      if (bare === undefined && bracketed === undefined) return match;
+      if (bracketed !== undefined) return `link to ${spokenDomain(bracketed)}`;
+      const [address, trailing] = splitTrailingPunctuation(bare!);
+      return `link to ${spokenDomain(address)}${trailing}`;
+    },
+  );
+}
+
+/**
+ * GFM's trailing-punctuation rule for an autolink literal: a sentence's `.` or
+ * `,` after an address, or a `)` the address itself did not open, belongs to
+ * the sentence and not to the link.
+ */
+function splitTrailingPunctuation(address: string): [string, string] {
+  let unmatchedClosers = 0;
+  for (const each of address) {
+    if (each === "(") unmatchedClosers -= 1;
+    else if (each === ")") unmatchedClosers += 1;
+  }
+  let end = address.length;
+  while (end > 0) {
+    const character = address[end - 1]!;
+    if (".,:;!?'\"*_~".includes(character)) end -= 1;
+    else if (character === ")" && unmatchedClosers > 0) {
+      end -= 1;
+      unmatchedClosers -= 1;
+    } else break;
+  }
+  return [address.slice(0, end), address.slice(end)];
+}
+
+/**
+ * The registrable domain of an address — `www.apple.com/iphone` and
+ * `docs.github.com` are `apple.com` and `github.com` — through the same
+ * public-suffix data the favicon and terminal network-policy services use, so
+ * `bbc.co.uk` keeps its three labels. Unlike those two, this honours the
+ * list's private section: `rally.github.io` names a site, and a listener
+ * recognizes the site, not the platform. A host with no public suffix (an IP,
+ * a local name) is spoken whole.
+ */
+function spokenDomain(address: string): string {
+  const host = address
+    .replace(/^https?:\/\//iu, "")
+    .replace(/^[^/?#@]*@/u, "")
+    .replace(/[/?#:].*$/u, "")
+    .replace(/\.+$/u, "")
+    .toLowerCase();
+  return parseDomain(host, { allowPrivateDomains: true }).domain ?? host;
 }
 
 function blocksFromMarkdown(markdown: string): Block[] {
