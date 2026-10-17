@@ -5282,7 +5282,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           // Activity push is: a failure is logged and the Activity row, the
           // pin's unread state and the digest stand regardless.
           const updates = this.artifactLedger ? drainArtifactUpdates(this.state.storage.sql) : [];
-          if (updates.length > 0) this.state.waitUntil(this.announceArtifactUpdates(updates));
+          if (updates.length > 0) {
+            this.state.waitUntil(this.announceArtifactUpdates(updates).catch((error: unknown) => logWarn(this.env, "artifact_update_announce_failed", {
+              code: diagnosticErrorCode(error, "artifact_update_announce_failed"),
+            })));
+          }
         } catch (error) {
           // Nothing here may throw: this runs outside every entry point.
           if (!isRetirementRefusal(error)) {
@@ -9855,6 +9859,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const feed = new WorkspaceActivityFeed(this.state.storage, this.spaceStorage());
     if (!feed.ready()) return;
     feed.markSeen(request.userId, request.seenThrough, Date.now());
+    // The artifact pins' unread state honours the same mark.
+    if (this.artifactLedger) {
+      try {
+        this.publishArtifactPins(request.userId, request.workspaceId);
+      } catch (error) {
+        logWarn(this.env, "artifact_pins_publish_failed", {
+          workspace_id: request.workspaceId, code: diagnosticErrorCode(error, "artifact_pins_publish_failed"),
+        });
+      }
+    }
     // The mark is this person's alone, so only their sockets re-read Activity:
     // another window, and the menu bar, which lists the unread rows.
     try {
@@ -10100,7 +10114,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
                  WHERE version.resource_id = pin.item_id
                    AND ${artifactUpdateSql("version", "pin")}
                    AND version.version > COALESCE((SELECT reads.read_through FROM workspace_activity_reads reads
-                     WHERE reads.user_id = pin.user_id AND reads.subject_key = ${artifactSubjectKeySql("pin.item_id")}), 0))`
+                     WHERE reads.user_id = pin.user_id AND reads.subject_key = ${artifactSubjectKeySql("pin.item_id")}), 0)
+                   -- Mark all read covers it as it covers the Activity row.
+                   AND CAST(unixepoch(version.captured_at, 'subsec') * 1000 AS INTEGER) > COALESCE((SELECT seen.seen_through
+                     FROM workspace_activity_seen seen WHERE seen.user_id = pin.user_id), 0))`
                 : "0"} AS unread
          FROM workspace_pins pin
          JOIN workspace_workstream_resource_links link
@@ -10161,7 +10178,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     if (pinners.size === 0) return;
-    for (const userId of pinners) this.publishArtifactPins(userId, workspaceId);
+    // One pinner's list failing to build must not cost the others theirs, or
+    // anyone their push.
+    for (const userId of pinners) {
+      try {
+        this.publishArtifactPins(userId, workspaceId);
+      } catch (error) {
+        logWarn(this.env, "artifact_pins_publish_failed", {
+          workspace_id: workspaceId, code: diagnosticErrorCode(error, "artifact_pins_publish_failed"),
+        });
+      }
+    }
     try {
       await this.publishSync(["activity"], workspaceId,
         this.placementAffinity() ?? await workspacePlacementAffinity(this.env, workspaceId),

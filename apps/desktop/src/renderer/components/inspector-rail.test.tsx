@@ -804,6 +804,24 @@ describe('resource detail content preview', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it('renders an HTML artifact in a sandboxed frame, not as text', async () => {
+    const page: WorkstreamResource = { ...note, id: 'resource-page', title: 'Launch page.html', mimeType: 'text/html' };
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          loadResourceContent={vi.fn(async () => new Blob(['<h1>Launch</h1>'], { type: 'text/html' }))}
+          panel={{ resourceId: page.id, onClose: vi.fn() }}
+          workstream={{ ...workstream, resources: [page] }}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const frame = await screen.findByTitle('Preview of Launch page.html');
+    expect(frame.getAttribute('sandbox')).toBe('');
+    expect(frame.getAttribute('srcdoc')).toContain('<body><h1>Launch</h1></body>');
+    expect(screen.queryByText('<h1>Launch</h1>')).toBeNull();
+  });
+
   it('offers the resource panel actions from its title pill menu', async () => {
     const onOpenResourceVersion = vi.fn();
     const version: ResourceVersion = { version: 1, title: note.title, mimeType: 'text/markdown', capturedAt: '2026-10-01T00:00:00.000Z', author: null, cause: null, contentAvailable: true };

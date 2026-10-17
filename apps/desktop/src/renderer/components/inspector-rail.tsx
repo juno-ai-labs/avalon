@@ -1,5 +1,6 @@
 import { openLink } from '../lib/browser-rail-links';
 import { desktopBridge } from '../lib/platform';
+import { isHtmlFile, isolatedHtml } from './attachment-lightbox';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { IconArchive, IconArrowLeft, IconChevronRight, IconChevronsRight, IconExternalLink, IconEye, IconFileText, IconHistory, IconLoader2, IconPlus, IconRefresh, IconUserPlus, IconWindowMaximize, IconX } from '@tabler/icons-react';
@@ -421,6 +422,14 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
       <p className="inspector-detail-preview-status" role="status">
         <IconLoader2 aria-hidden="true" className="spin" size={14} stroke={1.9} /> Loading preview…
       </p>
+    );
+  }
+  // A page renders in the lightbox's sandbox, never as text the panel trusts.
+  if (isHtmlFile({ name: resource.title, mimeType: resource.mimeType })) {
+    return (
+      <article className="inspector-detail-document is-html">
+        <iframe sandbox="" srcDoc={isolatedHtml(state.text)} title={`Preview of ${resource.title}`} />
+      </article>
     );
   }
   return (

@@ -45,6 +45,7 @@ import {
   WorkstreamWorkflowInputSchema,
   WORKSTREAM_SIDEBAR_FACEPILE_LIMIT,
   workstreamParticipantPreview,
+  MemberPreferencesUpdateSchema,
 } from "./index";
 
 const id = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0";
@@ -1665,5 +1666,12 @@ describe("TimestampSchema seconds requirement", () => {
     const { pattern } = z.toJSONSchema(TimestampSchema) as { pattern: string };
     expect(pattern).toContain(":[0-5]\\d(?:\\.\\d+)?");
     expect(pattern).not.toContain("(?::[0-5]\\d(?:\\.\\d+)?)?");
+  });
+});
+
+describe("member preference saves", () => {
+  it("leaves out every kind a save does not name, defaulted kinds included", () => {
+    expect(MemberPreferencesUpdateSchema.parse({ notify: { mentions: ["email"] } }))
+      .toEqual({ notify: { mentions: ["email"] } });
   });
 });

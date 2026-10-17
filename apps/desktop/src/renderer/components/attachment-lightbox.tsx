@@ -18,9 +18,15 @@ interface LoadedPreview {
 
 const HTML_FILE_PATTERN = /\.html?$/iu;
 
+/** Whether a file is an HTML page, which renders only inside {@link isolatedHtml}. */
+export function isHtmlFile(file: { name: string; mimeType?: string | null | undefined }): boolean {
+  const mimeType = attachmentMime(file.mimeType ?? undefined);
+  return mimeType === 'text/html' || (hasGenericAttachmentMime(mimeType) && HTML_FILE_PATTERN.test(file.name));
+}
+
 function previewMode(preview: AttachmentPreview): PreviewMode {
   const mimeType = attachmentMime(preview.mimeType);
-  if (mimeType === 'text/html' || (hasGenericAttachmentMime(mimeType) && HTML_FILE_PATTERN.test(preview.name))) return 'html';
+  if (isHtmlFile(preview)) return 'html';
   if (isVideoAttachment(mimeType, preview.name)) return 'video';
   if (mimeType.startsWith('text/') && mimeType !== 'text/markdown') return 'text';
   const kind = classifyAttachmentKind({ fileName: preview.name, mimeType: preview.mimeType });
@@ -29,7 +35,7 @@ function previewMode(preview: AttachmentPreview): PreviewMode {
   return kind === 'text' ? 'text' : 'markdown';
 }
 
-function isolatedHtml(source: string): string {
+export function isolatedHtml(source: string): string {
   const policy = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data: blob:; font-src data:; style-src \'unsafe-inline\';">';
   // Establish the policy before parsing any untrusted markup, including
   // resource tags before a head or a fake head inside a comment.
