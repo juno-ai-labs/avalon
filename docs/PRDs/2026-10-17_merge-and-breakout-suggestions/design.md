@@ -1,0 +1,510 @@
+# Design: the post-generation overlay
+
+> Companion to [the PRD](prd.md). This file holds what is too detailed for the
+> PRD body: the four pieces and their contracts, the JEV decision in full, the
+> gates, the shadow corpus and how the threshold is read from it, the failure
+> table, the testing plan, the documents a build has to touch, and the limits
+> handed back. A phased `plan.md` is written after the PRD is approved, per
+> [`prds.md`](../../prds.md); the [build sequence](#build-sequence) below is
+> the order it would take.
+
+## What JEV is good at, and what that decides here
+
+[`jev-best-practices.md`](../../jev-best-practices.md) is the evidence; this is
+the reading of it that shapes the design.
+
+- **One bounded question over named state.** JEV answers a Choice over a
+  closed set, with a confidence the provider computed, in about 220 ms p50
+  and 350 ms p95 on `jev-1.13.0`. It does not write prose. So the judgement
+  "what does this turn call for" is JEV's, and the Breakout prompt is not.
+- **The label carries the decision; the threshold is a nearly flat lever
+  below 0.5.** Both shipped classifiers found the Choice's confidence is a
+  cliff at 0.5 rather than a gradient above it. So the work goes into the
+  outcomes and their boundaries, and the threshold is read off a sweep rather
+  than argued about.
+- **Decomposing a coupled decision loses the shared boundary.** Addressing's
+  two-question split scored 25.93% four-class against 81.48% for one question.
+  Merge and breakout are both judged against the same purpose, so they are
+  one question with three outcomes, not two questions.
+- **A classifier with no corpus is a guess, and the guess must be reversible.**
+  This one has a corpus waiting in retained data, which is why phase 1 is a
+  shadow run rather than a surface.
+- **State fields are the trust boundary.** The purpose, the turn and the
+  context are separate named objects; nothing is concatenated into the
+  question.
+- **Price the errors before the threshold.** The formula is below with
+  proposed weights; the direction is the team's.
+
+## The pieces
+
+Four blocks. Each has one job, none knows the others' product meaning, and the
+overlay is their composition.
+
+| Piece | Where | Owns | Knows nothing about |
+| --- | --- | --- | --- |
+| Settlement observer | `apps/api/src/durable-objects/substream-agent.ts`, a step in `settleAgentRun` | Running the gates cheapest-first and calling the classifier; never throws | Which classifier or what a suggestion is for |
+| Turn disposition classifier | `packages/agent-harness/src/turn-disposition.ts`, beside `semantic-trigger-gate.ts` | The state shape, the question, the criteria, the threshold's comparison, the mapping to a decision | Where a decision is stored or shown |
+| Conversation suggestion slot | `SubstreamAgent` table `conversation_suggestions`, a socket event, a dismiss route | One standing suggestion per conversation, its lifecycle, its resolution record | Who produced it or why |
+| Breakout prompt drafter | `apps/api/src/services/breakout-suggestion-service.ts`, a `runStructuredInference` role | Writing an opening prompt a person edits | Whether the prompt is ever shown |
+
+The client adds one block that reads the slot and performs its two actions
+through code that exists: the merge composer mode and the launch pane.
+
+### The settlement observer
+
+`settleAgentRun` already runs, after every terminal run and in this order:
+observation and telemetry, result delivery, work-stream naming, the
+description loop, a Breakout's first description. Each step is awaited, never
+throws, and does its own cheap admission before any model call. The overlay is
+the last step, after the description loop, so it reads the freshest purpose
+and delays nothing in front of it.
+
+Its input is what the lane already has: `WorkstreamWorkflowInput`
+(`parentKind`, `parentId`, `substreamId`, `backgroundAgent`) and
+`AgentTerminalOutcome` (`status`, `finalTurnId`). It reads the final turn
+through `product.messageForRuntime`, as result delivery does, and recent
+messages through `readableMessagesBefore`, which already excludes tool rows
+and the retired suggestion type. The purpose is the object's own
+`workstream.description` and `title`.
+
+The step records every decision through `createClassifierDiagnosticSink` under
+a new role, `turn_disposition_classifier`, which also meters it. In shadow that
+record is the whole output.
+
+### The turn disposition classifier
+
+Written to the shape of `semantic-trigger-gate.ts`: constants, the question as
+data through `jevChoiceQuestion`, the answer schema through
+`jevSingleChoiceAnswers`, one exported `judgeTurnDisposition` that never
+throws and returns a decision with a code.
+
+**The decision contract**, written before the question:
+
+| | |
+| --- | --- |
+| Entity | One settled Rally turn, the last of a completed run, in one conversation |
+| Outcomes | `result_ready_to_merge` → offer `merge_up`; `side_question_worth_a_breakout` → offer `start_breakout`; `continue_here` → nothing |
+| Evidence between adjacent outcomes | Whether the turn closes the purpose or is a step of it; whether the turn opened work beside the purpose or about it |
+| Insufficient confidence | Nothing, recorded as `confidence_below_threshold` |
+| Cannot answer | Nothing, recorded as `classifier_unavailable` with the provider's failure kind |
+
+**The state:**
+
+```json
+{
+  "conversation": {
+    "kind": "thread | breakout",
+    "purpose": "workstream.description",
+    "title": "workstream.title"
+  },
+  "settled_turn": {
+    "text": "the final turn, bounded as addressing bounds a message",
+    "artifacts": [{ "title": "...", "kind": "..." }]
+  },
+  "conversation_context": {
+    "recent_messages": [{ "author": "person | rally", "text": "..." }]
+  }
+}
+```
+
+`recent_messages` is the newest ten before the turn, each bounded to 1,000
+code points keeping both ends, through the helper addressing already uses
+(`limitAddressingRecentMessages` in `packages/agent-harness/src/index.ts`,
+extracted so both callers share one bound). `artifacts` is the resources the
+run created or edited, by title and kind, if the object can list them for the
+run cheaply; otherwise it is omitted and its value is the first ablation.
+Nothing else goes in: every extra field is one JEV can over-weight.
+
+**The question**, as a first candidate for the ablation to move:
+
+```json
+{
+  "question": "Measured against `conversation.purpose`, what does `settled_turn` call for next?",
+  "focus": "Judge the settled turn. `conversation.purpose` is what this conversation exists to do. Use `conversation_context.recent_messages` only to tell whether the purpose is still in motion here, and whether a side question is new rather than the purpose itself.",
+  "decision": "Choose exactly one."
+}
+```
+
+**The criteria:**
+
+| Outcome | Meaning | Include | Exclude |
+| --- | --- | --- | --- |
+| `result_ready_to_merge` | The turn states a finished result that closes the purpose, in words a reader outside this conversation could use without the transcript | A final deliverable, decision or answer with nothing left open to the people here; a result the people here confirmed | A draft the turn itself calls preliminary or asks the people here to review; a partial result whose next step is still here; an answer to a narrow question that is not the purpose |
+| `side_question_worth_a_breakout` | The turn, or the exchange that led to it, opened a distinct piece of work beside the purpose: large enough to need its own conversation, likely to crowd this one | A sub-problem the turn proposes to work separately; a second deliverable the people asked for that the purpose does not cover; a line of questions on another subject that has run for several turns | A clarification or follow-up about the purpose itself; a one-line aside; the next step of the purpose |
+| `continue_here` | The turn is a step of the purpose, and the purpose is still in motion here | Partial work, a question to a person, a status update; a result that answers a small part of the purpose | A finished result that closes the purpose; a distinct piece of work beside the purpose |
+
+The exclusions are symmetric on purpose: what one outcome excludes, its
+neighbour includes, so no case falls between them for the model to settle
+differently from run to run. `continue_here` is defined positively rather
+than as a catch-all; ordinary uncertainty belongs in the confidence.
+
+**Two constants, one measured and one transcribed:**
+
+- `TURN_DISPOSITION_CONFIDENCE_THRESHOLD`: the comparison is `>`, matching
+  the other two classifiers, so a confidence equal to it stays quiet. The value
+  is read from the shadow sweep (below). While the surface does not exist the
+  constant is not applied; every answer is recorded with its confidence.
+- `TURN_DISPOSITION_JEV_TIMEOUT_MS = 1_000`: three times the measured JEV p95
+  of about 350 ms, the same budget addressing and the semantic trigger carry
+  against the same provider, transcribed with that source.
+
+**Mapping to a suggestion kind** is the host's, in the observer, by
+conversation kind:
+
+| Choice | In a Breakout | In a Thread's Main |
+| --- | --- | --- |
+| `result_ready_to_merge` | `merge_up` into the Thread | `merge_up` into the default Channel |
+| `side_question_worth_a_breakout` | nothing (no nested Breakouts) | `start_breakout` from this turn |
+| `continue_here` | nothing | nothing |
+
+The question is the same in both kinds; the mapping discards what the host
+cannot offer. The alternative, two question documents, is two candidates to
+keep measured. If the shadow corpus shows the breakout outcome drawing
+probability mass away from the merge boundary inside Breakouts, a Breakout
+variant of the question is the ablation to run.
+
+### The price list, and what it says about the threshold
+
+With `p` the probability a positive answer is right, and `c`, `f`, `m` the
+weights of a correct suggestion, a false one and a missed one, suggesting beats
+staying quiet when `p > (c − f) / (2c − f − m)`. Three price lists frame the
+choice:
+
+| Price list | `c` | `f` | `m` | Suggest when `p >` | Reads as |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Semantic trigger's | 1 | 0 | −2 | 0.25 | A miss costs the request; a false fire costs one session that finds nothing |
+| Symmetric | 1 | −1 | −1 | 0.50 | Both errors cost one unit of attention |
+| Noise-averse (proposed) | 1 | −1 | −0.5 | 0.57 | A false line erodes trust in the line; a miss leaves the Merge button where it was |
+
+The proposed direction is the third, for two reasons that are the product's
+and not a tuning knob: the manual path exists and is one hover away, so a miss
+costs little; and the predecessor was retired for noise, so a false suggestion
+spends the trust the whole feature depends on. The team confirms the
+direction; the number then comes from the sweep, because a Choice's reported
+confidence is not `p` and is not calibrated.
+
+### The gates
+
+Deterministic, cheapest first, each a reason not to pay for the next. Most
+settled turns stop at one of them.
+
+| # | Gate | Reads | Why |
+| --- | --- | --- | --- |
+| 1 | The run completed with a final text turn | the outcome | A failed or stopped run, or a tool-only ending, has no result to judge |
+| 2 | `parentKind` is `workstream`, not a background agent, not archived | the input and the `workstream` row | Sidekick runs and background agents are out of scope; nothing reads an archived conversation |
+| 3 | This run has not already been judged | `conversation_suggestions` by `run_id`, and the diagnostics record | Settlement retries; the judgement is idempotent on the run |
+| 4 | At least one kind is offerable | the `workstream` row's scope; the conversation kind | A private Thread cannot merge into a Channel; a Breakout offers only `merge_up`. A Thread with no placement is left to the client's check |
+| 5 | The turn has not already been carried up | the newest `conversation_merged_into` marker, if its sequence is after the turn | A merged result is not suggested again |
+| 6 | Pacing: no dismissal of the same kind within `SUGGESTION_DISMISS_COOLDOWN_MS`; no more than `SUGGESTION_MAXIMUM_PER_CONVERSATION_DAY` shown per conversation per day | `conversation_suggestions` | Both open; see [limits handed back](#limits-handed-back) |
+
+No minimum turn length. A one-line "Done." is for the classifier to call
+`continue_here`; a length floor would be a number nobody can justify saving one
+unpriced call.
+
+### The suggestion slot
+
+One table in the conversation object, migration v75:
+
+```sql
+CREATE TABLE conversation_suggestions (
+  suggestion_id      TEXT PRIMARY KEY,
+  kind               TEXT NOT NULL CHECK (kind IN ('merge_up', 'start_breakout')),
+  judged_turn_id     TEXT NOT NULL,
+  run_id             TEXT NOT NULL,
+  status             TEXT NOT NULL CHECK (status IN ('open', 'accepted', 'dismissed', 'superseded')),
+  draft_text         TEXT,
+  decision_choice    TEXT NOT NULL,
+  decision_confidence REAL NOT NULL,
+  decision_model     TEXT NOT NULL,
+  created_at         INTEGER NOT NULL,
+  resolved_at        INTEGER,
+  resolved_by_user_id TEXT,
+  resolution         TEXT CHECK (resolution IN ('accepted', 'dismissed', 'ignored'))
+);
+CREATE UNIQUE INDEX conversation_suggestions_one_open
+  ON conversation_suggestions (status) WHERE status = 'open';
+CREATE INDEX conversation_suggestions_pacing ON conversation_suggestions (kind, status, resolved_at);
+```
+
+**Lifecycle, all server-side facts:**
+
+- **Open.** The observer inserts a row and, in the same `commitRuntimeMutation`,
+  supersedes any open row (`status = 'superseded'`, `resolution = 'ignored'`
+  if nobody acted on it). The client learns through a new canonical socket
+  event, `conversation_suggestion_changed`, and the snapshot's new
+  `suggestion` field.
+- **Accepted, merge.** `ConversationMergeService.markSource` already appends
+  the `conversation_merged_into` marker to the source conversation's object.
+  The same mutation resolves an open `merge_up` row whose judged turn is at or
+  before the merge: `status = 'accepted'`. No client call.
+- **Accepted, breakout.** `captureInitialSubstreamContext` runs in the parent
+  conversation's object with the cutoff turn. The same mutation resolves an
+  open `start_breakout` row whose judged turn is the cutoff.
+- **Dismissed.** `POST /conversations/:parentId/suggestions/:suggestionId/dismiss`
+  (with the substream in the query, as the conversation routes carry it),
+  admitted as a read of the conversation, resolving the row with who did it.
+- **Superseded.** The next human message admitted, or the next judgement,
+  supersedes the open row.
+
+Both acceptances are also the labels the corpus wants: a merge or a Breakout
+from a judged turn with a suggestion standing is a hit; one with none standing
+is a miss; a dismissal or an ignored row is a false positive or an unwanted
+one. Nothing is inferred from client behaviour.
+
+**What the client gets** is one optional object on the conversation snapshot
+and the event: `{ suggestionId, kind, judgedTurnId, draftText, target: { kind,
+id, title } | null }`. The server computes `target` for `merge_up` the way the
+Merge label does (the Thread, or the Channel `channelMergeTarget` would pick);
+the client still applies `mergeTargetFor` for this viewer before drawing the
+action. The snapshot field is optional and the event type is new, so both go
+only to builds at a new client contract, 8, the mechanism merge-back used for
+7. `safeParseSocketEvent` strips unknown keys but an unknown event type fails
+the union, which is why the event is contract-gated rather than sent to all.
+
+### The Breakout prompt drafter
+
+A `runStructuredInference` role, `breakout_suggestion`, declared in
+`AGENT_MODEL_ROLES` with flag `agent-model-breakout-suggestion`, default
+`OPENROUTER_STRUCTURED_MODEL`, registered in Ace's `ManagedModelRoleSchema`, and
+metered as `breakout_suggestion` with the Organization paying, like
+`breakout_summary`. The prompt lives in
+`packages/agent-harness/src/prompts/breakout-suggestion.ts`, byte-stable and
+golden-hashed per `writing-prompts.md`.
+
+It receives the same bounded window the classifier saw plus the purpose, and
+returns `{ prompt: string }`: two to five sentences, written as the first
+instruction of a Breakout a person is about to start, naming the sub-problem
+and what done looks like, with nothing the Thread's readers should not see
+restated. A reply that is empty or over `MESSAGE_MAX_CHARACTERS` is dropped and
+the suggestion is written with no draft; the launch pane opens empty, which is
+what New breakout does today. It runs only when the classifier chose
+`side_question_worth_a_breakout` above the threshold, so its cost scales with
+positives. It does not run in shadow.
+
+### The client
+
+- **The line.** A `ComposerInput` `notice` with the action and dismiss, in
+  `conversation-surface.tsx` beside merge mode's audience line. Drawn only when
+  the viewer passes `mergeTargetFor` (for `merge_up`) or can post (for
+  `start_breakout`).
+- **Accept merge** calls the existing merge-mode opener with the judged turn's
+  text and the suggestion's target, which is what the turn's `MergeButton`
+  calls.
+- **Accept breakout** calls `onStartSubstream(judgedTurnId)` and seeds the
+  launch composer's draft with `draftText`. `ConversationSubstreamLaunch` gains
+  an optional `initialDraft`, written to the launch composer's draft key once
+  when the pane opens, so a person who already typed there is not overwritten.
+- **Dismiss** calls the route and hides the line at once; the event confirms.
+- **Verification** per the rule for visible changes: the desktop under Xvfb,
+  Playwright over DevTools, screenshots of the line in a Breakout, in a Thread,
+  in merge mode after accepting, and in the launch pane after accepting.
+
+## Shadow mode and the corpus
+
+### What shadow records
+
+For every settled turn that passes gates 1 to 5, one `structured_inference`
+log row and one lakehouse record: the full application request (state and
+questions), the answer, its confidence, the model that answered, latency and
+tokens, and the mapped kind. Gate 6 is not applied in shadow, so pacing does
+not hide what the classifier would have said.
+
+### Where the labels come from
+
+Rally retains the outcomes this decision predicts, which is what makes this
+classifier measurable rather than a guess:
+
+| Label | Source | How it joins |
+| --- | --- | --- |
+| A Breakout was started from this turn | `originTurnId` on each Breakout (`visiblePrivateChildren`, `parent_breakout_preparations.request_json`) | The judged turn is the cutoff |
+| A Breakout's result was merged | `conversation_merge` messages in the Thread (`mergedFrom.breakoutId`), and the `conversation_merged_into` marker in the Breakout | The judged turn is the newest Rally turn before the marker whose text the merge body starts from |
+| A Thread's result was merged | `space_messages.source_workstream_id` in the WorkspaceDO, and the marker in the Thread | As above |
+| Neither | Every other judged turn | A regression label, not ground truth |
+
+A Breakout is an older product than merge-back, so `start_breakout` positives
+exist from day one; `merge_up` positives accrue from 2026-10-16. Both are
+production labels: a merge that did not happen is not proof that a suggestion
+would have been wrong, so the "neither" class needs the independent
+adjudication layer addressing used, a sampled subset judged by Sol at medium
+reasoning against the same rubric, with the production label and the judgement
+kept distinguishable.
+
+### How the threshold is read
+
+The eval lives in `packages/agent-harness/evals/turn-disposition/`, shaped like
+`evals/addressing/`: a caller-supplied corpus that is never committed, a
+content-safe synthetic fixture for the runner, a content-free aggregate
+baseline, reports bound to the corpus hash and written to a protected scratch
+directory with mode 0600. The corpus is an authorized export of lakehouse
+records joined to the labels above through the engineering MCP, handled under
+the production-data runbook and deleted after the run.
+
+1. Freeze the label mapping and split development from holdout before tuning.
+2. Repeat the baseline request three times to measure the floor; a difference
+   smaller than a candidate's own spread is not a difference.
+3. Ablate one representational idea at a time: with and without `artifacts`;
+   the fourth outcome; a Breakout-specific question; shorter context.
+4. Sweep the threshold through one implementation of the gate's rule, scored
+   against the confirmed price list, and read the suggestion rate per settled
+   turn at each point: that rate is the number the product owner is asked to
+   accept, and it is what "not too noisy" means in a figure.
+5. Run the winner once on untouched holdout, repeat it, and commit the
+   aggregate as the baseline. Pin the shipped request to the measured bytes.
+
+### What "not too noisy on either end" means in numbers
+
+Read from shadow before any surface, and from the slot afterwards:
+
+- **Suggestion rate**: positives above the candidate threshold per settled
+  turn, per kind, per conversation kind. The loud end.
+- **Miss rate**: merges and Breakouts people made whose judged turn had no
+  positive. The quiet end.
+- **Acceptance and dismissal rates** once visible: accepted, dismissed and
+  ignored per shown suggestion, read from the slot's resolutions.
+- **Settlement cost**: the step's added latency at p50 and p95 against the
+  description loop's, from the settlement observation that is already
+  recorded. If it grows past the description loop's, the step moves to a Queue
+  per key design decision 6.
+
+## Noise controls, and which are open
+
+| Control | Mechanism | Value |
+| --- | --- | --- |
+| One standing suggestion per conversation | The partial unique index; a new judgement supersedes | Structural |
+| Replaced by the next turn or message | Supersession on admission and on judgement | Structural |
+| Removed on dismiss, for everyone | The dismiss route | Structural |
+| Never unread, Activity, push or digest | The slot is not a transcript row and emits no activity effect | Structural |
+| Shown only to who can act | `mergeTargetFor` and the post check on the client | Structural |
+| Threshold | `TURN_DISPOSITION_CONFIDENCE_THRESHOLD`, `>` | Measured in shadow |
+| Cooldown after a dismissal of the same kind | `SUGGESTION_DISMISS_COOLDOWN_MS` | Open, `0` |
+| Suggestions shown per conversation per day | `SUGGESTION_MAXIMUM_PER_CONVERSATION_DAY` | Open, `+Infinity` |
+
+The retired router's workspace-wide suppression (an event type turned off
+after four resolutions and no acceptance) is deliberately not rebuilt. Its
+no-way-back problem was the argument against it then, and the slot's per
+conversation record gives the threshold the same feedback without a switch
+that a quiet afternoon can flip for everybody.
+
+## Failure modes
+
+| Situation | What happens |
+| --- | --- |
+| JEV answers `continue_here` | Nothing shown; recorded |
+| Confidence at or below the threshold | Nothing shown; `confidence_below_threshold` recorded with the confidence |
+| JEV unavailable: HTTP, schema, deadline, no `TYPESAFE_API_KEY` | Nothing shown; `classifier_unavailable` with the provider's failure kind; settlement continues. Local development has no key and records unavailable, which is honest |
+| The drafter fails or over-runs | A `start_breakout` suggestion with no draft; the launch pane opens empty |
+| Settlement retries after a crash | Gate 3 finds the run already judged; no second call, no second row |
+| The description is empty or provisional | The question still runs; `purpose` is the first line of the request, which is what the loop would otherwise use. Breakout descriptions are summarized at their first settlement, before this step |
+| A merge lands with no suggestion standing | The marker is written as today; the corpus records a miss |
+| Two people act at once | The merge or Breakout goes through its own admission; the first resolution wins and the second finds the row resolved |
+| The conversation is archived between judgement and action | The merge route and `prepare` refuse as they do today; the row is left open and superseded by the next event |
+| An older desktop build | Receives neither the event nor the snapshot field; shows nothing |
+
+## Latency and cost
+
+Nothing is added to a request path. The judgement runs after the final turn,
+`stream_completed` and the run's terminal commit, in the settlement lane,
+behind steps that already make slower model calls. The person sees the
+suggestion arrive a moment after the answer, over the socket.
+
+Cost is one JEV call per settled turn that passes the gates. Addressing already
+makes one per human message, so this roughly doubles JEV volume; the JEV leg
+is unpriced in metering today (`usage-metering.md`), and that stays true here
+until the team prices it. The drafter's cost scales with positives and is
+metered to the Organization. Writes: one row per positive, none otherwise.
+
+## Testing
+
+Per [`testing.md`](../../testing.md): the runtime decides where a test goes,
+each integration test is proved able to fail by breaking the behaviour it
+covers once, and the limits' open values get both an enforcement test and an
+open-value test.
+
+| Suite | Covers | Proved by breaking |
+| --- | --- | --- |
+| `packages/agent-harness/src/turn-disposition.test.ts` (Node, stubbed provider) | The request bytes and key order; every outcome's mapping per conversation kind; the threshold's equality semantics; one case per way of not getting an answer; cancellation propagating | Unit-level; the literal is the only break available |
+| `apps/api/test-workers/turn-disposition-settlement.test.ts` (workerd) | A completed Breakout run with a fetch double answering `result_ready_to_merge` leaves one open `merge_up` row and one event; a Thread run answering the breakout outcome leaves `start_breakout`; `continue_here` leaves nothing; a failed run and an unreachable provider leave settlement, naming and description untouched; a replayed settlement writes once; a merge marker resolves the row `accepted`; a capture at the judged turn resolves it; a new message supersedes it; unread and the directory are unchanged | Skip the supersession write (the open row survives); skip the idempotency gate (two rows); move the step before the terminal commit (the turn is not yet final) |
+| `apps/api/test/conversation-suggestions-route.test.ts` (Node, typed double) | The dismiss route's admission and refusal codes; the snapshot field under contract 8 and its absence under 7 | Return the field to a contract-7 build |
+| `apps/api/test/agent-model-flags.test.ts` | The new role is routed, flagged and metered; the exhaustiveness checks on `AGENT_MODEL_FLAG_KEYS` and `ORGANIZATION_PAYS` compile | Type-level |
+| Renderer (`screens/workstream.test.tsx`, `components/workstream-blocks.test.tsx`) | The line draws for a viewer who can act and not for one who cannot; accept opens merge mode with the judged text; accept opens the launch pane with the draft; dismiss hides at once | Component-level |
+| `packages/agent-harness/evals/turn-disposition/` | The runner on the synthetic fixture; the corpus is never committed | Not a test; the eval |
+
+The prompt's golden hash and the pinned question bytes are the regression
+guard on the measured request: an edit fails until the baseline is re-run and
+moved, as `semantic-trigger-gate.ts` records.
+
+## Documents a build has to touch
+
+- **New:** `docs/conversation-suggestions.md`, the module document for the
+  slot and the overlay step, to the shape in `module-documents.md`, registered
+  in `docs/README.md`.
+- `docs/agent-harness.md`: the settlement step and the third JEV caller, with
+  a changelog entry carrying the why.
+- `docs/jev-classifier-opportunities.md`: the candidate entry this PRD adds is
+  deleted when the classifier ships, per that file's rule.
+- `docs/workstream-durable-object.md`: migration v75, the socket event, the
+  snapshot field, contract 8.
+- `docs/conversation-merge.md`: merge mode opened from a suggestion;
+  `markSource` resolving a row.
+- `docs/substream-creation.md`: the launch pane's `initialDraft`; the capture
+  resolving a row.
+- `docs/feature-flags.md`: the `breakout_suggestion` role and flag, and
+  `conversationSuggestionsEnabled` if the flag is asked for.
+- `docs/usage-metering.md` and `docs/data-model.md`: the new metered
+  activities and the table.
+- `docs/writing-prompts.md` is followed, not changed.
+
+## Build sequence
+
+Each phase is a pull request or two with its own acceptance gate. The
+`plan.md` that formalizes this is written after approval.
+
+1. **Shadow.** The classifier module and its Node tests; the settlement step
+   with gates 1 to 5; the `turn_disposition_classifier` diagnostics role and
+   metered activity; the eval scaffold with the synthetic fixture. Gate:
+   decisions appear in `structured_inference` logs and the lakehouse for a
+   Breakout and a Thread in staging; a run with TypeSafe unreachable settles as
+   before; settlement p95 is read before and after.
+2. **Measure.** Authorized export, labels joined, split made, floor measured,
+   ablations run, sweep scored against the confirmed price list, holdout
+   repeated, baseline committed, request pinned. Gate: a threshold and a
+   suggestion rate the product owner has seen and accepted, and a decision on
+   Thread to Channel in the first visible version.
+3. **Surface.** Migration v75 and the slot; the socket event and snapshot field
+   under contract 8; the dismiss route; resolution from `markSource` and from
+   the capture; supersession; gate 6 with its open constants and both tests;
+   the composer line and both accept paths; `initialDraft` on the launch pane;
+   the drafter role, flag and prompt; the product flag if asked for, registered
+   in Ace in this phase. Gate: the workerd suite above; the four screenshots;
+   the acceptance flows in the PRD walked on staging.
+4. **Calibrate.** Read accepted, dismissed and ignored from the slot after the
+   first weeks; re-score the stored shadow answers under any corrected price
+   list without re-calling the provider; the team sets the two open numbers or
+   deletes the guards; the fourth outcome and the Breakout question variant
+   are ablated if the data asks for them.
+
+## Limits handed back
+
+Per [`adding-security-defensive-and-other-limits.md`](../../adding-security-defensive-and-other-limits.md):
+defined, enforced through a parameter, tested at a finite value and at the open
+value, and shipped open. Neither introduces an unbounded path: without them the
+slot shows one line per positive judgement, which is the behaviour the
+threshold already bounds.
+
+| Constant | File | Bounds | Open value | On trip | Derive from |
+| --- | --- | --- | --- | --- | --- |
+| `SUGGESTION_DISMISS_COOLDOWN_MS` | `substream-agent.ts` (the observer step) | Time after a dismissal of one kind before the same kind is offered again in that conversation | `0` | Gate 6 skips the judgement; recorded as `paced` | The shadow data's distribution of time between a dismissal and the next positive in one conversation; the retired router used 30 days for a different rule |
+| `SUGGESTION_MAXIMUM_PER_CONVERSATION_DAY` | same | Suggestions shown in one conversation per rolling day | `Number.POSITIVE_INFINITY` | Gate 6 skips; recorded as `paced` | The measured suggestion rate per settled turn times settled turns per conversation per day, from shadow |
+
+The threshold is not on this table: it is a measured value with its own
+procedure above, not a guard to be opened.
+
+## What this deliberately does not do
+
+- Change what the agent sees or can do. No tool, no prompt line, no history.
+- Write into a parent conversation or a Channel on its own.
+- Add an Activity kind, a notification kind or a digest line.
+- Replace the description loop's judgement of purpose. It reads that loop's
+  output and adds nothing to its inputs.
+- Decide for a person whether a result is worth the parent's attention. It
+  asks, once, quietly, and records the answer.
