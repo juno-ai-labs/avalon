@@ -160,6 +160,15 @@ async function titleMenu(trigger: string | RegExp, item: string | readonly strin
   }
 }
 
+/** A list a live row wrote; one seeded from the device has no version. */
+const liveVersion = {
+  commonEventId: '00000000-0000-7000-8000-000000000007',
+  viewerEventId: '00000000-0000-7000-8001-000000000004',
+  authorityGeneration: 1,
+  commonWaterline: 7,
+  viewerWaterline: 4,
+};
+
 function NavigationProbe(): null { navigateInTest = useNavigate(); locationInTest = useLocation(); return null; }
 
 function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: string, restored = false): QueryClient {
@@ -212,15 +221,27 @@ describe('socket-first channel open', () => {
     });
   });
 
-  it('returns a restored Breakout to Main when the loaded child directory no longer contains it', async () => {
+  it('returns a restored Breakout to Main when the live child directory no longer contains it', async () => {
     const missing = '00000000-0000-7000-8000-00000000066a';
     const parent = recoveryBoot();
     renderScreen((cache) => {
       cache.setQueryData(['workstream', workstreamId], parent);
       cache.setQueryData(['ordered-transcript', workstreamId], parent.transcript);
-      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [] });
+      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [], stateVersion: liveVersion });
     }, missing, true);
     await waitFor(() => expect(locationInTest.search).toBe(''));
+  });
+
+  it('keeps a restored Breakout that a child directory seeded from the device does not list', async () => {
+    const created = '00000000-0000-7000-8000-00000000066a';
+    const parent = recoveryBoot();
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['ordered-transcript', workstreamId], parent.transcript);
+      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [] });
+    }, created, true);
+    await screen.findByRole('textbox', { name: /message/iu });
+    expect(locationInTest.search).toBe(`?substream=${created}`);
   });
 
   it('counts background agents only in the conversation that started them', async () => {

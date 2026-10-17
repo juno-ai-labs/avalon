@@ -67,3 +67,41 @@ export function MergeMessage({ actions, children, className, id, label, mergedBy
     </article>
   );
 }
+
+/**
+ * What a merge leaves in its source: a divider across the feed, like a day
+ * separator, marking where this work's result went up. "↰ Adam merged this
+ * into **General** · just now", or "↰ Rally merged this into **General** for
+ * Adam" when Rally merged it on Adam's request; the line opens the merge where
+ * it landed.
+ */
+export function MergedIntoDivider({ byRally = false, id, mergedBy, onOpen, target, time }: {
+  /** Rally merged it, for `mergedBy`. */
+  byRally?: boolean;
+  id?: string;
+  /** Who merged it, or whom Rally merged it for, as the host names them; omitted when it cannot. */
+  mergedBy?: string | undefined;
+  /** Opens the merge where it landed; without it the line is only a label. */
+  onOpen?: (() => void) | undefined;
+  /** The Thread's or the Channel's name. */
+  target: string;
+  time: ReactNode;
+}): React.JSX.Element {
+  const content = <>
+    <IconCornerUpLeft aria-hidden="true" size={13} stroke={1.9} />
+    <span>{byRally ? 'Rally merged this into' : mergedBy ? `${mergedBy} merged this into` : 'Merged into'}</span>
+    <span className="merged-into-target">{target}</span>
+    {byRally && mergedBy && <span>for {mergedBy}</span>}
+    <span aria-hidden="true">·</span>
+    {time}
+  </>;
+  return (
+    // No separator role: a separator's children are presentational, which
+    // would hide the button from assistive tech.
+    <div className="merged-into" id={id}>
+      {onOpen
+        ? <button aria-label={`Merged into ${target}. Open the merge`} className="merged-into-label" onClick={onOpen} type="button">{content}</button>
+        : <span className="merged-into-label">{content}</span>}
+    </div>
+  );
+}

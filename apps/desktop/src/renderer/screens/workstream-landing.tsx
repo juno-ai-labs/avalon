@@ -3,7 +3,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { EmptyState, InlineError, LoadingState } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout } from '../lib/desktop-layout';
-import { channelRoute } from '../lib/navigation-routes';
+import { OPEN_EXPANDED, channelRoute } from '../lib/navigation-routes';
 import { usePins } from '../lib/pins';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
@@ -14,7 +14,10 @@ import { landingSpaceId, skippedWorkstreamIds } from '../lib/workstream-landing'
  * this device, else the Channel a screen just left asked to return to, else
  * their first pinned Channel, else General, else the first
  * Channel A–Z. A thread a screen just left (archived, made unread) is never
- * reopened from the saved route.
+ * reopened from the saved route. A saved thread under a Channel reopens
+ * expanded, as the Channel and the sidebar open one. A saved breakout is
+ * named as restored instead, so its thread returns to Main when the breakout
+ * was merged or removed since; an expand request would expand the breakout.
  */
 export function WorkstreamLandingScreen(): React.JSX.Element {
   const { session } = useAppSession();
@@ -27,7 +30,11 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
     ? readLayout(layoutKey(session.workspace.id, session.user.id, 'last-route')) : null;
   const savedThreadId = /\/(?:threads|workstreams)\/([^/?]+)/.exec(savedRoute ?? '')?.[1] ?? null;
   if (savedRoute && /^\/(channels|workstreams)\//.test(savedRoute) && (savedThreadId === null || !skipped.has(savedThreadId))) {
-    return <Navigate replace to={savedRoute} />;
+    const savedBreakoutId = new URLSearchParams(savedRoute.split('?')[1] ?? '').get('substream');
+    const expandsThread = savedThreadId !== null && savedRoute.startsWith('/channels/') && savedBreakoutId === null;
+    const restoreState = savedBreakoutId !== null ? { restoredBreakout: savedBreakoutId }
+      : expandsThread ? OPEN_EXPANDED : null;
+    return <Navigate replace state={restoreState} to={savedRoute} />;
   }
   const channels = active.data?.items;
   if (!channels) {

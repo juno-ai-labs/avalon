@@ -67,14 +67,19 @@ every level reads with `usePaneExpansion`. A navigation onto an artifact
 (`openThreadResourceState`, from a pinned artifact's row or its Activity row)
 is the panel's request: only the requested artifact honours it, so an artifact
 opened afterwards from the transcript comes up beside. The sidebar's Threads and Activity
-rows ask for it, and so does a Channel opening one of its threads, from a feed
+rows ask for it, so does the root landing when it reopens the saved thread,
+and so does a Channel opening one of its threads, from a feed
 row or by starting one in its composer: a thread opened from its Channel takes
 the whole window, and Collapse puts it beside the Channel. Other links inside a
 pane don't ask, so a breakout or a panel opened from a thread comes up beside
 it, holding the thread's expansion as above. A request to open a breakout
 expanded is the breakout's alone: the Channel level ignores a request whose
 route names a `substream`, so the thread keeps what it had, and closing the
-breakout returns to it.
+breakout returns to it. The landing therefore asks nothing of a saved breakout;
+it names it `restoredBreakout`, so a breakout merged or removed since the route
+was saved returns its thread to Main, beside the Channel. Only a live breakout
+list may say so: the list seeded from the device at launch can predate the
+breakout, so a restored breakout it omits stays open.
 
 Each step is drawn as movement, by `SplitConversationLayout` itself so both
 levels share it. A pane that opens beside another slides in from the right; a
@@ -176,6 +181,20 @@ results and the Channel composer's unsent attachments.
 thread's is, and is not restored after a relaunch. The shell learns of it
 through `useUiStore.railExpanded`, set by the surface that owns the rail.
 
+### 2026-10-17 — A saved thread reopens expanded
+
+**What changed:** When the root landing (`screens/workstream-landing.tsx`)
+reopens a saved thread under a Channel, on launch or on a navigation to `/`
+that carries no state, it asks for it expanded, so it takes the whole window with the Channel as its crumb. A saved breakout route does not
+ask: the request would be the breakout's, so its thread keeps what it had.
+
+**Why:** The saved route held only the path, and expansion lives in location
+state, so a thread that was last open came back beside its Channel. The product
+asked that a thread left open reopen as it opens from a Channel or the sidebar.
+
+**Considered and rejected:** Saving the expansion beside the route. The product
+asked for a reopened thread to be expanded every time, not to reopen as it was
+left, so there is nothing to save.
 
 ### 2026-10-15 — A Channel opens its threads expanded
 

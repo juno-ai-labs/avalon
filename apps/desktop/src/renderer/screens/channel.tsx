@@ -1,4 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import clsx from 'clsx';
 import type { ChannelMessage, ChannelStats, ChannelStatsList, SpaceSummary, WorkstreamAppearancePatch } from '@rally/contracts';
 import { AppearancePicker, AppearanceSubmenu } from '@rally/ui/components/appearance-picker';
 import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
@@ -315,21 +316,41 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
     // `space` too: the feed element first mounts when the Channel list arrives,
     // which may be after the rows were already in hand.
   }, [channelId, earlierPages, rows, space]);
-  // A navigation onto the message just posted (a merge) brings it into view
-  // once the feed lists it as its newest row, once per navigation. Newest, not
-  // merely listed: a repeat merge keeps its message id and moves to the
-  // bottom, and the cached feed still holds it where it was.
+  // A navigation onto one message brings it into view once per navigation,
+  // and lights it briefly so the eye lands on it. One just posted (a merge) is
+  // revealed once the feed lists it as its newest row. Newest, not merely
+  // listed: a repeat merge keeps its message id and moves to the bottom, and
+  // the cached feed still holds it where it was. An older one (a source's
+  // merge divider) is revealed wherever it is, paging back until it is
+  // loaded; until the feed is settled a missing row proves nothing, since a
+  // Channel opened from its cache is still refetching.
   const location = useLocation();
-  const revealMessageId = revealChannelMessageRequest(location.state);
+  const reveal = revealChannelMessageRequest(location.state);
   const revealedFor = useRef<string | null>(null);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const { fetchNextPage, hasNextPage, isFetching, isSuccess: feedLoaded } = feed;
   useLayoutEffect(() => {
-    if (!revealMessageId || revealedFor.current === location.key) return;
-    if (rows[0] === undefined || feedRowId(rows[0]) !== revealMessageId) return;
-    const target = feedScroll.current?.querySelector(`[data-message-id="${CSS.escape(revealMessageId)}"]`);
-    if (!target) return;
+    if (!reveal || revealedFor.current === location.key) return;
+    const target = feedScroll.current?.querySelector(`[data-message-id="${CSS.escape(reveal.messageId)}"]`);
+    if (!reveal.searchHistory) {
+      if (rows[0] === undefined || feedRowId(rows[0]) !== reveal.messageId || !target) return;
+    } else if (!target) {
+      if (!feedLoaded || isFetching || !feedScroll.current) return;
+      if (!hasNextPage) revealedFor.current = location.key;
+      else void fetchNextPage();
+      return;
+    } else {
+      atNewest.current = false;
+    }
     revealedFor.current = location.key;
     target.scrollIntoView({ block: 'center' });
-  }, [location.key, revealMessageId, rows, space]);
+    setHighlightedId(reveal.messageId);
+  }, [feedLoaded, fetchNextPage, hasNextPage, isFetching, location.key, reveal?.messageId, reveal?.searchHistory, rows, space]);
+  useEffect(() => {
+    if (highlightedId === null) return;
+    const timer = window.setTimeout(() => setHighlightedId(null), 2_400);
+    return () => window.clearTimeout(timer);
+  }, [highlightedId]);
 
   if (active.data === undefined) return <LoadingState label="Opening channel…" />;
   if (!space) return <EmptyState description="It may have been archived, made private, or you may no longer have access." title="Channel not found" />;
@@ -373,6 +394,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
             : row.message.merge
               ? <MergeCard
                 author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
+                focused={row.message.id === highlightedId}
                 key={row.message.id}
                 members={members.data ?? NO_MEMBERS}
                 merge={row.message.merge}
@@ -382,6 +404,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
               />
               : <MessageCard
                 author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
+                focused={row.message.id === highlightedId}
                 key={row.message.id}
                 members={members.data ?? NO_MEMBERS}
                 message={row.message}
@@ -468,16 +491,18 @@ function ThreadCard({ author, members, onOpen, open, placedAt, thread }: {
  * A message in the Channel itself, outside any thread, by whoever said it:
  * Rally, or a member. Not a button, because there is nothing to open.
  */
-function MessageCard({ author, members, message, placedAt }: {
+function MessageCard({ author, focused, members, message, placedAt }: {
   /** The member who said it, once the directory has them; unused for Rally. */
   author: WorkspaceMember | undefined;
+  /** A navigation asked for this message; see `revealChannelMessageState`. */
+  focused: boolean;
   members: readonly WorkspaceMember[];
   message: ChannelMessage;
   placedAt: string;
 }): React.JSX.Element {
   const rally = message.author.kind === 'rally';
   const body = useMemo(() => typedMentionRendering(message.body, members), [members, message.body]);
-  return <li className="channel-feed-item is-message" data-message-id={message.id}>
+  return <li className={clsx('channel-feed-item is-message', focused && 'is-focused')} data-message-id={message.id}>
     <div className="channel-feed-message">
       {rally ? <RallyAvatar /> : author && <Avatar member={author} title={null} />}
       <div className="channel-feed-message-body">
@@ -502,8 +527,10 @@ function MessageCard({ author, members, message, placedAt }: {
  * from the titles stored with the merge. An artifact opens in its thread,
  * where it is attached and so readable by everyone who sees this.
  */
-function MergeCard({ author, members, merge, message, onOpenThread, placedAt }: {
+function MergeCard({ author, focused, members, merge, message, onOpenThread, placedAt }: {
   author: WorkspaceMember | undefined;
+  /** A navigation asked for this merge: a source's divider, or the merge just made. */
+  focused: boolean;
   members: readonly WorkspaceMember[];
   merge: NonNullable<ChannelMessage['merge']>;
   message: ChannelMessage;
@@ -540,7 +567,7 @@ function MergeCard({ author, members, merge, message, onOpenThread, placedAt }: 
     card.scrollIntoView({ block: 'center' });
     card.querySelector('button')?.focus({ preventScroll: true });
   };
-  return <li className="channel-feed-item is-message is-merge" data-message-id={message.id}>
+  return <li className={clsx('channel-feed-item is-message is-merge', focused && 'is-focused')} data-message-id={message.id}>
     <MergeMessage
       label={`${merge.title || 'A thread'}, merged by ${merger}`}
       mergedBy={<>{author && <Avatar member={author} size="small" title={null} />}{merger}</>}

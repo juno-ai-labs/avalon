@@ -17,6 +17,7 @@ import {
 import {
   AutomationActivationV1Schema,
   ConversationMergeV1Schema,
+  ConversationMergedIntoV1Schema,
   AutomationDraftProposedV1Schema,
   ElicitationSchema,
   agentMessageNotice,
@@ -541,6 +542,7 @@ export function orderedTranscriptMessages(
             ...draftProposedFields(structured),
             ...automationActivationFields(structured),
             ...mergedFromFields(structured),
+            ...mergedIntoFields(structured),
             ...(elicitation.success ? { elicitation: normalizeElicitation(elicitation.data) } : {}),
           };
         }
@@ -2844,6 +2846,23 @@ function mergedFromFields(
     mergedFrom: {
       breakoutId: parsed.data.mergedFrom.breakoutId,
       title: parsed.data.mergedFrom.title,
+      actingAgent: parsed.data.actingAgent,
+    },
+  };
+}
+
+/** Where this source's result was merged, read from the server-written marker row. */
+function mergedIntoFields(
+  structured: Record<string, unknown>,
+): Pick<Message, 'mergedInto'> | Record<string, never> {
+  if (structured['type'] !== 'conversation_merged_into') return {};
+  const parsed = ConversationMergedIntoV1Schema.safeParse(structured);
+  if (!parsed.success) return {};
+  return {
+    mergedInto: {
+      ...parsed.data.mergedInto,
+      messageId: parsed.data.messageId,
+      mergedByUserId: parsed.data.mergedByUserId,
       actingAgent: parsed.data.actingAgent,
     },
   };

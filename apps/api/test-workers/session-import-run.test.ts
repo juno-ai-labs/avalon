@@ -45,6 +45,10 @@ const AUTH: AuthContext = { sessionId: SESSION_ID, userId: USER_ID, workspaceId:
 useSelectedModel();
 /** The scripted agent: read the page, then finish with the stored messages. */
 const provider = useOpenRouterDouble((call: ProviderCall) => {
+  // A Breakout's preparation summarizes its thread's context.
+  if (JSON.stringify(call.body.response_format ?? {}).includes("substream_context_summary")) {
+    return { say: JSON.stringify({ summary: "The thread plans a garden." }) };
+  }
   // The icon pass the opened Channel gets, a structured call with no tools.
   if (call.toolNames.length === 0) return { say: JSON.stringify({ title: "Tomato watering", icon: "megaphone" }) };
   const toolResults = call.messages.filter((message) => message.role === "tool").length;
@@ -439,6 +443,94 @@ describe("a conversation import run", () => {
       `SELECT archived_at FROM channels WHERE workstream_id = ?`, run.workstreamId).one().archived_at)).toBeNull();
     expect((await env.DB.prepare(`SELECT state FROM workstream_create_receipts WHERE workstream_id = ?`).bind(run.workstreamId)
       .first<{ state: string }>())?.state).toBe("initialized");
+  }, 60_000);
+
+  /** An opened thread to import into, its own import agent stopped. */
+  async function openedThread(service: SessionImportRunService): Promise<string> {
+    const spaceId = await importSpace();
+    const clientMessageId = crypto.randomUUID();
+    const run = await service.start({ sourceUrl: SOURCE_URL, title: "Garden", spaceIds: [spaceId], clientMessageId });
+    await service.complete(run.workstreamId, {
+      title: "Garden", clientMessageId, spaceIds: [spaceId],
+      source: { provider: "chatgpt", url: SOURCE_URL, sessionId: CONVERSATION_ID },
+      content: { messages: [{ role: "user", text: "Plan the garden", sourceMessageId: "g1" }] },
+    });
+    await service.discard({ workstreamId: run.workstreamId, substreamId: run.substreamId, clientMessageId: null });
+    return run.workstreamId;
+  }
+
+  const BREAKOUT_URL = "https://claude.ai/chat/0a1b2c3d-0000-4000-8000-0000000b0a75";
+  const breakoutSource = { provider: "claude" as const, url: BREAKOUT_URL, sessionId: "0a1b2c3d-0000-4000-8000-0000000b0a75" };
+
+  it("imports a conversation as a Breakout of an existing thread, listed only once it holds the history", async () => {
+    const service = new SessionImportRunService(creationEnv(), AUTH);
+    const threadId = await openedThread(service);
+    const clientMessageId = crypto.randomUUID();
+    const run = await service.startBreakout(threadId, { sourceUrl: BREAKOUT_URL, title: "Watering notes", clientMessageId });
+    expect(run.workstreamId).toBe(threadId);
+    // A replayed start finds the agent it launched rather than starting another.
+    expect(await service.startBreakout(threadId, { sourceUrl: BREAKOUT_URL, title: "Watering notes", clientMessageId })).toEqual(run);
+    const admission = await workspace().authorizeViewer({
+      workspaceId: WORKSPACE_ID, parentId: threadId, userId: USER_ID, substreamId: asSubstreamId(run.substreamId),
+    });
+    expect(admission.authorized).toBe(true);
+    const reservation = () => workspace().readPrivateChildPreparation({ workspaceId: WORKSPACE_ID, parentId: threadId, operationId: clientMessageId });
+    expect((await reservation())?.status).not.toBe("ready");
+
+    // A finish naming a conversation the import was not started on is refused before any upload.
+    const otherUrl = "https://claude.ai/chat/0a1b2c3d-0000-4000-8000-0000000b0a76";
+    await expect(service.completeBreakout(threadId, {
+      title: "Watering notes", clientMessageId, source: { ...breakoutSource, url: otherUrl, sessionId: "0a1b2c3d-0000-4000-8000-0000000b0a76" },
+      content: { messages: [{ role: "user", text: "Wrong chat", sourceMessageId: "x1", files: [{ name: "x.txt", mimeType: "text/plain",
+        kind: "attachment", source: { kind: "inline", encoding: "utf8", data: "x" } }] }] },
+    })).rejects.toMatchObject({ code: "session_import_source_mismatch" });
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      "SELECT title FROM resources WHERE resource_type='uploaded_file'").toArray())).toEqual([]);
+
+    const created = await service.completeBreakout(threadId, {
+      title: "Watering notes", clientMessageId, source: breakoutSource,
+      content: { messages: [
+        { role: "user", text: "How often should I water tomatoes?", sourceMessageId: "b1" },
+        { role: "assistant", text: "Deeply, about twice a week.", sourceMessageId: "b2" },
+      ] },
+    });
+    expect(created).toMatchObject({ substreamId: (await reservation())?.substreamId, title: "Watering notes" });
+    expect((await reservation())?.status).toBe("ready");
+    const breakout = new WorkstreamObjectClient(creationEnv(), AUTH, threadId, created.substreamId);
+    expect(JSON.stringify((await breakout.boot()).transcript)).toContain("Deeply, about twice a week.");
+    // Its source is recorded like a thread's, so it can be read again later.
+    expect((await breakout.importedSessionCheckpoint()).map((entry) => entry.sourceMessageId)).toEqual(["b1", "b2"]);
+    await service.discard({ workstreamId: threadId, substreamId: run.substreamId, clientMessageId: null });
+  }, 60_000);
+
+  it("refuses a Breakout import into a thread the caller cannot see before launching any agent in it", async () => {
+    const threadId = await openedThread(new SessionImportRunService(creationEnv(), AUTH));
+    const outsiderId = asUserId("00000000-0000-7000-8000-000000000f24");
+    // A member of the Organization who is not in this private thread.
+    await env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+      VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`).bind(WORKSPACE_ID, outsiderId).run();
+    const outsider = new SessionImportRunService(creationEnv(), { ...AUTH, userId: outsiderId });
+    await expect(outsider.startBreakout(threadId, { sourceUrl: BREAKOUT_URL, title: "Not mine", clientMessageId: crypto.randomUUID() }))
+      .rejects.toMatchObject({ status: 404 });
+    expect(await workspace().hiddenChildren({ workspaceId: WORKSPACE_ID, parentId: threadId, userId: outsiderId })).toEqual([]);
+  }, 60_000);
+
+  it("discarding a Breakout import cancels its reservation, so a late finish cannot open it", async () => {
+    const service = new SessionImportRunService(creationEnv(), AUTH);
+    const threadId = await openedThread(service);
+    const clientMessageId = crypto.randomUUID();
+    const run = await service.startBreakout(threadId, { sourceUrl: BREAKOUT_URL, title: "Abandoned", clientMessageId });
+    await service.discard({ workstreamId: threadId, substreamId: run.substreamId, clientMessageId, breakout: true });
+    expect((await workspace().readPrivateChildPreparation({ workspaceId: WORKSPACE_ID, parentId: threadId, operationId: clientMessageId }))?.status)
+      .toBe("failed");
+    await expect(service.completeBreakout(threadId, {
+      title: "Abandoned", clientMessageId, source: breakoutSource,
+      content: { messages: [{ role: "user", text: "late", sourceMessageId: "b1", files: [{ name: "late.txt", mimeType: "text/plain",
+        kind: "attachment", source: { kind: "inline", encoding: "utf8", data: "late" } }] }] },
+    })).rejects.toMatchObject({ code: "substream_creation_cancelled" });
+    // Refused before its file was uploaded, so nothing is left behind.
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      "SELECT title FROM resources WHERE resource_type='uploaded_file'").toArray())).toEqual([]);
   }, 60_000);
 
   it("discarding a Channel that never opened archives it and retires its create key", async () => {
