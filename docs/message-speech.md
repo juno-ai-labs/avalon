@@ -208,7 +208,7 @@ separate decision about whether an unnamed image is announced at all. The iOS
 client's Speak hands the raw message text to the system synthesizer and is not
 on this path.
 
-Shipped in the pull request for this change.
+Shipped in [#1278](https://github.com/juno-ai-labs/avalon/pull/1278).
 
 ### 2026-09-16 — Speak from the message menu uses the same one-voice mutex
 
