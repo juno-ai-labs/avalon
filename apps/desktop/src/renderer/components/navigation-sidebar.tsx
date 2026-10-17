@@ -1,4 +1,5 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import type { ActivityFilter, ActivityItem, ActivityPage, ArtifactPin, ConversationAccessRequestItem, PinKind, SpaceSummary, WorkstreamAppearance } from '@rally/contracts';
 import { IdentityTile, ShapeOutline, type TileBadge } from '@rally/ui/components/identity-tile';
 import { resourceGlyph } from '@rally/ui/components/resource-icon';
@@ -15,6 +16,7 @@ import {
   IconClock,
   IconCornerDownRight,
   IconDeviceDesktopDown,
+  IconDots,
   IconLock,
   IconMenu2,
   IconPin,
@@ -55,7 +57,7 @@ import { SidebarSkeletonRows } from './sidebar-skeleton';
 import { RailItem } from './rail-item';
 import { RelativeTime } from './relative-time';
 import { ResizableSidebar, SidebarFooterItems, SidebarScroll } from '@rally/ui/components/resizable-sidebar';
-import { PHONE_LAYOUT_MAX_WIDTH } from '@rally/ui/lib/phone-layout';
+import { PHONE_LAYOUT_MAX_WIDTH, usePhoneLayout } from '@rally/ui/lib/phone-layout';
 import type { ChannelStats, SpaceDirectory } from '@rally/contracts';
 
 const NAVIGATION_SHEET_ID = 'rally-navigation-sheet';
@@ -80,6 +82,15 @@ const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNo
   { id: 'activity', label: 'Activity', icon: <ShapeOutline shape="triangle" /> },
   { id: 'artifacts', label: 'Artifacts', icon: <ShapeOutline shape="sheet" /> },
 ];
+type Section = (typeof SECTIONS)[number];
+
+/**
+ * How many sections the phone's tab row draws before folding the rest into a
+ * More tab: four, then More, then Settings, six tiles across the row. The
+ * product owner set the count (2026-10-17); it is a layout choice, not a
+ * measured limit.
+ */
+const PHONE_RAIL_SECTIONS = 4;
 
 const THREAD_SORTS: ReadonlyArray<{ sort: SidebarChannelSort; label: string }> = [
   { sort: 'recent', label: 'Recent' },
@@ -233,6 +244,11 @@ export function NavigationSidebar({
     activity: unreadActivity,
   };
   const title = SECTIONS.find((candidate) => candidate.id === section)?.label ?? 'Threads';
+  // The phone's tab row has room for four sections beside More and Settings;
+  // the rest fold into More. A guest's four all fit, so they get no More.
+  const phone = usePhoneLayout();
+  const folded = phone ? sections.slice(PHONE_RAIL_SECTIONS) : [];
+  const shown = folded.length > 0 ? sections.slice(0, PHONE_RAIL_SECTIONS) : sections;
   const [creatingChannel, setCreatingChannel] = useState(false);
   const markActivityRead = useMarkActivityRead();
   return <ResizableSidebar
@@ -249,15 +265,16 @@ export function NavigationSidebar({
     <div className="navigation-body">
       <nav aria-label="Sections" className="navigation-rail">
         <div className="navigation-rail-top window-drag" />
-        {sections.map((candidate) => <RailItem
+        {shown.map((candidate) => <RailItem
           active={candidate.id === section}
           aria-current={candidate.id === section ? 'page' : undefined}
-          badge={<RailBadge count={badges[candidate.id]} section={candidate.id} />}
+          badge={<RailBadge count={badges[candidate.id]} label={badgeLabel(candidate.id, badges[candidate.id])} />}
           icon={candidate.icon}
           key={candidate.id}
           label={candidate.label}
           onClick={() => setSection(candidate.id)}
         />)}
+        {folded.length > 0 && <MoreSections active={section} badges={badges} onChoose={setSection} sections={folded} />}
         <div className="navigation-rail-spacer" />
         {accountMenu}
       </nav>
@@ -318,14 +335,77 @@ export function NavigationSidebar({
 /** What a section's count says it counts, for its accessible name. */
 const BADGE_NOUNS: Record<SidebarSection, string> = { pinned: 'pinned with news', channels: 'with new threads', threads: 'waiting', artifacts: 'updated', activity: 'unread' };
 
-/** A section button's red count; nothing at zero, `99+` past two digits. */
-function RailBadge({ count, section }: { count: number; section: SidebarSection }): React.JSX.Element | null {
+/** What a section's count says, for its accessible name: "3 waiting". */
+function badgeLabel(section: SidebarSection, count: number): string {
+  return `${count} ${BADGE_NOUNS[section]}`;
+}
+
+/**
+ * A red count; nothing at zero, `99+` past two digits. Over a section
+ * button's corner by default; `className` puts the same pill in a menu row.
+ */
+function RailBadge({ className = 'navigation-rail-badge', count, label }: { className?: string; count: number; label: string }): React.JSX.Element | null {
   if (count <= 0) return null;
   return <span
-    aria-label={`${count} ${BADGE_NOUNS[section]}`}
-    className={count > 99 ? 'navigation-rail-badge is-capped' : 'navigation-rail-badge'}
+    aria-label={label}
+    className={count > 99 ? `${className} is-capped` : className}
     role="img"
   >{count > 99 ? '99+' : count}</span>;
+}
+
+/**
+ * The phone tab row's More tab: a menu of the sections the row has no room
+ * for, each a radio row with its own count. The tile reads as selected while
+ * one of them is the open section, `aria-current` included, so assistive
+ * technology hears where the open section is and `usePinReveal` finds it as
+ * its last focus target as it would the section's own tab. Its count is the
+ * folded counts added up, named count by count, so nothing a folded section
+ * counts is lost from the row.
+ * Choosing one switches the section as its own tab would, so the sheet stays
+ * open on the list just picked.
+ */
+function MoreSections({ active, badges, onChoose, sections }: {
+  active: SidebarSection;
+  badges: Record<SidebarSection, number>;
+  onChoose: (section: SidebarSection) => void;
+  sections: readonly Section[];
+}): React.JSX.Element {
+  const counted = sections.filter((candidate) => badges[candidate.id] > 0);
+  const holdsActive = sections.some((candidate) => candidate.id === active);
+  return <DropdownMenu.Root>
+    <DropdownMenu.Trigger asChild>
+      <RailItem
+        active={holdsActive}
+        aria-current={holdsActive ? 'page' : undefined}
+        badge={<RailBadge
+          count={counted.reduce((total, candidate) => total + badges[candidate.id], 0)}
+          label={counted.map((candidate) => badgeLabel(candidate.id, badges[candidate.id])).join(', ')}
+        />}
+        icon={<IconDots aria-hidden="true" size={22} stroke={1.8} />}
+        label="More"
+      />
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Portal>
+      <DropdownMenu.Content className="menu-content navigation-more-menu" collisionPadding={8} sideOffset={4}>
+        <DropdownMenu.RadioGroup
+          onValueChange={(value) => {
+            const chosen = sections.find((candidate) => candidate.id === value);
+            if (chosen) onChoose(chosen.id);
+          }}
+          value={active}
+        >
+          {sections.map((candidate) => <DropdownMenu.RadioItem className="menu-item navigation-more-item" key={candidate.id} value={candidate.id}>
+            {candidate.icon}
+            <span className="navigation-more-label">{candidate.label}</span>
+            <RailBadge className="navigation-more-count" count={badges[candidate.id]} label={badgeLabel(candidate.id, badges[candidate.id])} />
+            <DropdownMenu.ItemIndicator className="navigation-more-check">
+              <IconCheck aria-hidden="true" size={15} stroke={1.9} />
+            </DropdownMenu.ItemIndicator>
+          </DropdownMenu.RadioItem>)}
+        </DropdownMenu.RadioGroup>
+      </DropdownMenu.Content>
+    </DropdownMenu.Portal>
+  </DropdownMenu.Root>;
 }
 
 /** The Activity tab's whole feed, whichever filter is shown: the tab and its badge share the one cache entry per filter. */
