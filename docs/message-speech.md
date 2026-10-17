@@ -24,8 +24,9 @@ A Speak click synchronously constructs and resumes a Web Audio `AudioContext`
 with the interactive latency hint. In parallel, `RallyApi` sends the complete
 stored markdown to the selected regional Worker with the current Rally session.
 The Worker reduces markdown to readable plain text, preserving headings, lists,
-code content, links, and every collapsed section while dropping formatting
-punctuation.
+code content, each link's name, and every collapsed section while dropping
+formatting punctuation and every address: a named link is its name, and a bare
+address is *link to* its registrable domain.
 
 Azure accepts at most 4,096 characters in one speech request, so longer text is
 split at paragraphs, sentences, lines, or words within that provider limit. The
@@ -45,6 +46,17 @@ context, and restores the button.
 - **Speech receives the stored message string, never rendered DOM.** Collapsing
   a heading changes only presentation; otherwise Speak would silently omit the
   content the reader asked it to play.
+- **A link is spoken by its name, never its address.** The reducer runs with
+  `linkTargets: "spoken"`, so `[the plan](https://example.com/plan)` and a
+  footnote's external source line both reach the provider as the words the
+  model wrote, and a bare `https://www.apple.com/iphone/compare` reaches it as
+  *link to apple.com*: the registrable domain, which `tldts` resolves, and
+  nothing else of the address. A listener cannot follow a spoken address, and
+  a voice spelling one out is noise between the words that matter; the
+  text-only email part keeps the address because a reader there can follow it.
+  An image with no alt text is spoken as *image*. An address inside a code
+  span or an indented code block is code and is read as written, as fenced
+  code already was.
 - **Audio is never buffered into a complete file.** Waiting for MP3 generation
   or the full response would turn a listening action into a generation wait and
   destroy time-to-first-audio.
@@ -72,7 +84,8 @@ This module owns on-demand playback of an existing assistant message. It does
 not create a durable audio resource; the agent's `generate_audio` tool and
 resource lifecycle are documented in [`agent-attachments.md`](agent-attachments.md).
 It borrows the plain-text Markdown reduction owned by the digest/email renderer
-but neither changes stored markdown nor owns how it is displayed; that remains
+([`digests.md`](digests.md)), asking it to drop link addresses, but neither
+changes stored markdown nor owns how it is displayed; that remains
 [`markdown-rendering.md`](markdown-rendering.md).
 
 The route is REST because a person explicitly requests one potentially large
@@ -107,8 +120,9 @@ decision.
 ## Testing
 
 `apps/api/test/message-speech-service.test.ts` proves the protected route,
-complete Markdown reduction, natural Unicode-safe splitting, ordered streaming,
-and disconnect cancellation. `apps/desktop/src/renderer/lib/api.test.ts` proves
+complete Markdown reduction, that a link reaches the provider as its name with
+no address, natural Unicode-safe splitting, ordered streaming, and disconnect
+cancellation. `apps/desktop/src/renderer/lib/api.test.ts` proves
 authenticated streaming without buffering;
 `apps/desktop/src/renderer/lib/pcm-speech-player.test.ts` proves sample decoding;
 and `apps/desktop/src/renderer/components/workstream-blocks.test.tsx` proves a
@@ -159,6 +173,50 @@ stream backpressure and keeps only the current provider reader plus one
 prefetched provider promise. That prefetch can synthesize one chunk a person
 later stops before hearing; prefetching the entire response was rejected because
 its abandoned cost grows with message length.
+
+### 2026-10-17 — Speak reads a link's name and not its address
+
+**What changed:** The speech service asks the shared plain-text reducer for
+`linkTargets: "spoken"`. `[the plan](https://example.com/plan)` reaches
+`gpt-4o-mini-tts` as *the plan*, a footnote's external source line as its title
+alone, and a bare `https://www.apple.com/iphone/compare`, `<https://…>` or
+`www.…` as *link to apple.com*, and an image with no alt text as *image*;
+before, every address was read out in full.
+
+**Why:** The reducer was written for the text-only email part, where the address
+beside a label is the reader's only way to follow the link. A listener cannot
+follow a spoken address, and a voice reading one out is long, unintelligible,
+and sits between the words that matter. A bare address has no name to speak in
+its place, so it is announced as a link and named by the one part of it a
+listener recognizes, the domain.
+
+**Considered and rejected:** Stripping the parentheses in the speech service
+after the reduction. That is a second regular expression that has to agree with
+the reducer about what a link is, and the Sources list the citation pass appends
+would have needed it too; it also could not tell an address in prose from one
+inside a code span once the backticks are gone. Also rejected: a speech-only
+reducer, which duplicates the heading, list, fence and citation handling to
+change one choice. The option sits on the primitive, beside the `sources`
+choice the citation rewrite already offers for the same reason. For the domain,
+the full host (*docs dot github dot com*) and a guess at the last two labels
+were both rejected: a listener gains nothing from a subdomain, and `bbc.co.uk`
+defeats the guess. `tldts`, which the favicon and terminal network-policy
+services already use, answers it. Speaking an unnamed image's full address, so
+that two images on one host stay distinguishable, was rejected too: a path
+spelled out is the noise this change removes.
+
+**Consequences:** A new spoken surface passes the same option. An address inside
+a code span or an indented code block is read as written, because it is code;
+the spoken text is the one mode that takes an indented block verbatim, since
+the email text part has always reduced its inline marks and is left that way.
+Any scheme other than `http(s)` is read as written too. The domain honours the
+Public Suffix List's private section, unlike the favicon and network-policy
+callers, so `rally.github.io` is heard as the site and not as `github.io`. An image with no alt text is spoken as
+*image*, as a screen reader names an unlabelled graphic; its address was all it
+had. The iOS client's Speak hands the raw message text to the system
+synthesizer and is not on this path.
+
+Shipped in [#1278](https://github.com/juno-ai-labs/avalon/pull/1278).
 
 ### 2026-09-16 — Speak from the message menu uses the same one-voice mutex
 
