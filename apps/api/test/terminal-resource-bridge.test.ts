@@ -861,13 +861,14 @@ describe("Terminal resource bridge", () => {
     // says which run wrote it and whether it was the document's first state
     // or a revision that superseded one.
     expect(database.prepare(
-      `SELECT version, author_kind, author_run_id, author_user_id, cause, storage_kind
+      `SELECT version, author_kind, author_run_id, author_user_id, cause, storage_kind, on_behalf_of_user_id
          FROM resource_versions WHERE resource_id = ? ORDER BY version`,
     ).all(String(first.resourceId))).toEqual([
       { version: 1, author_kind: "agent", author_run_id: R, author_user_id: null,
-        cause: "created", storage_kind: "object" },
+        cause: "created", storage_kind: "object", on_behalf_of_user_id: null },
+      // A revision also names the person whose run made it, so it is not news to them.
       { version: 2, author_kind: "agent", author_run_id: R, author_user_id: null,
-        cause: "published", storage_kind: "object" },
+        cause: "published", storage_kind: "object", on_behalf_of_user_id: U },
     ]);
   });
 
