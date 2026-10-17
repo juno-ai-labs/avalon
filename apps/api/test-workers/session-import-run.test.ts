@@ -503,8 +503,12 @@ describe("a conversation import run", () => {
       .toBe("failed");
     await expect(service.completeBreakout(threadId, {
       title: "Abandoned", clientMessageId, source: breakoutSource,
-      content: { messages: [{ role: "user", text: "late", sourceMessageId: "b1" }] },
+      content: { messages: [{ role: "user", text: "late", sourceMessageId: "b1", files: [{ name: "late.txt", mimeType: "text/plain",
+        kind: "attachment", source: { kind: "inline", encoding: "utf8", data: "late" } }] }] },
     })).rejects.toMatchObject({ code: "substream_creation_cancelled" });
+    // Refused before its file was uploaded, so nothing is left behind.
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      "SELECT title FROM resources WHERE resource_type='uploaded_file'").toArray())).toEqual([]);
   }, 60_000);
 
   it("discarding a Channel that never opened archives it and retires its create key", async () => {
