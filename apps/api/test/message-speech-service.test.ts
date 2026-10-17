@@ -69,7 +69,7 @@ describe("message speech streaming", () => {
       }),
     };
     const markdown = [
-      "Read [the plan](https://example.com/plan) first.[^memo]",
+      "Read [the plan](https://example.com/plan) first, then https://www.apple.com/iphone/compare.[^memo]",
       "",
       "[^memo]: [Margin memo](https://example.com/memo)",
     ].join("\n");
@@ -82,9 +82,12 @@ describe("message speech streaming", () => {
     });
     await collect(result.body);
 
-    // The inline link and the source list both lose their addresses: a
-    // listener cannot follow one, and a voice reading it is noise.
-    expect(requested).toEqual(["Read the plan first.[1]\n\nSources\n\n  1. Margin memo"]);
+    // The named link and the source list both lose their addresses, and the
+    // bare one is announced by the domain a listener would recognize: nobody
+    // can follow a spoken address, and a voice reading one is noise.
+    expect(requested).toEqual([
+      "Read the plan first, then link to apple.com.[1]\n\nSources\n\n  1. Margin memo",
+    ]);
   });
 
   it("never splits a surrogate pair and prefers a natural boundary", () => {
