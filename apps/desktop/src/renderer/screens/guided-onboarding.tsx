@@ -167,7 +167,7 @@ function AccountProfileSettings({ profileDetails }: { profileDetails?: (name: st
 }
 
 function AccountProfileFields({ editor, profileDetails }: { editor: AccountProfileEditor; profileDetails?: (name: string) => ReactNode }): React.JSX.Element {
-  const { profile, saving, error } = useSyncExternalStore(editor.subscribe, editor.getSnapshot);
+  const { profile, error } = useSyncExternalStore(editor.subscribe, editor.getSnapshot);
   const account = useOnboardingAccount();
   const { session } = useAppSession();
   return <div className="settings-account-profile">
@@ -182,7 +182,7 @@ function AccountProfileFields({ editor, profileDetails }: { editor: AccountProfi
         <div className="personal-colors" role="group" aria-label={settings.profileColor.label}>{PERSONAL_COLOR_KEYS.map((value) => <button type="button" key={value} aria-label={value} aria-pressed={personalColorKey(profile.color) === value} style={{ background: personalColor(value), color: personalColorInk(value) }} onClick={() => editor.update({ color: value })}>{personalColorKey(profile.color) === value && <Check size={14} />}</button>)}</div>
       </div>
     </div>
-    <div className="settings-account-actions" role="status">{error ? <><InlineError>{error}</InlineError><Button onClick={editor.retry}>Retry</Button></> : <small>{saving ? 'Saving…' : 'Changes save automatically'}</small>}</div>
+    {error && <div className="settings-account-actions" role="status"><InlineError>{error}</InlineError><Button onClick={editor.retry}>Retry</Button></div>}
   </div>;
 }
 
