@@ -68,6 +68,15 @@ body,
   overflow: hidden;
 }
 
+/* iOS 26 paints a Home Screen app's status bar from the page rather than from
+   the `theme-color` meta: the root element's own background, or a fixed
+   container at the top edge. The canvas `body` paints reaches the viewport by
+   propagation, but a root with no background of its own is reported to read as
+   transparent, and the bar then falls back to white over a dark page (WebKit
+   bug 305546; `docs/theming.md`). The same colour as `body`, so the shell's
+   backdrop still covers it everywhere but the rubber-band overscroll. */
+html { background-color: var(--av-sys-backdrop-color); }
+
 body {
   background: var(--av-sys-backdrop-color);
   color: var(--av-sys-color-text-default);
