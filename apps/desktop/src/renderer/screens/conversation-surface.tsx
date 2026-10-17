@@ -2673,11 +2673,12 @@ export function ConversationSurface({
     }
   };
 
-  // A thread's own composer imports a conversation as a new Breakout of it,
-  // the same reach as starting one. Only the Mac app has the embedded browser
-  // the import runs in; the browser shows the entry disabled, saying so.
+  // A thread's own composer imports a conversation as a new Breakout of it.
+  // Imports are a member's, as a new thread's import is: the API refuses a
+  // guest, so a guest is not offered one. Only the Mac app has the embedded
+  // browser the import runs in; the browser shows the entry disabled, saying so.
   const openBrowserImport = typeof window === 'undefined' ? undefined : window.rally?.openBrowserImport;
-  const composerMenuActions: ComposerMenuAction[] | undefined = parentKind === 'workstream' && substreamId === '0' ? [{
+  const composerMenuActions: ComposerMenuAction[] | undefined = parentKind === 'workstream' && substreamId === '0' && !guest ? [{
     ...(openBrowserImport ? {} : { disabledReason: 'Importing needs the Rally Mac app' }),
     icon: <IconCloudDownload aria-hidden="true" />,
     label: 'Import from Claude or ChatGPT',

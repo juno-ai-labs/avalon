@@ -305,6 +305,13 @@ describe('importing a conversation as a breakout from the thread composer', () =
     expect(screen.getByRole('menuitem', { name: 'Import from Claude or ChatGPT' })).toHaveAttribute('aria-disabled', 'true');
   });
 
+  it('offers a guest no import, which the API refuses them', async () => {
+    stubMacBridge();
+    session.current = { user: { id: 'guest', email: 'guest@example.test' }, workspace: { id: 'workspace', region: 'global', accessClass: 'guest' } };
+    renderScreen({ breakout: false });
+    expect(await composerMenu()).toEqual(['Attach files']);
+  });
+
   it('offers no import in a breakout’s composer, which cannot hold breakouts of its own', async () => {
     stubMacBridge();
     renderScreen({ breakout: true });

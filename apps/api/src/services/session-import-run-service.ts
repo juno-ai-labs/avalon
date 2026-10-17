@@ -51,6 +51,15 @@ async function nameDerivedUuid(name: string): Promise<string> {
 }
 
 /**
+ * The agent child of a Breakout import, named from the thread, the create key
+ * and the conversation it reads: a replay on another conversation names a
+ * different child, and a finish can be checked against the one that started.
+ */
+function breakoutImportChildId(workstreamId: string, clientMessageId: string, sourceUrl: string): Promise<string> {
+  return nameDerivedUuid(`${workstreamId}:${clientMessageId}:breakout:${sourceUrl}`);
+}
+
+/**
  * A conversation import run: an agent in a hidden child of the Channel it
  * imports into, driving the person's desktop browser, whose result the
  * desktop hands back to `complete` (a new Channel) or to the existing update
@@ -169,16 +178,22 @@ export class SessionImportRunService {
     const source = browserConversationSource(input.sourceUrl);
     const breakouts = new SubstreamCreationService(this.env, this.auth, this.defer);
     await breakouts.prepare(workstreamId, { operationId: input.clientMessageId, title: input.title, throughTurnId: null });
-    const childId = await nameDerivedUuid(`${workstreamId}:${input.clientMessageId}:breakout`);
-    const runId = await nameDerivedUuid(`${workstreamId}:${input.clientMessageId}:breakout:run`);
+    const childId = await breakoutImportChildId(workstreamId, input.clientMessageId, source.url);
+    const runId = await nameDerivedUuid(`${childId}:run`);
     const parent = await this.parent();
     if (await parent.ownsHiddenChild({ workspaceId: this.auth.workspaceId, parentId: workstreamId, substreamId: childId, userId: this.auth.userId })) {
       return { workstreamId, substreamId: childId };
     }
+    let admitted: "admitted" | "exists" | null = null;
     try {
-      await this.launch(workstreamId, source, [], childId, runId);
+      await this.launch(workstreamId, source, [], childId, runId, (outcome) => { admitted = outcome; });
     } catch (error) {
-      await breakouts.cancel(workstreamId, input.clientMessageId).catch(() => undefined);
+      // As `start`: a concurrent start that admitted the run owns the
+      // reservation now; only a launch with no run admitted takes it back.
+      const othersRun = admitted === "exists" || (admitted === null && await createHarnessRunObjectPort(
+        this.env, this.auth.workspaceId, workstreamId, undefined, childId,
+      ).run({ runId }).then((found) => found != null, () => false));
+      if (!othersRun) await breakouts.cancel(workstreamId, input.clientMessageId).catch(() => undefined);
       throw error;
     }
     return { workstreamId, substreamId: childId };
@@ -190,9 +205,15 @@ export class SessionImportRunService {
     if (!body.source.url) throw new ApiError(422, "session_import_source_missing", "The import names no source conversation");
     const breakouts = new SubstreamCreationService(this.env, this.auth, this.defer);
     // Before any file is uploaded: a key that names no live reservation of the
-    // caller's must not leave drafts behind, as `complete` checks its receipt first.
+    // caller's, or a conversation other than the one the import was started
+    // on, must not leave drafts behind, as `complete` checks its receipt first.
+    const childId = await breakoutImportChildId(workstreamId, body.clientMessageId, browserConversationSource(body.source.url).url);
+    if (!await (await this.parent()).ownsHiddenChild({ workspaceId: this.auth.workspaceId, parentId: workstreamId, substreamId: childId, userId: this.auth.userId })) {
+      throw new ApiError(409, "session_import_source_mismatch", "This import was started on another conversation");
+    }
     await breakouts.assertConfirmable(workstreamId, body.clientMessageId);
-    const conversation = await prepareSessionImport(this.env, this.auth, body, body.clientMessageId);
+    // Files are named from this operation; the thread scopes it as the preparation is scoped.
+    const conversation = await prepareSessionImport(this.env, this.auth, body, `breakout:${workstreamId}:${body.clientMessageId}`);
     return breakouts.confirm(workstreamId, body.clientMessageId, null, null, conversation);
   }
 
