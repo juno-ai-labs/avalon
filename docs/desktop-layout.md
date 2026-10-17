@@ -31,21 +31,30 @@ selected artifact panel is scoped to a thread and Breakout address; its resource
 conversation before the panel is drawn.
 
 Every attachment and artifact opens its panel at an even split with the
-conversation (`openRailAtEvenSplit`, called from `openPanel`). Opening a panel
-widens the window by the panel's width where the screen has room, and closing
-it gives back that width and any distance the window moved left to fit it
-(`conversation-details-geometry.ts`), unless the person moved or resized the
-window in between. So the split is the conversation's present width, capped
-at half of what the screen allows; a maximized window splits in half, and so
-does a browser tab, which cannot resize its window. The conversation is
-measured without the room it keeps for a panel already open beside it, so a
-Breakout taking over its Channel's panel splits against itself alone.
+conversation (`openRailAtEvenSplit`, called from `openPanel`). **No panel
+resizes the window**: the panel and the conversation share the main pane, and
+the split is half of it, in the desktop app and a browser tab alike. A
+Breakout taking over its Channel's panel splits the same pane, the room kept
+for the outgoing panel included.
+
+**The panel never floats over the conversation.** At any width above the phone
+layout (641px and up) the main pane gives up the panel's width and the panel
+sits beside it; there is no dimming layer to click away. The panel's width is
+capped by `--rail-max-slot`, which keeps `--conversation-min-width` for the
+conversation where the window allows. Where the pane cannot hold that minimum
+beside the narrowest panel, 424 + 280px (`railFillsPane` in `rail-split.ts`,
+which sets `rail-fills-pane` on the shell), the panel takes the whole pane and
+closing it is the way back. The app shell keeps its sidebar above phone width,
+so at the default 340px sidebar this is any window or tab narrower than
+1044px, the desktop app's 860px minimum included.
+At phone width the panel is a full-width sheet.
 
 Switching items in a panel already open for the same conversation keeps the
 width the person dragged it to. The split itself is not saved: the width
 stored per conversation is the one last dragged to, and it is what a panel
 restored on relaunch comes back at. Double-click or `Enter` on the panel's
-edge resets it to the narrow 320px default, not to the split.
+edge resets it to the even split it opened at; unlike the opening, the reset is
+the person's own act, so it is saved as the conversation's width like a drag.
 
 Every draggable edge, the sidebar's, the right panel's, and the
 split-conversation divider's, takes the same hit width,
@@ -110,12 +119,46 @@ the windows the person left open.
 `workstream-landing.test.tsx` checks route restoration and the landing order;
 `desktop-layout.test.tsx` checks the unused semantic row hook;
 `artifact-window-state.test.ts` checks the local registry and monitor clamp;
-`rail-split.test.ts` checks the width a panel opens at, and
-`conversation-details-geometry.test.ts` the window's growth and its return.
+`rail-split.test.ts` checks the width a panel opens at.
 The desktop acceptance check opens, moves, quits, and relaunches real Electron
 windows, and checks that rail positions and panels return visibly.
 
 ## Changelog
+
+### 2026-10-16 — Opening a panel no longer widens the window
+
+**What changed:** Opening the right panel, for an artifact, an attachment,
+resource details, the context rail or the embedded browser, leaves the
+window's size and position alone. The panel opens at half the main pane. The
+`window:set-conversation-details` IPC, `conversation-details-geometry.ts`, and
+the saved-state step that subtracted the panel's width are gone. Windows
+1180px wide or narrower no longer float the panel over a dimmed conversation:
+it sits beside it at every width above phone layout, and the scrim is gone.
+A pane too narrow to keep the conversation's minimum beside it gives the
+panel the whole pane instead.
+Double-click or `Enter` on the panel's edge now resets it to the even split
+instead of 320px.
+
+**Why:** Once panels opened at a 50/50 split, the window grew by the
+conversation's whole width on every opening, which moved and resized a window
+the person had placed. Opening something to read should not rearrange the
+desktop. Without that growth the default 1180px window sat on the floating
+side of the old breakpoint, so every panel opened as an overlay; the
+product's call was that overlays read as dated and the panel belongs beside
+the conversation.
+The edge's "reset width" jumped to a 320px nobody had seen since panels began
+opening at the split, so it now returns to the width the panel opened at.
+
+**Considered and rejected:** Keeping growth for the context and browser rails
+while stopping it for artifacts and attachments. The rails share one slot, so
+whether the window moved would depend on what last took it.
+
+**Consequences:** The window's geometry belongs to the person alone; nothing
+in the renderer can change it. A panel narrows the conversation, so its width
+is half the pane rather than the conversation's present width. Bringing
+growth back means rebuilding the width bookkeeping that saved state relied on
+to avoid storing a panel's width as the person's choice.
+
 
 ### 2026-10-15 — Panels open 50/50, and every edge is equally easy to grab
 

@@ -236,7 +236,6 @@ const bridge: RallyDesktopBridge = {
   copyText: (text) => ipcRenderer.invoke('system:copy-text', text) as Promise<void>,
   showDefinitionForSelection: () => ipcRenderer.invoke('system:show-definition') as Promise<void>,
   shareText: (text) => ipcRenderer.invoke('system:share-text', text) as Promise<void>,
-  setConversationDetailsOpen: (input) => ipcRenderer.invoke('window:set-conversation-details', input) as Promise<void>,
   getEmbeddedBrowserState: () => ipcRenderer.invoke('embedded-browser:state') as Promise<EmbeddedBrowserState>,
   commandEmbeddedBrowser: (command) => ipcRenderer.invoke('embedded-browser:command', command) as Promise<EmbeddedBrowserResult>,
   setEmbeddedBrowserBounds: (bounds) => ipcRenderer.invoke('embedded-browser:bounds', bounds) as Promise<void>,

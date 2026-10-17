@@ -1,6 +1,7 @@
 import clsx from 'clsx';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { evenSplitWidth } from '../lib/rail-split';
 import { DEFAULT_RAIL_WIDTH, MIN_RAIL_WIDTH } from '../lib/ui-store';
 import { DragHint } from './primitives';
 
@@ -64,12 +65,14 @@ export function RailResizeHandle({
   }, []);
 
   const clamp = (requested: number): number => Math.max(MIN_RAIL_WIDTH, Math.min(maxWidth, requested));
+  // Back to the even split the panel opens at. Like a drag, it is the person's
+  // choice, so it is saved as this conversation's width.
+  const reset = (): void => onResize(clamp(evenSplitWidth() ?? DEFAULT_RAIL_WIDTH));
 
   return (
     // The other two handles collapse the panel they hold; this one has a close
-    // control of its own, so its double-click gives back the narrow default
-    // `ui-store` starts on instead. A panel opens wider, at an even split
-    // (`rail-split.ts`); the reset is the way back to a narrow one.
+    // control of its own, so its double-click puts the panel back at the even
+    // split it opened at (`rail-split.ts`) instead.
     <DragHint action="Drag to resize" shortcut="Double-click or Enter to reset width" side="left" suppressed={resizing}>
       <div
         aria-label={label}
@@ -78,7 +81,7 @@ export function RailResizeHandle({
         aria-valuemin={MIN_RAIL_WIDTH}
         aria-valuenow={Math.min(maxWidth, width)}
         className={clsx('rail-resizer', resizing && 'is-resizing')}
-        onDoubleClick={() => onResize(clamp(DEFAULT_RAIL_WIDTH))}
+        onDoubleClick={reset}
         onKeyDown={(event) => {
           // Enter is the splitter's own action in the ARIA authoring practices,
           // and it is the only route to this width from the keyboard: the
@@ -86,7 +89,7 @@ export function RailResizeHandle({
           // one means counting steps to a number nothing on screen shows.
           if (event.key === 'Enter') {
             event.preventDefault();
-            onResize(clamp(DEFAULT_RAIL_WIDTH));
+            reset();
             return;
           }
           if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;

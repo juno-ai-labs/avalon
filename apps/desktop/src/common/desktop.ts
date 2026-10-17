@@ -493,9 +493,6 @@ export interface RallyDesktopBridge {
   showDefinitionForSelection: () => Promise<void>;
   /** Open the macOS share sheet for the given plain text. */
   shareText: (text: string) => Promise<void>;
-  /** Let the main conversation rail borrow desktop space instead of narrowing
-   * the feed whenever the display has room for it. */
-  setConversationDetailsOpen: (input: { open: boolean; width: number }) => Promise<void>;
   /** Local Chromium browser; visited pages never receive the Rally preload. */
   getEmbeddedBrowserState: () => Promise<EmbeddedBrowserState>;
   commandEmbeddedBrowser: (command: EmbeddedBrowserCommand) => Promise<EmbeddedBrowserResult>;

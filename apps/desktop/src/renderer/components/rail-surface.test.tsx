@@ -78,7 +78,6 @@ describe('RailSurface', () => {
           onClose={vi.fn()}
           onResize={vi.fn()}
           resizeLabel="Resize Preview"
-          scrimLabel="Dismiss Preview"
           width={360}
         >
           <div>panel</div>
@@ -87,24 +86,22 @@ describe('RailSurface', () => {
     );
   }
 
-  it('gives the sidebar one scrim and one grab handle while it holds the slot', () => {
+  it('gives the sidebar one grab handle while it holds the slot', () => {
     renderSurface(false);
 
     expect(screen.getByRole('complementary', { name: 'Preview' })).not.toHaveClass('is-leaving');
-    expect(screen.getByRole('button', { name: 'Dismiss Preview' })).toBeInTheDocument();
     expect(screen.getByRole('separator', { name: 'Resize Preview' })).toBeInTheDocument();
   });
 
   // The panel on its way out is on screen over the one that replaced it, so a
-  // second scrim, a second handle, or anything still reachable would belong to
-  // a sidebar that is already gone.
-  it('leaves the scrim, the handle, and every control to the panel that took over', () => {
+  // second handle, or anything still reachable, would belong to a sidebar that
+  // is already gone.
+  it('leaves the handle and every control to the panel that took over', () => {
     renderSurface(true);
 
     const surface = screen.getByRole('complementary', { name: 'Preview', hidden: true });
     expect(surface).toHaveClass('is-leaving');
     expect(surface).toHaveAttribute('inert');
-    expect(screen.queryByRole('button', { name: 'Dismiss Preview', hidden: true })).not.toBeInTheDocument();
     expect(screen.queryByRole('separator', { name: 'Resize Preview', hidden: true })).not.toBeInTheDocument();
   });
 });

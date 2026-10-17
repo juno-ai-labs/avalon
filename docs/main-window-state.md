@@ -1,16 +1,14 @@
 # Main window state
 
 Rally's main Electron window remembers its device-local position, normal size,
-and maximized state. This document owns the persistence and restore contract,
-including the temporary width Rally adds while conversation details are open.
+and maximized state. This document owns the persistence and restore contract.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/main/main-window-state.ts` | Validates, reads, writes, and places saved state; removes transient conversation-details width before persistence. |
+| `apps/desktop/src/main/main-window-state.ts` | Validates, reads, writes, and places saved state. |
 | `apps/desktop/src/main/index.ts` | Constructs the window from saved state and saves its normal geometry on close. |
-| `apps/desktop/src/main/conversation-details-geometry.ts` | Adds and removes the temporary details-rail width while the window is open. |
 | `apps/desktop/src/main/main-window-state.test.ts`, `main-window-startup.test.ts` | Cover placement, persistence, and main-process lifecycle wiring. |
 
 ## How it works
@@ -23,23 +21,18 @@ display if none overlaps. It constrains the rectangle to that work area where
 the native minimum size permits, then supplies the bounds to the constructor.
 After `ready-to-show`, it restores maximization and reveals the window.
 
-On close, main reads `getNormalBounds()` and `isMaximized()`. If the
-conversation-details rail added width and the native width still equals the
-width applied by that rail, it subtracts the temporary addition. A manual resize
-changes that width and therefore remains the user's chosen size. The state is
-written through a temporary file and renamed over the prior record.
+On close, main reads `getNormalBounds()` and `isMaximized()` and saves them as
+they are: Rally never resizes the main window itself, so its size is always the
+person's. The state is written through a temporary file and renamed over the
+prior record.
 
 ## Invariants
 
 - **Save normal bounds separately from maximization.** Saving a maximized
   rectangle as the user's size would make unmaximize return to a screen-sized
   window.
-- **A temporary details rail is not a window-size preference.** Persisting its
-  addition makes the window grow by one rail width on each open-rail/close cycle
-  because the renderer does not restore the rail as open.
-- **A user resize owns the width.** Subtract the rail's addition only when the
-  current width still matches the last width applied by the rail; otherwise
-  closing Rally would discard a manual resize.
+- **Only the person sizes the window.** Opening a panel does not resize it
+  (see [`desktop-layout.md`](desktop-layout.md)).
 - **A window that never became ready cannot replace saved state.** Its default
   or partial geometry would overwrite the last usable placement after a failed
   renderer load.
@@ -53,8 +46,7 @@ written through a temporary file and renamed over the prior record.
 The main process alone owns this state. It is a local window preference in
 Electron `userData`, separate for development and packaged Rally, and does not
 belong to an account, Organization, renderer store, or regional API. The renderer
-can request conversation-details geometry through its existing IPC operation;
-it cannot read or write the saved file.
+can neither resize the window nor read or write the saved file.
 
 ## Failure modes and limits
 
@@ -69,8 +61,8 @@ previous saved geometry.
 
 `pnpm --filter @rally/desktop exec vitest run
 src/main/main-window-state.test.ts src/main/main-window-startup.test.ts` checks
-the file round trip, malformed state, display changes, rail-width ownership, and
-the constructor and close-handler wiring. A real Electron close and cold relaunch
+the file round trip, malformed state, display changes, and the constructor and
+close-handler wiring. A real Electron close and cold relaunch
 checks the visible result, since a Node harness cannot prove native placement.
 
 ## Changelog

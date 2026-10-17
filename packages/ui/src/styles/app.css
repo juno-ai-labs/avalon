@@ -995,10 +995,6 @@ pre {
   z-index: 1;
 }
 
-@media (min-width: 1181px) {
-  .workspace-shell.rail-open .main-pane { padding-right: calc(var(--rail-slot) + 8px); }
-}
-
 .sidebar,
 .settings-sidebar {
   background: var(--av-cmp-sidebar-background);
@@ -4722,7 +4718,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 
 /* Right sidebar: the context inspector rail */
 
-.rail-scrim { display: none; }
 /* The width lives on the shell so the panel, handle, and room the main pane
    leaves for it animate together. */
 @property --rail-width {
@@ -5287,20 +5282,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 /* Responsive desktop window behavior */
 
 @media (max-width: 1180px) {
-  .rail-scrim { background: var(--av-sys-color-scrim-subtle); display: block; inset: 0; position: fixed; z-index: 35; }
-  .workspace-shell { --rail-max-slot: max(280px, min(560px, calc(100vw - var(--av-cmp-sidebar-width) - 20px))); }
-  .rail-surface { box-shadow: var(--av-sys-elevation-shadow-rail-strong); }
-  .rail-open .automation-composer-wrap { transform: translateX(calc(-50% + var(--av-cmp-sidebar-width) / 2)); width: calc(100% - var(--av-cmp-sidebar-width) - 60px); }
   .automation-overview-layout { grid-template-columns: 220px minmax(0, 1fr); }
   .automation-overview-actions .button:not(.run-now-button) { font-size: 0; gap: 0; padding: 5px 8px; }
-}
-
-/* The right sidebar floats over the transcript below 1181px, but never over the
-   header controls that opened it: those move left to sit beside it. Narrower
-   than 561px the panel is full-bleed and there is no beside to move to. */
-@media (min-width: 561px) and (max-width: 1180px) {
-  .rail-open .workstream-header,
-  .rail-open .automation-overview-header { padding-right: calc(var(--rail-slot) + 16px); }
 }
 
 @media (max-width: 920px) {
@@ -5311,9 +5294,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   .workspace-shell:not(.app-shell) .sidebar.is-mobile-open { transform: translateX(0); }
   .workspace-shell:not(.app-shell) .mobile-only { display: inline-flex; }
   .workspace-shell:not(.app-shell) .sidebar-resizer { display: none; }
-  .workspace-shell { --rail-max-slot: calc(100vw - 16px); }
-  .automation-composer-wrap,
-  .rail-open .automation-composer-wrap { transform: translateX(-50%); width: calc(100% - 50px); }
+  .automation-composer-wrap { transform: translateX(-50%); width: calc(100% - 50px); }
   /* The sidebar has left the flow, and with it the 48px title bar that was
      holding the window's own buttons clear of anything readable. These headers
      inherit that job for as long as it is gone. Off macOS the inset is 0 and
@@ -5385,7 +5366,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   .waiting-workstream-source,
   .waiting-workstream-row time,
   .waiting-workstream-copy > span { display: none; }
-  .workspace-shell { --rail-slot: calc(100vw - 16px); }
   .rail-surface { border-radius: var(--av-sys-size-radius-md); min-width: 0; }
   .rail-resizer { display: none; }
   .automation-overview-title > .badge { display: none; }
@@ -6046,8 +6026,17 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .composer-tools > .icon-button { border-radius: var(--av-sys-size-radius-pill); }
 .composer-send { height: 30px; width: 30px; }
 
-@media (min-width: 1181px) {
+/* Above phone width the panel always sits beside the conversation, never over
+   it: the pane gives up the panel's width. At phone width it is a full-width
+   sheet instead. 641 is `PHONE_LAYOUT_MAX_WIDTH` plus one. */
+@media (min-width: 641px) {
   .workspace-shell.rail-open .main-pane { padding-right: var(--rail-slot); }
+  /* Too narrow for the conversation's minimum beside the narrowest panel
+     (`railFillsPane`): the panel covers the whole pane and the pane keeps its
+     width under it, with no scrim and no edge to drag. */
+  .workspace-shell.rail-fills-pane { --rail-slot: calc(100vw - var(--av-cmp-sidebar-width)); }
+  .workspace-shell.rail-open.rail-fills-pane .main-pane { padding-right: 0; }
+  .workspace-shell.rail-fills-pane .rail-resizer { display: none; }
 }
 .rail-surface {
   animation: rail-open 240ms cubic-bezier(.22, 1, .36, 1);
@@ -7777,9 +7766,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   .app-shell .sidebar-menu-toggle[aria-expanded="true"] .sidebar-menu-glyph.is-menu,
   .app-shell .sidebar-menu-toggle[aria-expanded="false"] .sidebar-menu-glyph.is-close { opacity: 0; transform: rotate(90deg) scale(.6); }
   .app-shell .main-pane { height: calc(100% - var(--phone-top-bar-height)); margin-top: var(--phone-top-bar-height); }
-  /* The right panel and its scrim are fixed to the window too, and start under the bar. */
-  .app-shell .rail-surface,
-  .app-shell .rail-scrim { top: var(--phone-top-bar-height); }
+  /* The right panel is fixed to the window too, and starts under the bar. */
+  .app-shell .rail-surface { top: var(--phone-top-bar-height); }
   /* A phone has no room for a panel beside the conversation, so the panel
      takes the whole width rather than leaving a sliver of what is under it,
      and there is no edge left to resize from. */
