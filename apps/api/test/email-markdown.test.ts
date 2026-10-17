@@ -116,6 +116,27 @@ describe("email markdown rendering", () => {
     ].join("\n"));
   });
 
+  it("drops a labelled link's target on request and keeps a bare address", () => {
+    const source = [
+      "Read [the plan](https://example.com/plan), then https://example.com/raw.",
+      "",
+      "| Doc | Where |",
+      "| --- | --- |",
+      "| Plan | [the plan](https://example.com/plan) |",
+    ].join("\n");
+
+    expect(markdownToEmailText(source, { linkTargets: "drop" })).toBe([
+      "Read the plan, then https://example.com/raw.",
+      "",
+      "| Doc | Where |",
+      "| --- | --- |",
+      "| Plan | the plan |",
+    ].join("\n"));
+    // The default is unchanged: a text-only mail client has no other way to
+    // follow the link than the address written beside it.
+    expect(markdownToEmailText(source)).toContain("Read the plan (https://example.com/plan), then");
+  });
+
   it("strips markdown out of the inbox preview line", () => {
     const preheader = markdownToEmailPreheader([
       "# Daily briefing",

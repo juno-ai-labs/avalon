@@ -59,6 +59,34 @@ describe("message speech streaming", () => {
     expect(bytes).toEqual(Uint8Array.from(requested.flatMap((_, index) => [index + 1, index + 1])));
   });
 
+  it("speaks a link by its name and never reads its address", async () => {
+    const requested: string[] = [];
+    const client: AzureAudioClient = {
+      generate: vi.fn(),
+      streamPcm: vi.fn(async ({ text }) => {
+        requested.push(text);
+        return { body: new ReadableStream({ start(controller) { controller.close(); } }) };
+      }),
+    };
+    const markdown = [
+      "Read [the plan](https://example.com/plan) first.[^memo]",
+      "",
+      "[^memo]: [Margin memo](https://example.com/memo)",
+    ].join("\n");
+
+    const result = await streamMessageSpeech({
+      env,
+      markdown,
+      signal: new AbortController().signal,
+      client,
+    });
+    await collect(result.body);
+
+    // The inline link and the source list both lose their addresses: a
+    // listener cannot follow one, and a voice reading it is noise.
+    expect(requested).toEqual(["Read the plan first.[1]\n\nSources\n\n  1. Margin memo"]);
+  });
+
   it("never splits a surrogate pair and prefers a natural boundary", () => {
     expect(splitSpeechText("one two three 😀 four five", 14)).toEqual([
       "one two three",
