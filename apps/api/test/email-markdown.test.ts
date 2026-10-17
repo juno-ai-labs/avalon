@@ -116,6 +116,50 @@ describe("email markdown rendering", () => {
     ].join("\n"));
   });
 
+  it("speaks a named link as its label and a bare address as a link to its domain", () => {
+    const source = [
+      "Read [the plan](https://example.com/plan), then <https://docs.github.com/en/actions> or www.bbc.co.uk/news.",
+      "",
+      "Run `curl https://api.example.com/health` (see https://www.apple.com/iphone/compare).",
+      "",
+      "Is it https://example.com? Mail user@www.example.com today. ![](https://example.com/charts/revenue.png) beside ![Revenue](https://example.com/charts/revenue.png).",
+      "",
+      "Download ftp://www.example.com/file.zip or git+https://github.com/org/repo.git, then https://rally.github.io/docs.",
+      "",
+      "Example:",
+      "",
+      "    curl https://api.example.com/health",
+      "",
+      "| Doc | Where |",
+      "| --- | --- |",
+      "| Plan | [https://example.com/plan](https://example.com/plan) |",
+      "|Spec|https://example.com/spec|Approved|",
+    ].join("\n");
+
+    expect(markdownToEmailText(source, { linkTargets: "spoken" })).toBe([
+      "Read the plan, then link to github.com or link to bbc.co.uk.",
+      "",
+      "Run curl https://api.example.com/health (see link to apple.com).",
+      "",
+      "Is it link to example.com? Mail user@www.example.com today. image beside Revenue.",
+      "",
+      "Download ftp://www.example.com/file.zip or git+https://github.com/org/repo.git, then link to rally.github.io.",
+      "",
+      "Example:",
+      "",
+      "    curl https://api.example.com/health",
+      "",
+      "| Doc | Where |",
+      "| --- | --- |",
+      "| Plan | link to example.com |",
+      "|Spec|link to example.com|Approved|",
+    ].join("\n"));
+    // The default is unchanged: a text-only mail client has no other way to
+    // follow a link than the address written beside it.
+    expect(markdownToEmailText(source))
+      .toContain("Read the plan (https://example.com/plan), then <https://docs.github.com/en/actions> or www.bbc.co.uk/news.");
+  });
+
   it("strips markdown out of the inbox preview line", () => {
     const preheader = markdownToEmailPreheader([
       "# Daily briefing",

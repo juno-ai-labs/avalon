@@ -477,6 +477,12 @@ footnote handling at all.
 The TeX repair escapes Markdown punctuation in what it unwraps, and a `\[` it
 manufactured would stop looking like the link the citation pass has to find.
 
+**The plain-text part is also what Speak reads aloud**, through
+`markdownToEmailText`'s `linkTargets: "spoken"`: a named link is its label, a
+bare address is *link to* its registrable domain, and an unnamed image is
+*image*. The decision and its reasoning are
+[`message-speech.md`](message-speech.md)'s.
+
 The digest's own text uses only `##` sections, bullets and links, so it never
 reaches the parts of that list a model's answer needs.
 
@@ -635,7 +641,7 @@ apply the audience columns the same way; see [Invariants](#invariants).
 | --- | --- |
 | `apps/api/test/activity-event-projection.test.ts` | Projection from `activities`, audience resolution, target rows, and the cursor. |
 | `apps/api/test/digest-email-content.test.ts` | The digest shell: inline styles, counts, and the preheader. |
-| `apps/api/test/email-markdown.test.ts` | The shared Markdown subset, escaping, refused link targets, and the preview line. |
+| `apps/api/test/email-markdown.test.ts` | The shared Markdown subset, escaping, refused link targets, the text part with and without link addresses, and the preview line. |
 | `apps/api/test/digest-schedule.test.ts` | The day mask, one `schedules` row per time, timezone re-derivation, the reconciler's two passes, and the Personal Channel frozen as a destination and refused to a guest. |
 | `apps/api/test-workers/daily-digest.test.ts` | On real workerd: an unread start listed as the sidebar words it, nothing unread settling as `empty`, a fired-again occurrence sending nothing twice, and a claimed but unsent occurrence sending the text it kept. |
 | `apps/api/test/digest-delivery.test.ts` | Independent per-destination settlement, the skipped unknown target type, and `needs_input` on a permanent rejection. |
