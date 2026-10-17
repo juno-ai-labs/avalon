@@ -477,6 +477,16 @@ describe("a conversation import run", () => {
     const reservation = () => workspace().readPrivateChildPreparation({ workspaceId: WORKSPACE_ID, parentId: threadId, operationId: clientMessageId });
     expect((await reservation())?.status).not.toBe("ready");
 
+    // A finish naming a conversation the import was not started on is refused before any upload.
+    const otherUrl = "https://claude.ai/chat/0a1b2c3d-0000-4000-8000-0000000b0a76";
+    await expect(service.completeBreakout(threadId, {
+      title: "Watering notes", clientMessageId, source: { ...breakoutSource, url: otherUrl, sessionId: "0a1b2c3d-0000-4000-8000-0000000b0a76" },
+      content: { messages: [{ role: "user", text: "Wrong chat", sourceMessageId: "x1", files: [{ name: "x.txt", mimeType: "text/plain",
+        kind: "attachment", source: { kind: "inline", encoding: "utf8", data: "x" } }] }] },
+    })).rejects.toMatchObject({ code: "session_import_source_mismatch" });
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      "SELECT title FROM resources WHERE resource_type='uploaded_file'").toArray())).toEqual([]);
+
     const created = await service.completeBreakout(threadId, {
       title: "Watering notes", clientMessageId, source: breakoutSource,
       content: { messages: [
