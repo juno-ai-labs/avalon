@@ -408,7 +408,11 @@ in Chromium. The shell links `/manifest.webmanifest` (`display: standalone`,
 start and scope `/`) and `/apple-touch-icon.png`; the Worker serves those and
 the manifest's icons from the root, by name, beside `/assets/`. The icons are
 the Mac app icon, which is full-bleed with its mark inside the maskable safe
-zone, so one 512 px file serves as both the plain and the maskable icon.
+zone, so one 512 px file serves as both the plain and the maskable icon. The
+status bar above a Home Screen app is iOS's to paint, from the document's
+`theme-color` meta: the entry carries a light and dark pair for the first
+paint, and `applyTheme` keeps both at the applied canvas
+([`theming.md`](theming.md)).
 
 On iOS this is what makes notifications possible: Safari offers Web Push only to
 a Home Screen app, so in a Safari tab Settings reports `home-screen` and tells
