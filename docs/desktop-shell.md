@@ -27,6 +27,7 @@ a thread or a breakout opens, or who owns the right panel.
 | `packages/ui/src/components/conversation-card.tsx` | `ConversationCard`: one thread or Breakout as a feed entry. The Channel feed draws its threads with it, and a thread's feed its Breakouts. |
 | `packages/ui/src/components/split-conversation.tsx` | `SplitConversationLayout`, `SplitConversationMode`, `clampBreakoutWidth`. |
 | `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the section switcher (Pinned, Channels, Threads, Activity), the account menu under it, and the lists with their Pinned sections, sort, and drag to reorder. |
+| `apps/desktop/src/renderer/components/rail-item.tsx` | `RailItem`: one tile of the section switcher, the account menu's trigger included. |
 | `apps/desktop/src/renderer/screens/channel.tsx` | The Channel screen: its pill and menu, the feed of threads, the composer, and `ChannelStack`, the first two panes of the stack ([`pane-stack.md`](pane-stack.md)). |
 | `apps/desktop/src/renderer/components/channel-composer.tsx` | Starting a thread from a Channel. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | The thread screen: the thread and breakout panes, both pills, the one-slot rule, breakout creation in the right pane, and the Channel breadcrumb once the thread has shifted left. |
@@ -48,10 +49,12 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   which the main window centers over it per macOS version (the width is
   `--navigation-rail-width`; change it and the light position together):
   **Pinned**, **Channels**, **Threads** and **Activity**, each an outline over
-  its name, and the account menu at the bottom (its trigger shows only the
-  avatar here). The outlines are what each list holds: a Channel is a squircle
-  and a Thread is a circle, as their rows draw them, and Activity, which holds
-  neither, is a triangle. Pinned holds every kind that can be pinned, so it
+  its name, and the account menu at the bottom, labelled Settings. Every
+  entry, the account menu's trigger included, is one `RailItem`: a 34px tile
+  around a 22px shape, so they share size, hover and the active tint, which a
+  menu's trigger also takes while its menu is open. The outlines are what each
+  list holds: a Channel is a squircle and a Thread is a circle, as their rows
+  draw them, and Activity, which holds neither, is a triangle. Pinned holds every kind that can be pinned, so it
   takes the Tabler pin a row's pin button draws, at the outlines' 1.8 stroke.
   The choice is a device preference (`rally.sidebar-section`). Every section
   carries a red count (`RailBadge`; nothing at zero, `99+` past two digits). **Threads**: every conversation waiting on this
@@ -485,6 +488,25 @@ which would break "opening anything closes the sheet".
 **Consequences:** The reset is still the only place the sheet's state changes
 on navigation. Set the request only at phone width: an open sheet makes the
 pane inert (the 2026-10-06 entry, "The sidebar is a top bar and sheet").
+
+### 2026-10-16 — The account menu is a rail tile like the sections
+
+**What changed:** The account menu's trigger in the section switcher is a
+`RailItem`, the same component the four sections draw, labelled Settings at
+every width. A support session's staff avatar sits on the tile's corner.
+
+**Why:** The trigger was the footer's `AccountTrigger` (avatar, name, chevron)
+squeezed into the rail by CSS that hid its copy and resized its avatar, so it
+came out a different size and shape from the sections beside it, and the phone
+tab rebuilt it again with its own rules and a `::after` label.
+
+**Considered and rejected:** Keeping `AccountTrigger` and matching the tile in
+CSS. That fixed the size once, but left two components that have to be kept in
+step by hand.
+
+**Consequences:** A new rail entry, menu or not, is a `RailItem`; a Radix
+trigger wraps it with `asChild`. `WorkspaceAccountMenu` now only renders in the
+rail. `AccountTrigger` stays for the Sideline footer.
 
 ### 2026-10-16 — Pinned's rail icon is the pin
 

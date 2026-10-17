@@ -67,7 +67,8 @@ Activity is the list to check when you have been away. It shows what happened to
 - someone added you to a Thread;
 - someone mentioned you;
 - someone started a Thread or a Breakout you can see;
-- Rally finished a run in a Thread you are part of.
+- Rally finished a run in a Thread you are part of;
+- someone merged a Breakout into a Thread, or a Thread into a Channel.
 
 Each item names who did it, the Thread or Breakout, and the Channel it is in. Click an item to open what it names. Anything new since you last looked has a small dot at the end of its row, and opening the Activity list counts as looking.
 
