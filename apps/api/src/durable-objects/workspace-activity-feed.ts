@@ -10,7 +10,9 @@ import {
   type ActivityWaterline,
 } from "./activity-clear-rules";
 import { boundParameterChunks } from "./bound-parameters";
-import { breakoutListedSql, channelListedSql, type Viewer } from "./listing-rules";
+import { listedResourceVisibilitySql } from "../services/resource-listing";
+import { breakoutListedSql, channelListedSql, mainOpenableSql, type Viewer } from "./listing-rules";
+import { artifactUpdateSql } from "./workspace-pin-storage";
 import { SPACE_CHANNEL_PAGE_SIZE, type WorkspaceSpaceStorage } from "./workspace-space-storage";
 
 /**
@@ -27,6 +29,8 @@ import { SPACE_CHANNEL_PAGE_SIZE, type WorkspaceSpaceStorage } from "./workspace
  * - **run_finished** is a thread or breakout the viewer takes part in whose
  *   run is `completed`, at its `completed_at`, so each conversation shows its
  *   latest finish once rather than one row per run.
+ * - **artifact_updated** is a version of an artifact the viewer pinned, read
+ *   from `resource_versions` against their pin (`artifactUpdateSql`).
  *
  * Every arm applies the listing rules in its own SQL, a breakout through both
  * of the conversation page's gates, so neither a row nor the page cursor ever
@@ -55,7 +59,14 @@ export function activitySubjectKey(subject: ActivitySubject): string {
     case "thread": return `thread:${subject.threadId}`;
     case "breakout": return `breakout:${subject.threadId}:${subject.substreamId}`;
     case "channel": return `channel:${subject.channelId}`;
+    // Spelled as `artifactSubjectKeySql` spells it, which reads this waterline in SQL.
+    case "artifact": return `artifact:${subject.resourceId}`;
   }
+}
+
+/** An `artifact_updated` row's id: one row per version of one artifact. */
+export function artifactActivityId(resourceId: string, version: number): string {
+  return `artifact:${resourceId}:${version}`;
 }
 
 /**
@@ -91,6 +102,10 @@ interface ActivityKey extends Record<string, SqlStorageValue> {
   /** On a thread's `merged` row: the Channel it merged into. */
   merged_channel_id?: string | null;
   merged_channel_name?: string | null;
+  /** On an `artifact_updated` row: the artifact, its title now, and the version. */
+  artifact_id?: string | null;
+  artifact_title?: string | null;
+  artifact_version?: number | null;
 }
 
 /**
@@ -120,6 +135,10 @@ function activityRowFacts(
         key: activitySubjectKey({ kind: "channel", channelId: placement.channelId }),
         ordinals: { opened: 0, placement: placement.ordinal },
       })),
+      artifact: key.artifact_id ? [{
+        key: activitySubjectKey({ kind: "artifact", resourceId: key.artifact_id }),
+        ordinals: { version: Number(key.artifact_version) },
+      }] : [],
     },
     times: { occurred: Number(key.occurred_at) },
   };
@@ -314,6 +333,31 @@ export class WorkspaceActivityFeed {
                WHERE breakout_viewer.user_id = ?1 AND breakout_viewer.is_participant = 1
                  AND breakout.exact_state = 'completed'
                  AND breakout.completed_at IS NOT NULL`) : []),
+      // A new version of an artifact the viewer pinned, made by somebody
+      // else after they pinned it, while it is still generated in a Main they
+      // may list. Read from the version history itself; nothing is logged.
+      ...(mentionsOnly || !this.artifactUpdatesReady() ? [] : arm(`SELECT 'artifact:' || version.resource_id || ':' || version.version AS id,
+                     'artifact_updated' AS kind,
+                     CAST(unixepoch(version.captured_at, 'subsec') * 1000 AS INTEGER) AS occurred_at,
+                     version.author_user_id AS actor_user_id,
+                     CASE version.author_kind WHEN 'agent' THEN 'Rally' ELSE '' END AS actor_label,
+                     pin.parent_id AS thread_id, '0' AS substream_id,
+                     NULL AS attention_ordinal,
+                     r.id AS artifact_id, r.title AS artifact_title, version.version AS artifact_version
+                FROM workspace_pins pin
+                JOIN resource_versions version ON version.resource_id = pin.item_id
+                JOIN resources r ON r.id = pin.item_id
+                JOIN workspace_workstream_resource_links link
+                  ON link.workstream_id = pin.parent_id
+                 AND link.resource_id = pin.item_id
+                 AND link.relationship_type = 'generated'
+                JOIN channels directory ON directory.workstream_id = pin.parent_id
+                ${CHANNEL_VIEWER}
+               WHERE pin.user_id = ?1 AND pin.item_kind = 'artifact'
+                 AND ${artifactUpdateSql("version", "pin")}
+                 AND ${listedResourceVisibilitySql("r")}
+                 AND directory.archived_at IS NULL
+                 AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}`)),
     ].sort(newestFirst);
     // Each arm took one page past its own cursor, so the merged head is the
     // global first page, and anything left over means there is another.
@@ -419,10 +463,20 @@ export class WorkspaceActivityFeed {
           : key.merged_breakout_id ? { substreamId: key.merged_breakout_id, title: key.merged_breakout_title ?? "" }
             : null,
         ...(key.merged_channel_id ? { mergedInto: { channelId: key.merged_channel_id, name: key.merged_channel_name ?? "" } } : {}),
+        ...(key.artifact_id ? {
+          artifact: { resourceId: key.artifact_id, title: key.artifact_title ?? "", version: Number(key.artifact_version) },
+        } : {}),
         channelIds: channelIds.get(key.thread_id) ?? [],
         unread: key.occurred_at > seenThrough && !done(key),
       }];
     });
+  }
+
+  /** Whether this object has reached migration 111, whose index the artifact arm reads through. */
+  private artifactUpdatesReady(): boolean {
+    return this.storage.sql.exec(
+      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_artifact_updates'`,
+    ).toArray().length === 1;
   }
 
   /** Whether this object has reached migration 101. */

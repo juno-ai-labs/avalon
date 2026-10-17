@@ -1,9 +1,10 @@
 import { openLink } from '../lib/browser-rail-links';
 import { desktopBridge } from '../lib/platform';
+import { isHtmlFile, isolatedHtml } from './attachment-lightbox';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { IconArchive, IconArrowLeft, IconArrowsDiagonal, IconChevronRight, IconChevronsRight, IconExternalLink, IconEye, IconFileText, IconHistory, IconLoader2, IconPlus, IconRefresh, IconUserPlus, IconWindowMaximize, IconX } from '@tabler/icons-react';
-import { ActionTile, ActionTiles, LevelRow, TitleMenuHeader, TitleMenuItem, TitleMenuSeparator, TitlePillClose, TitlePillHeader, useTitleMenuNav } from '@rally/ui/components/title-pill';
+import { IconArchive, IconArrowLeft, IconChevronRight, IconChevronsRight, IconExternalLink, IconEye, IconFileText, IconHistory, IconLoader2, IconPlus, IconRefresh, IconUserPlus, IconWindowMaximize, IconX } from '@tabler/icons-react';
+import { ActionTile, ActionTiles, LevelRow, TitleMenuHeader, TitleMenuItem, TitleMenuSeparator, TitlePillClose, TitlePillHeader, useTitleMenuNav, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { classifyAttachmentKind } from '@rally/contracts';
 import { DetailHeaderActionsHost } from './detail-header-actions';
 import type { IconGroupAction } from '@rally/ui/components/icon-group';
@@ -34,8 +35,10 @@ interface InspectorRailProps {
   panel?: {
     resourceId: string;
     onClose: () => void;
-    /** Shows the resource's readable preview in the full-window lightbox. */
-    onExpand?: (resource: WorkstreamResource) => void;
+    /** Expand the panel over its conversation, or put it back: the stack's own control. */
+    expandAction?: readonly IconGroupAction[] | undefined;
+    /** What the panel sits in, as breadcrumbs, while it is expanded. */
+    ancestors?: readonly TitlePillLevel[] | undefined;
   };
   failure?: 'watch' | 'detach' | 'refresh' | 'attach';
   /**
@@ -421,6 +424,14 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
       </p>
     );
   }
+  // A page renders in the lightbox's sandbox, never as text the panel trusts.
+  if (isHtmlFile({ name: resource.title, mimeType: resource.mimeType })) {
+    return (
+      <article className="inspector-detail-document is-html">
+        <iframe sandbox="" srcDoc={isolatedHtml(state.text)} title={`Preview of ${resource.title}`} />
+      </article>
+    );
+  }
   return (
     <article className="inspector-detail-document">
       <MarkdownBody verbatim>{state.text}</MarkdownBody>
@@ -799,18 +810,11 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
           }}
         /> } : {}),
       }}
-      // A live site has no single file to show full-window; its menu has New window.
       // The detail's own actions, such as a live artifact's, join Expand in
-      // the header's group, so they fold into "⋯" with it.
-      actions={[
-        ...detailActions,
-        ...(resource && props.panel.onExpand && !isSiteResource(resource) && resource.contentAvailable ? [{
-          key: 'expand',
-          label: 'Expand',
-          icon: <IconArrowsDiagonal aria-hidden="true" size={16} stroke={1.9} />,
-          onSelect: () => props.panel?.onExpand?.(resource),
-        }] : []),
-      ]}
+      // the header's group, so they fold into "⋯" with it. A live site expands
+      // like any other artifact: the panel takes the pane, not a lightbox.
+      actions={[...detailActions, ...(props.panel.expandAction ?? [])]}
+      ancestors={props.panel.ancestors ? [...props.panel.ancestors] : []}
       // A live site composites a native view under this header that paints
       // above all renderer DOM, so a label hanging down lands behind the page.
       // Upward does not fit: the header sits at the window's top and Radix

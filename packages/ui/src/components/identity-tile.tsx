@@ -6,10 +6,12 @@ import { Tip } from './primitives';
 /**
  * What a tile's outline says about the thing it stands for. A Channel is a
  * squircle and a Thread is a circle, everywhere a list shows one, so a row is
- * read as one or the other before its name is. The section switcher draws the
- * same outlines, plus the triangle for Activity, which no object takes.
+ * read as one or the other before its name is. An artifact is a sheet, a
+ * square with a tighter corner than a Channel's, painted neutral rather than in
+ * a hue. The section switcher draws the same outlines, plus the triangle for
+ * Activity, which no object takes; Artifacts' outline is a page.
  */
-export type TileShape = 'squircle' | 'circle';
+export type TileShape = 'squircle' | 'circle' | 'sheet';
 
 /** What an object is drawn as: its outline, its symbol, and the pair it is painted in. */
 export interface IdentityMark {
@@ -148,6 +150,10 @@ const OUTLINES: Record<OutlineShape, ReactNode> = {
   squircle: <rect height="16.8" rx="5.6" width="16.8" x="3.6" y="3.6" />,
   circle: <circle cx="12" cy="12" r="8.6" />,
   triangle: <path d="M10.6 4.3a1.6 1.6 0 0 1 2.8 0l7.9 13.9a1.6 1.6 0 0 1-1.4 2.4H4.1a1.6 1.6 0 0 1-1.4-2.4z" />,
+  sheet: <>
+    <path d="M6.6 3.4h7.2l5.2 5.2v10.4a1.6 1.6 0 0 1-1.6 1.6H6.6A1.6 1.6 0 0 1 5 19V5a1.6 1.6 0 0 1 1.6-1.6z" />
+    <path d="M13.6 3.6v3.6a1.6 1.6 0 0 0 1.6 1.6h3.6" />
+  </>,
 };
 
 /** A shape's bare outline, for the section switcher and a collapsed title crumb. */

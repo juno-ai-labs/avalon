@@ -55,15 +55,20 @@ describe('AttachmentPanel', () => {
     expect(second.loadContent).not.toHaveBeenCalled();
   });
 
-  it('expands the item it is showing, gallery position included, to the full window', async () => {
-    const onExpand = vi.fn();
+  it('draws the Expand or Collapse it is given, with what it covers as breadcrumbs', () => {
+    const onSelect = vi.fn();
     const first = { name: 'first.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['first'])) };
-    const second = { name: 'second.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['second'])) };
-    render(<Tooltip.Provider><AttachmentPanel onClose={vi.fn()} onExpand={onExpand} onResize={vi.fn()} preview={{ ...first, gallery: [first, second], galleryIndex: 0 }} width={360} /></Tooltip.Provider>);
-    fireEvent.keyDown(await screen.findByRole('img', { name: 'first.png' }), { key: 'ArrowRight' });
-    await screen.findByRole('img', { name: 'second.png' });
-    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
-    expect(onExpand).toHaveBeenCalledWith(expect.objectContaining({ galleryIndex: 1, gallery: [first, second] }));
+    render(<Tooltip.Provider><AttachmentPanel
+      ancestors={[{ key: 'thread', icon: null, title: 'Launch', label: 'Show Launch', onSelect: vi.fn() }]}
+      expandAction={[{ key: 'expand', label: 'Collapse', icon: null, onSelect }]}
+      onClose={vi.fn()}
+      onResize={vi.fn()}
+      preview={first}
+      width={360}
+    /></Tooltip.Provider>);
+    expect(screen.getByRole('button', { name: 'Launch' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse' }));
+    expect(onSelect).toHaveBeenCalledOnce();
   });
 
   it('labels a prior version and offers the way back to the current one', () => {

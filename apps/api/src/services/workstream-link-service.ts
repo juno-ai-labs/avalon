@@ -8,7 +8,7 @@ import { logWarn } from "../observability/logger";
 /** Mint a canonical Channel or Breakout URL from the Organization's current placement authority. */
 export async function canonicalWorkstreamUrl(
   env: Env,
-  input: { region: Region; workspaceId: string; workstreamId: string; substreamId?: string },
+  input: { region: Region; workspaceId: string; workstreamId: string; substreamId?: string; artifactId?: string },
 ): Promise<string> {
   const workspaceId = asWorkspaceId(input.workspaceId);
   const workspace = await durableObjectStubForWorkspace(
@@ -24,6 +24,7 @@ export async function canonicalWorkstreamUrl(
   if (!placement.spaceId) {
     // Space bootstrap and placement can lag Channel creation. A link should not
     // turn that transient absence into a lost notification or queued push.
+    // The addressed form has no artifact segment: it opens the thread.
     logWarn(env, "canonical_channel_space_missing", { workspaceId, workstreamId: input.workstreamId });
     return new URL(
       `/app/workspaces/${input.region}/${workspaceId}/workstreams/${input.workstreamId}${input.substreamId ? `/substreams/${input.substreamId}` : ""}`,

@@ -43,6 +43,7 @@ const KIND_SETTINGS: Record<NotificationKind, SettingDefinition> = {
   newBreakouts: settings.notifyNewBreakouts,
   runFinished: settings.notifyRunFinished,
   merges: settings.notifyMerges,
+  artifactUpdates: settings.notifyArtifactUpdates,
 };
 
 /**

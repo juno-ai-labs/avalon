@@ -48,13 +48,14 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
 - **The section switcher**, a 76px rail under the macOS window controls,
   which the main window centers over it per macOS version (the width is
   `--navigation-rail-width`; change it and the light position together):
-  **Pinned**, **Channels**, **Threads** and **Activity**, each an outline over
+  **Pinned**, **Channels**, **Threads**, **Activity** and **Artifacts**, each an outline over
   its name, and the account menu at the bottom, labelled Settings. Every
   entry, the account menu's trigger included, is one `RailItem`: a 34px tile
   around a 22px shape, so they share size, hover and the active tint, which a
   menu's trigger also takes while its menu is open. The outlines are what each
   list holds: a Channel is a squircle and a Thread is a circle, as their rows
-  draw them, and Activity, which holds neither, is a triangle. Pinned holds every kind that can be pinned, so it
+  draw them, and Activity, which holds neither, is a triangle. Artifacts is a
+  page, the outline its rows' sheet tiles stand for. Pinned holds every kind that can be pinned, so it
   takes the Tabler pin a row's pin button draws, at the outlines' 1.8 stroke.
   The choice is a device preference (`rally.sidebar-section`). Every section
   carries a red count (`RailBadge`; nothing at zero, `99+` past two digits). **Threads**: every conversation waiting on this
@@ -68,7 +69,7 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   thread or breakout whose row reads unread (a mention, never opened, or
   unread messages), from the copies the Pinned list draws.
 - **One list**, titled with the section's name. Pinned's list is a section per
-  kind, **Channels** then **Threads** (threads, then breakouts), each the same
+  kind, **Channels**, **Threads** (threads, then breakouts) and **Artifacts**, each the same
   Pinned part its own tab draws above everything else, reorderable the same
   way, with nothing unpinned beside it. A guest gets no Channels section there
   either. Each list has **Restart to update**
@@ -140,6 +141,15 @@ its thread's socket, and a plain click starts the open-latency measurement
 (`markWorkstreamFeedOpenStarted`); the open thread clicked again starts
 nothing. A thread opened from a desktop link is scrolled into view, loading
 further pages until its row is listed.
+
+**Artifacts**: the artifacts this person pinned, in their order, and nothing
+else yet. A row is a neutral sheet tile with the artifact's kind glyph,
+badged with its thread, its title and last update, and "kind · thread" below.
+A pin with a version this person has not seen is unread (bold, a dot), and the
+section's count is how many are. A row opens its thread with the artifact's
+panel expanded ([`pane-stack.md`](pane-stack.md)); right-click unpins or
+moves it.
+[`workstream-pinning.md`](workstream-pinning.md#artifact-pins) owns the pin.
 
 **Activity**: requests to join waiting on this person (approve or decline in
 place), then what happened to them, grouped Today, Yesterday and by day

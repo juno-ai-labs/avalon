@@ -8,6 +8,8 @@ import { isImageAttachment, isVideoAttachment } from '../lib/attachment-media';
 
 export interface AttachmentPreview {
   name: string;
+  /** The resource this previews, when it is one: what a pinned artifact's seen version is reported for. */
+  resourceId?: string;
   mimeType?: string;
   src?: string;
   loadContent?: (signal?: AbortSignal) => Promise<Blob>;

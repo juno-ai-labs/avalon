@@ -56,8 +56,9 @@ sits in ([`pane-stack.md`](pane-stack.md)).
 | **Space** | `https://rallywith.ai/app/<region>/<organization-base58>/s/<space-base58>/` | Space sharing and handoff |
 | **Channel** | Space URL plus `c/<channel-base58>` | Current Channel link writers |
 | **Breakout** | Channel URL plus `/b/<breakout-base58>` | Current Breakout link writers |
+| **Artifact** | Channel URL plus `/a/<artifact-base58>`: the thread, opened onto that artifact expanded. Never with `/b/` | A pinned artifact's push (`artifact_updated`) |
 | **Sidekick** | `https://rallywith.ai/app/<region>/<organization-base58>/sk/<sidekick-base58>/` | The Sidekick screen's menu; hands off to `rallywithai://workspace/<region>/<organization-base58>/sidekicks/<sidekick-base58>` |
-| **Deep link** | `rallywithai://workspace/<region>/<organization-base58>/spaces/<space-base58>/channels/<channel-base58>` | The canonical page's last hop; Breakout adds `/breakouts/<breakout-base58>` |
+| **Deep link** | `rallywithai://workspace/<region>/<organization-base58>/spaces/<space-base58>/channels/<channel-base58>` | The canonical page's last hop; Breakout adds `/breakouts/<breakout-base58>`, Artifact `/artifacts/<artifact-base58>` |
 | **Legacy reader** | `/app/workspaces/.../workstreams/...`, `/app/workstreams/...`, or older deep links | Compatibility for already-shared links |
 
 The desktop still registers `rallywithai://` and reads the older
@@ -400,6 +401,30 @@ new path. Push clicks
 use the same adapter with notification attribution. See [push](push-notifications.md).
 
 ## Changelog
+
+### 2026-10-17 — A link can open a thread onto an artifact
+
+**What changed:** A Channel link may end in `/a/<artifact-base58>` (deep link
+`/artifacts/<artifact-base58>`), and every reader in this tree takes it: the
+desktop's main process and intent parser, the web app's `shellLocation`, the
+site handoff, and the iPhone, which opens the thread. The desktop carries it
+as `?artifact=` on `/workstreams/:id`, and `LoneThreadRoute` turns that into
+the navigation state the sidebar's artifact row sends (`openThreadResourceState`),
+so the artifact opens expanded. A pinned artifact's push is the one writer.
+
+**Why:** A push about a new version of a pinned artifact should open that
+artifact, not leave the person to find it in its thread.
+
+**Considered and rejected:** A query parameter on the thread link. Every
+reader refuses a canonical link with a query, so it would have opened nothing
+anywhere, the same as a new segment, with none of a segment's validation.
+
+**Consequences:** A build from before this refuses the link, so nothing
+general mints it: it rides only `artifact_updated` pushes, which an older Mac
+and iPhone already drop by kind. The addressed fallback form, for a thread no
+Space holds, has no artifact segment and opens the thread. The site must
+deploy before a desktop release that relies on it, as for any new path.
+
 
 ### 2026-10-10 — Links keep their shape; the app's routes say Channel and thread
 

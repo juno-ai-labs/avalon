@@ -2,7 +2,6 @@ import { BreakoutMenu, ChannelMenu, type ConversationRowTarget } from '@rally/ui
 import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import type { IconGroupAction } from '@rally/ui/components/icon-group';
 import { WorkstreamGlyph, workstreamMark } from '@rally/ui/components/workstream-glyph';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -23,7 +22,7 @@ import { holdCreationTraceUntilSendReady, startPerfTrace } from '../lib/perf-tra
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
 import { AppearancePicker, AppearanceSubmenu } from '../components/appearance-picker';
-import { IconArrowsDiagonal, IconArrowsDiagonalMinimize2, IconPalette } from '@tabler/icons-react';
+import { IconPalette } from '@tabler/icons-react';
 import { RelativeTime } from '../components/relative-time';
 
 import type { WorkstreamChildDirectory } from '../lib/channel-viewer-state';
@@ -70,6 +69,7 @@ export {
 
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { channelRoute, revealChannelMessageState, useChannelPane, usePaneExpansion } from '../lib/navigation-routes';
+import { expandToggle } from '../components/pane-expand-toggle';
 import { usePinAction, usePinnedIds } from '../lib/pins';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { normalizeHarnessStatus } from '../lib/api';
@@ -1052,25 +1052,3 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   );
 }
 
-/**
- * The header action that expands a pane over the one beside it, or puts it
- * back: Expand while both are on screen, Collapse while it is expanded.
- */
-function expandToggle(expanded: boolean, beside: boolean, setExpanded: (expanded: boolean) => void): IconGroupAction[] | undefined {
-  if (expanded) {
-    // One key for both states, so the button a keyboard pressed keeps focus.
-    return [{
-      key: 'expand',
-      label: 'Collapse',
-      icon: <IconArrowsDiagonalMinimize2 aria-hidden="true" size={16} stroke={1.9} />,
-      onSelect: () => setExpanded(false),
-    }];
-  }
-  if (!beside) return undefined;
-  return [{
-    key: 'expand',
-    label: 'Expand',
-    icon: <IconArrowsDiagonal aria-hidden="true" size={16} stroke={1.9} />,
-    onSelect: () => setExpanded(true),
-  }];
-}

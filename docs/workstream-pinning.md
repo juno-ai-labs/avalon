@@ -1,7 +1,8 @@
 # Pinning
 
-A person pins what they want to hand: a thread, a Channel or a breakout. Each
-sidebar section (Threads, Channels) has a **Pinned** part above its list,
+A person pins what they want to hand: a thread, a Channel, a breakout, or an
+artifact Rally generated. Each sidebar section (Threads, Channels, Artifacts)
+has a **Pinned** part above its list,
 arranged by hand, never sorted, and both the pin and the arrangement live on
 the server, so the same person opening Rally on another machine finds their
 list as they left it.
@@ -34,6 +35,8 @@ the product calls a thread.
 | `packages/contracts/src/navigation.ts` | `Pin`, `PinKind`, `PinList` and the request shapes. |
 | `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | The Pinned part of the Threads and Channels tabs, the right-click **Pin** / **Unpin** item, the drag to reorder (`usePinnedDrag`), and the pin-failure line. |
 | `packages/ui/src/components/conversation-menus.tsx` | **Pinned in my sidebar**, the switch in a thread's and a Channel's title menu. |
+| `apps/desktop/src/renderer/lib/artifact-pin-actions.ts` | **Pin** / **Unpin** on an artifact card, offered for what the thread's Main holds as an artifact. |
+| `apps/desktop/src/renderer/components/resource-action-menu.tsx` | A resource card's right-click menu and its `⋯` button, drawing the same actions. |
 | `apps/desktop/src/renderer/screens/workstream-landing.tsx`, `lib/workstream-landing.ts` | The root route, and `useOpenFirstWorkstream`, the one way a screen leaves for it. |
 
 ## How it works
@@ -91,6 +94,67 @@ dragged to pin it. A drop is the append the server always does, then
 `PUT /navigation/pins` with the row in the slot it was dropped in; a newer pin
 write skips that second step, so an older drop cannot save its order over it.
 A landed row stays in Pinned until the pin list holds it.
+
+### Artifact pins
+
+An artifact is stored in `workspace_pins` as a fourth `item_kind`, `artifact`,
+with the thread it was generated in as its `parent_id`, the way a breakout
+carries its thread (migration 110 rebuilt the table to admit it). It shares the
+table's order rules and the one per-person limit, but not the wire list:
+
+- **Its own list.** `GET /navigation/pins` and the socket's `pins` stay the
+  three kinds. A shipped desktop parses `Pin` strictly, so one unknown kind
+  there would fail its whole list. Artifact pins travel as `artifactPins`
+  (`ArtifactPinSchema`), beside `pins` on the connect payload and on
+  `workspace_navigation_state`, where an older build drops the key it does not
+  know. They have their own routes: `GET|PUT /navigation/artifact-pins` and
+  `PUT|DELETE /navigation/artifact-pins/:id` (`threadId` in the body of a pin).
+- **What a row carries.** Each pin arrives with what its row draws: the
+  resource's title, type, MIME type and last update, and its thread's title,
+  appearance and Channels. The Space snapshot does not carry them, because it
+  goes to every socket in the Organization and an artifact pin does not change
+  with a Space; the connect payload and each write's answer do.
+- **The gate.** A pin is accepted only when the resource is linked to that
+  thread's Main as `generated`, is listed, and the person may open that Main.
+  WorkspaceDO checks this against `workspace_workstream_resource_links`, which
+  is Main's projection; a breakout's own links are not projected there, so a
+  breakout's artifact can be pinned once it is attached to its thread. An
+  unpin is never refused.
+- **Reading.** A pin whose artifact is gone, unlisted or no longer generated
+  in that Main, or whose Main the person can no longer open, is left out of the
+  list, not deleted. It returns if access does, and an unpin tidies it.
+
+**Updates.** A pinned artifact is unread while somebody else has made a
+version of it, since it was pinned, that the person has not seen
+(`artifactUpdateSql`: a republish or a replacement, never the first version,
+a refetch or a bookkeeping capture). Only agents write those versions today,
+and an agent's version names its run rather than a person, so a revision the
+pinner asked Rally for counts as news too; excluding it needs the run's
+requester recorded on the version. What they have seen is their Activity
+waterline on the subject `artifact:<id>`, moved to the version that was
+current when the artifact was opened in a panel, so the pin's unread state and
+its `artifact_updated` Activity rows settle together. Mark all read covers the
+pins as it covers the rows. A panel behind the browser rail is not on screen,
+and in a gallery only the image shown is seen. A version that arrives
+while the panel is open is not the one on screen and stays unread until the
+artifact is opened again. An unpin takes the artifact's rows out of Activity,
+so it tells the person's windows to read Activity again. The Artifacts button counts the unread pins, and so does
+Pinned. A trigger on `resource_versions` (migration 111) queues each new
+version of a pinned artifact in `workspace_artifact_updates`; the drain after
+the write sends each pinner their pin list and an Activity re-read, and pushes
+the row ([`push-notifications.md`](push-notifications.md#activity-rows)). The
+announcement is held to the object's lifetime (`waitUntil`) and is best effort,
+as every Activity push is: the ledger row is gone once drained, so a failed
+member lookup or Queue send loses that push, logged, while the row, the unread
+pin and the digest stand.
+
+On a card, **Pin** and **Unpin** sit behind a `⋯` button that shows while the
+card is hovered or focused, and in its right-click menu: one list of actions
+(`ResourceAction`) drawn by both. A file card reads "Pinned · Markdown"; an
+image or media tile carries a pin in its corner. The **Artifacts** tab lists
+the pins alone for now, and the **Pinned** tab draws them as a third part,
+**Artifacts**. A row opens its thread with the artifact's panel expanded
+(`openThreadResourceState`; [`pane-stack.md`](pane-stack.md)).
 
 ### Older desktops' per-Space pins
 
@@ -338,6 +402,40 @@ Space should inherit an Organization-wide pin when a Channel has multiple
 placements, so the migration intentionally clears all existing pins.
 
 ## Changelog
+
+### 2026-10-17 — Generated artifacts can be pinned
+
+**What changed:** An artifact Rally generated in a thread's Main can be pinned
+from its card's new `⋯` menu or its right-click menu. Migration 110 rebuilds
+`workspace_pins` so `item_kind` admits `artifact`, carrying its thread as
+`parent_id`. The pins travel as `artifactPins` with routes of their own, and
+the sidebar gains an **Artifacts** tab and an Artifacts part in Pinned. A new
+version somebody else makes of a pinned artifact makes it unread, counts on
+the Artifacts and Pinned buttons, is an `artifact_updated` Activity row and a
+push; migration 111 adds the ledger and trigger that notice it.
+
+**Why:** People wanted a generated deliverable at hand without finding the
+message it came in. Pinning was already one person's ordered list of things
+to hand, so an artifact joins it rather than starting a second mechanism.
+
+**Considered and rejected:** A seen-version column on the pin. The Activity
+feed already keeps one waterline per person per subject; an artifact as a
+subject, its version as the ordinal, gives the pin and its rows one answer and
+reuses the read event, sync topic and clear-rule language as they stand.
+Logging an Activity event per version: the version history is already the
+log, as the directory is for starts and finishes. A fourth `PinKind` in `pins`. A shipped desktop
+parses `Pin` strictly, so the first artifact pin would empty its Pinned lists;
+a separate key costs a second list in the client and nothing on the old one.
+A table of its own: the order, limit and write paths are the same, and the
+rebuild is three statements on a table nothing references. Checking a
+breakout's artifact against its conversation object: one more hop on every pin
+and list read, for a case attaching the artifact to its thread already covers.
+
+**Consequences:** `list` filters `artifact` out, so every reader of the shared
+list keeps answering for three kinds; a new reader of `workspace_pins` must do
+the same. The pin limit counts artifacts. A pinned artifact's row reflects its
+thread's title and access as of the last connect or pin write, not live.
+
 
 ### 2026-10-12 — Dragging a row into Pinned pins it again
 

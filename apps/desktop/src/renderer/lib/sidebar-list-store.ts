@@ -1,4 +1,4 @@
-import type { ChannelStats, ContainerOrder, PersonalOrder, PinList, PinnedOrder, SpaceSnapshot } from '@rally/contracts';
+import type { ArtifactPinList, ChannelStats, ContainerOrder, PersonalOrder, PinList, PinnedOrder, SpaceSnapshot } from '@rally/contracts';
 import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 
 import { sameContainer } from './personal-order';
@@ -58,6 +58,8 @@ export const PERSONAL_ORDER_QUERY_KEY = ['personal-order'] as const;
 export const PINNED_ORDER_QUERY_KEY = ['pinned-order'] as const;
 /** Every pin this person has, each kind in their order: the Channels and Threads tabs' Pinned sections. */
 export const PINS_QUERY_KEY = ['pins'] as const;
+/** This person's pinned artifacts in their order: the Artifacts tab, and the Pinned tab's Artifacts part. */
+export const ARTIFACT_PINS_QUERY_KEY = ['artifact-pins'] as const;
 /** Each listed Channel's thread count and last activity, for the Channels tab. */
 export const CHANNEL_STATS_QUERY_KEY = ['channel-stats'] as const;
 /** The Threads tab's server list: threads and breakouts this person takes part in or pinned. */
@@ -71,9 +73,10 @@ export const ACTIVITY_QUERY_KEY = ['activity'] as const;
  */
 export function applyNavigationState(
   queryClient: QueryClient,
-  state: { pins?: PinList | undefined; channelStats?: ChannelStats[] | undefined },
+  state: { pins?: PinList | undefined; artifactPins?: ArtifactPinList | undefined; channelStats?: ChannelStats[] | undefined },
 ): void {
   if (state.pins) queryClient.setQueryData(PINS_QUERY_KEY, state.pins);
+  if (state.artifactPins) queryClient.setQueryData(ARTIFACT_PINS_QUERY_KEY, state.artifactPins);
   const rows = state.channelStats;
   if (!rows || rows.length === 0) return;
   queryClient.setQueryData<ChannelStats[]>(CHANNEL_STATS_QUERY_KEY, (current) => {
@@ -172,7 +175,7 @@ export function applyVersionedSpaceSnapshot(
   /** All's Pinned order; a payload from a server without it reads as none. */
   pinnedOrder: PinnedOrder = [],
   /** Absent from a server before the navigation redesign; leaves what is held. */
-  navigation: { pins?: PinList | undefined; channelStats?: ChannelStats[] | undefined } = {},
+  navigation: { pins?: PinList | undefined; artifactPins?: ArtifactPinList | undefined; channelStats?: ChannelStats[] | undefined } = {},
 ): boolean {
   pinWaterlineLedger(queryClient);
   // Not under the Space waterline: both are this person's own state, sent in
@@ -181,6 +184,8 @@ export function applyVersionedSpaceSnapshot(
   // out, and a Space change is when they may have moved, so they are read
   // again instead.
   if (navigation.pins) queryClient.setQueryData(PINS_QUERY_KEY, navigation.pins);
+  // Only the connect payload carries them; a broadcast snapshot leaves what is held.
+  if (navigation.artifactPins) queryClient.setQueryData(ARTIFACT_PINS_QUERY_KEY, navigation.artifactPins);
   if (navigation.channelStats) queryClient.setQueryData(CHANNEL_STATS_QUERY_KEY, navigation.channelStats);
   else void queryClient.invalidateQueries({ queryKey: CHANNEL_STATS_QUERY_KEY });
   const waterlines = queryClient.getQueryData<Partial<Record<SidebarWaterline, number>>>(

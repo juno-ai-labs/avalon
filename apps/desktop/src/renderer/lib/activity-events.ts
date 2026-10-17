@@ -17,7 +17,13 @@ function aboutSubject(item: ActivityItem, subject: ActivitySubject): boolean {
     case 'thread': return item.threadId === subject.threadId && item.breakout === null;
     case 'breakout': return item.breakout?.substreamId === subject.substreamId;
     case 'channel': return item.channelIds.includes(subject.channelId);
+    case 'artifact': return item.artifact?.resourceId === subject.resourceId;
   }
+}
+
+/** The subject a pinned artifact's reads are about; `through` is the version seen. */
+export function artifactActivitySubject(resourceId: string): ActivitySubject {
+  return { kind: 'artifact', resourceId };
 }
 
 /**

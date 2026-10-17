@@ -7,7 +7,7 @@ export type RailVariant = 'context' | 'browser';
 /** How the sidebar orders the Channels nobody pinned. */
 export type SidebarChannelSort = 'alphabetical' | 'recent' | 'needs_you';
 /** Which list the sidebar's section switcher shows. */
-export type SidebarSection = 'pinned' | 'channels' | 'threads' | 'activity';
+export type SidebarSection = 'pinned' | 'channels' | 'threads' | 'artifacts' | 'activity';
 /** The panel occupying the right sidebar slot. */
 export interface RailInspector {
   type: 'resource' | 'connection' | 'task' | 'run';
@@ -29,6 +29,8 @@ interface UiState {
   /** How the Channels tab orders the Channels nobody pinned; A–Z until changed. */
   channelSort: SidebarChannelSort;
   railOpen: boolean;
+  /** The open panel is expanded over its conversation, taking the whole pane. */
+  railExpanded: boolean;
   railVariant: RailVariant;
   railWidth: number;
   inspector: RailInspector | null;
@@ -42,6 +44,7 @@ interface UiState {
   setChannelSort: (sort: SidebarChannelSort) => void;
   openRail: (variant?: RailVariant) => void;
   closeRail: () => void;
+  setRailExpanded: (expanded: boolean) => void;
   setRailVariant: (variant: RailVariant) => void;
   // `remember: false` sizes this opening only, leaving the width the person
   // last dragged to as what a restored panel comes back at.
@@ -123,10 +126,11 @@ export const useUiStore = create<UiState>((set, get) => ({
   sidebarOpen: false,
   sheetAfterNavigation: false,
   sidebarWidth: loadSidebarWidth(SIDEBAR_WIDTH_STORAGE_KEY, SINGLE_SIDEBAR_DEFAULT_WIDTH),
-  sidebarSection: loadPreference<SidebarSection>(SIDEBAR_SECTION_STORAGE_KEY, ['pinned', 'channels', 'threads', 'activity'], 'channels'),
+  sidebarSection: loadPreference<SidebarSection>(SIDEBAR_SECTION_STORAGE_KEY, ['pinned', 'channels', 'threads', 'artifacts', 'activity'], 'channels'),
   threadSort: loadPreference<SidebarChannelSort>(THREAD_SORT_STORAGE_KEY, ['alphabetical', 'recent', 'needs_you'], 'recent'),
   channelSort: loadPreference<SidebarChannelSort>(CHANNEL_SORT_STORAGE_KEY, ['alphabetical', 'recent', 'needs_you'], 'alphabetical'),
   railOpen: false,
+  railExpanded: false,
   railVariant: 'context',
   railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, null),
   inspector: null,
@@ -156,6 +160,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   // closes: the panel is still on screen fading out, and swapping its contents
   // under the fade would be the last thing seen of it.
   closeRail: () => set({ railOpen: false }),
+  setRailExpanded: (railExpanded) => set({ railExpanded }),
   setRailVariant: (railVariant) => set({ railVariant, inspector: null }),
   setRailWidth: (width, { remember = true } = {}) => {
     const railWidth = clampRailWidth(width);
