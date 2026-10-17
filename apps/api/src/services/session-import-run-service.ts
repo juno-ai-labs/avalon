@@ -5,6 +5,7 @@ import {
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
+  type SessionImportBreakoutRequest,
   type SessionImportRequest,
   type SpaceId,
 } from "@rally/contracts";
@@ -21,6 +22,7 @@ import { resolveAgentModelRouting } from "./agent-model-flags";
 import { activateWorkstreamLoop } from "./integrations";
 import { browserConversationSource, sessionSourceUrlProvider } from "./session-import";
 import { prepareSessionImport } from "./session-import-files";
+import { SubstreamCreationService } from "./substream-creation-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { WorkstreamObjectCreationService } from "./workstream-object-creation-service";
 import { bootstrapConversationChildRuntime, provisionWorkstreamObject } from "./workstream-runtime-database";
@@ -46,6 +48,15 @@ async function nameDerivedUuid(name: string): Promise<string> {
   digest[8] = (digest[8]! & 0x3f) | 0x80; // RFC 9562 variant
   const hex = [...digest.subarray(0, 16)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+/**
+ * The agent child of a Breakout import, named from the thread, the create key
+ * and the conversation it reads: a replay on another conversation names a
+ * different child, and a finish can be checked against the one that started.
+ */
+function breakoutImportChildId(workstreamId: string, clientMessageId: string, sourceUrl: string): Promise<string> {
+  return nameDerivedUuid(`${workstreamId}:${clientMessageId}:breakout:${sourceUrl}`);
 }
 
 /**
@@ -153,6 +164,85 @@ export class SessionImportRunService {
     if (result.status === "refused") {
       throw new ApiError(409, `session_import_discard_${result.code}`, "This thread cannot be discarded");
     }
+  }
+
+  /**
+   * Reserve a Breakout of an existing thread and start the agent that will
+   * fill it. The Breakout is an ordinary unconfirmed preparation, captured
+   * with the thread's context like any other, so it is in no listing until
+   * `completeBreakout` confirms it with the history. The create key is the
+   * preparation id, and the agent's child and run are named from it, so a
+   * replayed start reserves nothing new and launches no second agent.
+   */
+  async startBreakout(workstreamId: string, input: { sourceUrl: string; title: string; clientMessageId: string }) {
+    const source = browserConversationSource(input.sourceUrl);
+    const breakouts = new SubstreamCreationService(this.env, this.auth, this.defer);
+    const childId = await breakoutImportChildId(workstreamId, input.clientMessageId, source.url);
+    const runId = await nameDerivedUuid(`${childId}:run`);
+    // Who may start a Breakout here is decided before anything is launched in the thread.
+    await breakouts.assertCanCreate(workstreamId);
+    // Preparation captures and summarizes the thread's context, a model round
+    // trip the agent does not depend on, so the agent starts alongside it
+    // rather than after it. It is ready long before the agent finishes reading.
+    const preparing = breakouts.prepare(workstreamId, { operationId: input.clientMessageId, title: input.title, throughTurnId: null });
+    preparing.catch(() => undefined);
+    const parent = await this.parent();
+    if (await parent.ownsHiddenChild({ workspaceId: this.auth.workspaceId, parentId: workstreamId, substreamId: childId, userId: this.auth.userId })) {
+      await preparing;
+      return { workstreamId, substreamId: childId };
+    }
+    let admitted: "admitted" | "exists" | null = null;
+    const [prepared, launched] = await Promise.allSettled([
+      preparing,
+      this.launch(workstreamId, source, [], childId, runId, (outcome) => { admitted = outcome; }),
+    ]);
+    if (prepared.status === "rejected") {
+      // No Breakout for the agent to fill. Best effort: a loop not yet executing
+      // misses the stop, and its finish is then refused instead.
+      if (launched.status === "fulfilled") await this.stopAgent(workstreamId, childId).catch(() => undefined);
+      throw prepared.reason;
+    }
+    if (launched.status === "rejected") {
+      // As `start`: a concurrent start that admitted the run owns the
+      // reservation now; only a launch with no run admitted takes it back.
+      const othersRun = admitted === "exists" || (admitted === null && await createHarnessRunObjectPort(
+        this.env, this.auth.workspaceId, workstreamId, undefined, childId,
+      ).run({ runId }).then((found) => found != null, () => false));
+      if (!othersRun) await breakouts.cancel(workstreamId, input.clientMessageId).catch(() => undefined);
+      throw launched.reason;
+    }
+    return { workstreamId, substreamId: childId };
+  }
+
+  /** Stop the import agent running in the caller's hidden child. */
+  private async stopAgent(workstreamId: string, substreamId: string): Promise<void> {
+    const workspaceId = this.auth.workspaceId;
+    const child = await durableObjectStubForWorkspace(
+      this.env, this.env.SUBSTREAM_AGENTS, workspaceId,
+      conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(workstreamId), asSubstreamId(substreamId)),
+    );
+    await child.stopOwnedAgent();
+  }
+
+  /** Confirm the reserved Breakout with the conversation the agent read. */
+  async completeBreakout(workstreamId: string, body: SessionImportBreakoutRequest) {
+    assertImportIdentity(body);
+    if (!body.source.url) throw new ApiError(422, "session_import_source_missing", "The import names no source conversation");
+    const breakouts = new SubstreamCreationService(this.env, this.auth, this.defer);
+    // Before any file is uploaded: a key that names no live reservation of the
+    // caller's, or a conversation other than the one the import was started
+    // on, must not leave drafts behind, as `complete` checks its receipt first.
+    const childId = await breakoutImportChildId(workstreamId, body.clientMessageId, browserConversationSource(body.source.url).url);
+    if (!await (await this.parent()).ownsHiddenChild({ workspaceId: this.auth.workspaceId, parentId: workstreamId, substreamId: childId, userId: this.auth.userId })) {
+      throw new ApiError(409, "session_import_source_mismatch", "This import was started on another conversation");
+    }
+    // Only files are uploaded ahead of `confirm`, which checks the preparation itself.
+    if (body.content.messages.some((message) => message.files?.length)) {
+      await breakouts.assertConfirmable(workstreamId, body.clientMessageId);
+    }
+    // Files are named from this operation; the thread scopes it as the preparation is scoped.
+    const conversation = await prepareSessionImport(this.env, this.auth, body, `breakout:${workstreamId}:${body.clientMessageId}`);
+    return breakouts.confirm(workstreamId, body.clientMessageId, null, null, conversation);
   }
 
   /** Start the agent again on a Channel imported before, keeping its recorded messages first. */
@@ -306,7 +396,7 @@ export class SessionImportRunService {
    * first, so a `complete` that races this one is refused rather than opening
    * a Channel this has already archived.
    */
-  async discard(input: { workstreamId: string; substreamId: string; clientMessageId: string | null }) {
+  async discard(input: { workstreamId: string; substreamId: string; clientMessageId: string | null; breakout?: boolean }) {
     const workspaceId = this.auth.workspaceId;
     const parent = await this.parent();
     // Authorized before anything is stopped: only the hidden child the caller
@@ -315,12 +405,13 @@ export class SessionImportRunService {
     if (!await parent.ownsHiddenChild({ workspaceId, parentId: input.workstreamId, substreamId: input.substreamId, userId: this.auth.userId })) {
       throw new ApiError(404, "session_import_not_found", "No import of yours runs in that conversation");
     }
-    const child = await durableObjectStubForWorkspace(
-      this.env, this.env.SUBSTREAM_AGENTS, workspaceId,
-      conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(input.workstreamId), asSubstreamId(input.substreamId)),
-    );
-    await child.stopOwnedAgent();
+    await this.stopAgent(input.workstreamId, input.substreamId);
     if (input.clientMessageId === null) return { discarded: false };
+    if (input.breakout) {
+      // A Breakout the finish already confirmed stays; `cancel` refuses it.
+      await new SubstreamCreationService(this.env, this.auth, this.defer).cancel(input.workstreamId, input.clientMessageId);
+      return { discarded: true };
+    }
     await this.retire(input.workstreamId, input.clientMessageId);
     return { discarded: true };
   }

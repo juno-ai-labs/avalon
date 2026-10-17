@@ -261,7 +261,7 @@ const bridge: RallyDesktopBridge = {
     ipcRenderer.on('organizations:refresh-requested', handler);
     return () => ipcRenderer.removeListener('organizations:refresh-requested', handler);
   },
-  completeBrowserImport: (workstreamId) => ipcRenderer.invoke('browser-import:imported', workstreamId) as Promise<void>,
+  completeBrowserImport: (workstreamId, substreamId) => ipcRenderer.invoke('browser-import:imported', workstreamId, substreamId) as Promise<void>,
   reportBrowserImport: (progress) => ipcRenderer.invoke('browser-import:progress', progress) as Promise<void>,
   onBrowserImportProgress: (listener) => {
     // Main parsed it from the import window before relaying it here.
