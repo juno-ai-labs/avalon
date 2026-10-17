@@ -394,6 +394,29 @@ describe('a Channel', () => {
     expect(scrollIntoView.mock.contexts[0]).toBe(screen.getByText('Merged again.').closest('li'));
   });
 
+  it('pages back to an older merge a divider asks for, then brings it into view and lights it', async () => {
+    const mergeId = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a66';
+    const thread = { kind: 'thread' as const, placedAt: '2026-10-02T02:00:00.000Z', attentionSequenceNumber: 2, thread: plan };
+    // The newest page holds only a later thread; the merge is a page back.
+    api.getChannelFeed.mockImplementation(async (_channelId: string, cursor: string | null) => cursor === null
+      ? { nextCursor: 'older', latestAttentionSequenceNumber: 2, items: [thread] }
+      : { nextCursor: null, latestAttentionSequenceNumber: 2, items: [{ kind: 'message', placedAt: '2026-10-01T01:00:00.000Z', attentionSequenceNumber: 1, message: {
+        id: mergeId,
+        author: { kind: 'member', userId: 'me' },
+        body: 'Merged last week.',
+        merge: { threadId: plan.id, title: 'Q4 plan', summary: null, embeds: [] },
+      } }] });
+    const original = Element.prototype.scrollIntoView;
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    onTestFinished(() => { Element.prototype.scrollIntoView = original; });
+    renderChannel('/channels/outbound', undefined, revealChannelMessageState(mergeId, { searchHistory: true }));
+    const merge = await screen.findByText('Merged last week.');
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({ block: 'center' }));
+    expect(scrollIntoView.mock.contexts[0]).toBe(merge.closest('li'));
+    expect(merge.closest('li')?.classList.contains('is-focused')).toBe(true);
+  });
+
   it('opens an artifact a merge cites, by its alias, in its thread', async () => {
     api.getWorkspaceMembers.mockResolvedValueOnce([workspace.currentUser] as never);
     api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 3, items: [

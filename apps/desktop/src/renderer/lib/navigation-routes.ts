@@ -75,17 +75,22 @@ export function openResourceRequest(state: unknown): { threadId: string; resourc
 }
 
 /**
- * A navigation that opens a Channel onto the message just posted there: the
- * feed brings it into view once it is the newest row.
+ * A navigation that opens a Channel onto one of its messages. By default the
+ * message was just posted (a merge), so the feed brings it into view once it
+ * is the newest row. With `searchHistory` it is an older one (a source's
+ * merge divider): the feed brings it into view wherever it is, paging back
+ * until it is loaded.
  */
-export function revealChannelMessageState(messageId: string): { revealMessageId: string } {
-  return { revealMessageId: messageId };
+export function revealChannelMessageState(messageId: string, options: { searchHistory?: boolean } = {}): {
+  revealMessageId: string; searchHistory?: true;
+} {
+  return { revealMessageId: messageId, ...(options.searchHistory ? { searchHistory: true as const } : {}) };
 }
 
 /** The Channel message a navigation asked to bring into view, or null when it asked for none. */
-export function revealChannelMessageRequest(state: unknown): string | null {
+export function revealChannelMessageRequest(state: unknown): { messageId: string; searchHistory: boolean } | null {
   return typeof state === 'object' && state !== null && 'revealMessageId' in state && typeof state.revealMessageId === 'string'
-    ? state.revealMessageId
+    ? { messageId: state.revealMessageId, searchHistory: 'searchHistory' in state && state.searchHistory === true }
     : null;
 }
 
