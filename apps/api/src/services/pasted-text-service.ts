@@ -2,6 +2,7 @@ import type { ModelMessage } from "@rally/agent-harness";
 import { z } from "zod";
 
 import type { Env } from "../env";
+import { detectTextType } from "../lib/pasted-text-type";
 import { truncateUtf16Safe } from "../lib/text";
 import { logStructuredEvent } from "../observability/logger";
 import { runStructuredInference } from "./structured-inference";
@@ -30,19 +31,18 @@ const nameJsonSchema = {
 // eslint-disable-next-line no-control-regex -- control characters are exactly what a file name may not hold
 const UNSAFE_NAME_CHARACTERS = /[\u0000-\u001f\u007f/\\:*?"<>|]/gu;
 
-export interface PastedTextNameRequest {
+export interface PastedTextRequest {
   workspaceId: string;
   userId: string | undefined;
-  /** The stand-in name the client gave the file; its extension is kept. */
-  fileName: string;
-  text: string;
+  /** The paste as the client uploaded it, under a stand-in name. */
+  file: File;
 }
 
 export type PastedTextNameInference = (messages: ModelMessage[]) => Promise<string>;
 
-function extensionOf(fileName: string): string {
+function stemOf(fileName: string): string {
   const dot = fileName.lastIndexOf(".");
-  return dot > 0 ? fileName.slice(dot + 1) : "";
+  return dot > 0 ? fileName.slice(0, dot) : fileName;
 }
 
 /**
@@ -52,7 +52,7 @@ function extensionOf(fileName: string): string {
  */
 export function normalizePastedTextName(answer: string, extension: string): string | null {
   let name = answer.replace(UNSAFE_NAME_CHARACTERS, " ").replace(/\s+/gu, " ").trim();
-  if (extension && name.toLowerCase().endsWith(`.${extension.toLowerCase()}`)) {
+  if (name.toLowerCase().endsWith(`.${extension.toLowerCase()}`)) {
     name = name.slice(0, -(extension.length + 1)).trim();
   }
   if (name.length > NAME_MAX_LENGTH) {
@@ -64,18 +64,13 @@ export function normalizePastedTextName(answer: string, extension: string): stri
   return name.length > 0 ? name : null;
 }
 
-/**
- * Names a pasted text attachment from what it says, keeping the extension the
- * client chose from its type. Never throws: the caller's alternative is the
- * stand-in name the client already gave the file, so a failure is logged and
- * returns null.
- */
-export async function namePastedTextWithClient(
+async function nameFromContent(
   env: Env,
   infer: PastedTextNameInference,
-  request: PastedTextNameRequest,
+  request: PastedTextRequest,
+  text: string,
+  extension: string,
 ): Promise<string | null> {
-  const extension = extensionOf(request.fileName);
   const messages: ModelMessage[] = [
     {
       role: "system",
@@ -89,15 +84,14 @@ export async function namePastedTextWithClient(
     {
       role: "user",
       content: [
-        { type: "text", text: `File type: ${extension || "txt"}` },
+        { type: "text", text: `File type: ${extension}` },
         { type: "text", text: "Untrusted content:" },
-        { type: "text", text: request.text.slice(0, SAMPLE_CHARACTERS) },
+        { type: "text", text: text.slice(0, SAMPLE_CHARACTERS) },
       ],
     },
   ];
   try {
-    const name = normalizePastedTextName(await infer(messages), extension);
-    return name ? (extension ? `${name}.${extension}` : name) : null;
+    return normalizePastedTextName(await infer(messages), extension);
   } catch (error) {
     logStructuredEvent(env, "warn", "pasted_text_naming_failed", {
       workspace_id: request.workspaceId,
@@ -109,23 +103,41 @@ export async function namePastedTextWithClient(
 }
 
 /**
- * Runs on the naming model with reasoning off, for the same reason a Channel's
- * name does: it is a one-shot relabelling, and the person who pasted is
- * waiting for the attachment to be ready to send.
+ * Turns a long paste into the file it should be stored as: typed by
+ * `detectTextType`, named from its content by the model, with the extension
+ * that matches the type. Never throws on naming: when the model fails the file
+ * keeps the client's stand-in stem under the detected extension.
  */
-export async function namePastedText(env: Env, request: PastedTextNameRequest): Promise<string | null> {
-  if (!env.OPENROUTER_API_KEY) return null;
-  return namePastedTextWithClient(env, async (messages) => (await runStructuredInference(env, {
-    role: "workstream_naming",
-    activity: "attachment_naming",
-    context: {
-      workspaceId: request.workspaceId,
-      ...(request.userId ? { userId: request.userId } : {}),
-    },
-    messages,
-    schemaName: "pasted_text_name",
-    jsonSchema: nameJsonSchema,
-    parse: (value) => PastedTextNameSchema.parse(value),
-    reasoningEffort: "none",
-  })).result.name, request);
+export async function preparePastedTextWithClient(
+  env: Env,
+  infer: PastedTextNameInference | null,
+  request: PastedTextRequest,
+): Promise<File> {
+  const text = await request.file.text();
+  const type = detectTextType(text);
+  const name = infer ? await nameFromContent(env, infer, request, text, type.extension) : null;
+  return new File([text], `${name ?? stemOf(request.file.name)}.${type.extension}`, { type: type.mimeType });
+}
+
+/**
+ * Names on the naming model with reasoning off, for the same reason a
+ * Channel's name does: it is a one-shot relabelling, and the person who pasted
+ * is watching a skeleton until it returns.
+ */
+export async function preparePastedText(env: Env, request: PastedTextRequest): Promise<File> {
+  return preparePastedTextWithClient(env, env.OPENROUTER_API_KEY
+    ? async (messages) => (await runStructuredInference(env, {
+      role: "workstream_naming",
+      activity: "attachment_naming",
+      context: {
+        workspaceId: request.workspaceId,
+        ...(request.userId ? { userId: request.userId } : {}),
+      },
+      messages,
+      schemaName: "pasted_text_name",
+      jsonSchema: nameJsonSchema,
+      parse: (value) => PastedTextNameSchema.parse(value),
+      reasoningEffort: "none",
+    })).result.name
+    : null, request);
 }
