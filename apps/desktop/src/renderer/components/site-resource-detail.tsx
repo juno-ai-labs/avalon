@@ -62,6 +62,8 @@ export interface SiteResourceDetailProps {
       cornerRadius: number;
     }) => Promise<boolean>;
     setBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
+    /** A still of the live view, shown in the pane while an overlay hides it. */
+    snapshot: () => Promise<string | null>;
     close: () => Promise<void>;
     popOut: (request: DesktopSiteArtifactWindowRequest) => Promise<boolean>;
     copyText: (text: string) => Promise<void>;
@@ -82,6 +84,9 @@ export interface SiteResourceDetailProps {
  * `allow-same-origin` means the artifact's origin, never the app's. Widening
  * this is a security change: see `docs/live-web-artifacts.md`.
  */
+/** The rectangle that collapses the composited view while keeping its page loaded. */
+const HIDDEN = { x: 0, y: 0, width: 0, height: 0 };
+
 const ARTIFACT_FRAME_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
 
 export function SiteResourceDetail({
@@ -132,6 +137,14 @@ export function SiteResourceDetail({
    * not on screen to be covered.
    */
   const [showingData, setShowingData] = React.useState(false);
+  /**
+   * The page as it looked when a menu or dialog opened over it.
+   *
+   * The composited view paints above the DOM, so it has to collapse under any
+   * overlay, and the pane it leaves is empty. This still stands in for it, so
+   * the page stays in view beneath the overlay instead of going blank.
+   */
+  const [snapshot, setSnapshot] = React.useState<string | null>(null);
 
   /**
    * A fresh open code, for one navigation.
@@ -183,11 +196,6 @@ export function SiteResourceDetail({
   const measure = React.useCallback((): { x: number; y: number; width: number; height: number } | null => {
     const pane = paneRef.current;
     if (!pane) return null;
-    // The owning lightbox is allowed; menus and dialogs above it must win
-    // over Electron's native view, which otherwise paints above the DOM.
-    const occluded = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"]')]
-      .some((overlay) => !overlay.contains(pane) && overlay.getAttribute('data-state') !== 'closed');
-    if (occluded) return { x: 0, y: 0, width: 0, height: 0 };
     const rect = pane.getBoundingClientRect();
     const viewport = pane.closest('.rail-scroll')?.getBoundingClientRect();
     const left = Math.max(rect.left, viewport?.left ?? 0, 0);
@@ -202,6 +210,15 @@ export function SiteResourceDetail({
       width: Math.max(0, Math.round(right - left)),
       height: Math.max(0, Math.round(bottom - top)),
     };
+  }, []);
+
+  // The owning lightbox is allowed; menus and dialogs above it must win over
+  // Electron's native view, which otherwise paints above the DOM.
+  const occluded = React.useCallback((): boolean => {
+    const pane = paneRef.current;
+    if (!pane) return false;
+    return [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"]')]
+      .some((overlay) => !overlay.contains(pane) && overlay.getAttribute('data-state') !== 'closed');
   }, []);
 
   /**
@@ -245,7 +262,7 @@ export function SiteResourceDetail({
         return await surface.present({
           artifactId: navigation.artifactId,
           url: navigation.openUrl,
-          bounds: measure() ?? bounds,
+          bounds: occluded() ? HIDDEN : measure() ?? bounds,
           cornerRadius: paneCorner(),
         });
       })
@@ -262,7 +279,7 @@ export function SiteResourceDetail({
       setPreviewShown(null);
       void surface.close();
     };
-  }, [access, measure, mintAccess, paneCorner, resourceId, showingData, surface]);
+  }, [access, measure, mintAccess, occluded, paneCorner, resourceId, showingData, surface]);
 
   // Native content must remain clipped to its owning scroll viewport and
   // disappear behind nested DOM dialogs; Electron cannot infer either.
@@ -276,9 +293,35 @@ export function SiteResourceDetail({
     // reveals it at the last bounds it was sent. A dialog opened or a pane
     // moved during that load must already be reflected by then.
     if (!access || previewShown === false || showingData || surface.framed) return undefined;
+    let disposed = false;
+    let hidden = false;
+    let capturing = false;
     const update = (): void => {
       const bounds = measure();
-      if (bounds) void surface.setBounds(bounds);
+      if (!bounds || capturing) return;
+      const covered = occluded();
+      if (covered && !hidden) {
+        // The still is taken before the view collapses, because a collapsed
+        // view paints nothing to take. Updates in the meantime wait for it,
+        // and the one it runs on finishing sees whatever is current then.
+        capturing = true;
+        void surface.snapshot()
+          .catch(() => null)
+          .then((image) => {
+            capturing = false;
+            if (disposed) return;
+            hidden = true;
+            setSnapshot(image);
+            update();
+          });
+        return;
+      }
+      hidden = covered;
+      void surface.setBounds(covered ? HIDDEN : bounds).then(() => {
+        // Dropped only once the view is back over it, so the pane never shows
+        // empty in between.
+        if (!hidden && !disposed) setSnapshot(null);
+      });
     };
     window.addEventListener('resize', update);
     window.addEventListener('scroll', update, true);
@@ -288,12 +331,14 @@ export function SiteResourceDetail({
     overlays.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-state', 'role'] });
     update();
     return () => {
+      disposed = true;
       window.removeEventListener('resize', update);
       window.removeEventListener('scroll', update, true);
       observer.disconnect();
       overlays.disconnect();
+      setSnapshot(null);
     };
-  }, [access, measure, previewShown, showingData, surface]);
+  }, [access, measure, occluded, previewShown, showingData, surface]);
 
   // The canonical public link carries no access code or viewer identity.
   // Copying it shares the current site with anyone.
@@ -371,8 +416,10 @@ export function SiteResourceDetail({
             {!accessError && previewShown === null && <p className="site-detail-status">Opening…</p>}
             {/*
               Nothing is rendered *into* the pane when the preview is live: the
-              composited view covers it. This placeholder is what a person sees
-              where no view can be composited — a browser build, or a refused URL.
+              composited view covers it. The exceptions are the still shown
+              while an overlay hides that view, and the placeholder a person
+              sees where no view can be composited — a browser build, or a
+              refused URL.
             */}
             {frameUrl && surface.framed && (
               <iframe
@@ -385,6 +432,7 @@ export function SiteResourceDetail({
                 referrerPolicy="no-referrer"
               />
             )}
+            {snapshot && <img alt="" className="site-detail-snapshot" src={snapshot} />}
             {access && previewShown === false && (
               <EmptyState
                 description="Open it in your browser to see the live page."
