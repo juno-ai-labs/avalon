@@ -609,7 +609,8 @@ unclickable until that hide goes out, so the wait is bounded: past
 pane is blank, as before. The still is placed at the rectangle the view held,
 since a view clipped by the rail captures only its visible slice. The still is
 a picture, not the page: nothing under an overlay is interactive, which it was
-not before either.
+not before either. No still is taken while the view is still loading behind
+"Opening…": the view is hidden then, and there is no site on screen to keep.
 
 ### 2026-10-18 — One "Opening…" per open, and no route read before the bootstrap
 
