@@ -1,4 +1,5 @@
 import { uuidV7 } from "../lib/uuid-v7";
+import { isUnlistedResourceMetadata } from "../services/resource-listing";
 import { boundParameterChunks } from "./bound-parameters";
 import {
   WorkspaceConnectorResourceResolveResultSchema,
@@ -285,13 +286,14 @@ export function renameWorkspaceResource(
   storage: DurableObjectStorage,
   request: WorkspaceResourceRenameRequest,
 ): WorkspaceResourceRenameResult {
-  const current = storage.sql.exec<{ title: string }>(
-    `SELECT title FROM resources WHERE id = ? AND workspace_id = ?`,
+  const current = storage.sql.exec<{ title: string; metadata_json: string }>(
+    `SELECT title, metadata_json FROM resources WHERE id = ? AND workspace_id = ?`,
     request.resourceId,
     request.workspaceId,
   ).toArray()[0];
   if (!current) return WorkspaceResourceRenameResultSchema.parse({ outcome: "not_found" });
-  if (current.title === request.title) return WorkspaceResourceRenameResultSchema.parse({ outcome: "unchanged" });
+  const listed = !isUnlistedResourceMetadata(current.metadata_json);
+  if (current.title === request.title) return WorkspaceResourceRenameResultSchema.parse({ outcome: "unchanged", listed });
   storage.sql.exec(
     `UPDATE resources
         SET title = ?, updated_at = ?,
@@ -305,7 +307,7 @@ export function renameWorkspaceResource(
     request.resourceId,
     request.workspaceId,
   );
-  return WorkspaceResourceRenameResultSchema.parse({ outcome: "renamed" });
+  return WorkspaceResourceRenameResultSchema.parse({ outcome: "renamed", listed });
 }
 
 /** Record a re-fetch that produced the content the row already holds. */

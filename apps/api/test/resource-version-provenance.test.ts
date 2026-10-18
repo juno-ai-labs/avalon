@@ -197,4 +197,17 @@ describe("resource version provenance", () => {
     const projected = await service.versions(resourceId);
     expect(z.array(ResourceRevisionSchema).parse(projected)).toMatchObject([{ version: 1, author: null }]);
   });
+
+  it("sends a rename's version as one with no cause, which a desktop build from before it can parse", async () => {
+    const { database, env } = fixture();
+    seedConnectorResource(database);
+    database.exec(`UPDATE resources SET title = 'Kickoff notes', revision_author_kind = 'member',
+      revision_author_user_id = '${userId}', revision_cause = 'renamed' WHERE id = '${resourceId}'`);
+    const service = new ResourceService(env, auth);
+
+    await expect(service.versions(resourceId)).resolves.toMatchObject([
+      { version: 2, title: "Kickoff notes", author: { kind: "member", userId }, cause: null },
+      { version: 1, cause: "created" },
+    ]);
+  });
 });
