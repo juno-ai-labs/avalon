@@ -137,6 +137,7 @@ import { resolveMentionPayload } from './mention-draft';
 import { newRequestId } from './perf-trace';
 import type { TelemetrySurfaceEntrypoint } from './telemetry';
 import { reportJavascriptError, reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './telemetry';
+import { shouldNameFromContent } from './pasted-text';
 import type {
   AgentModelOverride,
   DigestDeliveryTargetType,
@@ -2026,6 +2027,7 @@ export class RallyApi {
       }
       const form = new FormData();
       form.set('file', file, file.name);
+      if (shouldNameFromContent(file)) form.set('titleFromContent', 'true');
       request.send(form);
     });
   }

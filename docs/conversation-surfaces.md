@@ -204,6 +204,21 @@ Radix's `disabled`, which would drop it from arrow-key focus, so a keyboard
 still reaches the tooltip that gives the reason. The Channel's composer uses it
 for **Import from Claude or ChatGPT** ([session import](session-import.md)).
 
+A paste into a composer that takes attachments attaches as a file once its
+copied text reaches `LONG_PASTE_CHARACTERS` (5,000 UTF-16 code units,
+`lib/pasted-text.ts`), instead of landing at the caret; shorter text pastes as
+before. `detectTextType` picks the file's MIME type and extension from the
+text: JSON that parses, HTML, XML, Markdown, TSV, CSV, else plain text. Source
+code lands in plain text, since no cheap test tells languages apart. The file
+starts as `Pasted text <date> at <time>.<ext>`, and the upload sends
+`titleFromContent=true`; `POST /resources/upload` then asks the naming model
+for a title (`services/pasted-text-naming-service.ts`, metered as
+`attachment_naming`) and stores it as the resource's title with the client's
+extension. The pending tile shows `resource.title` once the upload returns, so
+it flips from the stand-in to the generated name. Naming that fails or has no
+model key keeps the stand-in. The window-level paste does not do this: text
+with no field to land in is left alone.
+
 The run's Stop action is an icon after Send, sharing the microphone's circular
 neutral background, with a tooltip that explains the
 current action or pending stop. Its mounted, inert-when-hidden slot animates its
@@ -744,6 +759,32 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-10-18 — A long paste attaches as a typed, named file
+
+**What changed:** Text pasted into a composer at or past 5,000 characters
+becomes an attachment instead of filling the field. The client detects JSON,
+HTML, XML, Markdown, TSV and CSV and gives the file the matching MIME type and
+extension; the upload route names it from its content with the naming model.
+
+**Why:** A pasted document filled the composer, buried whatever the person
+meant to say about it, and reached the agent as message text rather than as a
+document it can page through and cite. Typing the file keeps the attachment
+viewer and the agent's text projection on the right reader.
+
+**Considered and rejected:** Naming the file on the client before attaching,
+which would leave the paste showing nothing for the length of a model call.
+Renaming the resource after upload, which needs a rename route and races the
+send. Naming inside the upload costs about a second before the attachment is
+ready and needs neither. Asking the model for the type as well as the name was
+also rejected: the type would then wait on the model, and the heuristics are
+right for the common cases.
+
+**Consequences:** The 5,000-character threshold and the 8,000-character sample
+the model reads are product choices placed here as a starting point; change
+them in `pasted-text.ts` and the naming service. The `titleFromContent` marker
+lives on the in-memory `File`, so a draft restored after a restart re-uploads
+under its stand-in name.
 
 ### 2026-10-17 — Arming turns an arc; red is only for capture that is running
 
