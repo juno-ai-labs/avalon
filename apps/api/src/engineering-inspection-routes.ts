@@ -1,3 +1,4 @@
+import type { SearchEngineeringOrganizationsInput } from "@rally/contracts/engineering-inspection";
 import { RegionSchema } from "@rally/contracts/regions";
 import { z } from "zod";
 
@@ -84,4 +85,65 @@ export async function resolveInspectionWorkstreamRoute(
     expectedGeneration ?? null,
   ).first<unknown>();
   return row === null ? null : InspectionWorkstreamRouteSchema.parse(row);
+}
+
+const OrganizationRowSchema = z.strictObject({
+  id: z.string(),
+  name: z.string(),
+  slug: z.string(),
+  region: RegionSchema,
+  plan: z.string(),
+  created_at: z.string(),
+  abandoned_at: z.string().nullable(),
+  member_count: z.number().int().nonnegative(),
+  last_seen_at: z.string().nullable(),
+});
+export type OrganizationRow = z.infer<typeof OrganizationRowSchema>;
+
+/**
+ * Every Organization in this region that matches the filters, unordered. The
+ * caller merges the regions and orders the whole set.
+ *
+ * Timestamps are stored as UTC ISO strings, so a bound is normalized to the
+ * same form before the text comparison. The text match runs here rather than
+ * in SQL because SQLite's `lower()` folds only ASCII, so `École` would not
+ * match `école`.
+ */
+export async function searchInspectionOrganizations(
+  env: InspectionRouteEnv,
+  filter: SearchEngineeringOrganizationsInput,
+): Promise<OrganizationRow[]> {
+  const after = filter.createdAfter ? new Date(filter.createdAfter).toISOString() : null;
+  const before = filter.createdBefore ? new Date(filter.createdBefore).toISOString() : null;
+  const result = await env.DB.prepare(
+    `SELECT workspace.id, workspace.name, workspace.slug, workspace.region, workspace.plan,
+            workspace.created_at, workspace.abandoned_at,
+            (SELECT COUNT(*) FROM workspace_members member
+              WHERE member.workspace_id = workspace.id
+                AND member.status = 'active' AND member.access_class = 'member') AS member_count,
+            (SELECT MAX(member.last_seen_at) FROM workspace_members member
+              WHERE member.workspace_id = workspace.id
+                AND member.status = 'active') AS last_seen_at
+       FROM workspaces workspace
+      WHERE workspace.region = ?1
+        AND (?2 IS NULL OR workspace.plan = ?2)
+        AND CASE ?3
+              WHEN 'include' THEN 1
+              WHEN 'only' THEN workspace.abandoned_at IS NOT NULL
+              ELSE workspace.abandoned_at IS NULL
+            END
+        AND (?4 IS NULL OR workspace.created_at >= ?4)
+        AND (?5 IS NULL OR workspace.created_at < ?5)`,
+  ).bind(
+    env.AVALON_REGION,
+    filter.plan ?? null,
+    filter.abandoned ?? "exclude",
+    after,
+    before,
+  ).all<unknown>();
+  const rows = z.array(OrganizationRowSchema).parse(result.results ?? []);
+  const query = filter.query?.toLowerCase();
+  return query === undefined
+    ? rows
+    : rows.filter((row) => [row.name, row.slug, row.id].some((text) => text.toLowerCase().includes(query)));
 }
