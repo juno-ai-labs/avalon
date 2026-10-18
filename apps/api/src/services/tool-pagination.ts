@@ -60,16 +60,14 @@ export function paginatedToolNames(definition: Pick<HarnessTool["definition"], "
   return [operation, `${operation}_next`, "read_resource_previous"];
 }
 
-/** What the model is told about a page ID an earlier run issued. */
-export const EARLIER_RUN_PAGE_NOTICE = "This page ID came from an earlier message. Page IDs work only within the reply that returned them, so it cannot be used now.";
-
 /**
- * An authored paginated tool that can say how to restart from an earlier run's
- * page: given its stored continuation input, return the error the model sees,
- * or null when it cannot.
+ * An authored paginated tool that can name what one of its continuations
+ * reads, as structured failure details (`{ resourceId }` for a resource read).
+ * It runs only to describe a page that cannot be redeemed, never to execute
+ * it; the attachment grounding guard needs the identity to clear the failure.
  */
 export type PaginatedHarnessTool = HarnessTool & {
-  explainEarlierRunPage?: (continuationInput: unknown, context: HarnessToolContext) => Promise<Error | null>;
+  continuationDetails?: (continuationInput: unknown) => Promise<Record<string, unknown> | null>;
 };
 
 /** Expand only an explicitly authored tool. Private continuations never escape this wrapper. */
@@ -123,12 +121,14 @@ export function withToolPagination(tool: PaginatedHarnessTool, host: PaginationH
       if (unknownPage || (error instanceof ObjectPortError && message.startsWith("page_"))) throw new Error(message, { cause: error });
       throw error;
     }
-    if ("inputJson" in claimed) return claimed;
-    const explained = await tool.explainEarlierRunPage?.(JSON.parse(claimed.earlierRunInputJson), context);
-    if (explained) throw explained;
-    throw Object.assign(new Error(
-      `page_id_from_earlier_message: ${EARLIER_RUN_PAGE_NOTICE} Call ${firstName} to start a new read.`,
-    ), { code: operation === "read_resource" ? "invalid_cursor" : "page_id_from_earlier_message" });
+    if (!claimed.refused) return claimed;
+    // Across runs the guard has no memory of this page, so without the
+    // identity its failure stays anonymous and no later read can clear it.
+    const details = await tool.continuationDetails?.(JSON.parse(claimed.inputJson)).catch(() => null);
+    throw Object.assign(new Error(claimed.refused === "page_already_consumed"
+      ? `page_already_consumed: This page was already read. Use the nextPageId from that read's result, or call ${firstName} to start a new read.`
+      : "page_in_progress: This page already has a call in progress."),
+    { code: claimed.refused, ...(details ? { details } : {}) });
   }
   async function execute(input: unknown, context: HarnessToolContext): Promise<HarnessToolResult> {
     const result = await tool.execute(input, context);
