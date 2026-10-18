@@ -1317,6 +1317,21 @@ describe("Channel merges", () => {
     expect(target.channels).toEqual([{ id: outbound, name: "Outbound" }, { id: board, name: "Board" }]);
   });
 
+  it("given a thread whose earliest placement is a private Channel, when its placement is read with nobody asking, then the Organization-wide Channel is named and the private one is not", async () => {
+    const outbound = await channelWithThreads();
+    const made = await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: outbound, audience: { scope: "personal", participantUserIds: [OWNER] },
+    });
+    expect(made).toMatchObject({ ok: true, space: { scope: "personal" } });
+    // Nothing Organization-wide holds the thread yet: no placement, rather than the private name.
+    expect(await workspace().threadMergePlacement({ workspaceId: WORKSPACE_ID, workstreamId: OPEN_THREAD }))
+      .toEqual({ ok: false, code: "merge_channel_not_placed" });
+    const board = await reserveChannel("Board");
+    await place(board, OPEN_THREAD);
+    expect(await workspace().threadMergePlacement({ workspaceId: WORKSPACE_ID, workstreamId: OPEN_THREAD }))
+      .toEqual({ ok: true, spaceId: board, title: "Board" });
+  });
+
   it("given a member read through the placements, when the owner merges a thread, then it is the newest item, names its thread, and is news to the member alone", async () => {
     const channelId = await channelWithThreads();
     await workspace().acknowledgeSpaceRead({ workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId, readThroughSequenceNumber: 2 });

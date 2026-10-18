@@ -1338,7 +1338,12 @@ export class WorkspaceSpaceStorage {
     return { ok: true, spaceId: target.id, name: target.name, channels };
   }
 
-  /** Where a thread's merge would land with nobody asking: its earliest active placement. */
+  /**
+   * Where a thread's merge would land with nobody asking: its earliest active
+   * Organization-wide placement. Only Organization-wide, because the answer is
+   * stored on a suggestion row that every reader of the thread receives; a
+   * private Channel's name is not theirs to learn from it.
+   */
   threadMergePlacement(workstreamId: string):
     | { ok: true; spaceId: string; title: string }
     | { ok: false; code: "workstream_not_found" | "conversation_archived" | "merge_thread_private" | "merge_channel_not_placed" } {
@@ -1354,6 +1359,7 @@ export class WorkspaceSpaceStorage {
          FROM space_channel_memberships membership
          JOIN spaces space ON space.space_id = membership.space_id
         WHERE membership.workstream_id = ? AND membership.state = 'active' AND space.archived_at IS NULL
+          AND space.scope = 'workspace'
         ORDER BY membership.joined_at, membership.space_id
         LIMIT 1`,
       workstreamId,

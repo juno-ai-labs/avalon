@@ -3552,7 +3552,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         return jsonResponse(await this.product.markUnread(current));
       }
       if (request.operation === "dismiss_suggestion") {
-        await this.product.authorize(current);
+        // Archived included: an open row outlives archiving, and its readers keep the feed.
+        await this.product.authorize(current, true);
         const existing = this.suggestions.byId(request.suggestionId);
         if (!existing) return jsonResponse({ error: "suggestion_not_found" }, 404);
         const dismissed = this.state.storage.transactionSync(() =>
