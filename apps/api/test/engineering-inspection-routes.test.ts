@@ -6,6 +6,7 @@ import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import {
   resolveInspectionWorkspaceRoute,
   resolveInspectionWorkstreamRoute,
+  searchInspectionOrganizations,
 } from "../src/engineering-inspection-routes";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -140,5 +141,76 @@ describe("engineering inspection authority routing", () => {
       authority_generation: 3,
     });
     expect(await resolveInspectionWorkstreamRoute(env, WORKSTREAM_ID, 3)).toBeNull();
+  });
+});
+
+describe("engineering organization search", () => {
+  const ACME = "00000000-0000-7000-8000-000000000ed1";
+  const BETA = "00000000-0000-7000-8000-000000000ed2";
+  const GONE = "00000000-0000-7000-8000-000000000ed3";
+  const GUEST = "00000000-0000-7000-8000-000000000ed4";
+  const SUSPENDED = "00000000-0000-7000-8000-000000000ed6";
+
+  function organizations() {
+    const { database, env } = fixture();
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('${GUEST}', 'guest-user', 'guest@example.com', 'Guest', '${AT}', '${AT}'),
+             ('${SUSPENDED}', 'suspended-user', 'suspended@example.com', 'Suspended', '${AT}', '${AT}');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at, plan)
+      VALUES ('${ACME}', 'Acme Corp', 'acme', 'global', '${USER_ID}', '2026-09-01T00:00:00.000Z', '${AT}', 'growth'),
+             ('${BETA}', 'Beta Labs', 'beta', 'global', '${USER_ID}', '2026-10-01T00:00:00.000Z', '${AT}', 'starter');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at, abandoned_at)
+      VALUES ('${GONE}', 'Acme Old', 'acme-old', 'global', '${USER_ID}', '2026-09-15T00:00:00.000Z', '${AT}', '${AT}');
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, last_seen_at)
+      VALUES ('${ACME}', '${USER_ID}', 'owner', 'active', '2026-10-10T00:00:00.000Z');
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, access_class, last_seen_at)
+      VALUES ('${ACME}', '${GUEST}', NULL, 'active', 'guest', '2026-10-12T00:00:00.000Z');
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, last_seen_at)
+      VALUES ('${ACME}', '${SUSPENDED}', 'member', 'suspended', '2026-10-14T00:00:00.000Z');
+    `);
+    return env;
+  }
+
+  it("matches name or slug case-insensitively and leaves abandoned Organizations out", async () => {
+    const rows = await searchInspectionOrganizations(organizations(), { query: "ACME" });
+    expect(rows).toEqual([{
+      id: ACME,
+      name: "Acme Corp",
+      slug: "acme",
+      region: "global",
+      plan: "growth",
+      created_at: "2026-09-01T00:00:00.000Z",
+      abandoned_at: null,
+      member_count: 1,
+      last_seen_at: "2026-10-12T00:00:00.000Z",
+    }]);
+  });
+
+  it("matches a name's non-ASCII capitals case-insensitively", async () => {
+    const env = organizations();
+    const ecole = "00000000-0000-7000-8000-000000000ed5";
+    await env.DB.prepare(
+      `INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+       VALUES (?, 'École Normale', 'ecole', 'global', ?, ?, ?)`,
+    ).bind(ecole, USER_ID, AT, AT).run();
+    const rows = await searchInspectionOrganizations(env, { query: "école" });
+    expect(rows.map((row) => row.id)).toEqual([ecole]);
+  });
+
+  it("returns only abandoned Organizations when asked", async () => {
+    const rows = await searchInspectionOrganizations(organizations(), { abandoned: "only" });
+    expect(rows.map((row) => row.id)).toEqual([GONE]);
+  });
+
+  it("filters by plan and by a creation window given in any offset", async () => {
+    const env = organizations();
+    const starter = await searchInspectionOrganizations(env, { plan: "starter", abandoned: "include" });
+    expect(starter.map((row) => row.id).sort()).toEqual([WORKSPACE_ID, BETA, GONE].sort());
+    const window = await searchInspectionOrganizations(env, {
+      createdAfter: "2026-08-31T20:00:00.001-04:00",
+      createdBefore: "2026-10-01T00:00:00.001Z",
+    });
+    expect(window.map((row) => row.id)).toEqual([BETA]);
   });
 });
