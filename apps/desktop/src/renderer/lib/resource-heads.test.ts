@@ -1,7 +1,7 @@
 import type { ResourceHead } from '@rally/contracts';
 import { QueryClient } from '@tanstack/react-query';
 import { describe, expect, it } from 'vitest';
-import { applyResourceHeads, RESOURCE_HEADS_QUERY_KEY } from './resource-heads';
+import { applyResourceHeads, followResourceHeads, RESOURCE_HEADS_QUERY_KEY } from './resource-heads';
 import type { WorkstreamDetail, WorkstreamResource } from './types';
 import { workstreamDetailQueryKey } from './workstreams-cache';
 
@@ -68,5 +68,37 @@ describe('applyResourceHeads', () => {
     expect(queryClient.getQueryData(workstreamDetailQueryKey('thread-a'))).toBe(held);
     expect(queryClient.getQueryData<Record<string, ResourceHead>>(RESOURCE_HEADS_QUERY_KEY)?.['resource-report']?.version)
       .toBe(3);
+  });
+});
+
+describe('followResourceHeads', () => {
+  it('keeps a newer announced head when the conversation socket later writes an older copy', () => {
+    const queryClient = new QueryClient();
+    const stop = followResourceHeads(queryClient);
+    queryClient.setQueryData(workstreamDetailQueryKey('thread-a'), detail([report]));
+    applyResourceHeads(queryClient, [{ ...head, version: 3 }]);
+
+    // A room event for version 2, delayed behind the workspace socket's 3.
+    queryClient.setQueryData(workstreamDetailQueryKey('thread-a'), detail([{ ...report, currentVersion: 2 }]));
+
+    expect(queryClient.getQueryData<WorkstreamDetail>(workstreamDetailQueryKey('thread-a'))?.resources)
+      .toEqual([expect.objectContaining({ currentVersion: 3, title: 'Launch report, final' })]);
+    stop();
+  });
+
+  it('records a newer version a conversation snapshot carries and moves every other conversation to it', () => {
+    const queryClient = new QueryClient();
+    const stop = followResourceHeads(queryClient);
+    queryClient.setQueryData(workstreamDetailQueryKey('thread-b'), detail([report]));
+
+    queryClient.setQueryData(workstreamDetailQueryKey('thread-a'), detail([{ ...report, title: 'Report v4', currentVersion: 4 }]));
+    // The next write of the other conversation's detail, whatever it carries, holds the head.
+    queryClient.setQueryData(workstreamDetailQueryKey('thread-b'), detail([report]));
+
+    expect(queryClient.getQueryData<Record<string, ResourceHead>>(RESOURCE_HEADS_QUERY_KEY)?.['resource-report'])
+      .toMatchObject({ version: 4, title: 'Report v4' });
+    expect(queryClient.getQueryData<WorkstreamDetail>(workstreamDetailQueryKey('thread-b'))?.resources)
+      .toEqual([expect.objectContaining({ currentVersion: 4, title: 'Report v4' })]);
+    stop();
   });
 });

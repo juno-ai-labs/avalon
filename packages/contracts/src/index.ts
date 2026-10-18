@@ -2964,8 +2964,9 @@ export type ResourceHead = z.infer<typeof ResourceHeadSchema>;
  * These resources have a new version, of any type and from any producer, so
  * any preview open on one is stale.
  *
- * Addressed per socket: a resource is named only to a person who may open a
- * conversation that links it, the same gate an artifact pin reads under.
+ * Addressed per socket: a resource is named only to a person who may open the
+ * Main of a thread that links it, the same gate an artifact pin reads under.
+ * An unlisted resource is never named.
  * Outside the waterline and never replayed: a client that was away reads each
  * resource's head when it next opens the conversation that holds it. Older
  * clients ignore the unknown `type`. `docs/websocket-architecture.md` owns it.
