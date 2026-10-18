@@ -102,14 +102,23 @@ function railWidthKey(prefix: string, scope: string | null): string {
 }
 
 function loadRailWidth(prefix: string, scope: string | null): number {
-  if (typeof window === 'undefined') return DEFAULT_RAIL_WIDTH;
+  return savedWidth(prefix, scope) ?? DEFAULT_RAIL_WIDTH;
+}
+
+function savedWidth(prefix: string, scope: string | null): number | null {
+  if (typeof window === 'undefined') return null;
 
   try {
     const storedWidth = Number.parseFloat(window.localStorage.getItem(railWidthKey(prefix, scope)) ?? '');
-    return Number.isFinite(storedWidth) ? clampRailWidth(storedWidth) : DEFAULT_RAIL_WIDTH;
+    return Number.isFinite(storedWidth) ? clampRailWidth(storedWidth) : null;
   } catch {
-    return DEFAULT_RAIL_WIDTH;
+    return null;
   }
+}
+
+/** The width the person last set for `scope`'s panel, or null when they never have. */
+export function savedRailWidth(scope: string | null): number | null {
+  return savedWidth(RAIL_WIDTH_STORAGE_PREFIX, scope);
 }
 
 function saveRailWidth(prefix: string, scope: string | null, width: number): void {

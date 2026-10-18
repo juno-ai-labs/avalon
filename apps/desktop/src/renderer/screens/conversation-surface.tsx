@@ -100,7 +100,7 @@ import { resolveFeedOpenSource, useWorkstreamFeedOpenTelemetry } from '../lib/us
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { ActivityPresence, InferenceDelayNotice, JumpToLatestButton } from '../components/conversation-follow';
-import { openRailAtEvenSplit, useRailFillsPane } from '../lib/rail-split';
+import { openRailAtEvenSplit, restoreRail, useRailFillsPane } from '../lib/rail-split';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   orderedTranscriptQueryKey,
@@ -1565,7 +1565,7 @@ export function ConversationSurface({
     // the slot; a Breakout opening beside its Channel must not take a panel
     // the Channel has open.
     if (savedPanel || useUiStore.getState().railScope === null) setRailScope(railScopeKey);
-    if (savedPanel) useUiStore.getState().openRail('context');
+    if (savedPanel) restoreRail(railScopeKey, () => useUiStore.getState().openRail('context'));
     restoredPanelKey.current = artifactPanelKey;
     return () => {
       restoredPanelKey.current = null;
