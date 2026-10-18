@@ -2615,13 +2615,15 @@ export function ConversationSurface({
     },
   });
 
-  // The room's `resource_updated` brings the new version; the title moves now.
+  // The room's `resource_updated` brings the new version; the title moves now,
+  // unless that event, or somebody else's, already moved the version on.
   const renameResource = useMutation({
     mutationFn: ({ resource, title }: { resource: WorkstreamResource; title: string }) => api!.renameResource(id, resource.id, title),
     onSuccess: (_result, { resource, title }) => {
       queryClient.setQueryData<WorkstreamDetail>(parentDetailQueryKey, (current) => current ? {
         ...current,
-        resources: current.resources.map((item) => item.id === resource.id ? { ...item, title } : item),
+        resources: current.resources.map((item) => item.id === resource.id && item.currentVersion === resource.currentVersion
+          ? { ...item, title } : item),
       } : current);
     },
   });
@@ -3796,8 +3798,11 @@ export function ConversationSurface({
         } : {})}
         resourceLink={(resource: WorkstreamResource) => {
           const workspace = session?.workspace;
-          if (!workspace || !linkSpaceId || !isMainArtifact(resource.id)) return undefined;
-          return () => copyArtifactLink({ region: workspace.region, workspaceId: workspace.id }, linkSpaceId, id, resource.id);
+          // A detail installed from the conversation's own object carries no
+          // placements, so the directory's stand in for the routed Channel.
+          const spaceId = linkSpaceId ?? threadPlacements?.[0] ?? null;
+          if (!workspace || !spaceId || !isMainArtifact(resource.id)) return undefined;
+          return () => copyArtifactLink({ region: workspace.region, workspaceId: workspace.id }, spaceId, id, resource.id);
         }}
         resourcePin={(resource: WorkstreamResource) => isMainArtifact(resource.id)
           ? { on: pinnedArtifactIds.has(resource.id), onChange: (next: boolean) => setArtifactPinned(resource.id, next, id) }

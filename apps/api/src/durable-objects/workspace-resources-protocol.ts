@@ -195,10 +195,15 @@ export const WorkspaceResourceRenameRequestSchema = deferredZodSchema(() => z.st
   at: TimestampSchema,
 }));
 
-/** `unchanged` writes nothing, since any write to `title` records a version. */
-export const WorkspaceResourceRenameResultSchema = deferredZodSchema(() => z.strictObject({
-  outcome: z.enum(["renamed", "unchanged", "not_found"]),
-}));
+/**
+ * `unchanged` writes nothing, since any write to `title` records a version.
+ * `listed` is false for a resource enumeration leaves out, which a caller
+ * must not advertise.
+ */
+export const WorkspaceResourceRenameResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
+  z.strictObject({ outcome: z.enum(["renamed", "unchanged"]), listed: z.boolean() }),
+  z.strictObject({ outcome: z.literal("not_found") }),
+]));
 
 export const WorkspaceResourceWatchEnableRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,

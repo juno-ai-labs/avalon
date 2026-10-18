@@ -150,8 +150,8 @@ describe("renaming a resource on real workerd", () => {
       const rename = (title: string) => instance.renameResource({
         workspaceId: WORKSPACE_ID, resourceId: RESOURCE, title, renamedByUserId: MEMBER, at: "2026-08-28T03:00:00.000Z",
       });
-      expect(await rename("Q4 plan")).toEqual({ outcome: "renamed" });
-      expect(await rename("Q4 plan")).toEqual({ outcome: "unchanged" });
+      expect(await rename("Q4 plan")).toEqual({ outcome: "renamed", listed: true });
+      expect(await rename("Q4 plan")).toEqual({ outcome: "unchanged", listed: true });
       expect(state.storage.sql.exec(
         `SELECT version, title, author_kind, author_user_id, cause FROM resource_versions WHERE resource_id = ? ORDER BY version`,
         RESOURCE,

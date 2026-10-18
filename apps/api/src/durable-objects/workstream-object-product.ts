@@ -3514,7 +3514,8 @@ export class WorkstreamObjectProductService {
    * lives on the workspace's resource row, which every thread linking it reads
    * live; this thread's frozen descriptor, which its message chips read, takes
    * it too. Answers the resource for this room's `resource_updated`, or null
-   * when the title was already this one.
+   * when there is nothing to tell: the title was already this one here too, or
+   * the resource is one enumeration leaves out.
    */
   async renameResource(auth: AuthContext, resourceId: string, title: string): Promise<WorkstreamResource | null> {
     await this.authorize(auth);
@@ -3552,7 +3553,9 @@ export class WorkstreamObjectProductService {
       },
       (updated) => updated ? [{ partitionKey: "common", effect: this.commonEffect(this.root()) }] : [],
     );
-    if (!changed && result.outcome === "unchanged") return null;
+    // A resource enumeration leaves out keeps its new title but is not
+    // advertised, as a runtime attach withholds its event.
+    if (!result.listed || (!changed && result.outcome === "unchanged")) return null;
     return this.readBackAttachedResource(auth.userId, resourceId);
   }
 

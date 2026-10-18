@@ -1398,8 +1398,12 @@ filled, the three triggers that read the old one are dropped, the old one is
 dropped and the new one renamed into its place, and the triggers return with
 their text unchanged.
 
-**Consequences:** A later cause takes the same steps, and the capture
-triggers and the pin ledger's trigger are named constants so that it can.
+**Consequences:** `GET /resources/:id/versions` sends a `renamed` version
+with no cause, because a desktop build from before it parses the history
+with a closed enum; send it once those builds are gone. The contract now
+reads an unknown cause as none, so a later cause needs no such hold. A
+later cause takes the same migration steps, and the capture triggers and the
+pin ledger's trigger are named constants so that it can.
 Rows are kept; `navigation-migrations.test.ts` upgrades a populated 112 and
 checks them.
 
