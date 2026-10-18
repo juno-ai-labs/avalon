@@ -37,7 +37,7 @@ interface InspectorRailProps {
     onClose: () => void;
     /** Expand the panel over its conversation, or put it back: the stack's own control. */
     expandAction?: readonly IconGroupAction[] | undefined;
-    /** What the panel sits in, as breadcrumbs, while it is expanded. */
+    /** What the panel sits in, as breadcrumbs, while it stands alone. */
     ancestors?: readonly TitlePillLevel[] | undefined;
   };
   failure?: 'watch' | 'detach' | 'refresh' | 'attach';
