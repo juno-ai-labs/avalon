@@ -3,7 +3,7 @@ import { desktopBridge } from '../lib/platform';
 import { isHtmlFile, isolatedHtml } from './attachment-lightbox';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { IconArchive, IconArrowLeft, IconChevronRight, IconChevronsRight, IconExternalLink, IconEye, IconFileText, IconHistory, IconLoader2, IconPlus, IconRefresh, IconUserPlus, IconWindowMaximize, IconX } from '@tabler/icons-react';
+import { IconArchive, IconArrowLeft, IconChevronRight, IconChevronsRight, IconExternalLink, IconEye, IconFileText, IconHistory, IconLink, IconLoader2, IconPencil, IconPin, IconPinnedOff, IconPlus, IconRefresh, IconUserPlus, IconWindowMaximize, IconX } from '@tabler/icons-react';
 import { ActionTile, ActionTiles, LevelRow, TitleMenuHeader, TitleMenuItem, TitleMenuSeparator, TitlePillClose, TitlePillHeader, useTitleMenuNav, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { classifyAttachmentKind } from '@rally/contracts';
 import { DetailHeaderActionsHost } from './detail-header-actions';
@@ -88,6 +88,12 @@ interface InspectorRailProps {
   onOpenResourceVersion?: (resource: WorkstreamResource, version: ResourceVersion) => void;
   onRefreshResource?: (resource: WorkstreamResource) => void;
   refreshingResourceId?: string | null;
+  /** Renames an artifact; absent where the viewer may not. */
+  onRenameResource?: ((resource: WorkstreamResource, title: string) => Promise<void>) | undefined;
+  /** Copies a link that opens the thread onto this artifact; undefined where none can be minted. */
+  resourceLink?: ((resource: WorkstreamResource) => (() => Promise<void>) | undefined) | undefined;
+  /** Whether this artifact is pinned, and the switch; undefined where it cannot be pinned. */
+  resourcePin?: ((resource: WorkstreamResource) => { on: boolean; onChange: (next: boolean) => void } | undefined) | undefined;
   /** True while the inspector is fading out. */
   leaving?: boolean;
   dropTarget?: {
@@ -573,11 +579,14 @@ const VERSIONS_VIEW = { key: 'versions', label: 'Versions' };
  * The resource panel's title-pill menu: what the resource is, then what can be
  * done to it, in the same tiles and levels a thread's menu uses.
  */
-function ResourcePanelMenu({ onArchive, onOpenSource, onPopOut, onRefresh, popOutDisabled, refreshing, resource, versions }: {
+function ResourcePanelMenu({ onArchive, onCopyLink, onOpenSource, onPopOut, onRefresh, onRename, pinned, popOutDisabled, refreshing, resource, versions }: {
   onArchive?: (() => void) | undefined;
+  onCopyLink?: (() => void) | undefined;
   onOpenSource?: (() => void) | undefined;
   onPopOut?: (() => void) | undefined;
   onRefresh?: (() => void) | undefined;
+  onRename?: (() => void) | undefined;
+  pinned?: { on: boolean; onChange: (next: boolean) => void } | undefined;
   popOutDisabled: boolean;
   refreshing: boolean;
   resource: WorkstreamResource;
@@ -592,6 +601,13 @@ function ResourcePanelMenu({ onArchive, onOpenSource, onPopOut, onRefresh, popOu
       title={resource.title}
     />
     <ActionTiles>
+      {onRename && <ActionTile icon={<IconPencil aria-hidden="true" size={20} stroke={1.6} />} label="Rename" onSelect={onRename} />}
+      {onCopyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={onCopyLink} />}
+      {pinned && <ActionTile
+        icon={pinned.on ? <IconPinnedOff aria-hidden="true" size={20} stroke={1.6} /> : <IconPin aria-hidden="true" size={20} stroke={1.6} />}
+        label={pinned.on ? 'Unpin' : 'Pin'}
+        onSelect={() => pinned.onChange(!pinned.on)}
+      />}
       {onPopOut && <ActionTile disabled={popOutDisabled} icon={<IconWindowMaximize aria-hidden="true" size={20} stroke={1.6} />} label="New window" onSelect={onPopOut} />}
       {onOpenSource && <ActionTile icon={<IconExternalLink aria-hidden="true" size={20} stroke={1.6} />} label="Open source" onSelect={onOpenSource} />}
       {onRefresh && <ActionTile disabled={refreshing} icon={<IconRefresh aria-hidden="true" size={20} stroke={1.6} />} label="Refresh" onSelect={onRefresh} />}
@@ -710,6 +726,11 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const [archiveFailed, setArchiveFailed] = useState(false);
   const [popOutFailed, setPopOutFailed] = useState(false);
   const [poppingOut, setPoppingOut] = useState(false);
+  const [copyLinkFailed, setCopyLinkFailed] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<WorkstreamResource | null>(null);
+  const [renameTitle, setRenameTitle] = useState('');
+  const [renaming, setRenaming] = useState(false);
+  const [renameFailed, setRenameFailed] = useState(false);
   const closeInspectorRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -718,7 +739,38 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
     setArchiving(false);
     setPopOutFailed(false);
     setPoppingOut(false);
+    setCopyLinkFailed(false);
+    setRenameTarget(null);
+    setRenameFailed(false);
+    setRenaming(false);
   }, [inspector?.id]);
+
+  const copyResourceLink = (copy: () => Promise<void>): void => {
+    setCopyLinkFailed(false);
+    void copy().catch(() => setCopyLinkFailed(true));
+  };
+
+  const closeRename = (): void => {
+    if (renaming) return;
+    setRenameTarget(null);
+    setRenameFailed(false);
+  };
+
+  const submitRename = async (): Promise<void> => {
+    const title = renameTitle.trim();
+    if (!renameTarget || !props.onRenameResource || !title || renaming) return;
+    if (title === renameTarget.title) { setRenameTarget(null); return; }
+    setRenaming(true);
+    setRenameFailed(false);
+    try {
+      await props.onRenameResource(renameTarget, title);
+      setRenameTarget(null);
+    } catch {
+      setRenameFailed(true);
+    } finally {
+      setRenaming(false);
+    }
+  };
 
   const popOutGeneratedArtifact = async (): Promise<void> => {
     if (!resource || resource.direction !== 'artifact' || isSiteResource(resource)
@@ -785,6 +837,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
 
   const refreshable = Boolean(resource && resource.direction === 'source' && resource.refreshSupported && props.onRefreshResource);
   const liveSite = Boolean(resource && isSiteResource(resource) && props.siteArtifacts);
+  const copyLink = resource && props.resourceLink?.(resource);
   const panelHeader = props.panel && (
     <TitlePillHeader
       className="panel-title-header"
@@ -796,6 +849,10 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         ...(resource ? { menu: <ResourcePanelMenu
           {...(props.onDetachResource ? { onArchive: () => { setArchiveFailed(false); setArchiveTarget(resource); } } : {})}
           {...(resource.canonicalUrl ? { onOpenSource: () => void openLink(resource.canonicalUrl!) } : {})}
+          {...(resource.direction === 'artifact' && props.onRenameResource
+            ? { onRename: () => { setRenameFailed(false); setRenameTitle(resource.title); setRenameTarget(resource); } } : {})}
+          {...(copyLink ? { onCopyLink: () => copyResourceLink(copyLink) } : {})}
+          pinned={props.resourcePin?.(resource)}
           {...(resource.direction === 'artifact' && !isSiteResource(resource) ? { onPopOut: () => void popOutGeneratedArtifact() } : {})}
           {...(refreshable ? { onRefresh: () => props.onRefreshResource?.(resource) } : {})}
           popOutDisabled={!hasGeneratedArtifactPreview(resource) || !props.loadResourceContent || poppingOut}
@@ -914,6 +971,9 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         {popOutFailed && <div className="rail-inline-error"><InlineError>
           The artifact couldn’t be opened in a new window.
         </InlineError></div>}
+        {copyLinkFailed && <div className="rail-inline-error"><InlineError>
+          The link couldn’t be copied.
+        </InlineError></div>}
         {props.failure && <div className="rail-inline-error"><InlineError>
           {inspectorRailFailureCopy[props.failure]}
         </InlineError></div>}
@@ -952,6 +1012,33 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         title="Archive this resource?"
       >
         {archiveFailed ? <InlineError>The resource couldn’t be archived.</InlineError> : null}
+      </Modal>
+      <Modal
+        footer={(
+          <>
+            <Button disabled={renaming} onClick={closeRename}>Cancel</Button>
+            <Button
+              className="button-primary"
+              disabled={renaming || !renameTitle.trim() || renameTitle.trim() === renameTarget?.title}
+              onClick={() => void submitRename()}
+            >
+              Rename
+            </Button>
+          </>
+        )}
+        onOpenChange={(open) => {
+          if (!open) closeRename();
+        }}
+        open={Boolean(renameTarget)}
+        title="Rename artifact"
+      >
+        {renameFailed ? <InlineError>The artifact couldn’t be renamed.</InlineError> : null}
+        <form onSubmit={(event) => { event.preventDefault(); void submitRename(); }}>
+          <label className="form-field">
+            <span>Title</span>
+            <input autoFocus disabled={renaming} maxLength={300} onChange={(event) => setRenameTitle(event.target.value)} value={renameTitle} />
+          </label>
+        </form>
       </Modal>
     </>
   );

@@ -42,6 +42,7 @@ import type { ClientSession } from '@rally/contracts/client-session';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { useCitations } from '../lib/use-citations';
 import { artifactPinActions, combineResourceActions } from '../lib/artifact-pin-actions';
+import { copyArtifactLink } from '../lib/copy-workstream-link';
 import { breakoutResourceActions } from '../lib/breakout-resource-actions';
 import { ApiError, type MentionIdentity } from '../lib/api';
 import { useChannelRail } from '../lib/channel-rails';
@@ -1295,6 +1296,12 @@ export interface ConversationSurfaceProps {
   /** The Breakout open beside this conversation, if any. */
   openBreakoutId?: string | null;
   onOpenBreakout?: (substreamId: string) => void;
+  /**
+   * The Channel this thread is open under, for links that name it; the
+   * screen reads it from the route. Null where no Channel holds it for the
+   * reader, as for a guest outside every Channel they see.
+   */
+  linkSpaceId?: string | null;
   /** Opens the merge a Merged chip in this feed names, where it landed. */
   onOpenMerge?: (merge: MessageMergedInto) => void;
   /** Open the composer's merge mode, empty: the title menu's Merge. A new nonce asks again. */
@@ -1359,6 +1366,7 @@ export function ConversationSurface({
   breakouts,
   openBreakoutId = null,
   onOpenBreakout,
+  linkSpaceId = null,
   onOpenMerge,
   mergeRequest = null,
   onMerged,
@@ -1821,6 +1829,10 @@ export function ConversationSurface({
       ? artifactPinActions({ pinnedIds: pinnedArtifactIds, setPinned: setArtifactPinned, threadId: id, threadResources: pinnableResources })
       : undefined,
   ), [attachPending, attachResourceToChannel, citationActionsIdentity, pinActionsIdentity]);
+  // An artifact in Main's list is one a pin or a link can name: both open the
+  // thread's Main onto it, so a breakout's own artifact has neither.
+  const isMainArtifact = (resourceId: string): boolean =>
+    Boolean(pinnableResources?.some((resource) => resource.id === resourceId && resource.direction === 'artifact'));
   const citationPinned = useCallback((resourceId: string) => pinnedArtifactIds.has(resourceId), [pinnedArtifactIds]);
   // Citations resolve against the loaded work stream's resources, and the
   // transcript needs this before the screen has decided it has a work stream to
@@ -2599,6 +2611,19 @@ export function ConversationSurface({
       queryClient.setQueryData<WorkstreamDetail>(parentDetailQueryKey, (current) => current ? {
         ...current,
         resources: current.resources.filter((item) => item.id !== resource.id),
+      } : current);
+    },
+  });
+
+  // The room's `resource_updated` brings the new version; the title moves now,
+  // unless that event, or somebody else's, already moved the version on.
+  const renameResource = useMutation({
+    mutationFn: ({ resource, title }: { resource: WorkstreamResource; title: string }) => api!.renameResource(id, resource.id, title),
+    onSuccess: (_result, { resource, title }) => {
+      queryClient.setQueryData<WorkstreamDetail>(parentDetailQueryKey, (current) => current ? {
+        ...current,
+        resources: current.resources.map((item) => item.id === resource.id && item.currentVersion === resource.currentVersion
+          ? { ...item, title } : item),
       } : current);
     },
   });
@@ -3768,6 +3793,20 @@ export function ConversationSurface({
           onToggleWatch: (resource: WorkstreamResource, enabled: boolean) => watchResource.mutate({ resource, enabled }),
         } : {})}
         onOpenResourceVersion={openResourceVersion}
+        {...(api && isMainArtifact(resourcePanel.resourceId) ? {
+          onRenameResource: (resource: WorkstreamResource, title: string) => renameResource.mutateAsync({ resource, title }),
+        } : {})}
+        resourceLink={(resource: WorkstreamResource) => {
+          const workspace = session?.workspace;
+          // A detail installed from the conversation's own object carries no
+          // placements, so the directory's stand in for the routed Channel.
+          const spaceId = linkSpaceId ?? threadPlacements?.[0] ?? null;
+          if (!workspace || !spaceId || !isMainArtifact(resource.id)) return undefined;
+          return () => copyArtifactLink({ region: workspace.region, workspaceId: workspace.id }, spaceId, id, resource.id);
+        }}
+        resourcePin={(resource: WorkstreamResource) => isMainArtifact(resource.id)
+          ? { on: pinnedArtifactIds.has(resource.id), onChange: (next: boolean) => setArtifactPinned(resource.id, next, id) }
+          : undefined}
         refreshingResourceId={refreshResource.isPending ? refreshResource.variables?.id ?? null : null}
         resourceVersions={resourceVersions.data}
         resourceVersionsFailed={Boolean(resourceVersions.error)}

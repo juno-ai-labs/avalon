@@ -386,6 +386,10 @@ export class WorkstreamObjectClient {
     await this.request({ operation: "detach_resource", resourceId });
   }
 
+  async renameResource(resourceId: string, title: string): Promise<void> {
+    await this.request({ operation: "rename_resource", resourceId, title });
+  }
+
   async answerElicitation(
     elicitationId: string,
     input: z.infer<typeof AnswerElicitationRequestSchema>,

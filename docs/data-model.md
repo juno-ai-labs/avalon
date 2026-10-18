@@ -651,7 +651,8 @@ SQL joins.
   `current_version` identifies the latest semantic state and `resource_versions`
   retains every state from version 1 onward, including its original and
   model-readable R2 refs, its provenance (`author_kind` with the one identity
-  column that kind admits, and `cause`), and a `storage_kind` naming the shape
+  column that kind admits, and `cause`: `created`, `published`, `refetched`,
+  `replaced` or `renamed`), and a `storage_kind` naming the shape
   of the refs — one value today, deliberately unconstrained so a later storage
   shape needs no table rebuild. Provenance reaches a version through
   `revision_author_*` and `revision_cause` on `resources`, set by the same
@@ -1378,6 +1379,35 @@ inactive legacy tables after deploying the Worker that no longer reaps them.
 The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
+
+### 2026-10-18 — A rename is a version cause of its own
+
+**What changed:** WorkspaceDO migration 113 admits `renamed` in
+`resources.revision_cause` and `resource_versions.cause`. A person renaming an
+artifact stages a `member` author and that cause; the same title writes
+nothing.
+
+**Why:** Any write to `title` records a version, so a rename had to name a
+cause or record none. `replaced` would have made every rename news to the
+artifact's pinners and told history something false.
+
+**Considered and rejected:** Rebuilding both tables to widen the CHECK.
+`resources` is a referenced parent, which needs the hold-and-restore recipe
+and its risks. Instead each column is replaced: a wider one is added and
+filled, the three triggers that read the old one are dropped, the old one is
+dropped and the new one renamed into its place, and the triggers return with
+their text unchanged.
+
+**Consequences:** `GET /resources/:id/versions` sends a `renamed` version
+with no cause, because a desktop build from before it parses the history
+with a closed enum; send it once those builds are gone. The contract now
+reads an unknown cause as none, so a later cause needs no such hold. An
+agent republish that repeats the title it last set keeps a person's rename
+(`AGENT_RESOURCE_TITLE_SQL`); one that names a new title takes it. A
+later cause takes the same migration steps, and the capture triggers and the
+pin ledger's trigger are named constants so that it can.
+Rows are kept; `navigation-migrations.test.ts` upgrades a populated 112 and
+checks them.
 
 ### 2026-10-17 — An agent's resource version names the person it acted for
 
