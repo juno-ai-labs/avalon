@@ -600,8 +600,9 @@ still is what keeps the page in sight. Shrinking the view around the overlay
 was rejected: a popover in the middle of the pane leaves no rectangle to
 shrink to.
 
-**Consequences:** The still must be taken before the zero rectangle is sent,
-and the renderer holds every update while the capture is in flight so a
+**Consequences:** The still must be taken, and painted in the pane, before
+the zero rectangle is sent (decode, `flushSync`, then wait a frame); a
+`setState` alone lets the view collapse before React draws it. The renderer holds every update while the capture is in flight so a
 mutation burst cannot collapse the view first. The still is a picture, not the
 page: nothing under an overlay is interactive, which it was not before either.
 
