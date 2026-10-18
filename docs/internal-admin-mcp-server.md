@@ -231,6 +231,7 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | `update_feature_flag` | `key`, `description`, `enabled`, `default_variation`, `rules` | Replaces a managed product flag's whole definition through Ace and notifies connected clients. |
 | `list_model_flags` | None | Lists each agent role's model flag with its default and live route. |
 | `update_model_flag` | `role`, `routing` | Replaces an agent role's default route plan through Ace after checking each model id on OpenRouter. |
+| `query_lakehouse` | `lakehouse`, `sql` | Runs read-only Basin SQL against `llm_inference`, `analytics_events`, or `usage_events`. |
 
 SQL results include `columns`, JSON-safe `rows`, `rowsRead`, and `rowsWritten`.
 BLOB values are returned as `{ "type": "blob", "base64": "..." }`.
@@ -253,6 +254,11 @@ maintenance; it is not a domain-level count of changed records.
 - Read a flag with `list_feature_flags` before `update_feature_flag`, and send
   every rule back. The update replaces the whole definition, so a rule left out
   is deleted for everyone it reached.
+
+- `query_lakehouse` returns Cloudflare's `schema`, `rows`, and `metrics`.
+  Filter on the table's timestamp column and add a `LIMIT`: Basin SQL bills by
+  bytes scanned. Select `llm_inference`'s `request`, `response`, and `error`
+  only for one `inference_request_id`; they hold raw customer content.
 
 - The server audits the Access actor, tool, target IDs, and success or failure,
   but deliberately does not log SQL text, bindings, result rows, or SQLite error

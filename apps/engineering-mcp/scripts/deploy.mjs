@@ -8,6 +8,10 @@ import { parseWranglerConfig } from "../../../scripts/wrangler-config.mjs";
 const appDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
 const deploymentToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
+// Read token for the Global lakehouse buckets' Basin SQL. Optional so a missing
+// GitHub secret does not fail the API release this deploy runs inside; the
+// query_lakehouse tool names the missing secret instead.
+const basinSqlToken = process.env.ENGINEERING_MCP_BASIN_SQL_API_TOKEN?.trim();
 const mcpDomain = "mcp.internal.rallywith.ai";
 const aceDomain = "ace.internal.rallywith.ai";
 const generatedConfig = join(appDirectory, "wrangler.generated.json");
@@ -142,12 +146,22 @@ const audience = await ensureAccessApplication();
 const source = await readFile(join(appDirectory, "wrangler.jsonc"), "utf8");
 const config = parseWranglerConfig(source);
 config.vars.ACCESS_APPLICATION_AUD = audience;
+config.vars.CLOUDFLARE_ACCOUNT_ID = accountId;
 await writeFile(generatedConfig, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 try {
   execFileSync("pnpm", ["exec", "wrangler", "deploy", "--config", generatedConfig], {
     cwd: appDirectory,
     stdio: "inherit",
   });
+  if (basinSqlToken) {
+    execFileSync("pnpm", ["exec", "wrangler", "secret", "put", "BASIN_SQL_API_TOKEN", "--config", generatedConfig], {
+      cwd: appDirectory,
+      input: `${basinSqlToken}\n`,
+      stdio: ["pipe", "inherit", "inherit"],
+    });
+  } else {
+    console.warn("ENGINEERING_MCP_BASIN_SQL_API_TOKEN is not set; query_lakehouse keeps any existing secret");
+  }
 } finally {
   await unlink(generatedConfig).catch(() => undefined);
 }
