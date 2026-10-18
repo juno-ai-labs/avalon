@@ -106,8 +106,9 @@ Unknown, wrong-scope, or uncommitted IDs fail with `page_id_invalid`; completed
 and concurrent consumers produce `page_already_consumed` and `page_in_progress`.
 These failures tell the caller to restart or use the completed page's next ID,
 naming the first-page tool; storage cannot, so the wrapper writes that text.
-For a consumed page, storage returns the page's stored arguments without writing,
-and the tool's optional `continuationDetails` names what it read (`resourceId`
+For a page another receipt holds (consumed or in progress), storage returns the
+refusal and the page's stored arguments without writing, and the tool's optional
+`continuationDetails` names what it reads (`resourceId`
 for a resource read) in the failure details. The attachment grounding guard
 needs that identity: a later run has no memory of the page, and an anonymous
 failure is never cleared by a later successful read.
@@ -130,7 +131,8 @@ consume their incoming page, so transient failures can be retried.
 
 There is no new arbitrary page count, timeout, or general repeated-failure breaker.
 IDs last as long as the producing receipt and run rows; underlying provider
-cursors can expire sooner, and the executor reports that as its own failure. Missing or changed durable producer results fail rather than silently
+cursors can expire sooner, and the executor reports that as its own failure.
+Missing or changed durable producer results fail rather than silently
 rebinding a published ID to different arguments.
 
 ## Testing
