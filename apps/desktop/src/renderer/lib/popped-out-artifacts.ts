@@ -47,6 +47,13 @@ export async function restorePoppedOutArtifacts(input: {
   }));
 }
 
+/**
+ * The refreshes in flight in this window, by resource and version. One set
+ * for every caller, so the app shell and an open conversation that both learn
+ * of a version transfer its bytes once.
+ */
+export const POPPED_OUT_ARTIFACT_REFRESHES = new Set<string>();
+
 export interface RefreshPoppedOutArtifactsInput {
   bridge: Pick<
     RallyDesktopBridge,
@@ -58,7 +65,7 @@ export interface RefreshPoppedOutArtifactsInput {
     artifactId: string;
     openUrl: string;
   }>;
-  resources: WorkstreamResource[];
+  resources: readonly Pick<WorkstreamResource, 'id' | 'currentVersion' | 'mimeType' | 'title'>[];
   signal?: AbortSignal;
 }
 
@@ -82,7 +89,7 @@ export async function refreshPoppedOutArtifacts({
   const resourcesById = new Map(resources.map((resource) => [resource.id, resource]));
   await Promise.all(Object.entries(openVersions).map(async ([resourceId, openVersion]) => {
     const resource = resourcesById.get(resourceId);
-    if (!resource || resource.currentVersion === openVersion) return;
+    if (!resource || resource.currentVersion <= openVersion) return;
     const key = `${resourceId}:${resource.currentVersion}`;
     if (inFlight.has(key)) return;
     inFlight.add(key);

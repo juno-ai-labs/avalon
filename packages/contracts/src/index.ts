@@ -2945,6 +2945,39 @@ export const WorkspaceReachChangedEventSchema = z.strictObject({
 export type WorkspaceReachChangedEvent = z.infer<typeof WorkspaceReachChangedEventSchema>;
 
 /**
+ * What a resource shows at its newest version: the fields a new version can
+ * move, and nothing about how a conversation links it. A client merges it
+ * over the resource it already holds, keeping that link's own fields.
+ */
+export const ResourceHeadSchema = z.strictObject({
+  resourceId: IdSchema,
+  version: z.number().int().positive(),
+  title: z.string().min(1).max(300),
+  mimeType: z.string().max(160).nullable(),
+  updatedAt: TimestampSchema,
+  contentAvailable: z.boolean(),
+  sizeBytes: z.number().int().nonnegative(),
+});
+export type ResourceHead = z.infer<typeof ResourceHeadSchema>;
+
+/**
+ * These resources have a new version, of any type and from any producer, so
+ * any preview open on one is stale.
+ *
+ * Addressed per socket: a resource is named only to a person who may open a
+ * conversation that links it, the same gate an artifact pin reads under.
+ * Outside the waterline and never replayed: a client that was away reads each
+ * resource's head when it next opens the conversation that holds it. Older
+ * clients ignore the unknown `type`. `docs/websocket-architecture.md` owns it.
+ */
+export const WorkspaceResourceVersionsEventSchema = z.strictObject({
+  type: z.literal("workspace_resource_versions"),
+  occurredAt: TimestampSchema,
+  resources: z.array(ResourceHeadSchema).min(1),
+});
+export type WorkspaceResourceVersionsEvent = z.infer<typeof WorkspaceResourceVersionsEventSchema>;
+
+/**
  * User-specific flags sent outside the workspace waterline. Two people in one
  * WorkspaceDO can match different Flagship rules, so these values must never
  * ride the common `workspace_sync` event.

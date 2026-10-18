@@ -53,6 +53,22 @@ describe('refreshing detached artifact windows', () => {
     }));
   });
 
+  it('leaves a window alone that already shows a newer version than the one it is told of', async () => {
+    const loadResourceContent = vi.fn();
+    const updatePoppedOutArtifact = vi.fn(async () => false);
+    await refreshPoppedOutArtifacts({
+      bridge: {
+        getPoppedOutArtifactVersions: vi.fn(async () => ({ [artifact.id]: 5 })),
+        updatePoppedOutArtifact,
+      },
+      inFlight: new Set(),
+      loadResourceContent,
+      resources: [artifact],
+    });
+    expect(loadResourceContent).not.toHaveBeenCalled();
+    expect(updatePoppedOutArtifact).not.toHaveBeenCalled();
+  });
+
   it('mints a fresh one-shot URL when a detached live site advances', async () => {
     const site = { ...artifact, id: 'resource-site', mimeType: SITE_MANIFEST_MIME_TYPE };
     const updatePoppedOutArtifact = vi.fn(async () => false);

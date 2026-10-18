@@ -113,6 +113,9 @@ import {
   WorkspaceFeatureFlagsEventSchema,
   WorkspacePresenceEventSchema,
   WorkspaceReachChangedEventSchema,
+  ResourceHeadSchema,
+  WorkspaceResourceVersionsEventSchema,
+  type ResourceHead,
   WorkspaceSocketSyncEventSchema,
   type MemberPreferences,
   WorkspaceSyncTopicSchema,
@@ -812,6 +815,11 @@ import {
   WORKSPACE_PINS_MIGRATION,
 } from "./workspace-pin-storage";
 import { type ChannelReadState, WORKSPACE_CHANNEL_READS_MIGRATION } from "./workspace-channel-read-storage";
+import {
+  drainResourceVersionChanges,
+  resourceVersionLedgerReady,
+  WORKSPACE_RESOURCE_VERSION_CHANGES_MIGRATION,
+} from "./workspace-resource-versions";
 import {
   CHANNEL_COLOR_SYNC_MIGRATION,
   ChannelColorSyncMessageSchema,
@@ -4532,6 +4540,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     RESOURCES_CREATE_SEMANTIC_VERSION_V112,
     RESOURCE_VERSIONS_QUEUE_ARTIFACT_UPDATE,
   ],
+}, {
+  version: 114,
+  description: "a ledger of every resource with a new version, so open previews can follow it",
+  // See WORKSPACE_RESOURCE_VERSION_CHANGES_MIGRATION and docs/websocket-architecture.md.
+  statements: WORKSPACE_RESOURCE_VERSION_CHANGES_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -5358,6 +5371,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private railLedger = false;
   /** Whether this object has the pinned-artifact update ledger (migration 111). */
   private artifactLedger = false;
+  private resourceVersionLedger = false;
   /**
    * Channels a directory batch drained from the rail ledger for its own
    * follow-up pass to send (`applyDirectoryBatch`). In memory: a pass that
@@ -5385,7 +5399,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // itself is refused once the workspace is retired, which is right.
     let railDrainScheduled = false;
     this.state = observeSqlWrites(state, () => {
-      if ((!this.railLedger && !this.artifactLedger) || railDrainScheduled) return;
+      if ((!this.railLedger && !this.artifactLedger && !this.resourceVersionLedger) || railDrainScheduled) return;
       railDrainScheduled = true;
       queueMicrotask(() => {
         try {
@@ -5405,6 +5419,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             this.state.waitUntil(this.announceArtifactUpdates(updates).catch((error: unknown) => logWarn(this.env, "artifact_update_announce_failed", {
               code: diagnosticErrorCode(error, "artifact_update_announce_failed"),
             })));
+          }
+          // A new version of any resource, for every open preview of it.
+          if (this.resourceVersionLedger) {
+            this.publishResourceVersions(drainResourceVersionChanges(this.state.storage.sql));
           }
         } catch (error) {
           // Nothing here may throw: this runs outside every entry point.
@@ -7508,6 +7526,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.artifactLedger = this.state.storage.sql.exec(
       `SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_artifact_updates'`,
     ).toArray().length > 0;
+    this.resourceVersionLedger = resourceVersionLedgerReady(this.state.storage.sql);
   }
 
   /** Every socket accepted and not yet heard from, open or already gone. */
@@ -10337,6 +10356,72 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       .find((attachment) => attachment?.subscribed && attachment.userId === userId);
     if (!socket) return;
     this.publishNavigationState(userId, { artifactPins: this.artifactPinsFor(viewerOf(socket), workspaceId) });
+  }
+
+  /**
+   * Tell each socket which of these resources have a new head, so a preview
+   * open on one moves to it. A socket hears only the resources its person may
+   * open a conversation linking: a thread whose Main they may open, or a
+   * Channel they reach. Not on the waterline and never replayed: a client
+   * that was away reads each head when it next opens the conversation.
+   *
+   * One visibility read per person, whatever the number of their sockets.
+   */
+  private publishResourceVersions(drained: readonly ResourceHead[]): void {
+    // A row the contract refuses costs its own announcement, not the batch's.
+    const heads = drained.filter((head) => {
+      const parsed = ResourceHeadSchema.safeParse(head);
+      if (!parsed.success) {
+        logWarn(this.env, "resource_version_publish_skipped", {
+          code: zodDiagnosticCode(parsed.error, "resource_head") ?? "resource_head_invalid",
+        });
+      }
+      return parsed.success;
+    });
+    if (heads.length === 0) return;
+    const linkedTo = new Map<string, string[]>();
+    for (const row of this.state.storage.sql.exec<{ resource_id: string; workstream_id: string }>(
+      `SELECT resource_id, workstream_id FROM workspace_workstream_resource_links
+        WHERE resource_id IN (SELECT value FROM json_each(?))`,
+      JSON.stringify(heads.map((head) => head.resourceId)),
+    )) {
+      linkedTo.set(row.resource_id, [...linkedTo.get(row.resource_id) ?? [], row.workstream_id]);
+    }
+    if (linkedTo.size === 0) return;
+    const occurredAt = new Date().toISOString();
+    const payloads = new Map<string, string | null>();
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed) continue;
+      const key = `${attachment.userId}:${attachment.accessClass ?? "member"}`;
+      let payload = payloads.get(key);
+      if (payload === undefined) {
+        const viewer = viewerOf(attachment);
+        const opened = new Map<string, boolean>();
+        const opens = (conversationId: string): boolean => {
+          let open = opened.get(conversationId);
+          if (open === undefined) {
+            open = this.mainOpenable(viewer, conversationId)
+              || this.spaceStorage().reach(viewer, conversationId, true) !== null;
+            opened.set(conversationId, open);
+          }
+          return open;
+        };
+        const visible = heads.filter((head) => (linkedTo.get(head.resourceId) ?? []).some(opens));
+        payload = visible.length === 0 ? null : JSON.stringify(WorkspaceResourceVersionsEventSchema.parse({
+          type: "workspace_resource_versions",
+          occurredAt,
+          resources: visible,
+        }));
+        payloads.set(key, payload);
+      }
+      if (payload === null) continue;
+      try {
+        socket.send(payload);
+      } catch {
+        // Hibernation owns cleanup; a reconnecting client reads the heads it opens.
+      }
+    }
   }
 
   private artifactPinTargetListed(viewer: Viewer, itemId: string, threadId: string): boolean {
