@@ -79,7 +79,8 @@ records which conversation it came from
    the horizon passes, with no action by anyone.
 3. A fact that is contradicted by the same person is replaced; a fact
    contradicted by a different person becomes a shared memory of the
-   disagreement; a fact a person retracts is gone from every later run.
+   disagreement; a fact a person retracts never returns from recall and
+   leaves every conversation's digest as the retraction reaches its copy.
 4. Memory adds no new wait between a message landing and the first provider
    request, on every path: a warm conversation, a cold one, a new Breakout, a
    new Thread, a Sidekick run.
@@ -180,10 +181,14 @@ anyone else. The transcript shows these as ordinary tool activity rows.
 
 **Reviewing.** In their Personal Channel a person sees "What Rally
 remembers": their own facts, each with the message it came from, its horizon
-if any, and whether it is expired. They can remove any fact; removal is
-immediate for every later run. Facts about the Organization and about Channels
-the person may open are listed below their own, read-only for a member and
-removable by an administrator.
+if any, and whether it is expired. They can remove any fact. Removal is
+immediate for recall, which reads the store, and reaches each conversation's
+digest copy through the copy-sync lane within one alarm tick; a run that
+starts in a conversation in the moments before its copy is refreshed can see
+the fact once more, and that is the whole lag ([`design.md` §7](design.md#7-digest)).
+Facts about the Organization and about Channels the person may open are
+listed below their own, read-only for a member and removable by an
+administrator.
 
 **Sidekicks.** A Sidekick run receives the digest of its home conversation in
 place of the automatic recall it freezes today, which also removes the
@@ -227,8 +232,11 @@ that produced it, evaluated at read time.
 5. **Bi-temporal facts with deterministic supersession first.** `valid_from`,
    `valid_until` for when a fact was true; `recorded_at`, `superseded_at`,
    `retracted_at` for when Rally knew. A fact with a parsable
-   `(subject, relation)` key supersedes its predecessor with no judgment call;
-   the model decides only for unkeyed facts, with the existing facts in view.
+   `(subject, relation)` key supersedes its predecessor with no judgment call
+   when the same person stated both; when a different person states a
+   different value for the same key, the host writes the disagreement fact of
+   decision 8 and leaves both claims active. The model decides only for
+   unkeyed facts, with the existing facts in view.
    Rejected: similarity-gated updates, which cannot tell a contradiction from
    a duplicate.
 6. **Expiry by predicate.** Reads filter on `valid_until`; nothing is deleted
@@ -312,8 +320,17 @@ authoritative.
 
 - `memory_sweep_state`: `swept_through_seq`, `rest_until`,
   `consecutive_quiet`, `last_outcome`, beside `description_refresh_state`.
-- `memory_digest_copies`: `user_id` (nullable), `digest_hash`, `text`,
-  `source_revision`, `refreshed_at`, the personal-prompt copy pattern.
+- `memory_digest_copies`: `user_id` (nullable), `source_revision`,
+  `refreshed_at`, and `facts_json`: the digest's facts as structured rows
+  (`fact_id`, `subject_kind`, `subject_label`, `kind`, `text`, `valid_from`,
+  `valid_until`, `conflict`), not rendered text. The run renders the digest
+  locally at start, applying the date predicates then, so a fact that
+  expired or has not started yet is handled exactly without any read beyond
+  the object. Retraction and visibility narrowing reach copies through the
+  copy-sync lane (the Channel colour-sync shape: a trigger marks the affected
+  conversations with a revision, the `WorkspaceDO` alarm sends one batch to
+  the activity Queue, the consumer refreshes each copy), and through the
+  ordinary refresh after each run.
 
 Backfill: none required. Existing conversations are swept forward from their
 current head; the team may run a `thread_backfill` job over open Threads if
