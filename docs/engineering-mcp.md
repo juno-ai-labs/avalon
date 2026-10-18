@@ -31,7 +31,7 @@ available to Rally users by virtue of product membership.
   Ace exports for the flag tools. Its interface and input schemas live in
   `apps/ace/src/protocol.ts`, which this Worker compiles.
 - `apps/engineering-mcp/src/lakehouse.ts` is the Basin SQL client behind
-  `query_lakehouse`. It takes bucket and table names from the checked-in
+  `query_data_lake`. It takes bucket and table names from the checked-in
   `config/*-lakehouse.json` manifests.
 - `.github/workflows/deploy-api.yml` deploys this Worker only after both
   regional API entrypoints are live and healthy.
@@ -116,7 +116,7 @@ the flag first and send it back with its change.
 
 ### Lakehouses
 
-`query_lakehouse` sends one statement to Cloudflare's Basin SQL HTTP API
+`query_data_lake` sends one statement to Cloudflare's Basin SQL HTTP API
 (formerly R2 SQL) for one of the three Global lakehouses:
 
 | `lakehouse` | Table | Basin Catalog bucket | Owning document |
@@ -277,7 +277,7 @@ generation fences admit only the current active authority. Existing Access tests
 signature, issuer, audience, cookie, and header verification because this
 Worker imports that one verifier rather than forking it.
 
-The same file drives `query_lakehouse` against a Basin SQL double, since the
+The same file drives `query_data_lake` against a Basin SQL double, since the
 API cannot run here: the table picks the bucket, Cloudflare's result returns
 unchanged, a refusal logs only its code, and a missing token makes no request.
 
@@ -329,7 +329,7 @@ The provisioner requires `CLOUDFLARE_ACCOUNT_ID` and
 when the `ENGINEERING_MCP_BASIN_SQL_API_TOKEN` GitHub secret is set in the
 `api-production` environment, installs it as `BASIN_SQL_API_TOKEN`. Without the
 secret the deploy keeps whatever token the Worker already has, and
-`query_lakehouse` fails as `lakehouse_token_unconfigured` if it has none: the
+`query_data_lake` fails as `lakehouse_token_unconfigured` if it has none: the
 MCP deploys inside the API release, and a missing analytics credential should
 not turn that release red. It requires the existing Ace Access application as the
 policy, identity-provider, and session-duration source; missing source state is
@@ -350,7 +350,7 @@ primary and fallbacks. Ace owns validation and the atomic write.
 
 ### 2026-10-18 — Query the Global lakehouses
 
-**What changed:** `query_lakehouse` runs read-only Basin SQL against
+**What changed:** `query_data_lake` runs read-only Basin SQL against
 `llm_inference`, `analytics_events`, or `usage_events`, using a bucket-scoped
 token installed as a Worker secret.
 

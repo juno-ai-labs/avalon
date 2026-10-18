@@ -113,6 +113,7 @@ describe("Rally engineering MCP tools", () => {
 
     const response = await rpc(env, "tools/list");
     const result = response.result as { tools: Array<{ name: string; annotations?: Record<string, boolean> }> };
+    expect(result.tools.find((tool) => tool.name === "query_data_lake")).toMatchObject({ title: "Query Data Lake" });
     expect(result.tools.map((tool) => tool.name)).toEqual([
       "list_workspaces",
       "list_workstreams",
@@ -127,7 +128,7 @@ describe("Rally engineering MCP tools", () => {
       "update_feature_flag",
       "list_model_flags",
       "update_model_flag",
-      "query_lakehouse",
+      "query_data_lake",
     ]);
     for (const tool of result.tools.filter((item) => /^(run|update)_/.test(item.name))) {
       expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
@@ -554,7 +555,7 @@ describe("Rally engineering MCP tools", () => {
     vi.stubGlobal("fetch", basin);
 
     const response = await rpc(testEnv(), "tools/call", {
-      name: "query_lakehouse",
+      name: "query_data_lake",
       arguments: { lakehouse: "llm_inference", sql: "SELECT event_id FROM avalon.llm_inference LIMIT 1" },
     });
     const toolResult = response.result as { isError?: boolean; content: Array<{ text: string }> };
@@ -576,7 +577,7 @@ describe("Rally engineering MCP tools", () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const response = await rpc(testEnv(), "tools/call", {
-      name: "query_lakehouse",
+      name: "query_data_lake",
       arguments: { lakehouse: "usage_events", sql: "SELECT customer_email FROM avalon.usage_events" },
     });
     const result = response.result as { isError: boolean; content: Array<{ text: string }> };
@@ -585,7 +586,7 @@ describe("Rally engineering MCP tools", () => {
     const rows = logged.mock.calls.map((call) => JSON.parse(String(call[0])) as Record<string, unknown>);
     expect(rows).toEqual([expect.objectContaining({
       event: "engineering_mcp_tool_failed",
-      tool: "query_lakehouse",
+      tool: "query_data_lake",
       lakehouse: "usage_events",
       error_code: "lakehouse_query_failed:40004",
     })]);
@@ -601,7 +602,7 @@ describe("Rally engineering MCP tools", () => {
     delete env.BASIN_SQL_API_TOKEN;
 
     const response = await rpc(env, "tools/call", {
-      name: "query_lakehouse",
+      name: "query_data_lake",
       arguments: { lakehouse: "analytics_events", sql: "SELECT 1" },
     });
     const result = response.result as { isError: boolean };

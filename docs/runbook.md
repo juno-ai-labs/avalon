@@ -1843,7 +1843,7 @@ work-stream URL into it. Nothing here mutates production; every step is a read.
    | Global | R2 SQL over Data Catalog bucket `avalon-global-inference-lakehouse` | `avalon-global-payloads` |
 
 An MCP client connected to the engineering MCP can skip the token and curl
-steps below: its `query_lakehouse` tool runs the same statements
+steps below: its `query_data_lake` tool runs the same statements
 ([`engineering-mcp.md`](engineering-mcp.md#lakehouses)). The handling rules for
 what comes back still apply.
 
@@ -2121,7 +2121,7 @@ read it back.
 
 ### Querying analytics events in production
 
-The engineering MCP's `query_lakehouse` tool runs these queries too, with
+The engineering MCP's `query_data_lake` tool runs these queries too, with
 `lakehouse: "analytics_events"`.
 
 Use Cloudflare's HTTP APIs, not the dashboard. Store a dedicated read token in
