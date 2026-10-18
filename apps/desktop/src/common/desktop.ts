@@ -548,6 +548,8 @@ export interface RallyDesktopBridge {
    * over it. The view collapses rather than closing, so state survives.
    */
   setArtifactPreviewHidden: (hidden: boolean) => Promise<void>;
+  /** A still of the live preview as an image data URL, or `null` when none is showing. */
+  snapshotArtifactPreview: () => Promise<string | null>;
   /** Tear the preview down: the detail closed, or the work stream changed. */
   closeArtifactPreview: () => Promise<void>;
   /** Open a generated artifact in its own isolated window. */

@@ -1743,6 +1743,7 @@ export function ConversationSurface({
       surface: {
         present: bridge.presentArtifactPreview,
         setBounds: bridge.setArtifactPreviewBounds,
+        snapshot: bridge.snapshotArtifactPreview,
         close: bridge.closeArtifactPreview,
         popOut: bridge.popOutArtifact,
         copyText: bridge.copyText,

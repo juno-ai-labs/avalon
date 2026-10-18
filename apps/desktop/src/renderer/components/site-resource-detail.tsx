@@ -1,5 +1,6 @@
 import { IconAlertCircle, IconCheck, IconCopy, IconDatabase, IconExternalLink, IconWindowMaximize } from '@tabler/icons-react';
 import React from 'react';
+import { flushSync } from 'react-dom';
 import type { DesktopSiteArtifactWindowRequest } from '../../common/desktop';
 
 import type { IconGroupAction } from '@rally/ui/components/icon-group';
@@ -62,6 +63,8 @@ export interface SiteResourceDetailProps {
       cornerRadius: number;
     }) => Promise<boolean>;
     setBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
+    /** A still of the live view as an image data URL. */
+    snapshot: () => Promise<string | null>;
     close: () => Promise<void>;
     popOut: (request: DesktopSiteArtifactWindowRequest) => Promise<boolean>;
     copyText: (text: string) => Promise<void>;
@@ -83,6 +86,48 @@ export interface SiteResourceDetailProps {
  * this is a security change: see `docs/live-web-artifacts.md`.
  */
 const ARTIFACT_FRAME_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
+
+/** Resolves once `src` is decoded, so mounting it paints on the next frame. */
+async function decoded(src: string): Promise<void> {
+  const image = new Image();
+  image.src = src;
+  try {
+    await image.decode();
+  } catch {
+    // An undecodable still is shown as-is; the hide must not wait on it.
+  }
+}
+
+/** Resolves after the browser has painted the current DOM. */
+async function nextPaint(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
+
+/**
+ * How long a menu or dialog waits, under the view, for the still before the
+ * view hides without one. The overlay is invisible and unclickable until the
+ * hide goes out, so a slow or hung `capturePage` must not hold it. Past this,
+ * the pane is blank under the overlay, as it was before stills existed.
+ * Set by the team (2026-10-18): a normal capture, resize and encode is
+ * roughly 20 to 80 ms, and 150 ms covers that with margin.
+ */
+const STILL_WAIT_MS = 150;
+
+/** The still, or `null` once `STILL_WAIT_MS` passes without one. */
+async function stillWithin(take: () => Promise<string | null>): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), STILL_WAIT_MS); });
+  try {
+    return await Promise.race([take().catch(() => null), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The rectangle that collapses the composited view while keeping its page loaded. */
+const HIDDEN = { x: 0, y: 0, width: 0, height: 0 };
 
 export function SiteResourceDetail({
   resourceId,
@@ -132,6 +177,12 @@ export function SiteResourceDetail({
    * not on screen to be covered.
    */
   const [showingData, setShowingData] = React.useState(false);
+  // The page as it looked when a menu or dialog opened over it.
+  const [snapshot, setSnapshot] = React.useState<{
+    src: string;
+    /** Where the view was, relative to the pane: a clipped view is a slice of it. */
+    placement: React.CSSProperties;
+  } | null>(null);
 
   /**
    * A fresh open code, for one navigation.
@@ -183,11 +234,6 @@ export function SiteResourceDetail({
   const measure = React.useCallback((): { x: number; y: number; width: number; height: number } | null => {
     const pane = paneRef.current;
     if (!pane) return null;
-    // The owning lightbox is allowed; menus and dialogs above it must win
-    // over Electron's native view, which otherwise paints above the DOM.
-    const occluded = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"]')]
-      .some((overlay) => !overlay.contains(pane) && overlay.getAttribute('data-state') !== 'closed');
-    if (occluded) return { x: 0, y: 0, width: 0, height: 0 };
     const rect = pane.getBoundingClientRect();
     const viewport = pane.closest('.rail-scroll')?.getBoundingClientRect();
     const left = Math.max(rect.left, viewport?.left ?? 0, 0);
@@ -202,6 +248,15 @@ export function SiteResourceDetail({
       width: Math.max(0, Math.round(right - left)),
       height: Math.max(0, Math.round(bottom - top)),
     };
+  }, []);
+
+  // The owning lightbox is allowed; menus and dialogs above it must win over
+  // Electron's native view, which otherwise paints above the DOM.
+  const occluded = React.useCallback((): boolean => {
+    const pane = paneRef.current;
+    if (!pane) return false;
+    return [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"]')]
+      .some((overlay) => !overlay.contains(pane) && overlay.getAttribute('data-state') !== 'closed');
   }, []);
 
   /**
@@ -245,7 +300,7 @@ export function SiteResourceDetail({
         return await surface.present({
           artifactId: navigation.artifactId,
           url: navigation.openUrl,
-          bounds: measure() ?? bounds,
+          bounds: occluded() ? HIDDEN : measure() ?? bounds,
           cornerRadius: paneCorner(),
         });
       })
@@ -262,7 +317,7 @@ export function SiteResourceDetail({
       setPreviewShown(null);
       void surface.close();
     };
-  }, [access, measure, mintAccess, paneCorner, resourceId, showingData, surface]);
+  }, [access, measure, mintAccess, occluded, paneCorner, resourceId, showingData, surface]);
 
   // Native content must remain clipped to its owning scroll viewport and
   // disappear behind nested DOM dialogs; Electron cannot infer either.
@@ -276,9 +331,53 @@ export function SiteResourceDetail({
     // reveals it at the last bounds it was sent. A dialog opened or a pane
     // moved during that load must already be reflected by then.
     if (!access || previewShown === false || showingData || surface.framed) return undefined;
+    let disposed = false;
+    let hidden = false;
+    let capturing = false;
     const update = (): void => {
       const bounds = measure();
-      if (bounds) void surface.setBounds(bounds);
+      if (!bounds || capturing) return;
+      const covered = occluded();
+      if (covered && !hidden) {
+        // The still is taken before the view collapses, because a collapsed
+        // view paints nothing to take. Updates in the meantime wait for it,
+        // and the one it runs on finishing sees whatever is current then.
+        capturing = true;
+        const pane = paneRef.current?.getBoundingClientRect();
+        const placement: React.CSSProperties = {
+          left: bounds.x - (pane?.left ?? 0),
+          top: bounds.y - (pane?.top ?? 0),
+          width: bounds.width,
+          height: bounds.height,
+        };
+        void stillWithin(surface.snapshot)
+          .then(async (image) => {
+            // On screen before the hide is sent, or the pane shows empty for
+            // the frames between the view collapsing and React painting.
+            if (image) await decoded(image);
+            if (disposed) return;
+            if (!occluded()) {
+              // The overlay closed while the still was being taken: the view
+              // never left, so there is nothing to stand in for.
+              capturing = false;
+              update();
+              return;
+            }
+            flushSync(() => setSnapshot(image ? { src: image, placement } : null));
+            await nextPaint();
+            capturing = false;
+            if (disposed) return;
+            hidden = true;
+            update();
+          });
+        return;
+      }
+      hidden = covered;
+      void surface.setBounds(covered ? HIDDEN : bounds).then(() => {
+        // Dropped only once the view is back over it, so the pane never shows
+        // empty in between.
+        if (!hidden && !disposed) setSnapshot(null);
+      });
     };
     window.addEventListener('resize', update);
     window.addEventListener('scroll', update, true);
@@ -288,12 +387,14 @@ export function SiteResourceDetail({
     overlays.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-state', 'role'] });
     update();
     return () => {
+      disposed = true;
       window.removeEventListener('resize', update);
       window.removeEventListener('scroll', update, true);
       observer.disconnect();
       overlays.disconnect();
+      setSnapshot(null);
     };
-  }, [access, measure, previewShown, showingData, surface]);
+  }, [access, measure, occluded, previewShown, showingData, surface]);
 
   // The canonical public link carries no access code or viewer identity.
   // Copying it shares the current site with anyone.
@@ -371,8 +472,10 @@ export function SiteResourceDetail({
             {!accessError && previewShown === null && <p className="site-detail-status">Opening…</p>}
             {/*
               Nothing is rendered *into* the pane when the preview is live: the
-              composited view covers it. This placeholder is what a person sees
-              where no view can be composited — a browser build, or a refused URL.
+              composited view covers it. The exceptions are the still shown
+              while an overlay hides that view, and the placeholder a person
+              sees where no view can be composited — a browser build, or a
+              refused URL.
             */}
             {frameUrl && surface.framed && (
               <iframe
@@ -385,6 +488,7 @@ export function SiteResourceDetail({
                 referrerPolicy="no-referrer"
               />
             )}
+            {snapshot && <img alt="" className="site-detail-snapshot" src={snapshot.src} style={snapshot.placement} />}
             {access && previewShown === false && (
               <EmptyState
                 description="Open it in your browser to see the live page."
