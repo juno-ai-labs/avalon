@@ -538,6 +538,8 @@ jobs:
       # Deploy the administrative caller after its configured API targets.
       - name: Deploy the engineering MCP after configured regional entrypoints
         if: env.DEPLOY_GLOBAL == 'true'
+        env:
+          ENGINEERING_MCP_BASIN_SQL_API_TOKEN: ${{ secrets.ENGINEERING_MCP_BASIN_SQL_API_TOKEN }}
         run: pnpm --filter @rally/engineering-mcp run deploy
 
       - name: Verify the engineering MCP advertises OAuth to non-browser clients
