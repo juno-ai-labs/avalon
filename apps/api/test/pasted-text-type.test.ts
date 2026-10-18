@@ -13,6 +13,7 @@ describe("detectTextType", () => {
     ["| a | b |\n| --- | --- |\n| 1 | 2 |", "text/markdown", "md"],
     ["name\tcount\nEU\t12\nUS\t14", "text/tab-separated-values", "tsv"],
     ["name,count\nEU,12\nUS,14", "text/csv", "csv"],
+    ['name,note\nA,"x,y"\nB,"say ""hi"", then go"', "text/csv", "csv"],
     ["Dear team,\nThe launch moves to Tuesday, as agreed, after the review.\nThanks, Adam", "text/plain", "txt"],
     ["name,count\nEU,12", "text/plain", "txt"],
     ["{ not json", "text/plain", "txt"],
