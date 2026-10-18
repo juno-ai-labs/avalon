@@ -92,61 +92,110 @@ throws and returns a decision with a code.
 
 | | |
 | --- | --- |
-| Entity | One settled Rally turn, the last of a completed run, in one conversation |
+| Entity | One message in one conversation: a Rally turn once its run settles, or a person's message once it is admitted. A Breakout's parent is its Thread; a Thread's parent is its Channel |
 | Outcomes | `worth_carrying_up` → offer `merge_up`; `side_question_worth_a_breakout` → offer `start_breakout`; `continue_here` → nothing |
-| Evidence between adjacent outcomes | Whether the turn holds something the parent's readers need now, or is a step of the work here; whether the turn opened work beside the purpose or about it |
+| Evidence between adjacent outcomes | Whether the message holds something new for the parent's readers, or is a step of the work here; whether the message opened work beside the purpose or about it |
 | Insufficient confidence | Nothing, recorded as `confidence_below_threshold` |
 | Cannot answer | Nothing, recorded as `classifier_unavailable` with the provider's failure kind |
+
+The first draft of this contract judged only a Rally turn, the last of a
+completed run, inside a Breakout. The corpus evaluation widened it twice. A
+Thread merges up into a Channel and breaks out into a Breakout, so the same
+decision applies one level up. And a side question is usually opened by a
+person, not by Rally's answer to it: the message that says "separate thing,
+can you also…" is the one a Breakout suggestion should sit under, before Rally
+has spent a run answering in the wrong room.
+
+#### What the classifier is shown, and why
+
+The state is what a person who owns the parent conversation would want in
+front of them before deciding, and nothing a person would not read. Picture
+the Thread's owner skimming a Breakout under it. They ask three things: *is
+there something here I need?*, *did this wander into something that deserves
+its own room?*, and *have I already pulled this up?* They answer them from a
+few things, in this order, and the state carries exactly those:
+
+| Field | What a person reads it for | Where it comes from |
+| --- | --- | --- |
+| `parent.kind`, `parent.title`, `parent.purpose` | Whether a result is **new to the readers who would receive it**. "Worth carrying up" cannot be judged without knowing what the parent is doing; the first state had no parent at all and judged from inside the child | The Thread's title and description for a Breakout; the Channel titles a Thread belongs to |
+| `conversation.opening_request` | **The charter**, in the person's own words. The description loop's paraphrase drifts (one corpus Breakout's purpose named a candidate its first turn never mentioned); the first request does not | The first person-authored message of the conversation, kept whole up to 1,200 code points around a middle ellipsis |
+| `conversation.purpose`, `conversation.title` | The purpose **as it evolved**, which the opening request cannot show | `workstream.description` and `workstream.title` |
+| `conversation.messages_before` | How far in this is: a first reply and a fortieth are read differently | Count of judged messages before this one |
+| `so_far.summary` | **Where the work stands** when the conversation is long. A person catching up on a long thread reads the handoff, not the transcript; the compaction checkpoint is exactly that handoff: request, decisions, done, facts, open | The newest `transcript_compaction_checkpoints` row before the message, the `summary` of its payload, bounded to 2,500 code points; absent when the conversation never compacted |
+| `so_far.earlier_outputs` | **What has already been produced here**, so a reader can tell the first deliverable from the fifth revision of it. This one field answers the largest error family the first corpus pass had: revisions, additions and restyles of an existing output flagged as new deliverables | The `resource://` references in earlier messages, unique by resource, newest eight, each with how many messages ago |
+| `so_far.carried_up_before` | **What the parent already received** from here, so a second suggestion is not a repeat | Merge markers before this message: `conversation_merged_into` in a Breakout, `space_messages.source_workstream_id` for a Thread |
+| `recent_messages` | Whether the **loop is still turning** (feedback → tweak) and whether a side question is new rather than the purpose. Weak evidence, and the focus says so | The six judged messages before this one, each bounded to 700 code points around a middle ellipsis |
+| `judged_message.author` | A person's message and Rally's call for different things: a person opens side questions and states decisions; Rally delivers | `author_type` |
+| `judged_message.text` | The subject of the decision | The message, bounded to 6,000 code points around a middle ellipsis |
+| `judged_message.outputs[].first_time_here` | Whether each output the message names is **new or a revision** | Resource references in the message, matched against the conversation's earlier ones |
+
+What is deliberately not in it: the transcript (the summary and the output
+history carry what it would), the message's position in time, the pacing
+signals (how many suggestions were shown lately; those are gates, not
+evidence), the parent's own recent messages (a parent's reader decides on
+what the child produced, not on what the parent is saying today), and the
+model's own earlier verdicts. Every extra field is one JEV can over-weight.
+The order of the fields is the order a person would read them, and the focus
+sentence tells the model to read as the parent's owner, because that framing,
+not any single criterion, is what the first state lacked.
 
 **The state:**
 
 ```json
 {
+  "parent": { "kind": "channel | thread", "title": "...", "purpose": "a Thread's description; a Channel has none" },
   "conversation": {
     "kind": "thread | breakout",
+    "title": "workstream.title",
     "purpose": "workstream.description",
-    "title": "workstream.title"
+    "opening_request": "the first person-authored message, when there is one",
+    "messages_before": 12
   },
-  "settled_turn": {
-    "text": "the final turn, bounded as addressing bounds a message",
-    "artifacts": [{ "title": "...", "kind": "..." }]
+  "so_far": {
+    "summary": "the newest compaction handoff before this message, when one exists",
+    "earlier_outputs": [{ "title": "...", "messages_ago": 3 }],
+    "carried_up_before": 0
   },
-  "conversation_context": {
-    "recent_messages": [{ "author": "person | rally", "text": "..." }]
+  "recent_messages": [{ "author": "person | rally", "text": "..." }],
+  "judged_message": {
+    "author": "person | rally",
+    "text": "...",
+    "outputs": [{ "title": "...", "first_time_here": true }]
   }
 }
 ```
 
-`recent_messages` is the newest ten before the turn, each bounded to 1,000
-code points keeping both ends, through the helper addressing already uses
-(`limitAddressingRecentMessages` in `packages/agent-harness/src/index.ts`,
-extracted so both callers share one bound). `artifacts` is the resources the
-run created or edited, by title and kind, if the object can list them for the
-run cheaply; otherwise it is omitted and its value is the first ablation.
-Nothing else goes in: every extra field is one JEV can over-weight.
+The bounds are constants in `turn-disposition.ts` and `boundTurnDispositionState`
+applies them, so the request bytes an evaluation measures are the bytes
+production sends.
 
-**The question**, as a first candidate for the ablation to move:
+**The question:**
 
 ```json
 {
-  "question": "Measured against `conversation.purpose`, what does `settled_turn` call for next?",
-  "focus": "Judge the settled turn. `conversation.purpose` is what this conversation exists to do. Use `conversation_context.recent_messages` only to tell whether the purpose is still in motion here, and whether a side question is new rather than the purpose itself.",
+  "question": "Read as the owner of `parent`: what does `judged_message` call for?",
+  "focus": "`parent` is the conversation that would receive a merge and who reads it. `conversation.opening_request` and `conversation.purpose` are what this conversation exists to do. `so_far.summary`, when present, is where the work stood before the recent messages; `so_far.earlier_outputs` are the things already produced here, and `so_far.carried_up_before` how many times something was already carried to the parent. Use `recent_messages` only to tell whether the purpose is still in motion and whether a side question is new. `judged_message.outputs[].first_time_here` says whether an output is new or a revision.",
   "decision": "Choose exactly one."
 }
 ```
 
-**The criteria:**
+**The criteria**, as the first corpus pass left them (the evaluation section
+below records what each exclusion earned):
 
 | Outcome | Meaning | Include | Exclude |
 | --- | --- | --- | --- |
-| `worth_carrying_up` | The turn holds something the parent conversation's readers need now, in words they could use without this transcript: a deliverable, a decision, an answer to what they asked, a recommendation, a milestone, or a question only they can settle | A finished deliverable or draft; a deliverable revised the way the people here asked, now done; a decision the people here reached; the answer to the purpose; a question this conversation cannot settle and the parent can; a milestone the parent is waiting on | A draft the turn itself calls preliminary or asks the people here to review; routine progress, however long; a question to the people here; an answer to a narrow question that is not the purpose |
-| `side_question_worth_a_breakout` | The turn, or the exchange that led to it, opened a distinct piece of work beside the purpose: large enough to need its own conversation, likely to crowd this one | A sub-problem the turn proposes to work separately; a second deliverable the people asked for that the purpose does not cover; a line of questions on another subject that has run for several turns | A clarification or follow-up about the purpose itself; a one-line aside; the next step of the purpose |
-| `continue_here` | The turn is a step of the work here, and nothing in it is for the parent's readers yet | Partial work, a question to a person here, a status update; a result that answers a small part of the purpose | Something the parent's readers need now; a deliverable revised as asked and now done; a distinct piece of work beside the purpose |
+| `worth_carrying_up` | The message holds something new for the parent's readers, in words they could use without this transcript: a deliverable, a finding, a decision, an answer to what they asked, a recommendation, a milestone, or a question only they can settle | The first complete deliverable or draft for the purpose; a finding, diagnosis or assessment the people here asked for; a decision or recommendation the people here reached; the answer to the purpose; a correction that changes a result already carried; a question this conversation cannot settle and the parent can; a milestone the parent is waiting on, or a notice that a purpose the parent cares about is complete; a person's message that states a decision or result the parent's readers need | A revision, addition, restyle, fix or expansion of a deliverable this conversation already produced; a variation offered for taste, or a draft the message itself calls preliminary; general knowledge, or an opinion the parent's work does not need; a summary or explanation of material the parent already has; the answer to a narrow follow-up question, inside or beside the purpose; routine progress, a blocked attempt, an acknowledgement, or a report to a coordinating agent; a question to the people here about the purpose, or a person's request to Rally |
+| `side_question_worth_a_breakout` | The message, or the exchange that led to it, opened a distinct piece of work beside the purpose: large enough to need its own conversation, likely to crowd this one | A sub-problem the message proposes to work separately; a second deliverable the people asked for that the purpose does not cover; a person's request or proposal that starts a different piece of work from the purpose, whoever it is addressed to; a line of questions on another subject that has run for several messages | A clarification or follow-up about the purpose itself; a one-line aside, or a general-knowledge question answered in one message; the next step of the purpose |
+| `continue_here` | The message is a step of the work here, and nothing in it is new for the parent's readers | Partial work, a question to a person here about the purpose, a status update, a person's request to Rally about the purpose; a revision, addition, restyle or fix of a deliverable already produced here; a variation offered for taste; a narrow follow-up answer, general knowledge, or a summary of material the parent already has; a result that answers a small part of the purpose | Something new that the parent's readers need now; a distinct piece of work beside the purpose |
 
 The exclusions are symmetric on purpose: what one outcome excludes, its
 neighbour includes, so no case falls between them for the model to settle
 differently from run to run. `continue_here` is defined positively rather
-than as a catch-all; ordinary uncertainty belongs in the confidence.
+than as a catch-all; ordinary uncertainty belongs in the confidence. The live
+probe's line "a deliverable revised the way the people here asked, now done"
+under `worth_carrying_up` was reversed by the corpus: on real Breakouts a
+revision is almost always one step of an iteration loop, and the owner of the
+parent wants the result once, not every version of it.
 
 **Two constants, one measured and one transcribed:**
 
@@ -164,8 +213,14 @@ conversation kind:
 | Choice | In a Breakout | In a Thread's Main |
 | --- | --- | --- |
 | `worth_carrying_up` | `merge_up` into the Thread | `merge_up` into the default Channel |
-| `side_question_worth_a_breakout` | nothing (no nested Breakouts) | `start_breakout` from this turn |
+| `side_question_worth_a_breakout` | nothing (no nested Breakouts) | `start_breakout` from this message |
 | `continue_here` | nothing | nothing |
+
+Three kinds of conversation never reach the classifier, by origin rather than
+by judgement, because nothing in them is for people: a coordinator's sub-agent
+Breakout (its result goes to the coordinator), an import, and a digest or
+other system-kind Thread. The corpus holds them labeled `continue_here` so a
+model that is shown one anyway is measured on it.
 
 **A second question, for the words and not the decision.** What a merge
 carries is not always a result: a decision, an answer, a draft, a milestone
