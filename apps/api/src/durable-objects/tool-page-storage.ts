@@ -30,6 +30,11 @@ export const PageClaimSchema = PageIdentitySchema.extend({ pageId: z.string() })
 
 export class ToolPageError extends Error {}
 
+/** A redeemed page's arguments, or why another receipt holds it. */
+export type PageClaim =
+  | { inputJson: string; refused?: undefined }
+  | { inputJson: string; refused: "page_already_consumed" | "page_in_progress" };
+
 function parsePage<T>(schema: z.ZodType<T>, raw: unknown): T {
   const parsed = schema.safeParse(raw);
   if (!parsed.success) throw new ToolPageError(zodDiagnosticCode(parsed.error, "page_arguments")!);
@@ -52,6 +57,8 @@ export class ToolPageStorage {
       }
       return existing.page_id;
     }
+    // Cycle detection follows one run's chain. A page claimed from an earlier
+    // run has its row there, so a chain resumed across messages starts afresh.
     const parent = this.sql.exec<{ page_id: string }>(
       "SELECT page_id FROM tool_pages WHERE run_id = ? AND consumer_id = ?",
       input.runId, input.effectIntentId,
@@ -85,47 +92,34 @@ export class ToolPageStorage {
   }
 
   /**
-   * Redeem a page for this run, or say it belongs to an earlier one.
-   *
-   * A page ID never crosses runs, but the model sees every earlier tool result
-   * in its history, so on a new message it often copies a `nextPageId` that an
-   * earlier run issued. Reporting that case apart from an unknown ID lets the
-   * caller say what happened and how to restart, instead of an error that reads
-   * as if the model mistyped the ID. The earlier page's arguments are returned
-   * only to the same principal, connection and operation, for the caller to
-   * describe, never to execute.
-   *
-   * The earlier-run lookup is deliberately unindexed: no index leads with
-   * `page_id`, so a miss scans this conversation's pages. It runs only on a
-   * miss, and an index would add a write to every `issue`.
+   * Redeem a page issued anywhere in this conversation: the current run first
+   * by primary key, then earlier runs, where an ID two runs share is refused.
+   * A page another receipt holds is refused with its stored arguments, which
+   * the caller may describe but never execute. Reasons: `tool-pagination.md`.
    */
-  claim(raw: z.infer<typeof PageClaimSchema>): { inputJson: string } | { earlierRunInputJson: string } {
+  claim(raw: z.infer<typeof PageClaimSchema>): PageClaim {
     const input = parsePage(PageClaimSchema, raw);
-    const row = this.sql.exec<{
-      input_json: string; consumer_id: string | null; consumer_status: string | null;
-    }>(`SELECT page.input_json, page.consumer_id, consumer.status AS consumer_status
+    type PageRow = { run_id: string; input_json: string; consumer_id: string | null; consumer_status: string | null };
+    const columns = `page.run_id, page.input_json, page.consumer_id, consumer.status AS consumer_status
       FROM tool_pages page JOIN tool_effects producer ON producer.effect_intent_id = page.producer_id
-      LEFT JOIN tool_effects consumer ON consumer.effect_intent_id = page.consumer_id
-      WHERE page.run_id = ? AND page.page_id = ? AND page.operation = ?
-        AND page.connection_id IS ? AND page.principal_json = ? AND producer.status = 'completed'`,
-    input.runId, input.pageId, input.operation, input.connectionId, input.principalJson).toArray()[0];
+      LEFT JOIN tool_effects consumer ON consumer.effect_intent_id = page.consumer_id`;
+    const scope = `page.page_id = ? AND page.operation = ?
+        AND page.connection_id IS ? AND page.principal_json = ? AND producer.status = 'completed'`;
+    const bindings = [input.pageId, input.operation, input.connectionId, input.principalJson];
+    let row = this.sql.exec<PageRow>(`SELECT ${columns} WHERE page.run_id = ? AND ${scope}`,
+      input.runId, ...bindings).toArray()[0];
     if (!row) {
-      const earlier = this.sql.exec<{ input_json: string }>(`SELECT page.input_json
-        FROM tool_pages page JOIN tool_effects producer ON producer.effect_intent_id = page.producer_id
-        WHERE page.run_id <> ? AND page.page_id = ? AND page.operation = ?
-          AND page.connection_id IS ? AND page.principal_json = ? AND producer.status = 'completed'
-        ORDER BY page.rowid DESC LIMIT 1`,
-      input.runId, input.pageId, input.operation, input.connectionId, input.principalJson).toArray()[0];
-      if (earlier) return { earlierRunInputJson: earlier.input_json };
-      throw new ToolPageError("page_id_invalid: Restart with the first-page tool; pageId is not available for this operation and run.");
+      const earlier = this.sql.exec<PageRow>(`SELECT ${columns} WHERE page.run_id <> ? AND ${scope} LIMIT 2`,
+        input.runId, ...bindings).toArray();
+      if (earlier.length === 1) row = earlier[0];
     }
+    if (!row) throw new ToolPageError("page_id_invalid: Restart with the first-page tool; pageId is not available for this operation.");
     if (row.consumer_id !== null && row.consumer_id !== input.effectIntentId && row.consumer_status !== "failed") {
-      throw new ToolPageError(row.consumer_status === "completed"
-        ? "page_already_consumed: Use nextPageId from the completed page, or restart with the first-page tool."
-        : "page_in_progress: This page already has a call in progress.");
+      return { refused: row.consumer_status === "completed" ? "page_already_consumed" : "page_in_progress",
+        inputJson: row.input_json };
     }
     this.sql.exec("UPDATE tool_pages SET consumer_id = ? WHERE run_id = ? AND page_id = ?",
-      input.effectIntentId, input.runId, input.pageId);
+      input.effectIntentId, row.run_id, input.pageId);
     return { inputJson: row.input_json };
   }
 }

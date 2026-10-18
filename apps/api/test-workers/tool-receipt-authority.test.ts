@@ -92,6 +92,8 @@ async function receipt(
   return { status, value: parsed?.value ?? null, ...(parsed?.error ? { error: parsed.error } : {}) };
 }
 
+const CLAIM = z.object({ inputJson: z.string(), refused: z.enum(["page_already_consumed", "page_in_progress"]).optional() });
+
 function seedLiveRun(state: DurableObjectState, runId = RUN): void {
   state.storage.sql.exec(
     `INSERT INTO runs (run_id, substream_id, status, budget, attempt_epoch,
@@ -204,7 +206,7 @@ describe("tool-receipt authority on real workerd", () => {
       claimPage: async (args) => {
         const answer = await receipt(stub, "claimPage", args);
         if (answer.error) throw new Error(answer.error);
-        return z.object({ inputJson: z.string() }).parse(answer.value);
+        return CLAIM.parse(answer.value);
       },
     } });
     await receipt(stub, "admit", admission("first", "first"));
@@ -245,9 +247,10 @@ describe("tool-receipt authority on real workerd", () => {
       await expect(receipt(stub, "claimPage", { ...claim, effectIntentId: "third", ...wrong })).rejects.toThrow("page_id_invalid");
     }
     await receipt(stub, "admit", admission("fourth", "fourth"));
-    const claims = await Promise.allSettled(["third", "fourth"].map((effectIntentId) => receipt(stub, "claimPage", { ...claim, effectIntentId })));
-    expect(claims.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-    const winner = claims[0]!.status === "fulfilled" ? "third" : "fourth";
+    const claims = await Promise.all(["third", "fourth"].map(async (effectIntentId) =>
+      CLAIM.parse((await receipt(stub, "claimPage", { ...claim, effectIntentId })).value)));
+    expect(claims.map((result) => result.refused ?? "claimed").sort()).toEqual(["claimed", "page_in_progress"]);
+    const winner = claims[0]!.refused === undefined ? "third" : "fourth";
     const retry = winner === "third" ? "fourth" : "third";
     // A -> B -> A stops without discarding already-fetched provider content.
     expect((await receipt(stub, "issuePage", { ...claim, effectIntentId: winner, prefix: "google_2", slot: "nextPageId",
@@ -263,66 +266,91 @@ describe("tool-receipt authority on real workerd", () => {
     });
     await expect(first!.execute({ query: "needle" }, context(retry))).rejects.toThrow("page_execution_ownership_lost");
   });
-  it("tells a later run its page came from an earlier message, without redeeming it", async () => {
-    // A new message starts a new run, and the model still sees the last run's
-    // `nextPageId` in its history. The page must stay unredeemable, but the
-    // refusal has to say why and hand the tool the arguments to explain.
+  it("redeems a page an earlier run issued, once, for the same principal", async () => {
+    // Each message starts a new run, and the model still sees the last run's
+    // `nextPageId` in its history. That page must work in the later run, and
+    // its claim must bind the later receipt exactly as a same-run claim does.
     const stub = agent();
     await boot(stub);
     const LATER_RUN = "00000000-0000-7000-8000-00000000rc02";
+    const LAST_RUN = "00000000-0000-7000-8000-00000000rc03";
     await runInDurableObject(stub, (_instance, state) => { seedWorkstreamRoot(state); seedLiveRun(state); });
     const principal = { type: "workspace" as const, workspaceId: asWorkspaceId(WORKSPACE_ID) };
     const context = (id: string, runId: string): HarnessToolContext => ({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID,
       harnessRunId: runId, toolCallId: id, effectIntentId: id, executionPrincipal: principal, signal: new AbortController().signal });
     const executed: unknown[] = [];
-    const explained: unknown[] = [];
     let runId = RUN;
-    const tool = {
-      definition: { name: "read_resource", description: "Read", capability: "test.read", mode: "read" as const, idempotency: "safe" as const,
+    const fence = () => ({ runId, attemptId: ATTEMPT, owner: OWNER });
+    const [first, next] = withToolPagination({
+      definition: { name: "read_resource", description: "Read", capability: "test.read", mode: "read", idempotency: "safe",
         pagination: { cursorParameter: "cursor" }, inputSchema: { type: "object", properties: { resourceId: { type: "string" }, cursor: { type: "string" } } } },
-      execute: async (args: unknown) => {
+      execute: async (args) => {
         executed.push(args);
-        return { output: { text: "page" }, summary: "page", pagination: { continuations: [{
-          operation: "read_resource", slot: "nextPageId" as const, input: { cursor: "position-12000" } }] } };
+        // The later run reads the last page and issues none, so the only
+        // dependency its receipt can have is the claim on the earlier page.
+        const last = z.object({ cursor: z.string().optional() }).parse(args).cursor === "after-1";
+        return { output: { text: "page" }, summary: "page", pagination: { continuations: last ? [] : [{
+          operation: "read_resource", slot: "nextPageId", input: { cursor: `after-${executed.length}` } }] } };
       },
+      continuationDetails: async (continuation) => ({ described: continuation }),
+    }, { prefix: "workstream", connectionId: null, fence, receipts: {
+      issuePage: async (args) => z.string().nullable().parse((await receipt(stub, "issuePage", args)).value),
+      claimPage: async (args) => CLAIM.parse((await receipt(stub, "claimPage", args)).value),
+    } });
+    const complete = (effectIntentId: string) => receipt(stub, "complete", { effectIntentId, checkpointIndex: 1, outputRef: `${effectIntentId}-output`,
+      outputSummary: "page", providerOperationId: null, payloadJson: "{}", allowAmbiguousReconciliation: false, fence: fence(), now: Date.now() });
+    const startRun = async (next: string) => {
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec("UPDATE runs SET status = 'completed', lease_owner = NULL WHERE run_id = ?", runId);
+        seedLiveRun(state, next);
+      });
+      runId = next;
     };
-    const host = { prefix: "workstream", connectionId: null, fence: () => ({ runId, attemptId: ATTEMPT, owner: OWNER }), receipts: {
-      issuePage: async (args: unknown) => z.string().nullable().parse((await receipt(stub, "issuePage", args)).value),
-      claimPage: async (args: unknown) => z.union([z.object({ inputJson: z.string() }), z.object({ earlierRunInputJson: z.string() })])
-        .parse((await receipt(stub, "claimPage", args)).value),
-    } };
-    const [first, next] = withToolPagination({ ...tool, explainEarlierRunPage: async (continuation) => {
-      explained.push(continuation);
-      return Object.assign(new Error("call read_resource with startCharacter 12000"), { code: "page_id_from_earlier_message" });
-    } }, host);
-    const [, plainNext] = withToolPagination(tool, host);
 
     await receipt(stub, "admit", admission("first", "first"));
     const pageId = z.object({ nextPageId: z.string() })
       .parse((await first!.execute({ resourceId: "resource-1" }, context("first", RUN))).output).nextPageId;
-    await receipt(stub, "complete", { effectIntentId: "first", checkpointIndex: 1, outputRef: "first-output", outputSummary: "page",
-      providerOperationId: null, payloadJson: "{}", allowAmbiguousReconciliation: false, fence: host.fence(), now: Date.now() });
-    await runInDurableObject(stub, (_instance, state) => {
-      state.storage.sql.exec("UPDATE runs SET status = 'completed', lease_owner = NULL WHERE run_id = ?", RUN);
-      seedLiveRun(state, LATER_RUN);
-    });
-    runId = LATER_RUN;
+    await complete("first");
+    await startRun(LATER_RUN);
 
     await receipt(stub, "admit", admission("later", "later", LATER_RUN));
-    await expect(next!.execute({ pageId }, context("later", LATER_RUN))).rejects.toMatchObject({
-      code: "page_id_from_earlier_message", message: "call read_resource with startCharacter 12000",
-    });
-    expect(explained).toEqual([{ cursor: "position-12000" }]);
-    await expect(plainNext!.execute({ pageId }, context("later", LATER_RUN))).rejects.toMatchObject({
-      code: "invalid_cursor", message: expect.stringContaining("came from an earlier message"),
-    });
-    // Another principal is told nothing about the earlier page.
-    await expect(receipt(stub, "claimPage", { runId: LATER_RUN, effectIntentId: "later", operation: "read_resource", connectionId: null,
-      principalJson: '{"type":"user","userId":"other"}', fence: host.fence(), pageId })).rejects.toThrow("page_id_invalid");
-    expect(executed).toEqual([{ resourceId: "resource-1" }]);
+    await next!.execute({ pageId }, context("later", LATER_RUN));
+    expect(executed).toEqual([{ resourceId: "resource-1" }, { cursor: "after-1" }]);
     await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec("SELECT consumer_id FROM tool_pages WHERE page_id = ?", pageId).one().consumer_id).toBeNull();
+      expect(state.storage.sql.exec("SELECT run_id, consumer_id FROM tool_pages WHERE page_id = ?", pageId).toArray())
+        .toEqual([{ run_id: RUN, consumer_id: "later" }]);
     });
+    await complete("later");
+    // The later receipt now has a dependent page claim, so its call coordinate
+    // cannot be silently rebound to different arguments.
+    expect((await receipt(stub, "admit", { ...admission("later", "later", LATER_RUN), requestHash: "different-page" })).value)
+      .toMatchObject({ state: "ambiguous_external_write" });
+
+    await startRun(LAST_RUN);
+    await receipt(stub, "admit", admission("last", "last", LAST_RUN));
+    // Refused, but described from the stored continuation and never executed.
+    await expect(next!.execute({ pageId }, context("last", LAST_RUN))).rejects.toMatchObject({
+      code: "page_already_consumed", details: { described: { cursor: "after-1" } },
+      message: expect.stringContaining("This page was already read."),
+    });
+    expect(executed).toHaveLength(2);
+    // Another principal sees nothing of the earlier page.
+    await expect(receipt(stub, "claimPage", { runId: LAST_RUN, effectIntentId: "last", operation: "read_resource", connectionId: null,
+      principalJson: '{"type":"user","userId":"other"}', fence: fence(), pageId })).rejects.toThrow("page_id_invalid");
+
+    // IDs are unique per run only. Two earlier runs holding one ID is refused
+    // rather than resolved to whichever row a scan meets first.
+    const colliding = z.object({ nextPageId: z.string() })
+      .parse((await first!.execute({ resourceId: "resource-2" }, context("last", LAST_RUN))).output).nextPageId;
+    await complete("last");
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO tool_pages(run_id, page_id, producer_id, slot, operation, connection_id, principal_json, input_json)
+        SELECT ?, page_id, 'later', 'copy', operation, connection_id, principal_json, input_json FROM tool_pages WHERE page_id = ?`,
+      LATER_RUN, colliding);
+    });
+    await startRun("00000000-0000-7000-8000-00000000rc04");
+    await receipt(stub, "admit", admission("after", "after", runId));
+    await expect(next!.execute({ pageId: colliding }, context("after", runId))).rejects.toThrow("page_id_invalid");
   });
 
   it("releases deleted consumers and preserves issuance when cancellation arrives after a provider read", async () => {

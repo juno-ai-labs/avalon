@@ -5,7 +5,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { __integrationTesting } from "../src/services/integrations";
-import type { PaginatedHarnessTool } from "../src/services/tool-pagination";
+import { withToolPagination } from "../src/services/tool-pagination";
 import { ATTACHMENT_TEXT_EXTRACTOR_VERSION } from "../src/services/attachment-derivative-service";
 import {
   buildGifStoryboard,
@@ -478,50 +478,38 @@ describe("work-stream attachment tools", () => {
     });
   });
 
-  it("turns a page from an earlier message into the one call that resumes the same read", async () => {
+  it("names the resource when a page from an earlier message was already read, so a restart clears the guard", async () => {
+    // Run A issues page 2, run B reads it, run C copies the same ID from its
+    // history. Run C's guard has no memory of the page, so a refusal without
+    // the resource stays anonymous and replaces the reply even after the
+    // model restarts the read.
     const { database, objectStore, bucket, env } = fixture();
-    const resourceId = insertReadyResource(database, objectStore, bucket, 3);
-    const read: PaginatedHarnessTool = __integrationTesting.createAvalonTools(env, input())
-      .find((tool) => tool.definition.name === "read_resource")!;
+    const resourceId = insertReadyResource(database, objectStore, bucket, 4);
+    const read = __integrationTesting.createAvalonTools(env, input()).find((tool) => tool.definition.name === "read_resource")!;
     const first = await read.execute({ resourceId }, context());
-    const next = first.pagination!.continuations.find((page) => page.slot === "nextPageId")!.input;
+    const consumed = first.pagination!.continuations.find((page) => page.slot === "nextPageId")!.input;
+    const [, next] = withToolPagination(read, { prefix: "workstream", wirePrefix: "", connectionId: null,
+      fence: { runId: HARNESS_RUN_ID, attemptId: "attempt", owner: "owner" }, receipts: {
+        issuePage: vi.fn(async () => null),
+        claimPage: vi.fn(async () => ({ refused: "page_already_consumed" as const, inputJson: JSON.stringify(consumed) })),
+      } });
+    const pageId = "workstream_coral_bright_vibrant_harriot";
+    const error: unknown = await next!.execute({ pageId }, { ...context(), effectIntentId: "stale" }).catch((caught: unknown) => caught);
+    expect(readStructuredFailure(error)).toEqual({ code: "page_already_consumed", details: { resourceId } });
 
-    const error = await read.explainEarlierRunPage!(next, context());
-    // The guard reads `resourceId` from here to clear this failure once the
-    // suggested read succeeds; the sanitizer drops the whole detail otherwise.
-    expect(readStructuredFailure(error)).toEqual({
-      code: "page_id_from_earlier_message",
-      details: { resourceId, suggestedCall: { tool: "read_resource", arguments: { resourceId, startCharacter: 12_000 } } },
-    });
-    expect(error!.message).toContain(`call read_resource with {"resourceId":"${resourceId}","startCharacter":12000}`);
-    const resumed = await read.execute({ resourceId, startCharacter: 12_000 }, context());
-    expect(resumed).toMatchObject({ output: { resourceId, range: { start: 12_000 } } });
-
-    // The bug this fixes, end to end: the refused page used to leave an
-    // anonymous failure that no later read could clear, so the reply was
-    // replaced by the unverified-attachment boundary.
     const guard = new __integrationTesting.AttachmentGroundingGuard();
     const policy = { capability: "workstream.resources.read" };
     guard.onStarted({ type: "tool_started", toolCallId: "stale", toolName: "read_resource_next", pluginId: "rally:workstream",
-      policy, input: { pageId: "workstream_coral_bright_vibrant_harriot" } } as never);
+      policy, input: { pageId } } as never);
     guard.onFailed({ type: "tool_failed", toolCallId: "stale", toolName: "read_resource_next", pluginId: "rally:workstream",
-      policy, error: error!.message, data: readStructuredFailure(error), phase: "execution", outcome: "definitive_failure" } as never);
+      policy, error: (error as Error).message, data: readStructuredFailure(error), phase: "execution", outcome: "definitive_failure" } as never);
     expect(guard.boundary()).toContain(resourceId);
-    guard.onStarted({ type: "tool_started", toolCallId: "resume", toolName: "read_resource", pluginId: "rally:workstream",
-      policy, input: { resourceId, startCharacter: 12_000 } } as never);
-    guard.onCompleted({ type: "tool_completed", toolCallId: "resume", toolName: "read_resource", pluginId: "rally:workstream",
-      policy, result: resumed } as never);
+    const restarted = await read.execute({ resourceId }, context());
+    guard.onStarted({ type: "tool_started", toolCallId: "restart", toolName: "read_resource", pluginId: "rally:workstream",
+      policy, input: { resourceId } } as never);
+    guard.onCompleted({ type: "tool_completed", toolCallId: "restart", toolName: "read_resource", pluginId: "rally:workstream",
+      policy, result: restarted } as never);
     expect(guard.boundary()).toBeNull();
-    await expect(read.explainEarlierRunPage!({ cursor: "not-a-cursor" }, context())).resolves.toBeNull();
-
-    // Changed text invalidates the offset: the hint restarts the read rather
-    // than reading the new version at a position measured on the old one.
-    database.prepare("UPDATE resources SET model_content_sha256 = ? WHERE id = ?").run("c".repeat(64), resourceId);
-    expect(readStructuredFailure(await read.explainEarlierRunPage!(next, context()))).toEqual({
-      code: "page_id_from_earlier_message",
-      details: { resourceId, suggestedCall: { tool: "read_resource", arguments: { resourceId } } },
-    });
-    expect((await read.explainEarlierRunPage!(next, context()))!.message).toContain("restart the read");
   });
 
   it("rejects an oversized derivative object before hydrating it into Worker memory", async () => {
