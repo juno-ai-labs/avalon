@@ -72,14 +72,10 @@ ordering and paging run once over the whole set. `list_orgs` includes abandoned 
 `search_orgs` leaves them out unless asked. They read D1 only and open no
 Durable Object, so an Organization whose authority is closed still appears.
 
-Paging is by page number: a result is `{ items, page, pageCount, total,
-nextPage }`, and the caller asks for the next page by repeating its arguments
-with `page` set to `nextPage`. An opaque cursor was rejected because models
-garble long random tokens when they copy them back, and the product's
-four-word page IDs need storage this stateless Worker does not have. The cost
-is that a row can repeat or be skipped if an Organization is created or
-removed between calls. The default page is 200 rows, about 12-16k tokens,
-chosen for a large context window so most searches fit on one page.
+A result is `{ items, page, pageCount, total, nextPage }`, 200 rows per page
+by default; the caller repeats its arguments with `page` set to `nextPage`. A
+row can repeat or be skipped if an Organization is created or removed between
+calls.
 
 `run_substream_sql` takes workspace, work-stream, and substream IDs. The parent
 IDs are not redundant: all three are part of the Durable Object's stable name.
@@ -367,7 +363,7 @@ primary and fallbacks. Ace owns validation and the atomic write.
 **What changed:** `list_orgs` and `search_orgs` call a new bridge method,
 `searchOrganizations`, that filters `workspaces` in each region's D1 and adds
 member count and last-seen time. The MCP orders the merged set and pages it
-by number, 200 rows by default.
+by number.
 
 **Why:** `list_workspaces` returns every Organization sorted by name with no
 filter, plan, age or activity, so finding one meant reading the whole list.
@@ -375,9 +371,11 @@ filter, plan, age or activity, so finding one meant reading the whole list.
 **Considered and rejected:** Adding fields and filters to `listWorkspaces`.
 The MCP parses each regional answer strictly and deploys after the regional
 Workers, so a new key breaks the live MCP's `list_workspaces` for the length of
-the rollout. A new method is one the old MCP never calls. Ordering in D1 was
-also rejected: each region would sort only its own rows, and the MCP would
-have to sort again anyway.
+the rollout. A new method is one the old MCP never calls. An opaque paging cursor was
+rejected because models garble long random tokens when they copy them back,
+and the product's four-word page IDs need storage this stateless Worker does
+not have. The 200-row default page, about 12-16k tokens, is sized for a large
+context window so most searches fit on one page.
 
 **Consequences:** `list_workspaces` remains for existing clients and could be
 retired. A new filter goes into the D1 query and the input schema together; a

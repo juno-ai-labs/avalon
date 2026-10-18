@@ -170,7 +170,7 @@ export const EngineeringOrganizationSchema = deferredZodSchema(() => z.strictObj
   abandonedAt: z.string().nullable(),
   /** Active members, guests excluded. */
   memberCount: z.number().int().nonnegative(),
-  /** The latest `last_seen_at` of any member; null if nobody has been seen. */
+  /** The latest `last_seen_at` of any active member or guest; null if none has been seen. */
   lastSeenAt: z.string().nullable(),
 }));
 export type EngineeringOrganization = z.infer<typeof EngineeringOrganizationSchema>;

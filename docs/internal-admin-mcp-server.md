@@ -220,7 +220,7 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | --- | --- | --- |
 | `list_workspaces` | None | Lists workspace identity records across configured deployments. |
 | `list_orgs` | Optional `orderBy`, `direction`, `limit`, `page` | Lists every Organization across regions, newest first unless ordered otherwise, abandoned ones included, with plan, creation time, active member count, and last seen. |
-| `search_orgs` | Optional `query`, `plan`, `abandoned`, `createdAfter`, `createdBefore`, plus the ordering and paging inputs | Same rows as `list_orgs`, narrowed by every filter given; abandoned Organizations are left out unless `abandoned` is `include` or `only`. Both return 200 rows per page by default with `nextPage`; repeat the call with `page` set to it. |
+| `search_orgs` | Optional `query`, `plan`, `abandoned`, `createdAfter`, `createdBefore`, plus the ordering and paging inputs | Same rows as `list_orgs`, narrowed by every filter given; abandoned Organizations are left out unless `abandoned` is `include` or `only`. |
 | `list_workstreams` | `workspaceId` | Reads the authoritative WorkspaceDO work-stream directory. |
 | `list_substreams` | `workstreamId` | Lists main substream `0` and child substreams from the Channel's hosted parent in WorkspaceDO. |
 | `list_sidekicks` | `workspaceId` | Reads the authoritative WorkspaceDO Sidekick directory, in every lifecycle including deleted. |

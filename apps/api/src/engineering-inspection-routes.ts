@@ -122,7 +122,8 @@ export async function searchInspectionOrganizations(
               WHERE member.workspace_id = workspace.id
                 AND member.status = 'active' AND member.access_class = 'member') AS member_count,
             (SELECT MAX(member.last_seen_at) FROM workspace_members member
-              WHERE member.workspace_id = workspace.id) AS last_seen_at
+              WHERE member.workspace_id = workspace.id
+                AND member.status = 'active') AS last_seen_at
        FROM workspaces workspace
       WHERE workspace.region = ?1
         AND (?2 IS NULL OR workspace.plan = ?2)
