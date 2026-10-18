@@ -270,7 +270,12 @@ export function SiteResourceDetail({
     // Nothing to track while the data view has the pane: the composited view is
     // already torn down, and this effect would go on re-querying the document
     // on every scroll and mutation to move something that is not there.
-    if (previewShown !== true || showingData || surface.framed) return undefined;
+    //
+    // Tracked from access onward, not from `previewShown`: the main process
+    // holds the view collapsed until the site's document is ready and then
+    // reveals it at the last bounds it was sent. A dialog opened or a pane
+    // moved during that load must already be reflected by then.
+    if (!access || previewShown === false || showingData || surface.framed) return undefined;
     const update = (): void => {
       const bounds = measure();
       if (bounds) void surface.setBounds(bounds);
@@ -288,7 +293,7 @@ export function SiteResourceDetail({
       observer.disconnect();
       overlays.disconnect();
     };
-  }, [measure, previewShown, showingData, surface]);
+  }, [access, measure, previewShown, showingData, surface]);
 
   // The canonical public link carries no access code or viewer identity.
   // Copying it shares the current site with anyone.
