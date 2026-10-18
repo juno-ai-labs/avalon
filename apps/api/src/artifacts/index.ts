@@ -199,24 +199,16 @@ const artifactServer = {
     if (host.region !== env.AVALON_REGION) return html(neutralPage(), 404);
     if (isFramedHopFromAnotherArtifact(request)) return html(neutralPage(), 403);
 
-    let artifactId = host.legacyArtifactId;
-    if (!artifactId && host.hostnameStub) {
-      artifactId = await resolveArtifactHostname(env, host.hostnameStub);
-    }
-    if (!artifactId) return html(neutralPage(), 404);
-
-    const origin = url.origin;
-    const artifact = durableObjectStubForArtifact(
-      env as never,
-      env.ARTIFACT_HOSTS,
-      artifactHostDOName(env.AVALON_REGION, asArtifactId(artifactId)),
-    );
-
     // The bootstrap page is the one path served before a session exists, and it
     // is Rally's own HTML rather than artifact content. It reads the code from
     // `location.hash` — which a browser never sends to a server — and POSTs it
     // in a body, so the proof stays out of Cloudflare's invocation log, the
     // Logpush export, and every trace span.
+    //
+    // Served before the hostname lookup: the page is the same for every host
+    // and reads nothing about the artifact, so the D1 read would only delay the
+    // first step of every open. It also stops this path telling a known host
+    // from an unknown one; redemption, next, still resolves the artifact.
     if (url.pathname === `${ARTIFACT_RESERVED_PREFIX}/open`) {
       return html(
         redeemBootstrapPage(`${ARTIFACT_RESERVED_PREFIX}/redeem`),
@@ -231,6 +223,19 @@ const artifactServer = {
         },
       );
     }
+
+    let artifactId = host.legacyArtifactId;
+    if (!artifactId && host.hostnameStub) {
+      artifactId = await resolveArtifactHostname(env, host.hostnameStub);
+    }
+    if (!artifactId) return html(neutralPage(), 404);
+
+    const origin = url.origin;
+    const artifact = durableObjectStubForArtifact(
+      env as never,
+      env.ARTIFACT_HOSTS,
+      artifactHostDOName(env.AVALON_REGION, asArtifactId(artifactId)),
+    );
 
     // **This endpoint never serves artifact content.** It consumes the code,
     // sets the cookie, and redirects, so no artifact document is ever loaded at

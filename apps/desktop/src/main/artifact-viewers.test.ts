@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -9,8 +10,10 @@ import {
   ArtifactUserActivation,
   confineToArtifactOrigin,
   isArtifactUrl,
+  loadArtifactDocument,
   loadArtifactInitialUrl,
   TRANSIENT_ACTIVATION_LIFESPAN_MS,
+  type ArtifactDocumentContents,
   type PreviewBounds,
 } from './artifact-viewers';
 
@@ -454,6 +457,7 @@ describe('the rail preview controller', () => {
       url: string | null;
       bounds: PreviewBounds[];
       radii: number[];
+      visible: boolean[];
       closed: boolean;
       destroyed: boolean;
     }[] = [];
@@ -474,6 +478,7 @@ describe('the rail preview controller', () => {
           url: null as string | null,
           bounds: [] as PreviewBounds[],
           radii: [] as number[],
+          visible: [] as boolean[],
           closed: false,
           destroyed: false,
         };
@@ -484,10 +489,13 @@ describe('the rail preview controller', () => {
           destroyed: () => host.destroyed || state.destroyed,
           setBounds: (bounds: PreviewBounds) => state.bounds.push(bounds),
           setBorderRadius: (radius: number) => state.radii.push(radius),
-          loadURL: async (url: string) => {
+          setVisible: (visible: boolean) => state.visible.push(visible),
+          load: async (url: string) => {
             state.url = url;
-            if (load) return await load(url);
-            if (loadFailure) throw loadFailure;
+            return await loadArtifactInitialUrl(async () => {
+              if (load) return await load(url);
+              if (loadFailure) throw loadFailure;
+            });
           },
           close: () => { state.closed = true; },
         };
@@ -541,6 +549,22 @@ describe('the rail preview controller', () => {
     expect(removed).toHaveLength(0);
   });
 
+  it('keeps the view hidden, at the pane’s size, until the artifact’s own document is ready', async () => {
+    // The access URL lands on the redeem bootstrap, which has its own
+    // "Opening…". Shown from the start, it painted over the rail's placeholder:
+    // two loading looks for one open. Hidden by collapsing instead, the site's
+    // startup scripts measured a 0×0 viewport and a chart sized once stayed empty.
+    let finishLoad!: () => void;
+    const loading = new Promise<void>((resolve) => { finishLoad = resolve; });
+    const { controller, views } = harness(DOMAIN, null, async () => await loading);
+    const presented = controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/__rally/open#code`, bounds, cornerRadius: 16 });
+    expect(views[0]?.visible).toEqual([false]);
+    expect(views[0]?.bounds.at(-1)).toEqual(bounds);
+    finishLoad();
+    expect(await presented).toBe(true);
+    expect(views[0]?.visible).toEqual([false, true]);
+  });
+
   it('makes concurrent presenters await the same failed initial load', async () => {
     let rejectLoad!: (error: Error) => void;
     const load = new Promise<void>((_resolve, reject) => { rejectLoad = reject; });
@@ -566,10 +590,10 @@ describe('the rail preview controller', () => {
     expect(views[0]?.closed).toBe(false);
   });
 
-  it('replaces the view when the artifact changes', () => {
+  it('replaces the view when the artifact changes', async () => {
     const { controller, views, removed } = harness();
-    controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
-    controller.present({
+    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
+    await controller.present({
       artifactId: OTHER_ARTIFACT,
       url: `https://${OTHER_ARTIFACT}-g.${DOMAIN}/`,
       bounds,
@@ -581,11 +605,11 @@ describe('the rail preview controller', () => {
     expect(controller.currentArtifactId()).toBe(OTHER_ARTIFACT);
   });
 
-  it('collapses to nothing while an app overlay is open, and restores after', () => {
+  it('collapses to nothing while an app overlay is open, and restores after', async () => {
     // A WebContentsView composites above the renderer's DOM, so a dialog or the
     // command palette would otherwise be painted over by artifact content.
     const { controller, views } = harness();
-    controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
+    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
     controller.setOverlayOpen(true);
     expect(views[0]?.bounds.at(-1)).toEqual({ x: 0, y: 0, width: 0, height: 0 });
     controller.setOverlayOpen(false);
@@ -596,17 +620,17 @@ describe('the rail preview controller', () => {
     expect(views).toHaveLength(1);
   });
 
-  it('stays hidden through a layout change while an overlay is open', () => {
+  it('stays hidden through a layout change while an overlay is open', async () => {
     const { controller, views } = harness();
-    controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
+    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
     controller.setOverlayOpen(true);
     controller.setBounds({ x: 500, y: 50, width: 400, height: 500 });
     expect(views[0]?.bounds.at(-1)).toEqual({ x: 0, y: 0, width: 0, height: 0 });
   });
 
-  it('clamps a layout update to the window', () => {
+  it('clamps a layout update to the window', async () => {
     const { controller, views } = harness();
-    controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
+    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
     controller.setBounds({ x: 900, y: 100, width: 9_000, height: 9_000 });
     expect(views[0]?.bounds.at(-1)).toEqual({ x: 900, y: 100, width: 300, height: 700 });
   });
@@ -619,9 +643,9 @@ describe('the rail preview controller', () => {
     expect(views[0]?.bounds.at(-1)).toEqual({ x: 500, y: 100, width: 400, height: 300 });
   });
 
-  it('destroys the view and forgets the artifact', () => {
+  it('destroys the view and forgets the artifact', async () => {
     const { controller, views, removed } = harness();
-    controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
+    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
     controller.destroy();
     expect(views[0]?.closed).toBe(true);
     expect(removed).toHaveLength(1);
@@ -709,5 +733,56 @@ describe('artifact initial loading', () => {
     await expect(loadArtifactInitialUrl(async () => {
       throw Object.assign(new Error('dns'), { code: 'ERR_NAME_NOT_RESOLVED', errno: -105 });
     })).resolves.toBe(false);
+  });
+});
+
+describe('loading an artifact’s own document', () => {
+  /** Web contents that walk the redeem bootstrap the way Chromium does. */
+  function contents(steps: (emitter: EventEmitter & { url: string }) => void) {
+    const emitter = Object.assign(new EventEmitter(), { url: '' });
+    const surface: ArtifactDocumentContents & { listenerCount(event: string): number } = {
+      getURL: () => emitter.url,
+      loadURL: async (url: string) => {
+        emitter.url = url.split('#')[0]!;
+        steps(emitter);
+        throw Object.assign(new Error('aborted'), { code: 'ERR_ABORTED', errno: -3 });
+      },
+      on: (event: string, listener: (...args: never[]) => void) => emitter.on(event, listener as (...args: unknown[]) => void),
+      removeListener: (event: string, listener: (...args: never[]) => void) => emitter.removeListener(event, listener as (...args: unknown[]) => void),
+      listenerCount: (event: string) => emitter.listenerCount(event),
+    };
+    return surface;
+  }
+
+  it('resolves on the site’s document, not on the bootstrap before it', async () => {
+    const order: string[] = [];
+    const surface = contents((emitter) => {
+      // Even were the bootstrap to reach `dom-ready`, it is not the site.
+      emitter.emit('dom-ready');
+      emitter.emit('did-fail-load', {}, -3, 'ERR_ABORTED', `${ORIGIN}/__rally/open`, true);
+      setTimeout(() => {
+        emitter.url = `${ORIGIN}/`;
+        order.push('site');
+        emitter.emit('dom-ready');
+      }, 0);
+    });
+    await expect(loadArtifactDocument(surface, `${ORIGIN}/__rally/open#code`).then((shown) => {
+      order.push('resolved');
+      return shown;
+    })).resolves.toBe(true);
+    expect(order).toEqual(['site', 'resolved']);
+    expect(surface.listenerCount('dom-ready')).toBe(0);
+  });
+
+  it('fails on a main-frame load failure after the bootstrap', async () => {
+    const surface = contents((emitter) => {
+      setTimeout(() => emitter.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', `${ORIGIN}/`, true), 0);
+    });
+    await expect(loadArtifactDocument(surface, `${ORIGIN}/__rally/open#code`)).resolves.toBe(false);
+  });
+
+  it('fails when its contents go away before the site arrives', async () => {
+    const surface = contents((emitter) => { setTimeout(() => emitter.emit('destroyed'), 0); });
+    await expect(loadArtifactDocument(surface, `${ORIGIN}/__rally/open#code`)).resolves.toBe(false);
   });
 });
