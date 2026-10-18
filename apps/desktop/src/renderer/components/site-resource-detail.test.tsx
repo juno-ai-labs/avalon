@@ -138,7 +138,7 @@ describe('showing a live artifact in the rail', () => {
     document.body.append(overlay);
     await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 }));
     expect(stillAtHide).toEqual(['data:image/jpeg;base64,c3RpbGw=']);
-    // Taken while the view was still showing: a collapsed view paints nothing.
+    // Taken while the view was still showing.
     const snapshot = vi.mocked(props.surface.snapshot);
     const hide = vi.mocked(props.surface.setBounds).mock.calls.findIndex(([bounds]) => bounds.width === 0);
     expect(snapshot.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(props.surface.setBounds).mock.invocationCallOrder[hide]!);
