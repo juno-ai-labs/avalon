@@ -497,6 +497,7 @@ describe('the rail preview controller', () => {
               if (loadFailure) throw loadFailure;
             });
           },
+          capture: async () => `still of ${state.url ?? 'nothing'}`,
           close: () => { state.closed = true; },
         };
       },
@@ -618,6 +619,25 @@ describe('the rail preview controller', () => {
     // dialog restores what the person was looking at.
     expect(views[0]?.closed).toBe(false);
     expect(views).toHaveLength(1);
+  });
+
+  it('takes a still of the live page, and none once there is no page to take', async () => {
+    const { controller } = harness();
+    expect(await controller.snapshot()).toBeNull();
+    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
+    expect(await controller.snapshot()).toBe(`still of ${ORIGIN}/`);
+    controller.destroy();
+    expect(await controller.snapshot()).toBeNull();
+  });
+
+  it('takes no still while the page is still loading behind the rail', async () => {
+    let finish: () => void = () => undefined;
+    const { controller } = harness(DOMAIN, null, async () => await new Promise<void>((resolve) => { finish = resolve; }));
+    const presented = controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
+    expect(await controller.snapshot()).toBeNull();
+    finish();
+    await presented;
+    expect(await controller.snapshot()).toBe(`still of ${ORIGIN}/`);
   });
 
   it('stays hidden through a layout change while an overlay is open', async () => {

@@ -22,6 +22,7 @@ function surface(overrides: Partial<SiteResourceDetailProps['surface']> = {}) {
   return {
     present: vi.fn(async () => true),
     setBounds: vi.fn(async () => undefined),
+    snapshot: vi.fn(async (): Promise<string | null> => 'data:image/jpeg;base64,c3RpbGw='),
     close: vi.fn(async () => undefined),
     popOut: vi.fn(async () => true),
     copyText: vi.fn(async () => undefined),
@@ -111,6 +112,28 @@ describe('showing a live artifact in the rail', () => {
     await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 }));
     overlay.remove();
     await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 20, y: 40, width: 500, height: 320 }));
+    geometry.mockRestore();
+  });
+
+  it('keeps the page in view under a nested dialog by showing a still taken before the view hides', async () => {
+    const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ x: 20, y: 40, width: 500, height: 320 }),
+    );
+    const { props } = setup();
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenCalledWith({ x: 20, y: 40, width: 500, height: 320 }));
+    const pane = screen.getByTestId('site-preview-pane');
+    const overlay = document.createElement('div');
+    overlay.setAttribute('role', 'menu');
+    document.body.append(overlay);
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 }));
+    expect(pane.querySelector('img')?.getAttribute('src')).toBe('data:image/jpeg;base64,c3RpbGw=');
+    // Taken while the view was still showing: a collapsed view paints nothing.
+    const snapshot = vi.mocked(props.surface.snapshot);
+    const hide = vi.mocked(props.surface.setBounds).mock.calls.findIndex(([bounds]) => bounds.width === 0);
+    expect(snapshot.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(props.surface.setBounds).mock.invocationCallOrder[hide]!);
+    overlay.remove();
+    await waitFor(() => expect(pane.querySelector('img')).toBeNull());
+    expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 20, y: 40, width: 500, height: 320 });
     geometry.mockRestore();
   });
 
