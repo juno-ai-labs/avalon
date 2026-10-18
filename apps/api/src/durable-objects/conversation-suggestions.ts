@@ -36,6 +36,15 @@ import {
  * buys no quiet period; at `Infinity` a conversation is never capped per day.
  */
 export const SUGGESTION_DISMISS_COOLDOWN_MS = 0;
+/**
+ * How many readable messages before the judged turn feed `earlier_outputs`
+ * and `first_time_here`: a window, because every settlement pays this read
+ * and a long Thread must not pay for its whole history each turn. An artifact
+ * first embedded before the window reads as new to the classifier; the number
+ * is a guess handed back to the team per
+ * `docs/adding-security-defensive-and-other-limits.md`.
+ */
+export const TURN_DISPOSITION_EARLIER_OUTPUT_WINDOW = 200;
 export const SUGGESTION_MAXIMUM_PER_CONVERSATION_DAY = Number.POSITIVE_INFINITY;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -116,25 +125,25 @@ export class ConversationSuggestionStorage {
     ).toArray();
   }
 
-  judgementForRun(runId: string): { code: string; suggestion_id: string | null } | null {
-    return this.sql.exec<{ code: string; suggestion_id: string | null } & Record<string, SqlStorageValue>>(
-      `SELECT code, suggestion_id FROM turn_disposition_judgements WHERE run_id = ?`, runId,
+  judgementForRun(runId: string): { code: string; failure_kind: string | null; suggestion_id: string | null } | null {
+    return this.sql.exec<{ code: string; failure_kind: string | null; suggestion_id: string | null } & Record<string, SqlStorageValue>>(
+      `SELECT code, failure_kind, suggestion_id FROM turn_disposition_judgements WHERE run_id = ?`, runId,
     ).toArray()[0] ?? null;
   }
 
   recordJudgement(input: {
     runId: string; judgedTurnId: string; code: string; choice: string | null; confidence: number | null;
-    carriedItemKind: string | null; model: string | null; suggestionId: string | null; now: number;
+    carriedItemKind: string | null; model: string | null; failureKind: string | null; suggestionId: string | null; now: number;
   }): void {
     this.sql.exec(
       `INSERT INTO turn_disposition_judgements
-         (run_id, judged_turn_id, code, choice, confidence, carried_item_kind, model, suggestion_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (run_id, judged_turn_id, code, choice, confidence, carried_item_kind, model, failure_kind, suggestion_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (run_id) DO UPDATE SET code = excluded.code, choice = excluded.choice,
          confidence = excluded.confidence, carried_item_kind = excluded.carried_item_kind,
-         model = excluded.model, suggestion_id = excluded.suggestion_id`,
+         model = excluded.model, failure_kind = excluded.failure_kind, suggestion_id = excluded.suggestion_id`,
       input.runId, input.judgedTurnId, input.code, input.choice, input.confidence,
-      input.carriedItemKind, input.model, input.suggestionId, input.now,
+      input.carriedItemKind, input.model, input.failureKind, input.suggestionId, input.now,
     );
   }
 
@@ -348,7 +357,7 @@ export interface TurnDispositionObservationInput {
 
 export type TurnDispositionObservation =
   | { outcome: "skipped"; gate: string }
-  | { outcome: "judged"; code: string; confidence: number | null; model: string | null; suggestion: SuggestionRow | null }
+  | { outcome: "judged"; code: string; confidence: number | null; model: string | null; failureKind: string | null; suggestion: SuggestionRow | null }
   | { outcome: "resumed"; suggestion: SuggestionRow };
 
 /**
@@ -418,14 +427,22 @@ export async function observeTurnDisposition(input: TurnDispositionObservationIn
     : null;
   let code: string = decision.code;
   if (decision.disposition !== null && decision.confidence !== null && decision.disposition !== "continue_here" && kind === null) {
-    code = offered === null ? "confidence_below_threshold" : "not_offerable";
+    // Below threshold is about the confidence alone; a confident side question
+    // in a Breakout, or a confident carry-up with no parent to offer, is a
+    // positive the host could not offer, and the record says so.
+    code = !(decision.confidence > threshold) ? "confidence_below_threshold" : "not_offerable";
   }
   const written = input.commit(() => {
   let suggestion: SuggestionRow | null = null;
   if (kind !== null) {
+    // Gate 5 again, inside the write: the classifier call yielded, and a merge
+    // that landed meanwhile resolved no row because there was none yet
+    // (docs/durable-object-sqlite.md, re-check a fence after an await).
+    if (input.storage.mergeMarkers(judged.sequence_number).after > 0) {
+      code = "already_carried_up";
     // Gate 3b: a settlement that lands behind three newer messages has
     // nothing to show; the decision is still recorded.
-    if (input.storage.readableCountAfter(judged.sequence_number) >= SUGGESTION_VISIBLE_WITHIN_NEWEST_TURNS) {
+    } else if (input.storage.readableCountAfter(judged.sequence_number) >= SUGGESTION_VISIBLE_WITHIN_NEWEST_TURNS) {
       code = "late";
     } else {
       const pacing = input.storage.pacing(kind, now);
@@ -455,12 +472,13 @@ export async function observeTurnDisposition(input: TurnDispositionObservationIn
     confidence: decision.confidence,
     carriedItemKind: decision.kind,
     model: decision.model,
+    failureKind: decision.failureKind ?? null,
     suggestionId: suggestion?.suggestion_id ?? null,
     now,
   });
   return { code, suggestion };
   });
-  return { outcome: "judged", code: written.code, confidence: decision.confidence, model: decision.model, suggestion: written.suggestion };
+  return { outcome: "judged", code: written.code, confidence: decision.confidence, model: decision.model, failureKind: decision.failureKind ?? null, suggestion: written.suggestion };
 }
 
 function unavailable(failureKind: string): TurnDispositionDecision {
@@ -476,7 +494,7 @@ export function buildTurnDispositionState(input: {
   identity: { title: string; description: string };
   carriedUpBefore: number;
 }): TurnDispositionState {
-  const earlier = input.storage.readableBefore(input.judged.sequence_number, 200);
+  const earlier = input.storage.readableBefore(input.judged.sequence_number, TURN_DISPOSITION_EARLIER_OUTPUT_WINDOW);
   const messagesBefore = input.storage.readableCountBefore(input.judged.sequence_number);
   const opening = input.storage.openingRequest();
   const judgedText = input.judged.content ?? "";

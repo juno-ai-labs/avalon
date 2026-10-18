@@ -28,7 +28,7 @@ and the settlement lane), [`jev-best-practices.md`](jev-best-practices.md).
 | `packages/contracts/src/index.ts` | The snapshot's optional `suggestions` and the `conversation_suggestion_changed` socket event; the `suggestion_draft` model role and its flag key. |
 | `packages/contracts/src/usage.ts` | The metered activities `turn_disposition_classifier` and `suggestion_draft`. |
 | `apps/api/src/durable-objects/conversation-suggestions.ts` | `ConversationSuggestionStorage` over the two tables, `observeTurnDisposition` (the gates, the state, the decision, the row), `buildTurnDispositionState`, `resourceEmbeds`. |
-| `apps/api/src/durable-objects/substream-agent.ts` | `observeTurnDispositionStep`, the last step of `settleAgentRun`; `draftSuggestionWords`; `readSuggestionParent`; `expireSuggestionsBestEffort`; the `dismiss_suggestion` product operation; the resolutions in `messageOperationOutcome` and `captureInitialSubstreamContext`; the snapshot's `suggestions`. |
+| `apps/api/src/durable-objects/substream-agent.ts` | `observeTurnDispositionStep`, the last step of `settleAgentRun`; `draftSuggestionWords`; `readSuggestionParent`; `expireSuggestionsBestEffort`; the `dismiss_suggestion` product operation; the resolutions in `messageOperationOutcome` and `resolveBreakoutSuggestion` (called by the creation service once the Breakout is ready); the snapshot's `suggestions`. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Migration v75: `conversation_suggestions`, `turn_disposition_judgements`. |
 | `apps/api/src/durable-objects/workspace-space-storage.ts`, `workspace-do.ts` | `threadMergePlacement`, the viewer-less read of the Organization-wide Channel a Thread's merge would land in; a private Channel is never named, since the answer reaches every reader of the Thread. |
 | `apps/api/src/services/suggestion-draft-service.ts` | `draftSuggestion`: the `suggestion_draft` structured-inference role. |
@@ -99,7 +99,7 @@ cooldown.
 | Status | Written by | Resolution |
 | --- | --- | --- |
 | `open` | The observer, for a confident positive | |
-| `accepted` | A `conversation_merged_into` marker appended to this conversation resolves every open `merge_up` row on a turn at or before it, in the marker's own commit; `captureInitialSubstreamContext` at a turn resolves the open `start_breakout` row on that turn | `accepted` |
+| `accepted` | A `conversation_merged_into` marker appended to this conversation resolves every open `merge_up` row on a turn at or before it, in the marker's own commit; `resolveBreakoutSuggestion`, called by `SubstreamCreationService` once the Breakout cut at that turn is ready, resolves the open `start_breakout` row on it | `accepted` |
 | `dismissed` | The dismiss route, for everyone, with who did it | `dismissed` |
 | `expired` | The newest-three rule, on each admitted message, each appended system row and each judgement | `ignored` |
 | `withdrawn` | A failed draft | none |
@@ -121,7 +121,9 @@ held once in `packages/contracts`.
 ### What the client shows
 
 The chip is drawn by the conversation surface in the feed's `afterTurn` slot
-under the last row of the judged turn, for a viewer who can take the action:
+under the last row of the judged turn, when the kind's product flag is on for
+the viewer (`conversation-suggestions-enabled`, `breakout-suggestions-enabled`;
+[`feature-flags.md`](feature-flags.md)) and for a viewer who can take the action:
 `merge_up` when `mergeTargetFor` gives this viewer a target, `start_breakout`
 when the viewer can start a Breakout here (a Thread's Main). The title and
 sentence are fixed strings with one slot: "Merge to **{target}**" and "This
@@ -262,7 +264,15 @@ for the people who can act. Accepting a merge opens the response card, which
 now makes every merge; accepting a Breakout opens the launch pane seeded with
 a drafted prompt; the feed's recency retires the line after three newer
 messages. Migration v75, the `suggestion_draft` role and two metered
-activities came with it.
+activities came with it. The line is behind two product flags, off by
+default: `conversation-suggestions-enabled` for the merge chip and
+`breakout-suggestions-enabled` for the Breakout chip; the judgement, its
+record and the drafter run everywhere whatever they say. A Breakout
+suggestion resolves when the Breakout is ready, not when its context is
+captured, so a failed or abandoned preparation leaves the chip standing; the
+observer re-reads the merge markers inside its write, since the classifier
+call yields; and a judgement that could not be made records why
+(`failure_kind`).
 
 **Why:** merge-back made a result's way up depend on a person remembering to
 press Merge after Rally wrote it, and Rally's own description loop already
@@ -286,7 +296,8 @@ for the socket (the socket carries no claim, and the parser already strips
 the unknown key).
 
 **What a future change has to respect:** the row and the judgement are one
-transaction; the marker's resolution runs in the marker's own commit; the
+transaction; the marker's resolution runs in the marker's own commit; a
+Breakout's resolution waits for the child to be ready; the
 client and the object count the same readable messages; the threshold stays
 pinned to the measured request in `design.md`, and a change to the question or
 the context re-runs the eval before it ships.

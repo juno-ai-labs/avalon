@@ -280,7 +280,26 @@ frozen, so the change is recorded here and, when it ships, in
 
 ## Decision log
 
-None yet.
+1. **2026-10-18. Shadow and surface ship in one pull request, behind the
+   flags.** The design's shadow phase was meant to read settlement latency and
+   decisions in staging before any surface existed. The corpus evaluation
+   (`design.md`, "The first corpus evaluation") answered what shadow was for,
+   so the surface shipped with it, dark: the two product flags default off,
+   and the judgement and its record run everywhere whatever they say.
+2. **2026-10-18. The Breakout chip has its own flag.** The side-question
+   class measured weakest (F1 about 0.47 on the holdout), so its chip stays
+   off on its own until its precision is read from the record, as the design
+   concluded.
+3. **2026-10-18. A person's message is not judged in this version.** Only a
+   settled Rally turn is, in the settlement lane; judging at admission is a
+   second hook and a call per human message for the weakest class.
+4. **2026-10-18. No client-contract gate for the socket field.** The
+   conversation socket carries no contract claim and `safeParseSocketEvent`
+   strips the unknown key, so an older build keeps its snapshot without one.
+5. **2026-10-18. Every merge is made in the response card.** The composer's
+   merge mode is gone, by the product owner's call; the card's body is a plain
+   text box, so a merge note carries no `@` mentions and runs no
+   nonparticipant confirmation. Restoring them is a later change.
 
 ## Key design decisions
 
@@ -340,9 +359,12 @@ None yet.
    past what the description loop costs, the step moves to a Queue and the
    object keeps the slot as the authority, which is the same split the
    semantic trigger made.
-7. **The merge draft is the turn's text.** Prefilling the merge composer with
-   the judged turn is what the Merge hover action already does, so an accepted
-   suggestion costs no model call. Summarize stays phase 2 of merge-back.
+7. **The merge draft is a drafted note, the turn's text until it lands.**
+   The response card opens with the judged turn's words the way the Merge
+   hover action already does, and the drafter (one structured call per
+   confident positive, after the chip is shown) replaces them with a note for
+   the parent's readers that keeps every artifact the turn embeds. Summarize
+   stays phase 2 of merge-back.
 8. **The words are drafted by one generative role, gated by the classifier,
    after the chip is already up, and never in shadow.** JEV cannot write
    prose. One `runStructuredInference` role with its own flag writes a merge
@@ -435,11 +457,12 @@ structured-inference gateway; neither is a tool.
 - **Phase 2, the surface.** Ships the slot, the socket event under a new
   client contract, the line under the turn, the response card for every
   merge with the composer's merge mode removed, the breakout accept path,
-  and the drafting role on its own model flag, `agent-model-breakout-suggestion`, defaulting to
+  and the drafting role on its own model flag, `agent-model-suggestion-draft`, defaulting to
   `OPENROUTER_STRUCTURED_MODEL`. The default for a visible feature is to ship
   to everybody on merge. **This PRD recommends a flag instead**, and records
-  that an engineer has to ask for one: `conversationSuggestionsEnabled`,
-  default **off**, registered in Ace, because the whole question this feature
+  that an engineer has to ask for one: `conversation-suggestions-enabled` for
+  the merge chip and `breakout-suggestions-enabled` for the Breakout chip,
+  each default **off**, registered in Ace, because the whole question this feature
   turns on is noise, the predecessor was retired for it, and a staged audience
   is how the first weeks of accept and dismiss rates are read without a
   product-wide retreat. The server-side judgement keeps running everywhere

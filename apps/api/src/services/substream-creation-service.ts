@@ -324,6 +324,31 @@ export class SubstreamCreationService {
    * canonical turn for a `clientMessageId` it has already admitted instead of
    * writing a second one.
    */
+  /**
+   * The Breakout a suggestion asked for is ready: its row resolves now, after
+   * the child is durable and never at capture, so a failed or abandoned
+   * preparation leaves the chip standing (docs/conversation-suggestions.md).
+   * Best effort: the Breakout exists whatever happens to the chip.
+   */
+  private async resolveBreakoutSuggestion(parentId: string, operation: PrivateChildPreparationOperation, span: FlowSpan): Promise<void> {
+    if (operation.sourceThroughTurnId === null) return;
+    const throughTurnId = operation.sourceThroughTurnId;
+    await span.step("substream.create.suggestion.resolve", async () => {
+      try {
+        const main = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, this.auth.workspaceId,
+          conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, parentId, "0"));
+        await main.resolveBreakoutSuggestion({ throughTurnId, userId: this.auth.userId });
+      } catch (error) {
+        logStructuredEvent(this.env, "warn", "suggestion_breakout_resolution_failed", {
+          operation_id: operation.operationId,
+          workspace_id: this.auth.workspaceId,
+          workstream_id: parentId,
+          reason: diagnosticErrorCode(error, "suggestion_breakout_resolution_failed"),
+        });
+      }
+    });
+  }
+
   private async openSubstream(
     parentId: string,
     operation: PrivateChildPreparationOperation,
@@ -341,6 +366,7 @@ export class SubstreamCreationService {
     const title = opening ? provisionalWorkstreamTitle(opening.text, operation.title) : operation.title;
     if (!opening) {
       await span.step("substream.create.child.publish", async () => { await publish?.(); });
+      await this.resolveBreakoutSuggestion(parentId, operation, span);
       return { substreamId: operation.substreamId, title, opening: null };
     }
     const receipt = await span.step("substream.create.opening.admit", () => new WorkstreamObjectClient(
@@ -364,6 +390,7 @@ export class SubstreamCreationService {
       } : {}),
     }));
     await span.step("substream.create.child.publish", async () => { await publish?.(); });
+    await this.resolveBreakoutSuggestion(parentId, operation, span);
     // Membership after publication, because the parent grants it only for a
     // child that is ready — and it is the parent's to grant: the
     // conversation-local roster the turn itself wrote gives neither discovery

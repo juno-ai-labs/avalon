@@ -429,6 +429,21 @@ describe("prompt renderers", () => {
     expect(descriptionMessages[0]!.content).not.toContain(injection);
     expect(descriptionMessages[1]).toMatchObject({ role: "user" });
     expect(descriptionMessages[1]!.content).toContain(injection);
+
+    // The drafter carries member-set titles and purposes and transcript text.
+    for (const kind of ["merge_up", "start_breakout"] as const) {
+      const draftMessages = renderSuggestionDraftMessages({
+        kind,
+        title: injection,
+        purpose: injection,
+        parentTitle: injection,
+        recent: [{ author: "person", text: injection }],
+        judgedText: injection,
+      });
+      expect(draftMessages[0]!.content).not.toContain(injection);
+      expect(draftMessages[1]).toMatchObject({ role: "user" });
+      expect(draftMessages[1]!.content).toContain(injection);
+    }
   });
 
   it("bounds each transcript message and marks a window that dropped its older half", () => {

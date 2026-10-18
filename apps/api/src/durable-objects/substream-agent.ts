@@ -30,7 +30,7 @@ import { SubstreamAddressSchema, type SubstreamContextCapture } from "@rally/con
 import { workspaceDOName } from "./names";
 import { initialContextFrames } from "./substream-context-transfer";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { pendingBindToolBatch, type HarnessToolResult } from "@rally/agent-harness";
+import { TURN_DISPOSITION_MAX_RECENT_MESSAGES, pendingBindToolBatch, type HarnessToolResult } from "@rally/agent-harness";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -2464,16 +2464,23 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (!authorization.authorized || authorization.archived || !operation
       || operation.creatorUserId !== input.userId
       || operation.sourceThroughTurnId !== input.throughTurnId) throw new Error("substream_capture_forbidden");
-    const capture = this.transcript.captureSubstreamContext({
+    return this.transcript.captureSubstreamContext({
       operationId: input.operationId, source, throughTurnId: input.throughTurnId,
     });
-    if (input.throughTurnId !== null) {
-      // The Breakout a suggestion asked for is being made from its turn: taken.
-      const resolved = this.state.storage.transactionSync(() =>
-        this.suggestions.resolveBreakoutAt(input.throughTurnId!, input.userId, Date.now()));
-      if (resolved) await this.publishSuggestionChanged(resolved);
-    }
-    return capture;
+  }
+
+  /**
+   * The Breakout a suggestion asked for exists: the open row on its cutoff
+   * turn is taken. Called by the creation service once the child is ready,
+   * not at capture, so a preparation that fails or is abandoned leaves the
+   * chip standing. Idempotent: a retry of the confirmation finds nothing open.
+   */
+  async resolveBreakoutSuggestion(input: { throughTurnId: string; userId: string }): Promise<{ resolved: boolean }> {
+    await this.initialized;
+    const resolved = this.state.storage.transactionSync(() =>
+      this.suggestions.resolveBreakoutAt(input.throughTurnId, input.userId, Date.now()));
+    if (resolved) await this.publishSuggestionChanged(resolved);
+    return { resolved: resolved !== null };
   }
 
   /** Provisioned by the coordinator, seeded from the parent's durable receipt, never client text. */
@@ -2927,7 +2934,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             // The marker says this conversation's result was carried up: an
             // open merge suggestion on a turn at or before it was taken.
             if (mergeMarker && appended.outcome === "appended") {
-              resolvedSuggestions.push(...this.suggestions.resolveMergedThrough(appended.sequenceNumber, mergeMarker.mergedByUserId, Date.now()));
+              // Guarded: a suggestion's resolution must never fail the merge that resolves it.
+              try {
+                resolvedSuggestions.push(...this.suggestions.resolveMergedThrough(appended.sequenceNumber, mergeMarker.mergedByUserId, Date.now()));
+              } catch (error) {
+                logWarn(this.env, "conversation_suggestion_resolution_failed", {
+                  workstream_id: this.objectStore.identity()?.parentId,
+                  reason: diagnosticErrorCode(error, "conversation_suggestion_resolution_failed"),
+                });
+              }
             }
             return appended;
           }
@@ -5689,6 +5704,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         ...(observation.outcome === "skipped" ? { gate: observation.gate } : {}),
         ...(observation.outcome === "judged"
           ? { code: observation.code, confidence: observation.confidence, model: observation.model,
+              ...(observation.failureKind ? { failure_kind: observation.failureKind } : {}),
               suggestion_kind: observation.suggestion?.kind ?? null }
           : {}),
       });
@@ -5727,7 +5743,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         purpose: this.identityRows.identity()?.description ?? "",
         title: this.identityRows.identity()?.title ?? "",
         parentTitle: row.target_title,
-        recent: this.suggestions.readableBefore(judged.sequence_number, 3).reverse()
+        recent: this.suggestions.readableBefore(judged.sequence_number, TURN_DISPOSITION_MAX_RECENT_MESSAGES).reverse()
           .map((turn) => ({ author: turn.author_type === "agent" ? "rally" as const : "person" as const, text: turn.content ?? "" })),
         defer: (promise) => this.state.waitUntil(promise),
       })

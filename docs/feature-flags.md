@@ -492,6 +492,8 @@ behave:
 | --- | --- | --- | --- |
 | `developer-settings` | boolean | `false` | Whether Application → Developer exists on this device |
 | `suggested-work-enabled` | boolean | `false` | Whether Electron shows Suggested Work surfaces |
+| `conversation-suggestions-enabled` | boolean | `false` | Whether Electron draws the merge suggestion chip under a settled Rally turn. The server judges and records every turn either way; see [`conversation-suggestions.md`](conversation-suggestions.md) |
+| `breakout-suggestions-enabled` | boolean | `false` | Whether Electron draws the Breakout suggestion chip. Held back on its own until the side-question classifier's precision is measured; see [`conversation-suggestions.md`](conversation-suggestions.md) |
 | `live-artifacts-enabled` | boolean | `false` | Whether Electron shows live-artifact surfaces — the rail's site detail and preview pane, the Data view, and the artifact window. Presentation only: an artifact's authorization is structural, so a URL somebody already holds keeps working through its session checks whether or not this is on. See [`live-web-artifacts.md`](live-web-artifacts.md) |
 | `multiple-workspaces-enabled` | boolean | `false` | Whether Electron shows workspace switching, invitations, creation, and background attention |
 

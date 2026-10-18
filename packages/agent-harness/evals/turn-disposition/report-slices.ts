@@ -66,6 +66,9 @@ function ratio(numerator: number, denominator: number): number {
 }
 
 export function scoreSlice(slice: string, rows: Scored[], threshold: number): SliceRow {
+  // Production maps a positive at or below the threshold to no suggestion, so
+  // agreement is scored on that decision, not on the raw choice.
+  const decided = (row: Scored): TurnDisposition => row.actual !== "continue_here" && !(row.confidence > threshold) ? "continue_here" : row.actual;
   const carried = (row: Scored): boolean => row.actual === "worth_carrying_up" && row.confidence > threshold;
   const tp = rows.filter((row) => carried(row) && row.expected === "worth_carrying_up").length;
   const fp = rows.filter((row) => carried(row) && row.expected !== "worth_carrying_up").length;
@@ -77,7 +80,7 @@ export function scoreSlice(slice: string, rows: Scored[], threshold: number): Sl
   return {
     slice,
     n: rows.length,
-    accuracy: ratio(rows.filter((row) => row.actual === row.expected).length, rows.length),
+    accuracy: ratio(rows.filter((row) => decided(row) === row.expected).length, rows.length),
     tp,
     fp,
     fn,

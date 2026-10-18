@@ -175,17 +175,30 @@ export function SubstreamLaunchSurface({
   // composer. `new` is not a substream id: every real one is a UUID.
   const draftKey = workstreamDraftKey(workspaceRegion, workspaceId, parent.id, PENDING_SUBSTREAM_DRAFT_ID);
   // A suggestion's drafted opening prompt is written into the launch draft once,
-  // when the pane opens, and only over an empty draft: a person who already
-  // typed here is not overwritten. The composer mounts after the write so it
-  // hydrates the seeded words (docs/conversation-suggestions.md).
-  const [draftSeeded, setDraftSeeded] = useState(!draft.initialDraft);
-  // The notice saying the words are Rally's stands until the person edits them.
-  const [draftedNotice, setDraftedNotice] = useState(Boolean(draft.initialDraft));
+  // when the pane opens, over an empty draft or over a seed an earlier launch
+  // left untouched: a person's own words are never overwritten, and a pane
+  // opened without a seed clears one left behind, so the shared pending draft
+  // never carries another suggestion's prompt. The composer mounts after the
+  // write so it hydrates the seeded words (docs/conversation-suggestions.md).
+  const [draftSeeded, setDraftSeeded] = useState(!draft.initialDraft && !seededPrompts.has(draftKey));
+  // The notice saying the words are Rally's: only over words this pane seeded,
+  // and only until the person edits them.
+  const [draftedNotice, setDraftedNotice] = useState(false);
   useEffect(() => {
-    if (!draft.initialDraft) return;
+    if (draftSeeded) return;
     let cancelled = false;
     void readDraftText(draftKey).then(async (current) => {
-      if (!current?.text.trim()) await writeDraftText(draftKey, draft.initialDraft!);
+      const text = current?.text ?? '';
+      const untouchedSeed = text.trim().length === 0 || text === seededPrompts.get(draftKey);
+      if (draft.initialDraft) {
+        if (!untouchedSeed) return;
+        await writeDraftText(draftKey, draft.initialDraft);
+        seededPrompts.set(draftKey, draft.initialDraft);
+        if (!cancelled) setDraftedNotice(true);
+      } else if (untouchedSeed && text.length > 0) {
+        await writeDraftText(draftKey, '');
+        seededPrompts.delete(draftKey);
+      }
     }).finally(() => { if (!cancelled) setDraftSeeded(true); });
     return () => { cancelled = true; };
     // Once, on open: the draft is the pane's for as long as it stays open.
@@ -388,7 +401,7 @@ export function SubstreamLaunchSurface({
           model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
           {...(draftedNotice ? { notice: <><Pencil aria-hidden="true" size={13} />Drafted by Rally from this thread. Edit it, then start.</> } : {})}
           onAttach={attachmentDraft.addFiles}
-          onDraftChange={(value) => { if (value !== draft.initialDraft) setDraftedNotice(false); }}
+          onDraftChange={(value) => { if (value !== draft.initialDraft) { setDraftedNotice(false); seededPrompts.delete(draftKey); } }}
           onOpenAttachment={onOpenAttachment}
           onRemoveAttachment={attachmentDraft.removeAttachment}
           onRetryAttachment={attachmentDraft.retryAttachment}
@@ -417,3 +430,10 @@ export function SubstreamLaunchSurface({
  */
 export { PENDING_SUBSTREAM_DRAFT_ID } from '@rally/ui/components/conversation-menus';
 import { PENDING_SUBSTREAM_DRAFT_ID } from '@rally/ui/components/conversation-menus';
+
+/**
+ * The prompt each pending launch draft was last seeded with, by draft key, so
+ * a later launch can tell Rally's untouched words from a person's own.
+ * Session-local on purpose: a restart starts from the stored draft alone.
+ */
+const seededPrompts = new Map<string, string>();
