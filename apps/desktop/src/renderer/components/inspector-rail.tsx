@@ -3,8 +3,8 @@ import { desktopBridge } from '../lib/platform';
 import { isHtmlFile, isolatedHtml } from './attachment-lightbox';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { IconArchive, IconArrowLeft, IconChevronRight, IconChevronsRight, IconExternalLink, IconEye, IconFileText, IconHistory, IconLink, IconLoader2, IconPencil, IconPin, IconPinnedOff, IconPlus, IconRefresh, IconUserPlus, IconWindowMaximize, IconX } from '@tabler/icons-react';
-import { ActionTile, ActionTiles, LevelRow, TitleMenuHeader, TitleMenuItem, TitleMenuSeparator, TitlePillClose, TitlePillHeader, useTitleMenuNav, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { IconArchive, IconArrowLeft, IconChevronRight, IconChevronsRight, IconDots, IconExternalLink, IconEye, IconFileText, IconHistory, IconLink, IconLoader2, IconPencil, IconPin, IconPlus, IconRefresh, IconUserPlus, IconWindowMaximize, IconX } from '@tabler/icons-react';
+import { ActionTile, ActionTiles, LevelRow, openLevel, TitleMenuItem, TitleMenuSeparator, TitleMenuSwitch, TitlePillClose, TitlePillHeader, useTitleMenuNav, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { classifyAttachmentKind } from '@rally/contracts';
 import { DetailHeaderActionsHost } from './detail-header-actions';
 import type { IconGroupAction } from '@rally/ui/components/icon-group';
@@ -574,10 +574,13 @@ function ResourceVersionsMenu(props: ResourceVersionsProps): React.JSX.Element {
 }
 
 const VERSIONS_VIEW = { key: 'versions', label: 'Versions' };
+const MORE_VIEW = { key: 'more', label: 'More' };
 
 /**
- * The resource panel's title-pill menu: what the resource is, then what can be
- * done to it, in the same tiles and levels a thread's menu uses.
+ * The resource panel's title-pill menu, built like a thread's: the most used
+ * actions as tiles ending in More, then a row for each level. The pill already
+ * names the resource, so the menu does not repeat it; the pin switch and
+ * Archive sit behind More, where a thread keeps them.
  */
 function ResourcePanelMenu({ onArchive, onCopyLink, onOpenSource, onPopOut, onRefresh, onRename, pinned, popOutDisabled, refreshing, resource, versions }: {
   onArchive?: (() => void) | undefined;
@@ -594,29 +597,27 @@ function ResourcePanelMenu({ onArchive, onCopyLink, onOpenSource, onPopOut, onRe
 }): React.JSX.Element {
   const nav = useTitleMenuNav();
   if (nav.view?.key === VERSIONS_VIEW.key) return <ResourceVersionItems {...versions} />;
+  if (nav.view?.key === MORE_VIEW.key) {
+    return <>
+      {pinned && <TitleMenuSwitch checked={pinned.on} icon={<IconPin aria-hidden="true" size={16} stroke={1.8} />} label="Pinned in my sidebar" onChange={pinned.onChange} />}
+      {onArchive && <>
+        {pinned && <TitleMenuSeparator />}
+        <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={onArchive}>
+          {resource.direction === 'artifact' ? 'Archive artifact' : 'Archive resource'}
+        </TitleMenuItem>
+      </>}
+    </>;
+  }
   return <>
-    <TitleMenuHeader
-      eyebrow={resource.direction === 'artifact' ? 'Artifact' : 'Resource'}
-      icon={<ResourceIcon resource={resource} />}
-      title={resource.title}
-    />
     <ActionTiles>
       {onRename && <ActionTile icon={<IconPencil aria-hidden="true" size={20} stroke={1.6} />} label="Rename" onSelect={onRename} />}
       {onCopyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={onCopyLink} />}
-      {pinned && <ActionTile
-        icon={pinned.on ? <IconPinnedOff aria-hidden="true" size={20} stroke={1.6} /> : <IconPin aria-hidden="true" size={20} stroke={1.6} />}
-        label={pinned.on ? 'Unpin' : 'Pin'}
-        onSelect={() => pinned.onChange(!pinned.on)}
-      />}
       {onPopOut && <ActionTile disabled={popOutDisabled} icon={<IconWindowMaximize aria-hidden="true" size={20} stroke={1.6} />} label="New window" onSelect={onPopOut} />}
       {onOpenSource && <ActionTile icon={<IconExternalLink aria-hidden="true" size={20} stroke={1.6} />} label="Open source" onSelect={onOpenSource} />}
       {onRefresh && <ActionTile disabled={refreshing} icon={<IconRefresh aria-hidden="true" size={20} stroke={1.6} />} label="Refresh" onSelect={onRefresh} />}
+      {(pinned || onArchive) && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
     </ActionTiles>
     <LevelRow icon={<IconHistory aria-hidden="true" size={17} stroke={1.7} />} label="Versions" view={VERSIONS_VIEW} />
-    {onArchive && <>
-      <TitleMenuSeparator />
-      <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={onArchive}>Archive</TitleMenuItem>
-    </>}
   </>;
 }
 

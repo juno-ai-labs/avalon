@@ -322,13 +322,15 @@ from; reduced motion turns both off.
   thread**) and the message it started from. People (inviting to the
   Breakout alone) and Sidekicks as above;
   More is Icon and color, **Public to organization**, and **Archive breakout** last.
-- **Artifact menu** (`ResourcePanelMenu`, the right panel's pill): header names
-  the item, then tiles for Rename, Copy link and Pin/Unpin, the tiles a thread
-  offers, then New window, Open source and Refresh where they apply, Versions,
-  and **Archive** last. Rename, Copy link and Pin appear only for an artifact
-  in the thread's Main, the ones a pin or an `/a/` link can name; Copy link
-  also needs a Space for the link to name, so a guest's Channel outside every
-  Space has none. Rename asks for the title in a dialog and saves it through
+- **Artifact menu** (`ResourcePanelMenu`, the right panel's pill): built like
+  a thread's menu, with no header since the pill already names the item. Tiles
+  for Rename, Copy link, New window, Open source and Refresh where they apply,
+  then More; a Versions row. More is **Pinned in my sidebar** and **Archive
+  artifact** (or **Archive resource**) last. Rename, Copy link and the pin
+  appear only for an artifact in the thread's Main, the ones a pin or an `/a/`
+  link can name; Copy link also needs a Space for the link to name, so a
+  guest's Channel outside every Space has none. Rename asks for the title in a
+  dialog and saves it through
   `PATCH /conversations/:parentId/resources/:resourceId`.
 
 ### Breakouts
@@ -493,6 +495,21 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-18 — The artifact menu takes a thread menu's shape
+
+**What changed:** The artifact menu drops its header, ends its tiles in More,
+and moves Pin (now the **Pinned in my sidebar** switch) and Archive behind
+More. The switch moved from `conversation-menus.tsx` to `title-pill.tsx` as
+`TitleMenuSwitch`, shared by both menus.
+
+**Why:** The product owner found the artifact menu did not look like the
+thread and Breakout menus it sits beside. This reverses the earlier call in
+this changelog to keep Pin as a tile with no More level.
+
+**Consequences:** A new setting or destructive action on a resource belongs
+in More, as on a thread. The menu no longer says whether the item is an
+artifact or a resource; the pill's label and the Archive item still do.
 
 ### 2026-10-18 — The artifact menu gains Rename, Copy link and Pin
 

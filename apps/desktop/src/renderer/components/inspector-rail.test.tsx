@@ -864,10 +864,6 @@ describe('resource detail content preview', () => {
     };
 
     openMenu();
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
-    expect(onPin).toHaveBeenCalledWith(true);
-
-    openMenu();
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy link' }));
     expect(copy).toHaveBeenCalledOnce();
 
@@ -878,9 +874,14 @@ describe('resource detail content preview', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Rename' }));
     await waitFor(() => expect(onRenameResource).toHaveBeenCalledWith(note, 'Q4 plan'));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
+    fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: 'Pinned in my sidebar' }));
+    expect(onPin).toHaveBeenCalledWith(true);
   });
 
-  it('offers Unpin for a pinned artifact and leaves out what its host cannot do', async () => {
+  it('shows a pinned artifact as pinned and leaves out what its host cannot do', async () => {
     render(
       <Tooltip.Provider>
         <InspectorRail
@@ -892,9 +893,11 @@ describe('resource detail content preview', () => {
       </Tooltip.Provider>,
     );
     fireEvent.pointerDown(screen.getByRole('button', { name: `Artifact menu: ${note.title}` }), { button: 0, ctrlKey: false });
-    expect(await screen.findByRole('menuitem', { name: 'Unpin' })).toBeVisible();
+    expect(await screen.findByRole('menuitem', { name: 'More' })).toBeVisible();
     expect(screen.queryByRole('menuitem', { name: 'Copy link' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: 'Rename' })).toBeNull();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'More' }));
+    expect(await screen.findByRole('menuitemcheckbox', { name: 'Pinned in my sidebar' })).toBeChecked();
   });
 
   it('keeps the rename dialog open and says so when the rename fails', async () => {
@@ -958,7 +961,8 @@ describe('resource detail content preview', () => {
     await screen.findByRole('complementary', { name: `Resource: ${note.title}` });
 
     fireEvent.pointerDown(screen.getByRole('button', { name: `Artifact menu: ${note.title}` }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive artifact' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
 
     await waitFor(() => expect(screen.queryByRole('complementary')).toBeNull());

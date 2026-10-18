@@ -532,6 +532,23 @@ export function TitleMenuSeparator(): React.JSX.Element {
   return <DropdownMenu.Separator className="menu-separator" />;
 }
 
+/** A setting kept on what the menu names, drawn as a switch the row toggles. */
+export function TitleMenuSwitch({ checked, disabled, icon, label, onChange }: {
+  checked: boolean; disabled?: boolean | undefined; icon: ReactNode; label: string; onChange: (next: boolean) => void;
+}): React.JSX.Element {
+  return <DropdownMenu.CheckboxItem
+    checked={checked}
+    className="menu-item title-menu-switch-row"
+    disabled={disabled}
+    onCheckedChange={onChange}
+    onSelect={(event) => event.preventDefault()}
+  >
+    {icon}
+    <span className="title-menu-item-copy">{label}</span>
+    <span aria-hidden="true" className="title-menu-switch" data-checked={checked ? '' : undefined} />
+  </DropdownMenu.CheckboxItem>;
+}
+
 /**
  * A round control at the right of a pane's header. Every icon in a header
  * wears the same raised circle as the pills beside it, so one header never

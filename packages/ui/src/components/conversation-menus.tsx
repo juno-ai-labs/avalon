@@ -33,7 +33,7 @@ import { breakoutHasActivity, type BreakoutMark } from './breakout-marks';
 import { Avatar, Tip } from './primitives';
 import { ResourceIcon } from './resource-icon';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
-import { ActionTile, ActionTiles, keepSearchFocus, LevelRow, openLevel, TitleMenuHeader, TitleMenuItem, TitleMenuButton, TitleMenuSearch, TitleMenuSeparator, useTitleMenuNav, type TitleMenuView } from './title-pill';
+import { ActionTile, ActionTiles, keepSearchFocus, LevelRow, openLevel, TitleMenuHeader, TitleMenuItem, TitleMenuButton, TitleMenuSearch, TitleMenuSeparator, TitleMenuSwitch, useTitleMenuNav, type TitleMenuView } from './title-pill';
 import { WorkstreamMark } from './workstream-glyph';
 
 /** The id a Breakout being written is selected under before it exists. */
@@ -404,28 +404,11 @@ function BreakoutsView({ breakouts, onOpenBreakout, openSubstreamId, renderAge }
   </>;
 }
 
-/** A setting kept on the conversation, drawn as a switch the row toggles. */
-function SwitchRow({ checked, disabled, icon, label, onChange }: {
-  checked: boolean; disabled?: boolean | undefined; icon: ReactNode; label: string; onChange: (next: boolean) => void;
-}): React.JSX.Element {
-  return <DropdownMenu.CheckboxItem
-    checked={checked}
-    className="menu-item title-menu-switch-row"
-    disabled={disabled}
-    onCheckedChange={onChange}
-    onSelect={(event) => event.preventDefault()}
-  >
-    {icon}
-    <span className="title-menu-item-copy">{label}</span>
-    <span aria-hidden="true" className="title-menu-switch" data-checked={checked ? '' : undefined} />
-  </DropdownMenu.CheckboxItem>;
-}
-
 /** The conversation's Organization audience, as a switch; nothing where it cannot change. */
 function PublicSwitch({ actions }: { actions: ConversationRowActions | undefined }): React.JSX.Element | null {
   const onSetPublic = actions?.onSetPublic;
   if (!onSetPublic) return null;
-  return <SwitchRow
+  return <TitleMenuSwitch
     checked={actions.isPublic ?? false}
     disabled={actions.publicDisabled}
     icon={<IconWorld aria-hidden="true" size={16} stroke={1.8} />}
@@ -516,7 +499,7 @@ export function ChannelMenu({
   if (nav.view?.key === 'more') {
     return <>
       {appearance}
-      {pinned && <SwitchRow checked={pinned.on} icon={<IconPin aria-hidden="true" size={16} stroke={1.8} />} label="Pinned in my sidebar" onChange={pinned.onChange} />}
+      {pinned && <TitleMenuSwitch checked={pinned.on} icon={<IconPin aria-hidden="true" size={16} stroke={1.8} />} label="Pinned in my sidebar" onChange={pinned.onChange} />}
       <PublicSwitch actions={actions} />
       {onImportUpdates && <TitleMenuItem icon={<IconCloudDownload aria-hidden="true" size={16} stroke={1.8} />} onSelect={onImportUpdates}>Import updates</TitleMenuItem>}
       {extraActions}
@@ -595,8 +578,8 @@ export function ChannelContainerMenu({
   if (nav.view?.key === 'more') {
     return <>
       {appearance}
-      {pinned && <SwitchRow checked={pinned.on} icon={<IconPin aria-hidden="true" size={16} stroke={1.8} />} label="Pinned in my sidebar" onChange={pinned.onChange} />}
-      {publicToOrganization && <SwitchRow checked={publicToOrganization.on} disabled={publicToOrganization.disabled} icon={<IconWorld aria-hidden="true" size={16} stroke={1.8} />} label="Public to organization" onChange={publicToOrganization.onChange} />}
+      {pinned && <TitleMenuSwitch checked={pinned.on} icon={<IconPin aria-hidden="true" size={16} stroke={1.8} />} label="Pinned in my sidebar" onChange={pinned.onChange} />}
+      {publicToOrganization && <TitleMenuSwitch checked={publicToOrganization.on} disabled={publicToOrganization.disabled} icon={<IconWorld aria-hidden="true" size={16} stroke={1.8} />} label="Public to organization" onChange={publicToOrganization.onChange} />}
       {onArchive && <>
         {(appearance || publicToOrganization || pinned) && <TitleMenuSeparator />}
         <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={onArchive}>Archive channel</TitleMenuItem>
