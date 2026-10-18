@@ -26,7 +26,7 @@ interface LabelLine {
 
 interface Report {
   target: string;
-  model: string;
+  summaries: Array<{ model: string }>;
   results: TurnDispositionResult[];
 }
 
@@ -164,7 +164,7 @@ async function main(): Promise<void> {
     ["with earlier outputs", (row) => row.evaluationCase.state.so_far.earlier_outputs.length > 0],
     ["holdout, person-labeled", (row) => !isDevelopmentCase(row.evaluationCase) && row.source === "person"],
   ];
-  process.stdout.write(`${parsed.target} ${parsed.model} run ${run} threshold ${threshold}: ${scored.length} scored\n`);
+  process.stdout.write(`${parsed.target} ${parsed.summaries.map((summary) => summary.model).join(",")} run ${run} threshold ${threshold}: ${scored.length} scored\n`);
   process.stdout.write(`${["slice".padEnd(26), "n".padStart(5), "acc".padStart(7), "TP".padStart(5), "FP".padStart(5), "FN".padStart(5), "TN".padStart(5), "prec".padStart(7), "recall".padStart(7), "F1".padStart(7), "side TP/FP/FN".padStart(10), "sugg%".padStart(7)].join(" ")}\n`);
   for (const [name, predicate] of slices) {
     process.stdout.write(`${format(scoreSlice(name, scored.filter(predicate), threshold))}\n`);
