@@ -124,7 +124,7 @@ few things, in this order, and the state carries exactly those:
 | `so_far.summary` | **Where the work stands** when the conversation is long. A person catching up on a long thread reads the handoff, not the transcript; the compaction checkpoint is exactly that handoff: request, decisions, done, facts, open | The newest `transcript_compaction_checkpoints` row before the message, the `summary` of its payload, bounded to 2,500 code points; absent when the conversation never compacted |
 | `so_far.earlier_outputs` | **What has already been produced here**, so a reader can tell the first deliverable from the fifth revision of it. This one field answers the largest error family the first corpus pass had: revisions, additions and restyles of an existing output flagged as new deliverables | The `resource://` references in earlier messages, unique by resource, newest eight, each with how many messages ago |
 | `so_far.carried_up_before` | **What the parent already received** from here, so a second suggestion is not a repeat | Merge markers before this message: `conversation_merged_into` in a Breakout, `space_messages.source_workstream_id` for a Thread |
-| `recent_messages` | Whether the **loop is still turning** (feedback → tweak) and whether a side question is new rather than the purpose. Weak evidence, and the focus says so | The six judged messages before this one, each bounded to 700 code points around a middle ellipsis |
+| `recent_messages` | Whether the **loop is still turning** (feedback → tweak) and whether a side question is new rather than the purpose. Weak evidence, and the focus says so | The three judged messages before this one, each bounded to 700 code points around a middle ellipsis; six scored the same on the 2026-10-18 ablation at a fifth more bytes |
 | `judged_message.author` | A person's message and Rally's call for different things: a person opens side questions and states decisions; Rally delivers | `author_type` |
 | `judged_message.text` | The subject of the decision | The message, bounded to 6,000 code points around a middle ellipsis |
 | `judged_message.outputs[].first_time_here` | Whether each output the message names is **new or a revision** | Resource references in the message, matched against the conversation's earlier ones |
@@ -687,6 +687,72 @@ and the cases are the dataset for the prompt optimization that follows; the
 hand labels without their notes are committed beside the eval as
 `golden-labels-2026-10-18.jsonl`, and the rest stays in the protected
 directory and is deleted when that work is done.
+
+### Prompt optimization, 2026-10-18
+
+The request above was then put through a GEPA search
+(`packages/agent-harness/evals/turn-disposition/gepa.ts`) over the same
+corpus, on the development half only, to see whether rewording the question or
+changing what context JEV sees could move the numbers. A candidate is the
+disposition question plus a context policy: which state fields are sent, how
+many recent messages and how long, how long the judged message, how many
+earlier outputs, and whether the judged message comes before or after the
+context. Each candidate was scored on all 1,909 development cases at the 0.6
+threshold; a reflection model (`openai/gpt-6-astra`, at the product owner's
+choice, after a first attempt with Sonnet was set aside) read a parent's
+failures with the state exactly as that parent's policy rendered it and
+proposed one child; parents were drawn from the Pareto front over per-case
+scores; every third child could change only the context policy. Thirty
+children were produced. Selection used macro F1 over the three outcomes, so a
+gain on the rare side-question class counted as much as one on carry-up.
+
+**On the development half the search looked like a win and on the holdout
+it was not one.** The best children reached macro F1 0.73 against the
+baseline's 0.69, all of it from the side-question class (F1 0.35 to 0.52) and
+none of it from carry-up, which stayed at the baseline's 0.765 or below. The
+holdout, scored twice per candidate, read:
+
+| Holdout, 2,279 cases | Baseline, two runs | Best by dev macro F1 (c05) | Best carry-up on dev (c08) | Compact (c29) |
+| --- | --- | --- | --- | --- |
+| Three-way accuracy | 91.3% / 91.3% | 90.6% / 90.6% | 91.6% / 91.3% | 90.8% / 91.0% |
+| Macro F1 | 0.714 / 0.719 | 0.728 / 0.724 | 0.726 / 0.713 | 0.664 / 0.674 |
+| Carry-up precision / recall | 73% / 74% | 68% / 74% | 74% / 72% | 70% / 68% |
+| Carry-up F1 | 0.735 / 0.727 | 0.710 / 0.710 | 0.731 / 0.718 | 0.693 / 0.700 |
+| Side-question F1 | 0.46 / 0.48 | 0.53 / 0.52 | 0.50 / 0.47 | 0.35 / 0.37 |
+| State bytes, mean | 2,550 | 2,430 | 2,889 | 1,916 |
+
+The baseline's own two runs differ by 0.005 in macro F1 and 0.008 in
+carry-up F1, which is the floor every difference is read against. c05's
+macro F1 gain is twice that floor and comes with a carry-up F1 two points
+below the baseline and lower accuracy; c08 is the baseline within noise at
+13% more bytes. Nothing cleared the bar on the outcome that ships, so **the
+question stays as written above.** The side-question gains that drove
+selection rest on 21 hand labels and 81 judge labels, the smallest and
+noisiest class in the corpus, which is the lesson for the next run: select on
+the outcome the product shows, not on a macro average that lets the rare
+class steer.
+
+**The context ablation is the part that paid.** Six hand-written variants of
+the baseline's context, with the question unchanged, scored on the holdout
+twice each:
+
+| Variant | Carry-up F1, two runs | Carry-up precision | Bytes | Read |
+| --- | --- | --- | --- | --- |
+| Baseline (six recent messages at 700) | 0.726 / 0.733 | 73% | 2,550 | |
+| Three recent messages | 0.727 / 0.732 | 72% | 2,022 | Same answers, 21% fewer bytes. **Adopted.** |
+| Three recent messages at 1,500 | 0.739 / 0.724 | 73% | 2,220 | Within noise of three at 700, for more bytes |
+| Without `messages_before` and `carried_up_before` | 0.723 / 0.726 | 72% | 2,508 | Within noise; `carried_up_before` was non-zero in 24 cases, so this says nothing about its value once merges accrue |
+| Without `parent` | 0.734 / 0.731 | 70% | 2,472 | Recall up, precision down three points, and five on the hand labels: the parent is what tells "new for them" from "new here" |
+| Without `so_far` | 0.707 / 0.730 | 70% | 2,451 | The widest spread of any variant and lower on the hand labels; summary was present in 7 cases, so this measures `earlier_outputs` |
+| Judged message before the context | 0.697 / 0.696 | 69% | 2,550 | Three points of F1 lost on order alone; the context has to come first |
+
+`TURN_DISPOSITION_MAX_RECENT_MESSAGES` is now 3. Everything else in the
+state stays, two of its fields on the explicit note that this corpus could
+not test them: `so_far.summary` and `so_far.carried_up_before` are almost
+always absent or zero here and are kept on the design's reasoning, to be
+re-read once compaction and merges have accrued. The candidates, their
+per-case scores and both holdout reports are in the protected directory with
+the corpus; nothing from the search is committed except the optimizer.
 
 ### What "not too noisy on either end" means in numbers
 
