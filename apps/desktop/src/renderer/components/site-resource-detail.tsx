@@ -368,11 +368,6 @@ export function SiteResourceDetail({
         : (
           <div className="site-detail-pane" data-testid="site-preview-pane" ref={paneRef}>
             {accessError && <EmptyState description={accessError} title="This site could not be opened" />}
-            {/*
-              Until the page itself is ready, not just the access: the view or
-              frame stays hidden over the redeem bootstrap, so this is the one
-              "Opening…" a person sees.
-            */}
             {!accessError && previewShown === null && <p className="site-detail-status">Opening…</p>}
             {/*
               Nothing is rendered *into* the pane when the preview is live: the

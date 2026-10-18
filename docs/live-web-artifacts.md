@@ -229,9 +229,7 @@ address bar, and `POST`s the code in a request body. The redeem endpoint never
 serves artifact content: it consumes the code, sets the cookie, and redirects, so
 no artifact document is ever loaded at a location that held the code. The
 bootstrap is served before the hostname route is read, since it is the same
-page for every host. Neither the rail's composited view nor the browser
-client's frame is shown over it: each stays hidden until the site's own
-document is ready, so the rail's "Opening…" is the only one a person sees. This
+page for every host. This
 Rally-authored bootstrap is the only response with
 `Referrer-Policy: same-origin`, which keeps Chromium's Origin non-opaque on the
 redeem POST; the artifact document reached after redemption returns to
@@ -612,8 +610,11 @@ the only loading look.
 **Consequences:** A site whose document never reaches `dom-ready` keeps the
 rail on "Opening…" rather than showing a half-loaded page. The frame relies on
 Chromium firing no `load` for the bootstrap, whose form `POST` replaces it
-mid-parse; a check in a real Chromium confirmed it. Should that change, the
-frame shows the bootstrap for one round trip, as before.
+mid-parse; a check in a real Chromium confirmed it. Safari and Firefox were not
+checked: where a browser does fire one, the frame shows the bootstrap for one
+round trip, as before. The frame's `load` also waits for the site's images, so a
+site with a slow image stays behind "Opening…" until they finish; a cross-origin
+frame gives the parent no earlier signal without Rally script inside the site.
 
 ### 2026-10-15 — The skill checks layout by looking, and names the grid trap
 
