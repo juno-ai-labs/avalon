@@ -24,6 +24,9 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     searchOrganizations: vi.fn<EngineeringInspectionRpcBinding["searchOrganizations"]>(
       async () => ({ region, items: [] }),
     ),
+    searchUsers: vi.fn<EngineeringInspectionRpcBinding["searchUsers"]>(
+      async () => ({ region, items: [] }),
+    ),
     listWorkstreams: vi.fn<EngineeringInspectionRpcBinding["listWorkstreams"]>(
       async () => ({ found: false }),
     ),
@@ -120,6 +123,8 @@ describe("Rally engineering MCP tools", () => {
       "list_workspaces",
       "list_orgs",
       "search_orgs",
+      "list_users",
+      "search_users",
       "list_workstreams",
       "list_substreams",
       "list_sidekicks",
@@ -727,5 +732,79 @@ describe("Rally engineering MCP tools", () => {
     const body = JSON.parse(result.content[0]!.text) as { items: unknown[] };
     expect(body).toMatchObject({ total: 201, pageCount: 2, nextPage: 2 });
     expect(body.items).toHaveLength(200);
+  });
+
+  function user(
+    userId: string,
+    name: string,
+    email: string,
+    createdAt: string,
+    organizationCount: number,
+    lastSeenAt: string | null,
+    region: "global" | "enterprise",
+  ) {
+    return {
+      userId,
+      name,
+      email,
+      region,
+      createdAt,
+      lastSeenAt,
+      organizations: Array.from({ length: organizationCount }, (_, index) => ({
+        workspaceId: asWorkspaceId(`00000000-0000-7000-8000-0000000001${String(index).padStart(2, "0")}`),
+        name: `Org ${index}`,
+        slug: `org-${index}`,
+        role: "member",
+        accessClass: "member",
+        status: "active",
+        lastSeenAt,
+      })),
+    };
+  }
+
+  it("orders users from both regions as one set and keeps a person's row in each region", async () => {
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    vi.mocked(global.searchUsers).mockResolvedValue({ region: "global", items: [
+      user("u1", "ada", "ada@example.com", "2026-09-01T00:00:00.000Z", 2, null, "global"),
+      user("u2", "Bea", "bea@example.com", "2026-10-01T00:00:00.000Z", 0, "2026-10-02T00:00:00.000Z", "global"),
+    ] });
+    vi.mocked(enterprise.searchUsers).mockResolvedValue({ region: "enterprise", items: [
+      user("u1", "Ada", "ada@example.com", "2026-08-01T00:00:00.000Z", 3, "2026-10-09T00:00:00.000Z", "enterprise"),
+    ] });
+    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
+    const rows = async (name: string, args: Record<string, unknown>) => {
+      const response = await rpc(env, "tools/call", { name, arguments: args });
+      const result = response.result as { content: Array<{ text: string }> };
+      const body = JSON.parse(result.content[0]!.text) as { items: Array<{ userId: string; region: string }>; total: number };
+      return body.items.map((item) => `${item.region}:${item.userId}`);
+    };
+
+    await expect(rows("list_users", {})).resolves.toEqual(["global:u2", "global:u1", "enterprise:u1"]);
+    await expect(rows("list_users", { orderBy: "organizationCount" }))
+      .resolves.toEqual(["enterprise:u1", "global:u1", "global:u2"]);
+    await expect(rows("search_users", { orderBy: "email" }))
+      .resolves.toEqual(["enterprise:u1", "global:u1", "global:u2"]);
+    await expect(rows("search_users", { orderBy: "lastSeenAt", limit: 2 }))
+      .resolves.toEqual(["enterprise:u1", "global:u2"]);
+  });
+
+  it("sends user search filters to every region and none for list_users", async () => {
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
+
+    await rpc(env, "tools/call", {
+      name: "search_users",
+      arguments: { query: "ada", createdBefore: "2026-10-01T00:00:00Z", orderBy: "name", page: 2 },
+    });
+    await rpc(env, "tools/call", { name: "list_users", arguments: { limit: 5 } });
+
+    for (const binding of [global, enterprise]) {
+      expect(vi.mocked(binding.searchUsers).mock.calls).toEqual([
+        [{ query: "ada", createdBefore: "2026-10-01T00:00:00Z" }],
+        [{}],
+      ]);
+    }
   });
 });

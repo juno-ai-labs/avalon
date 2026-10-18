@@ -15,6 +15,8 @@ import {
   ListEngineeringWorkspacesResultSchema,
   SearchEngineeringOrganizationsInputSchema,
   SearchEngineeringOrganizationsResultSchema,
+  SearchEngineeringUsersInputSchema,
+  SearchEngineeringUsersResultSchema,
   EngineeringSpaceListLookupSchema,
   SubstreamSqlInspectionInputSchema,
   SubstreamInspectionInputSchema,
@@ -33,6 +35,7 @@ import {
   type EngineeringWorkstreamListLookup,
   type ListEngineeringWorkspacesResult,
   type SearchEngineeringOrganizationsResult,
+  type SearchEngineeringUsersResult,
 } from "@rally/contracts/engineering-inspection";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { WorkerEntrypoint } from "cloudflare:workers";
@@ -47,6 +50,7 @@ import {
   resolveInspectionWorkspaceRoute,
   resolveInspectionWorkstreamRoute,
   searchInspectionOrganizations,
+  searchInspectionUsers,
   type InspectionWorkspaceRoute,
   type InspectionWorkstreamRoute,
 } from "./engineering-inspection-routes";
@@ -270,6 +274,42 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         abandonedAt: row.abandoned_at,
         memberCount: row.member_count,
         lastSeenAt: row.last_seen_at,
+      })),
+    });
+  }
+
+  async searchUsers(input: unknown): Promise<SearchEngineeringUsersResult> {
+    const filter = parseRpcInput(SearchEngineeringUsersInputSchema, input, "searchUsers");
+    try {
+      return await this.searchUsersUnchecked(filter);
+    } catch (error) {
+      const code = zodDiagnosticCode(error, "searchUsers");
+      throw code ? new Error(code) : error;
+    }
+  }
+
+  private async searchUsersUnchecked(
+    filter: z.infer<typeof SearchEngineeringUsersInputSchema>,
+  ): Promise<SearchEngineeringUsersResult> {
+    const rows = await searchInspectionUsers(this.env, filter);
+    return SearchEngineeringUsersResultSchema.parse({
+      region: this.env.AVALON_REGION,
+      items: rows.map((row) => ({
+        userId: row.id,
+        name: row.name,
+        email: row.email,
+        region: this.env.AVALON_REGION,
+        createdAt: row.created_at,
+        lastSeenAt: row.last_seen_at,
+        organizations: row.memberships.map((membership) => ({
+          workspaceId: membership.workspace_id,
+          name: membership.name,
+          slug: membership.slug,
+          role: membership.role,
+          accessClass: membership.access_class,
+          status: membership.status,
+          lastSeenAt: membership.last_seen_at,
+        })),
       })),
     });
   }

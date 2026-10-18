@@ -181,6 +181,49 @@ export const SearchEngineeringOrganizationsResultSchema = deferredZodSchema(() =
 }));
 export type SearchEngineeringOrganizationsResult = z.infer<typeof SearchEngineeringOrganizationsResultSchema>;
 
+/**
+ * Filters for the user search. Every field narrows the result; none given
+ * returns every user in the region. Ordering and paging are the caller's.
+ */
+export const SearchEngineeringUsersInputSchema = deferredZodSchema(() => z.strictObject({
+  /** Case-insensitive substring of the name, email, or ID. */
+  query: z.string().min(1).optional(),
+  createdAfter: z.string().datetime({ offset: true }).optional(),
+  createdBefore: z.string().datetime({ offset: true }).optional(),
+}));
+export type SearchEngineeringUsersInput = z.infer<typeof SearchEngineeringUsersInputSchema>;
+
+export const EngineeringUserOrganizationSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  name: z.string(),
+  slug: z.string(),
+  /** Null for a guest. */
+  role: z.string().nullable(),
+  accessClass: z.string(),
+  status: z.string(),
+  lastSeenAt: z.string().nullable(),
+}));
+export type EngineeringUserOrganization = z.infer<typeof EngineeringUserOrganizationSchema>;
+
+export const EngineeringUserSchema = deferredZodSchema(() => z.strictObject({
+  userId: z.string(),
+  name: z.string(),
+  email: z.string(),
+  region: RegionSchema,
+  createdAt: z.string(),
+  /** The latest `last_seen_at` across the user's active memberships; null if never seen. */
+  lastSeenAt: z.string().nullable(),
+  /** Every membership in this region, whatever its status. */
+  organizations: z.array(EngineeringUserOrganizationSchema),
+}));
+export type EngineeringUser = z.infer<typeof EngineeringUserSchema>;
+
+export const SearchEngineeringUsersResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  items: z.array(EngineeringUserSchema),
+}));
+export type SearchEngineeringUsersResult = z.infer<typeof SearchEngineeringUsersResultSchema>;
+
 export const WorkspaceInspectionInputSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema,
 }));
@@ -345,6 +388,7 @@ export type EngineeringSqlLookup = z.infer<typeof EngineeringSqlLookupSchema>;
 export interface EngineeringInspectionRpcBinding {
   listWorkspaces(input: ListEngineeringWorkspacesInput): Promise<ListEngineeringWorkspacesResult>;
   searchOrganizations(input: SearchEngineeringOrganizationsInput): Promise<SearchEngineeringOrganizationsResult>;
+  searchUsers(input: SearchEngineeringUsersInput): Promise<SearchEngineeringUsersResult>;
   listWorkstreams(input: WorkspaceInspectionInput): Promise<EngineeringWorkstreamListLookup>;
   listSubstreams(input: WorkstreamInspectionInput): Promise<EngineeringSubstreamListLookup>;
   listSidekicks(input: WorkspaceInspectionInput): Promise<EngineeringSidekickListLookup>;
