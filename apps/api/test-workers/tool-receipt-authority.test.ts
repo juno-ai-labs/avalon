@@ -204,7 +204,7 @@ describe("tool-receipt authority on real workerd", () => {
       claimPage: async (args) => {
         const answer = await receipt(stub, "claimPage", args);
         if (answer.error) throw new Error(answer.error);
-        return z.object({ inputJson: z.string() }).parse(answer.value);
+        return z.union([z.object({ inputJson: z.string() }), z.object({ consumedInputJson: z.string() })]).parse(answer.value);
       },
     } });
     await receipt(stub, "admit", admission("first", "first"));
@@ -286,9 +286,11 @@ describe("tool-receipt authority on real workerd", () => {
         return { output: { text: "page" }, summary: "page", pagination: { continuations: [{
           operation: "read_resource", slot: "nextPageId", input: { cursor: `after-${executed.length}` } }] } };
       },
+      continuationDetails: async (continuation) => ({ described: continuation }),
     }, { prefix: "workstream", connectionId: null, fence, receipts: {
       issuePage: async (args) => z.string().nullable().parse((await receipt(stub, "issuePage", args)).value),
-      claimPage: async (args) => z.object({ inputJson: z.string() }).parse((await receipt(stub, "claimPage", args)).value),
+      claimPage: async (args) => z.union([z.object({ inputJson: z.string() }), z.object({ consumedInputJson: z.string() })])
+        .parse((await receipt(stub, "claimPage", args)).value),
     } });
     const complete = (effectIntentId: string) => receipt(stub, "complete", { effectIntentId, checkpointIndex: 1, outputRef: `${effectIntentId}-output`,
       outputSummary: "page", providerOperationId: null, payloadJson: "{}", allowAmbiguousReconciliation: false, fence: fence(), now: Date.now() });
@@ -321,7 +323,12 @@ describe("tool-receipt authority on real workerd", () => {
 
     await startRun(LAST_RUN);
     await receipt(stub, "admit", admission("last", "last", LAST_RUN));
-    await expect(next!.execute({ pageId }, context("last", LAST_RUN))).rejects.toThrow("page_already_consumed: This page was already read.");
+    // Refused, but described from the stored continuation and never executed.
+    await expect(next!.execute({ pageId }, context("last", LAST_RUN))).rejects.toMatchObject({
+      code: "page_already_consumed", details: { described: { cursor: "after-1" } },
+      message: expect.stringContaining("This page was already read."),
+    });
+    expect(executed).toHaveLength(2);
     // Another principal sees nothing of the earlier page.
     await expect(receipt(stub, "claimPage", { runId: LAST_RUN, effectIntentId: "last", operation: "read_resource", connectionId: null,
       principalJson: '{"type":"user","userId":"other"}', fence: fence(), pageId })).rejects.toThrow("page_id_invalid");

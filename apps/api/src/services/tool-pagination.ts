@@ -60,8 +60,18 @@ export function paginatedToolNames(definition: Pick<HarnessTool["definition"], "
   return [operation, `${operation}_next`, "read_resource_previous"];
 }
 
+/**
+ * An authored paginated tool that can name what one of its continuations
+ * reads, as structured failure details (`{ resourceId }` for a resource read).
+ * It runs only to describe a page that cannot be redeemed, never to execute
+ * it; the attachment grounding guard needs the identity to clear the failure.
+ */
+export type PaginatedHarnessTool = HarnessTool & {
+  continuationDetails?: (continuationInput: unknown) => Promise<Record<string, unknown> | null>;
+};
+
 /** Expand only an explicitly authored tool. Private continuations never escape this wrapper. */
-export function withToolPagination(tool: HarnessTool, host: PaginationHost): HarnessTool[] {
+export function withToolPagination(tool: PaginatedHarnessTool, host: PaginationHost): HarnessTool[] {
   const pagination = tool.definition.pagination;
   if (!pagination) return [tool];
   const sourceOnly = pagination.sourceOnly === true;
@@ -91,28 +101,33 @@ export function withToolPagination(tool: HarnessTool, host: PaginationHost): Har
   }
   const firstName = stableWireToolName(wirePrefix, operation);
   async function claim(pageId: string, context: HarnessToolContext, target = operation) {
+    let claimed;
     try {
-      return await host.receipts.claimPage({ ...identity(context), operation: target, pageId });
+      claimed = await host.receipts.claimPage({ ...identity(context), operation: target, pageId });
     } catch (error) {
       let message = error instanceof ObjectPortError ? error.code : error instanceof Error ? error.message : "";
       // Storage cannot name the model's tools, so the instruction is written
       // here. It covers wrong-scope and uncommitted pages too, where the ID
       // was copied exactly, so it says only what to do next.
       const unknownPage = message.startsWith("page_id_invalid:");
-      const consumedPage = message.startsWith("page_already_consumed:");
       if (unknownPage) {
         message = `page_id_invalid: This page ID cannot be used here. Call ${firstName} to start a new read.`;
-      } else if (consumedPage) {
-        message = `page_already_consumed: This page was already read. Use the nextPageId from that read's result, or call ${firstName} to start a new read.`;
       }
       // Keep the attachment grounding guard's existing, bounded recovery
       // semantics when a model damages a page ID before resource resolution.
       if (operation === "read_resource" && unknownPage) {
         throw Object.assign(new Error(message), { code: "invalid_cursor" });
       }
-      if (unknownPage || consumedPage || (error instanceof ObjectPortError && message.startsWith("page_"))) throw new Error(message, { cause: error });
+      if (unknownPage || (error instanceof ObjectPortError && message.startsWith("page_"))) throw new Error(message, { cause: error });
       throw error;
     }
+    if ("inputJson" in claimed) return claimed;
+    // Across runs the guard has no memory of this page, so without the
+    // identity its failure stays anonymous and no later read can clear it.
+    const details = await tool.continuationDetails?.(JSON.parse(claimed.consumedInputJson)).catch(() => null);
+    throw Object.assign(new Error(
+      `page_already_consumed: This page was already read. Use the nextPageId from that read's result, or call ${firstName} to start a new read.`,
+    ), { code: "page_already_consumed", ...(details ? { details } : {}) });
   }
   async function execute(input: unknown, context: HarnessToolContext): Promise<HarnessToolResult> {
     const result = await tool.execute(input, context);
