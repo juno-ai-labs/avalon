@@ -73,7 +73,7 @@ import {
   ACTIVITY_QUERY_KEY,
   channelFeedQueryKey,
 } from './sidebar-list-store';
-import { applyResourceHeads } from './resource-heads';
+import { applyResourceHeads, followResourceHeads } from './resource-heads';
 import { realtimeSocketTelemetry } from './socket-telemetry';
 import { reportTelemetryProductIntent, telemetryJourneyDuration, uuidV7 } from './telemetry';
 import type { WorkstreamSummary } from './types';
@@ -382,6 +382,9 @@ export function WorkspaceSocketProvider({
 }>): React.JSX.Element {
   const queryClient = useQueryClient();
   const localCacheScope = useLocalCacheScope();
+  // Every conversation detail stays at the newest resource head this window
+  // knows, whichever writer lands last.
+  useEffect(() => followResourceHeads(queryClient), [queryClient]);
   const [state, setState] = useState<WorkspaceSocketState>('connecting');
   const [topicWaterlines, setTopicWaterlines] = useState<Partial<Record<WorkspaceSyncTopic, number>>>({});
   const [sidebarConnect, setSidebarConnect] = useState<SidebarConnect | null>(null);

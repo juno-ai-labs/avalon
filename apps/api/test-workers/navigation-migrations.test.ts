@@ -10,6 +10,8 @@ import { describe, expect, it } from "vitest";
 
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
+import { isArtifactNewsCause } from "../src/durable-objects/workspace-pin-storage";
+import { drainResourceVersionChanges } from "../src/durable-objects/workspace-resource-versions";
 
 const OWNER = "00000000-0000-7000-8000-0000000000a1";
 const SPACE = "00000000-0000-7000-8000-0000000000b1";
@@ -219,11 +221,70 @@ describe("migration 113", () => {
       // The capture triggers came back: staging is consumed after each version.
       expect(sql.exec(`SELECT revision_cause, revision_author_kind FROM resources WHERE id = ?`, resource).one())
         .toEqual({ revision_cause: null, revision_author_kind: null });
-      // A pinner hears about the republish, not the rename.
-      expect(sql.exec(`SELECT version FROM workspace_artifact_updates WHERE resource_id = ?`, resource).toArray())
-        .toEqual([{ version: 4 }]);
+      // The ledger holds both versions with their causes; a pinner hears
+      // about the republish, not the rename.
+      const changes = drainResourceVersionChanges(sql);
+      expect(changes).toEqual([
+        { resourceId: resource, version: 3, cause: "renamed" },
+        { resourceId: resource, version: 4, cause: "published" },
+      ]);
+      expect(changes.filter((change) => isArtifactNewsCause(change.cause)).map((change) => change.version))
+        .toEqual([4]);
       expect(() => sql.exec(`UPDATE resources SET title = 'Plan again', revision_cause = 'invented' WHERE id = ?`, resource))
         .toThrow(/CHECK constraint failed/u);
+      expect(sql.exec("PRAGMA foreign_key_check").toArray()).toEqual([]);
+    });
+  });
+});
+
+describe("migration 114", () => {
+  it("upgrades a populated Organization at 113, keeping a queued pinned version and recording every resource after", async () => {
+    const workspaceId = "00000000-0000-7000-8000-0000000000f1";
+    const pinned = "00000000-0000-7000-8000-0000000000f2";
+    const unpinned = "00000000-0000-7000-8000-0000000000f3";
+    const stub = env.MIGRATION_PROBE_DO!.getByName("version-ledger-v113");
+    await stub.ping();
+    const republish = (sql: SqlStorage, id: string, ref: string) => sql.exec(
+      `UPDATE resources SET content_ref = ?, content_sha256 = ?, revision_author_kind = 'system',
+         revision_cause = 'published' WHERE id = ?`, ref, ref, id);
+    await runInDurableObject(stub, (_instance, state) => {
+      const before = WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 113);
+      expect(before.at(-1)?.version).toBe(113);
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage, migrations: before, component: "workspace_do", workerVersionId: "before-version-ledger", now: 1,
+      });
+      const sql = state.storage.sql;
+      sql.exec(`INSERT INTO workspace_identity (id, workspace_id, region, placement_affinity, created_at, updated_at)
+        VALUES (1, ?, 'global', 'wnam', 0, 0)`, workspaceId);
+      for (const id of [pinned, unpinned]) {
+        sql.exec(`INSERT INTO resources
+            (id, workspace_id, resource_type, provider, title, mime_type, content_ref, content_sha256,
+             metadata_json, created_at, updated_at)
+          VALUES (?, ?, 'generated_file', 'avalon_generated', 'Plan', 'text/markdown', 'v1', 'v1', '{}',
+                  '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z')`, id, workspaceId);
+      }
+      sql.exec(`INSERT INTO workspace_pins (user_id, item_kind, item_id, parent_id, position, created_at, updated_at)
+        VALUES (?, 'artifact', ?, ?, 0, 0, 0)`, OWNER, pinned, NEWER);
+      // Queued by the old trigger and not yet drained when the deployment lands.
+      republish(sql, pinned, "v2");
+      republish(sql, unpinned, "v2");
+      expect(sql.exec(`SELECT resource_id, version FROM workspace_artifact_updates`).toArray())
+        .toEqual([{ resource_id: pinned, version: 2 }]);
+    });
+
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS, component: "workspace_do",
+        workerVersionId: "with-version-ledger", now: 2,
+      });
+      const sql = state.storage.sql;
+      expect(sql.exec(`SELECT name FROM sqlite_schema WHERE name IN
+          ('workspace_artifact_updates', 'resource_versions_queue_artifact_update')`).toArray()).toEqual([]);
+      republish(sql, unpinned, "v3");
+      expect(drainResourceVersionChanges(sql)).toEqual([
+        { resourceId: pinned, version: 2, cause: "published" },
+        { resourceId: unpinned, version: 3, cause: "published" },
+      ]);
       expect(sql.exec("PRAGMA foreign_key_check").toArray()).toEqual([]);
     });
   });

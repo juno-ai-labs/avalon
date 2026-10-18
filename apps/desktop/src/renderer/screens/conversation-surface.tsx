@@ -60,7 +60,6 @@ import { RelativeTime } from '../components/relative-time';
 import { BreakoutOrigin, breakoutOriginMessages, originExcerpt } from '../components/breakout-origin';
 import { formatDateTime } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
-import { POPPED_OUT_ARTIFACT_REFRESHES, refreshPoppedOutArtifacts } from '../lib/popped-out-artifacts';
 import { layoutKey, readArtifactPanel, writeLayout } from '../lib/desktop-layout';
 import {
   currentSurfaceEntrypoint,
@@ -1765,30 +1764,9 @@ export function ConversationSurface({
     setPanel(null);
     closeOwnRail();
   }, [resourcePanel, closeOwnRail, id, routedDetail, workstreamContext]);
-  useEffect(() => {
-    if (!routedDetail) return;
-    const controller = new AbortController();
-    // The socket advances `currentVersion` on the canonical resource. Inline
-    // previews observe the same value directly; detached windows report the
-    // version they still show so we only authorize and transfer newer bytes.
-    const resources = [
-      ...routedDetail.resources,
-      ...(workstreamContext?.id === id ? workstreamContext.resources : []),
-    ];
-    void refreshPoppedOutArtifacts({
-      bridge: desktopBridge(),
-      inFlight: POPPED_OUT_ARTIFACT_REFRESHES,
-      loadResourceContent,
-      ...(siteArtifacts ? { openSiteArtifact: siteArtifacts.openArtifact } : {}),
-      resources,
-      signal: controller.signal,
-    }).catch(() => {
-      // Inline preview failure presentation owns the user-visible state. A
-      // detached window safely remains on its last complete version and the
-      // next canonical version signal retries it.
-    });
-    return () => controller.abort();
-  }, [id, loadResourceContent, routedDetail?.resources, siteArtifacts, workstreamContext?.id, workstreamContext?.resources]);
+  // Popped-out windows follow new versions from the app shell
+  // (`App.tsx`), which reads every version this conversation's socket carries
+  // through `followResourceHeads`.
   // Attaching always targets the Channel's main conversation, from any breakout.
   const attachResource = useMutation({
     mutationFn: (resource: WorkstreamResource) => api!.attachResource(id, resource.id),

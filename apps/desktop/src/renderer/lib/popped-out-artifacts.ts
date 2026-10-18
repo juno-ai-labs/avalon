@@ -47,13 +47,6 @@ export async function restorePoppedOutArtifacts(input: {
   }));
 }
 
-/**
- * The refreshes in flight in this window, by resource and version. One set
- * for every caller, so the app shell and an open conversation that both learn
- * of a version transfer its bytes once.
- */
-export const POPPED_OUT_ARTIFACT_REFRESHES = new Set<string>();
-
 export interface RefreshPoppedOutArtifactsInput {
   bridge: Pick<
     RallyDesktopBridge,
