@@ -63,6 +63,8 @@ export interface ArtifactViewHandle {
    * `loadArtifactDocument`.
    */
   load(url: string): Promise<boolean>;
+  /** The page as painted now, as an image data URL, or `null` when nothing is painted. */
+  capture(): Promise<string | null>;
   close(): void;
 }
 
@@ -622,6 +624,15 @@ export class ArtifactPreviewController {
   setOverlayOpen(open: boolean): void {
     this.hiddenByOverlay = open;
     this.applyBounds();
+  }
+
+  /** A still of the live page, for the pane while an overlay hides the view. */
+  async snapshot(): Promise<string | null> {
+    const view = this.view;
+    // A view still loading is hidden behind the rail's "Opening…": nothing of
+    // the site is on screen to stand in for.
+    if (!view || view.destroyed() || this.hiddenByOverlay || this.pendingLoad?.view === view) return null;
+    return await view.capture();
   }
 
   destroy(): void {
