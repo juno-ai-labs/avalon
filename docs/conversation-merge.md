@@ -329,9 +329,11 @@ more than keeping a private Channel's name hidden.
 
 **What changed:** The composer's merge mode is gone. `MergeResponseCard`
 (`packages/ui`) is the merge as the parent will draw it, made editable: the
-source's mark and name, "merged by" and the person, the words in a text box,
-the embeds the words cite as removable pills, then the audience line, the
-target pill, the hint and Cancel and Merge. It opens where the merge was asked
+tag line "Merge, as {parent} will see it", the source's mark and name,
+"merged by" and the person, the words in a text box, the embeds the words cite
+as removable cards, the audience line, then a footer with the target pill, the
+hint, Cancel and Merge. A solid card where the chip is dashed: this one is
+about to exist. It opens where the merge was asked
 for: under a turn from a suggestion or that turn's Merge hover action, and at
 the end of the feed, above the composer, from the title menu. Enter merges,
 Shift+Enter breaks a line, Esc cancels; the route, the admission and the kept

@@ -12,16 +12,17 @@ import type { ReactNode } from 'react';
  * the action; and a dismiss. Nothing posts or starts without the person: the
  * action opens the response card or the launch pane to edit first.
  */
-export const SUGGESTION_EXCERPT_CHARACTERS = 96;
+export const SUGGESTION_EXCERPT_CHARACTERS = 72;
 
 /**
  * The excerpt line, cut by characters rather than by CSS: the first
  * {@link SUGGESTION_EXCERPT_CHARACTERS} of the words, a trailing space
  * dropped, an ellipsis appended, so the closing quote follows the ellipsis
  * directly. CSS truncation leaves up to a glyph of blank between the ellipsis
- * and whatever comes after it, which is why it is not used here. The budget is
- * about a line of the chip at its widest; the line wraps rather than clips
- * when the pane is narrower (design.md, "The client").
+ * and whatever comes after it, which is why it is not used here. The line
+ * keeps `white-space: nowrap` with `overflow: hidden` as a guard for a narrow
+ * pane; the budget is what fits one line of the chip at the narrowest pane
+ * the desktop lays out (design.md, "The client").
  */
 export function suggestionExcerpt(text: string): string {
   const firstLine = text.split('\n').map((line) => line.trim()).find((line) => line.length > 0) ?? '';
@@ -48,20 +49,21 @@ export function SuggestionChip({ action, excerpt, kind, label, onDismiss, pendin
   const Icon = kind === 'merge_up' ? IconCornerUpLeft : IconCornerDownRight;
   return (
     <div aria-label={label} className={clsx('suggestion-chip', kind === 'merge_up' ? 'is-merge' : 'is-breakout')} role="group">
-      <div className="suggestion-chip-head">
-        <span aria-hidden="true" className="suggestion-chip-mark"><Icon size={13} stroke={1.9} /></span>
-        <span className="suggestion-chip-title">{title}</span>
-        <button aria-label="Dismiss suggestion" className="suggestion-chip-dismiss" onClick={onDismiss} type="button">
-          <IconX aria-hidden="true" size={13} stroke={2} />
-        </button>
+      <div className="suggestion-chip-text">
+        <span className="suggestion-chip-title"><Icon aria-hidden="true" size={13} stroke={1.9} />{title}</span>
+        <p className="suggestion-chip-sentence">{sentence}</p>
+        {pending
+          ? <span aria-label="Rally is drafting the words" className="suggestion-chip-excerpt is-pending" role="status">
+              <span aria-hidden="true">“</span><span className="skeleton-bar" /><span aria-hidden="true">”</span>
+            </span>
+          : excerpt !== null && <p className="suggestion-chip-excerpt">{excerpt}</p>}
       </div>
-      <p className="suggestion-chip-sentence">{sentence}</p>
-      {pending
-        ? <span aria-label="Rally is drafting the words" className="suggestion-chip-excerpt is-pending" role="status"><span className="skeleton-bar" /></span>
-        : excerpt !== null && <p className="suggestion-chip-excerpt">{excerpt}</p>}
-      <div className="suggestion-chip-actions">
+      <div className="suggestion-chip-controls">
         <button className="suggestion-chip-action" disabled={pending} onClick={action.onAct} type="button">
-          <Icon aria-hidden="true" size={13} stroke={2} />{action.label}
+          <Icon aria-hidden="true" size={12} stroke={2} />{action.label}
+        </button>
+        <button aria-label="Dismiss suggestion" className="suggestion-chip-dismiss" onClick={onDismiss} type="button">
+          <IconX aria-hidden="true" size={12} stroke={2} />
         </button>
       </div>
     </div>

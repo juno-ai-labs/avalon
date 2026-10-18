@@ -1,6 +1,6 @@
 import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, type WorkspaceInvitee } from '@rally/contracts';
 import type { AgentModelOverride } from '../lib/agent-models';
-import { X } from 'lucide-react';
+import { Pencil, X } from 'lucide-react';
 import { IconCornerDownRight } from '@tabler/icons-react';
 import {
   useEffect, type ReactNode, useRef, useState } from 'react';
@@ -179,6 +179,8 @@ export function SubstreamLaunchSurface({
   // typed here is not overwritten. The composer mounts after the write so it
   // hydrates the seeded words (docs/conversation-suggestions.md).
   const [draftSeeded, setDraftSeeded] = useState(!draft.initialDraft);
+  // The notice saying the words are Rally's stands until the person edits them.
+  const [draftedNotice, setDraftedNotice] = useState(Boolean(draft.initialDraft));
   useEffect(() => {
     if (!draft.initialDraft) return;
     let cancelled = false;
@@ -384,7 +386,9 @@ export function SubstreamLaunchSurface({
           members={members}
           {...(invitees ? { invitees } : {})}
           model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
+          {...(draftedNotice ? { notice: <><Pencil aria-hidden="true" size={13} />Drafted by Rally from this thread. Edit it, then start.</> } : {})}
           onAttach={attachmentDraft.addFiles}
+          onDraftChange={(value) => { if (value !== draft.initialDraft) setDraftedNotice(false); }}
           onOpenAttachment={onOpenAttachment}
           onRemoveAttachment={attachmentDraft.removeAttachment}
           onRetryAttachment={attachmentDraft.retryAttachment}

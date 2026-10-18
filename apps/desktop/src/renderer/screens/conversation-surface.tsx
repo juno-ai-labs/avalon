@@ -3277,7 +3277,8 @@ export function ConversationSurface({
         onDismiss={() => dismissSuggestion(suggestion)}
         pending={pending}
         sentence={<>This might be a good time to merge this back into <strong>{mergeTargetName}</strong>.</>}
-        title={<>Merge to <strong>{mergeTargetName}</strong></>}
+        title={<>Merge to <strong>{mergeTargetName}</strong>{merge?.kind === 'channel' && merge.channels.length > 1
+          && <IconChevronDown aria-hidden="true" className="suggestion-chip-caret" size={11} stroke={2} />}</>}
       />);
     } else {
       afterTurn.set(suggestion.judgedTurnId, <SuggestionChip
@@ -3323,6 +3324,7 @@ export function ConversationSurface({
     quote={merge.kind === 'channel' ? ((visibleTranscript.find((message) => message.authorType === 'human' && message.text)?.text ?? '').split('\n')[0] ?? null) : null}
     source={{ mark: <IconCornerDownRight aria-hidden="true" size={10} stroke={2} />, title: displayedDetail.title }}
     submitting={merging}
+    targetName={mergeTargetName ?? ''}
     targetPill={<MergeTargetPill
       channelId={mergeChannel?.id ?? null}
       label={merge.kind === 'thread' ? 'Merge to thread' : `Merge to ${mergeChannel?.name ?? ''}`}

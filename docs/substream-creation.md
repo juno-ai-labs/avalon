@@ -586,7 +586,9 @@ substitute for real-provider latency or window-level acceptance.
 **What changed:** `ConversationSubstreamLaunch` and `SubstreamDraft` gained
 `initialDraft`: a drafted opening prompt the launch pane writes once into its
 draft key when it opens, over an empty draft only, and mounts the composer
-after the write so it hydrates the words. `captureInitialSubstreamContext`
+after the write so it hydrates the words, with the composer's notice saying
+"Drafted by Rally from this thread. Edit it, then start." until the words are
+edited. `captureInitialSubstreamContext`
 resolves an open `start_breakout` suggestion on the cutoff turn as accepted.
 Both come from [`conversation-suggestions.md`](conversation-suggestions.md).
 
