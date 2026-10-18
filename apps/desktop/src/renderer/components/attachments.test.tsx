@@ -2,7 +2,9 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { cleanup, fireEvent, render as renderBare, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MessageAttachment } from '../lib/types';
+import { pastedTextFile } from '../lib/pasted-text';
+import type { MessageAttachment, WorkstreamResource } from '../lib/types';
+import type { PendingAttachment } from '../lib/use-file-attachments';
 import { AttachmentLightbox } from './attachment-lightbox';
 import { type AttachmentPreview, MessageAttachments, PendingAttachmentTile } from './attachments';
 
@@ -134,6 +136,30 @@ describe('attachment presentation', () => {
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ name: 'complete image name.png', src: 'blob:local-image' }));
     fireEvent.click(screen.getByRole('button', { name: 'Remove complete image name.png' }));
     expect(onRemove).toHaveBeenCalledOnce();
+  });
+
+  it('holds a long paste in a skeleton until the API has typed and named it', () => {
+    const file = pastedTextFile('# Q4 hiring plan', '2026-10-18 at 17.10.00', 1);
+    const tile = (attachment: Partial<PendingAttachment>) => <PendingAttachmentTile
+      attachment={{ localId: 'draft-paste', file, progress: 99, status: 'uploading', ...attachment }}
+      onOpen={vi.fn()}
+      onRemove={vi.fn()}
+      onRetry={vi.fn()}
+    />;
+    const { rerender } = render(tile({}));
+
+    expect(screen.getByRole('status', { name: 'Preparing pasted text' })).toBeVisible();
+    expect(screen.queryByText(/Pasted text/u)).toBeNull();
+    expect(screen.queryByRole('progressbar')).toBeNull();
+
+    rerender(<Tooltip.Provider>{tile({
+      progress: 100,
+      status: 'ready',
+      resource: { id: 'draft-paste', title: 'Q4 Hiring Plan.md', mimeType: 'text/markdown' } as WorkstreamResource,
+    })}</Tooltip.Provider>);
+
+    expect(screen.queryByRole('status', { name: 'Preparing pasted text' })).toBeNull();
+    expect(screen.getByTitle('Q4 Hiring Plan.md')).toBeVisible();
   });
 
   it('shows pending video as a media tile and opens the local preview', () => {

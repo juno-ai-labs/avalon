@@ -35,6 +35,7 @@ import { withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { listedResourceVisibilitySql } from './resource-listing';
 import { putStagedResourceObject, releaseStagedResourceObject } from "./resource-object-cleanup";
+import { preparePastedText } from "./pasted-text-service";
 import { allocateResourceSlugBesideCreation } from "./resource-slug";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
@@ -200,7 +201,8 @@ export class ResourceService {
   }
 
   async upload(file: File, title: string | undefined, draftId: string,
-    importIdentity?: { operationId: string; sourceRole: "user" | "assistant"; sourceKind: "attachment" | "artifact"; fileIndex: string }) {
+    importIdentity?: { operationId: string; sourceRole: "user" | "assistant"; sourceKind: "attachment" | "artifact"; fileIndex: string },
+    pastedText = false) {
     const maxBytes = numericEnv(this.env, "MAX_ATTACHMENT_BYTES", 25_000_000);
     if (file.size === 0) throw new ApiError(422, "attachment_empty", "Empty files cannot be attached");
     if (file.size > maxBytes) throw new ApiError(413, "attachment_too_large", `Attachments may not exceed ${maxBytes} bytes`);
@@ -222,6 +224,12 @@ export class ResourceService {
         && metadata['declaredMimeType'] === truncateUtf16Safe(file.type || 'application/octet-stream', 160)
         && JSON.stringify(metadata['importIdentity']) === JSON.stringify(importIdentity)) return this.get(id);
       throw new ApiError(409, "attachment_draft_exists", "This attachment draft already exists");
+    }
+    // Typed and named only once the upload is known to be new and in bounds,
+    // so an empty, oversized or repeated paste never pays for a model call.
+    // The text is unchanged, so the bytes and hash above still describe it.
+    if (pastedText) {
+      file = await preparePastedText(this.env, { workspaceId: this.auth.workspaceId, userId: this.auth.userId, file });
     }
     const declaredMimeType = truncateUtf16Safe(file.type || "application/octet-stream", 160);
     const verifiedMimeType = verifyAttachmentMimeType(bytes, file.name, declaredMimeType);

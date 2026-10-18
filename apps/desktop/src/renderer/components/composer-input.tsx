@@ -38,6 +38,7 @@ import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { appendDictationTranscript, type RealtimeDictationApi, useRealtimeDictation } from '../lib/use-realtime-dictation';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useFilePaste } from '../lib/use-file-paste';
+import { MAX_ATTACHMENTS } from '../lib/attachment-limits';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import { type AttachmentPreview, PendingAttachmentTile } from './attachments';
 import { IconButton, InlineError, Tip } from './primitives';
@@ -332,7 +333,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   useEffect(() => {
     if (!debugEnabled && modelOverrideValue !== null) releaseModelOverride?.(null);
   }, [debugEnabled, modelOverrideValue, releaseModelOverride]);
-  const paste = useFilePaste(attachFiles, submitting || !onAttach);
+  const paste = useFilePaste(attachFiles, submitting || !onAttach, attachments.length < MAX_ATTACHMENTS);
   // An IME's in-flight text never reaches `value`, so the highlight layer steps
   // aside and lets the textarea paint itself until the composition commits.
   const [composing, setComposing] = useState(false);
