@@ -235,6 +235,26 @@ describe('the suggestion chip', () => {
     })));
   });
 
+  it('a note that mentions somebody not in the personal Thread asks first, then merges with them added', async () => {
+    api.getWorkspaceMembers.mockResolvedValue([
+      { id: 'member', name: 'Morgan', email: 'morgan@example.test', status: 'active', role: 'owner', accessClass: 'member', timezone: 'UTC' },
+      { id: 'priya', name: 'Priya', email: 'priya@example.test', status: 'active', role: 'member', accessClass: 'member', timezone: 'UTC' },
+    ]);
+    api.mergeConversation.mockResolvedValue({ mergedInto: { kind: 'thread', id: threadId, title: 'Pricing' }, messageId: 'm1', replayed: false, sharedResourceIds: [] });
+    renderBreakout(twoTurns, [suggestion()]);
+    const chip = await screen.findByRole('group', { name: 'Suggestion: merge to Pricing' });
+    fireEvent.click(within(chip).getByRole('button', { name: 'Merge' }));
+    const card = await screen.findByRole('article', { name: 'Merge to Pricing' });
+    fireEvent.change(within(card).getByRole('textbox', { name: 'Merge note' }), { target: { value: '@Priya the discount stays.' } });
+    fireEvent.click(within(card).getByRole('button', { name: 'Merge' }));
+    await screen.findByText('Add participant?');
+    expect(api.mergeConversation).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Add and merge' }));
+    await waitFor(() => expect(api.mergeConversation).toHaveBeenCalledWith(threadId, expect.objectContaining({
+      body: '@Priya the discount stays.', breakoutId, confirmedParticipantUserIds: ['priya'],
+    })));
+  });
+
   it('the Merge hover action opens the same card under its turn, prefilled with the turn\'s words', async () => {
     renderBreakout(twoTurns, []);
     const judgedRow = (await screen.findByText(judged)).closest('[data-arrival-id]') as HTMLElement;
