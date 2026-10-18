@@ -93,6 +93,10 @@ import {
 import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
 import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { uuidV7 } from "../lib/uuid-v7";
+import { ConversationSuggestionStorage, observeTurnDisposition, suggestionForClient, type SuggestionParent, type SuggestionRow } from "./conversation-suggestions";
+import { createClassifierDiagnosticSink } from "../services/classifier-diagnostics";
+import { createIdentityObjectPort } from "../runtime/identity-port";
+import { draftSuggestion } from "../services/suggestion-draft-service";
 import {
   HarnessRunMetricsSchema,
   recordHarnessRunObservation,
@@ -294,6 +298,18 @@ function isAppendedMessageOutcome(
     && typeof candidate.sequenceNumber === "number";
 }
 
+/** The merge marker's who, when an appended system row is one; null for any other row. */
+function mergedIntoMarker(structuredContentJson: string | null | undefined): { mergedByUserId: string | null } | null {
+  if (!structuredContentJson) return null;
+  try {
+    const parsed = JSON.parse(structuredContentJson) as { type?: unknown; mergedByUserId?: unknown };
+    if (parsed.type !== "conversation_merged_into") return null;
+    return { mergedByUserId: typeof parsed.mergedByUserId === "string" ? parsed.mergedByUserId : null };
+  } catch {
+    return null;
+  }
+}
+
 function isPersistedElicitationOutcome(value: unknown): boolean {
   if (value === null || typeof value !== "object") return false;
   const outcome = (value as Record<string, unknown>).outcome;
@@ -487,6 +503,10 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   productOperation({ operation: z.literal("update"), input: UpdateWorkstreamRequestSchema }),
   productOperation({ operation: z.literal("acknowledge_read"), input: AcknowledgeWorkstreamReadRequestSchema }),
   productOperation({ operation: z.literal("mark_unread") }),
+  // A person dismissing a suggestion: admitted as a read of the conversation,
+  // since it records a choice about a line only readers see and changes
+  // nothing in the transcript. `docs/conversation-suggestions.md`.
+  productOperation({ operation: z.literal("dismiss_suggestion"), suggestionId: IdSchema }),
   productOperation({ operation: z.literal("create_message"),
     input: WorkstreamObjectCreateMessageInputSchema }),
   productOperation({ operation: z.literal("import_source_get") }),
@@ -1005,6 +1025,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private loop!: SubstreamLoopStorage;
   private resources!: WorkstreamResourceStorage;
   private identityRows!: WorkstreamIdentityStorage;
+  private suggestions!: ConversationSuggestionStorage;
   private harnessRuns!: WorkstreamHarnessRunStorage;
   private desktopActions!: WorkstreamDesktopActionStorage;
   /**
@@ -1111,6 +1132,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.messages = new WorkstreamMessageStorage(state.storage);
       this.resources = new WorkstreamResourceStorage(state.storage);
       this.identityRows = new WorkstreamIdentityStorage(state.storage);
+      this.suggestions = new ConversationSuggestionStorage(state.storage.sql);
       this.harnessRuns = new WorkstreamHarnessRunStorage(state.storage);
       this.desktopActions = new WorkstreamDesktopActionStorage(state.storage);
       await this.objectStore.waitUntilReady();
@@ -2442,9 +2464,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (!authorization.authorized || authorization.archived || !operation
       || operation.creatorUserId !== input.userId
       || operation.sourceThroughTurnId !== input.throughTurnId) throw new Error("substream_capture_forbidden");
-    return this.transcript.captureSubstreamContext({
+    const capture = this.transcript.captureSubstreamContext({
       operationId: input.operationId, source, throughTurnId: input.throughTurnId,
     });
+    if (input.throughTurnId !== null) {
+      // The Breakout a suggestion asked for is being made from its turn: taken.
+      const resolved = this.state.storage.transactionSync(() =>
+        this.suggestions.resolveBreakoutAt(input.throughTurnId!, input.userId, Date.now()));
+      if (resolved) await this.publishSuggestionChanged(resolved);
+    }
+    return capture;
   }
 
   /** Provisioned by the coordinator, seeded from the parent's durable receipt, never client text. */
@@ -2888,11 +2917,19 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const preparedMessage = parsedAppendInput
       ? await this.messages.prepareMessage(parsedAppendInput)
       : null;
+    const mergeMarker = parsedAppendInput ? mergedIntoMarker(parsedAppendInput.structuredContentJson) : null;
+    const resolvedSuggestions: SuggestionRow[] = [];
     const value = mutates
       ? await this.product.commitRuntimeMutation(
         () => {
           if (preparedMessage && parsedAppendInput) {
-            return this.messages.appendPreparedMessage(preparedMessage);
+            const appended = this.messages.appendPreparedMessage(preparedMessage);
+            // The marker says this conversation's result was carried up: an
+            // open merge suggestion on a turn at or before it was taken.
+            if (mergeMarker && appended.outcome === "appended") {
+              resolvedSuggestions.push(...this.suggestions.resolveMergedThrough(appended.sequenceNumber, mergeMarker.mergedByUserId, Date.now()));
+            }
+            return appended;
           }
           return method.apply(this.messages, parsed.data.args);
         },
@@ -2901,6 +2938,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       : method.apply(this.messages, parsed.data.args);
     if (preparedMessage && isAppendedMessageOutcome(value)) {
       await this.flushSemanticRealtimeOutboxBestEffort();
+      for (const row of resolvedSuggestions) await this.publishSuggestionChanged(row);
+      await this.expireSuggestionsBestEffort();
     }
     return { status: 200, payload: { ok: true, value: value ?? null } };
   }
@@ -3511,6 +3550,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
       if (request.operation === "mark_unread") {
         return jsonResponse(await this.product.markUnread(current));
+      }
+      if (request.operation === "dismiss_suggestion") {
+        await this.product.authorize(current);
+        const existing = this.suggestions.byId(request.suggestionId);
+        if (!existing) return jsonResponse({ error: "suggestion_not_found" }, 404);
+        const dismissed = this.state.storage.transactionSync(() =>
+          this.suggestions.dismiss(request.suggestionId, current.userId, Date.now()));
+        if (dismissed) await this.publishSuggestionChanged(dismissed);
+        const row = dismissed ?? existing;
+        return jsonResponse({ suggestionId: row.suggestion_id, status: row.status, replayed: dismissed === null });
       }
       if (request.operation === "create_message") {
         const { replayed, ...receipt } = await this.admitMessage(sender, request.input, span);
@@ -5575,8 +5624,165 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           });
         });
       }
+      // Last, so it reads the freshest purpose and delays nothing in front of
+      // it: does this turn call for carrying up or breaking out? One JEV
+      // call behind gates that are each cheaper than it; never throws.
+      await this.observeTurnDispositionStep(executionEnv, input, outcome);
     }
     return canvaCleanupDiagnostic ?? settlementDiagnosticCode;
+  }
+
+  /**
+   * The turn-disposition observer: the design's settlement step, as one call
+   * that cannot fail settlement. Expires suggestions the newest-three rule has
+   * retired, judges the final turn, writes and publishes a row for a confident
+   * positive, then asks the drafter for the words and publishes again. A
+   * retry that finds a `pending` row resumes at the draft without judging.
+   * `docs/conversation-suggestions.md` owns the lifecycle.
+   */
+  private async observeTurnDispositionStep(
+    executionEnv: Env,
+    input: WorkstreamWorkflowInput,
+    outcome: AgentTerminalOutcome,
+  ): Promise<void> {
+    const substreamId = input.substreamId ?? "0";
+    try {
+      await this.expireSuggestionsBestEffort();
+      const traceId = uuidV7(Date.now());
+      const sink = createClassifierDiagnosticSink(executionEnv, {
+        role: "turn_disposition_classifier",
+        workspaceId: input.workspaceId,
+        workstreamId: input.parentId,
+        traceId,
+        defer: (promise) => this.state.waitUntil(promise),
+      });
+      const identityRow = this.identityRows.identity();
+      const observation = await observeTurnDisposition({
+        env: executionEnv,
+        storage: this.suggestions,
+        workspaceId: input.workspaceId,
+        workstreamId: input.parentId,
+        substreamId,
+        runId: input.harnessRunId,
+        finalTurnId: outcome.finalTurnId ?? null,
+        completed: outcome.status === "completed",
+        backgroundAgent: input.backgroundAgent !== undefined,
+        identity: identityRow
+          ? { title: identityRow.title, description: identityRow.description, scope: identityRow.scope,
+              archived_at: identityRow.archived_at, system_kind: identityRow.system_kind }
+          : null,
+        readParent: () => this.readSuggestionParent(executionEnv, input.workspaceId, input.parentId, substreamId),
+        onDiagnostic: sink.record,
+        traceId,
+        now: () => Date.now(),
+        newId: () => uuidV7(Date.now()),
+        commit: (mutate) => this.state.storage.transactionSync(mutate),
+      });
+      logInfo(executionEnv, "turn_disposition_outcome", {
+        workspace_id: input.workspaceId,
+        workstream_id: input.parentId,
+        substream_id: substreamId,
+        harness_run_id: input.harnessRunId,
+        trace_id: traceId,
+        outcome: observation.outcome,
+        ...(observation.outcome === "skipped" ? { gate: observation.gate } : {}),
+        ...(observation.outcome === "judged"
+          ? { code: observation.code, confidence: observation.confidence, model: observation.model,
+              suggestion_kind: observation.suggestion?.kind ?? null }
+          : {}),
+      });
+      const row = observation.outcome === "judged" ? observation.suggestion
+        : observation.outcome === "resumed" ? observation.suggestion
+        : null;
+      if (!row) return;
+      if (observation.outcome === "judged") await this.publishSuggestionChanged(row);
+      await this.draftSuggestionWords(executionEnv, input, substreamId, row);
+    } catch (error) {
+      logWarn(executionEnv, "turn_disposition_step_failed", {
+        workspace_id: input.workspaceId,
+        workstream_id: input.parentId,
+        substream_id: substreamId,
+        harness_run_id: input.harnessRunId,
+        reason: diagnosticErrorCode(error, "turn_disposition_step_failed"),
+      });
+    }
+  }
+
+  /** The two-phase write's second phase: the words, then the row filled or withdrawn, then the event. */
+  private async draftSuggestionWords(
+    executionEnv: Env,
+    input: WorkstreamWorkflowInput,
+    substreamId: string,
+    row: SuggestionRow,
+  ): Promise<void> {
+    const judged = this.suggestions.turn(row.judged_turn_id);
+    const draft = judged
+      ? await draftSuggestion(executionEnv, {
+        workspaceId: input.workspaceId,
+        workstreamId: input.parentId,
+        substreamId,
+        kind: row.kind,
+        judgedText: judged.content ?? "",
+        purpose: this.identityRows.identity()?.description ?? "",
+        title: this.identityRows.identity()?.title ?? "",
+        parentTitle: row.target_title,
+        recent: this.suggestions.readableBefore(judged.sequence_number, 3).reverse()
+          .map((turn) => ({ author: turn.author_type === "agent" ? "rally" as const : "person" as const, text: turn.content ?? "" })),
+        defer: (promise) => this.state.waitUntil(promise),
+      })
+      : null;
+    const updated = this.state.storage.transactionSync(() => this.suggestions.setDraft(row.suggestion_id, draft));
+    if (updated) await this.publishSuggestionChanged(updated);
+  }
+
+  /** The parent as the classifier and the chip name it: the Thread above a Breakout, the Channel a Thread would merge into. */
+  private async readSuggestionParent(
+    executionEnv: Env,
+    workspaceId: string,
+    workstreamId: string,
+    substreamId: string,
+  ): Promise<SuggestionParent | null> {
+    try {
+      if (substreamId !== "0") {
+        const thread = await createIdentityObjectPort(executionEnv, workspaceId, workstreamId, undefined, "0").identity();
+        if (!thread) return null;
+        return { kind: "thread", id: workstreamId, title: thread.title, purpose: thread.description.trim() || undefined };
+      }
+      const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
+        workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId)));
+      const placement = await parent.threadMergePlacement({ workspaceId: asWorkspaceId(workspaceId), workstreamId: asWorkstreamId(workstreamId) });
+      return placement.ok ? { kind: "channel", id: placement.spaceId, title: placement.title, purpose: undefined } : null;
+    } catch (error) {
+      logWarn(executionEnv, "turn_disposition_parent_read_failed", {
+        workspace_id: workspaceId, workstream_id: workstreamId, substream_id: substreamId,
+        reason: diagnosticErrorCode(error, "turn_disposition_parent_read_failed"),
+      });
+      return null;
+    }
+  }
+
+  /** The newest-three rule, recorded: run on each admitted message and each judgement. */
+  private async expireSuggestionsBestEffort(): Promise<void> {
+    try {
+      const expired = this.state.storage.transactionSync(() => this.suggestions.expireBehindNewest(Date.now()));
+      for (const row of expired) await this.publishSuggestionChanged(row);
+    } catch (error) {
+      logWarn(this.env, "conversation_suggestion_expiry_failed", {
+        workstream_id: this.objectStore.identity()?.parentId,
+        reason: diagnosticErrorCode(error, "conversation_suggestion_expiry_failed"),
+      });
+    }
+  }
+
+  private async publishSuggestionChanged(row: SuggestionRow): Promise<void> {
+    await this.publishAgentRuntimeEvent({ type: "conversation_suggestion_changed", suggestion: suggestionForClient(row) })
+      .catch((error: unknown) => {
+        logWarn(this.env, "conversation_suggestion_publish_failed", {
+          workstream_id: this.objectStore.identity()?.parentId,
+          suggestion_id: row.suggestion_id,
+          reason: diagnosticErrorCode(error, "conversation_suggestion_publish_failed"),
+        });
+      });
   }
 
   /** Whether a run completed at least one send to another agent. A refused send is not a reply. */
@@ -6626,7 +6832,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         });
       }
     }
-    if (result.inserted) await this.flushSemanticRealtimeOutboxBestEffort();
+    if (result.inserted) {
+      await this.flushSemanticRealtimeOutboxBestEffort();
+      await this.expireSuggestionsBestEffort();
+    }
     span.setAttributes({ "rally.message.deduplicated": !result.inserted });
     return { turn: result.turn, deliveryState: result.deliveryState, replayed: !result.inserted };
   }
@@ -8295,6 +8504,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       activeInferenceDelays: workstream.harnessStatus === "running"
         ? this.objectStore.activeInferenceDelays().filter((delay) => delay.harnessRunId === workstream.latestHarnessRunId)
         : [],
+      suggestions: this.suggestions.open().map(suggestionForClient),
     }) as SocketSnapshotEvent;
     let event = snapshotEvent();
     let encodedBytes = textEncoder.encode(JSON.stringify(event)).byteLength;

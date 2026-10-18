@@ -117,6 +117,15 @@ export const MANAGED_MODELS = [
     description: 'Drives the person\'s desktop browser (page script, page outline, screenshots, input) to read a ChatGPT or Claude conversation and its files into a new Channel. Must accept images.',
     defaultRouting: { model: 'openai/gpt-6.1-sol', fallbackModels: ['google/gemini-3.8-flash'] },
   },
+  {
+    rank: 8,
+    rankReason: 'Occasional · one call per confident suggestion',
+    role: 'suggestion_draft',
+    key: 'agent-model-suggestion-draft',
+    label: 'Suggestion draft',
+    description: 'Writes the words a conversation suggestion carries after the classifier has judged a settled turn worth carrying up or breaking out: a merge note for the parent readers, or a Breakout opening prompt and subject. Runs only on a confident positive, after the chip is shown.',
+    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.8-flash'] },
+  },
 ] as const satisfies readonly ManagedModelDefinition[];
 
 export const ManagedModelRoleSchema = z.enum(AGENT_MODEL_ROLES);

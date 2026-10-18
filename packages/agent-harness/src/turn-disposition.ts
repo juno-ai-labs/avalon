@@ -281,12 +281,15 @@ export const TurnDispositionAnswersSchema = z.object({
 });
 
 /**
- * The confidence a positive answer needs before a chip is written. Provisional:
- * the design reads this off the shadow sweep, and nothing here is gated on it
- * until the surface exists. The comparison is `>`, matching the other two
- * classifiers, so a confidence equal to it stays quiet.
+ * The confidence a positive answer needs before a chip is written. Read off
+ * the 2026-10-18 corpus sweep (`design.md`, "The first corpus evaluation"):
+ * carry-up F1 is flat from 0.5 to 0.7 while precision climbs from 68% to 80%
+ * and the suggestion rate on a person's messages falls from 7% to 5%, and
+ * the product owner's price list weighs a false line above a miss, so the
+ * upper end of the flat band is the one chosen. The comparison is `>`,
+ * matching the other two classifiers, so a confidence equal to it stays quiet.
  */
-export const TURN_DISPOSITION_CONFIDENCE_THRESHOLD = 0.5;
+export const TURN_DISPOSITION_CONFIDENCE_THRESHOLD = 0.6;
 
 /**
  * JEV's own deadline for this decision: three times the measured p95 of about

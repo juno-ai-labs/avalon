@@ -724,6 +724,10 @@ import {
   WorkspaceChannelMergeResultSchema,
   WorkspaceChannelMergeTargetRequestSchema,
   WorkspaceChannelMergeTargetResultSchema,
+  WorkspaceThreadMergePlacementRequestSchema,
+  WorkspaceThreadMergePlacementResultSchema,
+  type WorkspaceThreadMergePlacementRequest,
+  type WorkspaceThreadMergePlacementResult,
   WorkspaceChannelMessageRemoveRequestSchema,
   type WorkspaceChannelMergeRequest,
   type WorkspaceChannelMergeResult,
@@ -10756,6 +10760,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return WorkspaceChannelMergeTargetResultSchema.parse(
       this.spaceStorage().channelMergeTarget(member(request.auth.userId), request.workstreamId, request.spaceId),
     );
+  }
+
+  /**
+   * Where a thread's merge would land with nobody asking: its earliest active
+   * placement, the Channel `channelMergeTarget` picks for a person who can
+   * post there. The turn-disposition observer reads it from a thread's object
+   * to name the parent for the classifier and on the suggestion it writes; the
+   * merge itself still asks `channelMergeTarget` for the person who merges.
+   */
+  async threadMergePlacement(input: WorkspaceThreadMergePlacementRequest): Promise<WorkspaceThreadMergePlacementResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceThreadMergePlacementRequestSchema, input, "thread_merge_placement");
+    this.assertWorkspace(request.workspaceId);
+    return WorkspaceThreadMergePlacementResultSchema.parse(this.spaceStorage().threadMergePlacement(request.workstreamId));
   }
 
   /**
