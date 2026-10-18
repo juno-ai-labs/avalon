@@ -10,6 +10,7 @@ import {
   WorkspaceFeatureFlagsEventSchema,
   WorkspacePresenceEventSchema,
   WorkspaceReachChangedEventSchema,
+  WorkspaceResourceVersionsEventSchema,
   WorkspaceAccessRequestsEventSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceChannelRailsEventSchema,
@@ -72,6 +73,7 @@ import {
   ACTIVITY_QUERY_KEY,
   channelFeedQueryKey,
 } from './sidebar-list-store';
+import { applyResourceHeads } from './resource-heads';
 import { realtimeSocketTelemetry } from './socket-telemetry';
 import { reportTelemetryProductIntent, telemetryJourneyDuration, uuidV7 } from './telemetry';
 import type { WorkstreamSummary } from './types';
@@ -1252,6 +1254,13 @@ export function WorkspaceSocketProvider({
             void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
             return;
           }
+          const resourceVersions = safeParseSocketEvent(WorkspaceResourceVersionsEventSchema, decoded);
+          if (resourceVersions.success) {
+            // A resource some conversation holds has a new version: every
+            // preview open on it moves to the new head.
+            applyResourceHeads(queryClient, resourceVersions.data.resources);
+            return;
+          }
           const spaceConversations = safeParseSocketEvent(
             WorkspaceSpaceConversationsEventSchema, decoded,
           );
@@ -1322,6 +1331,7 @@ export function WorkspaceSocketProvider({
               ['workspace_space_snapshot', 'space snapshot', spaceSnapshot],
               ['space_conversations_changed', 'space conversations nudge', spaceConversations],
               ['workspace_reach_changed', 'reach change', reachChanged],
+              ['workspace_resource_versions', 'resource versions', resourceVersions],
               ['workspace_access_requests', 'access requests', accessRequests],
               ['workspace_usage', 'usage', usage],
             ],

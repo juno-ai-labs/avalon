@@ -60,7 +60,7 @@ import { RelativeTime } from '../components/relative-time';
 import { BreakoutOrigin, breakoutOriginMessages, originExcerpt } from '../components/breakout-origin';
 import { formatDateTime } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
-import { refreshPoppedOutArtifacts } from '../lib/popped-out-artifacts';
+import { POPPED_OUT_ARTIFACT_REFRESHES, refreshPoppedOutArtifacts } from '../lib/popped-out-artifacts';
 import { layoutKey, readArtifactPanel, writeLayout } from '../lib/desktop-layout';
 import {
   currentSurfaceEntrypoint,
@@ -1493,7 +1493,6 @@ export function ConversationSurface({
   const restoredPanelKey = useRef<string | null>(null);
   const activeConversationAddressRef = useRef(conversationAddress);
   const pendingSendCount = useRef(0);
-  const poppedOutArtifactRefreshes = useRef(new Set<string>());
   // What the right panel holds. Every artifact and attachment this
   // conversation opens lands here rather than in a modal. Closing keeps the
   // occupant so the panel has something to draw while it fades out.
@@ -1778,7 +1777,7 @@ export function ConversationSurface({
     ];
     void refreshPoppedOutArtifacts({
       bridge: desktopBridge(),
-      inFlight: poppedOutArtifactRefreshes.current,
+      inFlight: POPPED_OUT_ARTIFACT_REFRESHES,
       loadResourceContent,
       ...(siteArtifacts ? { openSiteArtifact: siteArtifacts.openArtifact } : {}),
       resources,
