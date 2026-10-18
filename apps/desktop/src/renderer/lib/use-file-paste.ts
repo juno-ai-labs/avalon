@@ -131,12 +131,14 @@ function useNameSequence(): (key: string) => number {
 export function useFilePaste(
   onFiles: (files: File[]) => void,
   disabled = false,
+  /** False once the message holds all the files it can, so long text still pastes rather than vanishing. */
+  roomForText = true,
 ): (event: React.ClipboardEvent<HTMLElement>) => void {
   const nextOrdinal = useNameSequence();
   return useCallback((event: React.ClipboardEvent<HTMLElement>): void => {
     if (disabled) return;
-    claimPaste(event, onFiles, nextOrdinal, true);
-  }, [disabled, nextOrdinal, onFiles]);
+    claimPaste(event, onFiles, nextOrdinal, roomForText);
+  }, [disabled, nextOrdinal, onFiles, roomForText]);
 }
 
 /** A text surface handles its own paste, and a dialog owns everything inside it. */

@@ -11,8 +11,15 @@ import {
   createTestDurableObjectId,
   createTestEnv,
 } from "./helpers/cloudflare-test";
+import { runStructuredInference } from "../src/services/structured-inference";
 import { sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
+
+// The naming model cannot run here; a pasted upload's call is counted instead.
+vi.mock("../src/services/structured-inference", async (original) => ({
+  ...await original<object>(),
+  runStructuredInference: vi.fn(async () => { throw new Error("model unreachable"); }),
+}));
 
 const workspaceId = asWorkspaceId('00000000-0000-7000-8000-000000000001');
 const userId = asUserId('00000000-0000-7000-8000-000000000002');
@@ -188,6 +195,27 @@ describe('uploaded attachment drafts', () => {
     await reapDeletedResourceObjects(env, workspaceId);
     expect(stored).toHaveLength(0);
     await expect(service.get(draftId)).rejects.toMatchObject({ status: 404, code: 'resource_not_found' });
+  });
+
+  it('stores a long paste under its detected type, typed only once the draft is new', async () => {
+    const { database, env } = fixture({ async put() {}, async delete() {} }, { OPENROUTER_API_KEY: 'test-key' });
+    const naming = vi.mocked(runStructuredInference);
+    naming.mockClear();
+    const service = new ResourceService(env, auth);
+    const paste = () => new File(['# Launch plan\n\nShip it.'], 'Pasted text 2026-10-18 at 17.10.00.txt', { type: 'text/plain' });
+
+    const uploaded = await service.upload(paste(), undefined, draftId, undefined, true);
+
+    // The model is unreachable, so the stand-in stem stays under the detected type.
+    expect(uploaded).toMatchObject({ title: 'Pasted text 2026-10-18 at 17.10.00.md', mimeType: 'text/markdown' });
+    expect(database.prepare('SELECT title, mime_type FROM resources WHERE id = ?').get(draftId))
+      .toEqual({ title: 'Pasted text 2026-10-18 at 17.10.00.md', mime_type: 'text/markdown' });
+    expect(naming).toHaveBeenCalledOnce();
+
+    // A retry of a draft that already landed is refused before any model call.
+    await expect(service.upload(paste(), undefined, draftId, undefined, true))
+      .rejects.toMatchObject({ status: 409, code: 'attachment_draft_exists' });
+    expect(naming).toHaveBeenCalledOnce();
   });
 
   it('preserves uploaded bytes when the resource insert commits but its response is lost', async () => {

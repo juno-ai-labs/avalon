@@ -204,21 +204,12 @@ Radix's `disabled`, which would drop it from arrow-key focus, so a keyboard
 still reaches the tooltip that gives the reason. The Channel's composer uses it
 for **Import from Claude or ChatGPT** ([session import](session-import.md)).
 
-A paste into a composer that takes attachments attaches as a file once its
-copied text reaches `LONG_PASTE_CHARACTERS` (5,000 UTF-16 code units,
-`lib/pasted-text.ts`), instead of landing at the caret; shorter text pastes as
-before. The client does none of the deciding: it uploads the text as
-`Pasted text <date> at <time>.txt` with `pastedText=true`, and the tile shows a
-skeleton card until the upload returns. `POST /resources/upload` hands the file
-to `services/pasted-text-service.ts`, which picks the MIME type and extension
-with `lib/pasted-text-type.ts` (JSON that parses, HTML, XML, Markdown, TSV,
-CSV, else plain text; source code lands in plain text, since no cheap test
-tells languages apart), asks the naming model for a title (metered as
-`attachment_naming`), names the file `Pasted - <title>.<ext>`, and stores the
-rebuilt file. The tile then shows the
-resource's title and type. Naming that fails or has no model key keeps the
-stand-in stem under the detected extension. The window-level paste does not do
-this: text with no field to land in is left alone.
+A paste of `LONG_PASTE_CHARACTERS` or more (`lib/pasted-text.ts`) attaches
+as a file instead of landing at the caret, unless the message already holds
+all the files it can. The client uploads it as plain text with
+`pastedText=true` and shows a skeleton card; `ResourceService.upload` hands it
+to `services/pasted-text-service.ts`, which types and names it, and the tile
+then shows the resource's title and type.
 
 The run's Stop action is an icon after Send, sharing the microphone's circular
 neutral background, with a tooltip that explains the
