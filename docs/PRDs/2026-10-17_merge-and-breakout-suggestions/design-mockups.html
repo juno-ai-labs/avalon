@@ -261,10 +261,13 @@
       .schip .t b { font-weight: 600; color: var(--t); }
       .schip .d { font-size: 12px; line-height: 17px; color: var(--t3); }
       .schip .d i { font-style: normal; color: var(--t4); }
-      .schip .ex { display: flex; align-items: center; gap: 2px; font-size: 12px; color: var(--t4); min-width: 0; margin-top: 1px; }
-      .schip .ex .txt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+      /* The quotes share the text's baseline, as glyphs in a line do, and
+         hug it: no gap, the glyphs' own side bearings are the spacing. A
+         skeleton bar has no baseline, so it centres on the x-height instead. */
+      .schip .ex { display: flex; align-items: baseline; gap: 0; font-size: 12px; line-height: 17px; color: var(--t4); min-width: 0; margin-top: 1px; }
+      .schip .ex .txt { white-space: nowrap; overflow: hidden; min-width: 0; }
       .schip .ex .oq, .schip .ex .cq { flex: none; }
-      .schip .ex .sk { margin: 0 4px; }
+      .schip .ex .sk { align-self: center; margin: 0 3px; }
       .schip .ctl2 { display: flex; align-items: center; gap: 8px; flex: none; margin-top: 1px; }
       .schip .act { display: inline-flex; align-items: center; gap: 5px; color: var(--ok); font-weight: 600; background: var(--ok-wash); padding: 4px 10px 4px 8px; border-radius: 999px; font-size: 12px; white-space: nowrap; }
       .schip .act.v { color: var(--ink3); background: var(--tint3); }
@@ -309,8 +312,8 @@
       .mm .t16 { width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; background: var(--fill); color: var(--t3); }
       .mm .t16.o { background: var(--tint); color: var(--ink); }
       .mm .who { display: inline-flex; align-items: center; gap: 4px; }
-      .mq { display: flex; align-items: center; gap: 2px; max-width: 520px; font-size: 12.5px; color: var(--t4); min-width: 0; }
-      .mq .txt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+      .mq { display: flex; align-items: baseline; gap: 0; max-width: 520px; font-size: 12.5px; line-height: 18px; color: var(--t4); min-width: 0; }
+      .mq .txt { white-space: nowrap; overflow: hidden; min-width: 0; }
       .mq .oq, .mq .cq { flex: none; }
 
       /* the launch pane: the branched-from turn and what came before it,
@@ -420,7 +423,7 @@
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#bend" /></svg>Merge to <b>Cold Outreach</b></div>
                         <div class="d">This might be a good time to merge this back into <b>Cold Outreach</b>.</div>
-                        <div class="ex"><span class="oq">“</span><span class="txt">Sequence B now opens with the teardown offer. Four emails, each under 90 words; the second cites the founder's launch post.</span><span class="cq">”</span></div>
+                        <div class="ex"><span class="oq">“</span><span class="txt">Sequence B now opens with the teardown offer. Four emails, each under 90 words…</span><span class="cq">”</span></div>
                       </div>
                       <div class="ctl2"><span class="act"><svg class="i i12"><use href="#bend" /></svg>Merge</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                     </div>
@@ -486,7 +489,7 @@
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#brk" /></svg>Breakout: <b>Fund outreach</b></div>
                         <div class="d">Want to break this out?</div>
-                        <div class="ex"><span class="oq">“</span><span class="txt">Draft a cold-outreach sequence for seed funds: portfolio reach and a co-investment angle, four emails under 90 words, no teardown offer.</span><span class="cq">”</span></div>
+                        <div class="ex"><span class="oq">“</span><span class="txt">Draft a cold-outreach sequence for seed funds: portfolio reach and a co-investment…</span><span class="cq">”</span></div>
                       </div>
                       <div class="ctl2"><span class="act v"><svg class="i i12"><use href="#brk" /></svg>Start</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                     </div>
@@ -548,7 +551,7 @@
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#bend" /></svg>Merge to <b>Cold Outreach</b></div>
                         <div class="d">This might be a good time to merge this back into <b>Cold Outreach</b>.</div>
-                        <div class="ex"><span class="oq">“</span><span class="txt">Sequence B now opens with the teardown offer. Four emails, each under 90 words; the second cites the founder's launch post.</span><span class="cq">”</span></div>
+                        <div class="ex"><span class="oq">“</span><span class="txt">Sequence B now opens with the teardown offer. Four emails, each under 90 words…</span><span class="cq">”</span></div>
                       </div>
                       <div class="ctl2"><span class="act"><svg class="i i12"><use href="#bend" /></svg>Merge</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                     </div>
@@ -609,7 +612,7 @@
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#bend" /></svg>Merge to <b>GTM</b><svg class="i i11" style="color: var(--t4)"><use href="#cd" /></svg></div>
                         <div class="d">This might be a good time to merge this back into <b>GTM</b>.</div>
-                        <div class="ex"><span class="oq">“</span><span class="txt">After four days of back-and-forth, three sequences are final. The strongest opens with the founder's own launch post and asks for a 15-minute teardown.</span><span class="cq">”</span></div>
+                        <div class="ex"><span class="oq">“</span><span class="txt">After four days of back-and-forth, three sequences are final. The strongest…</span><span class="cq">”</span></div>
                       </div>
                       <div class="ctl2"><span class="act"><svg class="i i12"><use href="#bend" /></svg>Merge</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                     </div>
@@ -658,7 +661,7 @@
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#brk" /></svg>Breakout: <b>Starter tier</b></div>
                         <div class="d">Want to break this out?</div>
-                        <div class="ex"><span class="oq">“</span><span class="txt">Decide whether a Starter tier survives the $96 annual plan: pull the last two quarters of usage by tier, compare both competitors' entry plans, and recommend keep, fold into Team, or drop.</span><span class="cq">”</span></div>
+                        <div class="ex"><span class="oq">“</span><span class="txt">Decide whether a Starter tier survives the $96 annual plan: pull the last two…</span><span class="cq">”</span></div>
                       </div>
                       <div class="ctl2"><span class="act v"><svg class="i i12"><use href="#brk" /></svg>Start</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                     </div>
@@ -775,7 +778,7 @@
                   <div class="st">
                     <div class="t"><svg class="i i13"><use href="#brk" /></svg>Breakout: <b>Starter tier</b></div>
                     <div class="d">Want to break this out?</div>
-                    <div class="ex"><span class="oq">“</span><span class="txt">Decide whether a Starter tier survives the $96 annual plan: pull the last two quarters of usage by tier…</span><span class="cq">”</span></div>
+                    <div class="ex"><span class="oq">“</span><span class="txt">Decide whether a Starter tier survives the $96 annual plan…</span><span class="cq">”</span></div>
                   </div>
                   <div class="ctl2"><span class="act v"><svg class="i i12"><use href="#brk" /></svg>Start</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                 </div>
@@ -826,7 +829,7 @@
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#bend" /></svg>Merge to <b>Cold Outreach</b></div>
                         <div class="d">This might be a good time to merge this back into <b>Cold Outreach</b>.</div>
-                        <div class="ex"><span class="oq">“</span><span class="txt">Sequence B now opens with the teardown offer. Four emails, each under 90 words; the second cites the founder's launch post.</span><span class="cq">”</span></div>
+                        <div class="ex"><span class="oq">“</span><span class="txt">Sequence B now opens with the teardown offer. Four emails, each under 90 words…</span><span class="cq">”</span></div>
                       </div>
                       <div class="ctl2"><span class="act"><svg class="i i12"><use href="#bend" /></svg>Merge</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                     </div>
@@ -1021,7 +1024,7 @@
                     <div class="rcard">
                       <div class="rc-tag"><svg class="i i12"><use href="#bend" /></svg>Merge, as GTM will see it</div>
                       <div class="mm"><span class="src"><span class="t16 o"><svg class="i i9"><use href="#plane" /></svg></span>Cold Outreach</span>· merged by <span class="who"><span class="av s at">AT</span>Alex</span>· now</div>
-                      <div class="mq"><span class="oq">“</span><span class="txt">Pull together three cold-outreach sequences for seed-stage founders based on this video and our ICP doc…</span><span class="cq">”</span></div>
+                      <div class="mq"><span class="oq">“</span><span class="txt">Pull together three cold-outreach sequences for seed-stage founders…</span><span class="cq">”</span></div>
                       <div class="rc-body"><b>After four days of back-and-forth, three sequences are final.</b> The strongest opens with the founder's own launch post and asks for a 15-minute teardown rather than a demo. All three are in the document.<span class="caret"></span></div>
                       <div class="rc-embeds">
                         <div class="doc sm" style="max-width: 300px"><span class="ic"><svg class="i i16"><use href="#file" /></svg></span><span class="tx"><b>Outreach sequences</b></span><svg class="i i11 rm"><use href="#x" /></svg></div>
