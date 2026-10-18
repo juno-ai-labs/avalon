@@ -244,7 +244,7 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 **What changed:** `apps/browser/index.html` carries an inline rule that paints
 `html` and `body` `#070707` under `prefers-color-scheme: dark` while `html` has
-no `data-theme`.
+no `data-theme`, with the light canvas colour as its ink.
 
 **Why:** The stylesheet emits the light block on `:root` so the first frame is
 deterministic, and `installTheme` stamps `data-theme` only once the module
@@ -252,8 +252,7 @@ bundle has downloaded and run. The stylesheet is in the head and arrives first,
 so a dark phone painted the light canvas for as long as the bundle took. An iOS
 Home Screen app reloads whenever iOS has evicted it, and the service worker
 caches nothing, so on a phone network that showed as a white flash on most
-returns to the app. Reproduced in Chromium by holding the bundle back: the
-canvas read `#fcfcfc` in dark, and `#070707` with the rule.
+returns to the app.
 
 **Considered and rejected:** A blocking classic script in the head that reads
 the stored choice and stamps `data-theme` early. The CSP allows no inline
@@ -266,7 +265,9 @@ double the dark block.
 **Consequences:** A choice pinned against the phone (Dark on a light phone, or
 the reverse) still shows the phone's canvas until the bundle runs, as the
 `theme-color` pair already does. `#070707` is a fourth copy of the dark canvas
-and moves with `themeWindowBackground`. Not yet verified on a device.
+and moves with `themeWindowBackground`. The ink is there because with
+JavaScript off the stamp never comes, and the `<noscript>` notice would
+otherwise be the light theme's dark text on the dark canvas.
 
 ### 2026-10-17 — The status bar follows the canvas in an iOS Home Screen app
 
