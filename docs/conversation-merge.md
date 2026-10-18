@@ -59,9 +59,9 @@ The route, with `breakoutId`, runs in this order:
    mergedFrom: { breakoutId, title }, mergedByUserId, actingAgent }`. The
    title is the Breakout's, frozen at merge time, and left out of the
    admission's replay hash: a rename between a lost response and its retry
-   still replays. The request's `mentions` and `confirmedParticipantUserIds`
-   travel with it as with any message; the response card sends neither,
-   since its body is a plain text box (see "The client"). With `merge` present the
+   still replays. The `@` mentions typed in the note and the people confirmed
+   for a personal Thread travel with it as with any message (see "The
+   client"). With `merge` present the
    admission never classifies the message and never starts a run, whatever the
    room's size; the message still queues behind input waiting for Rally.
 
@@ -199,9 +199,11 @@ thread's Channel), "Enter to merge · Esc to cancel", **Cancel** and
 closes the card. The draft persists under the existing `…:merge` key until
 merged or cancelled. The composer below stays an ordinary composer: its merge
 mode is gone, and its `notice`, `toolsAccessory` and `submitContent` slots
-stay for other modes. The card's body is a plain text box, so a merge note
-carries no `@` mentions and runs no nonparticipant confirmation; a person who
-wants to mention someone does it in the Thread after the merge lands. Merge
+stay for other modes. The card's body is a plain text box without the
+composer's mention picker; an `@` mention typed in a Breakout merge note still
+resolves against the members the way a message's does (`api.mergeConversation`),
+and one that names somebody not yet in a personal Thread asks first, in the
+same dialog the composer shows, before the merge carries them in. Merge
 keeps one `clientMessageId` for the same words and target until it succeeds,
 so a send whose response was lost is retried as a replay; new words or a new
 target are a new merge. A merge that finishes after its card was cancelled
