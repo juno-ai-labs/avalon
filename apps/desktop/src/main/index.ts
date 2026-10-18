@@ -3498,6 +3498,12 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
         setBorderRadius: (radius) => view.setBorderRadius(radius),
         setVisible: (visible) => view.setVisible(visible),
         load: async (url) => await loadArtifactDocument(contents, url),
+        capture: async () => {
+          const image = await contents.capturePage();
+          // JPEG rather than PNG: this crosses IPC and is shown only while a
+          // menu or dialog sits over it, so size beats exactness.
+          return image.isEmpty() ? null : `data:image/jpeg;base64,${image.toJPEG(90).toString('base64')}`;
+        },
         close: () => contents.close(),
       };
       // The controller speaks in handles, not Electron objects, so the window
@@ -4230,6 +4236,12 @@ function registerIpc(): void {
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!bounds || !window) return;
     artifactPreviews.get(window)?.setBounds(bounds);
+  });
+  ipcMain.handle('artifact:snapshot-preview', async (event) => {
+    assertTrustedIpcSender(event);
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) return null;
+    return await artifactPreviews.get(window)?.snapshot().catch(() => null) ?? null;
   });
   ipcMain.handle('artifact:set-preview-hidden', async (event, raw: unknown) => {
     assertTrustedIpcSender(event);

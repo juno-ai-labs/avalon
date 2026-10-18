@@ -360,7 +360,9 @@ is the only place that can forward into it.
   escape it. And a `WebContentsView` composites *above* the renderer's DOM, so
   any app surface that can overlap the rail — a dialog, the command palette, a
   lightbox — must collapse the view to nothing while it is open, or artifact
-  content paints over it.
+  content paints over it. The pane under it then shows a still of the page,
+  taken with `capturePage` *before* the collapse (a collapsed view paints
+  nothing to take), and dropped once the view is back.
   The same view takes the pointer from anything drawn under it, so the
   panel's resize target must sit outside the area it covers, or the panel can
   be resized only from the strip beside its header. Verified visually; no
@@ -583,6 +585,25 @@ mint one; that is inside that console's stated authority rather than a boundary
 this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 
 ## Changelog
+
+### 2026-10-18 — An overlay covers the page instead of blanking it
+
+**What changed:** Before the rail preview collapses under a menu or dialog,
+the renderer asks the main process for a still of the page
+(`snapshotArtifactPreview`, `capturePage` as a JPEG data URL) and shows it in
+the pane until the overlay closes and the view is back in place.
+
+**Why:** Opening the artifact's own title menu (Rename, Copy link, Pin,
+Versions) blanked the whole site behind it, which reads as the page having
+crashed. A native view cannot sit under DOM, so the view still has to go; the
+still is what keeps the page in sight. Shrinking the view around the overlay
+was rejected: a popover in the middle of the pane leaves no rectangle to
+shrink to.
+
+**Consequences:** The still must be taken before the zero rectangle is sent,
+and the renderer holds every update while the capture is in flight so a
+mutation burst cannot collapse the view first. The still is a picture, not the
+page: nothing under an overlay is interactive, which it was not before either.
 
 ### 2026-10-18 — One "Opening…" per open, and no route read before the bootstrap
 

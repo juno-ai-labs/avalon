@@ -571,6 +571,10 @@ const browserBridge: RallyDesktopBridge = {
   async setArtifactPreviewHidden() {
     // Nothing is composited, so there is nothing to hide.
   },
+  async snapshotArtifactPreview() {
+    // Nothing is composited, so there is nothing to take.
+    return null;
+  },
   async closeArtifactPreview() {
     // Nothing is composited, so there is nothing to tear down.
   },

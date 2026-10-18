@@ -1009,6 +1009,7 @@ describe('resource detail content preview', () => {
       surface: {
         present: vi.fn(async () => true),
         setBounds: vi.fn(async () => undefined),
+        snapshot: vi.fn(async () => null),
         close: vi.fn(async () => undefined),
         popOut: vi.fn(async () => true),
         copyText: vi.fn(async () => undefined),
