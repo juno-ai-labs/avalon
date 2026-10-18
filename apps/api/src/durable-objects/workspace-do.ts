@@ -113,6 +113,8 @@ import {
   WorkspaceFeatureFlagsEventSchema,
   WorkspacePresenceEventSchema,
   WorkspaceReachChangedEventSchema,
+  type ResourceHead,
+  type WorkspaceResourceVersionsEvent,
   WorkspaceSocketSyncEventSchema,
   type MemberPreferences,
   WorkspaceSyncTopicSchema,
@@ -803,8 +805,7 @@ import {
 import {
   artifactSubjectKeySql,
   artifactUpdateSql,
-  drainArtifactUpdates,
-  type ArtifactUpdate,
+  isArtifactNewsCause,
   WorkspacePinStorage,
   WORKSPACE_ARTIFACT_PINS_MIGRATION,
   RESOURCE_VERSIONS_QUEUE_ARTIFACT_UPDATE,
@@ -812,6 +813,13 @@ import {
   WORKSPACE_PINS_MIGRATION,
 } from "./workspace-pin-storage";
 import { type ChannelReadState, WORKSPACE_CHANNEL_READS_MIGRATION } from "./workspace-channel-read-storage";
+import {
+  drainResourceVersionChanges,
+  readResourceHeads,
+  resourceVersionLedgerReady,
+  type ResourceVersionChange,
+  WORKSPACE_RESOURCE_VERSION_CHANGES_MIGRATION,
+} from "./workspace-resource-versions";
 import {
   CHANNEL_COLOR_SYNC_MIGRATION,
   ChannelColorSyncMessageSchema,
@@ -4532,6 +4540,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     RESOURCES_CREATE_SEMANTIC_VERSION_V112,
     RESOURCE_VERSIONS_QUEUE_ARTIFACT_UPDATE,
   ],
+}, {
+  version: 114,
+  description: "one ledger of every new resource version, for open previews and pinned artifacts alike",
+  // See WORKSPACE_RESOURCE_VERSION_CHANGES_MIGRATION and docs/websocket-architecture.md.
+  statements: WORKSPACE_RESOURCE_VERSION_CHANGES_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -5357,7 +5370,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private railLedger = false;
   /** Whether this object has the pinned-artifact update ledger (migration 111). */
-  private artifactLedger = false;
+  private versionLedger = false;
   /**
    * Channels a directory batch drained from the rail ledger for its own
    * follow-up pass to send (`applyDirectoryBatch`). In memory: a pass that
@@ -5385,7 +5398,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // itself is refused once the workspace is retired, which is right.
     let railDrainScheduled = false;
     this.state = observeSqlWrites(state, () => {
-      if ((!this.railLedger && !this.artifactLedger) || railDrainScheduled) return;
+      if ((!this.railLedger && !this.versionLedger) || railDrainScheduled) return;
       railDrainScheduled = true;
       queueMicrotask(() => {
         try {
@@ -5395,16 +5408,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             for (const workstreamId of drainChannelRailChanges(this.state.storage.sql)) rows.readers(workstreamId);
             this.publishChannelRows(rows);
           }
-          // A new version of a pinned artifact, from whichever producer wrote
-          // it. The announcement leaves the object, so it runs on its own,
-          // held to the object's lifetime. It is best effort, as every
-          // Activity push is: a failure is logged and the Activity row, the
-          // pin's unread state and the digest stand regardless.
-          const updates = this.artifactLedger ? drainArtifactUpdates(this.state.storage.sql) : [];
-          if (updates.length > 0) {
-            this.state.waitUntil(this.announceArtifactUpdates(updates).catch((error: unknown) => logWarn(this.env, "artifact_update_announce_failed", {
-              code: diagnosticErrorCode(error, "artifact_update_announce_failed"),
-            })));
+          // A new version of any resource, from whichever producer wrote it.
+          const changes = this.versionLedger ? drainResourceVersionChanges(this.state.storage.sql) : [];
+          if (changes.length > 0) {
+            // Every open preview of it moves to the new head.
+            this.publishResourceVersions(readResourceHeads(this.state.storage.sql,
+              changes.map((change) => change.resourceId)));
+            // A pinner hears only some causes as news. The announcement leaves
+            // the object, so it runs on its own, held to the object's
+            // lifetime. It is best effort, as every Activity push is: a
+            // failure is logged and the Activity row, the pin's unread state
+            // and the digest stand regardless.
+            const news = changes.filter((change) => isArtifactNewsCause(change.cause));
+            if (news.length > 0) {
+              this.state.waitUntil(this.announceArtifactUpdates(news).catch((error: unknown) => logWarn(this.env, "artifact_update_announce_failed", {
+                code: diagnosticErrorCode(error, "artifact_update_announce_failed"),
+              })));
+            }
           }
         } catch (error) {
           // Nothing here may throw: this runs outside every entry point.
@@ -7505,9 +7525,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.railLedger = this.state.storage.sql.exec(
       `SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'channel_rail_changes'`,
     ).toArray().length > 0;
-    this.artifactLedger = this.state.storage.sql.exec(
-      `SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_artifact_updates'`,
-    ).toArray().length > 0;
+    this.versionLedger = resourceVersionLedgerReady(this.state.storage.sql);
   }
 
   /** Every socket accepted and not yet heard from, open or already gone. */
@@ -9979,7 +9997,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!feed.ready()) return;
     feed.markSeen(request.userId, request.seenThrough, Date.now());
     // The artifact pins' unread state honours the same mark.
-    if (this.artifactLedger) {
+    if (this.versionLedger) {
       try {
         this.publishArtifactPins(request.userId, request.workspaceId);
       } catch (error) {
@@ -10223,7 +10241,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private artifactPinsFor(viewer: Viewer, workspaceId: string): ArtifactPin[] {
     const stored = new WorkspacePinStorage(this.state.storage).listArtifacts(viewer.userId);
     if (stored.length === 0) return [];
-    const updatesReady = this.artifactLedger;
+    const updatesReady = this.versionLedger;
     const resources = new Map(this.state.storage.sql.exec<{
       item_id: string; title: string; resource_type: string; mime_type: string | null; updated_at: string;
       current_version: number; unread: number;
@@ -10278,7 +10296,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * and each version is pushed through the Activity path, which decides per
    * person whether it is a row they may see and have not been sent.
    */
-  private async announceArtifactUpdates(updates: readonly ArtifactUpdate[]): Promise<void> {
+  private async announceArtifactUpdates(updates: readonly ResourceVersionChange[]): Promise<void> {
     const workspaceId = this.workspaceId();
     if (!workspaceId) return;
     const pins = new WorkspacePinStorage(this.state.storage);
@@ -10337,6 +10355,66 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       .find((attachment) => attachment?.subscribed && attachment.userId === userId);
     if (!socket) return;
     this.publishNavigationState(userId, { artifactPins: this.artifactPinsFor(viewerOf(socket), workspaceId) });
+  }
+
+  /**
+   * Tell each socket which of these resources have a new head, so a preview
+   * open on one moves to it. A socket hears only the resources linked to a
+   * thread whose Main its person may open, the gate an artifact pin reads
+   * under; only a thread's directory projection writes those links. Not on
+   * the waterline and never replayed: a client that was away reads each head
+   * when it next opens the conversation.
+   *
+   * The heads are built from bounded columns (`readResourceHeads`), so the
+   * event is assembled rather than parsed again for every person.
+   *
+   * One visibility read per person, whatever the number of their sockets.
+   */
+  private publishResourceVersions(heads: readonly ResourceHead[]): void {
+    if (heads.length === 0) return;
+    const linkedTo = new Map<string, string[]>();
+    for (const row of this.state.storage.sql.exec<{ resource_id: string; workstream_id: string }>(
+      `SELECT resource_id, workstream_id FROM workspace_workstream_resource_links
+        WHERE resource_id IN (SELECT value FROM json_each(?))`,
+      JSON.stringify(heads.map((head) => head.resourceId)),
+    )) {
+      linkedTo.set(row.resource_id, [...linkedTo.get(row.resource_id) ?? [], row.workstream_id]);
+    }
+    if (linkedTo.size === 0) return;
+    const occurredAt = new Date().toISOString();
+    const payloads = new Map<string, string | null>();
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed) continue;
+      const key = `${attachment.userId}:${attachment.accessClass ?? "member"}`;
+      let payload = payloads.get(key);
+      if (payload === undefined) {
+        const viewer = viewerOf(attachment);
+        const opened = new Map<string, boolean>();
+        const opens = (conversationId: string): boolean => {
+          let open = opened.get(conversationId);
+          if (open === undefined) {
+            open = this.mainOpenable(viewer, conversationId);
+            opened.set(conversationId, open);
+          }
+          return open;
+        };
+        const visible = heads.filter((head) => (linkedTo.get(head.resourceId) ?? []).some(opens));
+        const event: WorkspaceResourceVersionsEvent = {
+          type: "workspace_resource_versions",
+          occurredAt,
+          resources: visible,
+        };
+        payload = visible.length === 0 ? null : JSON.stringify(event);
+        payloads.set(key, payload);
+      }
+      if (payload === null) continue;
+      try {
+        socket.send(payload);
+      } catch {
+        // Hibernation owns cleanup; a reconnecting client reads the heads it opens.
+      }
+    }
   }
 
   private artifactPinTargetListed(viewer: Viewer, itemId: string, threadId: string): boolean {

@@ -10,6 +10,7 @@ import {
   WorkspaceFeatureFlagsEventSchema,
   WorkspacePresenceEventSchema,
   WorkspaceReachChangedEventSchema,
+  WorkspaceResourceVersionsEventSchema,
   WorkspaceAccessRequestsEventSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceChannelRailsEventSchema,
@@ -72,6 +73,7 @@ import {
   ACTIVITY_QUERY_KEY,
   channelFeedQueryKey,
 } from './sidebar-list-store';
+import { applyResourceHeads, followResourceHeads } from './resource-heads';
 import { realtimeSocketTelemetry } from './socket-telemetry';
 import { reportTelemetryProductIntent, telemetryJourneyDuration, uuidV7 } from './telemetry';
 import type { WorkstreamSummary } from './types';
@@ -380,6 +382,9 @@ export function WorkspaceSocketProvider({
 }>): React.JSX.Element {
   const queryClient = useQueryClient();
   const localCacheScope = useLocalCacheScope();
+  // Every conversation detail stays at the newest resource head this window
+  // knows, whichever writer lands last.
+  useEffect(() => followResourceHeads(queryClient), [queryClient]);
   const [state, setState] = useState<WorkspaceSocketState>('connecting');
   const [topicWaterlines, setTopicWaterlines] = useState<Partial<Record<WorkspaceSyncTopic, number>>>({});
   const [sidebarConnect, setSidebarConnect] = useState<SidebarConnect | null>(null);
@@ -1252,6 +1257,13 @@ export function WorkspaceSocketProvider({
             void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
             return;
           }
+          const resourceVersions = safeParseSocketEvent(WorkspaceResourceVersionsEventSchema, decoded);
+          if (resourceVersions.success) {
+            // A resource some conversation holds has a new version: every
+            // preview open on it moves to the new head.
+            applyResourceHeads(queryClient, resourceVersions.data.resources);
+            return;
+          }
           const spaceConversations = safeParseSocketEvent(
             WorkspaceSpaceConversationsEventSchema, decoded,
           );
@@ -1322,6 +1334,7 @@ export function WorkspaceSocketProvider({
               ['workspace_space_snapshot', 'space snapshot', spaceSnapshot],
               ['space_conversations_changed', 'space conversations nudge', spaceConversations],
               ['workspace_reach_changed', 'reach change', reachChanged],
+              ['workspace_resource_versions', 'resource versions', resourceVersions],
               ['workspace_access_requests', 'access requests', accessRequests],
               ['workspace_usage', 'usage', usage],
             ],

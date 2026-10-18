@@ -60,7 +60,6 @@ import { RelativeTime } from '../components/relative-time';
 import { BreakoutOrigin, breakoutOriginMessages, originExcerpt } from '../components/breakout-origin';
 import { formatDateTime } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
-import { refreshPoppedOutArtifacts } from '../lib/popped-out-artifacts';
 import { layoutKey, readArtifactPanel, writeLayout } from '../lib/desktop-layout';
 import {
   currentSurfaceEntrypoint,
@@ -1493,7 +1492,6 @@ export function ConversationSurface({
   const restoredPanelKey = useRef<string | null>(null);
   const activeConversationAddressRef = useRef(conversationAddress);
   const pendingSendCount = useRef(0);
-  const poppedOutArtifactRefreshes = useRef(new Set<string>());
   // What the right panel holds. Every artifact and attachment this
   // conversation opens lands here rather than in a modal. Closing keeps the
   // occupant so the panel has something to draw while it fades out.
@@ -1766,30 +1764,9 @@ export function ConversationSurface({
     setPanel(null);
     closeOwnRail();
   }, [resourcePanel, closeOwnRail, id, routedDetail, workstreamContext]);
-  useEffect(() => {
-    if (!routedDetail) return;
-    const controller = new AbortController();
-    // The socket advances `currentVersion` on the canonical resource. Inline
-    // previews observe the same value directly; detached windows report the
-    // version they still show so we only authorize and transfer newer bytes.
-    const resources = [
-      ...routedDetail.resources,
-      ...(workstreamContext?.id === id ? workstreamContext.resources : []),
-    ];
-    void refreshPoppedOutArtifacts({
-      bridge: desktopBridge(),
-      inFlight: poppedOutArtifactRefreshes.current,
-      loadResourceContent,
-      ...(siteArtifacts ? { openSiteArtifact: siteArtifacts.openArtifact } : {}),
-      resources,
-      signal: controller.signal,
-    }).catch(() => {
-      // Inline preview failure presentation owns the user-visible state. A
-      // detached window safely remains on its last complete version and the
-      // next canonical version signal retries it.
-    });
-    return () => controller.abort();
-  }, [id, loadResourceContent, routedDetail?.resources, siteArtifacts, workstreamContext?.id, workstreamContext?.resources]);
+  // Popped-out windows follow new versions from the app shell
+  // (`App.tsx`), which reads every version this conversation's socket carries
+  // through `followResourceHeads`.
   // Attaching always targets the Channel's main conversation, from any breakout.
   const attachResource = useMutation({
     mutationFn: (resource: WorkstreamResource) => api!.attachResource(id, resource.id),

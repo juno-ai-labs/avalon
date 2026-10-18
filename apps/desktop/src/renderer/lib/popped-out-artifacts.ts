@@ -58,7 +58,7 @@ export interface RefreshPoppedOutArtifactsInput {
     artifactId: string;
     openUrl: string;
   }>;
-  resources: WorkstreamResource[];
+  resources: readonly Pick<WorkstreamResource, 'id' | 'currentVersion' | 'mimeType' | 'title'>[];
   signal?: AbortSignal;
 }
 
@@ -82,7 +82,7 @@ export async function refreshPoppedOutArtifacts({
   const resourcesById = new Map(resources.map((resource) => [resource.id, resource]));
   await Promise.all(Object.entries(openVersions).map(async ([resourceId, openVersion]) => {
     const resource = resourcesById.get(resourceId);
-    if (!resource || resource.currentVersion === openVersion) return;
+    if (!resource || resource.currentVersion <= openVersion) return;
     const key = `${resourceId}:${resource.currentVersion}`;
     if (inFlight.has(key)) return;
     inFlight.add(key);
