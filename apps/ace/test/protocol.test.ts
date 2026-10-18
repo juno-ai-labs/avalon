@@ -102,8 +102,6 @@ describe('Ace managed flag protocol', () => {
       'multiple-workspaces-enabled',
       'push-notifications-enabled',
       'live-artifacts-enabled',
-      'conversation-suggestions-enabled',
-      'breakout-suggestions-enabled',
     ]);
     expect(MANAGED_FLAGS.map((flag) => flag.key)).toEqual(ProductFeatureFlagKeySchema.options);
     for (const flag of MANAGED_FLAGS) {

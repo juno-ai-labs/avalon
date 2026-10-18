@@ -280,16 +280,18 @@ frozen, so the change is recorded here and, when it ships, in
 
 ## Decision log
 
-1. **2026-10-18. Shadow and surface ship in one pull request, behind the
-   flags.** The design's shadow phase was meant to read settlement latency and
-   decisions in staging before any surface existed. The corpus evaluation
-   (`design.md`, "The first corpus evaluation") answered what shadow was for,
-   so the surface shipped with it, dark: the two product flags default off,
-   and the judgement and its record run everywhere whatever they say.
-2. **2026-10-18. The Breakout chip has its own flag.** The side-question
-   class measured weakest (F1 about 0.47 on the holdout), so its chip stays
-   off on its own until its precision is read from the record, as the design
-   concluded.
+1. **2026-10-18. Shadow and surface ship in one pull request, to everybody,
+   with no feature flag.** The design's shadow phase was meant to read
+   settlement latency and decisions in staging before any surface existed.
+   The corpus evaluation (`design.md`, "The first corpus evaluation") answered
+   what shadow was for, so the surface shipped with it. The product owner
+   ruled out a flag, against this PRD's own recommendation below: the slot's
+   record of accept, dismiss and ignore is how the noise is read, and a chip
+   nobody wants is dismissed, not gated.
+2. **2026-10-18. The Breakout chip ships with the merge chip.** The design
+   concluded the side-question class should stay in shadow until its
+   precision improved; the product owner's call is that it ships, and its
+   precision is read from the record like the merge chip's.
 3. **2026-10-18. A person's message is not judged in this version.** Only a
    settled Rally turn is, in the settlement lane; judging at admission is a
    second hook and a call per human message for the weakest class.
@@ -461,9 +463,8 @@ structured-inference gateway; neither is a tool.
   and the drafting role on its own model flag, `agent-model-suggestion-draft`, defaulting to
   `OPENROUTER_STRUCTURED_MODEL`. The default for a visible feature is to ship
   to everybody on merge. **This PRD recommends a flag instead**, and records
-  that an engineer has to ask for one: `conversation-suggestions-enabled` for
-  the merge chip and `breakout-suggestions-enabled` for the Breakout chip,
-  each default **off**, registered in Ace, because the whole question this feature
+  that an engineer has to ask for one: `conversationSuggestionsEnabled`,
+  default **off**, registered in Ace, because the whole question this feature
   turns on is noise, the predecessor was retired for it, and a staged audience
   is how the first weeks of accept and dismiss rates are read without a
   product-wide retreat. The server-side judgement keeps running everywhere
