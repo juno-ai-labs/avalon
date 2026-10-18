@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { detectTextType } from "../lib/pasted-text-type";
 import { truncateUtf16Safe } from "../lib/text";
-import { logStructuredEvent } from "../observability/logger";
+import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger";
 import { runStructuredInference } from "./structured-inference";
 
 /**
@@ -97,8 +97,9 @@ async function nameFromContent(
   } catch (error) {
     logStructuredEvent(env, "warn", "pasted_text_naming_failed", {
       workspace_id: request.workspaceId,
-      error_name: error instanceof Error ? error.name : "UnknownError",
-      error_message: error instanceof Error ? error.message : "Pasted text naming failed",
+      // A code, never the message: a schema rejection quotes the model's
+      // answer, which is drawn from the pasted text.
+      error_code: diagnosticErrorCode(error, "pasted_text_naming_failed"),
     });
     return null;
   }
@@ -121,7 +122,8 @@ export async function preparePastedTextWithClient(
   // The prefix says where the file came from wherever the name travels; the
   // stand-in already says it.
   const stem = name ? `${PASTED_PREFIX}${name}` : stemOf(request.file.name);
-  return new File([text], `${stem}.${type.extension}`, { type: type.mimeType });
+  // Built over the uploaded bytes rather than re-encoding the decoded text.
+  return new File([request.file], `${stem}.${type.extension}`, { type: type.mimeType });
 }
 
 /**

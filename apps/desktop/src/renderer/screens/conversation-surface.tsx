@@ -2913,8 +2913,8 @@ export function ConversationSurface({
         mentions: rendered.mentions,
         attachments: readyAttachments.flatMap((attachment) => attachment.resource ? [{
           id: attachment.resource.id,
-          fileName: attachment.file.name,
-          mimeType: attachment.file.type || 'application/octet-stream',
+          fileName: attachment.resource?.title ?? attachment.file.name,
+          mimeType: attachment.resource?.mimeType ?? (attachment.file.type || 'application/octet-stream'),
           sizeBytes: attachment.file.size,
           contentAvailable: true,
           createdAt,

@@ -38,7 +38,8 @@ import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { appendDictationTranscript, type RealtimeDictationApi, useRealtimeDictation } from '../lib/use-realtime-dictation';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useFilePaste } from '../lib/use-file-paste';
-import { MAX_ATTACHMENTS, type PendingAttachment } from '../lib/use-file-attachments';
+import { MAX_ATTACHMENTS } from '../lib/attachment-limits';
+import type { PendingAttachment } from '../lib/use-file-attachments';
 import { type AttachmentPreview, PendingAttachmentTile } from './attachments';
 import { IconButton, InlineError, Tip } from './primitives';
 

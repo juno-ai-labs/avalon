@@ -778,8 +778,9 @@ name: the heuristics are right for the common cases and cost nothing.
 **Consequences:** The 5,000-character threshold and the 8,000-character sample
 the model reads are product choices placed here as a starting point; change
 them in `pasted-text.ts` and the service. Naming costs about a second before
-the attachment is ready to send. The paste marker lives on the in-memory
-`File`, so a draft restored after a restart re-uploads as plain `.txt`.
+the attachment is ready to send. The draft cache keeps the paste marker, and
+an upload that finds its draft already stored reads the stored resource
+rather than describing it from the local file, since the server renamed it.
 
 ### 2026-10-17 — Arming turns an arc; red is only for capture that is running
 

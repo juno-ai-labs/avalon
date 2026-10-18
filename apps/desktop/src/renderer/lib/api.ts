@@ -2032,6 +2032,13 @@ export class RallyApi {
     });
   }
 
+  async getResource(id: string): Promise<WorkstreamResource> {
+    return mapResource(await this.request(`/resources/${encodeURIComponent(id)}`, {
+      method: 'GET',
+      schema: WireResourceSchema,
+    }));
+  }
+
   async deleteDraftResource(id: string): Promise<void> {
     await this.requestVoid(`/resources/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
