@@ -569,6 +569,125 @@ named `decision`, `answer` and `question` reliably and confused
 `deliverable` with `update` on the revised deliverable, which is consistent
 with the rule above that the kind is recorded before it is shown.
 
+### The first corpus evaluation, 2026-10-18
+
+The eval in `packages/agent-harness/evals/turn-disposition/` was run over
+every message, a person's or Rally's, in every exported Thread and Breakout,
+with the widened state above. This is the benchmark the production model is
+chosen from; the same corpus and labels are the dataset for the prompt
+optimization that follows.
+
+**Corpus.** 526 conversations from 27 Organizations: all 169 Breakouts and
+357 of the 480 Threads. That gave 3,931 cases: 1,474 a person's message,
+2,457 Rally's, 1,149 of those the final turn of a completed run. Two gaps,
+both named rather than hidden: 123 Threads (most of them in Juno Labs' own
+Organization) were not exported, because the export path, sub-agents
+re-keying transcripts out of the engineering MCP, was stopped by a safety
+classifier partway through each partition and no second path was taken; and
+65 Breakouts came from an earlier export whose bodies were cut at 2,000
+characters and carried no compaction rows. Only 2 conversations in the whole
+corpus had a compaction checkpoint, so `so_far.summary` was present in 7
+cases: the long-conversation path is designed, not yet measured.
+
+**Labels.** Two layers, kept distinguishable by `source`:
+
+- 1,301 cases labeled by hand by the author of this design, against the
+  criteria above, before any model answered: 176 `worth_carrying_up`, 21
+  `side_question_worth_a_breakout`, 1,104 `continue_here`. Every Breakout
+  person's message and every Breakout final turn is in this set, as are 370
+  Thread final turns and spread samples of the Thread strata.
+- Every case judged by `anthropic/claude-sonnet-5.5` at low reasoning
+  through the same request, a different model family from either target.
+  Against the hand labels the judge agrees on 91.1% of cases, with carry-up
+  precision 70% and recall 85%; the side-question class is where it is weak
+  (F1 0.34 on 21 positives). The hand label overlays the judge's wherever
+  both exist, so every case is scored and the hand-labeled slice is still
+  readable on its own.
+
+The production outcomes the design planned to read as labels were too thin
+to carry the eval: 24 cases sit before a later merge and 73 before a
+Breakout started, in a corpus whose merge-back shipped two days before.
+They are kept beside each case and reported, not used as truth.
+
+**Split.** Development and holdout halves are fixed by the conversation
+id's last hex digit, 1,756 and 2,175 cases. The v2 criteria were written
+from the v1 criteria's errors on the development half of the earlier
+216-case Breakout final-turn run; nothing was tuned on the holdout.
+
+**Targets.** JEV (`jev-latest`, resolving to `jev-1.13.0`, two runs over
+everything) and `openai/gpt-5.6-terra` over OpenRouter at reasoning `none`,
+through the same bounded state bytes. Coverage runs used concurrency;
+latency is from a separate sequential run over a fixed random sample of 300
+cases, end to end from the harness, request build to parsed answer.
+
+Over all 3,931 cases, against the merged labels:
+
+| | JEV, confidence > 0.6 | JEV, no threshold | Terra |
+| --- | --- | --- | --- |
+| Three-way agreement | 85.1% | 85.1% | 90.2% |
+| Carry-up precision / recall / F1 | 73.9% / 73.3% / 0.736 | 54.7% / 88.3% / 0.675 | 65.2% / 90.9% / 0.759 |
+| Side question TP / FP / FN | 35 / 48 / 62 | 68 / 176 / 29 | 58 / 90 / 39 |
+| Suggestions per Rally final turn | 24.8% | 39.9% | 33.7% |
+| Suggestions per person's message | 5.2% | 13.7% | 12.2% |
+| Same answer on both runs | 98.5% | 98.5% | not run |
+| Confidence, mean on correct / wrong | 0.79 / 0.51 | | 0.98 / 0.93 |
+| Latency, sequential, p50 / p90 / p99 | 83 / 123 / 165 ms | | 985 / 1,134 / 1,688 ms |
+
+On the 1,301 hand-labeled cases alone, the honest column, since the judge
+shares more of its reading with a generative target than with JEV:
+
+| | JEV, confidence > 0.6 | Terra |
+| --- | --- | --- |
+| Three-way agreement | 80.2% | 86.2% |
+| Carry-up TP / FP / FN | 120 / 62 / 56 | 157 / 118 / 19 |
+| Carry-up precision / recall / F1 | 65.9% / 68.2% / 0.670 | 57.1% / 89.2% / 0.696 |
+| Holdout half only: agreement, F1 | 83.0%, 0.667 | 88.0%, 0.681 |
+| Kind, where both say carry up | 75.8% | 80.9% |
+| Breakout final turns (the v1 run's slice, 323 cases): agreement | 75.9% (v1: 54.4%) | 83.3% (v1: 73.6%) |
+
+What the numbers say:
+
+- **The two are close on the hand labels and differ in how they miss.**
+  Terra finds nine in ten carry-ups and pays with twice JEV's false
+  positives; JEV at 0.6 is the quiet one, flagging one person's message in
+  twenty against Terra's one in eight, and misses a third of the
+  deliverables. Thresholded JEV and unthresholded Terra land within three
+  points of F1 on every slice, including the holdout.
+- **Only JEV has a threshold to turn.** Its confidence separates right from
+  wrong (0.79 against 0.51); Terra's is 0.98 and 0.93, so the gate's rule has
+  nothing to read and Terra's precision can only be moved by rewriting the
+  prompt. The threshold sweep puts JEV's F1 flat between 0.5 and 0.7
+  (0.729, 0.731, 0.729), with precision rising from 68% to 80% and recall
+  falling from 78% to 67% across it: the product owner's choice, as the
+  limits document asks.
+- **The false positives are the same kind for both.** By the hand labels'
+  notes, JEV's 62 at 0.6 are 14 Sidekick or system outputs, 5 test and QA
+  threads, 7 general-knowledge answers and 4 progress notes; Terra's 118 are
+  23, 21, 6 and 7. The first two are the origin gate's job, before the
+  classifier runs, and remove a third of JEV's and a third of Terra's.
+  52 of JEV's 62 are also Terra's.
+- **A conversation with earlier outputs is the hard case for both.** On the
+  775 cases where the conversation had already produced something, JEV's
+  carry-up F1 is 0.52 and Terra's 0.65: telling a rebuild that changes what
+  the parent would receive from a revision that does not is where the
+  criteria need the optimization run most.
+- **The side question is not ready for a surface.** 21 hand-labeled
+  positives; JEV calls 176 side questions without a threshold and 48 with,
+  Terra 90, against 58 and 35 right. Until the prompt work lifts it, the
+  Breakout suggestion should stay in shadow while the merge suggestion ships.
+- **JEV is twelve times faster, with no tail.** 83 ms at p50 and 165 ms at
+  p99 fits inside the settlement step as designed; Terra's second at p50
+  would move the step to the Queue path of key design decision 6 on day one.
+
+The choice is JEV, at the 0.6 threshold for shadow, with the Breakout
+suggestion held back. Terra's extra accuracy on the hand labels is six
+points of three-way agreement bought with twice the false positives, no
+threshold lever and a second of latency. The merged labels, the hand labels
+and the cases are the dataset for the prompt optimization that follows; the
+hand labels without their notes are committed beside the eval as
+`golden-labels-2026-10-18.jsonl`, and the rest stays in the protected
+directory and is deleted when that work is done.
+
 ### What "not too noisy on either end" means in numbers
 
 Read from shadow before any surface, and from the slot afterwards:
