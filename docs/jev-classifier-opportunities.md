@@ -315,44 +315,6 @@ produced survive the cut. That measurement needs no new corpus and no judge, and
 it settles the idea either way, which is a good reason to run it early even
 though shipping it ranks last.
 
-### 5. What a settled Rally turn calls for next, a decision nobody is making
-
-**Observed.** When a run completes in a Thread or a Breakout, `settleAgentRun`
-(`apps/api/src/durable-objects/substream-agent.ts`) renames, re-describes and
-records, and then stops. Whether the turn it just finished is a result the
-parent should hear, or the start of work that belongs in its own Breakout, is
-left to a person noticing. The merge-back PRD deferred "Rally suggesting a
-merge on its own"; its first draft wanted "a quiet 'Ready to merge?' chip with
-the draft prefilled".
-
-**Why JEV.** The answer is one member of a closed set, judged against state the
-object already holds: the conversation's `description`, kept true by the
-description loop, the settled turn, and the recent messages. The threshold that
-decides whether to show a person a line has to be applied to a confidence the
-provider computed. The retired Suggested context cards
-([`contextual-routing.md`](contextual-routing.md)) were the generative version
-of this idea, with a self-reported confidence and a feed card, and were removed
-as "an unsolicited interruption".
-
-**Contract.** Entity: the last turn of a completed run. Outcomes:
-`worth_carrying_up`, `side_question_worth_a_breakout`, `continue_here`,
-one question because both boundaries sit against the same purpose. What is
-carried is not always a result, so a second Choice in the same request names
-the kind (deliverable, decision, answer, update, question) for the line's
-wording alone.
-Insufficient confidence: nothing. The host maps the breakout outcome to
-nothing inside a Breakout.
-
-**What has to be measured first.** The labels are retained: every Breakout
-records the turn it was cut from (`originTurnId`), and every merge leaves a
-`conversation_merged_into` marker beside the turn it carried. So the first
-version runs in shadow, recording through `classifier-diagnostics.ts` and
-showing nothing, and the threshold is read from that run against a price list
-the team confirms. The design, the gates, the suggestion slot the answer lands
-in and the eval shape are in
-[`PRDs/2026-10-17_merge-and-breakout-suggestions/prd.md`](PRDs/2026-10-17_merge-and-breakout-suggestions/prd.md)
-and its `design.md`.
-
 ## Considered and rejected
 
 Kept because each is more attractive than it deserves to be, and the next reader

@@ -218,6 +218,7 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
       sendReady: true,
       state: 'connected',
       workspaceSocketState: 'connected',
+      suggestions: [],
     });
   });
 

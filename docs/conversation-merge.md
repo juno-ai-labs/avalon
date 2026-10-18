@@ -325,6 +325,30 @@ more than keeping a private Channel's name hidden.
 
 ## Changelog
 
+### 2026-10-18 — Every merge is made in the response card, and a merge resolves a suggestion
+
+**What changed:** The composer's merge mode is gone. `MergeResponseCard`
+(`packages/ui`) is the merge as the parent will draw it, made editable: the
+source's mark and name, "merged by" and the person, the words in a text box,
+the embeds the words cite as removable pills, then the audience line, the
+target pill, the hint and Cancel and Merge. It opens where the merge was asked
+for: under a turn from a suggestion or that turn's Merge hover action, and at
+the end of the feed, above the composer, from the title menu. Enter merges,
+Shift+Enter breaks a line, Esc cancels; the route, the admission and the kept
+`clientMessageId` are unchanged. The `MessageMergeAction` now names the turn
+beside the words. On the server, the `conversation_merged_into` marker
+`markSource` appends resolves the open merge suggestions on turns at or before
+it, in the marker's own commit. This records a drift from the frozen merge-back
+PRD, per `prds.md`; the suggestion that drove it is owned by
+[`conversation-suggestions.md`](conversation-suggestions.md).
+
+**Why:** the product owner's call, and it holds for every merge: the composer
+is for what a person is writing to the conversation, and a merge is written to
+the parent. The card is the parent's own merge block made editable, so what
+the person sees is what lands, which merge mode's plain text box could not
+promise. Keeping merge mode for the hover action and the title menu and using
+the card only for suggestions would have been two editors for one write.
+
 ### 2026-10-16 — The source shows it was merged
 
 **What changed:** A merge leaves a system row in its source, drawn as a

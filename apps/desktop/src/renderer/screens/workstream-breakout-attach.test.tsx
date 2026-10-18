@@ -213,6 +213,7 @@ describe('attaching a breakout artifact to its channel', () => {
       sendReady: true,
       state: 'connected',
       workspaceSocketState: 'connected',
+      suggestions: [],
     });
   });
 
@@ -280,6 +281,7 @@ describe('importing a conversation as a breakout from the thread composer', () =
     api.getWorkspaceMembers.mockResolvedValue([]);
     api.getConnections.mockResolvedValue([]);
     retainedSocket.mockReturnValue({
+      suggestions: [],
       activeCompaction: null, createMessage: vi.fn(), requestSnapshot: vi.fn(), retryOpening: vi.fn(),
       sendReady: true, state: 'connected', workspaceSocketState: 'connected',
     });
