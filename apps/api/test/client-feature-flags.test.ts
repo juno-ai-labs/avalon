@@ -237,8 +237,6 @@ describe("client feature flags", () => {
         multipleWorkspacesEnabled: false,
         pushNotificationsEnabled: false,
         liveArtifactsEnabled: false,
-        conversationSuggestionsEnabled: false,
-        breakoutSuggestionsEnabled: false,
       });
   });
 
@@ -299,8 +297,6 @@ describe("client feature flags", () => {
     // queried exactly once — does not depend on which order they arrived in.
     expect((flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls.map(([key]) => key).sort())
       .toEqual([
-        "breakout-suggestions-enabled",
-        "conversation-suggestions-enabled",
         "developer-settings",
         "live-artifacts-enabled",
         "multiple-workspaces-enabled",
@@ -347,8 +343,6 @@ describe("GET /feature-flags", () => {
       multipleWorkspacesEnabled: true,
       pushNotificationsEnabled: true,
       liveArtifactsEnabled: true,
-      conversationSuggestionsEnabled: true,
-      breakoutSuggestionsEnabled: true,
     });
   });
 
@@ -372,8 +366,6 @@ describe("GET /feature-flags", () => {
       multipleWorkspacesEnabled: false,
       pushNotificationsEnabled: false,
       liveArtifactsEnabled: false,
-      conversationSuggestionsEnabled: false,
-      breakoutSuggestionsEnabled: false,
     });
   });
 });

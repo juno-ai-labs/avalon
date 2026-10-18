@@ -121,9 +121,7 @@ held once in `packages/contracts`.
 ### What the client shows
 
 The chip is drawn by the conversation surface in the feed's `afterTurn` slot
-under the last row of the judged turn, when the kind's product flag is on for
-the viewer (`conversation-suggestions-enabled`, `breakout-suggestions-enabled`;
-[`feature-flags.md`](feature-flags.md)) and for a viewer who can take the action:
+under the last row of the judged turn, for a viewer who can take the action:
 `merge_up` when `mergeTargetFor` gives this viewer a target, `start_breakout`
 when the viewer can start a Breakout here (a Thread's Main). The title and
 sentence are fixed strings with one slot: "Merge to **{target}**" and "This
@@ -264,10 +262,9 @@ for the people who can act. Accepting a merge opens the response card, which
 now makes every merge; accepting a Breakout opens the launch pane seeded with
 a drafted prompt; the feed's recency retires the line after three newer
 messages. Migration v75, the `suggestion_draft` role and two metered
-activities came with it. The line is behind two product flags, off by
-default: `conversation-suggestions-enabled` for the merge chip and
-`breakout-suggestions-enabled` for the Breakout chip; the judgement, its
-record and the drafter run everywhere whatever they say. A Breakout
+activities came with it. No product flag: the product owner's call is that
+the line ships to everybody on merge, with the judgement record as the way
+its noise is read. A Breakout
 suggestion resolves when the Breakout is ready, not when its context is
 captured, so a failed or abandoned preparation leaves the chip standing; the
 observer re-reads the merge markers inside its write, since the classifier
