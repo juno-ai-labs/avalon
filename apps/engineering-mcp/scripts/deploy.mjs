@@ -10,7 +10,7 @@ const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
 const deploymentToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
 // Read token for the Global lakehouse buckets' Basin SQL. Optional so a missing
 // GitHub secret does not fail the API release this deploy runs inside; the
-// query_lakehouse tool names the missing secret instead.
+// query_data_lake tool names the missing secret instead.
 const basinSqlToken = process.env.ENGINEERING_MCP_BASIN_SQL_API_TOKEN?.trim();
 const mcpDomain = "mcp.internal.rallywith.ai";
 const aceDomain = "ace.internal.rallywith.ai";
@@ -160,7 +160,7 @@ try {
       stdio: ["pipe", "inherit", "inherit"],
     });
   } else {
-    console.warn("ENGINEERING_MCP_BASIN_SQL_API_TOKEN is not set; query_lakehouse keeps any existing secret");
+    console.warn("ENGINEERING_MCP_BASIN_SQL_API_TOKEN is not set; query_data_lake keeps any existing secret");
   }
 } finally {
   await unlink(generatedConfig).catch(() => undefined);
