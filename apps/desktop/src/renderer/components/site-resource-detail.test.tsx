@@ -148,6 +148,19 @@ describe('showing a live artifact in the rail', () => {
     expect(screen.queryByText('Opening…')).toBeNull();
   });
 
+  it('reports a dialog opened while the page is still loading, before the view is revealed', async () => {
+    // The main process reveals the view at the last bounds it was sent, so a
+    // dialog that opened during the load must have collapsed them already.
+    const present = vi.fn(async () => await new Promise<boolean>(() => undefined));
+    const { props } = setup({ surface: surface({ present }) });
+    await waitFor(() => expect(present).toHaveBeenCalled());
+    const overlay = document.createElement('div');
+    overlay.setAttribute('role', 'dialog');
+    document.body.append(overlay);
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 }));
+    overlay.remove();
+  });
+
   it('hides a browser host’s frame behind “Opening…” until the frame loads', async () => {
     // The frame first holds the bootstrap, which has an "Opening…" of its own.
     // Its `load` is the site's: the bootstrap is replaced before it fires one.
