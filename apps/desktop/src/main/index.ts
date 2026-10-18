@@ -3496,6 +3496,7 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
         destroyed: () => contents.isDestroyed(),
         setBounds: (bounds) => view.setBounds(bounds),
         setBorderRadius: (radius) => view.setBorderRadius(radius),
+        setVisible: (visible) => view.setVisible(visible),
         load: async (url) => await loadArtifactDocument(contents, url),
         close: () => contents.close(),
       };

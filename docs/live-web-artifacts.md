@@ -586,8 +586,8 @@ this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 
 ### 2026-10-18 — One "Opening…" per open, and no route read before the bootstrap
 
-**What changed:** The rail preview's `WebContentsView` stays collapsed until
-`loadArtifactDocument` sees `dom-ready` on a document that is not
+**What changed:** The rail preview's `WebContentsView` stays hidden
+(`setVisible(false)`, at the pane's bounds) until `loadArtifactDocument` sees `dom-ready` on a document that is not
 `/__rally/open`; the browser client's frame stays `visibility: hidden` until
 its first `load`. The rail's "Opening…" now lasts until the preview reports it
 is showing, rather than until access is minted. The serving Worker answers
@@ -615,6 +615,9 @@ checked: where a browser does fire one, the frame shows the bootstrap for one
 round trip, as before. The frame's `load` also waits for the site's images, so a
 site with a slow image stays behind "Opening…" until they finish; a cross-origin
 frame gives the parent no earlier signal without Rally script inside the site.
+The view is hidden with `setVisible`, never by collapsing it to a zero
+rectangle: the site's startup scripts run before `dom-ready`, and a 0×0
+viewport left a canvas or chart sized once at load empty.
 
 ### 2026-10-15 — The skill checks layout by looking, and names the grid trap
 
