@@ -17,13 +17,15 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asWorkspaceId } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
+import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 
 /** Its own workspace: every suite here addresses one object by name. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000009e0");
 const RESOURCE = "00000000-0000-7000-8000-0000000009a1";
 const RUN = "00000000-0000-7000-8000-0000000009a2";
+const MEMBER = "00000000-0000-7000-8000-0000000009a3";
 
-function workspace(): DurableObjectStub {
+function workspace(): DurableObjectStub<WorkspaceDO> {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
     workspaceDOName("global", WORKSPACE_ID),
   ));
@@ -138,6 +140,28 @@ describe("resource version capture on real workerd", () => {
 
       expect(readState(state)).toEqual({ content_ref: "global/original-1", current_version: 1 });
       expect(readVersions(state).map((row) => row.version)).toEqual([1]);
+    });
+  });
+});
+
+describe("renaming a resource on real workerd", () => {
+  it("records the rename as the person's own version, and nothing when the title is the same", async () => {
+    await runInDurableObject(workspace(), async (instance: WorkspaceDO, state) => {
+      const rename = (title: string) => instance.renameResource({
+        workspaceId: WORKSPACE_ID, resourceId: RESOURCE, title, renamedByUserId: MEMBER, at: "2026-08-28T03:00:00.000Z",
+      });
+      expect(await rename("Q4 plan")).toEqual({ outcome: "renamed" });
+      expect(await rename("Q4 plan")).toEqual({ outcome: "unchanged" });
+      expect(state.storage.sql.exec(
+        `SELECT version, title, author_kind, author_user_id, cause FROM resource_versions WHERE resource_id = ? ORDER BY version`,
+        RESOURCE,
+      ).toArray()).toEqual([
+        { version: 1, title: "Plan", author_kind: "agent", author_user_id: null, cause: "created" },
+        { version: 2, title: "Q4 plan", author_kind: "member", author_user_id: MEMBER, cause: "renamed" },
+      ]);
+      expect(await instance.renameResource({
+        workspaceId: WORKSPACE_ID, resourceId: RUN, title: "Nothing", renamedByUserId: MEMBER, at: "2026-08-28T03:00:00.000Z",
+      })).toEqual({ outcome: "not_found" });
     });
   });
 });

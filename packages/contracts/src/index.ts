@@ -820,7 +820,7 @@ export const ResourceVersionAuthorSchema = z.discriminatedUnion("kind", [
 ]);
 
 /** Why the pointers moved. `created` is a resource's own first state. */
-export const ResourceVersionCauseSchema = z.enum(["created", "published", "refetched", "replaced"]);
+export const ResourceVersionCauseSchema = z.enum(["created", "published", "refetched", "replaced", "renamed"]);
 
 export const ResourceRevisionSchema = z.object({
   resourceId: IdSchema,

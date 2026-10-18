@@ -2610,6 +2610,17 @@ export function ConversationSurface({
     },
   });
 
+  // The room's `resource_updated` brings the new version; the title moves now.
+  const renameResource = useMutation({
+    mutationFn: ({ resource, title }: { resource: WorkstreamResource; title: string }) => api!.renameResource(id, resource.id, title),
+    onSuccess: (_result, { resource, title }) => {
+      queryClient.setQueryData<WorkstreamDetail>(parentDetailQueryKey, (current) => current ? {
+        ...current,
+        resources: current.resources.map((item) => item.id === resource.id ? { ...item, title } : item),
+      } : current);
+    },
+  });
+
   // The rail's detail shows one resource at a time, so its history is fetched
   // for that one rather than for every attachment the work stream carries.
   const inspectedResourceId = resourcePanel ? resourcePanel.resourceId : inspector?.type === 'resource' ? inspector.id : null;
@@ -3775,6 +3786,9 @@ export function ConversationSurface({
           onToggleWatch: (resource: WorkstreamResource, enabled: boolean) => watchResource.mutate({ resource, enabled }),
         } : {})}
         onOpenResourceVersion={openResourceVersion}
+        {...(api && isMainArtifact(resourcePanel.resourceId) ? {
+          onRenameResource: (resource: WorkstreamResource, title: string) => renameResource.mutateAsync({ resource, title }),
+        } : {})}
         resourceLink={(resource: WorkstreamResource) => {
           const workspace = session?.workspace;
           if (!workspace || !linkSpaceId || !isMainArtifact(resource.id)) return undefined;

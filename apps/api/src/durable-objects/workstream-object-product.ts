@@ -3509,6 +3509,47 @@ export class WorkstreamObjectProductService {
     return { outcome: "readback_failed" };
   }
 
+  /**
+   * Rename an artifact this thread generated, as the person asking. The title
+   * lives on the workspace's resource row, which every thread linking it reads
+   * live; this thread's frozen descriptor, which its message chips read, takes
+   * it too. Answers the resource for this room's `resource_updated`, or null
+   * when the title was already this one.
+   */
+  async renameResource(auth: AuthContext, resourceId: string, title: string): Promise<WorkstreamResource | null> {
+    await this.authorize(auth);
+    const linked = await this.readBackAttachedResource(auth.userId, resourceId);
+    if (!linked) throw new ApiError(404, "resource_not_found", "Resource not found");
+    if (linked.direction !== "artifact") {
+      throw new ApiError(409, "resource_not_artifact", "Only an artifact can be renamed");
+    }
+    const workspaceId = this.root().parent_workspace_key;
+    const result = await (await this.workspaceDirectory(workspaceId)).renameResource({
+      workspaceId, resourceId, title, renamedByUserId: auth.userId, at: new Date().toISOString(),
+    });
+    if (result.outcome === "not_found") throw new ApiError(404, "resource_not_found", "Resource not found");
+    if (result.outcome === "unchanged") return null;
+    // The same write a runtime republish makes to its link, so the projection
+    // that follows the inventory revision moves with it.
+    await this.objectStore.commitWithRegionalEffects(
+      (sql) => {
+        const now = Date.now();
+        sql.exec(
+          `UPDATE workstream_resource_links SET resource_json = json_set(resource_json, '$.title', ?), updated_at = ?
+            WHERE resource_id = ?`,
+          title, now, resourceId,
+        );
+        sql.exec(
+          `INSERT INTO resource_inventory_revision(id, revision, updated_at) VALUES (1, 1, ?)
+           ON CONFLICT(id) DO UPDATE SET revision = revision + 1, updated_at = excluded.updated_at`,
+          now,
+        );
+      },
+      () => [{ partitionKey: "common", effect: this.commonEffect(this.root()) }],
+    );
+    return this.readBackAttachedResource(auth.userId, resourceId);
+  }
+
   async detachResource(auth: AuthContext, resourceId: string): Promise<void> {
     await this.authorize(auth);
     await this.objectStore.commitWithRegionalEffects(

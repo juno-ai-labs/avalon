@@ -807,6 +807,7 @@ import {
   type ArtifactUpdate,
   WorkspacePinStorage,
   WORKSPACE_ARTIFACT_PINS_MIGRATION,
+  RESOURCE_VERSIONS_QUEUE_ARTIFACT_UPDATE,
   WORKSPACE_ARTIFACT_UPDATES_MIGRATION,
   WORKSPACE_PINS_MIGRATION,
 } from "./workspace-pin-storage";
@@ -907,6 +908,7 @@ import {
   WorkspaceResourceExistsRequestSchema,
   WorkspaceResourceHydrationPublishRequestSchema,
   WorkspaceResourceHydrationRefreshRequestSchema,
+  WorkspaceResourceRenameRequestSchema,
   WorkspaceResourceObjectFailureRequestSchema,
   WorkspaceResourceObjectRefRequestSchema,
   WorkspaceResourceSlugBacklogRequestSchema,
@@ -939,6 +941,8 @@ import {
   type WorkspaceResourceHydrationPublishRequest,
   type WorkspaceResourceHydrationRefreshRequest,
   type WorkspaceResourceHydrationResult,
+  type WorkspaceResourceRenameRequest,
+  type WorkspaceResourceRenameResult,
   type WorkspaceResourceObjectFailureRequest,
   type WorkspaceResourceObjectRefRequest,
   type WorkspaceResourceObjectRemovalResult,
@@ -972,6 +976,7 @@ import {
   recordWorkspaceInboundEmailFailure,
   recordWorkspaceResourceObjectCleanupFailure,
   refreshWorkspaceResourceHydration,
+  renameWorkspaceResource,
   renewWorkspaceInboundEmailLease,
   resolveWorkspaceConnectorResource,
   retireWorkspaceResourceObjectStaging,
@@ -1745,6 +1750,73 @@ const MEMORY_SCOPE_DEPENDENTS = [
 const CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V62 = [
   ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55,
 ] as const;
+
+/**
+ * The version-capture triggers as migration 112 left them, named so migration
+ * 113 can drop and restore them around the cause columns it replaces: SQLite
+ * refuses to drop a column a trigger reads.
+ */
+const RESOURCES_CREATE_INITIAL_VERSION_V112 = `CREATE TRIGGER resources_create_initial_version
+       AFTER INSERT ON resources BEGIN
+         INSERT INTO resource_versions
+           (resource_id, workspace_id, version, connection_id, resource_type, provider,
+            provider_resource_id, title, mime_type, content_ref, canonical_url, metadata_json,
+            last_hydrated_at, uploaded_by_user_id, attachment_status, model_content_ref,
+            model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
+            model_content_status, model_content_extractor_version, model_content_character_count,
+            model_content_extracted_at, model_content_error_code, captured_at,
+            author_kind, author_run_id, author_user_id, author_connection_id, cause,
+            storage_kind, on_behalf_of_user_id)
+         VALUES
+           (NEW.id, NEW.workspace_id, NEW.current_version, NEW.connection_id, NEW.resource_type, NEW.provider,
+            NEW.provider_resource_id, NEW.title, NEW.mime_type, NEW.content_ref, NEW.canonical_url, NEW.metadata_json,
+            NEW.last_hydrated_at, NEW.uploaded_by_user_id, NEW.attachment_status, NEW.model_content_ref,
+            NEW.model_mime_type, NEW.model_content_sha256, NEW.model_metadata_json, NEW.content_sha256,
+            NEW.model_content_status, NEW.model_content_extractor_version, NEW.model_content_character_count,
+            NEW.model_content_extracted_at, NEW.model_content_error_code, NEW.updated_at,
+            NEW.revision_author_kind, NEW.revision_author_run_id, NEW.revision_author_user_id,
+            NEW.revision_author_connection_id, NEW.revision_cause,
+            NEW.revision_storage_kind, NEW.revision_on_behalf_of_user_id);
+         UPDATE resources
+            SET revision_author_kind = NULL, revision_author_run_id = NULL,
+                revision_author_user_id = NULL, revision_author_connection_id = NULL,
+                revision_cause = NULL, revision_storage_kind = 'object',
+                revision_on_behalf_of_user_id = NULL
+          WHERE id = NEW.id;
+       END`;
+
+const RESOURCES_CREATE_SEMANTIC_VERSION_V112 = `CREATE TRIGGER resources_create_semantic_version
+       AFTER UPDATE OF connection_id, resource_type, provider, provider_resource_id, title,
+         mime_type, content_ref, canonical_url, metadata_json, last_hydrated_at,
+         uploaded_by_user_id, attachment_status, content_sha256 ON resources
+       WHEN NEW.current_version = OLD.current_version BEGIN
+         UPDATE resources SET current_version = OLD.current_version + 1 WHERE id = NEW.id;
+         INSERT INTO resource_versions
+           (resource_id, workspace_id, version, connection_id, resource_type, provider,
+            provider_resource_id, title, mime_type, content_ref, canonical_url, metadata_json,
+            last_hydrated_at, uploaded_by_user_id, attachment_status, model_content_ref,
+            model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
+            model_content_status, model_content_extractor_version, model_content_character_count,
+            model_content_extracted_at, model_content_error_code, captured_at,
+            author_kind, author_run_id, author_user_id, author_connection_id, cause,
+            storage_kind, on_behalf_of_user_id)
+         SELECT id, workspace_id, current_version, connection_id, resource_type, provider,
+                provider_resource_id, title, mime_type, content_ref, canonical_url, metadata_json,
+                last_hydrated_at, uploaded_by_user_id, attachment_status, model_content_ref,
+                model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
+                model_content_status, model_content_extractor_version, model_content_character_count,
+                model_content_extracted_at, model_content_error_code, updated_at,
+                revision_author_kind, revision_author_run_id, revision_author_user_id,
+                revision_author_connection_id, revision_cause, revision_storage_kind,
+                revision_on_behalf_of_user_id
+           FROM resources WHERE id = NEW.id;
+         UPDATE resources
+            SET revision_author_kind = NULL, revision_author_run_id = NULL,
+                revision_author_user_id = NULL, revision_author_connection_id = NULL,
+                revision_cause = NULL, revision_storage_kind = 'object',
+                revision_on_behalf_of_user_id = NULL
+          WHERE id = NEW.id;
+       END`;
 
 export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
@@ -4425,67 +4497,40 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `ALTER TABLE resources ADD COLUMN revision_on_behalf_of_user_id TEXT`,
     `ALTER TABLE resource_versions ADD COLUMN on_behalf_of_user_id TEXT`,
     `DROP TRIGGER resources_create_initial_version`,
-    `CREATE TRIGGER resources_create_initial_version
-       AFTER INSERT ON resources BEGIN
-         INSERT INTO resource_versions
-           (resource_id, workspace_id, version, connection_id, resource_type, provider,
-            provider_resource_id, title, mime_type, content_ref, canonical_url, metadata_json,
-            last_hydrated_at, uploaded_by_user_id, attachment_status, model_content_ref,
-            model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
-            model_content_status, model_content_extractor_version, model_content_character_count,
-            model_content_extracted_at, model_content_error_code, captured_at,
-            author_kind, author_run_id, author_user_id, author_connection_id, cause,
-            storage_kind, on_behalf_of_user_id)
-         VALUES
-           (NEW.id, NEW.workspace_id, NEW.current_version, NEW.connection_id, NEW.resource_type, NEW.provider,
-            NEW.provider_resource_id, NEW.title, NEW.mime_type, NEW.content_ref, NEW.canonical_url, NEW.metadata_json,
-            NEW.last_hydrated_at, NEW.uploaded_by_user_id, NEW.attachment_status, NEW.model_content_ref,
-            NEW.model_mime_type, NEW.model_content_sha256, NEW.model_metadata_json, NEW.content_sha256,
-            NEW.model_content_status, NEW.model_content_extractor_version, NEW.model_content_character_count,
-            NEW.model_content_extracted_at, NEW.model_content_error_code, NEW.updated_at,
-            NEW.revision_author_kind, NEW.revision_author_run_id, NEW.revision_author_user_id,
-            NEW.revision_author_connection_id, NEW.revision_cause,
-            NEW.revision_storage_kind, NEW.revision_on_behalf_of_user_id);
-         UPDATE resources
-            SET revision_author_kind = NULL, revision_author_run_id = NULL,
-                revision_author_user_id = NULL, revision_author_connection_id = NULL,
-                revision_cause = NULL, revision_storage_kind = 'object',
-                revision_on_behalf_of_user_id = NULL
-          WHERE id = NEW.id;
-       END`,
+    RESOURCES_CREATE_INITIAL_VERSION_V112,
     `DROP TRIGGER resources_create_semantic_version`,
-    `CREATE TRIGGER resources_create_semantic_version
-       AFTER UPDATE OF connection_id, resource_type, provider, provider_resource_id, title,
-         mime_type, content_ref, canonical_url, metadata_json, last_hydrated_at,
-         uploaded_by_user_id, attachment_status, content_sha256 ON resources
-       WHEN NEW.current_version = OLD.current_version BEGIN
-         UPDATE resources SET current_version = OLD.current_version + 1 WHERE id = NEW.id;
-         INSERT INTO resource_versions
-           (resource_id, workspace_id, version, connection_id, resource_type, provider,
-            provider_resource_id, title, mime_type, content_ref, canonical_url, metadata_json,
-            last_hydrated_at, uploaded_by_user_id, attachment_status, model_content_ref,
-            model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
-            model_content_status, model_content_extractor_version, model_content_character_count,
-            model_content_extracted_at, model_content_error_code, captured_at,
-            author_kind, author_run_id, author_user_id, author_connection_id, cause,
-            storage_kind, on_behalf_of_user_id)
-         SELECT id, workspace_id, current_version, connection_id, resource_type, provider,
-                provider_resource_id, title, mime_type, content_ref, canonical_url, metadata_json,
-                last_hydrated_at, uploaded_by_user_id, attachment_status, model_content_ref,
-                model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
-                model_content_status, model_content_extractor_version, model_content_character_count,
-                model_content_extracted_at, model_content_error_code, updated_at,
-                revision_author_kind, revision_author_run_id, revision_author_user_id,
-                revision_author_connection_id, revision_cause, revision_storage_kind,
-                revision_on_behalf_of_user_id
-           FROM resources WHERE id = NEW.id;
-         UPDATE resources
-            SET revision_author_kind = NULL, revision_author_run_id = NULL,
-                revision_author_user_id = NULL, revision_author_connection_id = NULL,
-                revision_cause = NULL, revision_storage_kind = 'object',
-                revision_on_behalf_of_user_id = NULL
-          WHERE id = NEW.id;
-       END`,
+    RESOURCES_CREATE_SEMANTIC_VERSION_V112,
+  ],
+}, {
+  version: 113,
+  description: "a person renaming an artifact is a version cause of its own",
+  // A rename moves `title`, which the semantic-version trigger captures, so
+  // every rename records a version whether or not it has a cause to name. A
+  // cause of its own keeps it out of what a pin counts as news
+  // (`artifactUpdateSql`) and lets history say what happened. SQLite cannot
+  // widen a CHECK in place, and `resources` is a referenced parent, so each
+  // cause column is replaced rather than its table rebuilt: a wider column is
+  // added and filled, the triggers that read the old one are dropped so it
+  // can be, and the new one takes its name. The triggers come back unchanged.
+  statements: [
+    `DROP TRIGGER resources_create_initial_version`,
+    `DROP TRIGGER resources_create_semantic_version`,
+    `DROP TRIGGER resource_versions_queue_artifact_update`,
+    `ALTER TABLE resources ADD COLUMN revision_cause_v113 TEXT
+       CHECK (revision_cause_v113 IS NULL
+         OR revision_cause_v113 IN ('created', 'published', 'refetched', 'replaced', 'renamed'))`,
+    `UPDATE resources SET revision_cause_v113 = revision_cause WHERE revision_cause IS NOT NULL`,
+    `ALTER TABLE resources DROP COLUMN revision_cause`,
+    `ALTER TABLE resources RENAME COLUMN revision_cause_v113 TO revision_cause`,
+    `ALTER TABLE resource_versions ADD COLUMN cause_v113 TEXT
+       CHECK (cause_v113 IS NULL
+         OR cause_v113 IN ('created', 'published', 'refetched', 'replaced', 'renamed'))`,
+    `UPDATE resource_versions SET cause_v113 = cause WHERE cause IS NOT NULL`,
+    `ALTER TABLE resource_versions DROP COLUMN cause`,
+    `ALTER TABLE resource_versions RENAME COLUMN cause_v113 TO cause`,
+    RESOURCES_CREATE_INITIAL_VERSION_V112,
+    RESOURCES_CREATE_SEMANTIC_VERSION_V112,
+    RESOURCE_VERSIONS_QUEUE_ARTIFACT_UPDATE,
   ],
 }];
 
@@ -14278,6 +14323,31 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceResourceVersionListRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     return listWorkspaceResourceVersions(this.state.storage, request);
+  }
+
+  /**
+   * Rename a resource as a person. Its pinners' open windows get their pin
+   * list again, since a pinned artifact's row shows its title; the thread that
+   * asked tells its own room.
+   */
+  async renameResource(input: WorkspaceResourceRenameRequest): Promise<WorkspaceResourceRenameResult> {
+    await this.initialized;
+    const request = WorkspaceResourceRenameRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = renameWorkspaceResource(this.state.storage, request);
+    if (result.outcome !== "renamed") return result;
+    const pinners = new Set(new WorkspacePinStorage(this.state.storage).artifactPinners(request.resourceId)
+      .map((pinner) => pinner.userId));
+    for (const userId of pinners) {
+      try {
+        this.publishArtifactPins(userId, request.workspaceId);
+      } catch (error) {
+        logWarn(this.env, "artifact_pins_publish_failed", {
+          workspace_id: request.workspaceId, code: diagnosticErrorCode(error, "artifact_pins_publish_failed"),
+        });
+      }
+    }
+    return result;
   }
 
   /** Record a re-fetch that produced the content the row already holds. */

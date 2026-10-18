@@ -127,7 +127,8 @@ table's order rules and the one per-person limit, but not the wire list:
 **Updates.** A pinned artifact is unread while somebody else has made a
 version of it, since it was pinned, that the person has not seen
 (`artifactUpdateSql`: a republish or a replacement, never the first version,
-a refetch or a bookkeeping capture). A change the pinner
+a refetch, a rename or a bookkeeping capture). A rename pushes the pinners'
+lists again so the row shows the new title, without making the pin unread. A change the pinner
 made is never news to them: neither their own edit (`author_user_id`) nor a
 revision by a run acting for them (`on_behalf_of_user_id`, which the Terminal
 republish and the image edit record as the person who asked for the run; a
