@@ -136,6 +136,30 @@ describe('showing a live artifact in the rail', () => {
     expect(screen.queryByText('Preview unavailable here')).toBeNull();
   });
 
+  it('keeps its own “Opening…” until the composited page is ready, not just the access', async () => {
+    // The main process holds the view hidden over the redeem bootstrap and
+    // answers once the site is ready; the pane must not go blank meanwhile.
+    let showPage!: (shown: boolean) => void;
+    const present = vi.fn(async () => await new Promise<boolean>((resolve) => { showPage = resolve; }));
+    setup({ surface: surface({ present }) });
+    await waitFor(() => expect(present).toHaveBeenCalled());
+    expect(screen.getByText('Opening…')).toBeInTheDocument();
+    await act(async () => { showPage(true); });
+    expect(screen.queryByText('Opening…')).toBeNull();
+  });
+
+  it('hides a browser host’s frame behind “Opening…” until the frame loads', async () => {
+    // The frame first holds the bootstrap, which has an "Opening…" of its own.
+    // Its `load` is the site's: the bootstrap is replaced before it fires one.
+    setup({ surface: surface({ framed: true }) });
+    const frame = await screen.findByTitle('Offsite RSVP');
+    expect(frame).toHaveAttribute('data-loading');
+    expect(screen.getByText('Opening…')).toBeInTheDocument();
+    fireEvent.load(frame);
+    expect(frame).not.toHaveAttribute('data-loading');
+    expect(screen.queryByText('Opening…')).toBeNull();
+  });
+
   it('remints and replaces the native preview when a new version is published', async () => {
     const openArtifact = mintingAccess();
     const { props, rerender } = setup({ openArtifact, version: 4 });

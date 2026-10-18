@@ -161,6 +161,7 @@ import {
   artifactWebPreferences,
   confineToArtifactOrigin,
   isArtifactUrl,
+  loadArtifactDocument,
   loadArtifactInitialUrl,
   type ArtifactLinkHandoff,
   type ArtifactViewHandle,
@@ -3495,7 +3496,7 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
         destroyed: () => contents.isDestroyed(),
         setBounds: (bounds) => view.setBounds(bounds),
         setBorderRadius: (radius) => view.setBorderRadius(radius),
-        loadURL: async (url) => await contents.loadURL(url),
+        load: async (url) => await loadArtifactDocument(contents, url),
         close: () => contents.close(),
       };
       // The controller speaks in handles, not Electron objects, so the window

@@ -227,7 +227,11 @@ oracle. **The code never travels in a request URL.** The desktop lands on
 `location.hash` — which a browser never sends to a server — clears it from the
 address bar, and `POST`s the code in a request body. The redeem endpoint never
 serves artifact content: it consumes the code, sets the cookie, and redirects, so
-no artifact document is ever loaded at a location that held the code. This
+no artifact document is ever loaded at a location that held the code. The
+bootstrap is served before the hostname route is read, since it is the same
+page for every host. Neither the rail's composited view nor the browser
+client's frame is shown over it: each stays hidden until the site's own
+document is ready, so the rail's "Opening…" is the only one a person sees. This
 Rally-authored bootstrap is the only response with
 `Referrer-Policy: same-origin`, which keeps Chromium's Origin non-opaque on the
 redeem POST; the artifact document reached after redemption returns to
@@ -581,6 +585,35 @@ mint one; that is inside that console's stated authority rather than a boundary
 this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 
 ## Changelog
+
+### 2026-10-18 — One "Opening…" per open, and no route read before the bootstrap
+
+**What changed:** The rail preview's `WebContentsView` stays collapsed until
+`loadArtifactDocument` sees `dom-ready` on a document that is not
+`/__rally/open`; the browser client's frame stays `visibility: hidden` until
+its first `load`. The rail's "Opening…" now lasts until the preview reports it
+is showing, rather than until access is minted. The serving Worker answers
+`/__rally/open` before the D1 hostname-route read.
+
+**Why:** Opening a site showed two loading looks in turn: Rally's own
+"Opening…" in the pane, then the bootstrap's "Opening… One moment." in
+system type on a `Canvas` background, painted over it by the view. The
+bootstrap needed nothing from the route read, so every open paid a D1 round
+trip before its first step, and the path told a known host from an unknown one
+by 200 against 404.
+
+**Considered and rejected:** Having Electron `POST` the code to the redeem
+endpoint itself, skipping the bootstrap and one more round trip. That request
+carries `Sec-Fetch-Site: none`, which the redeem fence refuses; widening the
+fence is a security change and was not worth it for this. Making the bootstrap
+page blank: the system browser and the pop-out still show it, and there it is
+the only loading look.
+
+**Consequences:** A site whose document never reaches `dom-ready` keeps the
+rail on "Opening…" rather than showing a half-loaded page. The frame relies on
+Chromium firing no `load` for the bootstrap, whose form `POST` replaces it
+mid-parse; a check in a real Chromium confirmed it. Should that change, the
+frame shows the bootstrap for one round trip, as before.
 
 ### 2026-10-15 — The skill checks layout by looking, and names the grid trap
 
