@@ -20,10 +20,10 @@
 Today Rally remembers something only when the agent, mid-task, decides to
 call a memory tool. In ten weeks of dogfooding that happened twelve times,
 nothing stored has an expiry, and no Organization-wide memory exists. This
-PRD replaces that with memory Rally gathers on its own. After a Thread,
-Breakout or Channel feed has been active and then rests, a sweep on a
-Sol-class model reads what was said since the last sweep, together with what
-Rally already remembers about that place, and records facts: standing ones
+PRD replaces that with memory Rally gathers on its own. After a Thread, a
+Breakout or a Sidekick's conversation has been active and then rests, a sweep
+on a Sol-class model reads what was said since the last sweep, together with
+what Rally already remembers about that place, and records facts: standing ones
 that hold until contradicted, and situational ones with a horizon ("out until
 Thursday", "using the old endpoint until the migration lands"). Every fact
 knows which conversation it came from, who said it, and when it was true.
@@ -84,9 +84,11 @@ records which conversation it came from
 4. Memory adds no new wait between a message landing and the first provider
    request, on every path: a warm conversation, a cold one, a new Breakout, a
    new Thread, a Sidekick run.
-5. Memory never widens who learns what: a fact reaches a run only if the
-   person acting may open the conversation it came from today, and personal
-   memory reaches only its person's own activations.
+5. A fact reaches an activation only if the person acting may open every
+   conversation it came from today, and personal memory reaches only that
+   person's own activations. The one widening this design accepts is named,
+   not hidden: in a shared room, Rally's reply to a person may draw on what
+   only that person told it (design decision 7).
 6. The agent can ask for memory the digest left out, and a person can ask
    Rally to remember or forget something, each through one tool.
 7. A person can see what Rally remembers about them and where each fact came
@@ -127,6 +129,13 @@ records which conversation it came from
    Channel-side editor is deferred.
 8. **A second region.** Nothing here crosses the regional boundary; a second
    region gets its own store the way it gets its own `WorkspaceDO`.
+9. **Sweeping a Channel's own feed.** `space_messages` lives in `WorkspaceDO`
+   with text ids and `posted_at`, has no agent run to settle and no transcript
+   sequence, and holds eight rows in the dogfooding Organization, most of them
+   merge-back posts whose content a Thread sweep already saw. Deferred: it
+   needs a `WorkspaceDO`-side lane with a `(posted_at, message_id)` cursor
+   that survives keyed `replace` reposts and message-id evidence. The
+   `space:<spaceId>` source shape is defined now so that lane can use it.
 
 ## Product behavior
 
@@ -192,9 +201,14 @@ Facts about the Organization and about Channels the person may open are
 listed below their own, read-only for a member and removable by an
 administrator.
 
-**Sidekicks.** A Sidekick run receives the digest of its home conversation in
-place of the automatic recall it freezes today, which also removes the
-embedding call those runs still make. Sidekick tables are unchanged.
+**Sidekicks.** A Sidekick keeps memory of its own, as its `sidekick` scope
+does today: facts with subject `sidekick:<automationId>`, swept from the
+Sidekick's drafting conversation and its runs, visible wherever the Sidekick's
+own authority reaches and nowhere else. A run receives the digest of its home
+conversation, when it has one, plus the Sidekick's own facts, in place of the
+automatic recall it freezes today, which also removes the embedding call
+those runs still make. A personal or workspace Sidekick with no home receives
+its own facts alone. Sidekick tables are unchanged.
 
 **Failure.** A sweep that fails leaves the previous facts in force and is
 retried by its lane; a digest copy that is stale by one turn is used as is;
@@ -306,9 +320,11 @@ authoritative.
 `WorkspaceDO`:
 
 - `memory_facts`: `fact_id`, `subject_kind` (`organization` | `channel` |
-  `thread` | `breakout` | `person`), `subject_id`, `source_conversation`
-  (`<channelId>` for a Thread's Main, `<channelId>/<breakoutId>` for a
-  Breakout, `space:<spaceId>` for a Channel's own feed; never null, an
+  `thread` | `breakout` | `person` | `sidekick`), `subject_id`,
+  `source_conversation` (`<channelId>` for a Thread's Main,
+  `<channelId>/<breakoutId>` for a Breakout, `sidekick:<automationId>` for a
+  Sidekick's own conversation or run, `space:<spaceId>` for a Channel's own
+  feed once that lane exists; never null, an
   Organization fact included, so a fact promoted from a Channel that is later
   narrowed to private follows the Channel's current reach; a fact derived
   from a candidate carries the union of its sources, and a reader needs
@@ -324,10 +340,18 @@ authoritative.
   compare-and-swap on `from_seq` lives here.
 - `memory_digests`: `conversation`, `user_id` (nullable), `digest_hash`,
   `text`, `revision`, `rendered_at`.
-- Existing `memory_items`, `memory_mutations` and `memory_index_outbox`: the
-  nine dogfood items import as `standing` facts with `person` or `thread`
-  subjects; these three tables and the Vectorize projection retire with the
-  old plugin. **`memory_scopes` stays**: `memory_tables` and
+- Existing `memory_items`, `memory_mutations` and `memory_index_outbox`:
+  every active item in every Organization imports as a `standing` fact in
+  step 1, before the tables retire. Scope kind maps to subject: `user` to
+  `person:<userId>`, `workstream` to `thread:<workstreamId>`, `sidekick` to
+  `sidekick:<automationId>`, `workspace` to `organization`. The source is
+  `provenance_json.workstreamId` when the item has one; otherwise a `person`
+  fact takes the person's Personal Channel (`space:<personalSpaceId>`), a
+  `sidekick` fact takes `sidekick:<automationId>`, and an `organization`
+  fact takes the Organization's General Channel (`space:<generalSpaceId>`),
+  which is Organization-wide. Expired and invalidated items are not imported.
+  These three tables and the Vectorize projection then retire with the old
+  plugin. **`memory_scopes` stays**: `memory_tables` and
   `memory_table_rows` reference it with cascading foreign keys and the table
   tools resolve scopes through it, so retiring it would delete Sidekick table
   state. `memory_tables*` are untouched.
@@ -394,10 +418,16 @@ Ships to everybody on merge, in three steps, each a pull request:
 
 1. **Store, sweep and tools**, with the digest *not yet injected*: the
    recall-only baseline of [research.md §7.0](research.md#70-baseline-recall-only).
-   The old plugin's tools are removed and its items imported. Sweeps run and
-   facts accumulate; `memory_recall` is the only read.
-2. **Digest copies and injection**, attached to the triggering message per
-   design decision 7, Sidekick admission recall replaced.
+   The old plugin's tools are removed, its items imported, and
+   `freezeRunMemoryContext` is deleted for every run kind that still calls
+   it (Sidekick runs, scheduled wake-ups, connector and activity triggers,
+   manual retries, agent-to-agent messages), so no run reads the retired
+   store or pays the admission embedding. Until step 2 every run kind is
+   recall-only; `memory_recall` is the only read.
+2. **Digest copies and injection** for every run kind, attached to the
+   triggering input per design decision 7: a person's message, a Sidekick
+   run's trigger, a wake-up, a connector event. A Sidekick run's digest is
+   its home conversation's, when it has one, plus the Sidekick's own facts.
 3. **Review surface** in the Personal Channel.
 
 Turning it off: one product flag, `memory-sweep-enabled`, a kill switch that
