@@ -1,10 +1,11 @@
 import { asHarnessRunId, asWorkstreamId } from "@rally/contracts";
-import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { asUserId, asWorkspaceId, readStructuredFailure } from "@rally/contracts";
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { __integrationTesting } from "../src/services/integrations";
+import { withToolPagination } from "../src/services/tool-pagination";
 import { ATTACHMENT_TEXT_EXTRACTOR_VERSION } from "../src/services/attachment-derivative-service";
 import {
   buildGifStoryboard,
@@ -475,6 +476,40 @@ describe("work-stream attachment tools", () => {
       code: "resource_version_changed",
       details: { resourceId },
     });
+  });
+
+  it("names the resource when a page from an earlier message was already read, so a restart clears the guard", async () => {
+    // Run A issues page 2, run B reads it, run C copies the same ID from its
+    // history. Run C's guard has no memory of the page, so a refusal without
+    // the resource stays anonymous and replaces the reply even after the
+    // model restarts the read.
+    const { database, objectStore, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, objectStore, bucket, 4);
+    const read = __integrationTesting.createAvalonTools(env, input()).find((tool) => tool.definition.name === "read_resource")!;
+    const first = await read.execute({ resourceId }, context());
+    const consumed = first.pagination!.continuations.find((page) => page.slot === "nextPageId")!.input;
+    const [, next] = withToolPagination(read, { prefix: "workstream", wirePrefix: "", connectionId: null,
+      fence: { runId: HARNESS_RUN_ID, attemptId: "attempt", owner: "owner" }, receipts: {
+        issuePage: vi.fn(async () => null),
+        claimPage: vi.fn(async () => ({ consumedInputJson: JSON.stringify(consumed) })),
+      } });
+    const pageId = "workstream_coral_bright_vibrant_harriot";
+    const error: unknown = await next!.execute({ pageId }, { ...context(), effectIntentId: "stale" }).catch((caught: unknown) => caught);
+    expect(readStructuredFailure(error)).toEqual({ code: "page_already_consumed", details: { resourceId } });
+
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const policy = { capability: "workstream.resources.read" };
+    guard.onStarted({ type: "tool_started", toolCallId: "stale", toolName: "read_resource_next", pluginId: "rally:workstream",
+      policy, input: { pageId } } as never);
+    guard.onFailed({ type: "tool_failed", toolCallId: "stale", toolName: "read_resource_next", pluginId: "rally:workstream",
+      policy, error: (error as Error).message, data: readStructuredFailure(error), phase: "execution", outcome: "definitive_failure" } as never);
+    expect(guard.boundary()).toContain(resourceId);
+    const restarted = await read.execute({ resourceId }, context());
+    guard.onStarted({ type: "tool_started", toolCallId: "restart", toolName: "read_resource", pluginId: "rally:workstream",
+      policy, input: { resourceId } } as never);
+    guard.onCompleted({ type: "tool_completed", toolCallId: "restart", toolName: "read_resource", pluginId: "rally:workstream",
+      policy, result: restarted } as never);
+    expect(guard.boundary()).toBeNull();
   });
 
   it("rejects an oversized derivative object before hydrating it into Worker memory", async () => {

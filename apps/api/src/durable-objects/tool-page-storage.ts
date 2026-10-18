@@ -104,8 +104,12 @@ export class ToolPageStorage {
    * Principal, connection and operation still match, the consumer rules are
    * the same in every run, and the claim is recorded on the page's own row, so
    * the consuming receipt is a dependency whichever run issued it.
+   *
+   * A page a completed receipt already consumed returns its arguments as
+   * `consumedInputJson` and writes nothing. The caller refuses the call and
+   * may only describe them, so the refusal can name what the page read.
    */
-  claim(raw: z.infer<typeof PageClaimSchema>): { inputJson: string } {
+  claim(raw: z.infer<typeof PageClaimSchema>): { inputJson: string } | { consumedInputJson: string } {
     const input = parsePage(PageClaimSchema, raw);
     type PageRow = { run_id: string; input_json: string; consumer_id: string | null; consumer_status: string | null };
     const columns = `page.run_id, page.input_json, page.consumer_id, consumer.status AS consumer_status
@@ -123,9 +127,8 @@ export class ToolPageStorage {
     }
     if (!row) throw new ToolPageError("page_id_invalid: Restart with the first-page tool; pageId is not available for this operation.");
     if (row.consumer_id !== null && row.consumer_id !== input.effectIntentId && row.consumer_status !== "failed") {
-      throw new ToolPageError(row.consumer_status === "completed"
-        ? "page_already_consumed: Use nextPageId from the completed page, or restart with the first-page tool."
-        : "page_in_progress: This page already has a call in progress.");
+      if (row.consumer_status === "completed") return { consumedInputJson: row.input_json };
+      throw new ToolPageError("page_in_progress: This page already has a call in progress.");
     }
     this.sql.exec("UPDATE tool_pages SET consumer_id = ? WHERE run_id = ? AND page_id = ?",
       input.effectIntentId, row.run_id, input.pageId);

@@ -106,6 +106,11 @@ Unknown, wrong-scope, or uncommitted IDs fail with `page_id_invalid`; completed
 and concurrent consumers produce `page_already_consumed` and `page_in_progress`.
 These failures tell the caller to restart or use the completed page's next ID,
 naming the first-page tool; storage cannot, so the wrapper writes that text.
+For a consumed page, storage returns the page's stored arguments without writing,
+and the tool's optional `continuationDetails` names what it read (`resourceId`
+for a resource read) in the failure details. The attachment grounding guard
+needs that identity: a later run has no memory of the page, and an anonymous
+failure is never cleared by a later successful read.
 
 A claim tries the current run by primary key, then earlier runs. The second
 lookup is a deliberately unindexed scan of the conversation's pages, run only
@@ -156,6 +161,9 @@ redemption re-runs the authorized executor, so scope beyond principal,
 connection and operation added no safety. Claims now fall back to earlier runs
 and record the consumer on the page's own row, which keeps use-once and the
 receipt dependency across runs; `explainEarlierRunPage` was removed as dead.
+Use-once across runs makes a consumed earlier page the new stale case, so its
+refusal carries the resource identity through `continuationDetails`; without it
+the grounding guard reproduced the original false boundary one page later.
 Copying earlier pages into the current run was rejected: `UNIQUE(producer_id,
 slot)` forbids a second row, and a copy would split use-once across rows.
 Making IDs unique per conversation was rejected as a scan on every issue; a
