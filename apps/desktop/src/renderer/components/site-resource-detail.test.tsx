@@ -195,6 +195,25 @@ describe('showing a live artifact in the rail', () => {
     geometry.mockRestore();
   });
 
+  it('hides the view without a still when the capture does not come back', async () => {
+    // A hung capture must not keep the menu under the view: past the wait the
+    // hide goes out anyway, and the pane is blank as it was before stills.
+    const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ x: 20, y: 40, width: 500, height: 320 }),
+    );
+    const { props } = setup({
+      surface: surface({ snapshot: vi.fn(async () => await new Promise<string | null>(() => undefined)) }),
+    });
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenCalled());
+    const overlay = document.createElement('div');
+    overlay.setAttribute('role', 'menu');
+    document.body.append(overlay);
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 }));
+    expect(screen.getByTestId('site-preview-pane').querySelector('img')).toBeNull();
+    overlay.remove();
+    geometry.mockRestore();
+  });
+
   it('leaves the view up when the overlay closes before the still is taken', async () => {
     const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
       DOMRect.fromRect({ x: 20, y: 40, width: 500, height: 320 }),
