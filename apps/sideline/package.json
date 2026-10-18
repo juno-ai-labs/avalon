@@ -1,6 +1,6 @@
 {
   "name": "@rally/sideline",
-  "version": "0.1.146",
+  "version": "0.1.147",
   "private": true,
   "description": "Sideline internal represented-messaging app",
   "type": "module",
