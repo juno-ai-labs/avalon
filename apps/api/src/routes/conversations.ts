@@ -2,6 +2,7 @@ import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono } from "hono";
 import { requireSendableMessageLength, zValidator } from "../middleware/validation";
 import {
+  ConversationSuggestionDismissResultSchema,
   AcknowledgeWorkstreamReadRequestSchema,
   AgentModelOverrideSchema,
   ConversationMergeChannelsSchema,
@@ -321,6 +322,20 @@ conversationRoutes.patch("/:parentId/substreams/:substreamId/read-state",
     const param = c.req.valid("param");
     const client = await new ConversationService(c.env, getWorkspaceAuth(c)).client(param.parentId, false, param.substreamId);
     return c.json(WorkstreamSchema.parse(await client.acknowledgeRead(c.req.valid("json"))));
+  });
+/**
+ * Dismiss a suggestion under a turn, for everyone in the conversation. Read-
+ * authorized, like acknowledging a read: it records a choice about a line only
+ * readers see and changes nothing in the transcript, and the conversation
+ * object refuses a suggestion it does not hold. `substreamId` names the
+ * Breakout the suggestion sits in, `0` for the Thread's Main.
+ * `docs/conversation-suggestions.md`.
+ */
+conversationRoutes.post("/:parentId/substreams/:substreamId/suggestions/:suggestionId/dismiss",
+  zValidator("param", substreamSocketParam.extend({ suggestionId: IdSchema })), async (c) => {
+    const param = c.req.valid("param");
+    const client = await new ConversationService(c.env, getWorkspaceAuth(c)).client(param.parentId, false, param.substreamId);
+    return c.json(ConversationSuggestionDismissResultSchema.parse(await client.dismissSuggestion(param.suggestionId)));
   });
 conversationRoutes.get("/:parentId", zValidator("param", parentParam), async (c) => {
   const parentId = c.req.valid("param").parentId;
