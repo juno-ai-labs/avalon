@@ -588,8 +588,10 @@ substitute for real-provider latency or window-level acceptance.
 draft key when it opens, over an empty draft only, and mounts the composer
 after the write so it hydrates the words, with the composer's notice saying
 "Drafted by Rally from this thread. Edit it, then start." until the words are
-edited. `captureInitialSubstreamContext`
-resolves an open `start_breakout` suggestion on the cutoff turn as accepted.
+edited. Once the child is ready, the service calls the parent's
+`resolveBreakoutSuggestion`, which resolves an open `start_breakout`
+suggestion on the cutoff turn as accepted; capture does not, so a preparation
+that fails or is abandoned leaves the chip standing.
 Both come from [`conversation-suggestions.md`](conversation-suggestions.md).
 
 **Why:** a Breakout suggestion's accept path is this pane at the judged turn,

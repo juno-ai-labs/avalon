@@ -1,5 +1,8 @@
+import { z } from "zod";
 import { MESSAGE_MAX_CHARACTERS, type ConversationSuggestionKind } from "@rally/contracts";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { renderSuggestionDraftMessages, suggestionDraftJsonSchema } from "@rally/agent-harness";
+import { resourceEmbeds } from "../durable-objects/conversation-suggestions";
 import type { Env } from "../env";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { runStructuredInference } from "./structured-inference";
@@ -50,7 +53,7 @@ export async function draftSuggestion(env: Env, input: SuggestionDraftInput): Pr
       }),
       schemaName: input.kind === "merge_up" ? "suggestion_merge_note" : "suggestion_breakout_prompt",
       jsonSchema: suggestionDraftJsonSchema[input.kind],
-      parse: (value) => parseDraft(input.kind, value),
+      parse: (value) => parseDraft(input.kind, value, input.judgedText),
       reasoningEffort: "none",
       defer: input.defer,
       ...(input.signal ? { signal: input.signal } : {}),
@@ -62,23 +65,40 @@ export async function draftSuggestion(env: Env, input: SuggestionDraftInput): Pr
       workstream_id: input.workstreamId,
       substream_id: input.substreamId,
       kind: input.kind,
-      reason: diagnosticErrorCode(error, "suggestion_draft_failed"),
+      reason: zodDiagnosticCode(error, "suggestion_draft") ?? diagnosticErrorCode(error, "suggestion_draft_failed"),
     });
     return null;
   }
 }
 
-function parseDraft(kind: ConversationSuggestionKind, value: unknown): SuggestionDraft {
-  if (!value || typeof value !== "object") throw new Error("suggestion_draft_invalid");
-  const record = value as { text?: unknown; prompt?: unknown; subject?: unknown };
-  const text = typeof (kind === "merge_up" ? record.text : record.prompt) === "string"
-    ? String(kind === "merge_up" ? record.text : record.prompt).trim()
-    : "";
-  if (text.length === 0) throw new Error("suggestion_draft_empty");
-  if (text.length > MESSAGE_MAX_CHARACTERS) throw new Error("suggestion_draft_too_long");
-  const subject = kind === "start_breakout" && typeof record.subject === "string" && record.subject.trim().length > 0
-    ? record.subject.trim().slice(0, 120)
-    : null;
-  if (kind === "start_breakout" && subject === null) throw new Error("suggestion_draft_subject_missing");
-  return { text, subject };
+/** The subject is a chip title's worth of words; longer is cut, not refused. */
+export const SUGGESTION_SUBJECT_MAXIMUM_CHARACTERS = 120;
+
+const words = z.string().trim().min(1).max(MESSAGE_MAX_CHARACTERS);
+const MergeNoteSchema = z.object({ text: words });
+const BreakoutPromptSchema = z.object({ prompt: words, subject: z.string().trim().min(1) });
+
+/**
+ * The model's reply against a schema that mirrors `suggestionDraftJsonSchema`,
+ * so a rejection names the field (CLAUDE.md, "Naming a schema failure") and the
+ * structured-inference repair round sees a `ZodError`. A merge note keeps
+ * every artifact the judged message embeds: the drafter sees a bounded head
+ * of that message, so an embed past the bound is appended here rather than
+ * asked of the model.
+ */
+export function parseDraft(kind: ConversationSuggestionKind, value: unknown, judgedText: string): SuggestionDraft {
+  if (kind === "merge_up") {
+    const note = MergeNoteSchema.parse(value);
+    return { text: withEveryEmbed(note.text, judgedText), subject: null };
+  }
+  const draft = BreakoutPromptSchema.parse(value);
+  return { text: draft.prompt, subject: [...draft.subject].slice(0, SUGGESTION_SUBJECT_MAXIMUM_CHARACTERS).join("") };
+}
+
+/** The note with each embed of the judged message it does not already carry, as a link on its own line. */
+export function withEveryEmbed(note: string, judgedText: string): string {
+  const carried = new Set(resourceEmbeds(note).map((embed) => embed.id));
+  const missing = resourceEmbeds(judgedText).filter((embed) => !carried.has(embed.id));
+  if (missing.length === 0) return note;
+  return `${note}\n\n${missing.map((embed) => `[${embed.title}](resource://${embed.id})`).join("\n")}`;
 }

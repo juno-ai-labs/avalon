@@ -102,7 +102,7 @@ describe("observeTurnDisposition", () => {
       target_kind: "thread", target_id: workstreamId, target_title: "Pricing for the spring launch",
       decision_choice: "worth_carrying_up", decision_confidence: 0.91, decision_model: "jev-1.13.0",
     });
-    expect(storage.judgementForRun(runId)).toEqual({ code: "worth_carrying_up", suggestion_id: result.suggestion!.suggestion_id });
+    expect(storage.judgementForRun(runId)).toEqual({ code: "worth_carrying_up", failure_kind: null, suggestion_id: result.suggestion!.suggestion_id });
     expect(storage.open()).toHaveLength(1);
     // The request named the parent and carried the judged message's embed as new here.
     const request = JSON.parse(String((fetcher as unknown as ReturnType<typeof vi.fn>).mock.calls[0]![1]!.body)) as {
@@ -208,13 +208,37 @@ describe("observeTurnDisposition", () => {
     expect(shown.outcome === "judged" && shown.suggestion?.kind).toBe("merge_up");
   });
 
-  it("records classifier_unavailable without a key and still writes no row", async () => {
+  it("records classifier_unavailable without a key, naming why, and still writes no row", async () => {
     const { storage } = conversation(twoTurns);
     const fetcher = answering("worth_carrying_up", 0.91);
     const result = await observeTurnDisposition(observation(storage, { env: {}, fetch: fetcher }));
-    expect(result).toMatchObject({ outcome: "judged", code: "classifier_unavailable", suggestion: null });
+    expect(result).toMatchObject({ outcome: "judged", code: "classifier_unavailable", failureKind: "typesafe_key_missing", suggestion: null });
     expect(fetcher).not.toHaveBeenCalled();
-    expect(storage.judgementForRun(runId)?.code).toBe("classifier_unavailable");
+    expect(storage.judgementForRun(runId)).toMatchObject({ code: "classifier_unavailable", failure_kind: "typesafe_key_missing" });
+  });
+
+  it("records a confident side question in a Breakout as not_offerable, not as below the threshold", async () => {
+    const { storage } = conversation(twoTurns);
+    const result = await observeTurnDisposition(observation(storage, { fetch: answering("side_question_worth_a_breakout", 0.95) }));
+    expect(result).toMatchObject({ outcome: "judged", code: "not_offerable", confidence: 0.95, suggestion: null });
+  });
+
+  it("writes no row when a merge lands while the classifier is answering", async () => {
+    const { database, storage } = conversation(twoTurns);
+    const answer = answering("worth_carrying_up", 0.91);
+    const fetcher = vi.fn(async (...args: Parameters<typeof fetch>) => {
+      // The merge marker appends during the call: the pre-call gate saw none.
+      seedCanonicalConversationTurn(database, {
+        turnId: "turn-3", actor: "system", authorUserId: null, authorSnapshot: null, messageType: "system",
+        text: "Merged into Pricing", transcriptSequence: 3, createdAt: Date.parse("2026-10-18T10:00:05.000Z"),
+        structuredContentJson: JSON.stringify({ type: "conversation_merged_into", mergedByUserId: userId }),
+      });
+      return answer(...args);
+    }) as unknown as typeof fetch;
+    const result = await observeTurnDisposition(observation(storage, { fetch: fetcher }));
+    expect(result).toMatchObject({ outcome: "judged", code: "already_carried_up", suggestion: null });
+    expect(storage.open()).toEqual([]);
+    expect(storage.judgementForRun(runId)?.code).toBe("already_carried_up");
   });
 });
 

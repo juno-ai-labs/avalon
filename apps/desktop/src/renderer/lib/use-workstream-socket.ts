@@ -767,7 +767,9 @@ export function useWorkstreamSocket(
   const [sendReady, setSendReady] = useState(false);
   const [activeInferenceDelays, setActiveInferenceDelays] = useState<InferenceDelayState[]>(resumeState.activeInferenceDelays);
   const [activeCompaction, setActiveCompaction] = useState<AgentCompactionState | null>(null);
-  const [suggestions, setSuggestions] = useState<ConversationSuggestion[]>([]);
+  // From the resume state: a remount that resumes after the cursor replays no
+  // snapshot, and the open chips must not vanish until a forced one.
+  const [suggestions, setSuggestions] = useState<ConversationSuggestion[]>(resumeState.suggestions);
   const attempts = useRef(0);
   const retryOpening = useCallback((): void => {
     setOpeningError(undefined);
@@ -1594,7 +1596,8 @@ export function useWorkstreamSocket(
         else queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
         setActiveCompaction(event.activeCompaction);
         updateInferenceDelays(event.activeInferenceDelays);
-        setSuggestions(event.suggestions ?? []);
+        resumeState.suggestions = event.suggestions ?? [];
+        setSuggestions(resumeState.suggestions);
         queryClient.setQueryData<number>(
           workstreamSocketSnapshotGenerationQueryKey(parentId, substreamId),
           (current) => (current ?? 0) + 1,
@@ -1735,10 +1738,9 @@ export function useWorkstreamSocket(
         // The row's whole state each time: replace what is held for that id,
         // and drop it once it is no longer open. The newest-three rule that
         // hides a line is the surface's to apply against the feed it holds.
-        setSuggestions((current) => {
-          const others = current.filter((suggestion) => suggestion.suggestionId !== event.suggestion.suggestionId);
-          return event.suggestion.status === 'open' ? [...others, event.suggestion] : others;
-        });
+        const others = resumeState.suggestions.filter((suggestion) => suggestion.suggestionId !== event.suggestion.suggestionId);
+        resumeState.suggestions = event.suggestion.status === 'open' ? [...others, event.suggestion] : others;
+        setSuggestions(resumeState.suggestions);
       } else if (event.type === 'workstream_scope_changed') {
         // Whoever this change excluded has already been disconnected by the
         // room, so everyone still here may read it and only needs the lock on

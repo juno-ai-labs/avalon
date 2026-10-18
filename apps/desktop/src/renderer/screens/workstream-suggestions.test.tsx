@@ -32,7 +32,8 @@ vi.mock('../lib/collaboration-session', async (importOriginal) => {
     useShellCapabilities: () => actual.shellCapabilities({ host: 'desktop', session: session.current as ClientSession | null }),
   };
 });
-vi.mock('../lib/use-client-feature-flags', () => ({ useClientFeatureFlags: () => ({ data: {} }) }));
+// Both chips on: the flags hide the line, and these tests are about the line.
+vi.mock('../lib/use-client-feature-flags', () => ({ useClientFeatureFlags: () => ({ data: { conversationSuggestionsEnabled: true, breakoutSuggestionsEnabled: true } }) }));
 vi.mock('../lib/workstream-socket-pool', () => ({
   useWorkstreamSocketOpenContext: () => () => ({}),
   useRetainedWorkstreamSocket: retainedSocket,
@@ -191,7 +192,7 @@ describe('the suggestion chip', () => {
     expect(row?.querySelector('.message-block')?.textContent).toContain(judged);
   });
 
-  it('stays while two newer messages exist and is gone at the third', async () => {
+  it('stays while two newer messages exist', async () => {
     renderBreakout([...twoTurns, turn(3, 'human', 'thanks'), turn(4, 'assistant', 'Any time.')], [suggestion()]);
     await screen.findByRole('group', { name: 'Suggestion: merge to Pricing' });
   });

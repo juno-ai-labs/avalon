@@ -62,6 +62,18 @@ function option(argv: string[], name: string): string | undefined {
   return index === -1 ? undefined : argv[index + 1];
 }
 
+/** The discriminator of a bounded `structured_content_json` export, or the empty string when there is none or it is cut mid-way. */
+function structuredType(json: string): string {
+  if (json.length === 0) return "";
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return parsed && typeof parsed === "object" && typeof (parsed as { type?: unknown }).type === "string" ? (parsed as { type: string }).type : "";
+  } catch {
+    const match = /"type"\s*:\s*"([^"]+)"/.exec(json);
+    return match?.[1] ?? "";
+  }
+}
+
 function text(value: unknown): string {
   return typeof value === "string" ? value : value === null || value === undefined ? "" : String(value);
 }
@@ -141,7 +153,7 @@ async function main(): Promise<void> {
           author: text(row.at),
           messageType: text(row.mt),
           body: text(row.body),
-          structuredType: text(row.sc),
+          structuredType: structuredType(text(row.sc)),
           runId: text(row.run),
           createdAt: Number(row.ts),
         }))
