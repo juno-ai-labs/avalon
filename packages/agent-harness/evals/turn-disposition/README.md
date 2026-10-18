@@ -48,6 +48,12 @@ Three label files take part, all JSONL `{id, disposition, kind, source?, note?}`
   the judge's otherwise, so every case is scored and the slices can still tell
   who labeled what.
 
+`golden-labels-2026-10-18.jsonl` is the gold file of the first corpus run
+with its notes removed: case ids (conversation, substream and turn sequence),
+dispositions and kinds only, so a re-export of the same conversations can be
+re-scored against the same judgment. The notes, the judge labels and the
+cases stay in the protected directory.
+
 ```bash
 # 1. Export (see the design's "Where the labels come from"), then build cases:
 pnpm --filter @rally/agent-harness eval:turn-disposition:build -- \
