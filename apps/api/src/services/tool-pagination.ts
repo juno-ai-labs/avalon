@@ -121,13 +121,14 @@ export function withToolPagination(tool: PaginatedHarnessTool, host: PaginationH
       if (unknownPage || (error instanceof ObjectPortError && message.startsWith("page_"))) throw new Error(message, { cause: error });
       throw error;
     }
-    if ("inputJson" in claimed) return claimed;
+    if (!claimed.refused) return claimed;
     // Across runs the guard has no memory of this page, so without the
     // identity its failure stays anonymous and no later read can clear it.
-    const details = await tool.continuationDetails?.(JSON.parse(claimed.consumedInputJson)).catch(() => null);
-    throw Object.assign(new Error(
-      `page_already_consumed: This page was already read. Use the nextPageId from that read's result, or call ${firstName} to start a new read.`,
-    ), { code: "page_already_consumed", ...(details ? { details } : {}) });
+    const details = await tool.continuationDetails?.(JSON.parse(claimed.inputJson)).catch(() => null);
+    throw Object.assign(new Error(claimed.refused === "page_already_consumed"
+      ? `page_already_consumed: This page was already read. Use the nextPageId from that read's result, or call ${firstName} to start a new read.`
+      : "page_in_progress: This page already has a call in progress."),
+    { code: claimed.refused, ...(details ? { details } : {}) });
   }
   async function execute(input: unknown, context: HarnessToolContext): Promise<HarnessToolResult> {
     const result = await tool.execute(input, context);

@@ -491,7 +491,7 @@ describe("work-stream attachment tools", () => {
     const [, next] = withToolPagination(read, { prefix: "workstream", wirePrefix: "", connectionId: null,
       fence: { runId: HARNESS_RUN_ID, attemptId: "attempt", owner: "owner" }, receipts: {
         issuePage: vi.fn(async () => null),
-        claimPage: vi.fn(async () => ({ consumedInputJson: JSON.stringify(consumed) })),
+        claimPage: vi.fn(async () => ({ refused: "page_already_consumed" as const, inputJson: JSON.stringify(consumed) })),
       } });
     const pageId = "workstream_coral_bright_vibrant_harriot";
     const error: unknown = await next!.execute({ pageId }, { ...context(), effectIntentId: "stale" }).catch((caught: unknown) => caught);

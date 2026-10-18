@@ -92,6 +92,8 @@ async function receipt(
   return { status, value: parsed?.value ?? null, ...(parsed?.error ? { error: parsed.error } : {}) };
 }
 
+const CLAIM = z.object({ inputJson: z.string(), refused: z.enum(["page_already_consumed", "page_in_progress"]).optional() });
+
 function seedLiveRun(state: DurableObjectState, runId = RUN): void {
   state.storage.sql.exec(
     `INSERT INTO runs (run_id, substream_id, status, budget, attempt_epoch,
@@ -204,7 +206,7 @@ describe("tool-receipt authority on real workerd", () => {
       claimPage: async (args) => {
         const answer = await receipt(stub, "claimPage", args);
         if (answer.error) throw new Error(answer.error);
-        return z.union([z.object({ inputJson: z.string() }), z.object({ consumedInputJson: z.string() })]).parse(answer.value);
+        return CLAIM.parse(answer.value);
       },
     } });
     await receipt(stub, "admit", admission("first", "first"));
@@ -245,9 +247,10 @@ describe("tool-receipt authority on real workerd", () => {
       await expect(receipt(stub, "claimPage", { ...claim, effectIntentId: "third", ...wrong })).rejects.toThrow("page_id_invalid");
     }
     await receipt(stub, "admit", admission("fourth", "fourth"));
-    const claims = await Promise.allSettled(["third", "fourth"].map((effectIntentId) => receipt(stub, "claimPage", { ...claim, effectIntentId })));
-    expect(claims.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-    const winner = claims[0]!.status === "fulfilled" ? "third" : "fourth";
+    const claims = await Promise.all(["third", "fourth"].map(async (effectIntentId) =>
+      CLAIM.parse((await receipt(stub, "claimPage", { ...claim, effectIntentId })).value)));
+    expect(claims.map((result) => result.refused ?? "claimed").sort()).toEqual(["claimed", "page_in_progress"]);
+    const winner = claims[0]!.refused === undefined ? "third" : "fourth";
     const retry = winner === "third" ? "fourth" : "third";
     // A -> B -> A stops without discarding already-fetched provider content.
     expect((await receipt(stub, "issuePage", { ...claim, effectIntentId: winner, prefix: "google_2", slot: "nextPageId",
@@ -283,14 +286,16 @@ describe("tool-receipt authority on real workerd", () => {
         pagination: { cursorParameter: "cursor" }, inputSchema: { type: "object", properties: { resourceId: { type: "string" }, cursor: { type: "string" } } } },
       execute: async (args) => {
         executed.push(args);
-        return { output: { text: "page" }, summary: "page", pagination: { continuations: [{
+        // The later run reads the last page and issues none, so the only
+        // dependency its receipt can have is the claim on the earlier page.
+        const last = z.object({ cursor: z.string().optional() }).parse(args).cursor === "after-1";
+        return { output: { text: "page" }, summary: "page", pagination: { continuations: last ? [] : [{
           operation: "read_resource", slot: "nextPageId", input: { cursor: `after-${executed.length}` } }] } };
       },
       continuationDetails: async (continuation) => ({ described: continuation }),
     }, { prefix: "workstream", connectionId: null, fence, receipts: {
       issuePage: async (args) => z.string().nullable().parse((await receipt(stub, "issuePage", args)).value),
-      claimPage: async (args) => z.union([z.object({ inputJson: z.string() }), z.object({ consumedInputJson: z.string() })])
-        .parse((await receipt(stub, "claimPage", args)).value),
+      claimPage: async (args) => CLAIM.parse((await receipt(stub, "claimPage", args)).value),
     } });
     const complete = (effectIntentId: string) => receipt(stub, "complete", { effectIntentId, checkpointIndex: 1, outputRef: `${effectIntentId}-output`,
       outputSummary: "page", providerOperationId: null, payloadJson: "{}", allowAmbiguousReconciliation: false, fence: fence(), now: Date.now() });

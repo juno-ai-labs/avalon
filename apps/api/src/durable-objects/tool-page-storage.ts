@@ -30,6 +30,11 @@ export const PageClaimSchema = PageIdentitySchema.extend({ pageId: z.string() })
 
 export class ToolPageError extends Error {}
 
+/** A redeemed page's arguments, or why another receipt holds it. */
+export type PageClaim =
+  | { inputJson: string; refused?: undefined }
+  | { inputJson: string; refused: "page_already_consumed" | "page_in_progress" };
+
 function parsePage<T>(schema: z.ZodType<T>, raw: unknown): T {
   const parsed = schema.safeParse(raw);
   if (!parsed.success) throw new ToolPageError(zodDiagnosticCode(parsed.error, "page_arguments")!);
@@ -87,29 +92,12 @@ export class ToolPageStorage {
   }
 
   /**
-   * Redeem a page issued anywhere in this conversation.
-   *
-   * A page is scoped to the conversation, not the run: each message starts a
-   * new run, and the model still sees every earlier `nextPageId` in its
-   * history, so a run-scoped ID looked valid and was not. The current run is
-   * tried first with a primary-key lookup. Only on a miss does the claim look
-   * across earlier runs, which is a deliberately unindexed scan of this
-   * conversation's pages; an index on `page_id` would add a write to every
-   * `issue` to speed up a continuation across messages.
-   *
-   * IDs are unique per run, not per conversation, so two earlier runs can
-   * share one. That is refused as unknown rather than guessed at: the model
-   * restarts, where a guess would silently read another page.
-   *
-   * Principal, connection and operation still match, the consumer rules are
-   * the same in every run, and the claim is recorded on the page's own row, so
-   * the consuming receipt is a dependency whichever run issued it.
-   *
-   * A page a completed receipt already consumed returns its arguments as
-   * `consumedInputJson` and writes nothing. The caller refuses the call and
-   * may only describe them, so the refusal can name what the page read.
+   * Redeem a page issued anywhere in this conversation: the current run first
+   * by primary key, then earlier runs, where an ID two runs share is refused.
+   * A page another receipt holds is refused with its stored arguments, which
+   * the caller may describe but never execute. Reasons: `tool-pagination.md`.
    */
-  claim(raw: z.infer<typeof PageClaimSchema>): { inputJson: string } | { consumedInputJson: string } {
+  claim(raw: z.infer<typeof PageClaimSchema>): PageClaim {
     const input = parsePage(PageClaimSchema, raw);
     type PageRow = { run_id: string; input_json: string; consumer_id: string | null; consumer_status: string | null };
     const columns = `page.run_id, page.input_json, page.consumer_id, consumer.status AS consumer_status
@@ -127,8 +115,8 @@ export class ToolPageStorage {
     }
     if (!row) throw new ToolPageError("page_id_invalid: Restart with the first-page tool; pageId is not available for this operation.");
     if (row.consumer_id !== null && row.consumer_id !== input.effectIntentId && row.consumer_status !== "failed") {
-      if (row.consumer_status === "completed") return { consumedInputJson: row.input_json };
-      throw new ToolPageError("page_in_progress: This page already has a call in progress.");
+      return { refused: row.consumer_status === "completed" ? "page_already_consumed" : "page_in_progress",
+        inputJson: row.input_json };
     }
     this.sql.exec("UPDATE tool_pages SET consumer_id = ? WHERE run_id = ? AND page_id = ?",
       input.effectIntentId, row.run_id, input.pageId);
