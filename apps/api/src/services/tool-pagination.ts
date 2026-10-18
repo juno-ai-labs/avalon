@@ -60,8 +60,20 @@ export function paginatedToolNames(definition: Pick<HarnessTool["definition"], "
   return [operation, `${operation}_next`, "read_resource_previous"];
 }
 
+/** What the model is told about a page ID an earlier run issued. */
+export const EARLIER_RUN_PAGE_NOTICE = "This page ID came from an earlier message. Page IDs work only within the reply that returned them, so it cannot be used now.";
+
+/**
+ * An authored paginated tool that can say how to restart from an earlier run's
+ * page: given its stored continuation input, return the error the model sees,
+ * or null when it cannot.
+ */
+export type PaginatedHarnessTool = HarnessTool & {
+  explainEarlierRunPage?: (continuationInput: unknown, context: HarnessToolContext) => Promise<Error | null>;
+};
+
 /** Expand only an explicitly authored tool. Private continuations never escape this wrapper. */
-export function withToolPagination(tool: HarnessTool, host: PaginationHost): HarnessTool[] {
+export function withToolPagination(tool: PaginatedHarnessTool, host: PaginationHost): HarnessTool[] {
   const pagination = tool.definition.pagination;
   if (!pagination) return [tool];
   const sourceOnly = pagination.sourceOnly === true;
@@ -89,19 +101,34 @@ export function withToolPagination(tool: HarnessTool, host: PaginationHost): Har
       principalJson: JSON.stringify(context.executionPrincipal), fence: typeof host.fence === "function" ? host.fence() : host.fence,
     };
   }
+  const firstName = stableWireToolName(wirePrefix, operation);
   async function claim(pageId: string, context: HarnessToolContext, target = operation) {
+    let claimed;
     try {
-      return await host.receipts.claimPage({ ...identity(context), operation: target, pageId });
+      claimed = await host.receipts.claimPage({ ...identity(context), operation: target, pageId });
     } catch (error) {
-      const message = error instanceof ObjectPortError ? error.code : error instanceof Error ? error.message : "";
+      let message = error instanceof ObjectPortError ? error.code : error instanceof Error ? error.message : "";
+      // Storage cannot name the model's tools, so the instruction is written
+      // here. It covers wrong-scope and uncommitted pages too, where the ID
+      // was copied exactly, so it says only what to do next.
+      const unknownPage = message.startsWith("page_id_invalid:");
+      if (unknownPage) {
+        message = `page_id_invalid: This page ID cannot be used here. Call ${firstName} to start a new read.`;
+      }
       // Keep the attachment grounding guard's existing, bounded recovery
       // semantics when a model damages a page ID before resource resolution.
-      if (operation === "read_resource" && message.startsWith("page_id_invalid:")) {
+      if (operation === "read_resource" && unknownPage) {
         throw Object.assign(new Error(message), { code: "invalid_cursor" });
       }
-      if (error instanceof ObjectPortError && message.startsWith("page_")) throw new Error(message, { cause: error });
+      if (unknownPage || (error instanceof ObjectPortError && message.startsWith("page_"))) throw new Error(message, { cause: error });
       throw error;
     }
+    if ("inputJson" in claimed) return claimed;
+    const explained = await tool.explainEarlierRunPage?.(JSON.parse(claimed.earlierRunInputJson), context);
+    if (explained) throw explained;
+    throw Object.assign(new Error(
+      `page_id_from_earlier_message: ${EARLIER_RUN_PAGE_NOTICE} Call ${firstName} to start a new read.`,
+    ), { code: operation === "read_resource" ? "invalid_cursor" : "page_id_from_earlier_message" });
   }
   async function execute(input: unknown, context: HarnessToolContext): Promise<HarnessToolResult> {
     const result = await tool.execute(input, context);

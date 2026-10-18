@@ -84,7 +84,22 @@ export class ToolPageStorage {
     }
   }
 
-  claim(raw: z.infer<typeof PageClaimSchema>): { inputJson: string } {
+  /**
+   * Redeem a page for this run, or say it belongs to an earlier one.
+   *
+   * A page ID never crosses runs, but the model sees every earlier tool result
+   * in its history, so on a new message it often copies a `nextPageId` that an
+   * earlier run issued. Reporting that case apart from an unknown ID lets the
+   * caller say what happened and how to restart, instead of an error that reads
+   * as if the model mistyped the ID. The earlier page's arguments are returned
+   * only to the same principal, connection and operation, for the caller to
+   * describe, never to execute.
+   *
+   * The earlier-run lookup is deliberately unindexed: no index leads with
+   * `page_id`, so a miss scans this conversation's pages. It runs only on a
+   * miss, and an index would add a write to every `issue`.
+   */
+  claim(raw: z.infer<typeof PageClaimSchema>): { inputJson: string } | { earlierRunInputJson: string } {
     const input = parsePage(PageClaimSchema, raw);
     const row = this.sql.exec<{
       input_json: string; consumer_id: string | null; consumer_status: string | null;
@@ -94,7 +109,16 @@ export class ToolPageStorage {
       WHERE page.run_id = ? AND page.page_id = ? AND page.operation = ?
         AND page.connection_id IS ? AND page.principal_json = ? AND producer.status = 'completed'`,
     input.runId, input.pageId, input.operation, input.connectionId, input.principalJson).toArray()[0];
-    if (!row) throw new ToolPageError("page_id_invalid: Restart with the first-page tool; pageId is not available for this operation and run.");
+    if (!row) {
+      const earlier = this.sql.exec<{ input_json: string }>(`SELECT page.input_json
+        FROM tool_pages page JOIN tool_effects producer ON producer.effect_intent_id = page.producer_id
+        WHERE page.run_id <> ? AND page.page_id = ? AND page.operation = ?
+          AND page.connection_id IS ? AND page.principal_json = ? AND producer.status = 'completed'
+        ORDER BY page.rowid DESC LIMIT 1`,
+      input.runId, input.pageId, input.operation, input.connectionId, input.principalJson).toArray()[0];
+      if (earlier) return { earlierRunInputJson: earlier.input_json };
+      throw new ToolPageError("page_id_invalid: Restart with the first-page tool; pageId is not available for this operation and run.");
+    }
     if (row.consumer_id !== null && row.consumer_id !== input.effectIntentId && row.consumer_status !== "failed") {
       throw new ToolPageError(row.consumer_status === "completed"
         ? "page_already_consumed: Use nextPageId from the completed page, or restart with the first-page tool."
