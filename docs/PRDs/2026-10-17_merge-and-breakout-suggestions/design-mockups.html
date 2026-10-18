@@ -254,8 +254,7 @@
       .sline .q { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--t4); padding-left: 24px; min-width: 0; }
       .sline .q span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .bchip.ghost { box-shadow: none; border: 1px dashed var(--t5); background: transparent; color: var(--t3); }
-      .schip { display: flex; align-items: flex-start; gap: 10px; padding: 9px 12px 9px 10px; max-width: 600px; border-radius: 14px; border: 1px dashed var(--t5); background: transparent; }
-      .schip .av { margin-top: 1px; }
+      .schip { display: flex; align-items: flex-start; gap: 10px; padding: 9px 12px 9px 12px; max-width: 600px; border-radius: 14px; border: 1px dashed var(--t5); background: transparent; }
       .schip .st { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
       .schip .t { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--t2); }
       .schip .t b { font-weight: 600; color: var(--t); }
@@ -391,9 +390,8 @@
         <p class="lead">
           Under the turn it is about, after the turn's attachments and its hover
           row, in the row where "Breakouts from this message" chips are drawn: a
-          dashed chip with Rally's mark, a title, one sentence of context, one
-          cut line of the words it would post or start with, one action and a
-          dismiss.
+          dashed chip with a title, one sentence of context, one cut line of
+          the words it would post or start with, one action and a dismiss.
         </p>
         <div class="boards">
           <div class="board">
@@ -419,7 +417,6 @@
                       <span class="ic"><svg class="i i16"><use href="#file" /></svg></span><span class="tx"><b>Sequence B</b></span><span class="open">Open</span>
                     </div>
                     <div class="schip">
-                      <span class="av s r">R</span>
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#bend" /></svg>Merge to <b>Cold Outreach</b></div>
                         <div class="d">This might be a good time to merge this back into <b>Cold Outreach</b>.</div>
@@ -442,10 +439,11 @@
             <p class="why">
               A dashed chip under Rally's turn, in the row where the outcomes of a
               turn already live: breakout chips sit here once a Breakout exists,
-              and the dashed edge says this one does not exist yet. It answers
-              what a new person needs: whose idea it is (Rally's mark), what it
-              is and where it goes (the title), why now (the sentence), and what
-              would be posted (the excerpt). Nothing posts on its own: pressing
+              and the dashed edge says this one does not exist yet, and that it
+              is a suggestion rather than something a person did. It answers
+              what a new person needs: what it is and where it goes (the
+              title), why now (the sentence), and what would be posted (the
+              excerpt). Nothing posts on its own: pressing
               <b>Merge</b> opens the card to edit first. The title claims nothing about the kind of
               thing carried; a merge is a decision or a question as often as a
               result. The green pill is the merge target pill's own style, so
@@ -485,7 +483,6 @@
                     <div class="by"><b>Rally</b> just now</div>
                     <p>Yes, and it is a different sequence: a fund wants portfolio reach and a co-investment angle, not a teardown. The three founder sequences stand as they are; the fund version is its own piece of work.</p>
                     <div class="schip">
-                      <span class="av s r">R</span>
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#brk" /></svg>Breakout: <b>Fund outreach</b></div>
                         <div class="d">Want to break this out?</div>
@@ -547,7 +544,6 @@
                       <span><svg class="i i13"><use href="#pdf" /></svg>PDF</span>
                     </div>
                     <div class="schip">
-                      <span class="av s r">R</span>
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#bend" /></svg>Merge to <b>Cold Outreach</b></div>
                         <div class="d">This might be a good time to merge this back into <b>Cold Outreach</b>.</div>
@@ -608,7 +604,6 @@
                       <span class="ic"><svg class="i i16"><use href="#file" /></svg></span><span class="tx"><b>Outreach sequences</b></span><span class="open">Open</span>
                     </div>
                     <div class="schip">
-                      <span class="av s r">R</span>
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#bend" /></svg>Merge to <b>GTM</b><svg class="i i11" style="color: var(--t4)"><use href="#cd" /></svg></div>
                         <div class="d">This might be a good time to merge this back into <b>GTM</b>.</div>
@@ -657,7 +652,6 @@
                     <p>Annual at $96 a seat holds: it sits within 5% of the two closest competitors and keeps the 38% discount sales asked for.</p>
                     <p>Whether Starter survives is a separate question. It needs the last two quarters of usage by tier and a look at both competitors' entry plans, and it would bury this thread. I can work it through on its own.</p>
                     <div class="schip">
-                      <span class="av s r">R</span>
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#brk" /></svg>Breakout: <b>Starter tier</b></div>
                         <div class="d">Want to break this out?</div>
@@ -724,7 +718,6 @@
                       <span class="ic"><svg class="i i16"><use href="#file" /></svg></span><span class="tx"><b>Sequence B</b></span><span class="open">Open</span>
                     </div>
                     <div class="schip">
-                      <span class="av s r">R</span>
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#bend" /></svg>Merge to <b>Cold Outreach</b></div>
                         <div class="d">This might be a good time to merge this back into <b>Cold Outreach</b>.</div>
@@ -745,8 +738,8 @@
               </div>
             </div>
             <p class="why">
-              Everything the template knows is drawn at once: whose idea, what it
-              is, where it goes, why now. The excerpt line is a
+              Everything the template knows is drawn at once: what it is, where
+              it goes, why now. The excerpt line is a
               skeleton until the drafted note arrives, and <b>Merge</b> waits
               with it, because the card would open with words the person has
               not seen. Dismiss works from the first frame. A breakout chip
@@ -762,7 +755,6 @@
               <div class="cell">
                 <div class="mlabel">Arriving</div>
                 <div class="schip">
-                  <span class="av s r">R</span>
                   <div class="st">
                     <div class="t"><svg class="i i13"><use href="#brk" /></svg>Breakout: <span class="sk t"></span></div>
                     <div class="d">Want to break this out?</div>
@@ -774,7 +766,6 @@
               <div class="cell">
                 <div class="mlabel">Ready</div>
                 <div class="schip">
-                  <span class="av s r">R</span>
                   <div class="st">
                     <div class="t"><svg class="i i13"><use href="#brk" /></svg>Breakout: <b>Starter tier</b></div>
                     <div class="d">Want to break this out?</div>
@@ -825,7 +816,6 @@
                       <span class="ic"><svg class="i i16"><use href="#file" /></svg></span><span class="tx"><b>Sequence B</b></span><span class="open">Open</span>
                     </div>
                     <div class="schip">
-                      <span class="av s r">R</span>
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#bend" /></svg>Merge to <b>Cold Outreach</b></div>
                         <div class="d">This might be a good time to merge this back into <b>Cold Outreach</b>.</div>

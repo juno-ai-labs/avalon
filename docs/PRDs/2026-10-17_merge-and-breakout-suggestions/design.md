@@ -339,10 +339,11 @@ suggested; that button stays merge-back's phase 2.
 - **The chip.** Drawn under the judged turn by `MessageBlock` in
   `workstream-blocks.tsx`, in the `cardsAfter` row of `message-feed.tsx` where
   "Breakouts from this message" chips already sit, after the turn's
-  attachments and its hover action row: a dashed outline, Rally's mark, the
-  title, the sentence, one cut line of the note or the prompt, the action
-  pill (the merge target pill's style for `merge_up`, the breakout tint for
-  `start_breakout`), and a dismiss. Drawn
+  attachments and its hover action row: a dashed outline, the title, the
+  sentence, one cut line of the note or the prompt, the action pill (the
+  merge target pill's style for `merge_up`, the breakout tint for
+  `start_breakout`), and a dismiss. No avatar or mark: the dashed outline
+  and the sentence are what say it is a suggestion. Drawn
   only while the turn is among the newest three messages the feed holds, and
   only when the viewer passes `mergeTargetFor` (for `merge_up`) or can post
   (for `start_breakout`). Never in the composer: `ComposerInput`'s notice slot
