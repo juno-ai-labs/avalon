@@ -267,6 +267,16 @@
       .schip .act { display: inline-flex; align-items: center; gap: 5px; color: var(--ok); font-weight: 600; background: var(--ok-wash); padding: 4px 10px 4px 8px; border-radius: 999px; font-size: 12px; white-space: nowrap; }
       .schip .act.v { color: var(--ink3); background: var(--tint3); }
       .schip .dis { color: var(--t4); display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; }
+      .schip .act.wait { opacity: 0.45; }
+      .sk { display: inline-block; height: 10px; border-radius: 999px; background: linear-gradient(90deg, var(--fill) 0%, var(--ring) 50%, var(--fill) 100%); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; vertical-align: middle; }
+      .sk.t { height: 12px; width: 84px; margin-left: 2px; }
+      .sk.l { width: 72%; }
+      .sk.s { width: 48%; }
+      @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+      .chips3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 14px; }
+      .chips3 .cell { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+      .chips3 .cell .mlabel { font: 600 10.5px/16px var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--t4); }
+      .chips3 .schip { max-width: none; background: var(--card); }
       .bchip.ghost b { font-weight: 600; color: var(--t2); }
       .bchip.ghost .x { color: var(--t4); margin-left: 2px; }
       .acts.on { color: var(--t4); }
@@ -322,7 +332,7 @@
       .state { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 14px; background: var(--card); box-shadow: inset 0 0 0 1px var(--ring); min-width: 0; }
       .state h3 { margin: 0; font: 600 13.5px/18px var(--sans); }
       .state p { margin: 0; font-size: 13px; line-height: 19px; color: var(--t3); }
-      @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+      @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } .sk { background: var(--fill); } }
     </style>
   </head>
   <body>
@@ -434,9 +444,9 @@
               thing carried; a merge is a decision or a question as often as a
               result. The green pill is the merge target pill's own style, so
               <b>Merge</b> reads as the same act as the hover row's. Under the
-              sentence, one cut line of the note the card will open with, so
-              the person knows what they would be posting before they press
-              anything. The × is quiet and last. Title and sentence are fixed
+              sentence, one cut line of the note Rally drafted for the parent,
+              which is what the card will open with, so the person knows what
+              they would be posting before they press anything. The × is quiet and last. Title and sentence are fixed
               strings with one slot for a name; the excerpt is the words
               themselves.
             </p>
@@ -676,6 +686,122 @@
       </section>
 
       <section class="sec">
+        <h2>Arriving</h2>
+        <p class="lead">
+          The decision takes a quarter of a second after the turn settles; the
+          words take a few seconds more. So the chip arrives as soon as the
+          decision is made, with a skeleton where the words will be, and fills
+          when Rally's draft lands: the recommended merge note, or the opening
+          prompt and its subject.
+        </p>
+        <div class="boards">
+          <div class="board">
+            <div class="label">
+              <span class="code">N·12</span><span class="lname">The chip first, the words a moment later</span>
+            </div>
+            <div class="scroll">
+              <div class="card">
+                <div class="head split">
+                  <span class="cpill anc"><span class="sq c"><svg class="i i12"><use href="#plane" /></svg></span>Cold Outreach</span>
+                  <span class="cpill"><span class="sq c b"><svg class="i i12"><use href="#brk" /></svg></span>Sequence B <span class="mut">14 replies</span><svg class="i i12 car"><use href="#cd" /></svg></span>
+                  <span class="xb"><svg class="i"><use href="#x" /></svg></span>
+                </div>
+                <div class="tr">
+                  <div class="hum fadeup">
+                    <div class="by">20 min ago · <b>Alex</b></div>
+                    <div class="bub">Can it lead with the teardown offer instead?</div>
+                  </div>
+                  <div class="ag">
+                    <div class="by"><b>Rally</b> just now</div>
+                    <p><b>Sequence B now opens with the teardown offer.</b> Four emails, each under 90 words; the second cites the founder's launch post. Nothing else changed.</p>
+                    <div class="doc sm" style="max-width: 260px">
+                      <span class="ic"><svg class="i i16"><use href="#file" /></svg></span><span class="tx"><b>Sequence B</b></span><span class="open">Open</span>
+                    </div>
+                    <div class="schip">
+                      <span class="av s r">R</span>
+                      <div class="st">
+                        <div class="t"><svg class="i i13"><use href="#bend" /></svg>Merge to <b>Cold Outreach</b></div>
+                        <div class="d">Rally thinks the thread should see this. You'll edit a short note before it posts there.</div>
+                        <div class="ex"><svg class="i i12"><use href="#quote" /></svg><span class="sk l"></span></div>
+                      </div>
+                      <div class="ctl2"><span class="act wait"><svg class="i i12"><use href="#bend" /></svg>Merge</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="dock" style="padding-bottom: 18px">
+                  <div class="comp">
+                    <div class="ph">Message Sequence B</div>
+                    <div class="ctl">
+                      <svg class="i i16 g"><use href="#plus" /></svg><span class="sp"></span><svg class="i i16 g"><use href="#mic" /></svg><span class="sendb"><svg class="i"><use href="#up" /></svg></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              Everything the template knows is drawn at once: whose idea, what it
+              is, where it goes, what pressing it does. The excerpt line is a
+              skeleton until the drafted note arrives, and <b>Merge</b> waits
+              with it, because the card would open with words the person has
+              not seen. Dismiss works from the first frame. A breakout chip
+              arrives the same way, with a skeleton where its subject will go
+              in the title ("Breakout:") and another for the prompt.
+            </p>
+          </div>
+          <div class="board" style="grid-column: 1 / -1">
+            <div class="label">
+              <span class="code">N·13</span><span class="lname">The three states of a chip, side by side</span>
+            </div>
+            <div class="chips3">
+              <div class="cell">
+                <div class="mlabel">Arriving</div>
+                <div class="schip">
+                  <span class="av s r">R</span>
+                  <div class="st">
+                    <div class="t"><svg class="i i13"><use href="#brk" /></svg>Breakout: <span class="sk t"></span></div>
+                    <div class="d">Rally thinks this is its own piece of work. You'll edit the opening prompt before it starts.</div>
+                    <div class="ex"><svg class="i i12"><use href="#quote" /></svg><span class="sk l"></span></div>
+                  </div>
+                  <div class="ctl2"><span class="act v wait"><svg class="i i12"><use href="#brk" /></svg>Start</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
+                </div>
+              </div>
+              <div class="cell">
+                <div class="mlabel">Ready</div>
+                <div class="schip">
+                  <span class="av s r">R</span>
+                  <div class="st">
+                    <div class="t"><svg class="i i13"><use href="#brk" /></svg>Breakout: <b>Starter tier</b></div>
+                    <div class="d">Rally thinks this is its own piece of work. You'll edit the opening prompt before it starts.</div>
+                    <div class="ex"><svg class="i i12"><use href="#quote" /></svg><span>Decide whether a Starter tier survives the $96 annual plan: pull the last two quarters of usage by tier…</span></div>
+                  </div>
+                  <div class="ctl2"><span class="act v"><svg class="i i12"><use href="#brk" /></svg>Start</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
+                </div>
+              </div>
+              <div class="cell">
+                <div class="mlabel">Draft failed</div>
+                <div class="schip">
+                  <span class="av s r">R</span>
+                  <div class="st">
+                    <div class="t"><svg class="i i13"><use href="#brk" /></svg>Breakout</div>
+                    <div class="d">Rally thinks this is its own piece of work. Rally couldn't draft a prompt, so you'll write the opening one.</div>
+                  </div>
+                  <div class="ctl2"><span class="act v"><svg class="i i12"><use href="#brk" /></svg>Start</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
+                </div>
+              </div>
+            </div>
+            <p class="why">
+              Arriving: the title's subject and the excerpt are skeletons, and
+              the action waits. Ready: the draft filled both. Failed: the chip
+              stays useful without the draft, says so in its sentence, and the
+              action opens the launch pane empty, or for a merge the card with
+              the turn's own words. A draft never blocks the suggestion; it
+              only decorates it.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="sec">
         <h2>The newest three</h2>
         <p class="lead">
           A suggestion chip is drawn only while its turn is one of the newest
@@ -863,9 +989,9 @@
             <p class="why">
               The suggestion chip becomes the card, in its place. It is the merge as
               Cold Outreach will draw it: the same <i>MergeMessage</i> block the
-              Thread shows once a merge lands, with the byline, the words and
-              the document, except that the words are editable and the document
-              can be taken out. One line says who will see it. Enter merges, Esc
+              Thread shows once a merge lands, with the byline, Rally's drafted
+              note and the document, except that the words are editable and the
+              document can be taken out. One line says who will see it. Enter merges, Esc
               puts the chip back. The composer below is untouched, and merge
               mode no longer exists there.
             </p>
@@ -1040,7 +1166,7 @@
           What a suggestion does not do is most of the design.
         </p>
         <div class="states">
-          <div class="state"><h3>Open</h3><p>One chip under the turn, for the people who can act, while the turn is among the newest three. Nothing in the composer, no unread, no Activity row, no push.</p></div>
+          <div class="state"><h3>Open</h3><p>One chip under the turn, for the people who can act, while the turn is among the newest three. It arrives with a skeleton and fills when the draft lands. Nothing in the composer, no unread, no Activity row, no push.</p></div>
           <div class="state"><h3>Accepting</h3><p>The response card is open in the feed where the chip was, or the launch pane is open. Nothing is posted yet.</p></div>
           <div class="state"><h3>Accepted</h3><p>The merge lands or the Breakout is created, through the same admission as today. The chip resolves on its own.</p></div>
           <div class="state"><h3>Dismissed</h3><p>Gone for everyone in the conversation, at once. Recorded with who, so the same kind rests here for a while.</p></div>
