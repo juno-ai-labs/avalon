@@ -26,9 +26,12 @@
   `start_breakout`, drawn as a dashed chip under Rally's message for the
   people who can act on it, never in the composer: Rally's mark, a title
   naming the action and its target, one sentence saying what happens next,
-  the action, and a dismiss. Accepting a merge opens a
-  **response card** in the feed, in the line's place: the merge as the parent
-  will draw it, prefilled with the turn and editable. Accepting a Breakout
+  the action, and a dismiss. The chip arrives the moment the classifier
+  answers, with a skeleton where the words will be, and fills a few seconds
+  later when Rally's draft lands: a recommended note for the parent, or an
+  opening prompt and its subject. Accepting a merge opens a **response
+  card** in the feed, in the chip's place: the merge as the parent will draw
+  it, prefilled with the drafted note and editable. Accepting a Breakout
   opens the existing launch pane at that turn with a drafted opening prompt.
   The person edits and confirms. **Rally never merges or starts a Breakout on
   its own.**
@@ -87,7 +90,8 @@ phase measures before it shows.
    now (a deliverable, a decision, an answer, a milestone, or a question only
    they can settle), the people who can merge see one suggestion under that
    turn to merge it up, and accepting it opens a response card in the feed
-   prefilled with the turn's text and target.
+   prefilled with a note Rally drafted for the parent's readers and the
+   target.
 2. After a settled Rally turn in a Thread that opened a distinct piece of work
    beside the purpose, the people who can post see one suggestion under that
    turn to start a Breakout from it, with a drafted opening prompt they edit
@@ -118,9 +122,11 @@ phase measures before it shows.
    a person merges.
 3. **A Breakout suggestion inside a Breakout.** Deferred. There are no nested
    Breakouts; inside a Breakout the only suggestion is `merge_up`.
-4. **Summarizing the result for the merge draft.** Deferred to merge-back's
-   phase 2 (Summarize). The merge draft is the judged turn's text, which is
-   what the Merge hover action prefills today.
+4. **A Summarize button on the response card for a merge nobody suggested.**
+   Deferred, and one button away: the drafter this PRD builds is what that
+   button would call. A suggested merge gets its drafted note here; a merge
+   from the hover action or the title menu still opens with the turn's text
+   or empty.
 5. **A thread status in the Channel feed** ("result ready", "open") derived
    from this decision. Deferred. The decision record makes it possible later;
    merge-back listed statuses under Not now.
@@ -168,10 +174,22 @@ someone who has never seen one, the action, and a dismiss:
   **Start**.
 
 Every chip ends with one line of the words it would post or start with, cut
-with an ellipsis to the chip's width: for a merge, the note the response
-card opens with (the judged turn's text today, the drafted summary once
-merge-back's Summarize ships); for a Breakout, the drafted opening prompt. A
-person can judge the suggestion from the chip alone. The title and the
+with an ellipsis to the chip's width: for a merge, the note Rally drafted
+for the parent's readers, which is what the response card opens with; for a
+Breakout, the drafted opening prompt. A person can judge the suggestion from
+the chip alone.
+
+**Arriving.** The classifier answers about a quarter of a second after the
+turn settles; the draft takes a few seconds more. The chip is drawn as soon
+as the decision is made, with everything the template knows (whose idea,
+what it is, where it goes, what pressing it does) and a skeleton where the
+excerpt will be, and for a Breakout where the subject will be in the title.
+The action waits with the skeleton, because the card or the launch pane
+would open with words the person has not seen; Dismiss works from the first
+frame. When the draft lands the chip fills in place. When the draft fails,
+the chip stays: its sentence says Rally could not draft the words, the
+excerpt is left out, and the action opens the card with the turn's own
+words or the launch pane empty. A draft never blocks a suggestion. The title and the
 sentence are fixed strings per kind with one slot for a name; nothing in
 them is generated except a Breakout's subject, which the drafter returns
 beside the prompt. The sentence exists for a new person: it
@@ -325,13 +343,20 @@ None yet.
 7. **The merge draft is the turn's text.** Prefilling the merge composer with
    the judged turn is what the Merge hover action already does, so an accepted
    suggestion costs no model call. Summarize stays phase 2 of merge-back.
-8. **The Breakout prompt is drafted by a generative role, gated by the
-   classifier, and never in shadow.** JEV cannot write prose. The drafter is a
-   `runStructuredInference` role with its own flag, run only when the Choice
-   says `side_question_worth_a_breakout` above the threshold, so its cost
-   scales with positives rather than with turns. In shadow it does not run; its
-   quality is measured offline against the opening prompts people wrote for
-   the Breakouts they actually started.
+8. **The words are drafted by one generative role, gated by the classifier,
+   after the chip is already up, and never in shadow.** JEV cannot write
+   prose. One `runStructuredInference` role with its own flag writes a merge
+   note for the parent's readers or a Breakout's opening prompt and subject,
+   and runs only on a confident positive, so its cost scales with positives
+   rather than with turns. The chip is written and shown before the draft is
+   asked for, and filled when it lands: a chip that appeared four seconds
+   after the turn would read as an interruption, while one that appears as
+   the turn settles reads as part of it. In shadow the drafter does not run;
+   its quality is measured offline against the notes people merged and the
+   opening prompts they wrote for the Breakouts they actually started.
+   Rejected: opening the card with the turn's raw text and drafting nothing
+   for a merge, which saves a call and hands the person a note written for
+   this conversation rather than for the parent's readers.
 9. **Dismissal is per conversation.** The suggestion is about a shared result.
    The retired router's rule against "workspace-wide suppression on a single
    person's dismissals" was about suppressing future suggestions across a
@@ -358,8 +383,9 @@ None yet.
 One table in the conversation object (`SubstreamAgent`), migration v75 after
 `channel_color_revision`: `conversation_suggestions`, one row per judgement
 that produced a suggestion, with `kind`, the judged turn and run, `status`
-(`open`, `accepted`, `dismissed`, `expired`), the drafted text for a
-Breakout, the decision's choice, confidence and model, and who resolved it. A
+(`open`, `accepted`, `dismissed`, `expired`), a `draft_status`
+(`pending`, `ready`, `failed`) with the drafted text and subject, the
+decision's choice, confidence and model, and who resolved it. A
 unique index allows one row per judged turn. Pacing reads the newest
 `dismissed` row per kind. The sketch is in [design.md](design.md#the-suggestion-slot);
 the authoritative record is the migration and `data-model.md`.
@@ -446,6 +472,9 @@ structured-inference gateway; neither is a tool.
 - A failing or unreachable TypeSafe leaves settlement, naming and the
   description loop exactly as they are, and the run's terminal state is
   unaffected.
+- The chip appears with a skeleton within a second of the turn settling and
+  fills a few seconds later; with the drafting route unreachable it stays,
+  says so, and its action still works.
 
 ## Open questions
 
