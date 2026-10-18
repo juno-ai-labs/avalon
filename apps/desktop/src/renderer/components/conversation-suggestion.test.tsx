@@ -69,6 +69,7 @@ describe('MergeResponseCard', () => {
       onSubmit: vi.fn(),
       source: { mark: <span>↳</span>, title: 'Annual discount' },
       submitting: false,
+      targetName: 'Pricing',
       targetPill: <span>Merge to thread</span>,
       time: <span>now</span>,
       value: 'Keep the discount.',
@@ -104,5 +105,11 @@ describe('MergeResponseCard', () => {
     expect(article.textContent).toContain('merged by');
     expect(article.textContent).toContain('Morgan');
     expect(screen.getByRole('textbox', { name: 'Merge note' })).toHaveValue('Keep the discount.');
+    expect(article.textContent).toContain('Merge, as Pricing will see it');
+  });
+
+  it('prompts an empty card with the parent it will land in', () => {
+    card({ value: '' });
+    expect(screen.getByRole('textbox', { name: 'Merge note' })).toHaveAttribute('placeholder', 'Write what Pricing should know. Embed an artifact with [Title](resource://id).');
   });
 });
