@@ -8,6 +8,7 @@ describe("detectTextType", () => {
     ['<div class="card">\n  <p>Hi</p>\n</div>', "text/html", "html"],
     ['<?xml version="1.0"?>\n<feed><entry/></feed>', "application/xml", "xml"],
     ['<feed>\n  <entry id="1"/>\n</feed>', "application/xml", "xml"],
+    ['<?xml version="1.0"?>\n<rss><item><description><![CDATA[<p>Hi</p>]]></description></item></rss>', "application/xml", "xml"],
     ["# Launch plan\n\nShip it.", "text/markdown", "md"],
     ["- first item\n- see [the doc](https://example.com)", "text/markdown", "md"],
     ["| a | b |\n| --- | --- |\n| 1 | 2 |", "text/markdown", "md"],

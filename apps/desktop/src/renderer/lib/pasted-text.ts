@@ -14,8 +14,8 @@ export const LONG_PASTE_CHARACTERS = 5_000;
 /**
  * Files the upload hands to the API to type and name. A WeakSet rather than a
  * field on the file, so every surface that hands files to the attachment hook
- * keeps its signature; a draft restored after a restart is a new `File` and
- * uploads as the plain text it is.
+ * keeps its signature. The draft cache records the mark and restores it onto
+ * the rebuilt `File`, so switching away and back keeps the paste a paste.
  */
 const pastedText = new WeakSet<File>();
 
@@ -23,9 +23,12 @@ export function isPastedText(file: File): boolean {
   return pastedText.has(file);
 }
 
-/** The attachment a long paste becomes, under a stand-in name the API replaces. */
-export function pastedTextFile(text: string, stamp: string, ordinal: number): File {
-  const file = new File([text], `Pasted text ${stamp}${ordinal > 1 ? ` (${ordinal})` : ''}.txt`, { type: 'text/plain' });
+export function markPastedText(file: File): File {
   pastedText.add(file);
   return file;
+}
+
+/** The attachment a long paste becomes, under a stand-in name the API replaces. */
+export function pastedTextFile(text: string, stamp: string, ordinal: number): File {
+  return markPastedText(new File([text], `Pasted text ${stamp}${ordinal > 1 ? ` (${ordinal})` : ''}.txt`, { type: 'text/plain' }));
 }

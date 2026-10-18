@@ -21,6 +21,7 @@ vi.mock('./draft-cache', async (importOriginal) => {
     },
   };
 });
+import { isPastedText, pastedTextFile } from './pasted-text';
 import { type FileAttachmentsApi, useFileAttachments } from './use-file-attachments';
 import type { WorkstreamResource } from './types';
 
@@ -46,6 +47,7 @@ function apiMock(overrides: Partial<FileAttachmentsApi> = {}): FileAttachmentsAp
   return {
     uploadResource: vi.fn(async () => resource),
     deleteDraftResource: vi.fn(async () => undefined),
+    getResource: vi.fn(async () => { throw new Error('offline'); }),
     ...overrides,
   } satisfies FileAttachmentsApi;
 }
@@ -233,6 +235,37 @@ describe('useFileAttachments', () => {
 
     await waitFor(() => expect(restored.result.current.ready).toHaveLength(1));
     expect(restored.result.current.attachments[0]?.resource?.id).toBe(localId);
+  });
+
+  it('adopts the stored resource when an upload finds its draft already landed', async () => {
+    const stored = { ...resource, title: 'Pasted - Q4 hiring plan.md', mimeType: 'text/markdown' };
+    const getResource = vi.fn(async () => stored);
+    const api = apiMock({
+      uploadResource: vi.fn().mockRejectedValue(new ApiError('This attachment draft already exists', 409, 'attachment_draft_exists')),
+      getResource,
+    });
+    const { result } = renderHook(() => useFileAttachments(api, draftKey));
+
+    act(() => result.current.addFiles([pastedTextFile('# Q4 hiring plan', '2026-10-18 at 17.10.00', 1)]));
+
+    await waitFor(() => expect(result.current.ready).toHaveLength(1));
+    expect(getResource).toHaveBeenCalledWith(result.current.attachments[0]!.localId);
+    expect(result.current.attachments[0]?.resource).toMatchObject({ title: 'Pasted - Q4 hiring plan.md', mimeType: 'text/markdown' });
+  });
+
+  it('keeps a long paste marked for naming when its draft is restored', async () => {
+    const uploadResource = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(resource);
+    const api = apiMock({ uploadResource });
+    const first = renderHook(() => useFileAttachments(api, draftKey));
+    act(() => first.result.current.addFiles([pastedTextFile('# Q4 hiring plan', '2026-10-18 at 17.10.00', 1)]));
+    await waitFor(() => expect(first.result.current.attachments[0]?.status).toBe('failed'));
+    first.unmount();
+
+    const restored = renderHook(() => useFileAttachments(api, draftKey));
+
+    await waitFor(() => expect(restored.result.current.ready).toHaveLength(1));
+    const [file] = uploadResource.mock.calls.at(-1) as [File];
+    expect(isPastedText(file)).toBe(true);
   });
 
   it('swaps cached attachments when the composer moves to another draft', async () => {

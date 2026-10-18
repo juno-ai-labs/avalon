@@ -72,7 +72,7 @@ interface PasteEventLike {
 function claimPaste(
   event: PasteEventLike,
   onFiles: (files: File[]) => void,
-  nextOrdinal: (key: string) => number,
+  nextOrdinal: (stamp: string) => number,
   attachLongText: boolean,
 ): void {
   const clipboard = event.clipboardData;
@@ -93,22 +93,22 @@ function claimPaste(
   const stamp = timestamp(new Date());
   onFiles([
     ...carried.map((file) => !fromDisk && isSynthesizedImage(file)
-      ? new File([file], pastedImageName(file, stamp, nextOrdinal(`image ${stamp}`)), {
+      ? new File([file], pastedImageName(file, stamp, nextOrdinal(stamp)), {
         type: file.type,
         lastModified: file.lastModified,
       })
       : file),
-    ...(longText ? [pastedTextFile(text, stamp, nextOrdinal(`text ${stamp}`))] : []),
+    ...(longText ? [pastedTextFile(text, stamp, nextOrdinal(stamp))] : []),
   ]);
 }
 
 /** Keeps pastes that land in the same second apart without a shared clock. */
-function useNameSequence(): (key: string) => number {
-  const sequence = useRef({ key: '', used: 0 });
-  return useCallback((key: string): number => {
-    sequence.current = key === sequence.current.key
-      ? { key, used: sequence.current.used + 1 }
-      : { key, used: 1 };
+function useNameSequence(): (stamp: string) => number {
+  const sequence = useRef({ stamp: '', used: 0 });
+  return useCallback((stamp: string): number => {
+    sequence.current = stamp === sequence.current.stamp
+      ? { stamp, used: sequence.current.used + 1 }
+      : { stamp, used: 1 };
     return sequence.current.used;
   }, []);
 }
