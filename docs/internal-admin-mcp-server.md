@@ -255,10 +255,7 @@ maintenance; it is not a domain-level count of changed records.
   every rule back. The update replaces the whole definition, so a rule left out
   is deleted for everyone it reached.
 
-- `query_data_lake` returns Cloudflare's `schema`, `rows`, and `metrics`.
-  Filter on the table's timestamp column and add a `LIMIT`: Basin SQL bills by
-  bytes scanned. Select `llm_inference`'s `request`, `response`, and `error`
-  only for one `inference_request_id`; they hold raw customer content.
+- Follow `query_data_lake`'s tool description on scan cost and raw content.
 
 - The server audits the Access actor, tool, target IDs, and success or failure,
   but deliberately does not log SQL text, bindings, result rows, or SQLite error
