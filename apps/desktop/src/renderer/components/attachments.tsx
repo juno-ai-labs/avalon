@@ -104,7 +104,9 @@ export function PendingAttachmentTile({ actionsDisabled = false, attachment, onO
   const video = isVideoAttachment(attachment.file.type, attachment.file.name);
   const media = image || video || pendingFileKind(attachment.file.type, attachment.file.name) === 'audio';
   const content = useMemo(() => async () => attachment.file, [attachment.file]);
-  const record: MessageAttachment = { id: attachment.localId, fileName: attachment.file.name,
+  // Once uploaded, the resource's title is the name the message will carry;
+  // for a long paste it is the one the API wrote from the text.
+  const record: MessageAttachment = { id: attachment.localId, fileName: attachment.resource?.title ?? attachment.file.name,
     mimeType: attachment.file.type, sizeBytes: attachment.file.size, contentAvailable: true, createdAt: '' };
   const preview: AttachmentPreview = { name: record.fileName, mimeType: record.mimeType,
     ...(attachment.previewUrl ? { src: attachment.previewUrl } : {}), loadContent: content };
@@ -117,9 +119,9 @@ export function PendingAttachmentTile({ actionsDisabled = false, attachment, onO
         : <RemoteFileAttachment attachment={record} loadContent={content} onOpen={onOpen} showDownload={false} />}
       {attachment.status === 'uploading' && <ProgressRing progress={attachment.progress} />}
       {attachment.status === 'failed' && (
-        <button aria-label={`Retry ${attachment.file.name}`} className="attachment-retry" disabled={actionsDisabled} onClick={onRetry} title={attachment.error} type="button"><RefreshCcw size={14} /></button>
+        <button aria-label={`Retry ${record.fileName}`} className="attachment-retry" disabled={actionsDisabled} onClick={onRetry} title={attachment.error} type="button"><RefreshCcw size={14} /></button>
       )}
-      <button aria-label={`Remove ${attachment.file.name}`} className="attachment-remove" disabled={actionsDisabled} onClick={onRemove} type="button"><X size={13} /></button>
+      <button aria-label={`Remove ${record.fileName}`} className="attachment-remove" disabled={actionsDisabled} onClick={onRemove} type="button"><X size={13} /></button>
     </div>
   );
 }
