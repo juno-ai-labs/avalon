@@ -486,7 +486,7 @@ describe("work-stream attachment tools", () => {
     const first = await read.execute({ resourceId }, context());
     const next = first.pagination!.continuations.find((page) => page.slot === "nextPageId")!.input;
 
-    const error = await read.explainEarlierRunPage!(next);
+    const error = await read.explainEarlierRunPage!(next, context());
     // The guard reads `resourceId` from here to clear this failure once the
     // suggested read succeeds; the sanitizer drops the whole detail otherwise.
     expect(readStructuredFailure(error)).toEqual({
@@ -497,7 +497,16 @@ describe("work-stream attachment tools", () => {
     await expect(read.execute({ resourceId, startCharacter: 12_000 }, context())).resolves.toMatchObject({
       output: { resourceId, range: { start: 12_000 } },
     });
-    await expect(read.explainEarlierRunPage!({ cursor: "not-a-cursor" })).resolves.toBeNull();
+    await expect(read.explainEarlierRunPage!({ cursor: "not-a-cursor" }, context())).resolves.toBeNull();
+
+    // Changed text invalidates the offset: the hint restarts the read rather
+    // than reading the new version at a position measured on the old one.
+    database.prepare("UPDATE resources SET model_content_sha256 = ? WHERE id = ?").run("c".repeat(64), resourceId);
+    expect(readStructuredFailure(await read.explainEarlierRunPage!(next, context()))).toEqual({
+      code: "page_id_from_earlier_message",
+      details: { resourceId, suggestedCall: { tool: "read_resource", arguments: { resourceId } } },
+    });
+    expect((await read.explainEarlierRunPage!(next, context()))!.message).toContain("restart the read");
   });
 
   it("rejects an oversized derivative object before hydrating it into Worker memory", async () => {

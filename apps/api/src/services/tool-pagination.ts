@@ -70,7 +70,7 @@ export function paginatedToolNames(definition: Pick<HarnessTool["definition"], "
  * it: page IDs stay scoped to their run.
  */
 export type PaginatedHarnessTool = HarnessTool & {
-  explainEarlierRunPage?: (continuationInput: unknown) => Promise<Error | null>;
+  explainEarlierRunPage?: (continuationInput: unknown, context: HarnessToolContext) => Promise<Error | null>;
 };
 
 /** Expand only an explicitly authored tool. Private continuations never escape this wrapper. */
@@ -124,7 +124,7 @@ export function withToolPagination(tool: PaginatedHarnessTool, host: PaginationH
       throw error;
     }
     if ("inputJson" in claimed) return claimed;
-    const explained = await tool.explainEarlierRunPage?.(JSON.parse(claimed.earlierRunInputJson));
+    const explained = await tool.explainEarlierRunPage?.(JSON.parse(claimed.earlierRunInputJson), context);
     if (explained) throw explained;
     throw Object.assign(new Error(
       `page_id_from_earlier_message: This page ID came from an earlier message. Page IDs work only within the reply that returned them, so it cannot be used now. Call ${firstName} to start a new read.`,

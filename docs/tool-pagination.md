@@ -111,7 +111,9 @@ still sees the last run's `nextPageId` in its history and may copy it. The claim
 `earlierRunInputJson` instead of throwing, and the wrapper hands them to the
 tool's optional `explainEarlierRunPage`, never to `execute`. `read_resource`
 answers with `page_id_from_earlier_message`, the exact `resourceId` and
-`startCharacter` call that resumes the read, and `resourceId` in its details for
+`startCharacter` call that resumes the read (or a restart from the beginning
+when the derivative's version no longer matches the page's, since a bare offset
+carries no version fence), and `resourceId` in its details for
 the attachment grounding guard. A tool without the hook gets a generic
 `page_id_from_earlier_message` refusal naming its first-page tool.
 A repeated forward continuation instead returns the fetched content with
