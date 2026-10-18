@@ -1,6 +1,7 @@
 import { IconCornerUpLeft, IconFileText, IconUsers, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { isComposingKeyEvent } from '../lib/ime';
 
 /**
  * The merge as the parent will draw it, editable in place: `MergeMessage`'s
@@ -40,11 +41,20 @@ export function MergeResponseCard({
   value: string;
 }): React.JSX.Element {
   const textarea = useRef<HTMLTextAreaElement>(null);
+  // Sized to its words, and again when its width changes: a narrower pane
+  // wraps an unchanged note onto more lines, which `overflow: hidden` would clip.
   useEffect(() => {
     const element = textarea.current;
     if (!element) return;
-    element.style.height = 'auto';
-    element.style.height = `${element.scrollHeight}px`;
+    const fit = (): void => {
+      element.style.height = 'auto';
+      element.style.height = `${element.scrollHeight}px`;
+    };
+    fit();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(fit);
+    observer.observe(element);
+    return () => observer.disconnect();
   }, [value]);
   useEffect(() => {
     if (!autoFocus) return;
@@ -54,6 +64,8 @@ export function MergeResponseCard({
     element.setSelectionRange(element.value.length, element.value.length);
   }, [autoFocus]);
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    // Mid-composition, Enter commits a candidate and Escape drops one: neither is ours.
+    if (isComposingKeyEvent(event.nativeEvent)) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       onCancel();
@@ -85,7 +97,7 @@ export function MergeResponseCard({
         <textarea
           aria-label="Merge note"
           className="merge-response-card-input"
-          disabled={submitting}
+          readOnly={submitting}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={onKeyDown}
           placeholder={`Write what ${targetName} should know. Embed an artifact with [Title](resource://id).`}

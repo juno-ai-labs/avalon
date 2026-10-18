@@ -8933,13 +8933,6 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 /* In the message capsule the merge composer always takes its tall form, as
    the design draws it: the words across the top, who will see them, then the
    tools, the hint and Merge on one row. */
-.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-input-shell { grid-column: 1 / -1; grid-row: 2; }
-.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer :is(textarea, .composer-highlight) { padding: 11px 16px 4px; }
-.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-notice { grid-column: 1 / -1; grid-row: 3; padding: 2px 16px 0; }
-.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer :is(.composer-tools, .composer-submit-area) { align-self: center; grid-row: 4; }
-.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-tools { justify-content: flex-start; }
-.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-hint { align-self: center; display: block; font-size: 11.5px; grid-column: 2; grid-row: 4; }
-.has-message-capsule .workstream-composer.is-message-capsule.is-merge-composer .composer-send.has-content { border-radius: var(--av-sys-size-radius-pill); width: auto; }
 /* A conversation suggestion (docs/conversation-suggestions.md): one quiet line
    under a settled turn, in the row where Breakout cards sit. Dashed, because
    the thing it names does not exist yet; a title, one sentence, one cut line
@@ -9001,6 +8994,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   padding: 12px 14px 10px;
   width: 100%;
 }
+.merge-response-card:focus-within { box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong), 0 0 0 3px var(--av-sys-color-accent-tint); }
 .merge-response-card-tag { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 10.5px; font-weight: 600; gap: 6px; letter-spacing: .06em; line-height: 16px; text-transform: uppercase; }
 .merge-response-card-input {
   background: transparent;

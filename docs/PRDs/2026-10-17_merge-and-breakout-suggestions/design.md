@@ -624,11 +624,15 @@ through the same bounded state bytes. Coverage runs used concurrency;
 latency is from a separate sequential run over a fixed random sample of 300
 cases, end to end from the harness, request build to parsed answer.
 
-Over all 4,188 cases, against the merged labels:
+Over all 4,188 cases, against the merged labels. Agreement is scored on the
+decision production makes: a positive at or below the threshold counts as
+`continue_here`, which is why the thresholded column agrees more often than
+the raw choices do (an earlier version of this table scored the raw choice in
+both columns and read 85.4% for each):
 
 | | JEV, confidence > 0.6 | JEV, no threshold | Terra |
 | --- | --- | --- | --- |
-| Three-way agreement | 85.4% | 85.4% | 90.0% |
+| Three-way agreement | 91.0% | 85.4% | 90.0% |
 | Carry-up precision / recall / F1 | 75.9% / 74.0% / 0.749 | 56.7% / 89.2% / 0.693 | 66.1% / 91.6% / 0.768 |
 | Side question TP / FP / FN | 37 / 48 / 65 | 71 / 179 / 31 | 62 / 97 / 40 |
 | Suggestions per Rally final turn | 24.7% | 39.7% | 33.5% |

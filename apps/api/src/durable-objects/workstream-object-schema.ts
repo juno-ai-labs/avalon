@@ -3496,6 +3496,7 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
         confidence REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
         carried_item_kind TEXT,
         model TEXT,
+        failure_kind TEXT,
         suggestion_id TEXT,
         created_at INTEGER NOT NULL
       ) STRICT`,

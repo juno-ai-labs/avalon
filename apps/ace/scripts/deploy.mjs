@@ -152,6 +152,8 @@ await Promise.all([
   ensureFlag('multiple-workspaces-enabled', 'True shows workspace switching, invitations, creation, and background attention in Electron; false hides them without changing API availability.'),
   ensureFlag('push-notifications-enabled', 'True enables Apple push delivery and the desktop Notifications setting for everyone from launch; false pauses push for the targeted users.', 'on'),
   ensureFlag('live-artifacts-enabled', 'True shows live-artifact surfaces in Electron — the rail site detail and preview, the data view, and the artifact window; false hides them. An artifact URL somebody already holds keeps working either way, because its authorization is structural rather than flagged.'),
+  ensureFlag('conversation-suggestions-enabled', 'True draws the merge suggestion chip under a settled Rally turn in Electron; false hides it. The server judges and records every turn either way.'),
+  ensureFlag('breakout-suggestions-enabled', 'True draws the Breakout suggestion chip under a settled Rally turn in Electron; false hides it, which is where the side-question classifier stays until its precision is measured. The server judges and records every turn either way.'),
   ensureModelFlag('agent-model-workstream', 'Runs the main participant-visible work stream and the structured attachment-summary pass: reasons over transcripts, calls tools, and streams answers.', 'openai/gpt-6.1-sol', ['google/gemini-3.8-flash']),
   ensureModelFlag('agent-model-inline-child', 'Runs a bounded read-only child task delegated by a work-stream agent and returns the result to its parent.', 'openai/gpt-6.1-sol', ['google/gemini-3.8-flash']),
   ensureModelFlag('agent-model-workstream-naming', 'Creates the short work-stream title from the opening request while the creator waits.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.8-flash']),
@@ -159,6 +161,7 @@ await Promise.all([
   ensureModelFlag('agent-model-work-opportunity-ranking', 'Orders admitted suggestions for one person, accounting for freshness and impressions before storing the visible set.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.8-flash']),
   ensureModelFlag('agent-model-workstream-description', 'Re-evaluates the derived one-line description after terminal runs and rewrites it only when the work stream changed purpose.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.8-flash']),
   ensureModelFlag('agent-model-session-import', 'Drives the person\'s desktop browser (page script, page outline, screenshots, input) to read a ChatGPT or Claude conversation and its files into a new Channel. Must accept images.', 'openai/gpt-6.1-sol', ['google/gemini-3.8-flash']),
+  ensureModelFlag('agent-model-suggestion-draft', 'Writes the words a conversation suggestion carries after the classifier has judged a settled turn worth carrying up or breaking out: a merge note for the parent readers, or a Breakout opening prompt and subject. Runs only on a confident positive, after the chip is shown.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.8-flash']),
 ]);
 await verifyRuntimeQueuePermissions({ accountId, token: aceRuntimeToken });
 

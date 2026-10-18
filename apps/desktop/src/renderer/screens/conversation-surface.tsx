@@ -3258,8 +3258,14 @@ export function ConversationSurface({
       setDismissedSuggestionIds((current) => new Set([...current].filter((other) => other !== suggestion.suggestionId)));
     });
   };
+  // The flags hide the line, each kind on its own; the server judges and
+  // records every turn whatever they say (docs/conversation-suggestions.md).
+  const suggestionShown = (kind: ConversationSuggestion['kind']): boolean => kind === 'merge_up'
+    ? featureFlags.data?.conversationSuggestionsEnabled === true
+    : featureFlags.data?.breakoutSuggestionsEnabled === true;
   const visibleSuggestions = socketConnection.suggestions.filter((suggestion) =>
     suggestion.status === 'open'
+    && suggestionShown(suggestion.kind)
     && !dismissedSuggestionIds.has(suggestion.suggestionId)
     && suggestionTurnIsVisible(suggestion.judgedTurnId, readableTurnIds)
     && (suggestion.kind === 'merge_up' ? merge !== null && startMerge !== undefined : canStartBreakout));
