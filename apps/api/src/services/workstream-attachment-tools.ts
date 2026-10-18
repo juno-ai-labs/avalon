@@ -367,19 +367,31 @@ export function createWorkstreamAttachmentTools(
       // A page from an earlier message carries the resource and position the
       // model was reading. Naming both turns the refusal into the one call that
       // resumes the read, and `resourceId` lets the grounding guard clear this
-      // failure once that call succeeds.
-      explainEarlierRunPage: async (continuationInput) => {
+      // failure once that call succeeds. The offset is offered only while the
+      // derivative is the version it was measured against: a bare
+      // `startCharacter` carries no version fence, so on changed text it would
+      // read unrelated content the guard then counts as verified.
+      explainEarlierRunPage: async (continuationInput, context) => {
         const continuation = z.object({ cursor: z.string() }).safeParse(continuationInput);
         if (!continuation.success) return null;
         const state = await openCursorState(
           env, input, options, continuation.data.cursor, READ_CURSOR_PURPOSE, ReadCursorStateSchema,
         ).catch(() => null);
         if (!state) return null;
+        const unchanged = await (async () => {
+          const ready = await ensureReadyTextDerivative(env, await requireVisibleResource(env, input, options, state.resourceId), context);
+          return ready.sha256 === state.sha256 && ready.extractorVersion === state.extractorVersion;
+        })().catch(() => false);
         const tool = modelToolName("read_resource");
-        const args = { resourceId: state.resourceId, startCharacter: state.start };
+        const args = unchanged
+          ? { resourceId: state.resourceId, startCharacter: state.start }
+          : { resourceId: state.resourceId };
+        const instruction = unchanged
+          ? `To continue the same read, call ${tool} with ${JSON.stringify(args)}.`
+          : `The resource may have changed since that page, so restart the read: call ${tool} with ${JSON.stringify(args)}.`;
         return attachmentError(
           "page_id_from_earlier_message",
-          `This page ID came from an earlier message. Page IDs work only within the reply that returned them, so it cannot be used now. To continue the same read, call ${tool} with ${JSON.stringify(args)}.`,
+          `This page ID came from an earlier message. Page IDs work only within the reply that returned them, so it cannot be used now. ${instruction}`,
           { resourceId: state.resourceId, suggestedCall: { tool, arguments: args } },
         );
       },
