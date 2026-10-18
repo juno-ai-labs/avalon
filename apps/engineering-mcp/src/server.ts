@@ -12,6 +12,7 @@ import {
   InspectionSqlBindingSchema,
   ListEngineeringWorkspacesResultSchema,
   SearchEngineeringOrganizationsInputSchema,
+  SearchEngineeringUsersInputSchema,
 } from "@rally/contracts/engineering-inspection";
 import {
   ArtifactIdSchema,
@@ -32,6 +33,7 @@ import type { AccessPrincipal } from "./access";
 import type { Env } from "./env";
 import { LAKEHOUSE_TABLES, LAKEHOUSES, LakehouseQueryError, queryLakehouse } from "./lakehouse";
 import { organizationPage, organizationPageInputSchema } from "./organizations";
+import { userPage, userPageInputSchema } from "./users";
 
 type ToolResult = {
   content: [{ type: "text"; text: string }];
@@ -189,6 +191,20 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ orderBy, direction, limit, page, ...filter }) => tool(principal, "search_orgs", {}, () =>
     organizationPage(inspectionBindings(env), filter, { orderBy, direction, limit, page })));
+
+  server.registerTool("list_users", {
+    description: "List every Rally user across configured regions, newest first unless ordered otherwise, each with every Organization they belong to (role, guest or member, status, last seen). A person with accounts in two regions appears once per region. Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
+    inputSchema: userPageInputSchema,
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "list_users", {}, () =>
+    userPage(inspectionBindings(env), {}, request)));
+
+  server.registerTool("search_users", {
+    description: "Search Rally users across configured regions by name, email or ID, or by creation time, newest first unless ordered otherwise. Each result carries every Organization the user belongs to (role, guest or member, status, last seen). Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
+    inputSchema: { ...SearchEngineeringUsersInputSchema.unwrap().shape, ...userPageInputSchema },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, ({ orderBy, direction, limit, page, ...filter }) => tool(principal, "search_users", {}, () =>
+    userPage(inspectionBindings(env), filter, { orderBy, direction, limit, page })));
 
   server.registerTool("list_workstreams", {
     description: "List every work stream in the authoritative WorkspaceDO for a workspace ID.",
