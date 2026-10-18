@@ -1,6 +1,7 @@
+import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { openRailAtEvenSplit, railFillsPane } from './rail-split';
+import { openRailAtEvenSplit, railFillsPane, useRailFillsPane } from './rail-split';
 import { useUiStore } from './ui-store';
 
 // Layout is the browser's, which jsdom does not do: the main pane starts 200px
@@ -66,5 +67,30 @@ describe('whether the panel takes the whole pane', () => {
 
   it('takes the pane once the conversation would drop under its minimum', () => {
     expect(railFillsPane(1_043, 340)).toBe(true);
+  });
+
+  it('re-renders a reader only when a resize changes the answer', () => {
+    let width = 1_400;
+    vi.spyOn(window, 'innerWidth', 'get').mockImplementation(() => width);
+    const resize = (to: number): void => act(() => {
+      width = to;
+      window.dispatchEvent(new Event('resize'));
+    });
+    let renders = 0;
+    const { result } = renderHook(() => {
+      renders += 1;
+      return useRailFillsPane(340);
+    });
+    const before = renders;
+
+    resize(1_300);
+    resize(1_200);
+    expect(renders).toBe(before);
+    expect(result.current).toBe(false);
+
+    resize(900);
+    expect(result.current).toBe(true);
+    expect(renders).toBe(before + 1);
+    vi.restoreAllMocks();
   });
 });

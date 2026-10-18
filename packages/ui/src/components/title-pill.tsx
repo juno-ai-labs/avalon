@@ -1,7 +1,7 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { IconChevronDown, IconChevronRight, IconSearch, IconX } from '@tabler/icons-react';
 
-import { Menu } from 'lucide-react';
+import { Ellipsis, Menu } from 'lucide-react';
 
 import { IconGroup, type IconGroupAction, type TooltipSide } from './icon-group';
 import type { IdentityMark } from './identity-tile';
@@ -196,7 +196,6 @@ export interface TitlePillLevel {
   title: ReactNode;
   /** The accessible name of the menu trigger, e.g. `Channel menu: Launch`. */
   label: string;
-  meta?: ReactNode;
   menu?: ReactNode;
   onSelect?: () => void;
   /**
@@ -220,7 +219,6 @@ export function TitlePill({ level, variant = 'current' }: {
   const body = <>
     <span className="title-pill-icon">{level.icon}</span>
     <span className="title-pill-title">{level.title}</span>
-    {level.meta ? <span className="title-pill-meta">{level.meta}</span> : null}
   </>;
   const [view, setView] = useState<TitleMenuView | null>(null);
   const [direction, setDirection] = useState<'in' | 'out'>('in');
@@ -292,7 +290,6 @@ export function TitlePill({ level, variant = 'current' }: {
           <DropdownMenu.Trigger aria-label={view ? `${level.label}, ${view.label}` : level.label} className="title-pill-menu-trigger has-title">
             <span className="title-pill-menu-trigger-body">
               {crumbTitle}
-              {!view && level.meta ? <span className="title-pill-meta">{level.meta}</span> : null}
               {crumb}
               {chevron}
             </span>
@@ -316,7 +313,6 @@ export function TitlePill({ level, variant = 'current' }: {
     <DropdownMenu.Trigger aria-label={view ? `${level.label}, ${view.label}` : level.label} className={clsx('title-pill', `is-${variant}`)}>
       <span className="title-pill-icon">{level.icon}</span>
       {crumbTitle}
-      {!view && level.meta ? <span className="title-pill-meta">{level.meta}</span> : null}
       {crumb}
       {chevron}
     </DropdownMenu.Trigger>
@@ -353,10 +349,27 @@ const NAVIGATION_MARK: IdentityMark = {
   ink: 'var(--av-sys-color-text-default)',
 };
 
-function usePhoneHeader(): PhoneHeader | null {
+const FOLDED_MARK: IdentityMark = {
+  shape: 'circle',
+  icon: Ellipsis,
+  tint: 'var(--av-sys-color-surface-raised)',
+  ink: 'var(--av-sys-color-text-default)',
+};
+
+/**
+ * A phone's crumbs: past two, every crumb but the nearest folds into one
+ * "…" mark that lists them, so the row stays two marks wide.
+ */
+function foldCrumbs(crumbs: MarkBridgeItem[]): MarkBridgeItem[] {
+  if (crumbs.length <= 2) return crumbs;
+  const nearest = crumbs.at(-1)!;
+  return [{ key: 'folded', mark: FOLDED_MARK, name: 'Show path', menu: crumbs.slice(0, -1) }, nearest];
+}
+
+function usePhoneHeader(): { phone: boolean; header: PhoneHeader | null } {
   const phone = usePhoneLayout();
   const header = useContext(PhoneHeaderContext);
-  return phone ? header : null;
+  return { phone, header: phone ? header : null };
 }
 
 function navigationMark(header: PhoneHeader): MarkBridgeItem {
@@ -368,7 +381,7 @@ function navigationMark(header: PhoneHeader): MarkBridgeItem {
  * way to the navigation is there from the first frame.
  */
 export function TitlePillNavigation(): React.JSX.Element | null {
-  const header = usePhoneHeader();
+  const { header } = usePhoneHeader();
   return header ? <MarkBridge className="title-pill-bridge has-phone-navigation window-no-drag" items={[navigationMark(header)]} /> : null;
 }
 
@@ -396,7 +409,7 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
     if (level.bridge) bridge.push({ key: level.key, ...level.bridge, onSelect: level.onSelect });
   }
   const bridged = ancestors.length > 0 && bridge.length === ancestors.length;
-  const phoneHeader = usePhoneHeader();
+  const { phone, header: phoneHeader } = usePhoneHeader();
   const lead = phoneHeader ? [navigationMark(phoneHeader)] : [];
   const shownActions = phoneHeader ? [...phoneHeader.actions, ...actions ?? []] : actions;
   const headerRef = useRef<HTMLElement>(null);
@@ -416,7 +429,7 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
       {/* The nearest crumb keeps its name, which a bare mark does not say. A
           phone has no room for it and the stylesheet hides it there; the
           shape is measured from the name, so it closes back to a circle. */}
-      {bridged ? <MarkBridge className={clsx('title-pill-bridge window-no-drag', lead.length > 0 && 'has-phone-navigation')} items={[...lead, ...bridge]} labelLast /> : null}
+      {bridged ? <MarkBridge className={clsx('title-pill-bridge window-no-drag', lead.length > 0 && 'has-phone-navigation')} items={[...lead, ...phone ? foldCrumbs(bridge) : bridge]} labelLast /> : null}
     </div>
     <div className="title-pill-current window-no-drag" ref={currentRef}><TitlePill level={current} /></div>
     <div className="title-pill-trailing" ref={trailingRef}>{trailing || shownActions?.length

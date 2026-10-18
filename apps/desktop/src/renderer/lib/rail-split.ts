@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 
 import { MIN_RAIL_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, useUiStore } from './ui-store';
 
@@ -48,12 +48,16 @@ export function railFillsPane(windowWidth: number, sidebarWidth: number): boolea
   return windowWidth - sidebarWidth < SIDEBAR_CONTENT_MIN_WIDTH + MIN_RAIL_WIDTH;
 }
 
+function subscribeResize(onChange: () => void): () => void {
+  window.addEventListener('resize', onChange);
+  return () => window.removeEventListener('resize', onChange);
+}
+
+/**
+ * `railFillsPane` for this window, as the answer alone: a resize that leaves
+ * it unchanged re-renders nothing, which matters to every conversation pane
+ * that reads it while a window is dragged.
+ */
 export function useRailFillsPane(sidebarWidth: number): boolean {
-  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
-  useEffect(() => {
-    const update = (): void => setWindowWidth(window.innerWidth);
-    window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
-  }, []);
-  return railFillsPane(windowWidth, sidebarWidth);
+  return useSyncExternalStore(subscribeResize, () => railFillsPane(window.innerWidth, sidebarWidth));
 }
