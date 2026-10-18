@@ -95,7 +95,7 @@ the mark closes back to a circle.
 A mark may carry a `menu` of the objects it stands for and open it in place of
 `onSelect`. The header uses that at phone width: past two crumbs, all but the
 nearest fold into one "…" mark (`Show path`) that lists them, so the bridge
-stays two crumbs wide after the menu mark.
+stays two crumbs wide.
 
 A title pill's menu always opens below the pill. Its bottom edge never counts
 as a Radix collision, so the menu never flips above; its sides still do, so it
@@ -187,7 +187,7 @@ folds a bridge of more than two crumbs into a "…" mark listing all but the
 nearest, then the nearest.
 
 **Why:** A panel opened from a breakout stands alone on a phone and carries
-Channel, thread and breakout. Beside the menu mark, the title pill and the
+Channel, thread and breakout. Beside the menu button, the title pill and the
 trailing buttons, three crumbs left the panel's name a few letters wide. The
 product asked for at most two items: "…" with a dropdown, and the last.
 

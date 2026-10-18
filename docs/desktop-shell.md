@@ -222,9 +222,10 @@ its threads and messages, and a composer at the foot.
 
 The screen has one header. A pane with a `TitlePillHeader` is that header:
 the app shell provides `PhoneHeaderContext`, and at phone width the header
-leads its crumbs' glass `MarkBridge` with a menu mark that opens the sheet,
-and puts **Search organization** first in its folded "⋯" menu. Loading
-skeletons draw the mark alone (`TitlePillNavigation`).
+leads its crumbs with a round menu button that opens the sheet, drawn like
+the trailing buttons and apart from the crumbs' glass `MarkBridge`, and puts
+**Search organization** first in its folded "⋯" menu. Loading skeletons draw
+the button alone (`TitlePillNavigation`).
 A right-slot panel fills the phone, so its header carries the same. Every
 pane header on a phone takes the narrow pane's columns, so a long title
 truncates in the middle and the crowding shift is off. A window surface in a
@@ -240,14 +241,14 @@ account menu as a last tab labelled Settings. More carries the folded
 sections' counts added up, named count by count, and reads as selected while
 one of them is the open section; choosing one switches the section as its own
 tab would. A guest's four sections all fit, so no More is drawn. While a visible pane
-header carries the menu mark (`PHONE_NAVIGATION_CONTROL`), the shut sheet
+header carries the menu button (`PHONE_NAVIGATION_CONTROL`), the shut sheet
 keeps no bar and is hidden whole. A screen without one (the landing, Not
 found, an access request, a Breakout draft, whose header is collapsed to
 nothing so it hands over to the created Breakout without moving) and the
-browser panel, which draws no mark, keep the sheet's header as their top bar. The sheet is clipped rather than moved,
+browser panel, which draws no menu button, keep the sheet's header as their top bar. The sheet is clipped rather than moved,
 for the reasons the 2026-10-06 entry gives. Opening it from a pane header
 moves focus to its close button; closing hands focus back to the opener, or
-to the visible menu mark when the opener is gone (`useSheetOpener`). Opening
+to the visible menu button when the opener is gone (`useSheetOpener`). Opening
 anything from it closes it, as do Escape and widening past 640px; switching
 sections does not navigate, so the sheet stays open on the list just picked.
 Code that navigates and wants the sheet open afterwards sets
@@ -484,6 +485,22 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-18 — The phone's menu leaves the crumbs' glass bridge
+
+**What changed:** At phone width the menu is a round button like the
+header's trailing ones ("⋯", close), ahead of the crumbs, instead of the
+first mark of their `MarkBridge`. It has no circle outline, and the bridge
+holds only the path.
+
+**Why:** The product owner reversed the 2026-10-16 call. Fused into the
+bridge, the menu read as one more crumb in the path, its outlined circle
+matching the Channel and thread marks beside it.
+
+**Consequences:** The `has-phone-navigation` class moved to the button's own
+wrapper, so `PHONE_NAVIGATION_CONTROL` and the rule that drops the sheet's bar
+still find it. A bridge never carries a control that is not a level of the
+path.
 
 ### 2026-10-18 — A Breakout pill no longer shows its reply count
 
