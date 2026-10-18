@@ -52,8 +52,6 @@ export const DEVELOPER_SETTINGS_FLAG_KEY = "developer-settings";
 export const SUGGESTED_WORK_FLAG_KEY: ProductFeatureFlagKey = "suggested-work-enabled";
 export const MULTIPLE_WORKSPACES_FLAG_KEY: ProductFeatureFlagKey = "multiple-workspaces-enabled";
 export const LIVE_ARTIFACTS_FLAG_KEY: ProductFeatureFlagKey = "live-artifacts-enabled";
-export const CONVERSATION_SUGGESTIONS_FLAG_KEY: ProductFeatureFlagKey = "conversation-suggestions-enabled";
-export const BREAKOUT_SUGGESTIONS_FLAG_KEY: ProductFeatureFlagKey = "breakout-suggestions-enabled";
 
 interface ClientFeatureFlagSubject {
   userId: string;
@@ -165,16 +163,12 @@ export async function resolveClientFeatureFlagsForSubject(
     multipleWorkspacesEnabled,
     liveArtifactsEnabled,
     pushNotificationsEnabled,
-    conversationSuggestionsEnabled,
-    breakoutSuggestionsEnabled,
   ] = await Promise.all([
     resolveBooleanClientFlag(env, subject, DEVELOPER_SETTINGS_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, SUGGESTED_WORK_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, MULTIPLE_WORKSPACES_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, LIVE_ARTIFACTS_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, PUSH_NOTIFICATIONS_FLAG_KEY, context),
-    resolveBooleanClientFlag(env, subject, CONVERSATION_SUGGESTIONS_FLAG_KEY, context),
-    resolveBooleanClientFlag(env, subject, BREAKOUT_SUGGESTIONS_FLAG_KEY, context),
   ]);
   return {
     developerSettings,
@@ -182,8 +176,6 @@ export async function resolveClientFeatureFlagsForSubject(
     multipleWorkspacesEnabled,
     liveArtifactsEnabled,
     pushNotificationsEnabled,
-    conversationSuggestionsEnabled,
-    breakoutSuggestionsEnabled,
   };
 }
 

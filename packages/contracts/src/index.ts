@@ -467,14 +467,6 @@ export const ClientFeatureFlagsSchema = z.object({
    */
   liveArtifactsEnabled: z.boolean().default(false),
   pushNotificationsEnabled: z.boolean().default(false),
-  /**
-   * Whether the merge suggestion chip is drawn under a settled turn. The
-   * server judges and records every turn whatever this says; the flag hides
-   * the line (docs/conversation-suggestions.md).
-   */
-  conversationSuggestionsEnabled: z.boolean().default(false),
-  /** Whether the Breakout suggestion chip is drawn: held back on its own, as the PRD's design records. */
-  breakoutSuggestionsEnabled: z.boolean().default(false),
 });
 
 /** Product flags Ace is allowed to manage and publish to connected clients. */
@@ -483,8 +475,6 @@ export const ProductFeatureFlagKeySchema = z.enum([
   "multiple-workspaces-enabled",
   "push-notifications-enabled",
   "live-artifacts-enabled",
-  "conversation-suggestions-enabled",
-  "breakout-suggestions-enabled",
 ]);
 export const ProductFeatureFlagFanoutMessageSchema = z.strictObject({
   kind: z.literal("product_feature_flag_changed"),

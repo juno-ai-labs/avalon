@@ -32,8 +32,7 @@ vi.mock('../lib/collaboration-session', async (importOriginal) => {
     useShellCapabilities: () => actual.shellCapabilities({ host: 'desktop', session: session.current as ClientSession | null }),
   };
 });
-// Both chips on: the flags hide the line, and these tests are about the line.
-vi.mock('../lib/use-client-feature-flags', () => ({ useClientFeatureFlags: () => ({ data: { conversationSuggestionsEnabled: true, breakoutSuggestionsEnabled: true } }) }));
+vi.mock('../lib/use-client-feature-flags', () => ({ useClientFeatureFlags: () => ({ data: {} }) }));
 vi.mock('../lib/workstream-socket-pool', () => ({
   useWorkstreamSocketOpenContext: () => () => ({}),
   useRetainedWorkstreamSocket: retainedSocket,
