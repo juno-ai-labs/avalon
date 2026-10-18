@@ -278,6 +278,7 @@ const bridge: RallyDesktopBridge = {
     ipcRenderer.invoke('artifact:set-preview-bounds', bounds) as Promise<void>,
   setArtifactPreviewHidden: (hidden) =>
     ipcRenderer.invoke('artifact:set-preview-hidden', hidden) as Promise<void>,
+  snapshotArtifactPreview: () => ipcRenderer.invoke('artifact:snapshot-preview') as Promise<string | null>,
   closeArtifactPreview: () => ipcRenderer.invoke('artifact:close-preview') as Promise<void>,
   popOutArtifact: (request) => ipcRenderer.invoke('artifact:pop-out', request) as Promise<boolean>,
   getRestorableArtifactWindows: () => ipcRenderer.invoke('artifact:restorable-windows') as Promise<DesktopRestorableArtifactWindow[]>,

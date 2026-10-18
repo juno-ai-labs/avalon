@@ -22,6 +22,7 @@ function surface(overrides: Partial<SiteResourceDetailProps['surface']> = {}) {
   return {
     present: vi.fn(async () => true),
     setBounds: vi.fn(async () => undefined),
+    snapshot: vi.fn(async (): Promise<string | null> => 'data:image/jpeg;base64,c3RpbGw='),
     close: vi.fn(async () => undefined),
     popOut: vi.fn(async () => true),
     copyText: vi.fn(async () => undefined),
@@ -111,6 +112,128 @@ describe('showing a live artifact in the rail', () => {
     await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 }));
     overlay.remove();
     await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 20, y: 40, width: 500, height: 320 }));
+    geometry.mockRestore();
+  });
+
+  it('keeps the page in view under a nested dialog by showing a still taken before the view hides', async () => {
+    const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ x: 20, y: 40, width: 500, height: 320 }),
+    );
+    // What the pane held at the moment each hide was sent: the still has to be
+    // on screen by then, or the pane shows empty until React catches up.
+    const stillAtHide: (string | null)[] = [];
+    const { props } = setup({
+      surface: surface({
+        setBounds: vi.fn(async (bounds: { x: number; y: number; width: number; height: number }) => {
+          if (bounds.width === 0) {
+            stillAtHide.push(document.querySelector('[data-testid="site-preview-pane"] img')?.getAttribute('src') ?? null);
+          }
+        }),
+      }),
+    });
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenCalledWith({ x: 20, y: 40, width: 500, height: 320 }));
+    const pane = screen.getByTestId('site-preview-pane');
+    const overlay = document.createElement('div');
+    overlay.setAttribute('role', 'menu');
+    document.body.append(overlay);
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 }));
+    expect(stillAtHide).toEqual(['data:image/jpeg;base64,c3RpbGw=']);
+    // Taken while the view was still showing.
+    const snapshot = vi.mocked(props.surface.snapshot);
+    const hide = vi.mocked(props.surface.setBounds).mock.calls.findIndex(([bounds]) => bounds.width === 0);
+    expect(snapshot.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(props.surface.setBounds).mock.invocationCallOrder[hide]!);
+    overlay.remove();
+    await waitFor(() => expect(pane.querySelector('img')).toBeNull());
+    expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 20, y: 40, width: 500, height: 320 });
+    geometry.mockRestore();
+  });
+
+  it('holds the hide for the still, and keeps the still until the view is back', async () => {
+    const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ x: 20, y: 40, width: 500, height: 320 }),
+    );
+    let finishCapture: (image: string | null) => void = () => undefined;
+    let finishRestore: () => void = () => undefined;
+    const sent: { width: number }[] = [];
+    const { props } = setup({
+      surface: surface({
+        snapshot: vi.fn(async () => await new Promise<string | null>((resolve) => { finishCapture = resolve; })),
+        setBounds: vi.fn(async (bounds: { x: number; y: number; width: number; height: number }) => {
+          sent.push(bounds);
+          // Only the restore after the overlay is held, so the test can look
+          // at the pane while the view is not back yet.
+          if (bounds.width > 0 && sent.some((earlier) => earlier.width === 0)) {
+            await new Promise<void>((resolve) => { finishRestore = resolve; });
+          }
+        }),
+      }),
+    });
+    await waitFor(() => expect(sent.length).toBeGreaterThan(0));
+    const overlay = document.createElement('div');
+    overlay.setAttribute('role', 'dialog');
+    document.body.append(overlay);
+    await waitFor(() => expect(props.surface.snapshot).toHaveBeenCalledOnce());
+    // More mutations while the still is being taken must neither collapse the
+    // view early nor start a second capture.
+    overlay.setAttribute('data-state', 'open');
+    window.dispatchEvent(new Event('resize'));
+    await act(async () => { await Promise.resolve(); });
+    expect(sent.filter((bounds) => bounds.width === 0)).toHaveLength(0);
+    expect(props.surface.snapshot).toHaveBeenCalledOnce();
+
+    await act(async () => { finishCapture('data:image/jpeg;base64,c3RpbGw='); });
+    await waitFor(() => expect(sent.at(-1)).toEqual({ x: 0, y: 0, width: 0, height: 0 }));
+    const still = screen.getByTestId('site-preview-pane').querySelector('img');
+    expect(still?.style.width).toBe('500px');
+    expect(still?.style.height).toBe('320px');
+
+    overlay.remove();
+    await waitFor(() => expect(sent.at(-1)).toEqual({ x: 20, y: 40, width: 500, height: 320 }));
+    expect(screen.getByTestId('site-preview-pane').querySelector('img')).not.toBeNull();
+    await act(async () => { finishRestore(); });
+    await waitFor(() => expect(screen.getByTestId('site-preview-pane').querySelector('img')).toBeNull());
+    geometry.mockRestore();
+  });
+
+  it('hides the view without a still when the capture does not come back', async () => {
+    // A hung capture must not keep the menu under the view: past the wait the
+    // hide goes out anyway, and the pane is blank as it was before stills.
+    const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ x: 20, y: 40, width: 500, height: 320 }),
+    );
+    const { props } = setup({
+      surface: surface({ snapshot: vi.fn(async () => await new Promise<string | null>(() => undefined)) }),
+    });
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenCalled());
+    const overlay = document.createElement('div');
+    overlay.setAttribute('role', 'menu');
+    document.body.append(overlay);
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 }));
+    expect(screen.getByTestId('site-preview-pane').querySelector('img')).toBeNull();
+    overlay.remove();
+    geometry.mockRestore();
+  });
+
+  it('leaves the view up when the overlay closes before the still is taken', async () => {
+    const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ x: 20, y: 40, width: 500, height: 320 }),
+    );
+    let finishCapture: (image: string | null) => void = () => undefined;
+    const { props } = setup({
+      surface: surface({
+        snapshot: vi.fn(async () => await new Promise<string | null>((resolve) => { finishCapture = resolve; })),
+      }),
+    });
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenCalled());
+    const overlay = document.createElement('div');
+    overlay.setAttribute('role', 'menu');
+    document.body.append(overlay);
+    await waitFor(() => expect(props.surface.snapshot).toHaveBeenCalledOnce());
+    overlay.remove();
+    await act(async () => { finishCapture('data:image/jpeg;base64,c3RpbGw='); });
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 20, y: 40, width: 500, height: 320 }));
+    expect(props.surface.setBounds).not.toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 });
+    expect(screen.getByTestId('site-preview-pane').querySelector('img')).toBeNull();
     geometry.mockRestore();
   });
 
