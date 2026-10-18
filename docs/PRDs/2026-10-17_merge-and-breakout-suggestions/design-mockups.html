@@ -261,6 +261,8 @@
       .schip .t b { font-weight: 600; color: var(--t); }
       .schip .d { font-size: 12px; line-height: 17px; color: var(--t3); }
       .schip .d i { font-style: normal; color: var(--t4); }
+      .schip .ex { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--t4); min-width: 0; margin-top: 1px; }
+      .schip .ex span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .schip .ctl2 { display: flex; align-items: center; gap: 8px; flex: none; margin-top: 1px; }
       .schip .act { display: inline-flex; align-items: center; gap: 5px; color: var(--ok); font-weight: 600; background: var(--ok-wash); padding: 4px 10px 4px 8px; border-radius: 999px; font-size: 12px; white-space: nowrap; }
       .schip .act.v { color: var(--ink3); background: var(--tint3); }
@@ -374,7 +376,8 @@
           Under the turn it is about, after the turn's attachments and its hover
           row, in the row where "Breakouts from this message" chips are drawn: a
           dashed chip with Rally's mark, a title, one sentence of context, one
-          action and a dismiss.
+          cut line of the words it would post or start with, one action and a
+          dismiss.
         </p>
         <div class="boards">
           <div class="board">
@@ -404,6 +407,7 @@
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#bend" /></svg>Merge to <b>Cold Outreach</b></div>
                         <div class="d">Rally thinks the thread should see this. You'll edit a short note before it posts there.</div>
+                        <div class="ex"><svg class="i i12"><use href="#quote" /></svg><span>Sequence B now opens with the teardown offer. Four emails, each under 90 words; the second cites the founder's launch post.</span></div>
                       </div>
                       <div class="ctl2"><span class="act"><svg class="i i12"><use href="#bend" /></svg>Merge</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                     </div>
@@ -429,9 +433,12 @@
               posts on its own). The title claims nothing about the kind of
               thing carried; a merge is a decision or a question as often as a
               result. The green pill is the merge target pill's own style, so
-              <b>Merge</b> reads as the same act as the hover row's. The × is
-              quiet and last. Title and sentence are fixed strings with one
-              slot for a name.
+              <b>Merge</b> reads as the same act as the hover row's. Under the
+              sentence, one cut line of the note the card will open with, so
+              the person knows what they would be posting before they press
+              anything. The × is quiet and last. Title and sentence are fixed
+              strings with one slot for a name; the excerpt is the words
+              themselves.
             </p>
           </div>
           <div class="board">
@@ -466,6 +473,7 @@
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#brk" /></svg>Breakout: <b>Fund outreach</b></div>
                         <div class="d">Rally thinks this is its own piece of work. You'll edit the opening prompt before it starts.</div>
+                        <div class="ex"><svg class="i i12"><use href="#quote" /></svg><span>Draft a cold-outreach sequence for seed funds: portfolio reach and a co-investment angle, four emails under 90 words, no teardown offer.</span></div>
                       </div>
                       <div class="ctl2"><span class="act v"><svg class="i i12"><use href="#brk" /></svg>Start</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                     </div>
@@ -527,6 +535,7 @@
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#bend" /></svg>Merge to <b>Cold Outreach</b></div>
                         <div class="d">Rally thinks the thread should see this. You'll edit a short note before it posts there.</div>
+                        <div class="ex"><svg class="i i12"><use href="#quote" /></svg><span>Sequence B now opens with the teardown offer. Four emails, each under 90 words; the second cites the founder's launch post.</span></div>
                       </div>
                       <div class="ctl2"><span class="act"><svg class="i i12"><use href="#bend" /></svg>Merge</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                     </div>
@@ -587,6 +596,7 @@
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#bend" /></svg>Merge to <b>GTM</b><svg class="i i11" style="color: var(--t4)"><use href="#cd" /></svg></div>
                         <div class="d">Rally thinks the Channel should see this. You'll edit a short note before it posts there.</div>
+                        <div class="ex"><svg class="i i12"><use href="#quote" /></svg><span>After four days of back-and-forth, three sequences are final. The strongest opens with the founder's own launch post and asks for a 15-minute teardown.</span></div>
                       </div>
                       <div class="ctl2"><span class="act"><svg class="i i12"><use href="#bend" /></svg>Merge</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                     </div>
@@ -634,7 +644,8 @@
                       <span class="av s r">R</span>
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#brk" /></svg>Breakout: <b>Starter tier</b></div>
-                        <div class="d">Rally thinks this is its own piece of work. You'll edit the opening prompt before it starts. <i>Decide whether a Starter tier survives the $96 annual plan: pull the last two quarters of usage by tier…</i></div>
+                        <div class="d">Rally thinks this is its own piece of work. You'll edit the opening prompt before it starts.</div>
+                        <div class="ex"><svg class="i i12"><use href="#quote" /></svg><span>Decide whether a Starter tier survives the $96 annual plan: pull the last two quarters of usage by tier, compare both competitors' entry plans, and recommend keep, fold into Team, or drop.</span></div>
                       </div>
                       <div class="ctl2"><span class="act v"><svg class="i i12"><use href="#brk" /></svg>Start</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                     </div>
@@ -651,9 +662,10 @@
               </div>
             </div>
             <p class="why">
-              The breakout chip adds the first line of the drafted prompt after
-              its sentence, cut with an ellipsis, so a person can judge the
-              suggestion without opening anything. The pill takes the Breakout's
+              Both chips end with one cut line of the words involved: here the
+              drafted opening prompt, on a merge chip the note the card will
+              open with. Either way a person can judge the suggestion without
+              opening anything. The pill takes the Breakout's
               own mark and tint, as the breakout chips do, so merge and breakout
               never read as the same action. The subject in the title comes from
               the draft, not from the classifier; without a draft the title is
@@ -696,6 +708,7 @@
                       <div class="st">
                         <div class="t"><svg class="i i13"><use href="#bend" /></svg>Merge to <b>Cold Outreach</b></div>
                         <div class="d">Rally thinks the thread should see this. You'll edit a short note before it posts there.</div>
+                        <div class="ex"><svg class="i i12"><use href="#quote" /></svg><span>Sequence B now opens with the teardown offer. Four emails, each under 90 words; the second cites the founder's launch post.</span></div>
                       </div>
                       <div class="ctl2"><span class="act"><svg class="i i12"><use href="#bend" /></svg>Merge</span><span class="dis"><svg class="i i11"><use href="#x" /></svg></span></div>
                     </div>

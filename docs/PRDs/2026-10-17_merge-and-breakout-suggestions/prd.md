@@ -157,18 +157,24 @@ someone who has never seen one, the action, and a dismiss:
 
 - `merge_up` in a Breakout: title "Merge to **Cold Outreach**"; sentence
   "Rally thinks the thread should see this. You'll edit a short note before
-  it posts there."; action **Merge**.
+  it posts there."; one cut line of the note the response card will open
+  with; action **Merge**.
 - `merge_up` in a Thread: title "Merge to **GTM**" with the Channel menu's
   caret; sentence "Rally thinks the Channel should see this. You'll edit a
-  short note before it posts there."; action **Merge**.
+  short note before it posts there."; the same cut line; action **Merge**.
 - `start_breakout` in a Thread: title "Breakout: **Starter tier**"; sentence
   "Rally thinks this is its own piece of work. You'll edit the opening prompt
-  before it starts.", followed by the first line of the drafted prompt;
-  action **Start**.
+  before it starts."; one cut line of the drafted opening prompt; action
+  **Start**.
 
-The title and the sentence are fixed strings per kind with one slot for a
-name; nothing in them is generated except a Breakout's subject, which the
-drafter returns beside the prompt. The sentence exists for a new person: it
+Every chip ends with one line of the words it would post or start with, cut
+with an ellipsis to the chip's width: for a merge, the note the response
+card opens with (the judged turn's text today, the drafted summary once
+merge-back's Summarize ships); for a Breakout, the drafted opening prompt. A
+person can judge the suggestion from the chip alone. The title and the
+sentence are fixed strings per kind with one slot for a name; nothing in
+them is generated except a Breakout's subject, which the drafter returns
+beside the prompt. The sentence exists for a new person: it
 says whose idea this is, what pressing it does, and that nothing posts or
 starts without them. What a merge carries is not always a result, so the
 merge title names the target and claims nothing about the kind of thing. A
