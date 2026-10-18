@@ -1036,7 +1036,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         <form onSubmit={(event) => { event.preventDefault(); void submitRename(); }}>
           <label className="form-field">
             <span>Title</span>
-            <input autoFocus disabled={renaming} maxLength={180} onChange={(event) => setRenameTitle(event.target.value)} value={renameTitle} />
+            <input autoFocus disabled={renaming} maxLength={300} onChange={(event) => setRenameTitle(event.target.value)} value={renameTitle} />
           </label>
         </form>
       </Modal>

@@ -12,6 +12,7 @@ import {
   UpdateWorkstreamRequestSchema,
   WorkstreamMessageAdmissionReceiptSchema,
   WorkstreamResourceSchema,
+  ResourceSchema,
   WorkstreamBootSchema,
   WorkstreamSchema,
 } from "@rally/contracts";
@@ -358,7 +359,7 @@ conversationRoutes.post("/:parentId/resources", zValidator("param", parentParam)
 });
 /** Rename an artifact this thread generated. Every thread that links it reads the new title. */
 conversationRoutes.patch("/:parentId/resources/:resourceId", zValidator("param", resourceParam),
-  zValidator("json", z.strictObject({ title: UpdateWorkstreamRequestSchema.shape.title.unwrap() })), async (c) => {
+  zValidator("json", z.strictObject({ title: ResourceSchema.shape.title })), async (c) => {
     const param = c.req.valid("param");
     const client = await new ConversationService(c.env, getWorkspaceAuth(c)).writableClient(param.parentId);
     await client.renameResource(param.resourceId, c.req.valid("json").title);
