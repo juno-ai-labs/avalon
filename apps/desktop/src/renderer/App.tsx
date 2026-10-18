@@ -18,7 +18,8 @@ import { localCacheScope } from './lib/local-cache';
 import { FaviconApiProvider } from './lib/favicon-api';
 import { LocalCacheScopeProvider } from './lib/local-cache-scope';
 import { desktopBridge } from './lib/platform';
-import { restorePoppedOutArtifacts } from './lib/popped-out-artifacts';
+import { POPPED_OUT_ARTIFACT_REFRESHES, refreshPoppedOutArtifacts, restorePoppedOutArtifacts } from './lib/popped-out-artifacts';
+import { useResourceHeads } from './lib/resource-heads';
 import { useWorkspaceQuery } from './lib/use-workspace';
 import {
   abandonPendingWorkstreamFeedOpen,
@@ -312,6 +313,39 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
     }).catch(() => undefined);
     return () => controller.abort();
   }, [api, workspace.id]);
+  // A popped-out window follows its artifact's new versions whether or not
+  // the conversation it came from is on screen: the workspace socket names
+  // each new head, and only a window that main reports behind is refreshed.
+  const resourceHeads = useResourceHeads();
+  // Aborted with the session rather than per head: a refresh cancelled by the
+  // next head would still hold its in-flight key when that head's run looks.
+  const headRefreshes = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    headRefreshes.current = controller;
+    return () => controller.abort();
+  }, [api]);
+  useEffect(() => {
+    const signal = headRefreshes.current?.signal;
+    if (!api || !signal || new URLSearchParams(window.location.search).has('surface')) return;
+    const resources = Object.values(resourceHeads).map((head) => ({
+      id: head.resourceId,
+      currentVersion: head.version,
+      title: head.title,
+      ...(head.mimeType ? { mimeType: head.mimeType } : {}),
+    }));
+    if (resources.length === 0) return;
+    void refreshPoppedOutArtifacts({
+      bridge: desktopBridge(),
+      inFlight: POPPED_OUT_ARTIFACT_REFRESHES,
+      loadResourceContent: (id, signal) => api.getResourcePreviewContent(id, signal),
+      openSiteArtifact: (id) => api.openArtifact(id),
+      resources,
+      signal,
+    }).catch(() => {
+      // A window stays on its last complete version; the next head retries it.
+    });
+  }, [api, resourceHeads]);
   const settingsSurface = new URLSearchParams(window.location.search).get('surface') === 'settings';
   if (settingsSurface) {
     return (
