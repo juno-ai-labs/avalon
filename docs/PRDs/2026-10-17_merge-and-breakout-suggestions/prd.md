@@ -24,8 +24,8 @@
   nothing, and nothing is the default the design protects.
 - **A positive is one suggestion on that turn**, of kind `merge_up` or
   `start_breakout`, drawn as a dashed chip under Rally's message for the
-  people who can act on it, never in the composer: Rally's mark, a title
-  naming the action and its target, one sentence saying what happens next,
+  people who can act on it, never in the composer: a title naming the
+  action and its target, one sentence, one line of the words it would use,
   the action, and a dismiss. The chip arrives the moment the classifier
   answers, with a skeleton where the words will be, and fills a few seconds
   later when Rally's draft lands: a recommended note for the parent, or an
@@ -158,8 +158,8 @@ answer sees the suggestion arrive a moment later, never before.
 **What they see.** A suggestion chip under Rally's turn, after its
 attachments and its hover action row, in the row where "Breakouts from this
 message" chips are drawn: a dashed outline, because the thing it names does
-not exist yet, with Rally's mark, a title, one sentence of context for
-someone who has never seen one, the action, and a dismiss:
+not exist yet and because it is a suggestion rather than something a person
+did, with a title, one sentence, the action, and a dismiss:
 
 - `merge_up` in a Breakout: title "Merge to **Cold Outreach**"; sentence
   "This might be a good time to merge this back into **Cold Outreach**."; one
