@@ -10,7 +10,10 @@
     "ACCESS_TEAM_DOMAIN": "juno-labs.cloudflareaccess.com",
     // The deployment provisioner replaces this fail-closed placeholder with
     // the audience of the dedicated Managed OAuth Access application.
-    "ACCESS_APPLICATION_AUD": "injected-by-automated-deploy"
+    "ACCESS_APPLICATION_AUD": "injected-by-automated-deploy",
+    // Replaced from the deployment environment; names the account whose
+    // lakehouse buckets query_data_lake reads.
+    "CLOUDFLARE_ACCOUNT_ID": "injected-by-automated-deploy"
   },
   "routes": [{ "pattern": "mcp.internal.rallywith.ai", "custom_domain": true }],
   "services": [
