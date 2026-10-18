@@ -32,10 +32,8 @@ describe("conversation suggestions on the socket", () => {
   });
 
   it("is stripped from a snapshot by a parser that does not know the key, so an older build keeps its snapshot", () => {
-    // The union as a build before this field parsed it: the same schema with
-    // the key removed is what `safeParseSocketEvent` faces there.
-    const older = ServerSocketEventSchema.options.map((option) =>
-      "shape" in option && "suggestions" in option.shape ? option.omit({ suggestions: true }).strict() : option);
+    // The snapshot schema as a build before this field parsed it: the same
+    // object with the key removed is what `safeParseSocketEvent` faces there.
     const snapshot = {
       type: "snapshot", sequence: 1, occurredAt: "2026-10-18T10:00:00.000Z", reason: "initial",
       workstream: null, transcript: null, pendingInputChunkCount: 0, suggestions: [suggestion],
@@ -45,6 +43,5 @@ describe("conversation suggestions on the socket", () => {
       { ...snapshot, workstream: undefined, transcript: undefined },
     );
     expect(stripped.success).toBe(true);
-    expect(older.length).toBe(ServerSocketEventSchema.options.length);
   });
 });

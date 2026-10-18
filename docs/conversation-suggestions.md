@@ -30,7 +30,7 @@ and the settlement lane), [`jev-best-practices.md`](jev-best-practices.md).
 | `apps/api/src/durable-objects/conversation-suggestions.ts` | `ConversationSuggestionStorage` over the two tables, `observeTurnDisposition` (the gates, the state, the decision, the row), `buildTurnDispositionState`, `resourceEmbeds`. |
 | `apps/api/src/durable-objects/substream-agent.ts` | `observeTurnDispositionStep`, the last step of `settleAgentRun`; `draftSuggestionWords`; `readSuggestionParent`; `expireSuggestionsBestEffort`; the `dismiss_suggestion` product operation; the resolutions in `messageOperationOutcome` and `captureInitialSubstreamContext`; the snapshot's `suggestions`. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Migration v75: `conversation_suggestions`, `turn_disposition_judgements`. |
-| `apps/api/src/durable-objects/workspace-space-storage.ts`, `workspace-do.ts` | `threadMergePlacement`, the viewer-less read of the Channel a Thread's merge would land in. |
+| `apps/api/src/durable-objects/workspace-space-storage.ts`, `workspace-do.ts` | `threadMergePlacement`, the viewer-less read of the Organization-wide Channel a Thread's merge would land in; a private Channel is never named, since the answer reaches every reader of the Thread. |
 | `apps/api/src/services/suggestion-draft-service.ts` | `draftSuggestion`: the `suggestion_draft` structured-inference role. |
 | `apps/api/src/services/classifier-diagnostics.ts` | The sink the observer records every provider call through, under the `turn_disposition_classifier` role. |
 | `apps/api/src/routes/conversations.ts`, `apps/api/src/services/workstream-object-client.ts` | `POST /conversations/:parentId/substreams/:substreamId/suggestions/:suggestionId/dismiss`. |
