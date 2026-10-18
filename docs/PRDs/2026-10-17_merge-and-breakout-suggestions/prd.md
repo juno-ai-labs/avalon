@@ -162,12 +162,11 @@ not exist yet, with Rally's mark, a title, one sentence of context for
 someone who has never seen one, the action, and a dismiss:
 
 - `merge_up` in a Breakout: title "Merge to **Cold Outreach**"; sentence
-  "Rally thinks the thread should see this. You'll edit a short note before
-  it posts there."; one cut line of the note the response card will open
-  with; action **Merge**.
+  "This might be a good time to merge this back into **Cold Outreach**."; one
+  cut line of the note the response card will open with; action **Merge**.
 - `merge_up` in a Thread: title "Merge to **GTM**" with the Channel menu's
-  caret; sentence "Rally thinks the Channel should see this. You'll edit a
-  short note before it posts there."; the same cut line; action **Merge**.
+  caret; sentence "This might be a good time to merge this back into
+  **GTM**."; the same cut line; action **Merge**.
 - `start_breakout` in a Thread: title "Breakout: **Starter tier**"; sentence
   "Rally thinks this is its own piece of work. You'll edit the opening prompt
   before it starts."; one cut line of the drafted opening prompt; action
@@ -193,8 +192,9 @@ words or the launch pane empty. A draft never blocks a suggestion. The title and
 sentence are fixed strings per kind with one slot for a name; nothing in
 them is generated except a Breakout's subject, which the drafter returns
 beside the prompt. The sentence exists for a new person: it
-says whose idea this is, what pressing it does, and that nothing posts or
-starts without them. What a merge carries is not always a result, so the
+says why now and names the parent, and the excerpt shows what would be
+posted; nothing posts or starts without them, because the action opens the
+card or the launch pane to edit first. What a merge carries is not always a result, so the
 merge title names the target and claims nothing about the kind of thing. A
 typed form ("Rally thinks this is a decision Cold Outreach should see") is
 possible from a second classifier label the design records from the first

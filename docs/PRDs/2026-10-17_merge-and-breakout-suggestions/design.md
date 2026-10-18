@@ -348,16 +348,18 @@ suggested; that button stays merge-back's phase 2.
   name, pinned by a test. JEV returns a label, never prose, so nothing is
   generated for the merge chip. `merge_up`: title "Merge to {target}", the
   target being the Thread for a Breakout and the default Channel for a
-  Thread; sentence "Rally thinks the thread should see this. You'll edit a
-  short note before it posts there." (or "the Channel"). Once
-  `carried_item_kind` has earned it, the typed sentence "Rally thinks this is
-  a {kind} the thread should see." replaces the first clause.
+  Thread; sentence "This might be a good time to merge this back into
+  {target}." Once `carried_item_kind` has earned it, the typed sentence
+  "This might be a good time to merge this {kind} back into {target}."
+  replaces it.
   `start_breakout`: title "Breakout: {subject}", the subject being a short
   label the drafter returns beside the prompt, and "Breakout" alone when
   there is no draft; sentence "Rally thinks this is its own piece of work.
-  You'll edit the opening prompt before it starts." The second clause of
-  each sentence is there for a person who has never seen the chip: it says
-  nothing posts or starts without them.
+  You'll edit the opening prompt before it starts." The breakout sentence's
+  second clause is there for a person who has never seen the chip: it says
+  nothing starts without them. The merge sentence says why now and names the
+  parent; the card that opens is what makes "nothing posts without them"
+  true.
 - **The excerpt** is the last line of every chip: the words the action would
   post or start with, cut by the client to one line of the chip's width with
   an ellipsis, never stored cut. For `merge_up` it is the note the response
