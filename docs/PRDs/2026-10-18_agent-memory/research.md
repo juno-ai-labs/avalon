@@ -650,8 +650,11 @@ per-run user-role inputs. Two ways to keep it out of other people's runs:
   prompt and the per-member plugin catalog already do.
 
 The team picks between them in the PRD; the ephemeral form is the safer
-default and the filtered form is the optimization. Either way a digest that
-changes mid-run waits for the next activation. Promotion into the system
+default and the filtered form is the optimization. In both, the block is
+excluded from the compaction summariser's input and from the checkpoint by
+provenance, as resident-context positions are today, so one person's digest
+cannot reach a later speaker through the shared summary. Either way a digest
+that changes mid-run waits for the next activation. Promotion into the system
 prompt at a compaction stays a separate decision (section 9).
 
 **B12. Recall tools.** `memory_recall(query, scope?)` runs FTS in `WorkspaceDO`
@@ -990,11 +993,13 @@ Decisions that are not numbers:
    conversation's digest, and leave Sidekick tables alone. Proposed: yes.
 6. **Existing items.** The nine dogfood items import as `standing` facts with
    `person` or `thread` subjects. Trivial, and the only migration of data.
-7. **Guests.** A guest admitted to a Channel may open its Main; the
-   `organizationWide` leaf never admits a guest. Organization facts therefore
-   never reach a guest's run, and Channel facts do only where the guest may
-   open the Channel. Proposed: no special casing; the source rule already says
-   this.
+7. **Guests.** A guest with an explicit grant may open a Thread's Main even
+   though the `organizationWide` leaf never admits a guest, so the source
+   rule alone would hand such a guest the Organization facts learned in that
+   Thread. Decided in the PRD: an Organization fact carries a second
+   predicate, `admitsOrganizationWide` for the acting person, and a Channel
+   fact requires the Channel to be listed to them; the source rule covers
+   Thread and Breakout facts.
 8. **Conflicting claims from different people.** Decided 2026-10-18: a
    conflict is a memory, and it is shared. When the sweep finds two people
    stating different facts about the same subject, it does not pick a winner.
