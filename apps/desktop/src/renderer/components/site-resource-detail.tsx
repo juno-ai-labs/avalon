@@ -1,5 +1,6 @@
 import { IconAlertCircle, IconCheck, IconCopy, IconDatabase, IconExternalLink, IconWindowMaximize } from '@tabler/icons-react';
 import React from 'react';
+import { flushSync } from 'react-dom';
 import type { DesktopSiteArtifactWindowRequest } from '../../common/desktop';
 
 import type { IconGroupAction } from '@rally/ui/components/icon-group';
@@ -84,6 +85,24 @@ export interface SiteResourceDetailProps {
  * `allow-same-origin` means the artifact's origin, never the app's. Widening
  * this is a security change: see `docs/live-web-artifacts.md`.
  */
+/** Resolves once `src` is decoded, so mounting it paints on the next frame. */
+async function decoded(src: string): Promise<void> {
+  const image = new Image();
+  image.src = src;
+  try {
+    await image.decode();
+  } catch {
+    // An undecodable still is shown as-is; the hide must not wait on it.
+  }
+}
+
+/** Resolves after the browser has painted the current DOM. */
+async function nextPaint(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
+
 /** The rectangle that collapses the composited view while keeping its page loaded. */
 const HIDDEN = { x: 0, y: 0, width: 0, height: 0 };
 
@@ -307,11 +326,16 @@ export function SiteResourceDetail({
         capturing = true;
         void surface.snapshot()
           .catch(() => null)
-          .then((image) => {
+          .then(async (image) => {
+            // On screen before the hide is sent, or the pane shows empty for
+            // the frames between the view collapsing and React painting.
+            if (image) await decoded(image);
+            if (disposed) return;
+            flushSync(() => setSnapshot(image));
+            await nextPaint();
             capturing = false;
             if (disposed) return;
             hidden = true;
-            setSnapshot(image);
             update();
           });
         return;

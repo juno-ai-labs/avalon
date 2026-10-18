@@ -119,14 +119,25 @@ describe('showing a live artifact in the rail', () => {
     const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
       DOMRect.fromRect({ x: 20, y: 40, width: 500, height: 320 }),
     );
-    const { props } = setup();
+    // What the pane held at the moment each hide was sent: the still has to be
+    // on screen by then, or the pane shows empty until React catches up.
+    const stillAtHide: (string | null)[] = [];
+    const { props } = setup({
+      surface: surface({
+        setBounds: vi.fn(async (bounds: { x: number; y: number; width: number; height: number }) => {
+          if (bounds.width === 0) {
+            stillAtHide.push(document.querySelector('[data-testid="site-preview-pane"] img')?.getAttribute('src') ?? null);
+          }
+        }),
+      }),
+    });
     await waitFor(() => expect(props.surface.setBounds).toHaveBeenCalledWith({ x: 20, y: 40, width: 500, height: 320 }));
     const pane = screen.getByTestId('site-preview-pane');
     const overlay = document.createElement('div');
     overlay.setAttribute('role', 'menu');
     document.body.append(overlay);
     await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 }));
-    expect(pane.querySelector('img')?.getAttribute('src')).toBe('data:image/jpeg;base64,c3RpbGw=');
+    expect(stillAtHide).toEqual(['data:image/jpeg;base64,c3RpbGw=']);
     // Taken while the view was still showing: a collapsed view paints nothing.
     const snapshot = vi.mocked(props.surface.snapshot);
     const hide = vi.mocked(props.surface.setBounds).mock.calls.findIndex(([bounds]) => bounds.width === 0);
