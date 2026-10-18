@@ -1,7 +1,7 @@
 import type React from 'react';
 import { renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LONG_PASTE_CHARACTERS, shouldNameFromContent } from './pasted-text';
+import { isPastedText, LONG_PASTE_CHARACTERS } from './pasted-text';
 import { useFilePaste, useWindowFilePaste } from './use-file-paste';
 
 function pasteEvent(input: { files?: File[]; text?: string } = {}): React.ClipboardEvent<HTMLElement> {
@@ -152,7 +152,7 @@ describe('useFilePaste', () => {
     expect(onFiles).toHaveBeenCalledWith([first, second]);
   });
 
-  it('attaches long pasted Markdown as a named file instead of filling the field', async () => {
+  it('attaches long pasted text as a file for the API to type and name', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 7, 11, 9, 4, 5));
     const onFiles = vi.fn();
@@ -164,10 +164,10 @@ describe('useFilePaste', () => {
 
     expect(event.preventDefault).toHaveBeenCalledOnce();
     const [pasted] = onFiles.mock.calls[0]![0] as File[];
-    expect(pasted!.name).toBe('Pasted text 2026-08-11 at 09.04.05.md');
-    expect(pasted!.type).toBe('text/markdown');
+    expect(pasted!.name).toBe('Pasted text 2026-08-11 at 09.04.05.txt');
+    expect(pasted!.type).toBe('text/plain');
     expect(await pasted!.text()).toBe(text);
-    expect(shouldNameFromContent(pasted!)).toBe(true);
+    expect(isPastedText(pasted!)).toBe(true);
   });
 
   it('pastes text just under the long-paste length at the caret', () => {
@@ -181,7 +181,7 @@ describe('useFilePaste', () => {
     expect(event.preventDefault).not.toHaveBeenCalled();
   });
 
-  it('attaches a long spreadsheet copy as its table, not the picture of it', () => {
+  it('attaches a long spreadsheet copy as its text, not the picture of it', () => {
     const onFiles = vi.fn();
     const { result } = renderHook(() => useFilePaste(onFiles));
     const rows = Array.from({ length: 600 }, (_, index) => `Region ${index}\t${index * 12}`).join('\n');
@@ -190,7 +190,7 @@ describe('useFilePaste', () => {
     result.current(event);
 
     const files = onFiles.mock.calls[0]![0] as File[];
-    expect(files.map((file) => file.type)).toEqual(['text/tab-separated-values']);
+    expect(files.map((file) => file.type)).toEqual(['text/plain']);
   });
 
   it('ignores every paste while the surface is disabled', () => {

@@ -10,7 +10,7 @@ import { workspaceRealtimeInvalidation } from "../middleware/workspace-realtime"
 import { getRequestMembership, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { ArtifactOpenService } from "../services/artifact-open-service";
 import { ResourceService } from "../services/resource-service";
-import { namePastedText } from "../services/pasted-text-naming-service";
+import { preparePastedText } from "../services/pasted-text-service";
 import { ConversationService } from "../services/conversation-service";
 
 const idParam = z.object({ id: IdSchema });
@@ -93,18 +93,15 @@ resourceRoutes.post("/upload", async (c) => {
   if (!(file instanceof File)) throw new ApiError(422, "file_required", "A file field is required");
   const draftId = IdSchema.safeParse(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.DRAFT_ID));
   if (!draftId.success) throw new ApiError(422, "draft_id_required", "A valid draft attachment ID is required");
+  const title = typeof body.title === "string" ? body.title : undefined;
   const auth = getWorkspaceAuth(c);
-  // A long paste arrives under a stand-in name and asks to be named from what
-  // it says. A failed or skipped naming keeps the stand-in.
-  const title = typeof body.title === "string"
-    ? body.title
-    : body.titleFromContent === "true"
-      ? await namePastedText(c.env, {
-        workspaceId: auth.workspaceId, userId: auth.userId, fileName: file.name, text: await file.text(),
-      }) ?? undefined
-      : undefined;
+  // A long paste arrives as plain text under a stand-in name; the server
+  // decides what type it is and what to call it before storing it.
+  const stored = body.pastedText === "true"
+    ? await preparePastedText(c.env, { workspaceId: auth.workspaceId, userId: auth.userId, file })
+    : file;
   return c.json(ResourceSchema.parse(
-    await new ResourceService(c.env, auth).upload(file, title, draftId.data)), 201);
+    await new ResourceService(c.env, auth).upload(stored, title, draftId.data)), 201);
 });
 resourceRoutes.post("/resolve", zValidator("json", resolveBody), async (c) =>
   c.json(ResourceSchema.parse(await new ResourceService(c.env, getWorkspaceAuth(c)).resolve(c.req.valid("json"))), 201),

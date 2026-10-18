@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { MessageAttachment } from '../lib/types';
 import { isImageAttachment, isVideoAttachment } from '../lib/attachment-media';
+import { isPastedText } from '../lib/pasted-text';
 
 export interface AttachmentPreview {
   name: string;
@@ -93,6 +94,20 @@ function ProgressRing({ progress }: { progress: number }): React.JSX.Element {
   );
 }
 
+function PreparingFileCard(): React.JSX.Element {
+  return (
+    <div aria-busy="true" aria-label="Preparing pasted text" className="attachment-file-card is-preparing" role="status">
+      <span className="attachment-file-open">
+        <span className="skeleton-bar attachment-file-icon" />
+        <span className="attachment-file-details">
+          <span className="skeleton-bar attachment-file-name-skeleton" />
+          <span className="skeleton-bar attachment-file-meta-skeleton" />
+        </span>
+      </span>
+    </div>
+  );
+}
+
 export function PendingAttachmentTile({ actionsDisabled = false, attachment, onOpen, onRemove, onRetry }: {
   actionsDisabled?: boolean;
   attachment: PendingAttachment;
@@ -104,10 +119,13 @@ export function PendingAttachmentTile({ actionsDisabled = false, attachment, onO
   const video = isVideoAttachment(attachment.file.type, attachment.file.name);
   const media = image || video || pendingFileKind(attachment.file.type, attachment.file.name) === 'audio';
   const content = useMemo(() => async () => attachment.file, [attachment.file]);
-  // Once uploaded, the resource's title is the name the message will carry;
-  // for a long paste it is the one the API wrote from the text.
+  // A long paste has no name or type until the API returns one, so the card
+  // holds its shape without claiming either.
+  const preparing = attachment.status === 'uploading' && isPastedText(attachment.file);
+  // Once uploaded, the resource is what the message will carry; for a long
+  // paste the API chose its type and wrote its name from the text.
   const record: MessageAttachment = { id: attachment.localId, fileName: attachment.resource?.title ?? attachment.file.name,
-    mimeType: attachment.file.type, sizeBytes: attachment.file.size, contentAvailable: true, createdAt: '' };
+    mimeType: attachment.resource?.mimeType ?? attachment.file.type, sizeBytes: attachment.file.size, contentAvailable: true, createdAt: '' };
   const preview: AttachmentPreview = { name: record.fileName, mimeType: record.mimeType,
     ...(attachment.previewUrl ? { src: attachment.previewUrl } : {}), loadContent: content };
   return (
@@ -116,12 +134,13 @@ export function PendingAttachmentTile({ actionsDisabled = false, attachment, onO
         gallery={[preview]} index={0} onOpen={onOpen} />
         : media ? <AttachmentMediaTile name={record.fileName} mimeType={record.mimeType} src={attachment.previewUrl}
           loadContent={content} onOpen={(returnFocus) => onOpen({ ...preview, returnFocus })} />
+        : preparing ? <PreparingFileCard />
         : <RemoteFileAttachment attachment={record} loadContent={content} onOpen={onOpen} showDownload={false} />}
-      {attachment.status === 'uploading' && <ProgressRing progress={attachment.progress} />}
+      {attachment.status === 'uploading' && !preparing && <ProgressRing progress={attachment.progress} />}
       {attachment.status === 'failed' && (
         <button aria-label={`Retry ${record.fileName}`} className="attachment-retry" disabled={actionsDisabled} onClick={onRetry} title={attachment.error} type="button"><RefreshCcw size={14} /></button>
       )}
-      <button aria-label={`Remove ${record.fileName}`} className="attachment-remove" disabled={actionsDisabled} onClick={onRemove} type="button"><X size={13} /></button>
+      <button aria-label={preparing ? 'Remove pasted text' : `Remove ${record.fileName}`} className="attachment-remove" disabled={actionsDisabled} onClick={onRemove} type="button"><X size={13} /></button>
     </div>
   );
 }
