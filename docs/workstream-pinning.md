@@ -141,10 +141,14 @@ and in a gallery only the image shown is seen. A version that arrives
 while the panel is open is not the one on screen and stays unread until the
 artifact is opened again. An unpin takes the artifact's rows out of Activity,
 so it tells the person's windows to read Activity again. The Artifacts button counts the unread pins, and so does
-Pinned. A trigger on `resource_versions` (migration 111) queues each new
-version of a pinned artifact in `workspace_artifact_updates`; the drain after
-the write sends each pinner their pin list and an Activity re-read, and pushes
-the row ([`push-notifications.md`](push-notifications.md#activity-rows)). The
+Pinned. A trigger on `resource_versions` queues every new version of every
+resource in `workspace_resource_version_changes` (migration 114, which renamed
+and widened migration 111's pinned-only `workspace_artifact_updates`). The
+drain after the write keeps the published and replaced versions
+(`isArtifactNewsCause`), sends each pinner their pin list and an Activity
+re-read, and pushes the row
+([`push-notifications.md`](push-notifications.md#activity-rows)); the same
+drain moves open previews ([`websocket-architecture.md`](websocket-architecture.md)). The
 announcement is held to the object's lifetime (`waitUntil`) and is best effort,
 as every Activity push is: the ledger row is gone once drained, so a failed
 member lookup or Queue send loses that push, logged, while the row, the unread

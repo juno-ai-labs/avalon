@@ -36,7 +36,8 @@ import {
 } from "@rally/contracts/conversation-effects";
 
 import { WORKSPACE_CHANNEL_READS_MIGRATION } from "../src/durable-objects/workspace-channel-read-storage";
-import { drainArtifactUpdates, WORKSPACE_PINS_MIGRATION } from "../src/durable-objects/workspace-pin-storage";
+import { WORKSPACE_PINS_MIGRATION } from "../src/durable-objects/workspace-pin-storage";
+import { drainResourceVersionChanges } from "../src/durable-objects/workspace-resource-versions";
 import { WorkspaceActivityFeed } from "../src/durable-objects/workspace-activity-feed";
 import { WorkspaceActivityPushes } from "../src/durable-objects/workspace-activity-push";
 import { WorkspaceSpaceStorage } from "../src/durable-objects/workspace-space-storage";
@@ -909,7 +910,7 @@ describe("artifact pins", () => {
 
     const decided = await runInDurableObject(workspace(), (_instance, state) => {
       // The ledger the trigger filled names the version; the drain empties it.
-      const updates = drainArtifactUpdates(state.storage.sql);
+      const updates = drainResourceVersionChanges(state.storage.sql);
       const subjects = updates.map((update) => ({
         kind: "artifact" as const, threadId: OPEN_THREAD, substreamId: null, userId: MEMBER,
         itemId: `artifact:${update.resourceId}:${update.version}`,
@@ -920,12 +921,12 @@ describe("artifact pins", () => {
         audience: pushes.audience(subjects),
         member: pushes.pending({ userId: MEMBER, accessClass: "member" }, subjects, new Set()).map((item) => item.id),
         owner: pushes.pending({ userId: OWNER, accessClass: "member" }, subjects, new Set()).map((item) => item.id),
-        again: drainArtifactUpdates(state.storage.sql),
+        again: drainResourceVersionChanges(state.storage.sql),
       };
     });
 
     expect(decided).toEqual({
-      updates: [{ resourceId: ARTIFACT, version: 2 }],
+      updates: [{ resourceId: ARTIFACT, version: 2, cause: "published" }],
       audience: { everyone: false, userIds: [MEMBER] },
       member: [`artifact:${ARTIFACT}:2`],
       owner: [],
