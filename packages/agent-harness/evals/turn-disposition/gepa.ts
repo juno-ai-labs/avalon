@@ -422,7 +422,7 @@ async function main(): Promise<void> {
   const iterations = Number(option(argv, "--iterations") ?? "30");
   const threshold = Number(option(argv, "--threshold") ?? "0.6");
   const concurrency = Number(option(argv, "--concurrency") ?? "6");
-  const reflector = option(argv, "--reflector") ?? "anthropic/claude-fable-5.1";
+  const reflector = option(argv, "--reflector") ?? "openai/gpt-6-astra";
   const holdout = argv.includes("--holdout");
   const topK = Number(option(argv, "--top") ?? "3");
   await assertProtectedEvaluationPaths([casesPath, labelsPath], [outputPath]);
