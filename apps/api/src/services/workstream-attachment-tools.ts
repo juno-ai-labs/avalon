@@ -1,4 +1,4 @@
-import type { HarnessTool, HarnessToolContext, ModelMessageContentPart } from "@rally/agent-harness";
+import type { HarnessToolContext, ModelMessageContentPart } from "@rally/agent-harness";
 import {
   ATTACHMENT_LIST_RESOURCES_DESCRIPTION,
   AttachmentListResourcesArgumentsSchema,
@@ -24,6 +24,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { AttachmentCursorError, openAttachmentCursor } from "../lib/attachment-cursor";
 import { logStructuredEvent } from "../observability/logger";
+import type { PaginatedHarnessTool } from "./tool-pagination";
 import {
   ATTACHMENT_TEXT_EXTRACTOR_VERSION,
   materializeAttachmentDerivative,
@@ -112,7 +113,7 @@ export function createWorkstreamAttachmentTools(
   env: Env,
   input: WorkstreamWorkflowInput,
   options: WorkstreamAttachmentToolOptions = {},
-): HarnessTool[] {
+): PaginatedHarnessTool[] {
   const summarizeDerivative = options.summarizeDerivative ?? createAttachmentSummaryRunner(env);
   const modelToolPrefix = options.modelToolPrefix ?? "workstream";
   const capabilityPrefix = options.capabilityPrefix ?? "workstream.resources";
@@ -362,6 +363,25 @@ export function createWorkstreamAttachmentTools(
             ...(previous ? [{ operation: "read_resource_previous", slot: "previousPageId" as const, input: { cursor: previous } }] : []),
           ] },
         };
+      },
+      // A page from an earlier message carries the resource and position the
+      // model was reading. Naming both turns the refusal into the one call that
+      // resumes the read, and `resourceId` lets the grounding guard clear this
+      // failure once that call succeeds.
+      explainEarlierRunPage: async (continuationInput) => {
+        const continuation = z.object({ cursor: z.string() }).safeParse(continuationInput);
+        if (!continuation.success) return null;
+        const state = await openCursorState(
+          env, input, options, continuation.data.cursor, READ_CURSOR_PURPOSE, ReadCursorStateSchema,
+        ).catch(() => null);
+        if (!state) return null;
+        const tool = modelToolName("read_resource");
+        const args = { resourceId: state.resourceId, startCharacter: state.start };
+        return attachmentError(
+          "page_id_from_earlier_message",
+          `This page ID came from an earlier message. Page IDs work only within the reply that returned them, so it cannot be used now. To continue the same read, call ${tool} with ${JSON.stringify(args)}.`,
+          { resourceId: state.resourceId, suggestedCall: { tool, arguments: args } },
+        );
       },
     },
     {

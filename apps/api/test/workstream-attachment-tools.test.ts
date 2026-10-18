@@ -1,10 +1,11 @@
 import { asHarnessRunId, asWorkstreamId } from "@rally/contracts";
-import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { asUserId, asWorkspaceId, readStructuredFailure } from "@rally/contracts";
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { __integrationTesting } from "../src/services/integrations";
+import type { PaginatedHarnessTool } from "../src/services/tool-pagination";
 import { ATTACHMENT_TEXT_EXTRACTOR_VERSION } from "../src/services/attachment-derivative-service";
 import {
   buildGifStoryboard,
@@ -475,6 +476,28 @@ describe("work-stream attachment tools", () => {
       code: "resource_version_changed",
       details: { resourceId },
     });
+  });
+
+  it("turns a page from an earlier message into the one call that resumes the same read", async () => {
+    const { database, objectStore, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, objectStore, bucket, 3);
+    const read: PaginatedHarnessTool = __integrationTesting.createAvalonTools(env, input())
+      .find((tool) => tool.definition.name === "read_resource")!;
+    const first = await read.execute({ resourceId }, context());
+    const next = first.pagination!.continuations.find((page) => page.slot === "nextPageId")!.input;
+
+    const error = await read.explainEarlierRunPage!(next);
+    // The guard reads `resourceId` from here to clear this failure once the
+    // suggested read succeeds; the sanitizer drops the whole detail otherwise.
+    expect(readStructuredFailure(error)).toEqual({
+      code: "page_id_from_earlier_message",
+      details: { resourceId, suggestedCall: { tool: "read_resource", arguments: { resourceId, startCharacter: 12_000 } } },
+    });
+    expect(error!.message).toContain(`call read_resource with {"resourceId":"${resourceId}","startCharacter":12000}`);
+    await expect(read.execute({ resourceId, startCharacter: 12_000 }, context())).resolves.toMatchObject({
+      output: { resourceId, range: { start: 12_000 } },
+    });
+    await expect(read.explainEarlierRunPage!({ cursor: "not-a-cursor" })).resolves.toBeNull();
   });
 
   it("rejects an oversized derivative object before hydrating it into Worker memory", async () => {

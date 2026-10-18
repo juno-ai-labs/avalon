@@ -119,8 +119,11 @@ search passages and summary citations register their read cursors in the same
 provenance set. Completed receipt outputs rebuild that set after run resumption.
 The guard does not decode or approximate-match the bad cursor. A successful
 restart by resource ID can then clear the same guard entry instead of leaving a
-tool-call-only false positive. More than one active resource remains anonymous
-and fail-closed. A run
+tool-call-only false positive. A page ID from an earlier run is not guessed
+at either: the receipt authority still holds that page, so the read tool names
+its resource and offset from the stored continuation, and the failure carries
+that `resourceId` like any other cursor read. More than one active resource
+remains anonymous and fail-closed. A run
 that still ends replaces its prose with a deterministic, content-free
 `Attachment content unverified` boundary carrying only resource/tool/error
 provenance. `attachment_grounding_guard_triggered` records the same bounded
