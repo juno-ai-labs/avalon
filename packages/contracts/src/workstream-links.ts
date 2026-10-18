@@ -48,9 +48,9 @@ export interface WorkstreamLinkTarget extends WorkspaceTarget {
   /**
    * An artifact to open the thread onto, expanded. Only on a thread's own
    * link, never a breakout's: an artifact is pinned in, and opened from, its
-   * thread's Main. An app that does not know the segment refuses the link, so
-   * it is minted only where the receiver is known to read it (a pinned
-   * artifact's push, whose kind an older app already drops).
+   * thread's Main. A pinned artifact's push mints it, and so does the
+   * artifact menu's Copy link; a desktop app older than the segment refuses
+   * the link, which the web app, always current, does not.
    */
   artifactId?: string;
 }

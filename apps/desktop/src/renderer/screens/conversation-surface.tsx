@@ -42,6 +42,7 @@ import type { ClientSession } from '@rally/contracts/client-session';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { useCitations } from '../lib/use-citations';
 import { artifactPinActions, combineResourceActions } from '../lib/artifact-pin-actions';
+import { copyArtifactLink } from '../lib/copy-workstream-link';
 import { breakoutResourceActions } from '../lib/breakout-resource-actions';
 import { ApiError, type MentionIdentity } from '../lib/api';
 import { useChannelRail } from '../lib/channel-rails';
@@ -1821,6 +1822,12 @@ export function ConversationSurface({
       ? artifactPinActions({ pinnedIds: pinnedArtifactIds, setPinned: setArtifactPinned, threadId: id, threadResources: pinnableResources })
       : undefined,
   ), [attachPending, attachResourceToChannel, citationActionsIdentity, pinActionsIdentity]);
+  // An artifact in Main's list is one a pin or a link can name: both open the
+  // thread's Main onto it, so a breakout's own artifact has neither.
+  const isMainArtifact = (resourceId: string): boolean =>
+    Boolean(pinnableResources?.some((resource) => resource.id === resourceId && resource.direction === 'artifact'));
+  // A link names a Space; a guest's Channel outside every Space they see has none.
+  const linkSpaceId = routedDetail?.spaceIds?.[0] ?? null;
   const citationPinned = useCallback((resourceId: string) => pinnedArtifactIds.has(resourceId), [pinnedArtifactIds]);
   // Citations resolve against the loaded work stream's resources, and the
   // transcript needs this before the screen has decided it has a work stream to
@@ -3768,6 +3775,14 @@ export function ConversationSurface({
           onToggleWatch: (resource: WorkstreamResource, enabled: boolean) => watchResource.mutate({ resource, enabled }),
         } : {})}
         onOpenResourceVersion={openResourceVersion}
+        resourceLink={(resource: WorkstreamResource) => {
+          const workspace = session?.workspace;
+          if (!workspace || !linkSpaceId || !isMainArtifact(resource.id)) return undefined;
+          return () => copyArtifactLink({ region: workspace.region, workspaceId: workspace.id }, linkSpaceId, id, resource.id);
+        }}
+        resourcePin={(resource: WorkstreamResource) => isMainArtifact(resource.id)
+          ? { on: pinnedArtifactIds.has(resource.id), onChange: (next: boolean) => setArtifactPinned(resource.id, next, id) }
+          : undefined}
         refreshingResourceId={refreshResource.isPending ? refreshResource.variables?.id ?? null : null}
         resourceVersions={resourceVersions.data}
         resourceVersionsFailed={Boolean(resourceVersions.error)}

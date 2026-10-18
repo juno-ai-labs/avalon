@@ -844,6 +844,78 @@ describe('resource detail content preview', () => {
     expect(onOpenResourceVersion).toHaveBeenCalledWith(note, version);
   });
 
+  it('pins, copies a link to, and renames an artifact from its title pill menu', async () => {
+    const onPin = vi.fn();
+    const copy = vi.fn(async () => undefined);
+    const onRenameResource = vi.fn(async () => undefined);
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          onRenameResource={onRenameResource}
+          panel={{ resourceId: note.id, onClose: vi.fn() }}
+          resourceLink={() => copy}
+          resourcePin={() => ({ on: false, onChange: onPin })}
+          workstream={{ ...workstream, resources: [note] }}
+        />
+      </Tooltip.Provider>,
+    );
+    const openMenu = (): void => {
+      fireEvent.pointerDown(screen.getByRole('button', { name: `Artifact menu: ${note.title}` }), { button: 0, ctrlKey: false });
+    };
+
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+    expect(onPin).toHaveBeenCalledWith(true);
+
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy link' }));
+    expect(copy).toHaveBeenCalledOnce();
+
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Rename artifact' });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Title' }), { target: { value: '  Q4 plan  ' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Rename' }));
+    await waitFor(() => expect(onRenameResource).toHaveBeenCalledWith(note, 'Q4 plan'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('offers Unpin for a pinned artifact and leaves out what its host cannot do', async () => {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          panel={{ resourceId: note.id, onClose: vi.fn() }}
+          resourceLink={() => undefined}
+          resourcePin={() => ({ on: true, onChange: vi.fn() })}
+          workstream={{ ...workstream, resources: [note] }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.pointerDown(screen.getByRole('button', { name: `Artifact menu: ${note.title}` }), { button: 0, ctrlKey: false });
+    expect(await screen.findByRole('menuitem', { name: 'Unpin' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Copy link' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Rename' })).toBeNull();
+  });
+
+  it('keeps the rename dialog open and says so when the rename fails', async () => {
+    const onRenameResource = vi.fn(async () => { throw new Error('refused'); });
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          onRenameResource={onRenameResource}
+          panel={{ resourceId: note.id, onClose: vi.fn() }}
+          workstream={{ ...workstream, resources: [note] }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.pointerDown(screen.getByRole('button', { name: `Artifact menu: ${note.title}` }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Rename artifact' });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Title' }), { target: { value: 'Q4 plan' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Rename' }));
+    expect(await within(dialog).findByText('The artifact couldn’t be renamed.')).toBeVisible();
+  });
+
   it('draws the Expand it is given for any artifact, a live site included', () => {
     const onSelect = vi.fn();
     const expandAction = [{ key: 'expand', label: 'Expand', icon: null, onSelect }];

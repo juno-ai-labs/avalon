@@ -17,6 +17,13 @@ export async function copyWorkstreamLink(workspace: WorkspaceTarget, spaceId: st
   });
 }
 
+/** A link that opens a thread onto one of its artifacts. It needs a Space to name, so a guest's Channel has none. */
+export async function copyArtifactLink(workspace: WorkspaceTarget, spaceId: string, workstreamId: string, artifactId: string): Promise<void> {
+  const bridge = desktopBridge();
+  const { webBaseUrl } = await bridge.getRuntimeConfig();
+  await bridge.copyText(workstreamCanonicalUrl(webBaseUrl, { ...workspace, spaceId, workstreamId, artifactId }));
+}
+
 export async function copySpaceLink(workspace: WorkspaceTarget, spaceId: string): Promise<void> {
   const bridge = desktopBridge();
   const { webBaseUrl } = await bridge.getRuntimeConfig();
