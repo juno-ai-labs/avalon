@@ -92,7 +92,7 @@ async function receipt(
   return { status, value: parsed?.value ?? null, ...(parsed?.error ? { error: parsed.error } : {}) };
 }
 
-function seedLiveRun(state: DurableObjectState): void {
+function seedLiveRun(state: DurableObjectState, runId = RUN): void {
   state.storage.sql.exec(
     `INSERT INTO runs (run_id, substream_id, status, budget, attempt_epoch,
        model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
@@ -100,17 +100,17 @@ function seedLiveRun(state: DurableObjectState): void {
        tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
        created_at, updated_at, legacy_attempt_id, lease_owner, lease_expires_at)
      VALUES (?,'0','running','{}',0,0,'',0,0,1,0,0,0,0,0,0,0,0,0,0,1,1,?,?,?)`,
-    RUN,
+    runId,
     ATTEMPT,
     OWNER,
     Date.now() + 600_000,
   );
 }
 
-function admission(effectIntentId: string, toolCallId: string): Record<string, unknown> {
+function admission(effectIntentId: string, toolCallId: string, runId = RUN): Record<string, unknown> {
   return {
     effectIntentId,
-    runId: RUN,
+    runId,
     toolCallId,
     toolName: "read_resource",
     mode: "read",
@@ -121,7 +121,7 @@ function admission(effectIntentId: string, toolCallId: string): Record<string, u
     executionPlanJson: '{"mode":"read"}',
     compatiblePriorPlanHashes: [],
     providerIdempotencyKey: null,
-    fence: { runId: RUN, attemptId: ATTEMPT, owner: OWNER },
+    fence: { runId, attemptId: ATTEMPT, owner: OWNER },
     now: Date.now(),
   };
 }
@@ -263,6 +263,68 @@ describe("tool-receipt authority on real workerd", () => {
     });
     await expect(first!.execute({ query: "needle" }, context(retry))).rejects.toThrow("page_execution_ownership_lost");
   });
+  it("tells a later run its page came from an earlier message, without redeeming it", async () => {
+    // A new message starts a new run, and the model still sees the last run's
+    // `nextPageId` in its history. The page must stay unredeemable, but the
+    // refusal has to say why and hand the tool the arguments to explain.
+    const stub = agent();
+    await boot(stub);
+    const LATER_RUN = "00000000-0000-7000-8000-00000000rc02";
+    await runInDurableObject(stub, (_instance, state) => { seedWorkstreamRoot(state); seedLiveRun(state); });
+    const principal = { type: "workspace" as const, workspaceId: asWorkspaceId(WORKSPACE_ID) };
+    const context = (id: string, runId: string): HarnessToolContext => ({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID,
+      harnessRunId: runId, toolCallId: id, effectIntentId: id, executionPrincipal: principal, signal: new AbortController().signal });
+    const executed: unknown[] = [];
+    const explained: unknown[] = [];
+    let runId = RUN;
+    const tool = {
+      definition: { name: "read_resource", description: "Read", capability: "test.read", mode: "read" as const, idempotency: "safe" as const,
+        pagination: { cursorParameter: "cursor" }, inputSchema: { type: "object", properties: { resourceId: { type: "string" }, cursor: { type: "string" } } } },
+      execute: async (args: unknown) => {
+        executed.push(args);
+        return { output: { text: "page" }, summary: "page", pagination: { continuations: [{
+          operation: "read_resource", slot: "nextPageId" as const, input: { cursor: "position-12000" } }] } };
+      },
+    };
+    const host = { prefix: "workstream", connectionId: null, fence: () => ({ runId, attemptId: ATTEMPT, owner: OWNER }), receipts: {
+      issuePage: async (args: unknown) => z.string().nullable().parse((await receipt(stub, "issuePage", args)).value),
+      claimPage: async (args: unknown) => z.union([z.object({ inputJson: z.string() }), z.object({ earlierRunInputJson: z.string() })])
+        .parse((await receipt(stub, "claimPage", args)).value),
+    } };
+    const [first, next] = withToolPagination({ ...tool, explainEarlierRunPage: async (continuation) => {
+      explained.push(continuation);
+      return Object.assign(new Error("call read_resource with startCharacter 12000"), { code: "page_id_from_earlier_message" });
+    } }, host);
+    const [, plainNext] = withToolPagination(tool, host);
+
+    await receipt(stub, "admit", admission("first", "first"));
+    const pageId = z.object({ nextPageId: z.string() })
+      .parse((await first!.execute({ resourceId: "resource-1" }, context("first", RUN))).output).nextPageId;
+    await receipt(stub, "complete", { effectIntentId: "first", checkpointIndex: 1, outputRef: "first-output", outputSummary: "page",
+      providerOperationId: null, payloadJson: "{}", allowAmbiguousReconciliation: false, fence: host.fence(), now: Date.now() });
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("UPDATE runs SET status = 'completed', lease_owner = NULL WHERE run_id = ?", RUN);
+      seedLiveRun(state, LATER_RUN);
+    });
+    runId = LATER_RUN;
+
+    await receipt(stub, "admit", admission("later", "later", LATER_RUN));
+    await expect(next!.execute({ pageId }, context("later", LATER_RUN))).rejects.toMatchObject({
+      code: "page_id_from_earlier_message", message: "call read_resource with startCharacter 12000",
+    });
+    expect(explained).toEqual([{ cursor: "position-12000" }]);
+    await expect(plainNext!.execute({ pageId }, context("later", LATER_RUN))).rejects.toMatchObject({
+      code: "invalid_cursor", message: expect.stringContaining("came from an earlier message"),
+    });
+    // Another principal is told nothing about the earlier page.
+    await expect(receipt(stub, "claimPage", { runId: LATER_RUN, effectIntentId: "later", operation: "read_resource", connectionId: null,
+      principalJson: '{"type":"user","userId":"other"}', fence: host.fence(), pageId })).rejects.toThrow("page_id_invalid");
+    expect(executed).toEqual([{ resourceId: "resource-1" }]);
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT consumer_id FROM tool_pages WHERE page_id = ?", pageId).one().consumer_id).toBeNull();
+    });
+  });
+
   it("releases deleted consumers and preserves issuance when cancellation arrives after a provider read", async () => {
     const stub = agent();
     await boot(stub);
