@@ -739,7 +739,7 @@ twice each:
 | Variant | Carry-up F1, two runs | Carry-up precision | Bytes | Read |
 | --- | --- | --- | --- | --- |
 | Baseline (six recent messages at 700) | 0.726 / 0.733 | 73% | 2,550 | |
-| Three recent messages | 0.727 / 0.732 | 72% | 2,022 | Same answers, 21% fewer bytes. **Adopted.** |
+| Three recent messages | 0.727 / 0.732 | 72% | 2,022 | Same answers, 21% fewer bytes. **Adopted.** On the 300-case sequential latency sample, run twice: p50 70 ms, p90 92 ms, p99 140 ms, against 83, 123 and 165 ms with six |
 | Three recent messages at 1,500 | 0.739 / 0.724 | 73% | 2,220 | Within noise of three at 700, for more bytes |
 | Without `messages_before` and `carried_up_before` | 0.723 / 0.726 | 72% | 2,508 | Within noise; `carried_up_before` was non-zero in 24 cases, so this says nothing about its value once merges accrue |
 | Without `parent` | 0.734 / 0.731 | 70% | 2,472 | Recall up, precision down three points, and five on the hand labels: the parent is what tells "new for them" from "new here" |
