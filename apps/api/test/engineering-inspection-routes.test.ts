@@ -183,6 +183,17 @@ describe("engineering organization search", () => {
     }]);
   });
 
+  it("matches a name's non-ASCII capitals case-insensitively", async () => {
+    const env = organizations();
+    const ecole = "00000000-0000-7000-8000-000000000ed5";
+    await env.DB.prepare(
+      `INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+       VALUES (?, 'École Normale', 'ecole', 'global', ?, ?, ?)`,
+    ).bind(ecole, USER_ID, AT, AT).run();
+    const rows = await searchInspectionOrganizations(env, { query: "école" });
+    expect(rows.map((row) => row.id)).toEqual([ecole]);
+  });
+
   it("returns only abandoned Organizations when asked", async () => {
     const rows = await searchInspectionOrganizations(organizations(), { abandoned: "only" });
     expect(rows.map((row) => row.id)).toEqual([GONE]);
