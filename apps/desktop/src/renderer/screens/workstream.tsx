@@ -53,7 +53,6 @@ export {
   WorkstreamErrorState,
   acceptedMessageOverlayDeliveryState,
   branchProvenance,
-  conversationReplyCount,
   conversationReadAcknowledgement,
   highestVisibleAttentionSequence,
   initialTranscriptAnchorIndex,
@@ -890,7 +889,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       bridge: { mark: workstreamMark(breakoutId, selectedAppearance ?? undefined), name: title, action: 'Open breakout' },
       title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
       label: `Breakout menu: ${title}`,
-      ...(context.replyCount ? { meta: `${context.replyCount} ${context.replyCount === 1 ? 'reply' : 'replies'}` } : {}),
       menu: <BreakoutMenu
         actions={substreamActions}
         appearance={!channelWritable ? undefined : <AppearanceSubmenu
@@ -955,6 +953,9 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     workstreamContext={conversationScoped ? undefined : parent.data}
   />;
 
+  // What a breakout sits in: its Channel when that is off screen, and its
+  // thread, unless the reader reaches only the breakout.
+  const breakoutCrumbs = mainVisible ? [...channelCrumbs, channelLevel(null, openThreadAlone)] : [];
   const closeBreakout = <TitlePillClose label="Close breakout" onClose={() => selectSubstream('0')} />;
   const breakoutPane = !breakoutPaneOpen ? null : creatingHere ? <ConversationSurface
     honorsSearchTarget={false}
@@ -978,10 +979,11 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     // A reader who reaches only this Breakout cannot open the thread its merge
     // went to, so its divider stays a label.
     {...(conversationScoped ? {} : { onOpenMerge: openMerge })}
+    parentCrumbs={breakoutCrumbs}
     parentId={id}
     parentKind="workstream"
     renderHeader={(context) => <TitlePillHeader
-      ancestors={shownMode === 'breakout' && mainVisible ? [...channelCrumbs, channelLevel(null, openThreadAlone)] : []}
+      ancestors={shownMode === 'breakout' && mainVisible ? breakoutCrumbs : []}
       current={breakoutLevel(context)}
       actions={breakoutExpandAction}
       trailing={mainVisible ? closeBreakout : undefined}

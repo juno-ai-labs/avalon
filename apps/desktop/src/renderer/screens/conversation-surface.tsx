@@ -54,7 +54,7 @@ import { useBrowserRailLinks } from '../lib/browser-rail-links';
 import { BreakoutTickBar, breakoutsByOrigin, orderBreakoutsForTicks, type BreakoutMark } from '@rally/ui/components/breakout-marks';
 import type { TitleMenuPeople } from '@rally/ui/components/conversation-menus';
 import { TitlePillNavigation, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
+import { WorkstreamGlyph, workstreamMark } from '@rally/ui/components/workstream-glyph';
 import { RelativeTime } from '../components/relative-time';
 import { BreakoutOrigin, breakoutOriginMessages, originExcerpt } from '../components/breakout-origin';
 import { formatDateTime } from '../lib/format';
@@ -100,7 +100,7 @@ import { resolveFeedOpenSource, useWorkstreamFeedOpenTelemetry } from '../lib/us
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { ActivityPresence, InferenceDelayNotice, JumpToLatestButton } from '../components/conversation-follow';
-import { openRailAtEvenSplit } from '../lib/rail-split';
+import { openRailAtEvenSplit, useRailFillsPane } from '../lib/rail-split';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   orderedTranscriptQueryKey,
@@ -1089,26 +1089,10 @@ export interface ConversationHeaderContext {
   openArtifact?: (id: string, returnFocus: HTMLElement) => void;
   rename: (title: string) => Promise<void>;
   setAppearance: WorkstreamSocketConnection['setAppearance'];
-  /**
-   * How many messages this conversation holds, counted from its transcript
-   * once the whole of it is loaded. Undefined while older pages remain: a
-   * count of the loaded window would read as a total and be wrong.
-   */
-  replyCount?: number | undefined;
   /** A Breakout's origin message, for its title menu's "Started from" card. */
   origin?: { byline: string; text: string } | undefined;
   /** Adding people to this conversation from inside its title menu. */
   people?: TitleMenuPeople | undefined;
-}
-
-/** Messages a person would call replies: what people and Rally said, one per turn. */
-export function conversationReplyCount(transcript: readonly Message[]): number {
-  const turns = new Set<string>();
-  for (const message of transcript) {
-    if (message.messageType !== 'text' || message.authorType === 'system') continue;
-    turns.add(`${message.authorType}:${message.transcriptTurnId ?? message.id}`);
-  }
-  return turns.size;
 }
 
 export interface ConversationSubstreamLaunch {
@@ -1326,6 +1310,12 @@ export interface ConversationSurfaceProps {
    */
   breakoutOrigin?: { turnId: string | null | undefined; channelTitle: string } | undefined;
   /**
+   * The levels this conversation sits in, as crumbs, for a panel it opens
+   * that stands alone: a breakout's Channel and thread. Without it, the
+   * Channel's crumb while the Channel is off screen.
+   */
+  parentCrumbs?: readonly TitlePillLevel[] | undefined;
+  /**
    * Whether the `?turn=&sequence=` search target names this conversation. Two
    * conversations share the route when a Breakout is open beside its Channel,
    * and the target is only ever in one of them.
@@ -1376,6 +1366,7 @@ export function ConversationSurface({
   honorsSearchTarget = true,
   paneKey,
   breakoutOrigin,
+  parentCrumbs,
 }: ConversationSurfaceProps): React.JSX.Element {
   const detailQueryKey = useMemo(() => workstreamDetailQueryKey(id, substreamId), [id, substreamId]);
   const parentDetailQueryKey = useMemo(() => workstreamDetailQueryKey(id, '0'), [id]);
@@ -1923,18 +1914,32 @@ export function ConversationSurface({
     return () => setRailExpanded(false);
   }, [ownsRail, panelExpanded, setRailExpanded]);
   const channelPane = useChannelPane();
-  const panelExpandAction = expandToggle(panelExpanded, true, setPanelExpanded);
-  // Expanded, the panel's header carries what it covers, as an expanded
-  // breakout's does: the Channel when it has stepped off, then this
-  // conversation, which collapses the panel back beside it.
-  const panelAncestors: TitlePillLevel[] | undefined = !panelExpanded ? undefined : [
-    ...(channelPane?.shifted ? [channelPane.crumb] : []),
+  // Too narrow for the panel beside its conversation, a phone included, the
+  // panel covers the pane whether or not it was expanded, so it offers
+  // neither Expand nor a Collapse that would change nothing. The expansion
+  // is kept for when the window widens.
+  const panelFillsPane = useRailFillsPane(useUiStore((state) => state.sidebarWidth));
+  const panelExpandAction = panelFillsPane ? undefined : expandToggle(panelExpanded, true, setPanelExpanded);
+  // Alone on screen, the panel carries the crumbs of what it covers
+  // (`docs/pane-stack.md`). A breakout's mark is seeded by its own id.
+  const conversationTitle = routedDetail?.title ?? '';
+  const conversationMarkId = substreamId === '0' ? id : substreamId;
+  const panelAncestors: TitlePillLevel[] | undefined = !panelExpanded && !panelFillsPane ? undefined : [
+    ...(parentCrumbs ?? (channelPane?.shifted ? [channelPane.crumb] : [])),
     {
       key: `panel-conversation:${conversationAddress}`,
-      icon: <WorkstreamGlyph appearance={routedDetail?.appearance} id={id} size={24} />,
-      title: routedDetail?.title ?? '',
-      label: `Show ${routedDetail?.title ?? 'the conversation'}`,
-      onSelect: () => setPanelExpanded(false),
+      icon: <WorkstreamGlyph appearance={routedDetail?.appearance} id={conversationMarkId} size={24} />,
+      bridge: {
+        mark: workstreamMark(conversationMarkId, routedDetail?.appearance ?? undefined),
+        name: conversationTitle,
+        action: parentKind === 'automation' ? 'Open Sidekick' : substreamId === '0' ? 'Open thread' : 'Open breakout',
+      },
+      title: conversationTitle,
+      label: `Show ${conversationTitle || 'the conversation'}`,
+      onSelect: () => {
+        if (panelFillsPane) closeOwnRail();
+        else setPanelExpanded(false);
+      },
     },
   ];
   const members = useQuery({
@@ -2064,12 +2069,6 @@ export function ConversationSurface({
     },
     [canonicalTranscript, transcriptOverlays.data, showAgentWork],
   );
-  // Above every early return: a hook below one runs on some renders only.
-  const replyCount = useMemo(() => (
-    orderedTranscript.data && !adjacentTranscriptRange(orderedTranscript.data, 'older')
-      ? conversationReplyCount(transcript)
-      : undefined
-  ), [orderedTranscript.data, transcript]);
   // Held here rather than in the row: the virtualizer unmounts a row that
   // leaves the window but keeps the height it measured, so an open row that
   // came back closed would shrink under a cache that still expects it open.
@@ -3394,7 +3393,6 @@ export function ConversationSurface({
         openArtifact: sidebarScope === 'workstream' ? sidebarCitations.openPreview : citations.openPreview,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
         setAppearance: socketConnection.setAppearance,
-        replyCount,
         people: parentKind === 'workstream' ? {
           candidates: visibleMembers,
           invitees: visibleInvitees.map((invitee) => invitee.email),

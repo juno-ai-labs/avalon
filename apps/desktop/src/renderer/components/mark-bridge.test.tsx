@@ -48,6 +48,14 @@ describe('MarkBridge', () => {
     expect(tooltip).toHaveTextContent('Open channel');
   });
 
+  it('gives a mark that opens a menu its tooltip too', async () => {
+    render(<MarkBridge items={[{ key: 'folded', mark: thread, name: 'Show path', menu: items(vi.fn(), vi.fn()) }]} />);
+
+    fireEvent.pointerMove(screen.getByRole('button', { name: 'Show path' }), { pointerType: 'mouse' });
+
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Show path');
+  });
+
   it('names only the last mark when asked to', () => {
     render(<MarkBridge items={items(vi.fn(), vi.fn())} labelLast />);
 
@@ -154,6 +162,46 @@ describe('TitlePillHeader', () => {
       expect(items.map((item) => item.textContent)).toEqual(['Search organization', 'Expand']);
       fireEvent.click(items[0]!);
       expect(search).toHaveBeenCalledOnce();
+    });
+
+    const deep = (openChannel = vi.fn()): TitlePillLevel[] => [
+      level('channel', 'General', { mark: channel, name: 'General', action: 'Open channel' }, openChannel),
+      level('thread', 'Prepare', { mark: thread, name: 'Prepare', action: 'Open thread' }, vi.fn()),
+      level('breakout', 'Rollout', { mark: thread, name: 'Rollout', action: 'Open breakout' }, vi.fn()),
+    ];
+
+    it('folds crumbs past two into a "…" mark beside the nearest, listing the rest in its menu', async () => {
+      phoneWidth(true);
+      const openChannel = vi.fn();
+      render(<PhoneHeaderContext value={header(vi.fn(), vi.fn())}>
+        <TitlePillHeader ancestors={deep(openChannel)} current={level('artifact', 'Guide')} />
+      </PhoneHeaderContext>);
+
+      expect(screen.getAllByRole('button').map((mark) => mark.getAttribute('aria-label')).slice(0, 3))
+        .toEqual(['Open navigation', 'Show path', 'Open breakout: Rollout']);
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Show path' }), { button: 0, ctrlKey: false, pointerType: 'mouse' });
+      const items = await screen.findAllByRole('menuitem');
+      expect(items.map((item) => item.textContent)).toEqual(['General', 'Prepare']);
+      fireEvent.click(items[0]!);
+      expect(openChannel).toHaveBeenCalledOnce();
+    });
+
+    it('keeps two crumbs as they are', () => {
+      phoneWidth(true);
+      render(<PhoneHeaderContext value={header(vi.fn(), vi.fn())}>
+        <TitlePillHeader ancestors={deep().slice(0, 2)} current={level('breakout', 'Rollout')} />
+      </PhoneHeaderContext>);
+
+      expect(screen.queryByRole('button', { name: 'Show path' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Open channel: General' })).toBeInTheDocument();
+    });
+
+    it('folds nothing wider than a phone', () => {
+      phoneWidth(false);
+      render(<TitlePillHeader ancestors={deep()} current={level('artifact', 'Guide')} />);
+
+      expect(screen.queryByRole('button', { name: 'Show path' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Open channel: General' })).toBeInTheDocument();
     });
 
     it('carries neither wider than a phone', () => {

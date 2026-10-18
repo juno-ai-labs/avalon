@@ -35,6 +35,7 @@ The routes are the stack:
 | `/channels/:c/threads/:t?substream=:b` | thread, breakout | Channel |
 | …and the breakout opens a panel | breakout, panel | Channel, thread |
 | …a thread's panel, expanded | panel | Channel, thread |
+| …a breakout's panel, expanded or on a phone | panel | Channel, thread, breakout |
 | `/workstreams/:t` (a thread with no Channel the person may see) | thread | — |
 
 `ChannelStack` renders the Channel in the left slot and the thread screen in the
@@ -56,9 +57,13 @@ expansion ends when the breakout opens a panel.
 
 A **panel** is the last level. An artifact or attachment a conversation opens
 sits beside it with the same **Expand**; expanded it covers the pane (the shell's
-`rail-expanded`, which reuses the narrow window's full-pane rules) and its
-header carries the Channel, when it has stepped off, and the conversation, whose
-crumb collapses it. There is no lightbox over a panel any more: a full-window
+`rail-expanded`, which reuses the narrow window's full-pane rules). While it stands
+alone, expanded or in a window too narrow for it beside its conversation
+(`railFillsPane`, which every phone width is), its header carries the crumbs
+as one `MarkBridge`: the Channel, when it has stepped off, a breakout's thread
+(handed down as `parentCrumbs`), and the conversation. That crumb collapses an expanded panel, and closes one that
+cannot sit beside, which also offers neither Expand nor Collapse.
+There is no lightbox over a panel any more: a full-window
 view of an artifact is the panel expanded. `expandToggle`
 (`components/pane-expand-toggle.tsx`) draws the control at every level.
 
@@ -110,7 +115,9 @@ Widths are stored per pair: the thread beside its Channel under
   `/channels/:channelId/*` route; verified in a real window.
 - **The crumb is the Channel's, and only when it is off screen.** A crumb for a
   pane on screen is a second way to the same place that looks like a different
-  one. Guard: `shifted` in `ChannelStack`.
+  one. With two panes on screen only the left
+  one carries crumbs. Guard: `shifted` in `ChannelStack`, and a panel draws
+  crumbs only while it stands alone.
 - **A hidden pane acknowledges no read.** Both slots stay mounted, so a Channel
   behind its thread or a thread behind its breakout is still rendered. Each is
   wrapped in `PaneVisibility`, which turns the conversation visibility off
@@ -135,7 +142,8 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
   linking where its pill would. Above phone width the nearest crumb's name ends
   in an ellipsis rather than run under the pill, so the pane's own pill keeps
   its room and truncates last; at 640px and below the bridge shows marks
-  alone.
+  alone, and past two crumbs folds all but the nearest into a "…" menu
+  ([`shared-ui.md`](shared-ui.md)).
 - **Collapse in a narrow window** clears the expansion, but the pane still
   stands alone, as it would unexpanded; Collapse then simply goes away.
 - **A thread with no visible Channel** opens on `/workstreams/:id`, alone; it
@@ -160,6 +168,22 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
   window under Xvfb, per [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-17 — A panel standing alone carries its crumbs, as one glass bridge
+
+A panel drew its crumbs only while expanded, but at phone width, and in any
+window too narrow for the panel beside its conversation, it covers the pane
+without being expanded, which left a lone artifact header with no way back but
+close. The crumbs now follow whether the panel stands alone, not whether it
+was asked to expand: `panelFillsPane` reuses the shell's `useRailFillsPane`,
+so the header and the `rail-fills-pane` layout read the same rule. There the
+conversation crumb closes the panel, since collapsing would change nothing,
+and Expand and Collapse are withheld: either would change nothing on screen. Beside its conversation the panel still has none: the
+product wants crumbs on the left pane only when two are on screen.
+
+A breakout's panel dropped the thread from that path, since the surface
+only knew the Channel's crumb; the thread screen now hands the breakout's
+crumbs down as `parentCrumbs`, the same list its own header draws.
 
 ### 2026-10-17 — A panel expands like a pane, and the lightbox goes
 
