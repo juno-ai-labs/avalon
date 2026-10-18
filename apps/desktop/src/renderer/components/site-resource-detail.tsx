@@ -63,7 +63,7 @@ export interface SiteResourceDetailProps {
       cornerRadius: number;
     }) => Promise<boolean>;
     setBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
-    /** A still of the live view, shown in the pane while an overlay hides it. */
+    /** A still of the live view as an image data URL. */
     snapshot: () => Promise<string | null>;
     close: () => Promise<void>;
     popOut: (request: DesktopSiteArtifactWindowRequest) => Promise<boolean>;
@@ -177,13 +177,7 @@ export function SiteResourceDetail({
    * not on screen to be covered.
    */
   const [showingData, setShowingData] = React.useState(false);
-  /**
-   * The page as it looked when a menu or dialog opened over it.
-   *
-   * The composited view paints above the DOM, so it has to collapse under any
-   * overlay, and the pane it leaves is empty. This still stands in for it, so
-   * the page stays in view beneath the overlay instead of going blank.
-   */
+  // The page as it looked when a menu or dialog opened over it.
   const [snapshot, setSnapshot] = React.useState<{
     src: string;
     /** Where the view was, relative to the pane: a clipped view is a slice of it. */
