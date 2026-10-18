@@ -92,8 +92,12 @@ export class ToolPageStorage {
    * earlier run issued. Reporting that case apart from an unknown ID lets the
    * caller say what happened and how to restart, instead of an error that reads
    * as if the model mistyped the ID. The earlier page's arguments are returned
-   * only to the same principal, connection and operation, and are never
-   * redeemed: the caller may describe them, not execute them.
+   * only to the same principal, connection and operation, for the caller to
+   * describe, never to execute.
+   *
+   * The earlier-run lookup is deliberately unindexed: no index leads with
+   * `page_id`, so a miss scans this conversation's pages. It runs only on a
+   * miss, and an index would add a write to every `issue`.
    */
   claim(raw: z.infer<typeof PageClaimSchema>): { inputJson: string } | { earlierRunInputJson: string } {
     const input = parsePage(PageClaimSchema, raw);
