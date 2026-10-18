@@ -17,6 +17,7 @@ import {
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
+  WorkspaceNavigationStateEventSchema,
   WorkspaceResourceVersionsEventSchema,
   WorkspaceSocketSyncEventSchema,
   type ResourceHead,
@@ -156,30 +157,32 @@ async function runSql(sql: string, params: Array<string | number | null>): Promi
   });
 }
 
-async function storeResource(id: string, title: string): Promise<void> {
+async function storeResource(id: string, title: string, metadata: Record<string, unknown> = { size: 10 }): Promise<void> {
   await runSql(
     `INSERT INTO resources
        (id, workspace_id, resource_type, provider, title, mime_type, metadata_json, content_ref, created_at, updated_at)
-     VALUES (?, ?, 'generated_file', 'avalon', ?, 'text/markdown', '{"size":10}', 'v1', '2026-10-18T00:00:00.000Z', '2026-10-18T00:00:00.000Z')`,
-    [id, WORKSPACE_ID, title],
+     VALUES (?, ?, 'generated_file', 'avalon', ?, 'text/markdown', ?, 'v1', '2026-10-18T00:00:00.000Z', '2026-10-18T00:00:00.000Z')`,
+    [id, WORKSPACE_ID, title, JSON.stringify(metadata)],
   );
 }
 
 /** A new version of a stored resource, as a Terminal republish swaps its content in. */
-async function republish(id: string, contentRef: string, size: number, at: string): Promise<void> {
+async function republish(
+  id: string, contentRef: string, size: number, at: string, cause: "published" | "refetched" = "published",
+): Promise<void> {
   await runSql(
     `UPDATE resources
-        SET revision_author_kind = 'agent', revision_author_run_id = ?, revision_cause = 'published',
-            content_ref = ?, content_sha256 = ?, mime_type = 'text/html', metadata_json = ?, updated_at = ?
+        SET revision_author_kind = 'agent', revision_author_run_id = ?, revision_cause = ?,
+            content_ref = ?, content_sha256 = ?, mime_type = 'text/html', metadata_json = json_set(metadata_json, '$.size', ?), updated_at = ?
       WHERE id = ?`,
-    ["00000000-0000-7000-8000-00000000e3f1", contentRef, contentRef, JSON.stringify({ size }), at, id],
+    ["00000000-0000-7000-8000-00000000e3f1", cause, contentRef, contentRef, size, at, id],
   );
 }
 
 let ticketSequence = 0;
 
-/** A subscribed workspace socket recording every resource-version event it is sent. */
-async function connect(userId: UserId): Promise<{ heads: ResourceHead[][] }> {
+/** A subscribed workspace socket recording every resource-version event and artifact pin list it is sent. */
+async function connect(userId: UserId): Promise<{ heads: ResourceHead[][]; pins: Array<Array<[string, number, boolean]>> }> {
   ticketSequence += 1;
   const response = await workspace().fetch("https://workspace.test/socket", {
     headers: {
@@ -197,12 +200,16 @@ async function connect(userId: UserId): Promise<{ heads: ResourceHead[][] }> {
   }
   const socket = response.webSocket;
   socket.accept();
-  const received = { heads: [] as ResourceHead[][] };
+  const received = { heads: [] as ResourceHead[][], pins: [] as Array<Array<[string, number, boolean]>> };
   const subscribed = new Promise<void>((resolve) => {
     socket.addEventListener("message", (event) => {
       const data = JSON.parse(String(event.data)) as unknown;
       const versions = WorkspaceResourceVersionsEventSchema.safeParse(data);
       if (versions.success) received.heads.push(versions.data.resources);
+      const navigation = WorkspaceNavigationStateEventSchema.safeParse(data);
+      if (navigation.success && navigation.data.artifactPins) {
+        received.pins.push(navigation.data.artifactPins.map((pin) => [pin.id, pin.currentVersion, pin.unread]));
+      }
       if (WorkspaceSocketSyncEventSchema.safeParse(data).success) resolve();
     });
   });
@@ -261,11 +268,13 @@ describe("workspace_resource_versions", () => {
   it("announces a version of any cause, a rename included, and stays quiet for a resource's first version", async () => {
     const member = await connect(MEMBER);
 
-    await storeResource(LATE, "Late");
+    // A link can name a resource before its row arrives, so the first version
+    // is written while a thread the member opens already links it.
     await project(OPEN_THREAD, [{ ...thread("Launch", "workspace", REPORT), resourceLinks: [
       { resourceId: REPORT, watchEnabled: false, relationshipType: "generated" },
       { resourceId: LATE, watchEnabled: false, relationshipType: "generated" },
     ] } as ParentEffect], 2);
+    await storeResource(LATE, "Late");
     await expect(workspace().renameResource({
       workspaceId: WORKSPACE_ID,
       resourceId: REPORT,
@@ -278,5 +287,37 @@ describe("workspace_resource_versions", () => {
     expect(member.heads).toEqual([[expect.objectContaining({
       resourceId: REPORT, version: 2, title: "Launch report, final",
     })]]);
+  });
+
+  it("tells a pinner of a republish but not of a refetch, from the same ledger that moves every preview", async () => {
+    await expect(workspace().changeArtifactPin({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, itemId: REPORT, threadId: OPEN_THREAD, pinned: true,
+    })).resolves.toMatchObject({ ok: true });
+    const member = await connect(MEMBER);
+
+    // A pin counts only versions written after it was made.
+    const later = (seconds: number) => new Date(Date.now() + seconds * 1_000).toISOString();
+    await republish(REPORT, "v2", 42, later(1), "refetched");
+    await republish(REPORT, "v3", 43, later(2));
+
+    await vi.waitFor(() => {
+      expect(member.heads.flat().map((head) => head.version)).toEqual([2, 3]);
+      expect(member.pins).toEqual([[[REPORT, 3, true]]]);
+    });
+  });
+
+  it("leaves out an unlisted resource, which no conversation advertises", async () => {
+    await project(OPEN_THREAD, [{ ...thread("Launch", "workspace", REPORT), resourceLinks: [
+      { resourceId: REPORT, watchEnabled: false, relationshipType: "generated" },
+      { resourceId: LATE, watchEnabled: false, relationshipType: "generated" },
+    ] } as ParentEffect], 2);
+    await storeResource(LATE, "Recovery backup", { size: 10, listing: "unlisted" });
+    const member = await connect(MEMBER);
+
+    await republish(LATE, "v2", 7, "2026-10-18T01:00:00.000Z");
+    await republish(REPORT, "v2", 42, "2026-10-18T01:00:01.000Z");
+
+    await vi.waitFor(() => expect(member.heads.flat().map((head) => head.resourceId)).toContain(REPORT));
+    expect(member.heads.flat().map((head) => head.resourceId)).toEqual([REPORT]);
   });
 });
