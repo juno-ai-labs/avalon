@@ -559,7 +559,11 @@ existing candidates both in view, emits one of `add`, `update` (supersedes the
 earlier revision and links it), `retract` (the fact is now false) or `confirm`
 (nothing new, bump `last_confirmed_at`). There is no separate dedup gate ahead
 of the contradiction decision, because that is how Governed Shared Memory
-rejected half its writes before its detector ran (section 4.4). The operations
+rejected half its writes before its detector ran (section 4.4). A
+contradiction between two *different* people is not resolved by any of these
+operations: it becomes an `add` at the Channel or Organization level whose
+text carries both claims, their authors and their dates, and is superseded
+later by the settled fact (section 9, decision 8). The operations
 apply in one `WorkspaceDO` transaction fenced on the cursor: the job carries
 the `from_seq` it read, and a write whose cursor has moved is dropped. That is
 `redescribe`'s compare-and-swap, applied to memory.
@@ -991,13 +995,21 @@ Decisions that are not numbers:
    never reach a guest's run, and Channel facts do only where the guest may
    open the Channel. Proposed: no special casing; the source rule already says
    this.
-8. **Conflicting claims from different people.** Two members state different
-   facts about the same subject. No published rule exists (section 4.7).
-   Proposed for phase one: the newer statement supersedes within one
-   conversation; across conversations both stand with their authors and dates
-   shown, and the digest renders the newer first. The inputs for a stronger
-   rule (author role, corroboration, explicit confirmation) are stored from
-   day one.
+8. **Conflicting claims from different people.** Decided 2026-10-18: a
+   conflict is a memory, and it is shared. When the sweep finds two people
+   stating different facts about the same subject, it does not pick a winner.
+   It writes one fact at the Channel level, or the Organization level when the
+   placement allows, whose text states both claims with their authors and
+   dates, with evidence from both messages. The digest renders it as an open
+   disagreement, so Rally can surface it or ask rather than silently side with
+   whoever spoke last. When a later message settles it (one party agrees, a
+   decision is recorded, or a person confirms through the review surface), the
+   sweep supersedes the conflict fact with the settled fact at the same level.
+   One person contradicting themselves is not a conflict; the newer statement
+   supersedes within that subject as before. No published rule weighs one
+   person's claim against another's (section 4.7), and this design does not
+   need one: it stores the inputs (author role, corroboration, explicit
+   confirmation) and leaves the judgment to the people.
 9. **What to measure before widening the sweep.** A small set drawn from
    dogfood threads, scored for omission, junk, and stale facts after an
    update, the way the addressing classifier's 153-case replay was built. Not
