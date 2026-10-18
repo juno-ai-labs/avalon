@@ -183,6 +183,23 @@ export const WorkspaceResourceHydrationResultSchema = deferredZodSchema(() => z.
   updated: z.boolean(),
 }));
 
+/**
+ * A person renaming a resource. The title is the caller's to validate; the
+ * object records who renamed it as the version's author.
+ */
+export const WorkspaceResourceRenameRequestSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: IdSchema,
+  resourceId: IdSchema,
+  title: z.string().min(1),
+  renamedByUserId: IdSchema,
+  at: TimestampSchema,
+}));
+
+/** `unchanged` writes nothing, since any write to `title` records a version. */
+export const WorkspaceResourceRenameResultSchema = deferredZodSchema(() => z.strictObject({
+  outcome: z.enum(["renamed", "unchanged", "not_found"]),
+}));
+
 export const WorkspaceResourceWatchEnableRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   watchId: IdSchema,
@@ -477,4 +494,10 @@ export type WorkspaceInboundEmailResourceResult = z.infer<
 >;
 export type WorkspaceDiscoveredResourcesRequest = z.infer<
   typeof WorkspaceDiscoveredResourcesRequestSchema
+>;
+export type WorkspaceResourceRenameRequest = z.infer<
+  typeof WorkspaceResourceRenameRequestSchema
+>;
+export type WorkspaceResourceRenameResult = z.infer<
+  typeof WorkspaceResourceRenameResultSchema
 >;

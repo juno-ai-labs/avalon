@@ -505,6 +505,7 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   productOperation({ operation: z.literal("attach_resource"), resourceId: IdSchema }),
   productOperation({ operation: z.literal("attach_resources"), resourceIds: z.array(MergeResourceTokenSchema) }),
   productOperation({ operation: z.literal("detach_resource"), resourceId: IdSchema }),
+  productOperation({ operation: z.literal("rename_resource"), resourceId: IdSchema, title: z.string().min(1) }),
   productOperation({ operation: z.literal("answer_elicitation"),
     elicitationId: IdSchema, input: AnswerElicitationRequestSchema,
     slackOrigin: SlackOriginContextSchema.optional() }),
@@ -3596,6 +3597,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
       if (request.operation === "detach_resource") {
         await this.product.detachResource(current, request.resourceId);
+        return jsonResponse({ ok: true });
+      }
+      if (request.operation === "rename_resource") {
+        const resource = await this.product.renameResource(current, request.resourceId, request.title);
+        if (resource) await this.publishLocalProductEvent(identity, { type: "resource_updated", resource });
         return jsonResponse({ ok: true });
       }
       if (request.operation === "answer_elicitation") {

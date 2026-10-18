@@ -356,6 +356,14 @@ conversationRoutes.post("/:parentId/resources", zValidator("param", parentParam)
   const client = await new ConversationService(c.env, getWorkspaceAuth(c)).writableClient(c.req.valid("param").parentId);
   return c.json(WorkstreamResourceSchema.parse(await client.attachResource(c.req.valid("json").resourceId)), 201);
 });
+/** Rename an artifact this thread generated. Every thread that links it reads the new title. */
+conversationRoutes.patch("/:parentId/resources/:resourceId", zValidator("param", resourceParam),
+  zValidator("json", z.strictObject({ title: UpdateWorkstreamRequestSchema.shape.title.unwrap() })), async (c) => {
+    const param = c.req.valid("param");
+    const client = await new ConversationService(c.env, getWorkspaceAuth(c)).writableClient(param.parentId);
+    await client.renameResource(param.resourceId, c.req.valid("json").title);
+    return c.body(null, 204);
+  });
 conversationRoutes.delete("/:parentId/resources/:resourceId", zValidator("param", resourceParam), async (c) => {
   const param = c.req.valid("param");
   const client = await new ConversationService(c.env, getWorkspaceAuth(c)).writableClient(param.parentId);

@@ -129,6 +129,15 @@ export function artifactSubjectKeySql(resourceId: string): string {
   return `'artifact:' || ${resourceId}`;
 }
 
+/** The ledger's trigger, which migration 113 drops and restores around the cause column it replaces. */
+export const RESOURCE_VERSIONS_QUEUE_ARTIFACT_UPDATE = `CREATE TRIGGER resource_versions_queue_artifact_update
+     AFTER INSERT ON resource_versions
+     WHEN NEW.version > 1 AND NEW.cause IN ('published', 'replaced')
+      AND EXISTS (SELECT 1 FROM workspace_pins WHERE item_kind = 'artifact' AND item_id = NEW.resource_id)
+   BEGIN
+     INSERT OR IGNORE INTO workspace_artifact_updates (resource_id, version) VALUES (NEW.resource_id, NEW.version);
+   END`;
+
 /**
  * Migration 111: a ledger of new versions of pinned artifacts, filled by a
  * trigger on `resource_versions` and drained after the write that filled it,
@@ -147,13 +156,7 @@ export const WORKSPACE_ARTIFACT_UPDATES_MIGRATION: readonly string[] = [
     PRIMARY KEY (resource_id, version)
   ) STRICT`,
   `CREATE INDEX workspace_pins_item_idx ON workspace_pins(item_kind, item_id)`,
-  `CREATE TRIGGER resource_versions_queue_artifact_update
-     AFTER INSERT ON resource_versions
-     WHEN NEW.version > 1 AND NEW.cause IN ('published', 'replaced')
-      AND EXISTS (SELECT 1 FROM workspace_pins WHERE item_kind = 'artifact' AND item_id = NEW.resource_id)
-   BEGIN
-     INSERT OR IGNORE INTO workspace_artifact_updates (resource_id, version) VALUES (NEW.resource_id, NEW.version);
-   END`,
+  RESOURCE_VERSIONS_QUEUE_ARTIFACT_UPDATE,
 ];
 
 /** One new version of a pinned artifact the ledger held. */
