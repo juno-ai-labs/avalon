@@ -67,6 +67,7 @@ protocol inside each Durable Object.
 | `packages/contracts/src/workspace-reach-watch.ts` | The listen-only workspace socket for hosts without one of their own (Sideline main, the lite browser), and the heartbeat and reconnect numbers every workspace-socket client shares. |
 | `apps/desktop/src/renderer/lib/conversation-admission.tsx` | Composes account and workspace-journey readiness independently of connection warming. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns one substream `0` feed per selected work stream above the route, retains recently viewed feeds for five minutes, and supports presence-free feed warming on deliberate hover. |
+| `apps/api/src/durable-objects/workspace-resource-versions.ts`, `apps/desktop/src/renderer/lib/resource-heads.ts` | The one ledger of new resource versions, drained for `workspace_resource_versions` and the pinned-artifact announcement, and the client's merge of each announced head into the conversation details and popped-out windows that show it. |
 | `apps/desktop/src/renderer/lib/channel-viewer-state.ts` | Writes the breakouts and running background agents each workspace-socket Channel row carries into the caches the Channel menu and composer read. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Owns the SubstreamAgent feed protocol, ticket request, snapshot/replay application, heartbeat, pagination, and reconnect state machine. |
 | `apps/desktop/src/renderer/lib/realtime-socket.ts` | Presents a browser-shaped socket to the feed hook and maps Electron sockets onto one socket-ID-multiplexed preload listener. Browser development falls back to the native `WebSocket` constructor. |
@@ -451,6 +452,43 @@ they are retried.
 audience, live and on replay; how an event names one, and each topic's
 audience, are in
 [`realtime-sockets.md`](realtime-sockets.md#electron-connection-topology).
+
+**A resource's new version** (`workspace_resource_versions`) goes to every
+socket whose person may open the Main of a thread that links the resource, the
+gate an artifact pin reads under. Only a thread's directory projection writes
+those links, so a resource only a Channel's own conversation holds is not
+announced here; that conversation's socket still sends `resource_updated`. An
+unlisted resource is never named. It covers every resource
+type and every producer, because versions are only ever written by the
+`resources` triggers: a trigger on `resource_versions` notes each new version
+in `workspace_resource_version_changes` (WorkspaceDO migration 114), and the
+write hook that drains the Channel rail's ledger drains it too, after the
+write's transaction. It is the one ledger of new versions: the same drain
+feeds the pinned-artifact announcement, which keeps only the causes a pin
+counts as news ([`workstream-pinning.md`](workstream-pinning.md#artifact-pins)).
+Each person's payload is built once for all of their sockets. It carries each resource's head (version, title, MIME
+type, update time, whether content exists, size) and nothing about how a
+conversation links it, so the client merges it over the resource it holds.
+
+It is off the waterline and never replayed. A client that was away learns the
+head from the conversation's snapshot when it next opens it. On the client, every
+head the window hears is recorded (`RESOURCE_HEADS_QUERY_KEY`), whether the
+workspace socket announced it or a conversation's own snapshot or resource
+event carried it. `applyResourceHeads` moves `currentVersion` in every cached
+conversation detail that holds the resource at an older version, and
+`followResourceHeads`, installed by the workspace socket provider, does the
+same after every later write of a detail, so a delayed `resource_updated`, a
+snapshot, a REST answer or the local cache can never put an older version
+back. Every preview keys on `currentVersion`, so an open panel, a site preview
+and the version list reload.
+
+The app shell is the only place that refreshes a popped-out window on a new
+version: it reads the recorded heads, with one in-flight set and one abort
+signal held for the session. A refresh owned by a conversation screen could be
+cancelled when the person left it, after another caller had already stood down
+for it. After every reconnect but the first, the shell also reads the current
+version of each open window's artifact, because versions written while the
+socket was away are not replayed.
 
 ### Reconnect and teardown
 
@@ -856,6 +894,50 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-10-18 — Every new resource version reaches its open previews
+
+**What changed:** WorkspaceDO sends `workspace_resource_versions` on the
+workspace socket when any resource gets a new version, to each person who may
+open the Main of a thread linking it. The desktop and browser clients record
+every head they hear and hold each cached conversation detail at it, which
+reloads inline previews and site previews. The app shell alone refreshes
+popped-out windows from those heads, even when their conversation is not on
+screen, and rereads them after a reconnect.
+
+The pinned-artifact ledger (migration 111) became this one: migration 114
+renames its table and replaces its pins-only trigger with one for every
+resource, and the drain hands each reader what it needs, every version to the
+previews and the published or replaced ones to the pins.
+
+**Why:** A preview learned of a new version only from the conversation
+socket's `resource_updated`. That event goes only to the room that produced the
+version, and image edits, connector refetches and derivative re-ingests never
+send it. A popped-out window refreshed only while its conversation was mounted.
+So a preview open anywhere else stayed on the old version.
+
+**Considered and rejected:** Making every producer send `resource_updated` to
+every room that links the resource: many producers to change, and it still
+misses popped-out windows. A second ledger beside the pinned-artifact one: two
+triggers on the same insert recording overlapping rows, and two drains to keep
+in step. Invalidating the conversation detail instead of patching it: the
+conversation socket is that entry's only producer, so nothing would refetch it.
+Patching only when the event arrives: a delayed room event or snapshot then put
+the older version back, so every write of a detail is followed instead.
+Refreshing popped-out windows from both the conversation screen and the app
+shell with a shared in-flight set: a screen that was left cancelled a refresh
+the shell had already stood down for.
+
+**Consequences:** A new producer of versions needs no change here, as long as
+it writes through `resources`. A new reader of new versions filters the drain
+rather than adding a trigger; the cause a pin counts as news lives in
+`isArtifactNewsCause` beside `artifactUpdateSql`, and the two must agree. The
+event names a resource only to people who can open a thread linking it, and
+never an unlisted one; keep that gate if the payload grows. A new writer of a
+conversation detail needs no merge of its own, and a new surface that shows
+popped-out windows refreshes them through the app shell's recorded heads, not
+a refresh of its own. A window is refreshed only to a newer version than it
+shows, never back.
 
 ### 2026-10-10 — Readers of a socket-owned entry no longer replace its fetcher
 

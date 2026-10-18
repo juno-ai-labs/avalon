@@ -113,8 +113,9 @@ export const WORKSPACE_ARTIFACT_PINS_MIGRATION: readonly string[] = [
  * migration 112): a change somebody made is never news to them. A version from
  * before that migration names nobody and counts. `version` and `pin` are the
  * aliases in scope.
- * One definition, read by the trigger that queues a push, the Artifacts list's
- * unread state, and the Activity row, so the three cannot disagree.
+ * One definition, read by the Artifacts list's unread state and the Activity
+ * row, so the two cannot disagree; {@link isArtifactNewsCause} is its cause
+ * test for a version already drained, where the push starts.
  */
 export function artifactUpdateSql(version: string, pin: string): string {
   return `${version}.version > 1
@@ -124,12 +125,21 @@ export function artifactUpdateSql(version: string, pin: string): string {
     AND CAST(unixepoch(${version}.captured_at, 'subsec') * 1000 AS INTEGER) > ${pin}.created_at`;
 }
 
+/** Whether a drained version's cause can be news to a pinner, as {@link artifactUpdateSql} decides. */
+export function isArtifactNewsCause(cause: string | null): boolean {
+  return cause === "published" || cause === "replaced";
+}
+
 /** The waterline key a pinned artifact's reads move (`activitySubjectKey`). */
 export function artifactSubjectKeySql(resourceId: string): string {
   return `'artifact:' || ${resourceId}`;
 }
 
-/** The ledger's trigger, which migration 113 drops and restores around the cause column it replaces. */
+/**
+ * The ledger's trigger, which migration 113 drops and restores around the
+ * cause column it replaces, and migration 114 replaces with one for every
+ * resource (`workspace-resource-versions.ts`).
+ */
 export const RESOURCE_VERSIONS_QUEUE_ARTIFACT_UPDATE = `CREATE TRIGGER resource_versions_queue_artifact_update
      AFTER INSERT ON resource_versions
      WHEN NEW.version > 1 AND NEW.cause IN ('published', 'replaced')
@@ -147,7 +157,8 @@ export const RESOURCE_VERSIONS_QUEUE_ARTIFACT_UPDATE = `CREATE TRIGGER resource_
  * passes. The trigger's test is coarser than {@link artifactUpdateSql}: the
  * drain applies the per-person part when it reads each pinner's Activity.
  * The index is the trigger's and the drain's lookup from an artifact to the
- * people who pinned it.
+ * people who pinned it. Migration 114 renames the table and widens it to every
+ * resource; this is the shape it shipped in.
  */
 export const WORKSPACE_ARTIFACT_UPDATES_MIGRATION: readonly string[] = [
   `CREATE TABLE workspace_artifact_updates (
@@ -158,23 +169,6 @@ export const WORKSPACE_ARTIFACT_UPDATES_MIGRATION: readonly string[] = [
   `CREATE INDEX workspace_pins_item_idx ON workspace_pins(item_kind, item_id)`,
   RESOURCE_VERSIONS_QUEUE_ARTIFACT_UPDATE,
 ];
-
-/** One new version of a pinned artifact the ledger held. */
-export interface ArtifactUpdate {
-  resourceId: string;
-  version: number;
-}
-
-/** Empty the ledger, answering what it held; nothing before migration 111. */
-export function drainArtifactUpdates(sql: SqlStorage): ArtifactUpdate[] {
-  const ready = sql.exec(
-    `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_artifact_updates'`,
-  ).toArray().length === 1;
-  if (!ready) return [];
-  return sql.exec<{ resource_id: string; version: number }>(
-    `DELETE FROM workspace_artifact_updates RETURNING resource_id, version`,
-  ).toArray().map((row) => ({ resourceId: row.resource_id, version: Number(row.version) }));
-}
 
 /**
  * Every kind the table stores. `artifact` is not a `PinKind`: it travels in a

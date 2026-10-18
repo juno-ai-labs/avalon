@@ -4,7 +4,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import type { Region } from "@rally/contracts/regions";
 import { QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { Cable, RefreshCcw } from 'lucide-react';
-import { type PropsWithChildren, useEffect, useRef, useState } from 'react';
+import { type PropsWithChildren, useCallback, useEffect, useRef, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { desktopWorkspaceIdentityKey } from '../common/desktop';
 import { logError } from '../common/logger';
@@ -18,7 +18,8 @@ import { localCacheScope } from './lib/local-cache';
 import { FaviconApiProvider } from './lib/favicon-api';
 import { LocalCacheScopeProvider } from './lib/local-cache-scope';
 import { desktopBridge } from './lib/platform';
-import { restorePoppedOutArtifacts } from './lib/popped-out-artifacts';
+import { refreshPoppedOutArtifacts, restorePoppedOutArtifacts, type RefreshPoppedOutArtifactsInput } from './lib/popped-out-artifacts';
+import { useResourceHeads } from './lib/resource-heads';
 import { useWorkspaceQuery } from './lib/use-workspace';
 import {
   abandonPendingWorkstreamFeedOpen,
@@ -36,7 +37,7 @@ import { watchSystemAppearance, watchThemeBroadcast } from './lib/theme';
 import type { Workspace } from './lib/types';
 import { useWindowActivationTracking } from './lib/window-activation';
 import { useEscapeClosesWindow } from './lib/window-escape';
-import { WorkspaceSocketProvider } from './lib/workspace-socket';
+import { useOptionalWorkspaceSocket, WorkspaceSocketProvider } from './lib/workspace-socket';
 import { WorkspaceWorkstreamSockets } from './lib/workspace-workstream-sockets';
 import { BrowserImportProgress } from './lib/browser-import-progress';
 import { useOpenFirstWorkstream } from './lib/workstream-landing';
@@ -312,6 +313,65 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
     }).catch(() => undefined);
     return () => controller.abort();
   }, [api, workspace.id]);
+  // A popped-out window follows its artifact's new versions whether or not
+  // the conversation it came from is on screen. This is the only place that
+  // refreshes one on a new version: every version this window hears, from the
+  // workspace socket or a conversation's own, is a recorded head
+  // (`followResourceHeads`), and only a window main reports behind is
+  // refreshed. Aborted with the session rather than per head: a refresh
+  // cancelled by the next head would still hold its in-flight key when that
+  // head's run looks.
+  const resourceHeads = useResourceHeads();
+  const headRefreshes = useRef<{ controller: AbortController; inFlight: Set<string> } | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    headRefreshes.current = { controller, inFlight: new Set() };
+    return () => controller.abort();
+  }, [api]);
+  const refreshWindows = useCallback((resources: RefreshPoppedOutArtifactsInput['resources']) => {
+    const session = headRefreshes.current;
+    if (!api || !session || resources.length === 0) return;
+    void refreshPoppedOutArtifacts({
+      bridge: desktopBridge(),
+      inFlight: session.inFlight,
+      loadResourceContent: (id, signal) => api.getResourcePreviewContent(id, signal),
+      openSiteArtifact: (id) => api.openArtifact(id),
+      resources,
+      signal: session.controller.signal,
+    }).catch(() => {
+      // A window stays on its last complete version; the next head retries it.
+    });
+  }, [api]);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has('surface')) return;
+    refreshWindows(Object.values(resourceHeads).map((head) => ({
+      id: head.resourceId,
+      currentVersion: head.version,
+      title: head.title,
+      ...(head.mimeType ? { mimeType: head.mimeType } : {}),
+    })));
+  }, [refreshWindows, resourceHeads]);
+  // Versions are announced once and never replayed, so a window whose
+  // conversation is not open misses those written while the socket was away.
+  // Each reconnect after the first reads the current version of each open
+  // window's artifact, as restoring one at launch does.
+  const connectGeneration = useOptionalWorkspaceSocket()?.sidebarConnect?.generation ?? 0;
+  useEffect(() => {
+    if (!api || connectGeneration <= 1 || new URLSearchParams(window.location.search).has('surface')) return;
+    const signal = headRefreshes.current?.controller.signal;
+    void (async () => {
+      const open = Object.keys(await desktopBridge().getPoppedOutArtifactVersions());
+      const current = await Promise.all(open.map(async (id) => {
+        const head = (await api.getResourceVersions(id, signal))[0];
+        return head ? [{
+          id, currentVersion: head.version, title: head.title, ...(head.mimeType ? { mimeType: head.mimeType } : {}),
+        }] : [];
+      }));
+      refreshWindows(current.flat());
+    })().catch(() => {
+      // A window stays on its last complete version; the next head retries it.
+    });
+  }, [api, connectGeneration, refreshWindows]);
   const settingsSurface = new URLSearchParams(window.location.search).get('surface') === 'settings';
   if (settingsSurface) {
     return (

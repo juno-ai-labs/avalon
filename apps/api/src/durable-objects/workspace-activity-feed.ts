@@ -13,6 +13,7 @@ import { boundParameterChunks } from "./bound-parameters";
 import { listedResourceVisibilitySql } from "../services/resource-listing";
 import { breakoutListedSql, channelListedSql, mainOpenableSql, type Viewer } from "./listing-rules";
 import { artifactUpdateSql } from "./workspace-pin-storage";
+import { resourceVersionLedgerReady } from "./workspace-resource-versions";
 import { SPACE_CHANNEL_PAGE_SIZE, type WorkspaceSpaceStorage } from "./workspace-space-storage";
 
 /**
@@ -472,11 +473,13 @@ export class WorkspaceActivityFeed {
     });
   }
 
-  /** Whether this object has reached migration 111, whose index the artifact arm reads through. */
+  /**
+   * Whether this object has reached migration 111, whose index the artifact
+   * arm reads through. Its ledger table is how that shows, under the name
+   * migration 114 gave it.
+   */
   private artifactUpdatesReady(): boolean {
-    return this.storage.sql.exec(
-      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_artifact_updates'`,
-    ).toArray().length === 1;
+    return resourceVersionLedgerReady(this.storage.sql);
   }
 
   /** Whether this object has reached migration 101. */
