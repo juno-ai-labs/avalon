@@ -234,7 +234,7 @@ CREATE TABLE conversation_suggestions (
   kind               TEXT NOT NULL CHECK (kind IN ('merge_up', 'start_breakout')),
   judged_turn_id     TEXT NOT NULL,
   run_id             TEXT NOT NULL,
-  status             TEXT NOT NULL CHECK (status IN ('open', 'accepted', 'dismissed', 'expired')),
+  status             TEXT NOT NULL CHECK (status IN ('open', 'accepted', 'dismissed', 'expired', 'withdrawn')),
   draft_status       TEXT NOT NULL CHECK (draft_status IN ('pending', 'ready', 'failed')),
   draft_text         TEXT,
   draft_subject      TEXT,
@@ -322,10 +322,13 @@ the classifier saw plus the purpose and the judged turn whole.
   naming the sub-problem and what done looks like, plus a subject of a few
   words for the chip's title.
 
-A reply that is empty or over `MESSAGE_MAX_CHARACTERS` is a failed draft: the
-row goes to `failed`, the chip says so, and the action opens the card with
-the turn's own words or the launch pane empty, which is what Merge and New
-breakout do today. The drafter runs only after a confident positive, after
+A reply that is empty or over `MESSAGE_MAX_CHARACTERS`, a refusal, a
+deadline or an unreachable route is a failed draft: `draft_status` goes to
+`failed`, the row to `withdrawn`, and the event removes the chip. A
+suggestion without its words is not shown; the turn keeps its hover row.
+A withdrawn row is not a dismissal, so it buys no cooldown, and in the
+corpus it counts as a drafter failure, neither a hit nor a miss of the
+surface. The drafter runs only after a confident positive, after
 the row is inserted and shown, so its cost scales with positives and its
 latency never delays the chip. It does not run in shadow. The same role is
 what a Summarize button on the response card would call for a merge nobody
@@ -371,8 +374,7 @@ suggested; that button stays merge-back's phase 2.
   template, and it is content the viewer can already read in this
   conversation or is about to be shown to edit.
 - **Accept merge** opens the response card in the chip's place, prefilled
-  with the drafted note (or the judged turn's text when the draft failed) and
-  the suggestion's target.
+  with the drafted note and the suggestion's target.
 - **The response card** is `MergeResponseCard` in `packages/ui`, beside
   `MergeMessage` and built from its layout, so the editable preview and the
   landed merge are one block in two states. Its state lives on
@@ -393,9 +395,7 @@ suggested; that button stays merge-back's phase 2.
 - **The skeleton.** While `draft.status` is `pending` the chip draws a
   shimmer where the excerpt goes and, for a Breakout, where the subject goes
   in the title; the action is disabled and Dismiss is not. `ready` fills
-  both in place; `failed` drops the excerpt, adds a clause to the sentence
-  saying Rally could not draft the words, and enables the action with its
-  fallback. The shimmer respects `prefers-reduced-motion`.
+  both in place; a `withdrawn` row removes the chip. The shimmer respects `prefers-reduced-motion`.
 - **Accept breakout** calls `onStartSubstream(judgedTurnId)` and seeds the
   launch composer's draft with the drafted prompt. `ConversationSubstreamLaunch` gains
   an optional `initialDraft`, written to the launch composer's draft key once
@@ -501,7 +501,7 @@ that a quiet afternoon can flip for everybody.
 | JEV answers `continue_here` | Nothing shown; recorded |
 | Confidence at or below the threshold | Nothing shown; `confidence_below_threshold` recorded with the confidence |
 | JEV unavailable: HTTP, schema, deadline, no `TYPESAFE_API_KEY` | Nothing shown; `classifier_unavailable` with the provider's failure kind; settlement continues. Local development has no key and records unavailable, which is honest |
-| The drafter fails or over-runs | The row goes to `failed`; the chip stays, says so, and its action opens the card with the turn's words or the launch pane empty |
+| The drafter fails or over-runs | `draft_status` goes to `failed`, the row to `withdrawn`, and the chip is removed; the decision is still recorded |
 | The object is evicted between the decision and the draft | The row is `pending`; the alarm-recovered settlement retry finds it and resumes at the draft without judging again |
 | Settlement retries after a crash | Gate 3 finds the run already judged; no second call, no second row |
 | The description is empty or provisional | The question still runs; `purpose` is the first line of the request, which is what the loop would otherwise use. Breakout descriptions are summarized at their first settlement, before this step |
@@ -536,10 +536,10 @@ open-value test.
 | Suite | Covers | Proved by breaking |
 | --- | --- | --- |
 | `packages/agent-harness/src/turn-disposition.test.ts` (Node, stubbed provider) | The request bytes and key order; every outcome's mapping per conversation kind; the threshold's equality semantics; one case per way of not getting an answer; cancellation propagating | Unit-level; the literal is the only break available |
-| `apps/api/test-workers/turn-disposition-settlement.test.ts` (workerd) | A completed Breakout run with a fetch double answering `worth_carrying_up` leaves one open `merge_up` row and one event; a Thread run answering the breakout outcome leaves `start_breakout`; `continue_here` leaves nothing; a failed run and an unreachable provider leave settlement, naming and description untouched; a replayed settlement writes once; a merge marker resolves the row `accepted`; a capture at the judged turn resolves it; the third newer message expires it as `ignored` and the second does not; the row is published `pending` before the drafter is called and `ready` after, and `failed` when the drafting route refuses; a retry that finds a `pending` row drafts without judging again; unread and the directory are unchanged | Skip the expiry write (the open row survives a fourth message); skip the idempotency gate (two rows); move the step before the terminal commit (the turn is not yet final); publish only after the draft (no `pending` event) |
+| `apps/api/test-workers/turn-disposition-settlement.test.ts` (workerd) | A completed Breakout run with a fetch double answering `worth_carrying_up` leaves one open `merge_up` row and one event; a Thread run answering the breakout outcome leaves `start_breakout`; `continue_here` leaves nothing; a failed run and an unreachable provider leave settlement, naming and description untouched; a replayed settlement writes once; a merge marker resolves the row `accepted`; a capture at the judged turn resolves it; the third newer message expires it as `ignored` and the second does not; the row is published `pending` before the drafter is called and `ready` after, and `withdrawn` when the drafting route refuses; a retry that finds a `pending` row drafts without judging again; unread and the directory are unchanged | Skip the expiry write (the open row survives a fourth message); skip the idempotency gate (two rows); move the step before the terminal commit (the turn is not yet final); publish only after the draft (no `pending` event) |
 | `apps/api/test/conversation-suggestions-route.test.ts` (Node, typed double) | The dismiss route's admission and refusal codes; the snapshot field under contract 8 and its absence under 7 | Return the field to a contract-7 build |
 | `apps/api/test/agent-model-flags.test.ts` | The new role is routed, flagged and metered; the exhaustiveness checks on `AGENT_MODEL_FLAG_KEYS` and `ORGANIZATION_PAYS` compile | Type-level |
-| Renderer (`screens/workstream.test.tsx`, `components/workstream-blocks.test.tsx`, a new `merge-response-card.test.tsx` in `packages/ui`) | The line draws under the judged turn for a viewer who can act and not for one who cannot; it draws on the third newest turn and not on the fourth; a `pending` draft draws the skeleton with the action disabled and Dismiss enabled, `ready` fills it, `failed` keeps the chip with the fallback sentence; the composer carries nothing and never enters merge mode; accept opens the card in the chip's place with the drafted note and embeds; the hover action and the title menu open the same card, under the turn and at the end of the feed; Merge calls the route with the kept `clientMessageId`; Esc restores the line; accept opens the launch pane with the draft; dismiss hides at once | Component-level |
+| Renderer (`screens/workstream.test.tsx`, `components/workstream-blocks.test.tsx`, a new `merge-response-card.test.tsx` in `packages/ui`) | The line draws under the judged turn for a viewer who can act and not for one who cannot; it draws on the third newest turn and not on the fourth; a `pending` draft draws the skeleton with the action disabled and Dismiss enabled, `ready` fills it, `withdrawn` removes it; the composer carries nothing and never enters merge mode; accept opens the card in the chip's place with the drafted note and embeds; the hover action and the title menu open the same card, under the turn and at the end of the feed; Merge calls the route with the kept `clientMessageId`; Esc restores the line; accept opens the launch pane with the draft; dismiss hides at once | Component-level |
 | `packages/agent-harness/evals/turn-disposition/` | The runner on the synthetic fixture; the corpus is never committed | Not a test; the eval |
 
 The prompt's golden hash and the pinned question bytes are the regression
