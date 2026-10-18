@@ -27,7 +27,8 @@ holds it.
 | `apps/api/src/durable-objects/workspace-do.ts` | The RPCs: `channelMergeTarget`, `mergeThreadIntoChannel`, `removeChannelMessage`, `breakoutMergeTitles`. |
 | `apps/api/src/routes/spaces.ts` | The feed's contract-7 stripping, and `DELETE /spaces/:id/messages/:messageId` (Remove). |
 | `apps/api/src/services/conversation-tools.ts` | `conversation_merge`; see [`conversation-tools.md`](conversation-tools.md). |
-| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | `mergeTargetFor` (who can merge where), the composer's merge mode, the audience line, the Breakout card's **Merged** chip. |
+| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | `mergeTargetFor` (who can merge where), the one open merge draft behind the response card, `submitMerge`, the Breakout card's **Merged** chip. |
+| `packages/ui/src/components/merge-response-card.tsx` | `MergeResponseCard`, the merge as the parent will draw it, editable: where every merge is made. |
 | `packages/ui/src/components/merge-message.tsx` | `MergeMessage`, the one block every merge is drawn with, in a Thread and in a Channel; `MergedIntoDivider`, the source's mark of a merge. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MergeButton`, after New breakout in both hover rows, and a Thread merge drawn as `MergeMessage`. |
 | `apps/desktop/src/renderer/screens/channel.tsx` | `MergeCard`, a Channel merge in the feed as `MergeMessage`. |
@@ -58,8 +59,9 @@ The route, with `breakoutId`, runs in this order:
    mergedFrom: { breakoutId, title }, mergedByUserId, actingAgent }`. The
    title is the Breakout's, frozen at merge time, and left out of the
    admission's replay hash: a rename between a lost response and its retry
-   still replays. The composer's mentions and confirmed people travel with it,
-   as with any message. With `merge` present the
+   still replays. The `@` mentions typed in the note and the people confirmed
+   for a personal Thread travel with it as with any message (see "The
+   client"). With `merge` present the
    admission never classifies the message and never starts a run, whatever the
    room's size; the message still queues behind input waiting for Rally.
 
@@ -183,22 +185,28 @@ Main into its Channels when it is Organization-wide, the reader is a member,
 and the Channel is in their directory. "Merge to thread" or "Merge to <first
 Channel>" is the second hover action on every settled text message, after
 **New breakout**, and a row in the title menu that names the target at its
-end (the Thread, or "Channel"). Either opens the composer's merge mode with
-its own draft key (`…:merge`), prefilled with the message's words (empty from
-the menu). As the design's 5c·6 draws it, merge mode is the composer itself,
-in its tall form, not a bar over it:
-- an audience line naming who will see it and the artifacts the draft cites
-  ("The 6 people in Cold Outreach will see this and can open Sequence B");
-- a green target pill among the tools, whose menu picks a thread's Channel
-  and cancels;
-- "Enter to merge · Esc to cancel", and a labelled **Merge** button.
-
-These are generic `ComposerInput` slots (`notice`, `toolsAccessory`,
-`submitContent`) plus `WorkstreamComposer`'s `onCancel`, so another composer
-mode can use them. Merge
+end (the Thread, or "Channel"). Either opens the response card,
+`MergeResponseCard`, in the feed: under the turn the hover action or a
+suggestion named, or after the newest turn from the menu. It is the merge as
+the parent will draw it, `MergeMessage`'s layout made editable, under a tag
+line naming the parent that will see it: the source's mark and name, "merged
+by" and the person, the words in a text box prefilled with the message's
+words (empty from the menu), the artifacts the words cite as removable cards,
+the audience line ("The 6 people in Cold Outreach will see this and can open
+Sequence B"), then a footer with the green target pill (whose menu picks a
+thread's Channel), "Enter to merge · Esc to cancel", **Cancel** and
+**Merge**. Enter merges, Shift+Enter breaks a line, Esc puts the chip back or
+closes the card. The draft persists under the existing `…:merge` key until
+merged or cancelled. The composer below stays an ordinary composer: its merge
+mode is gone, and its `notice`, `toolsAccessory` and `submitContent` slots
+stay for other modes. The card's body is a plain text box without the
+composer's mention picker; an `@` mention typed in a Breakout merge note still
+resolves against the members the way a message's does (`api.mergeConversation`),
+and one that names somebody not yet in a personal Thread asks first, in the
+same dialog the composer shows, before the merge carries them in. Merge
 keeps one `clientMessageId` for the same words and target until it succeeds,
 so a send whose response was lost is retried as a replay; new words or a new
-target are a new merge. A merge that finishes after its composer was cancelled
+target are a new merge. A merge that finishes after its card was cancelled
 and another opened leaves the newer one and its draft alone. A Channel the
 reader reaches only `through_channel` is not offered. The thread's Channels
 come from its directory row, which keeps placements current, not from the
@@ -207,17 +215,17 @@ is the server's: `GET /conversations/:parentId/merge-channels` lists the
 Channels this person can merge into, earliest placement first, read in the
 background (`useMergeChannelOrder`). The Merge label, the title menu and the
 picker therefore lead with the Channel the server would choose, as the PRD
-sets the default. Until that read lands, the directory's order stands in. The merge
-composer has no attach control: a merge embeds artifacts by link. Stop still
-stops the run. A title-menu request opens merge mode once; returning to the
-pane does not reopen it. A Channel merge card's artifact opens in its thread
-with the artifact's panel open.
+sets the default. Until that read lands, the directory's order stands in. The
+card has no attach control: a merge embeds artifacts by link. A title-menu
+request opens the card once; returning to the pane does not reopen it. A
+Channel merge card's artifact opens in its thread with the artifact's panel
+open.
 
 A merge that lands takes the reader to it, through `onMerged` on
 `ConversationSurface`: a Breakout's merge closes the Breakout and scrolls its
 Thread to the new message; a Thread's merge opens the Channel it landed in and
 scrolls the feed to it once it is the newest row. Only the merge whose
-composer is still open moves the reader; a pane closed mid-merge moves nobody,
+card is still open moves the reader; a pane closed mid-merge moves nobody,
 and a Thread scroll still waiting for its message is dropped once the reader
 scrolls.
 
@@ -324,6 +332,32 @@ choice, made in review: a source that always says where its work went is worth
 more than keeping a private Channel's name hidden.
 
 ## Changelog
+
+### 2026-10-18 — Every merge is made in the response card, and a merge resolves a suggestion
+
+**What changed:** The composer's merge mode is gone. `MergeResponseCard`
+(`packages/ui`) is the merge as the parent will draw it, made editable: the
+tag line "Merge, as {parent} will see it", the source's mark and name,
+"merged by" and the person, the words in a text box, the embeds the words cite
+as removable cards, the audience line, then a footer with the target pill, the
+hint, Cancel and Merge. A solid card where the chip is dashed: this one is
+about to exist. It opens where the merge was asked
+for: under a turn from a suggestion or that turn's Merge hover action, and at
+the end of the feed, above the composer, from the title menu. Enter merges,
+Shift+Enter breaks a line, Esc cancels; the route, the admission and the kept
+`clientMessageId` are unchanged. The `MessageMergeAction` now names the turn
+beside the words. On the server, the `conversation_merged_into` marker
+`markSource` appends resolves the open merge suggestions on turns at or before
+it, in the marker's own commit. This records a drift from the frozen merge-back
+PRD, per `prds.md`; the suggestion that drove it is owned by
+[`conversation-suggestions.md`](conversation-suggestions.md).
+
+**Why:** the product owner's call, and it holds for every merge: the composer
+is for what a person is writing to the conversation, and a merge is written to
+the parent. The card is the parent's own merge block made editable, so what
+the person sees is what lands, which merge mode's plain text box could not
+promise. Keeping merge mode for the hover action and the title menu and using
+the card only for suggestions would have been two editors for one write.
 
 ### 2026-10-16 — The source shows it was merged
 

@@ -1,4 +1,4 @@
-import type { InferenceDelayState } from '@rally/contracts';
+import type { ConversationSuggestion, InferenceDelayState } from '@rally/contracts';
 import { createContext, useContext, useRef, type PropsWithChildren } from 'react';
 
 export interface StreamCursor {
@@ -40,6 +40,8 @@ export interface StreamCursor {
 export interface WorkstreamSocketResumeState {
   lastSequence: number;
   activeInferenceDelays: InferenceDelayState[];
+  /** The open suggestions as of the last snapshot or event: a remount that resumes after the cursor is replayed nothing, so it starts from these. */
+  suggestions: ConversationSuggestion[];
   readonly streamCursors: Map<string, StreamCursor>;
 }
 
@@ -85,7 +87,7 @@ export function useWorkstreamSocketResumeState(
   const key = `${parentId}:${substreamId}`;
   let resumeState = registry.get(key);
   if (!resumeState) {
-    resumeState = { lastSequence: 0, activeInferenceDelays: [], streamCursors: new Map() };
+    resumeState = { lastSequence: 0, activeInferenceDelays: [], suggestions: [], streamCursors: new Map() };
     registry.set(key, resumeState);
   }
   return resumeState;

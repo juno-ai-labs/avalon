@@ -2934,7 +2934,8 @@ describe('MessageBlock merge-back', () => {
     expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
       .toEqual(['New breakout', 'Merge to thread', 'Copy', 'Image', 'PDF']);
     fireEvent.click(screen.getByRole('button', { name: 'Merge to thread' }));
-    expect(onMerge).toHaveBeenCalledExactlyOnceWith('Sequence B is ready.');
+    // The turn travels with the words so the host can open the response card under it.
+    expect(onMerge).toHaveBeenCalledExactlyOnceWith('Sequence B is ready.', 'turn-12');
   });
 
   it('puts Merge after New breakout under a person’s own message too', () => {

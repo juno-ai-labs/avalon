@@ -4,6 +4,7 @@ import { useCachedWorkstreamSummary } from './use-workstreams-query';
 import { safeParseSocketEvent } from "@rally/contracts";
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import {
+  type ConversationSuggestion,
   ServerSocketEventSchema,
   WorkstreamSocketCommandResultSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
@@ -136,6 +137,8 @@ export interface WorkstreamSocketConnection {
   workspaceSocketState: 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
   activeInferenceDelays: InferenceDelayState[];
   activeCompaction: AgentCompactionState | null;
+  /** The open conversation suggestions, as the room last published them; the surface decides which are visible. */
+  suggestions: ConversationSuggestion[];
   createMessage(input: CreateWorkstreamMessageInput): Promise<AcceptedWorkstreamTurn>;
   answerElicitation(
     elicitationId: string,
@@ -764,6 +767,9 @@ export function useWorkstreamSocket(
   const [sendReady, setSendReady] = useState(false);
   const [activeInferenceDelays, setActiveInferenceDelays] = useState<InferenceDelayState[]>(resumeState.activeInferenceDelays);
   const [activeCompaction, setActiveCompaction] = useState<AgentCompactionState | null>(null);
+  // From the resume state: a remount that resumes after the cursor replays no
+  // snapshot, and the open chips must not vanish until a forced one.
+  const [suggestions, setSuggestions] = useState<ConversationSuggestion[]>(resumeState.suggestions);
   const attempts = useRef(0);
   const retryOpening = useCallback((): void => {
     setOpeningError(undefined);
@@ -1590,6 +1596,8 @@ export function useWorkstreamSocket(
         else queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
         setActiveCompaction(event.activeCompaction);
         updateInferenceDelays(event.activeInferenceDelays);
+        resumeState.suggestions = event.suggestions ?? [];
+        setSuggestions(resumeState.suggestions);
         queryClient.setQueryData<number>(
           workstreamSocketSnapshotGenerationQueryKey(parentId, substreamId),
           (current) => (current ?? 0) + 1,
@@ -1726,6 +1734,13 @@ export function useWorkstreamSocket(
         // versioned projection. Both conditions are the writer's, and
         // `patchCachedGeneratedIcon` holds the reasons for each.
         if (event.icon && substreamId === '0') patchCachedGeneratedIcon(queryClient, parentId, event.icon);
+      } else if (event.type === 'conversation_suggestion_changed') {
+        // The row's whole state each time: replace what is held for that id,
+        // and drop it once it is no longer open. The newest-three rule that
+        // hides a line is the surface's to apply against the feed it holds.
+        const others = resumeState.suggestions.filter((suggestion) => suggestion.suggestionId !== event.suggestion.suggestionId);
+        resumeState.suggestions = event.suggestion.status === 'open' ? [...others, event.suggestion] : others;
+        setSuggestions(resumeState.suggestions);
       } else if (event.type === 'workstream_scope_changed') {
         // Whoever this change excluded has already been disconnected by the
         // room, so everyone still here may read it and only needs the lock on
@@ -2506,6 +2521,7 @@ export function useWorkstreamSocket(
       workspaceSocketState,
       activeCompaction,
       activeInferenceDelays,
+      suggestions,
       answerElicitation,
       createMessage,
       loadTranscriptRange,
@@ -2519,6 +2535,7 @@ export function useWorkstreamSocket(
       admissionAllowed,
       activeCompaction,
       activeInferenceDelays,
+      suggestions,
       answerElicitation,
       createMessage,
       loadTranscriptRange,
