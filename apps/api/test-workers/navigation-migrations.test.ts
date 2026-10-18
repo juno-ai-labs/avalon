@@ -165,3 +165,66 @@ describe("migration 112", () => {
     });
   });
 });
+
+describe("migration 113", () => {
+  it("upgrades a populated Organization at 112, keeping version causes and recording a rename as one", async () => {
+    const workspaceId = "00000000-0000-7000-8000-0000000000e1";
+    const resource = "00000000-0000-7000-8000-0000000000e2";
+    const run = "00000000-0000-7000-8000-0000000000e3";
+    const stub = env.MIGRATION_PROBE_DO!.getByName("renamed-cause-v112");
+    await stub.ping();
+    await runInDurableObject(stub, (_instance, state) => {
+      const before = WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 112);
+      expect(before.at(-1)?.version).toBe(112);
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage, migrations: before, component: "workspace_do", workerVersionId: "before-renamed-cause", now: 1,
+      });
+      const sql = state.storage.sql;
+      sql.exec(`INSERT INTO workspace_identity (id, workspace_id, region, placement_affinity, created_at, updated_at)
+        VALUES (1, ?, 'global', 'wnam', 0, 0)`, workspaceId);
+      sql.exec(`INSERT INTO resources
+          (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
+           content_ref, content_sha256, metadata_json, attachment_status, model_content_status,
+           created_at, updated_at, revision_author_kind, revision_author_run_id, revision_cause)
+        VALUES (?, ?, 'generated_file', 'avalon_generated', 'terminal:plan.md', 'Plan', 'text/markdown',
+                'global/v1', 'a', '{}', 'attached', 'pending', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z',
+                'agent', ?, 'created')`, resource, workspaceId, run);
+      sql.exec(`UPDATE resources SET content_ref = 'global/v2', content_sha256 = 'b',
+          revision_author_kind = 'agent', revision_author_run_id = ?, revision_cause = 'published'
+        WHERE id = ?`, run, resource);
+      sql.exec(`INSERT INTO workspace_pins (user_id, item_kind, item_id, parent_id, position, created_at, updated_at)
+        VALUES (?, 'artifact', ?, ?, 0, 0, 0)`, OWNER, resource, NEWER);
+      sql.exec(`DELETE FROM workspace_artifact_updates`);
+    });
+
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS, component: "workspace_do",
+        workerVersionId: "with-renamed-cause", now: 2,
+      });
+      const sql = state.storage.sql;
+      sql.exec(`UPDATE resources SET title = 'Plan, renamed',
+          revision_author_kind = 'member', revision_author_user_id = ?, revision_cause = 'renamed'
+        WHERE id = ?`, OWNER, resource);
+      sql.exec(`UPDATE resources SET content_ref = 'global/v3', content_sha256 = 'c',
+          revision_author_kind = 'agent', revision_author_run_id = ?, revision_cause = 'published'
+        WHERE id = ?`, run, resource);
+      expect(sql.exec(`SELECT version, title, cause, author_kind FROM resource_versions
+          WHERE resource_id = ? ORDER BY version`, resource).toArray()).toEqual([
+        { version: 1, title: "Plan", cause: "created", author_kind: "agent" },
+        { version: 2, title: "Plan", cause: "published", author_kind: "agent" },
+        { version: 3, title: "Plan, renamed", cause: "renamed", author_kind: "member" },
+        { version: 4, title: "Plan, renamed", cause: "published", author_kind: "agent" },
+      ]);
+      // The capture triggers came back: staging is consumed after each version.
+      expect(sql.exec(`SELECT revision_cause, revision_author_kind FROM resources WHERE id = ?`, resource).one())
+        .toEqual({ revision_cause: null, revision_author_kind: null });
+      // A pinner hears about the republish, not the rename.
+      expect(sql.exec(`SELECT version FROM workspace_artifact_updates WHERE resource_id = ?`, resource).toArray())
+        .toEqual([{ version: 4 }]);
+      expect(() => sql.exec(`UPDATE resources SET title = 'Plan again', revision_cause = 'invented' WHERE id = ?`, resource))
+        .toThrow(/CHECK constraint failed/u);
+      expect(sql.exec("PRAGMA foreign_key_check").toArray()).toEqual([]);
+    });
+  });
+});
