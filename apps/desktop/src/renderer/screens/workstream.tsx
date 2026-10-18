@@ -929,6 +929,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const breakoutExpandAction = expandToggle(breakoutExpanded, shownMode === 'split', setBreakoutExpanded);
 
   const mainPane = !mainVisible ? null : <ConversationSurface
+    linkSpaceId={linkSpaceId}
     breakouts={breakoutMarks}
     mergeRequest={mergeRequest?.substreamId === '0' ? mergeRequest.nonce : null}
     onMerged={showMerge}
@@ -974,6 +975,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     }}
     workstreamContext={conversationScoped ? undefined : parent.data}
   /> : <ConversationSurface
+    linkSpaceId={linkSpaceId}
     mergeRequest={mergeRequest && mergeRequest.substreamId === openBreakoutId ? mergeRequest.nonce : null}
     onMerged={showMerge}
     // A reader who reaches only this Breakout cannot open the thread its merge
