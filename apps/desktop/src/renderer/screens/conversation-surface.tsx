@@ -34,7 +34,9 @@ import {
   type WorkstreamTranscriptSnapshot,
   type SpaceSummary,
   type ConversationMergeResult,
+  type ConversationSuggestion,
   mergeResourceIds,
+  suggestionTurnIsVisible,
 } from '@rally/contracts';
 import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
 import type { SubstreamInitialContext } from '@rally/contracts/substream-creation';
@@ -45,9 +47,8 @@ import { artifactPinActions, combineResourceActions } from '../lib/artifact-pin-
 import { breakoutResourceActions } from '../lib/breakout-resource-actions';
 import { ApiError, type MentionIdentity } from '../lib/api';
 import { useChannelRail } from '../lib/channel-rails';
-import { writeDraftText } from '../lib/draft-cache';
-import type { PendingAttachment } from '../lib/use-file-attachments';
-import { IconCheck, IconChevronDown, IconCloudDownload, IconCornerUpLeft, IconUsers } from '@tabler/icons-react';
+import { readDraftText, writeDraftText } from '../lib/draft-cache';
+import { IconCheck, IconChevronDown, IconCloudDownload, IconCornerDownRight, IconCornerUpLeft } from '@tabler/icons-react';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useBrowserRailLinks } from '../lib/browser-rail-links';
@@ -132,7 +133,9 @@ import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, LoadingStat
 import { ConversationAccessRequest } from '../components/conversation-access-request';
 import { useAccessRequests, useDecideAccessRequest } from '../lib/access-requests';
 import { CopyButton } from '../components/copy-button';
-import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
+import { feedRowKind, MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
+import { SuggestionChip, suggestionExcerpt } from '@rally/ui/components/conversation-suggestion';
+import { MergeResponseCard } from '@rally/ui/components/merge-response-card';
 import {
   ConnectorConnectionsProvider,
   connectorConnectionCardInput,
@@ -1114,13 +1117,14 @@ export function conversationReplyCount(transcript: readonly Message[]): number {
 export interface ConversationSubstreamLaunch {
   /** The main-conversation turn the substream branches from, or null from the sidebar. */
   throughTurnId: string | null;
+  /** A suggestion's drafted opening prompt, seeded into the launch composer once. */
+  initialDraft?: string | undefined;
   launching: LaunchingSubstream | null;
   error?: string | undefined;
   onCancel: () => void;
   onCreate: SubstreamLaunchProps['onCreate'];
 }
 
-const NO_PENDING_ATTACHMENTS: PendingAttachment[] = [];
 
 /**
  * Bring this turn into view; a new nonce asks again for the same turn.
@@ -1284,7 +1288,8 @@ export interface ConversationSurfaceProps {
   /** Parent-owned sidebar data; never substitute the selected child's roster or inventory. */
   workstreamContext?: WorkstreamDetail;
   sidebarScope?: "workstream" | "conversation";
-  onStartSubstream?: (throughTurnId: string) => void;
+  /** Opens the launch pane at a turn; a suggestion passes the drafted opening prompt to seed it with. */
+  onStartSubstream?: (throughTurnId: string, initialDraft?: string) => void;
   /**
    * A substream being written in front of this conversation.
    *
@@ -1313,7 +1318,7 @@ export interface ConversationSurfaceProps {
   onOpenBreakout?: (substreamId: string) => void;
   /** Opens the merge a Merged chip in this feed names, where it landed. */
   onOpenMerge?: (merge: MessageMergedInto) => void;
-  /** Open the composer's merge mode, empty: the title menu's Merge. A new nonce asks again. */
+  /** Open the response card at the end of the feed, empty: the title menu's Merge. A new nonce asks again. */
   mergeRequest?: number | null;
   /** A merge from this conversation landed: the host opens where it went. */
   onMerged?: (result: ConversationMergeResult) => void;
@@ -1426,7 +1431,6 @@ export function ConversationSurface({
   const setRailVariant = useUiStore((state) => state.setRailVariant);
   const setRailWidth = useUiStore((state) => state.setRailWidth);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const mergeFileInputRef = useRef<HTMLInputElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const transcriptContentRef = useRef<HTMLDivElement>(null);
   const conversationGenerationRef = useRef(0);
@@ -1449,19 +1453,23 @@ export function ConversationSurface({
   // opened prefilled from a message's words. `channelId` is the Channel a
   // thread merges into, picked from its Channels; a Breakout merges into its
   // Thread and names none.
-  const [mergeMode, setMergeMode] = useState<{ nonce: number; channelId: string | null } | null>(null);
-  // The merge draft as it is typed, for the audience line's artifact names.
+  // The response card (docs/conversation-merge.md): open under the turn the
+  // merge was asked from, or at the end of the feed from the title menu.
+  const [mergeCard, setMergeCard] = useState<{ nonce: number; channelId: string | null; anchorTurnId: string | null } | null>(null);
+  // The merge note as it is typed, for the audience line's artifact names and the card.
   const [mergeDraft, setMergeDraft] = useState('');
+  // Suggestions this reader dismissed, hidden at once while the room confirms.
+  const [dismissedSuggestionIds, setDismissedSuggestionIds] = useState<ReadonlySet<string>>(() => new Set());
   const [mergeError, setMergeError] = useState<string | undefined>();
   const [merging, setMerging] = useState(false);
   // One operation id per merge until it succeeds: a send whose response was
   // lost is retried with the same id, so the server answers it as a replay
   // rather than posting it twice. New words, or a new target, are a new merge.
   const mergeAttemptRef = useRef<{ key: string; id: string } | null>(null);
-  useEffect(() => { setMergeMode(null); setMergeError(undefined); }, [id, substreamId]);
+  useEffect(() => { setMergeCard(null); setMergeError(undefined); }, [id, substreamId]);
   const activeSpaces = useSpaceDirectories().active.data;
   const threadPlacements = useCachedWorkstreamPlacements(id);
-  const startMergeRef = useRef<((text: string) => void) | undefined>(undefined);
+  const startMergeRef = useRef<((text: string, anchorTurnId?: string) => void) | undefined>(undefined);
   // A request counts once: the one standing when this surface mounts was
   // already answered by an earlier mount, so coming back does not reopen it.
   const handledMergeRequestRef = useRef(mergeRequest);
@@ -3209,20 +3217,127 @@ export function ConversationSurface({
     spaces: activeSpaces?.items ?? [],
   });
   const mergeChannel = merge?.kind === 'channel'
-    ? merge.channels.find((channel) => channel.id === mergeMode?.channelId) ?? merge.channels[0]!
+    ? merge.channels.find((channel) => channel.id === mergeCard?.channelId) ?? merge.channels[0]!
     : null;
   const mergeDraftKey = `${workstreamDraftKey(workspaceRegion, workspaceId, id, substreamId)}:merge`;
-  const startMerge = merge ? (text: string): void => {
-    setMergeDraft(text);
-    void writeDraftText(mergeDraftKey, text).then(() => {
-      setMergeError(undefined);
-      setMergeMode({ nonce: Date.now(), channelId: merge.kind === 'channel' ? merge.channels[0]!.id : null });
-    });
+  // Opens the card. The words given win; an empty request from the title menu
+  // reopens whatever an earlier card left under the draft key.
+  const startMerge = merge ? (text: string, anchorTurnId?: string): void => {
+    const nonce = Date.now();
+    void (text ? writeDraftText(mergeDraftKey, text).then(() => text) : readDraftText(mergeDraftKey).then((draft) => draft?.text ?? ''))
+      .then((words) => {
+        setMergeDraft(words);
+        setMergeError(undefined);
+        setMergeCard({ nonce, channelId: merge.kind === 'channel' ? merge.channels[0]!.id : null, anchorTurnId: anchorTurnId ?? null });
+      });
   } : undefined;
-  mergeNonceRef.current = mergeMode?.nonce ?? null;
+  mergeNonceRef.current = mergeCard?.nonce ?? null;
+  const changeMergeDraft = (words: string): void => {
+    setMergeDraft(words);
+    void writeDraftText(mergeDraftKey, words);
+  };
+  // The conversation suggestions (docs/conversation-suggestions.md): drawn
+  // under the judged turn only while that turn is among the newest three
+  // messages the feed holds, counting what people and Rally said and not tool
+  // cards or system rows, and only for a viewer who can take the action.
+  // Not memoized: this sits below the surface's early returns, where a hook
+  // cannot go, and one pass over the visible rows is cheaper than the feed's
+  // own render.
+  const readableTurnIds: string[] = [];
+  for (const message of visibleTranscript) {
+    const turnId = message.transcriptTurnId;
+    if (!turnId || feedRowKind(message) === 'event') continue;
+    if (readableTurnIds[readableTurnIds.length - 1] !== turnId) readableTurnIds.push(turnId);
+  }
+  const canStartBreakout = parentKind === 'workstream' && substreamId === '0' && Boolean(onStartSubstream);
+  const mergeTargetName = merge ? (merge.kind === 'thread' ? merge.threadTitle : (mergeChannel?.name ?? merge.channels[0]!.name)) : null;
+  const textOfTurn = (turnId: string): string => visibleTranscript.find((message) => message.transcriptTurnId === turnId && message.text)?.text ?? '';
+  const dismissSuggestion = (suggestion: ConversationSuggestion): void => {
+    setDismissedSuggestionIds((current) => new Set([...current, suggestion.suggestionId]));
+    void api?.dismissSuggestion(id, substreamId, suggestion.suggestionId).catch(() => {
+      setDismissedSuggestionIds((current) => new Set([...current].filter((other) => other !== suggestion.suggestionId)));
+    });
+  };
+  const visibleSuggestions = socketConnection.suggestions.filter((suggestion) =>
+    suggestion.status === 'open'
+    && !dismissedSuggestionIds.has(suggestion.suggestionId)
+    && suggestionTurnIsVisible(suggestion.judgedTurnId, readableTurnIds)
+    && (suggestion.kind === 'merge_up' ? merge !== null && startMerge !== undefined : canStartBreakout));
+  const afterTurn = new Map<string, React.ReactNode>();
+  for (const suggestion of visibleSuggestions) {
+    if (mergeCard?.anchorTurnId === suggestion.judgedTurnId) continue;
+    const pending = suggestion.draft.status === 'pending';
+    if (suggestion.kind === 'merge_up') {
+      const words = suggestion.draft.text ?? textOfTurn(suggestion.judgedTurnId);
+      afterTurn.set(suggestion.judgedTurnId, <SuggestionChip
+        action={{ label: 'Merge', onAct: () => startMerge?.(words, suggestion.judgedTurnId) }}
+        excerpt={pending ? null : suggestionExcerpt(words)}
+        kind="merge_up"
+        label={`Suggestion: merge to ${mergeTargetName ?? ''}`}
+        onDismiss={() => dismissSuggestion(suggestion)}
+        pending={pending}
+        sentence={<>This might be a good time to merge this back into <strong>{mergeTargetName}</strong>.</>}
+        title={<>Merge to <strong>{mergeTargetName}</strong></>}
+      />);
+    } else {
+      afterTurn.set(suggestion.judgedTurnId, <SuggestionChip
+        action={{ label: 'Start', onAct: () => onStartSubstream?.(suggestion.judgedTurnId, suggestion.draft.text ?? undefined) }}
+        excerpt={!pending && suggestion.draft.text ? suggestionExcerpt(suggestion.draft.text) : null}
+        kind="start_breakout"
+        label={`Suggestion: breakout${suggestion.draft.subject ? ` ${suggestion.draft.subject}` : ''}`}
+        onDismiss={() => dismissSuggestion(suggestion)}
+        pending={pending}
+        sentence="Want to break this out?"
+        title={pending || !suggestion.draft.subject
+          ? <>Breakout{pending && <>: <span aria-label="Rally is choosing a subject" className="skeleton-bar suggestion-chip-subject-skeleton" /></>}</>
+          : <>Breakout: <strong>{suggestion.draft.subject}</strong></>}
+      />);
+    }
+  }
+  // The response card (docs/conversation-merge.md): the merge as the parent
+  // will draw it, editable, under the turn it was asked from or at the end.
+  const mergeResources = [...displayedDetail.resources, ...(workstreamContext?.id === id ? workstreamContext.resources : [])];
+  const mergeCardNode = mergeCard && merge ? <MergeResponseCard
+    audience={mergeAudience(
+      merge,
+      mergeChannel,
+      merge.kind === 'thread' && workstreamContext?.id === id ? workstreamContext.participants.length : null,
+      mergeArtifactTitles(mergeDraft, mergeResources),
+    )}
+    embeds={mergeResourceIds(mergeDraft).flatMap((token) => {
+      const resource = mergeResources.find((candidate) => candidate.id === token || candidate.slug === token);
+      return resource ? [{
+        id: token,
+        title: resource.title,
+        onRemove: () => changeMergeDraft(mergeDraft
+          .replace(new RegExp(`!?\\[[^\\]]*\\]\\(resource://${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`, 'g'), '')
+          .replace(/\n{3,}/g, '\n\n').trim()),
+      }] : [];
+    })}
+    error={mergeError}
+    label={`Merge to ${mergeTargetName ?? ''}`}
+    mergedBy={<span>{session?.user.name ?? 'You'}</span>}
+    onCancel={() => setMergeCard(null)}
+    onChange={changeMergeDraft}
+    onSubmit={() => { void submitMerge(mergeDraft, []).catch(() => undefined); }}
+    quote={merge.kind === 'channel' ? ((visibleTranscript.find((message) => message.authorType === 'human' && message.text)?.text ?? '').split('\n')[0] ?? null) : null}
+    source={{ mark: <IconCornerDownRight aria-hidden="true" size={10} stroke={2} />, title: displayedDetail.title }}
+    submitting={merging}
+    targetPill={<MergeTargetPill
+      channelId={mergeChannel?.id ?? null}
+      label={merge.kind === 'thread' ? 'Merge to thread' : `Merge to ${mergeChannel?.name ?? ''}`}
+      onCancel={() => setMergeCard(null)}
+      onPick={(channelId) => setMergeCard({ ...mergeCard, channelId })}
+      target={merge}
+    />}
+    time={<span>now</span>}
+    value={mergeDraft}
+  /> : null;
+  const mergeCardAnchored = Boolean(mergeCard?.anchorTurnId && readableTurnIds.includes(mergeCard.anchorTurnId));
+  if (mergeCardNode && mergeCard?.anchorTurnId && mergeCardAnchored) afterTurn.set(mergeCard.anchorTurnId, mergeCardNode);
   const submitMerge = async (text: string, mentions: MentionIdentity[], confirmedParticipantUserIds?: string[]): Promise<void> => {
     if (!api || !merge) return;
-    const nonce = mergeMode?.nonce ?? null;
+    const nonce = mergeCard?.nonce ?? null;
     const draftKey = mergeDraftKey;
     setMerging(true);
     setMergeError(undefined);
@@ -3235,7 +3350,7 @@ export function ConversationSurface({
       const result = await api.mergeConversation(id, { body: text, clientMessageId: mergeAttemptRef.current.id, ...target });
       mergeAttemptRef.current = null;
       const current = mergeNonceRef.current;
-      if (current === nonce) setMergeMode(null);
+      if (current === nonce) setMergeCard(null);
       // Cancelled and not reopened, the draft is these words; reopened, it is
       // the newer merge's.
       if (current === nonce || current === null) void writeDraftText(draftKey, '');
@@ -3364,6 +3479,7 @@ export function ConversationSurface({
         draft={{
           throughTurnId: substreamLaunch.throughTurnId,
           provenance: branchProvenance(visibleTranscript, substreamLaunch.throughTurnId),
+          ...(substreamLaunch.initialDraft ? { initialDraft: substreamLaunch.initialDraft } : {}),
         }}
         error={substreamLaunch.error}
         launching={substreamLaunch.launching}
@@ -3595,6 +3711,7 @@ export function ConversationSurface({
                 label: mergeLabel(merge),
                 onMerge: startMerge,
               } } : {})}
+              {...(afterTurn.size > 0 ? { afterTurn } : {})}
               {...(onOpenBreakout ? { onOpenBreakout } : {})}
               {...(onOpenMerge ? { onOpenMerge } : {})}
               {...(breakoutCards ? { breakoutCards } : {})}
@@ -3646,54 +3763,8 @@ export function ConversationSurface({
             || stopAcknowledgement.pendingRunId !== null
             || stopAcknowledgement.runId !== null)
             && <RunStopAcknowledgement settled={stopAcknowledgement.runId !== null} />}
-          {mergeMode && merge ? <>
-            <WorkstreamComposer
-              api={api ?? undefined}
-              ariaLabel="Merge message"
-              className="is-merge-composer"
-              attachments={NO_PENDING_ATTACHMENTS}
-              autoFocus
-              draftKey={mergeDraftKey}
-              error={mergeError}
-              fileInputRef={mergeFileInputRef}
-              key={`${conversationAddress}:merge:${mergeMode.nonce}`}
-              members={visibleMembers}
-              onOpenAttachment={openAttachment}
-              onRemoveAttachment={() => undefined}
-              onRetryAttachment={() => undefined}
-              notice={<><IconUsers aria-hidden="true" size={14} stroke={1.8} />{mergeAudience(
-                merge,
-                mergeChannel,
-                merge.kind === 'thread' && workstreamContext?.id === id ? workstreamContext.participants.length : null,
-                // A Breakout's words can cite what its Thread holds, so both are read.
-                mergeArtifactTitles(mergeDraft, [
-                  ...displayedDetail.resources,
-                  ...(workstreamContext?.id === id ? workstreamContext.resources : []),
-                ]),
-              )}</>}
-              onCancel={() => setMergeMode(null)}
-              onDraftChange={setMergeDraft}
-              onSend={(text, mentions, confirmedParticipantUserIds) => submitMerge(text, mentions, confirmedParticipantUserIds)}
-              onStop={async () => {
-                await stop.mutateAsync();
-              }}
-              placeholder="Write what the readers should know…"
-              sending={merging}
-              footerHint="Enter to merge · Esc to cancel"
-              submitContent={<><IconCornerUpLeft aria-hidden="true" size={14} stroke={2} /><span>Merge</span></>}
-              submitLabel="Merge"
-              toolsAccessory={<MergeTargetPill
-                channelId={mergeChannel?.id ?? null}
-                label={merge.kind === 'thread' ? 'Merge to thread' : `Merge to ${mergeChannel?.name ?? ''}`}
-                onCancel={() => setMergeMode(null)}
-                onPick={(channelId) => setMergeMode({ ...mergeMode, channelId })}
-                target={merge}
-              />}
-              substreamId={substreamId}
-              uploading={false}
-              workstream={displayedDetail}
-            />
-          </> : <WorkstreamComposer
+          {mergeCardNode && !mergeCardAnchored && <div className="merge-response-card-end">{mergeCardNode}</div>}
+          <WorkstreamComposer
             api={api ?? undefined}
             placeholder={parentKind === 'automation'
               ? 'Ask your Sidekick…'
@@ -3740,7 +3811,7 @@ export function ConversationSurface({
             draftKey={workstreamDraftKey(workspaceRegion, workspaceId, displayedDetail.id, substreamId)}
             substreamId={substreamId}
             {...(composerMenuActions ? { menuActions: composerMenuActions } : {})}
-          />}
+          />
         </div>
       </div>
       </>}

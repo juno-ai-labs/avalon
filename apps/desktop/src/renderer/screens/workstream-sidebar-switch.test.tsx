@@ -191,6 +191,7 @@ describe('the right sidebar does not follow a channel switch', () => {
       sendReady: true,
       state: 'connected',
       workspaceSocketState: 'connected',
+      suggestions: [],
     });
   });
 

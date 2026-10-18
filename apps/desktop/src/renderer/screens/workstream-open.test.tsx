@@ -210,6 +210,7 @@ describe('socket-first channel open', () => {
     api.getScopeSharingOptions.mockResolvedValue({ scopes: [], completeWorkstreamTargets: null });
     api.listManagedScopeGrants.mockResolvedValue({ status: "ready", grants: [] });
     retainedSocket.mockReturnValue({
+      suggestions: [],
       activeCompaction: null, activeInferenceDelays: [],
       createMessage: vi.fn(),
       setAppearance: vi.fn(),
@@ -413,6 +414,7 @@ describe('socket-first channel open', () => {
     scrollTranscriptToEnd.mockImplementationOnce(() => { screen.getByRole('log').scrollTop = 1400; });
     const loadTranscriptRange = vi.fn().mockResolvedValue(undefined);
     retainedSocket.mockReturnValue({
+      suggestions: [],
       state: 'connected', workspaceSocketState: 'connected', activeCompaction: null, activeInferenceDelays: [],
       sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange,
     });
@@ -452,7 +454,7 @@ describe('socket-first channel open', () => {
     const loadA = vi.fn(() => new Promise<void>(resolve => { resolveA = resolve; }));
     const loadB = vi.fn(() => new Promise<void>(resolve => { resolveB = resolve; }));
     retainedSocket.mockImplementation((_api, id) => ({
-      state: 'connected', workspaceSocketState: 'connected', activeCompaction: null, activeInferenceDelays: [],
+      state: 'connected', workspaceSocketState: 'connected', suggestions: [], activeCompaction: null, activeInferenceDelays: [],
       sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange: id === other ? loadB : loadA,
     }));
     const boots = [historyBoot(), historyBoot(other)];
@@ -485,7 +487,7 @@ describe('socket-first channel open', () => {
   it('shows reconnect status at an unloaded edge and resumes when connected', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600);
     const loadTranscriptRange = vi.fn().mockRejectedValue(new Error('offline test'));
-    const socket = { state: 'connecting', workspaceSocketState: 'connected', activeCompaction: null, activeInferenceDelays: [],
+    const socket = { state: 'connecting', workspaceSocketState: 'connected', suggestions: [], activeCompaction: null, activeInferenceDelays: [],
       sendReady: false, requestSnapshot: vi.fn(), loadTranscriptRange };
     retainedSocket.mockReturnValue(socket);
     const boot = historyBoot();
@@ -508,7 +510,7 @@ describe('socket-first channel open', () => {
       requested: { startInclusive: 30, endExclusive: 31 },
     });
     const loadTranscriptRange = vi.fn().mockRejectedValue(new Error('Newer gap unavailable'));
-    retainedSocket.mockReturnValue({ state: 'connected', workspaceSocketState: 'connected',
+    retainedSocket.mockReturnValue({ state: 'connected', workspaceSocketState: 'connected', suggestions: [],
       activeCompaction: null, activeInferenceDelays: [], sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange });
     renderScreen(cache => {
       cache.setQueryData(['workstream', workstreamId], boot);
@@ -543,7 +545,7 @@ describe('socket-first channel open', () => {
         }],
       });
     });
-    retainedSocket.mockReturnValue({ state: 'connected', workspaceSocketState: 'connected',
+    retainedSocket.mockReturnValue({ state: 'connected', workspaceSocketState: 'connected', suggestions: [],
       activeCompaction: null, activeInferenceDelays: [], sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange });
     const cache = renderScreen(cache => {
       cache.setQueryData(['workstream', workstreamId], boot);
@@ -565,6 +567,7 @@ describe('socket-first channel open', () => {
     }];
     const loadTranscriptRange = vi.fn().mockRejectedValue(new Error('History unavailable'));
     retainedSocket.mockReturnValue({
+      suggestions: [],
       activeCompaction: null, activeInferenceDelays: [], state: 'connected', workspaceSocketState: 'connected',
       requestSnapshot: vi.fn(), sendReady: true, loadTranscriptRange,
     });
@@ -921,6 +924,7 @@ describe('socket-first channel open', () => {
       sendReady: true,
       state: 'connected',
       workspaceSocketState: 'connected',
+      suggestions: [],
     }));
     const parent = recoveryBoot({ appearance: { icon: 'rocket', color: 'blue' } });
     const child = recoveryBoot({ title: 'Private child', appearance: { icon: 'orbit', color: 'green' } });
@@ -969,6 +973,7 @@ describe('socket-first channel open', () => {
       sendReady: true,
       state: 'connected',
       workspaceSocketState: 'connected',
+      suggestions: [],
     }));
     const boot = recoveryBoot({ appearance: { icon: 'rocket', color: 'blue' } });
     renderScreen((cache) => {
@@ -1087,7 +1092,7 @@ describe('socket-first channel open', () => {
       expect(api.addSubstreamParticipant).toHaveBeenCalledWith(workstreamId, childId, newcomer.id);
       return { turnId: 'turn', clientMessageId: 'message', createdAt: new Date().toISOString(), deliveryState: 'queued' };
     });
-    retainedSocket.mockReturnValue({ state: 'connected', workspaceSocketState: 'connected', sendReady: true, createMessage, requestSnapshot: vi.fn() });
+    retainedSocket.mockReturnValue({ state: 'connected', workspaceSocketState: 'connected', suggestions: [], sendReady: true, createMessage, requestSnapshot: vi.fn() });
     api.getWorkspaceMembers.mockResolvedValue([creator, newcomer]);
     if (refused) api.addSubstreamParticipant.mockRejectedValue(new Error('Parent access required'));
     else api.addSubstreamParticipant.mockResolvedValue(undefined);
@@ -1144,6 +1149,7 @@ describe('socket-first channel open', () => {
       sendReady: true,
       state: 'connected',
       workspaceSocketState: 'connected',
+      suggestions: [],
     });
 
     renderScreen();
@@ -1303,6 +1309,7 @@ describe('socket-first channel open', () => {
         }))
         : vi.fn(async () => { throw new Error('send refused'); });
       retainedSocket.mockReturnValue({
+        suggestions: [],
         activeCompaction: null, activeInferenceDelays: [], createMessage,
         requestSnapshot: vi.fn(), retryOpening: vi.fn(),
         sendReady: true, state: 'connected', workspaceSocketState: 'connected',
@@ -1371,6 +1378,7 @@ describe('socket-first channel open', () => {
       inferenceRequestId: '00000000-0000-7000-8000-000000000653', turnId: 'turn:delay',
     };
     retainedSocket.mockReturnValue({
+      suggestions: [],
       activeCompaction: null, activeInferenceDelays: [delay, { ...delay, inferenceRequestId: '00000000-0000-7000-8000-000000000654' }],
       createMessage: vi.fn(), requestSnapshot: vi.fn(), retryOpening: vi.fn(),
       sendReady: true, state: 'connected', workspaceSocketState: 'connected',
@@ -1574,6 +1582,7 @@ describe('socket-first channel open', () => {
   it('retries the authoritative socket after the first attempt fails', async () => {
     const retryOpening = vi.fn();
     retainedSocket.mockReturnValue({
+      suggestions: [],
       activeCompaction: null, activeInferenceDelays: [],
       createMessage: vi.fn(),
       requestSnapshot: vi.fn(),
@@ -1593,6 +1602,7 @@ describe('socket-first channel open', () => {
 
   it('shows the terminal error after all three timed opening attempts expire', async () => {
     retainedSocket.mockReturnValue({
+      suggestions: [],
       activeCompaction: null, activeInferenceDelays: [],
       createMessage: vi.fn(),
       openingError: 'The live connection timed out after 3 attempts.',
@@ -1613,7 +1623,7 @@ describe('socket-first channel open', () => {
     const createMessage = vi.fn();
     const socket = {
       activeCompaction: null, activeInferenceDelays: [], createMessage, requestSnapshot: vi.fn(), retryOpening: vi.fn(),
-      sendReady: true, state: 'connecting', workspaceSocketState: 'connecting',
+      sendReady: true, state: 'connecting', workspaceSocketState: 'connecting', suggestions: [],
     };
     retainedSocket.mockReturnValue(socket);
     const boot = recoveryBoot({ title: 'Remembered channel' });
@@ -1651,6 +1661,7 @@ describe('socket-first channel open', () => {
   it('keeps the remembered transcript and offers a retry on the card when the cached open times out', async () => {
     const retryOpening = vi.fn();
     retainedSocket.mockReturnValue({
+      suggestions: [],
       activeCompaction: null, activeInferenceDelays: [], createMessage: vi.fn(), requestSnapshot: vi.fn(), retryOpening,
       openingError: 'The live connection timed out after 3 attempts.',
       sendReady: false, state: 'unavailable', workspaceSocketState: 'connecting',

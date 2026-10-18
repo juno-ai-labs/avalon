@@ -1,0 +1,119 @@
+import { IconCornerUpLeft, IconUsers, IconX } from '@tabler/icons-react';
+import clsx from 'clsx';
+import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
+
+/**
+ * The merge as the parent will draw it, editable in place: `MergeMessage`'s
+ * layout (the source's mark and name, "merged by" and the person, then the
+ * words) with the body a text box, the embeds the words cite as pills a
+ * person can take out, and under it the audience line, the target pill, a
+ * hint and the two buttons (docs/conversation-merge.md, "The response card").
+ * Enter merges, Shift+Enter breaks a line, Esc cancels. Every merge is made
+ * here, from a suggestion, the Merge hover action or the title menu; the
+ * composer below it stays an ordinary composer.
+ */
+export function MergeResponseCard({
+  audience, autoFocus = true, className, embeds, error, label, mergedBy, onCancel, onChange, onSubmit, quote, source, submitting, targetPill, time, value,
+}: {
+  /** Who will see it, as merge mode's notice said it. */
+  audience: ReactNode;
+  autoFocus?: boolean;
+  className?: string;
+  /** The artifacts the words cite, each removable from the words. */
+  embeds: ReadonlyArray<{ id: string; title: string; onRemove: () => void }>;
+  error?: string | undefined;
+  label: string;
+  mergedBy: ReactNode;
+  onCancel: () => void;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  /** In a Channel only: the thread's first line. */
+  quote?: string | null | undefined;
+  source: { mark: ReactNode; tint?: { background: string; ink: string } | undefined; title: string };
+  submitting: boolean;
+  /** The host's target pill: the Thread, or the Channel with its menu. */
+  targetPill: ReactNode;
+  time: ReactNode;
+  value: string;
+}): React.JSX.Element {
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const element = textarea.current;
+    if (!element) return;
+    element.style.height = 'auto';
+    element.style.height = `${element.scrollHeight}px`;
+  }, [value]);
+  useEffect(() => {
+    if (!autoFocus) return;
+    const element = textarea.current;
+    if (!element) return;
+    element.focus();
+    element.setSelectionRange(element.value.length, element.value.length);
+  }, [autoFocus]);
+  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onCancel();
+    } else if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      if (!submitting && value.trim().length > 0) onSubmit();
+    }
+  };
+  return (
+    <article aria-label={label} className={clsx('merge-message merge-response-card', className)}>
+      <div className="merge-message-meta">
+        <span className="merge-message-source">
+          <span aria-hidden="true" className="merge-message-mark" style={source.tint ? { background: source.tint.background, color: source.tint.ink } : undefined}>{source.mark}</span>
+          <span>{source.title}</span>
+        </span>
+        <span>· merged by</span>
+        <span className="merge-message-who">{mergedBy}</span>
+        <span aria-hidden="true">·</span>
+        {time}
+      </div>
+      {quote && (
+        <div className="merge-message-quote">
+          <IconCornerUpLeft aria-hidden="true" size={13} stroke={1.9} />
+          <span>{quote}</span>
+        </div>
+      )}
+      <div className="merge-message-body">
+        <textarea
+          aria-label="Merge note"
+          className="merge-response-card-input"
+          disabled={submitting}
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder="Write what the readers should know…"
+          ref={textarea}
+          rows={2}
+          value={value}
+        />
+      </div>
+      {embeds.length > 0 && (
+        <ul aria-label="Artifacts this merge carries" className="merge-response-card-embeds">
+          {embeds.map((embed) => (
+            <li className="merge-response-card-embed" key={embed.id}>
+              <span>{embed.title}</span>
+              <button aria-label={`Remove ${embed.title}`} disabled={submitting} onClick={embed.onRemove} type="button">
+                <IconX aria-hidden="true" size={12} stroke={2} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {error && <p className="merge-response-card-error" role="alert">{error}</p>}
+      <div className="merge-response-card-foot">
+        <span className="merge-response-card-audience"><IconUsers aria-hidden="true" size={14} stroke={1.8} />{audience}</span>
+        <div className="merge-response-card-controls">
+          {targetPill}
+          <span className="merge-response-card-hint">Enter to merge · Esc to cancel</span>
+          <button className="merge-response-card-cancel" disabled={submitting} onClick={onCancel} type="button">Cancel</button>
+          <button className="merge-response-card-submit" disabled={submitting || value.trim().length === 0} onClick={onSubmit} type="button">
+            <IconCornerUpLeft aria-hidden="true" size={14} stroke={2} /><span>Merge</span>
+          </button>
+        </div>
+      </div>
+    </article>
+  );
+}
