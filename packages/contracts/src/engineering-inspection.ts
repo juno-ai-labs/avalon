@@ -144,6 +144,43 @@ export const ListEngineeringWorkspacesResultSchema = deferredZodSchema(() => z.s
 }));
 export type ListEngineeringWorkspacesResult = z.infer<typeof ListEngineeringWorkspacesResultSchema>;
 
+/**
+ * Filters for the Organization search. Every field narrows the result; none
+ * given returns every Organization in the region. Ordering and paging are the
+ * caller's, applied after the regions' answers are merged.
+ */
+export const SearchEngineeringOrganizationsInputSchema = deferredZodSchema(() => z.strictObject({
+  /** Case-insensitive substring of the name, slug, or ID. */
+  query: z.string().min(1).optional(),
+  plan: z.string().min(1).optional(),
+  /** `exclude` by default. */
+  abandoned: z.enum(["exclude", "include", "only"]).optional(),
+  createdAfter: z.string().datetime({ offset: true }).optional(),
+  createdBefore: z.string().datetime({ offset: true }).optional(),
+}));
+export type SearchEngineeringOrganizationsInput = z.infer<typeof SearchEngineeringOrganizationsInputSchema>;
+
+export const EngineeringOrganizationSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  name: z.string(),
+  slug: z.string(),
+  region: RegionSchema,
+  plan: z.string(),
+  createdAt: z.string(),
+  abandonedAt: z.string().nullable(),
+  /** Active members, guests excluded. */
+  memberCount: z.number().int().nonnegative(),
+  /** The latest `last_seen_at` of any member; null if nobody has been seen. */
+  lastSeenAt: z.string().nullable(),
+}));
+export type EngineeringOrganization = z.infer<typeof EngineeringOrganizationSchema>;
+
+export const SearchEngineeringOrganizationsResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  items: z.array(EngineeringOrganizationSchema),
+}));
+export type SearchEngineeringOrganizationsResult = z.infer<typeof SearchEngineeringOrganizationsResultSchema>;
+
 export const WorkspaceInspectionInputSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema,
 }));
@@ -307,6 +344,7 @@ export type EngineeringSqlLookup = z.infer<typeof EngineeringSqlLookupSchema>;
 /** The named regional WorkerEntrypoint surface bound only to the engineering MCP Worker. */
 export interface EngineeringInspectionRpcBinding {
   listWorkspaces(input: ListEngineeringWorkspacesInput): Promise<ListEngineeringWorkspacesResult>;
+  searchOrganizations(input: SearchEngineeringOrganizationsInput): Promise<SearchEngineeringOrganizationsResult>;
   listWorkstreams(input: WorkspaceInspectionInput): Promise<EngineeringWorkstreamListLookup>;
   listSubstreams(input: WorkstreamInspectionInput): Promise<EngineeringSubstreamListLookup>;
   listSidekicks(input: WorkspaceInspectionInput): Promise<EngineeringSidekickListLookup>;

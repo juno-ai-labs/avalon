@@ -1,3 +1,4 @@
+import type { SearchEngineeringOrganizationsInput } from "@rally/contracts/engineering-inspection";
 import { RegionSchema } from "@rally/contracts/regions";
 import { z } from "zod";
 
@@ -84,4 +85,64 @@ export async function resolveInspectionWorkstreamRoute(
     expectedGeneration ?? null,
   ).first<unknown>();
   return row === null ? null : InspectionWorkstreamRouteSchema.parse(row);
+}
+
+const OrganizationRowSchema = z.strictObject({
+  id: z.string(),
+  name: z.string(),
+  slug: z.string(),
+  region: RegionSchema,
+  plan: z.string(),
+  created_at: z.string(),
+  abandoned_at: z.string().nullable(),
+  member_count: z.number().int().nonnegative(),
+  last_seen_at: z.string().nullable(),
+});
+export type OrganizationRow = z.infer<typeof OrganizationRowSchema>;
+
+/**
+ * Every Organization in this region that matches the filters, unordered. The
+ * caller merges the regions and orders the whole set.
+ *
+ * Timestamps are stored as UTC ISO strings, so a bound is normalized to the
+ * same form before the text comparison.
+ */
+export async function searchInspectionOrganizations(
+  env: InspectionRouteEnv,
+  filter: SearchEngineeringOrganizationsInput,
+): Promise<OrganizationRow[]> {
+  const query = filter.query?.toLowerCase() ?? null;
+  const after = filter.createdAfter ? new Date(filter.createdAfter).toISOString() : null;
+  const before = filter.createdBefore ? new Date(filter.createdBefore).toISOString() : null;
+  const result = await env.DB.prepare(
+    `SELECT workspace.id, workspace.name, workspace.slug, workspace.region, workspace.plan,
+            workspace.created_at, workspace.abandoned_at,
+            (SELECT COUNT(*) FROM workspace_members member
+              WHERE member.workspace_id = workspace.id
+                AND member.status = 'active' AND member.access_class = 'member') AS member_count,
+            (SELECT MAX(member.last_seen_at) FROM workspace_members member
+              WHERE member.workspace_id = workspace.id) AS last_seen_at
+       FROM workspaces workspace
+      WHERE workspace.region = ?1
+        AND (?2 IS NULL
+             OR instr(lower(workspace.name), ?2) > 0
+             OR instr(lower(workspace.slug), ?2) > 0
+             OR instr(lower(workspace.id), ?2) > 0)
+        AND (?3 IS NULL OR workspace.plan = ?3)
+        AND CASE ?4
+              WHEN 'include' THEN 1
+              WHEN 'only' THEN workspace.abandoned_at IS NOT NULL
+              ELSE workspace.abandoned_at IS NULL
+            END
+        AND (?5 IS NULL OR workspace.created_at >= ?5)
+        AND (?6 IS NULL OR workspace.created_at < ?6)`,
+  ).bind(
+    env.AVALON_REGION,
+    query,
+    filter.plan ?? null,
+    filter.abandoned ?? "exclude",
+    after,
+    before,
+  ).all<unknown>();
+  return z.array(OrganizationRowSchema).parse(result.results ?? []);
 }
