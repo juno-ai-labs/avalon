@@ -48,7 +48,10 @@ Every apply also writes that value into each `theme-color` meta the document
 carries, which is what iOS 15 to 18 paint a Home Screen app's status bar from
 and Chromium an installed app's title bar; `apps/browser/index.html` holds a
 media-qualified light and dark pair so the paint before the script runs is
-right for the `system` choice. iOS 26 reads the page instead of the meta: the
+right for the `system` choice. The same document paints the canvas dark under
+`prefers-color-scheme: dark` until `data-theme` is stamped, because the
+stylesheet's unstamped root is light and the stamp waits on the module bundle.
+iOS 26 reads the page instead of the meta: the
 root element's own background, or a fixed container at the top edge. So `html`
 paints `sys.backdrop.color` as `body` does; a root with no background of its
 own is reported to read as transparent there, and the bar falls back to white.
@@ -124,7 +127,8 @@ serves it through `rally-font://`.
   with no background of its own, or a document without the tag or with a stale
   one, shows a white bar over a dark canvas. `html` paints `sys.backdrop.color`,
   `applyTheme` writes `themeWindowBackground` into every tag on every apply and
-  adds none, and the browser entry's pre-script pair holds the same two values.
+  adds none, and the browser entry's pre-script pair holds the same two values,
+  as does its pre-script dark canvas rule.
 - **A palette fill's ink is decided by APCA, not by the WCAG 2 ratio, and it is
   checked in.** `PALETTE_INK` is the table; sixteen of the nineteen fills take
   the near-white ink and `amber`, `lime` and `green` take the near-black one.
@@ -235,6 +239,34 @@ registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
+
+### 2026-10-18 — A dark phone no longer opens the Home Screen app on white
+
+**What changed:** `apps/browser/index.html` carries an inline rule that paints
+`html` and `body` `#070707` under `prefers-color-scheme: dark` while `html` has
+no `data-theme`.
+
+**Why:** The stylesheet emits the light block on `:root` so the first frame is
+deterministic, and `installTheme` stamps `data-theme` only once the module
+bundle has downloaded and run. The stylesheet is in the head and arrives first,
+so a dark phone painted the light canvas for as long as the bundle took. An iOS
+Home Screen app reloads whenever iOS has evicted it, and the service worker
+caches nothing, so on a phone network that showed as a white flash on most
+returns to the app. Reproduced in Chromium by holding the bundle back: the
+canvas read `#fcfcfc` in dark, and `#070707` with the rule.
+
+**Considered and rejected:** A blocking classic script in the head that reads
+the stored choice and stamps `data-theme` early. The CSP allows no inline
+script, so it would be one more request before first paint and a second parser
+of the device preferences. Emitting the dark block under a media query for the
+unstamped root from `build-theme-assets.mjs` would theme everything, not just
+the canvas, but nothing else is on screen before the bundle runs, and it would
+double the dark block.
+
+**Consequences:** A choice pinned against the phone (Dark on a light phone, or
+the reverse) still shows the phone's canvas until the bundle runs, as the
+`theme-color` pair already does. `#070707` is a fourth copy of the dark canvas
+and moves with `themeWindowBackground`. Not yet verified on a device.
 
 ### 2026-10-17 — The status bar follows the canvas in an iOS Home Screen app
 
