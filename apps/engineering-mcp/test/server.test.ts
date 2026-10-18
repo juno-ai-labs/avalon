@@ -71,6 +71,8 @@ function testEnv(bindings: Partial<Env> = {}): Env {
     GLOBAL_INSPECTION: regionalBinding("global"),
     ENTERPRISE_INSPECTION: regionalBinding("enterprise"),
     FLAG_ADMINISTRATION: flagAdministration(),
+    CLOUDFLARE_ACCOUNT_ID: "account-1",
+    BASIN_SQL_API_TOKEN: "basin-token",
     ...bindings,
   };
 }
@@ -125,6 +127,7 @@ describe("Rally engineering MCP tools", () => {
       "update_feature_flag",
       "list_model_flags",
       "update_model_flag",
+      "query_lakehouse",
     ]);
     for (const tool of result.tools.filter((item) => /^(run|update)_/.test(item.name))) {
       expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
@@ -539,5 +542,72 @@ describe("Rally engineering MCP tools", () => {
       actor: { subject: "engineer-1" },
       update: { role: "workstream", routing: { model: "example/missing", fallbackModels: [], reasoningEffort: "low" } },
     });
+  });
+
+  it("sends a lakehouse query to the table's own catalog bucket and returns Basin SQL's result", async () => {
+    const result = {
+      schema: [{ name: "event_id" }],
+      rows: [{ event_id: "inference-1:request" }],
+      metrics: { bytes_scanned: 1024, files_scanned: 1 },
+    };
+    const basin = vi.fn<typeof fetch>(async () => Response.json({ success: true, errors: [], result }));
+    vi.stubGlobal("fetch", basin);
+
+    const response = await rpc(testEnv(), "tools/call", {
+      name: "query_lakehouse",
+      arguments: { lakehouse: "llm_inference", sql: "SELECT event_id FROM avalon.llm_inference LIMIT 1" },
+    });
+    const toolResult = response.result as { isError?: boolean; content: Array<{ text: string }> };
+    expect(toolResult.isError).toBeUndefined();
+    expect(JSON.parse(toolResult.content[0]!.text)).toEqual(result);
+    const [url, init] = basin.mock.calls[0]!;
+    expect(url).toBe(
+      "https://api.sql.cloudflarestorage.com/api/v1/accounts/account-1/basin-sql/query/avalon-global-inference-lakehouse",
+    );
+    expect(init?.headers).toMatchObject({ Authorization: "Bearer basin-token" });
+    expect(JSON.parse(String(init?.body))).toEqual({ query: "SELECT event_id FROM avalon.llm_inference LIMIT 1" });
+  });
+
+  it("returns Basin SQL's refusal to the engineer and logs only its code", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => Response.json({
+      success: false,
+      errors: [{ code: 40004, message: "unknown column customer_email" }],
+    }, { status: 400 })));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const response = await rpc(testEnv(), "tools/call", {
+      name: "query_lakehouse",
+      arguments: { lakehouse: "usage_events", sql: "SELECT customer_email FROM avalon.usage_events" },
+    });
+    const result = response.result as { isError: boolean; content: Array<{ text: string }> };
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toBe("40004: unknown column customer_email");
+    const rows = logged.mock.calls.map((call) => JSON.parse(String(call[0])) as Record<string, unknown>);
+    expect(rows).toEqual([expect.objectContaining({
+      event: "engineering_mcp_tool_failed",
+      tool: "query_lakehouse",
+      lakehouse: "usage_events",
+      error_code: "lakehouse_query_failed:40004",
+    })]);
+    expect(JSON.stringify(rows)).not.toContain("customer_email");
+  });
+
+  it("refuses a lakehouse query without a token before calling Basin SQL", async () => {
+    const basin = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", basin);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const env = testEnv();
+    delete env.BASIN_SQL_API_TOKEN;
+
+    const response = await rpc(env, "tools/call", {
+      name: "query_lakehouse",
+      arguments: { lakehouse: "analytics_events", sql: "SELECT 1" },
+    });
+    const result = response.result as { isError: boolean };
+    expect(result.isError).toBe(true);
+    expect(basin).not.toHaveBeenCalled();
+    expect(logged.mock.calls.map((call) => JSON.parse(String(call[0])).error_code))
+      .toEqual(["lakehouse_token_unconfigured"]);
   });
 });

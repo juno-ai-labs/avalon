@@ -29,6 +29,7 @@ import {
 } from "../../ace/src/protocol";
 import type { AccessPrincipal } from "./access";
 import type { Env } from "./env";
+import { LAKEHOUSE_TABLES, LAKEHOUSES, LakehouseQueryError, queryLakehouse } from "./lakehouse";
 
 type ToolResult = {
   content: [{ type: "text"; text: string }];
@@ -55,7 +56,7 @@ class InspectionRefusal extends Error {
  * what the statement touched.
  */
 function toolErrorCode(error: unknown, tool: string): string {
-  if (error instanceof InspectionRefusal) return error.code;
+  if (error instanceof InspectionRefusal || error instanceof LakehouseQueryError) return error.code;
   const schema = zodDiagnosticCode(error, tool);
   if (schema) return schema;
   if (!(error instanceof Error)) return "tool_failed";
@@ -352,6 +353,16 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
       actor: { subject: principal.subject },
       update,
     }))));
+
+  server.registerTool("query_lakehouse", {
+    description: `Run a read-only Basin SQL (formerly R2 SQL) query against one Global analytical lakehouse. Each lakehouse is a separate catalog, so a query reaches only its own table: ${Object.values(LAKEHOUSES).map(({ table }) => table).join(", ")}. Run DESCRIBE <table> for its columns. Billing is by bytes scanned, so filter on the table's timestamp column and add a LIMIT. Pipeline rolls files every 300 seconds, so a row can take about five minutes to appear, and delivery is at-least-once: rows sharing event_id are one event. llm_inference holds raw prompts and model output; select its request, response and error columns only for a specific inference_request_id.`,
+    inputSchema: {
+      lakehouse: z.enum(LAKEHOUSE_TABLES).describe("The table to query; it selects the catalog."),
+      sql: z.string().min(1).describe("Basin SQL SELECT statement naming the table as <namespace>.<table>."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, ({ lakehouse, sql }) => tool(principal, "query_lakehouse", { lakehouse }, () =>
+    queryLakehouse({ accountId: env.CLOUDFLARE_ACCOUNT_ID, token: env.BASIN_SQL_API_TOKEN }, lakehouse, sql)));
 
   return server;
 }
