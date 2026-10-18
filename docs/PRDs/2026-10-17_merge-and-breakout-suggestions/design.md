@@ -314,9 +314,9 @@ positives. It does not run in shadow.
   `workstream-blocks.tsx`, in the `cardsAfter` row of `message-feed.tsx` where
   "Breakouts from this message" chips already sit, after the turn's
   attachments and its hover action row: a dashed outline, Rally's mark, the
-  title, the sentence, the action pill (the merge target pill's style for
-  `merge_up`, the breakout tint for `start_breakout`), a dismiss, and for a
-  Breakout the draft's first line. Drawn
+  title, the sentence, one cut line of the note or the prompt, the action
+  pill (the merge target pill's style for `merge_up`, the breakout tint for
+  `start_breakout`), and a dismiss. Drawn
   only while the turn is among the newest three messages the feed holds, and
   only when the viewer passes `mergeTargetFor` (for `merge_up`) or can post
   (for `start_breakout`). Never in the composer: `ComposerInput`'s notice slot
@@ -332,9 +332,18 @@ positives. It does not run in shadow.
   `start_breakout`: title "Breakout: {subject}", the subject being a short
   label the drafter returns beside the prompt, and "Breakout" alone when
   there is no draft; sentence "Rally thinks this is its own piece of work.
-  You'll edit the opening prompt before it starts.", followed by the draft's
-  first line. The second clause of each sentence is there for a person who
-  has never seen the chip: it says nothing posts or starts without them.
+  You'll edit the opening prompt before it starts." The second clause of
+  each sentence is there for a person who has never seen the chip: it says
+  nothing posts or starts without them.
+- **The excerpt** is the last line of every chip: the words the action would
+  post or start with, cut by the client to one line of the chip's width with
+  an ellipsis, never stored cut. For `merge_up` it is the note the response
+  card opens with, which is the judged turn's text until merge-back's
+  Summarize ships and the drafted summary after; for `start_breakout` it is
+  the drafted opening prompt, and the line is left out when there is no
+  draft. The excerpt is the one part of the chip that is content rather than
+  template, and it is content the viewer can already read in this
+  conversation or is about to be shown to edit.
 - **Accept merge** opens the response card in the line's place, prefilled
   with the judged turn's text and the suggestion's target.
 - **The response card** is `MergeResponseCard` in `packages/ui`, beside
