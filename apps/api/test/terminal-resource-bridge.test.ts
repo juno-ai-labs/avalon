@@ -1047,6 +1047,32 @@ describe("Terminal resource bridge", () => {
       .toEqual({ title: "Launch brief v2" });
   });
 
+  it("keeps a person's rename when a republish repeats the agent's old name, and takes a new one", async () => {
+    const I3 = "10000000-0000-4000-8000-000000000009";
+    const { database, bridge } = fixture();
+    const first = await bridge.publishResource(
+      context,
+      { filePath: "brief.md", displayName: "Launch brief" },
+      new TextEncoder().encode("# Brief\n"),
+    );
+    database.prepare(`UPDATE resources SET title = 'Launch brief (final)', revision_author_kind = 'member',
+      revision_author_user_id = ?, revision_cause = 'renamed' WHERE id = ?`).run(U, String(first.resourceId));
+
+    const repeated = await bridge.publishResource(
+      { ...context, effectIntentId: I2, toolCallId: "resource-recall" },
+      { filePath: "brief.md", displayName: "Launch brief" },
+      new TextEncoder().encode("# Brief\n\nMore.\n"),
+    );
+    expect(repeated.title).toBe("Launch brief (final)");
+
+    const named = await bridge.publishResource(
+      { ...context, effectIntentId: I3, toolCallId: "resource-rename" },
+      { filePath: "brief.md", displayName: "Launch plan" },
+      new TextEncoder().encode("# Plan\n"),
+    );
+    expect(named.title).toBe("Launch plan");
+  });
+
   it("returns the published document unchanged when the same path republishes identical bytes", async () => {
     const { database, put, bridge } = fixture();
     const bytes = new TextEncoder().encode("# Unchanged\n");

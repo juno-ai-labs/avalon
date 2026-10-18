@@ -1401,7 +1401,9 @@ their text unchanged.
 **Consequences:** `GET /resources/:id/versions` sends a `renamed` version
 with no cause, because a desktop build from before it parses the history
 with a closed enum; send it once those builds are gone. The contract now
-reads an unknown cause as none, so a later cause needs no such hold. A
+reads an unknown cause as none, so a later cause needs no such hold. An
+agent republish that repeats the title it last set keeps a person's rename
+(`AGENT_RESOURCE_TITLE_SQL`); one that names a new title takes it. A
 later cause takes the same migration steps, and the capture triggers and the
 pin ledger's trigger are named constants so that it can.
 Rows are kept; `navigation-migrations.test.ts` upgrades a populated 112 and
