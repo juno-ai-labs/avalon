@@ -20,8 +20,8 @@ export const SUGGESTION_EXCERPT_CHARACTERS = 96;
  * dropped, an ellipsis appended, so the closing quote follows the ellipsis
  * directly. CSS truncation leaves up to a glyph of blank between the ellipsis
  * and whatever comes after it, which is why it is not used here. The budget is
- * what fits one line of the chip at the narrowest pane the desktop lays out
- * (design.md, "The client").
+ * about a line of the chip at its widest; the line wraps rather than clips
+ * when the pane is narrower (design.md, "The client").
  */
 export function suggestionExcerpt(text: string): string {
   const firstLine = text.split('\n').map((line) => line.trim()).find((line) => line.length > 0) ?? '';
