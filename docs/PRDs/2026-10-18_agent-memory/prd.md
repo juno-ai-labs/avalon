@@ -113,10 +113,12 @@ records which conversation it came from
 4. **A confidence score the model emits.** No published rule weighs one
    person's claim against another's; this PRD stores the inputs such a rule
    would need and leaves judgment to people. Rejected for now, not deferred.
-5. **Memory for guests beyond what the source rule gives.** A guest's run
-   receives Channel facts only where the guest may open that Channel and never
-   Organization facts, because the Organization-wide leaf admits no guest.
-   No special casing is built.
+5. **Memory for guests beyond what the two visibility predicates give.** A
+   guest's run receives a Thread's facts where an explicit grant lets them
+   open it, a Channel's facts only where the Channel is listed to them, and
+   never Organization facts, because Organization facts carry a second
+   predicate, `admitsOrganizationWide`, which admits no guest. No further
+   special casing is built.
 6. **Rewriting the compaction checkpoint.** It stays the per-conversation
    handoff summary. Memory is the cross-conversation layer beside it.
 7. **A memory editor for Channel or Organization facts in the first release.**
@@ -252,6 +254,9 @@ that produced it, evaluated at read time.
    rooms. Left to the build: ephemeral decoration of the rendered request
    (safer default) or a principal-filtered durable derived input (cache
    optimization), per [research.md B11](research.md#6-the-building-blocks).
+   In either form the digest is excluded from the compaction summariser's
+   input and from the checkpoint, so one person's digest cannot reach a later
+   speaker through the shared summary ([`design.md` §7](design.md#7-digest)).
 8. **A disagreement between people is a shared memory.** Decided 2026-10-18:
    the sweep writes one Channel-level or Organization-level fact carrying both
    claims, their authors and dates, superseded when the team settles it. One
@@ -285,6 +290,13 @@ that produced it, evaluated at read time.
     and the current conversation's facts; Channel and Organization facts need
     an administrator. Rejected: letting any participant who can recall a
     shared fact retract it.
+15. **A sweep sees only what its conversation's participants may see, and a
+    derived fact keeps every source.** Candidates handed to the sweep model
+    are restricted to facts every current participant of the swept
+    conversation may open, and an update or disagreement derived from a
+    candidate carries the candidate's source as well as the sweep's.
+    Rejected: candidates by subject alone, which would let a public Thread's
+    sweep restate a private Breakout's words under the public source.
 
 ## Data model
 
@@ -298,8 +310,9 @@ authoritative.
   (`<channelId>` for a Thread's Main, `<channelId>/<breakoutId>` for a
   Breakout, `space:<spaceId>` for a Channel's own feed; never null, an
   Organization fact included, so a fact promoted from a Channel that is later
-  narrowed to private follows the Channel's current reach), `kind`
-  (`standing` | `situational`),
+  narrowed to private follows the Channel's current reach; a fact derived
+  from a candidate carries the union of its sources, and a reader needs
+  access to every one), `kind` (`standing` | `situational`),
   `text`, `fact_key` (nullable `(subject, relation)`), `observed_at`,
   `valid_from`, `valid_until`, `valid_until_basis` (`stated` | `event` |
   `assumed`), `recorded_at`, `superseded_at`, `superseded_by`, `retracted_at`,
@@ -311,10 +324,13 @@ authoritative.
   compare-and-swap on `from_seq` lives here.
 - `memory_digests`: `conversation`, `user_id` (nullable), `digest_hash`,
   `text`, `revision`, `rendered_at`.
-- Existing `memory_items` and `memory_scopes`: the nine dogfood items import
-  as `standing` facts with `person` or `thread` subjects; the tables, the
-  `memory_index_outbox` and the Vectorize projection retire with the old
-  plugin. `memory_tables*` are untouched.
+- Existing `memory_items`, `memory_mutations` and `memory_index_outbox`: the
+  nine dogfood items import as `standing` facts with `person` or `thread`
+  subjects; these three tables and the Vectorize projection retire with the
+  old plugin. **`memory_scopes` stays**: `memory_tables` and
+  `memory_table_rows` reference it with cascading foreign keys and the table
+  tools resolve scopes through it, so retiring it would delete Sidekick table
+  state. `memory_tables*` are untouched.
 
 `SubstreamAgent` (each conversation object):
 

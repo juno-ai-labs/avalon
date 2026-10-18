@@ -169,11 +169,16 @@ active fact word for word (returns that fact with `revision` unchanged and
 - **Model choice:** `query`, `text`, `kind`, `validUntil`, `about`, `factId`.
   **Host-derived:** who is acting, which conversation this is, the subjects
   that are relevant, which facts are visible, the source of a remembered fact.
-- **Visibility** is computed in `WorkspaceDO` at call time from the acting
-  person's current ability to open each fact's source conversation
-  (`mainOpenableSql` and the Breakout rule; for a fact whose source is a
-  Channel's own feed, the Channel's listing rule), intersected with the
-  conversation's participants for recall. Every fact has a source, an
+- **Visibility** is computed in `WorkspaceDO` at call time from two
+  predicates, both of which must hold. *Source:* the acting person may open
+  every source conversation of the fact today (`mainOpenableSql` and the
+  Breakout rule; for a source that is a Channel's own feed, the Channel's
+  listing rule). *Subject:* an Organization fact additionally requires
+  `admitsOrganizationWide` for the acting person, so a guest who holds an
+  explicit grant to a Thread still receives none of the Organization facts
+  learned there; a Channel fact additionally requires that the Channel be
+  listed to them. For recall, the result is further intersected with the
+  conversation's participants. Every fact has a source, an
   Organization fact included: it was promoted *from* a conversation, and if
   that conversation is later narrowed to private, people who may no longer
   open it stop receiving the fact at their next read, with no write. The FTS
@@ -218,7 +223,10 @@ ceiling of the rest, are open limits.
 (`messagesAfter` from `fromSeq - overlap`, tool rows excluded, authors
 labelled person, external, agent), reads from `WorkspaceDO` the active facts
 for the conversation's subjects whose text matches the window's terms plus
-every unexpired situational fact on those subjects, and calls
+every unexpired situational fact on those subjects, **restricted to facts
+every current participant of the swept conversation may see** (the fact's
+source is this conversation, or every participant may open it today), and
+calls
 `runStructuredInference` on role `memory_sweep` (flag
 `agent-model-memory-sweep`, default Sol-class, metered `memory_sweep`,
 Organization pays) with a strict JSON schema:
@@ -243,7 +251,13 @@ Organization pays) with a strict JSON schema:
 The prompt is told the conversation's placement (which Channels, whether
 Organization-wide or private, whether this is a Breakout), so `subjectKind`
 can rise no higher than the placement allows; the host refuses an operation
-that tries. It is told to prefer `update` and `confirm` over `add`, to write
+that tries. A fact the model derives from a candidate (an `update`, a
+`confirm`, a disagreement) keeps every contributing source: its
+`source_conversations` is the union of the candidate's and this
+conversation's, and reading it requires access to every one. Because
+candidates are already restricted to what this conversation's participants
+may see, that union never widens who may read a private conversation's
+words; the restriction is the first fence and the union is the second. It is told to prefer `update` and `confirm` over `add`, to write
 facts not instructions, to give a horizon basis, and to record a
 disagreement between two people as one `conflict` fact at the Channel or
 Organization level rather than choosing.
@@ -323,8 +337,21 @@ activity Queue, and the consumer refreshes each marked copy. A run that
 starts before the lane reaches its conversation can see the retracted or
 withdrawn fact once more; `memory_recall` never can, because it reads the
 store. The ordinary refresh after each run (the personal-prompt pattern)
-remains as the floor. The acceptance tests exercise this through the copy,
-not only through `WorkspaceDO`.
+remains as the floor. A `memory_forget` made from inside a conversation also
+removes the fact from that conversation's own copy in the same tool call, so
+the retracting person never sees it again where they retracted it. The
+acceptance tests exercise this through the copy, not only through
+`WorkspaceDO`.
+
+**The digest never enters the checkpoint.** Whichever injection form the
+build chooses, the digest block is excluded from the compaction summariser's
+input and from the persisted checkpoint, the way resident-context positions
+are excluded by provenance today; the summariser sees the transcript without
+it, and the next activation attaches a fresh digest for its own person. With
+ephemeral decoration this is automatic, because the block is never in the
+transcript; with a principal-filtered derived input it is a provenance
+exclusion that the acceptance tests cover by compacting one person's
+activation and then starting another person's.
 
 ## 8. Acceptance
 
@@ -343,6 +370,12 @@ not only through `WorkspaceDO`.
   key produces the disagreement fact with both claims still active; a
   consumer stopped between the `WorkspaceDO` commit and the cursor settle
   finishes the copy and the settle on redelivery from the stored receipt; a
+  sweep of a public Thread is never handed a candidate from a private
+  Breakout its participants cannot all open, and a fact derived from a
+  candidate carries both sources; a guest with an explicit Thread grant
+  receives the Thread's facts and none of the Organization's; one person's
+  activation compacted before another person's request leaves no digest text
+  in the checkpoint the second person's run replays; a
   cursor-moved batch is dropped; `forget` replays return the stored
   retraction.
 - **workerd tests** (`apps/api/test-workers/`): the settlement trigger claims,
