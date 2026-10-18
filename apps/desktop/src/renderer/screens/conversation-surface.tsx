@@ -1296,6 +1296,12 @@ export interface ConversationSurfaceProps {
   /** The Breakout open beside this conversation, if any. */
   openBreakoutId?: string | null;
   onOpenBreakout?: (substreamId: string) => void;
+  /**
+   * The Channel this thread is open under, for links that name it; the
+   * screen reads it from the route. Null where no Channel holds it for the
+   * reader, as for a guest outside every Channel they see.
+   */
+  linkSpaceId?: string | null;
   /** Opens the merge a Merged chip in this feed names, where it landed. */
   onOpenMerge?: (merge: MessageMergedInto) => void;
   /** Open the composer's merge mode, empty: the title menu's Merge. A new nonce asks again. */
@@ -1360,6 +1366,7 @@ export function ConversationSurface({
   breakouts,
   openBreakoutId = null,
   onOpenBreakout,
+  linkSpaceId = null,
   onOpenMerge,
   mergeRequest = null,
   onMerged,
@@ -1826,8 +1833,6 @@ export function ConversationSurface({
   // thread's Main onto it, so a breakout's own artifact has neither.
   const isMainArtifact = (resourceId: string): boolean =>
     Boolean(pinnableResources?.some((resource) => resource.id === resourceId && resource.direction === 'artifact'));
-  // A link names a Space; a guest's Channel outside every Space they see has none.
-  const linkSpaceId = routedDetail?.spaceIds?.[0] ?? null;
   const citationPinned = useCallback((resourceId: string) => pinnedArtifactIds.has(resourceId), [pinnedArtifactIds]);
   // Citations resolve against the loaded work stream's resources, and the
   // transcript needs this before the screen has decided it has a work stream to
