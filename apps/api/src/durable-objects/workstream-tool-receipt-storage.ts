@@ -31,7 +31,7 @@ import {
   type OutboundExternalBinding,
 } from "./external-binding-outbox";
 import { uuidV7 } from "../lib/uuid-v7";
-import { ToolPageError, ToolPageStorage, type PageIssueSchema, type PageClaimSchema } from "./tool-page-storage";
+import { ToolPageError, ToolPageStorage, type PageClaim, type PageIssueSchema, type PageClaimSchema } from "./tool-page-storage";
 import type { z } from "zod";
 import {
   WorkstreamTranscriptStorage,
@@ -276,7 +276,7 @@ export class WorkstreamToolReceiptStorage {
     });
   }
 
-  claimPage(input: z.infer<typeof PageClaimSchema> & { fence: ToolReceiptFence }): { inputJson: string } | { consumedInputJson: string } {
+  claimPage(input: z.infer<typeof PageClaimSchema> & { fence: ToolReceiptFence }): PageClaim {
     return this.storage.transactionSync(() => {
       this.#assertPageReceipt(input);
       return new ToolPageStorage(this.sql).claim(input);
