@@ -20,7 +20,9 @@ import {
   Plus,
   RefreshCcw,
   Search,
+  UserPlus,
 } from 'lucide-react';
+import { resolveMentionPayload } from '../lib/mention-draft';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { openResourceRequest, useChannelPane, usePaneExpansion } from '../lib/navigation-routes';
@@ -1462,6 +1464,11 @@ export function ConversationSurface({
   const [dismissedSuggestionIds, setDismissedSuggestionIds] = useState<ReadonlySet<string>>(() => new Set());
   const [mergeError, setMergeError] = useState<string | undefined>();
   const [merging, setMerging] = useState(false);
+  // A merge note that mentions somebody not yet in a personal Thread asks
+  // before it lands, as the composer does for any message: the people named
+  // are added with the merge, or the note stays open.
+  const [mergeConfirmation, setMergeConfirmation] = useState<{ text: string; members: WorkspaceMember[] } | null>(null);
+  const [mergeConfirming, setMergeConfirming] = useState(false);
   // One operation id per merge until it succeeds: a send whose response was
   // lost is retried with the same id, so the server answers it as a replay
   // rather than posting it twice. New words, or a new target, are a new merge.
@@ -3326,7 +3333,7 @@ export function ConversationSurface({
     mergedBy={<span>{session?.user.name ?? 'You'}</span>}
     onCancel={() => setMergeCard(null)}
     onChange={changeMergeDraft}
-    onSubmit={() => { void submitMerge(mergeDraft, []).catch(() => undefined); }}
+    onSubmit={() => submitMergeFromCard(mergeDraft)}
     quote={merge.kind === 'channel' ? ((visibleTranscript.find((message) => message.authorType === 'human' && message.text)?.text ?? '').split('\n')[0] ?? null) : null}
     source={{ mark: <IconCornerDownRight aria-hidden="true" size={10} stroke={2} />, title: displayedDetail.title }}
     submitting={merging}
@@ -3342,7 +3349,68 @@ export function ConversationSurface({
     value={mergeDraft}
   /> : null;
   const mergeCardAnchored = Boolean(mergeCard?.anchorTurnId && readableTurnIds.includes(mergeCard.anchorTurnId));
-  if (mergeCardNode && mergeCard?.anchorTurnId && mergeCardAnchored) afterTurn.set(mergeCard.anchorTurnId, mergeCardNode);
+  const mergeConfirmationNames = mergeConfirmation?.members.map((member) => member.name) ?? [];
+  const mergeConfirmationNode = mergeConfirmation ? <Modal
+    description={mergeConfirmationNames.length > 1
+      ? `${mergeConfirmationNames.join(', ')} are not currently participants. Would you like to add them with this merge? If you do not add them, they will not be able to see the mentions or this thread.`
+      : `${mergeConfirmationNames[0] ?? 'This person'} is not currently a participant. Would you like to add them with this merge? If you do not add them, they will not be able to see the mention or this thread.`}
+    footer={
+      <>
+        <Button disabled={mergeConfirming} onClick={() => setMergeConfirmation(null)}>Cancel</Button>
+        <Button className="button-primary" disabled={mergeConfirming} onClick={() => void confirmMergeParticipants()}>
+          {mergeConfirming ? <LoaderCircle className="spin" size={14} /> : <UserPlus size={14} />}
+          {mergeConfirmationNames.length > 1 ? 'Add all and merge' : 'Add and merge'}
+        </Button>
+      </>
+    }
+    onOpenChange={(open) => { if (!open && !mergeConfirming) setMergeConfirmation(null); }}
+    open
+    title={mergeConfirmationNames.length > 1 ? 'Add participants?' : 'Add participant?'}
+  >
+    {mergeConfirmation.members.map((member) => (
+      <div className="mention-confirm-person" key={member.id}>
+        <Avatar member={member} size="large" />
+        <span><strong>{member.name}</strong><small>{member.email}</small></span>
+      </div>
+    ))}
+  </Modal> : null;
+  const mergeCardWithDialog = mergeCardNode ? <>{mergeCardNode}{mergeConfirmationNode}</> : null;
+  if (mergeCardWithDialog && mergeCard?.anchorTurnId && mergeCardAnchored) afterTurn.set(mergeCard.anchorTurnId, mergeCardWithDialog);
+  /**
+   * The card's Merge. A Breakout merge resolves the `@` mentions typed in its
+   * note the way a message's are (`api.mergeConversation`); when one names a
+   * member who is not in a personal Thread, the confirmation the composer
+   * would have shown is shown here, and the merge carries the people added.
+   */
+  const submitMergeFromCard = (text: string): void => {
+    const thread = merge?.kind === 'thread' && workstreamContext?.id === id ? workstreamContext : null;
+    if (thread && thread.scope === 'personal' && text.includes('@')) {
+      const active = visibleMembers.filter((member) => (member.status ?? 'active') === 'active');
+      const resolved = new Set(resolveMentionPayload(text, [], active.map((member) => ({
+        type: 'person', label: member.name, userId: member.id, connectorType: null,
+      }))).flatMap((mention) => mention.type === 'person' && mention.userId ? [mention.userId] : []));
+      const participants = new Set(thread.participants.map((person) => person.id));
+      const nonparticipants = active.filter((member) => resolved.has(member.id) && !participants.has(member.id));
+      if (nonparticipants.length > 0) {
+        setMergeConfirmation({ text, members: nonparticipants });
+        return;
+      }
+    }
+    void submitMerge(text, []).catch(() => undefined);
+  };
+  const confirmMergeParticipants = async (): Promise<void> => {
+    if (!mergeConfirmation) return;
+    const confirmed = mergeConfirmation;
+    setMergeConfirming(true);
+    setMergeConfirmation(null);
+    try {
+      await submitMerge(confirmed.text, [], confirmed.members.map((member) => member.id));
+    } catch {
+      // The card keeps the words and shows the failure.
+    } finally {
+      setMergeConfirming(false);
+    }
+  };
   const submitMerge = async (text: string, mentions: MentionIdentity[], confirmedParticipantUserIds?: string[]): Promise<void> => {
     if (!api || !merge) return;
     const nonce = mergeCard?.nonce ?? null;
@@ -3771,7 +3839,7 @@ export function ConversationSurface({
             || stopAcknowledgement.pendingRunId !== null
             || stopAcknowledgement.runId !== null)
             && <RunStopAcknowledgement settled={stopAcknowledgement.runId !== null} />}
-          {mergeCardNode && !mergeCardAnchored && <div className="merge-response-card-end">{mergeCardNode}</div>}
+          {mergeCardWithDialog && !mergeCardAnchored && <div className="merge-response-card-end">{mergeCardWithDialog}</div>}
           <WorkstreamComposer
             api={api ?? undefined}
             placeholder={parentKind === 'automation'

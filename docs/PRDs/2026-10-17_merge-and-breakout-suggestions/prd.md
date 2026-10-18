@@ -297,9 +297,10 @@ frozen, so the change is recorded here and, when it ships, in
    conversation socket carries no contract claim and `safeParseSocketEvent`
    strips the unknown key, so an older build keeps its snapshot without one.
 5. **2026-10-18. Every merge is made in the response card.** The composer's
-   merge mode is gone, by the product owner's call; the card's body is a plain
-   text box, so a merge note carries no `@` mentions and runs no
-   nonparticipant confirmation. Restoring them is a later change.
+   merge mode is gone, by the product owner's call. The card's body is a plain
+   text box without the mention picker; a typed `@` mention still resolves,
+   and a nonparticipant of a personal Thread is confirmed before the merge
+   carries them in. The picker is a later change if wanted.
 
 ## Key design decisions
 
