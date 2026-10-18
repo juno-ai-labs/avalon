@@ -871,6 +871,28 @@ export const WorkspaceChannelMergeTargetResultSchema = z.union([
 ]);
 export type WorkspaceChannelMergeTargetResult = z.infer<typeof WorkspaceChannelMergeTargetResultSchema>;
 
+/**
+ * `threadMergePlacement`: the Channel a thread's merge would land in with
+ * nobody in particular asking, the earliest active placement, as
+ * `channelMergeTarget` picks it for a person. Read by the turn-disposition
+ * observer in a thread's object, which has a settled run and no viewer, to
+ * name the parent in the classifier's state and on the suggestion it writes.
+ */
+export const WorkspaceThreadMergePlacementRequestSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+});
+export type WorkspaceThreadMergePlacementRequest = z.infer<typeof WorkspaceThreadMergePlacementRequestSchema>;
+
+export const WorkspaceThreadMergePlacementResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), spaceId: SpaceIdSchema, title: z.string() }),
+  z.strictObject({
+    ok: z.literal(false),
+    code: z.enum(["workstream_not_found", "conversation_archived", "merge_thread_private", "merge_channel_not_placed"]),
+  }),
+]);
+export type WorkspaceThreadMergePlacementResult = z.infer<typeof WorkspaceThreadMergePlacementResultSchema>;
+
 /** `mergeThreadIntoChannel`: post or replace this thread's merge in one of its Channels. */
 export const WorkspaceChannelMergeRequestSchema = WorkspaceChannelMergeTargetRequestSchema.extend({
   body: z.string().trim().min(1).max(MESSAGE_MAX_CHARACTERS),

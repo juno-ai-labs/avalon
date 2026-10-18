@@ -71,6 +71,8 @@ export * from "./projects";
 export * from "./resource-relationships";
 export * from "./spaces";
 export * from "./conversation-merge";
+export * from "./conversation-suggestions";
+import { ConversationSuggestionSchema } from "./conversation-suggestions";
 export { MentionSchema } from "./mention-schema";
 import { MentionSchema } from "./mention-schema";
 export * from "./navigation";
@@ -264,6 +266,7 @@ export const AGENT_MODEL_ROLES = [
   "work_opportunity_ranking",
   "workstream_description",
   "session_import",
+  "suggestion_draft",
 ] as const;
 export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
 
@@ -276,6 +279,7 @@ export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   work_opportunity_ranking: "agent-model-work-opportunity-ranking",
   workstream_description: "agent-model-workstream-description",
   session_import: "agent-model-session-import",
+  suggestion_draft: "agent-model-suggestion-draft",
 };
 
 /** One task's primary OpenRouter model and its ordered fallback route. */
@@ -3412,6 +3416,12 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
     activeStreams: ActiveStreamCheckpointsSchema.default([]),
     activeCompaction: AgentCompactionStateSchema.nullable().default(null),
     activeInferenceDelays: z.array(InferenceDelayStateSchema).default([]),
+    /**
+     * The open suggestions on the newest turns, for a build that draws them.
+     * Optional, and stripped by `safeParseSocketEvent` on a build that does
+     * not know the key, so no contract gate is needed for the snapshot.
+     */
+    suggestions: z.array(ConversationSuggestionSchema).optional(),
   }).strict(),
   ServerEventBaseSchema.extend({
     type: z.literal("initial_context_snapshot_chunk"),
@@ -3476,6 +3486,16 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({
     type: z.literal("workstream_scope_changed"),
     scope: ScopeSchema
+  }),
+  /**
+   * A conversation suggestion was opened, filled with its draft, or resolved.
+   * The row's full state travels each time, so a client replaces what it
+   * holds for that suggestion id. A build that does not know the type ignores
+   * the frame, which is why the event needs no contract gate.
+   */
+  ServerEventBaseSchema.extend({
+    type: z.literal("conversation_suggestion_changed"),
+    suggestion: ConversationSuggestionSchema,
   }),
   StreamEventBaseSchema.extend({
     type: z.literal("stream_started"),
