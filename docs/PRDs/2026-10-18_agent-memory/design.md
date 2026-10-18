@@ -15,7 +15,7 @@
 | --- | --- |
 | Canonical plugin id | `rally:memory` (unchanged, so persisted activations keep their identity) |
 | Wire prefix | `memory_` (kept: the canonical names are plugin-local verbs, per [`agent-tools.md`](../../agent-tools.md)) |
-| Availability | Always active in every root run of a Thread Main, a Breakout, and a Sidekick's own conversation and runs; absent from inline child runs |
+| Availability | Always active in every root run of a Thread Main, a Breakout, and a Sidekick's own conversation and runs (where `memory_remember` files under the `sidekick` subject and `about: "me"` is refused); absent from inline child runs |
 | Selection | Preloaded; the model cannot load or unload it |
 | Authority | Host-derived from the frozen execution principal and the run's conversation. The model never names a scope, a subject, or a conversation |
 | Tool order | `recall`, `remember`, `forget` |
@@ -158,6 +158,14 @@ action, and only the detail keys listed. The model never translates a code.
 | `memory_horizon_forbidden` | remember | "A standing fact takes no `validUntil`. Remove it, or record the fact as situational." | correct and retry | none |
 | `memory_personal_unavailable` | remember | "This run acts for a Sidekick, not a person, so `about: \"me\"` is not available. Record it about this conversation or say it could not be stored personally." | correct and retry | none |
 | `memory_unavailable` | all | "Memory is not reachable right now. Continue without it; do not retry this call." | stop retrying | `retryAfterMs` absent |
+| `memory_input_invalid:<field>` | all | "The call's `<field>` is <issue in plain words: missing, too long (at most 600 characters), not one of "me" or "this conversation", outside 1 to 25, not a property this tool takes>. Fix that field and call again." | correct and retry | `field`, `issue` |
+
+The last row is one code family, not one row per property: the host names
+the rejected field through `zodDiagnosticCode` and `describeZodIssues` from
+`@rally/contracts`, never a bare `ZodError`, and the sentence carries the
+shortest safe correction for that field. The acceptance evaluation's "wrong
+first call" cases (`forget` with no `factId`, `remember` situational without
+a horizon) recover from this row and from `memory_horizon_required`.
 
 Normal outcomes are not errors: an empty `facts` list, an already-retracted
 fact on `forget` (returns the stored retraction), a `remember` that matches an
@@ -173,11 +181,14 @@ active fact word for word (returns that fact with `revision` unchanged and
   predicates, both of which must hold. *Source:* the acting person may open
   every source conversation of the fact today (`mainOpenableSql` and the
   Breakout rule; for a source that is a Channel's own feed, the Channel's
-  listing rule). *Subject:* an Organization fact additionally requires
+  listing rule; for a `sidekick:<automationId>` source, the Sidekick's own
+  authority, the same check `resolveMemoryAccess` makes today for the
+  `sidekick` scope). *Subject:* an Organization fact additionally requires
   `admitsOrganizationWide` for the acting person, so a guest who holds an
   explicit grant to a Thread still receives none of the Organization facts
   learned there; a Channel fact additionally requires that the Channel be
-  listed to them. For recall, the result is further intersected with the
+  listed to them; a `sidekick` fact reaches only that Sidekick's own
+  conversations and runs. For recall, the result is further intersected with the
   conversation's participants. Every fact has a source, an
   Organization fact included: it was promoted *from* a conversation, and if
   that conversation is later narrowed to private, people who may no longer
@@ -207,9 +218,13 @@ active fact word for word (returns that fact with `revision` unchanged and
 ## 6. The sweep
 
 **Trigger.** `settleAgentRun` in the conversation object's external-settlement
-lane, after the description loop's step, plus a derived alarm candidate: the
-earliest `rest_until` of a conversation with human messages after
-`swept_through_seq`. Both call `claimMemorySweep`, which pushes `rest_until`
+lane, after the description loop's step, for conversations whose parent is a
+Thread **and** for a Sidekick's own conversation and runs (the description
+loop's `parentKind === "workstream"` guard is not inherited; the sweep's
+guard admits `automation` too), plus a derived alarm candidate: the earliest
+`rest_until` of a conversation with human messages after
+`swept_through_seq`. A Channel's own feed is not swept in this PRD
+([`prd.md` non-goal 9](prd.md#non-goals)). Both call `claimMemorySweep`, which pushes `rest_until`
 first (the description loop's claim) and publishes `{ workspaceId,
 conversation, fromSeq, toSeq, attempt }` to `ACTIVITY_QUEUE`.
 
