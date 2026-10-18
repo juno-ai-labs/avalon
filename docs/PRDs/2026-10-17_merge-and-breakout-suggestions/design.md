@@ -139,9 +139,9 @@ Nothing else goes in: every extra field is one JEV can over-weight.
 
 | Outcome | Meaning | Include | Exclude |
 | --- | --- | --- | --- |
-| `worth_carrying_up` | The turn holds something the parent conversation's readers need now, in words they could use without this transcript: a deliverable, a decision, an answer to what they asked, a recommendation, a milestone, or a question only they can settle | A finished deliverable or draft; a decision the people here reached; the answer to the purpose; a question this conversation cannot settle and the parent can; a milestone the parent is waiting on | A draft the turn itself calls preliminary or asks the people here to review; routine progress, however long; a question to the people here; an answer to a narrow question that is not the purpose |
+| `worth_carrying_up` | The turn holds something the parent conversation's readers need now, in words they could use without this transcript: a deliverable, a decision, an answer to what they asked, a recommendation, a milestone, or a question only they can settle | A finished deliverable or draft; a deliverable revised the way the people here asked, now done; a decision the people here reached; the answer to the purpose; a question this conversation cannot settle and the parent can; a milestone the parent is waiting on | A draft the turn itself calls preliminary or asks the people here to review; routine progress, however long; a question to the people here; an answer to a narrow question that is not the purpose |
 | `side_question_worth_a_breakout` | The turn, or the exchange that led to it, opened a distinct piece of work beside the purpose: large enough to need its own conversation, likely to crowd this one | A sub-problem the turn proposes to work separately; a second deliverable the people asked for that the purpose does not cover; a line of questions on another subject that has run for several turns | A clarification or follow-up about the purpose itself; a one-line aside; the next step of the purpose |
-| `continue_here` | The turn is a step of the work here, and nothing in it is for the parent's readers yet | Partial work, a question to a person here, a status update; a result that answers a small part of the purpose | Something the parent's readers need now; a distinct piece of work beside the purpose |
+| `continue_here` | The turn is a step of the work here, and nothing in it is for the parent's readers yet | Partial work, a question to a person here, a status update; a result that answers a small part of the purpose | Something the parent's readers need now; a deliverable revised as asked and now done; a distinct piece of work beside the purpose |
 
 The exclusions are symmetric on purpose: what one outcome excludes, its
 neighbour includes, so no case falls between them for the model to settle
@@ -467,6 +467,52 @@ the production-data runbook and deleted after the run.
    accept, and it is what "not too noisy" means in a figure.
 5. Run the winner once on untouched holdout, repeat it, and commit the
    aggregate as the baseline. Pin the shipped request to the measured bytes.
+
+### A first live probe, 2026-10-18
+
+The question above, with the second `carried_item_kind` question in the
+same request, was run against the live endpoint on fourteen authored cases,
+twice each, from a scratch harness outside the tree. The numbers are a
+smoke test of the contract, not a measurement: the cases were written by
+the author of the question, there is no split and no adjudication, and the
+harness is not committed. They are recorded so the first real evaluation
+has something to be compared against.
+
+| | |
+| --- | --- |
+| Model | `jev-1.13.0` through `jev-latest` |
+| Disposition | 25 of 28 answers as expected; 13 of 14 cases gave the same answer twice |
+| Kind | 16 of 20 answers within the expected set |
+| Confidence | mean 0.75 on correct answers, 0.40 on wrong ones |
+| Latency | p50 120 ms, p90 181 ms, one 580 ms outlier on the first call; no failures |
+
+Three things the probe showed, each a candidate for the real corpus rather
+than a conclusion:
+
+- **A revised deliverable read as an update.** The Breakout case whose turn
+  ends "nothing else changed" came back `worth_carrying_up` at 0.48 and 0.52,
+  on the threshold, with the kind `update`. Adding one include to
+  `worth_carrying_up` ("a deliverable revised the way the people here asked,
+  now done") and its mirror exclude to `continue_here` moved it to 0.82 on
+  both runs and moved nothing else. That line is in the criteria above.
+- **A turn that both settles the purpose and opens a side question splits
+  the vote.** The "annual at $96 holds, Starter is a separate question" case
+  came back `worth_carrying_up` at about 0.5 both times, never the breakout.
+  A tie-break sentence in the focus ("if the turn does both, it is worth
+  carrying up") did not change the label and lowered confidence on every
+  carry-up case, so it was dropped. Whether such a turn should get both
+  suggestions, or the breakout on the following turn when the side question
+  is picked up, is the first question for the real corpus.
+- **A question to the people here that names a side piece of work** was
+  called a breakout once at 0.16 and `continue_here` once at 0.23: the one
+  unstable case, and one no threshold in the measured band would act on.
+
+Everything else, including the small answer inside a bigger purpose, the
+acknowledgement, the preliminary draft asking for review, the milestone and
+the recommendation, came back as expected on both runs. The second question
+named `decision`, `answer` and `question` reliably and confused
+`deliverable` with `update` on the revised deliverable, which is consistent
+with the rule above that the kind is recorded before it is shown.
 
 ### What "not too noisy on either end" means in numbers
 
