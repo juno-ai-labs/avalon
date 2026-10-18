@@ -181,6 +181,17 @@ describe('useFilePaste', () => {
     expect(event.preventDefault).not.toHaveBeenCalled();
   });
 
+  it('pastes long text at the caret when the message has no room for another file', () => {
+    const onFiles = vi.fn();
+    const { result } = renderHook(() => useFilePaste(onFiles, false, false));
+    const event = pasteEvent({ text: 'a'.repeat(LONG_PASTE_CHARACTERS) });
+
+    result.current(event);
+
+    expect(onFiles).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
   it('attaches a long spreadsheet copy as its text, not the picture of it', () => {
     const onFiles = vi.fn();
     const { result } = renderHook(() => useFilePaste(onFiles));
