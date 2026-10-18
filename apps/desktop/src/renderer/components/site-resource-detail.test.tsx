@@ -148,6 +148,76 @@ describe('showing a live artifact in the rail', () => {
     geometry.mockRestore();
   });
 
+  it('holds the hide for the still, and keeps the still until the view is back', async () => {
+    const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ x: 20, y: 40, width: 500, height: 320 }),
+    );
+    let finishCapture: (image: string | null) => void = () => undefined;
+    let finishRestore: () => void = () => undefined;
+    const sent: { width: number }[] = [];
+    const { props } = setup({
+      surface: surface({
+        snapshot: vi.fn(async () => await new Promise<string | null>((resolve) => { finishCapture = resolve; })),
+        setBounds: vi.fn(async (bounds: { x: number; y: number; width: number; height: number }) => {
+          sent.push(bounds);
+          // Only the restore after the overlay is held, so the test can look
+          // at the pane while the view is not back yet.
+          if (bounds.width > 0 && sent.some((earlier) => earlier.width === 0)) {
+            await new Promise<void>((resolve) => { finishRestore = resolve; });
+          }
+        }),
+      }),
+    });
+    await waitFor(() => expect(sent.length).toBeGreaterThan(0));
+    const overlay = document.createElement('div');
+    overlay.setAttribute('role', 'dialog');
+    document.body.append(overlay);
+    await waitFor(() => expect(props.surface.snapshot).toHaveBeenCalledOnce());
+    // More mutations while the still is being taken must neither collapse the
+    // view early nor start a second capture.
+    overlay.setAttribute('data-state', 'open');
+    window.dispatchEvent(new Event('resize'));
+    await act(async () => { await Promise.resolve(); });
+    expect(sent.filter((bounds) => bounds.width === 0)).toHaveLength(0);
+    expect(props.surface.snapshot).toHaveBeenCalledOnce();
+
+    await act(async () => { finishCapture('data:image/jpeg;base64,c3RpbGw='); });
+    await waitFor(() => expect(sent.at(-1)).toEqual({ x: 0, y: 0, width: 0, height: 0 }));
+    const still = screen.getByTestId('site-preview-pane').querySelector('img');
+    expect(still?.style.width).toBe('500px');
+    expect(still?.style.height).toBe('320px');
+
+    overlay.remove();
+    await waitFor(() => expect(sent.at(-1)).toEqual({ x: 20, y: 40, width: 500, height: 320 }));
+    expect(screen.getByTestId('site-preview-pane').querySelector('img')).not.toBeNull();
+    await act(async () => { finishRestore(); });
+    await waitFor(() => expect(screen.getByTestId('site-preview-pane').querySelector('img')).toBeNull());
+    geometry.mockRestore();
+  });
+
+  it('leaves the view up when the overlay closes before the still is taken', async () => {
+    const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ x: 20, y: 40, width: 500, height: 320 }),
+    );
+    let finishCapture: (image: string | null) => void = () => undefined;
+    const { props } = setup({
+      surface: surface({
+        snapshot: vi.fn(async () => await new Promise<string | null>((resolve) => { finishCapture = resolve; })),
+      }),
+    });
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenCalled());
+    const overlay = document.createElement('div');
+    overlay.setAttribute('role', 'menu');
+    document.body.append(overlay);
+    await waitFor(() => expect(props.surface.snapshot).toHaveBeenCalledOnce());
+    overlay.remove();
+    await act(async () => { finishCapture('data:image/jpeg;base64,c3RpbGw='); });
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 20, y: 40, width: 500, height: 320 }));
+    expect(props.surface.setBounds).not.toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 });
+    expect(screen.getByTestId('site-preview-pane').querySelector('img')).toBeNull();
+    geometry.mockRestore();
+  });
+
   it('hands the pane to the main process rather than embedding anything', async () => {
     // The renderer measures a rectangle and gets out of the way; it never
     // embeds artifact content itself.
