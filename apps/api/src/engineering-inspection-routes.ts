@@ -105,13 +105,14 @@ export type OrganizationRow = z.infer<typeof OrganizationRowSchema>;
  * caller merges the regions and orders the whole set.
  *
  * Timestamps are stored as UTC ISO strings, so a bound is normalized to the
- * same form before the text comparison.
+ * same form before the text comparison. The text match runs here rather than
+ * in SQL because SQLite's `lower()` folds only ASCII, so `École` would not
+ * match `école`.
  */
 export async function searchInspectionOrganizations(
   env: InspectionRouteEnv,
   filter: SearchEngineeringOrganizationsInput,
 ): Promise<OrganizationRow[]> {
-  const query = filter.query?.toLowerCase() ?? null;
   const after = filter.createdAfter ? new Date(filter.createdAfter).toISOString() : null;
   const before = filter.createdBefore ? new Date(filter.createdBefore).toISOString() : null;
   const result = await env.DB.prepare(
@@ -124,25 +125,24 @@ export async function searchInspectionOrganizations(
               WHERE member.workspace_id = workspace.id) AS last_seen_at
        FROM workspaces workspace
       WHERE workspace.region = ?1
-        AND (?2 IS NULL
-             OR instr(lower(workspace.name), ?2) > 0
-             OR instr(lower(workspace.slug), ?2) > 0
-             OR instr(lower(workspace.id), ?2) > 0)
-        AND (?3 IS NULL OR workspace.plan = ?3)
-        AND CASE ?4
+        AND (?2 IS NULL OR workspace.plan = ?2)
+        AND CASE ?3
               WHEN 'include' THEN 1
               WHEN 'only' THEN workspace.abandoned_at IS NOT NULL
               ELSE workspace.abandoned_at IS NULL
             END
-        AND (?5 IS NULL OR workspace.created_at >= ?5)
-        AND (?6 IS NULL OR workspace.created_at < ?6)`,
+        AND (?4 IS NULL OR workspace.created_at >= ?4)
+        AND (?5 IS NULL OR workspace.created_at < ?5)`,
   ).bind(
     env.AVALON_REGION,
-    query,
     filter.plan ?? null,
     filter.abandoned ?? "exclude",
     after,
     before,
   ).all<unknown>();
-  return z.array(OrganizationRowSchema).parse(result.results ?? []);
+  const rows = z.array(OrganizationRowSchema).parse(result.results ?? []);
+  const query = filter.query?.toLowerCase();
+  return query === undefined
+    ? rows
+    : rows.filter((row) => [row.name, row.slug, row.id].some((text) => text.toLowerCase().includes(query)));
 }
