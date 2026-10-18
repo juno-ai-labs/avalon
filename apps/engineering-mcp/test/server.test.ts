@@ -616,14 +616,21 @@ describe("Rally engineering MCP tools", () => {
       .toEqual(["lakehouse_token_unconfigured"]);
   });
 
-  function organization(id: string, name: string, memberCount: number, lastSeenAt: string | null, region: "global" | "enterprise") {
+  function organization(
+    id: string,
+    name: string,
+    createdAt: string,
+    memberCount: number,
+    lastSeenAt: string | null,
+    region: "global" | "enterprise",
+  ) {
     return {
       workspaceId: asWorkspaceId(id),
       name,
       slug: name.toLowerCase(),
       region,
       plan: "starter",
-      createdAt: "2026-09-01T00:00:00.000Z",
+      createdAt,
       abandonedAt: null,
       memberCount,
       lastSeenAt,
@@ -634,25 +641,27 @@ describe("Rally engineering MCP tools", () => {
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
     vi.mocked(global.searchOrganizations).mockResolvedValue({ region: "global", items: [
-      organization("00000000-0000-7000-8000-000000000ef1", "Acme", 3, null, "global"),
-      organization("00000000-0000-7000-8000-000000000ef2", "beta", 9, "2026-10-01T00:00:00.000Z", "global"),
+      organization("00000000-0000-7000-8000-000000000ef1", "Acme", "2026-09-01T00:00:00.000Z", 3, null, "global"),
+      organization("00000000-0000-7000-8000-000000000ef2", "beta", "2026-08-01T00:00:00.000Z", 9, "2026-10-01T00:00:00.000Z", "global"),
     ] });
     vi.mocked(enterprise.searchOrganizations).mockResolvedValue({ region: "enterprise", items: [
-      organization("00000000-0000-7000-8000-000000000ef3", "Cobalt", 5, "2026-10-09T00:00:00.000Z", "enterprise"),
+      organization("00000000-0000-7000-8000-000000000ef3", "Cobalt", "2026-10-01T00:00:00.000Z", 5, "2026-10-09T00:00:00.000Z", "enterprise"),
     ] });
     const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
     const names = async (name: string, args: Record<string, unknown>) => {
       const response = await rpc(env, "tools/call", { name, arguments: args });
       const result = response.result as { content: Array<{ text: string }> };
-      return (JSON.parse(result.content[0]!.text) as Array<{ name: string }>).map((item) => item.name);
+      return (JSON.parse(result.content[0]!.text) as { items: Array<{ name: string }> }).items.map((item) => item.name);
     };
 
-    await expect(names("list_orgs", {})).resolves.toEqual(["Acme", "beta", "Cobalt"]);
+    await expect(names("list_orgs", {})).resolves.toEqual(["Cobalt", "Acme", "beta"]);
+    await expect(names("search_orgs", {})).resolves.toEqual(["Cobalt", "Acme", "beta"]);
+    await expect(names("list_orgs", { orderBy: "name" })).resolves.toEqual(["Acme", "beta", "Cobalt"]);
     await expect(names("list_orgs", { orderBy: "memberCount", direction: "desc", limit: 2 }))
       .resolves.toEqual(["beta", "Cobalt"]);
-    await expect(names("search_orgs", { orderBy: "lastSeenAt", direction: "desc" }))
-      .resolves.toEqual(["Cobalt", "beta", "Acme"]);
     await expect(names("search_orgs", { orderBy: "lastSeenAt" }))
+      .resolves.toEqual(["Cobalt", "beta", "Acme"]);
+    await expect(names("search_orgs", { orderBy: "lastSeenAt", direction: "asc" }))
       .resolves.toEqual(["beta", "Cobalt", "Acme"]);
   });
 
@@ -673,5 +682,50 @@ describe("Rally engineering MCP tools", () => {
         [{ abandoned: "include" }],
       ]);
     }
+  });
+
+  it("pages by number over both regions' merged, ordered set", async () => {
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    vi.mocked(global.searchOrganizations).mockResolvedValue({ region: "global", items: [
+      organization("00000000-0000-7000-8000-000000000ef1", "Acme", "2026-09-01T00:00:00.000Z", 3, null, "global"),
+      organization("00000000-0000-7000-8000-000000000ef2", "Beta", "2026-08-01T00:00:00.000Z", 9, null, "global"),
+    ] });
+    vi.mocked(enterprise.searchOrganizations).mockResolvedValue({ region: "enterprise", items: [
+      organization("00000000-0000-7000-8000-000000000ef3", "Cobalt", "2026-10-01T00:00:00.000Z", 5, null, "enterprise"),
+    ] });
+    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
+    const page = async (args: Record<string, unknown>) => {
+      const response = await rpc(env, "tools/call", { name: "search_orgs", arguments: args });
+      const result = response.result as { content: Array<{ text: string }> };
+      const body = JSON.parse(result.content[0]!.text) as { items: Array<{ name: string }> } & Record<string, unknown>;
+      return { ...body, items: body.items.map((item) => item.name) };
+    };
+
+    await expect(page({ plan: "starter", limit: 2 }))
+      .resolves.toEqual({ items: ["Cobalt", "Acme"], page: 1, pageCount: 2, total: 3, nextPage: 2 });
+    await expect(page({ plan: "starter", limit: 2, page: 2 }))
+      .resolves.toEqual({ items: ["Beta"], page: 2, pageCount: 2, total: 3, nextPage: null });
+    await expect(page({ plan: "starter", limit: 2, page: 3 }))
+      .resolves.toEqual({ items: [], page: 3, pageCount: 2, total: 3, nextPage: null });
+  });
+
+  it("returns a default page of 200 when no limit is set", async () => {
+    const global = regionalBinding("global");
+    vi.mocked(global.searchOrganizations).mockResolvedValue({ region: "global", items: Array.from({ length: 201 }, (_, index) =>
+      organization(
+        `00000000-0000-7000-8000-${String(index).padStart(12, "0")}`,
+        `Org ${index}`,
+        "2026-09-01T00:00:00.000Z",
+        1,
+        null,
+        "global",
+      )) });
+
+    const response = await rpc(testEnv({ GLOBAL_INSPECTION: global }), "tools/call", { name: "list_orgs", arguments: {} });
+    const result = response.result as { content: Array<{ text: string }> };
+    const body = JSON.parse(result.content[0]!.text) as { items: unknown[] };
+    expect(body).toMatchObject({ total: 201, pageCount: 2, nextPage: 2 });
+    expect(body.items).toHaveLength(200);
   });
 });
