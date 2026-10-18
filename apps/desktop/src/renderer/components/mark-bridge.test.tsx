@@ -143,6 +143,8 @@ describe('TitlePillHeader', () => {
 
       const marks = screen.getAllByRole('button', { name: /^Open/u });
       expect(marks.map((mark) => mark.getAttribute('aria-label'))).toEqual(['Open navigation', 'Open channel: General']);
+      expect(marks[0]!.closest('.mark-bridge')).toBeNull();
+      expect(marks[1]!.closest('.mark-bridge')).not.toBeNull();
       fireEvent.click(marks[0]!);
       expect(openNavigation).toHaveBeenCalledOnce();
     });
