@@ -185,10 +185,10 @@ what it is, where it goes, what pressing it does) and a skeleton where the
 excerpt will be, and for a Breakout where the subject will be in the title.
 The action waits with the skeleton, because the card or the launch pane
 would open with words the person has not seen; Dismiss works from the first
-frame. When the draft lands the chip fills in place. When the draft fails,
-the chip stays: its sentence says Rally could not draft the words, the
-excerpt is left out, and the action opens the card with the turn's own
-words or the launch pane empty. A draft never blocks a suggestion. The title and the
+frame. When the draft lands the chip fills in place. When the draft fails, the
+chip is withdrawn: nothing is left on the turn, and the hover row's Merge
+and New breakout are where they always were. A suggestion without its words
+is not shown. The title and the
 sentence are fixed strings per kind with one slot for a name; nothing in
 them is generated except a Breakout's subject, which the drafter returns
 beside the prompt. The sentence is the ask, in one line: why now
@@ -383,9 +383,9 @@ None yet.
 One table in the conversation object (`SubstreamAgent`), migration v75 after
 `channel_color_revision`: `conversation_suggestions`, one row per judgement
 that produced a suggestion, with `kind`, the judged turn and run, `status`
-(`open`, `accepted`, `dismissed`, `expired`), a `draft_status`
-(`pending`, `ready`, `failed`) with the drafted text and subject, the
-decision's choice, confidence and model, and who resolved it. A
+(`open`, `accepted`, `dismissed`, `expired`, `withdrawn`), a
+`draft_status` (`pending`, `ready`, `failed`) with the drafted text and
+subject, the decision's choice, confidence and model, and who resolved it. A
 unique index allows one row per judged turn. Pacing reads the newest
 `dismissed` row per kind. The sketch is in [design.md](design.md#the-suggestion-slot);
 the authoritative record is the migration and `data-model.md`.
@@ -473,8 +473,8 @@ structured-inference gateway; neither is a tool.
   description loop exactly as they are, and the run's terminal state is
   unaffected.
 - The chip appears with a skeleton within a second of the turn settling and
-  fills a few seconds later; with the drafting route unreachable it stays,
-  says so, and its action still works.
+  fills a few seconds later; with the drafting route unreachable it is
+  withdrawn and the turn is left as it was.
 
 ## Open questions
 
