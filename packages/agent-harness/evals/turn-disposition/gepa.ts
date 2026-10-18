@@ -425,6 +425,7 @@ async function main(): Promise<void> {
   const reflector = option(argv, "--reflector") ?? "openai/gpt-6-astra";
   const holdout = argv.includes("--holdout");
   const topK = Number(option(argv, "--top") ?? "3");
+  const included = (option(argv, "--include") ?? "").split(",").map((id) => id.trim()).filter(Boolean);
   await assertProtectedEvaluationPaths([casesPath, labelsPath], [outputPath]);
   const typesafeKey = process.env.TYPESAFE_API_KEY?.trim();
   const openRouterKey = process.env.OPENROUTER_API_KEY?.trim();
@@ -464,7 +465,9 @@ async function main(): Promise<void> {
 
   if (holdout) {
     const ranked = [...pool].sort((left, right) => right.dev.macroF1 - left.dev.macroF1);
-    const chosen = [pool.find((item) => item.candidate.id === "baseline")!, ...ranked.filter((item) => item.candidate.id !== "baseline").slice(0, topK)];
+    const top = ranked.filter((item) => item.candidate.id !== "baseline").slice(0, topK);
+    const extra = pool.filter((item) => included.includes(item.candidate.id) && !top.includes(item) && item.candidate.id !== "baseline");
+    const chosen = [pool.find((item) => item.candidate.id === "baseline")!, ...top, ...extra];
     const personIds = new Set(holdoutCases.filter((evaluationCase) => !labels.get(evaluationCase.id)!.source?.startsWith("judge")).map((evaluationCase) => evaluationCase.id));
     const report: unknown[] = [];
     for (const item of chosen) {
