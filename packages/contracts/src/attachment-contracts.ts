@@ -264,7 +264,7 @@ export type CharacterRange = z.infer<typeof CharacterRangeSchema>;
 export const SuggestedAttachmentToolCallSchema = z.discriminatedUnion("tool", [
   z.strictObject({
     tool: z.literal("read_resource"),
-    arguments: z.strictObject({ resourceId: CanonicalUuidSchema }),
+    arguments: z.strictObject({ resourceId: CanonicalUuidSchema, startCharacter: NonNegativeIntegerSchema.optional() }),
   }),
   z.strictObject({
     tool: z.literal("view_resource"),
@@ -272,7 +272,7 @@ export const SuggestedAttachmentToolCallSchema = z.discriminatedUnion("tool", [
   }),
   z.strictObject({
     tool: z.literal("sidekick_read_resource"),
-    arguments: z.strictObject({ resourceId: CanonicalUuidSchema }),
+    arguments: z.strictObject({ resourceId: CanonicalUuidSchema, startCharacter: NonNegativeIntegerSchema.optional() }),
   }),
   z.strictObject({
     tool: z.literal("sidekick_view_resource"),
