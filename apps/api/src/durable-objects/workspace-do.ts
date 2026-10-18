@@ -10297,17 +10297,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     if (pinners.size === 0) return;
-    // One pinner's list failing to build must not cost the others theirs, or
-    // anyone their push.
-    for (const userId of pinners) {
-      try {
-        this.publishArtifactPins(userId, workspaceId);
-      } catch (error) {
-        logWarn(this.env, "artifact_pins_publish_failed", {
-          workspace_id: workspaceId, code: diagnosticErrorCode(error, "artifact_pins_publish_failed"),
-        });
-      }
-    }
+    this.publishArtifactPinsTo(pinners, workspaceId);
     try {
       await this.publishSync(["activity"], workspaceId,
         this.placementAffinity() ?? await workspacePlacementAffinity(this.env, workspaceId),
@@ -10327,6 +10317,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * the relationship one of their sockets was admitted with. Nobody connected
    * is nobody to tell: the connect payload carries the list.
    */
+  /** {@link publishArtifactPins} for each of several people. */
+  private publishArtifactPinsTo(userIds: Iterable<string>, workspaceId: string): void {
+    // One pinner's list failing to build must not cost the others theirs, or
+    // anyone their push.
+    for (const userId of userIds) {
+      try {
+        this.publishArtifactPins(userId, workspaceId);
+      } catch (error) {
+        logWarn(this.env, "artifact_pins_publish_failed", {
+          workspace_id: workspaceId, code: diagnosticErrorCode(error, "artifact_pins_publish_failed"),
+        });
+      }
+    }
+  }
+
   private publishArtifactPins(userId: string, workspaceId: string): void {
     const socket = this.state.getWebSockets().map(readAttachment)
       .find((attachment) => attachment?.subscribed && attachment.userId === userId);
@@ -14336,17 +14341,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const result = renameWorkspaceResource(this.state.storage, request);
     if (result.outcome !== "renamed") return result;
-    const pinners = new Set(new WorkspacePinStorage(this.state.storage).artifactPinners(request.resourceId)
-      .map((pinner) => pinner.userId));
-    for (const userId of pinners) {
-      try {
-        this.publishArtifactPins(userId, request.workspaceId);
-      } catch (error) {
-        logWarn(this.env, "artifact_pins_publish_failed", {
-          workspace_id: request.workspaceId, code: diagnosticErrorCode(error, "artifact_pins_publish_failed"),
-        });
-      }
-    }
+    this.publishArtifactPinsTo(new Set(new WorkspacePinStorage(this.state.storage).artifactPinners(request.resourceId)
+      .map((pinner) => pinner.userId)), request.workspaceId);
     return result;
   }
 
