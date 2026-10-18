@@ -19,7 +19,7 @@
  *
  * See `docs/live-web-artifacts.md` and `docs/security.md`.
  */
-import { parseArtifactHost } from '@rally/contracts';
+import { ARTIFACT_RESERVED_PREFIX, parseArtifactHost } from '@rally/contracts';
 import type { Session } from 'electron';
 
 /**
@@ -51,7 +51,18 @@ export interface ArtifactViewHandle {
    * is what reaches the bottom corners of the surface holding it.
    */
   setBorderRadius(radius: number): void;
-  loadURL(url: string): Promise<void>;
+  /**
+   * Show or hide the view without changing its size. A view loading behind the
+   * rail's "Opening…" is hidden this way rather than collapsed, so the site's
+   * startup code measures the pane it will be shown in, not a 0×0 viewport.
+   */
+  setVisible(visible: boolean): void;
+  /**
+   * Navigate to an artifact, resolving `true` once the artifact's own document
+   * is ready to show and `false` on a terminal failure. See
+   * `loadArtifactDocument`.
+   */
+  load(url: string): Promise<boolean>;
   close(): void;
 }
 
@@ -151,6 +162,67 @@ export async function loadArtifactInitialUrl(loadURL: () => Promise<void>): Prom
   } catch (error) {
     return typeof error === 'object' && error !== null && 'code' in error
       && error.code === 'ERR_ABORTED';
+  }
+}
+
+/** The events of an artifact's web contents that `loadArtifactDocument` reads. */
+export interface ArtifactDocumentContents {
+  loadURL(url: string): Promise<void>;
+  getURL(): string;
+  on(event: 'dom-ready' | 'destroyed', listener: () => void): unknown;
+  on(event: 'did-fail-load', listener: (
+    event: unknown, errorCode: number, errorDescription: string, url: string, isMainFrame: boolean,
+  ) => void): unknown;
+  removeListener(event: 'dom-ready' | 'destroyed' | 'did-fail-load', listener: (...args: never[]) => void): unknown;
+}
+
+/**
+ * Load an artifact and resolve once **the artifact's own document** is ready.
+ *
+ * The access URL is the redeem bootstrap, a Rally page with its own "Opening…"
+ * that lasts one round trip. Showing the view from the start painted that page
+ * over the rail's own "Opening…": two loading looks, one after the other, for
+ * one open. Waiting for the first `dom-ready` that is not the bootstrap keeps
+ * the rail's placeholder the only one. Chromium fires no `dom-ready` for the
+ * bootstrap in practice, since its form POST replaces it mid-parse; the path
+ * check is what makes that not matter.
+ *
+ * `ERR_ABORTED` is that same POST replacing the bootstrap, not a failure (see
+ * `loadArtifactInitialUrl`). Any other main-frame failure, or the contents
+ * going away, resolves `false`.
+ */
+export async function loadArtifactDocument(contents: ArtifactDocumentContents, url: string): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const finish = (shown: boolean): void => {
+      contents.removeListener('dom-ready', ready);
+      contents.removeListener('did-fail-load', failed);
+      contents.removeListener('destroyed', gone);
+      resolve(shown);
+    };
+    const ready = (): void => {
+      if (!isRedeemBootstrap(contents.getURL())) finish(true);
+    };
+    const failed = (_event: unknown, errorCode: number, _description: string, _url: string, isMainFrame: boolean): void => {
+      if (isMainFrame && errorCode !== ERR_ABORTED) finish(false);
+    };
+    const gone = (): void => finish(false);
+    contents.on('dom-ready', ready);
+    contents.on('did-fail-load', failed);
+    contents.on('destroyed', gone);
+    void loadArtifactInitialUrl(() => contents.loadURL(url)).then((loaded) => {
+      if (!loaded) finish(false);
+    });
+  });
+}
+
+/** Chromium's `net::ERR_ABORTED`, as `did-fail-load` reports it. */
+const ERR_ABORTED = -3;
+
+function isRedeemBootstrap(candidate: string): boolean {
+  try {
+    return new URL(candidate).pathname === `${ARTIFACT_RESERVED_PREFIX}/open`;
+  } catch {
+    return false;
   }
 }
 
@@ -513,12 +585,16 @@ export class ArtifactPreviewController {
       // one layout, so it must not ride along with the bounds a scroll
       // recomputes many times a second.
       created.setBorderRadius(request.cornerRadius);
+      // Hidden, at full size, until the site's own document is ready: the
+      // rail's "Opening…" is what a person sees over the redeem bootstrap.
+      created.setVisible(false);
       this.applyBounds();
-      const result = loadArtifactInitialUrl(() => created.loadURL(request.url)).then((loaded) => {
+      const result = created.load(request.url).then((loaded) => {
         // DNS, TLS, and terminal navigation failures should not leave an empty
-        // composited view. `ERR_ABORTED` is the successful redemption handoff
-        // documented by `loadArtifactInitialUrl`, not a terminal failure.
-        if (!loaded && this.view === created) this.destroy();
+        // composited view.
+        if (this.view !== created) return loaded;
+        if (!loaded) this.destroy();
+        else created.setVisible(true);
         return loaded;
       });
       this.pendingLoad = { view: created, result };
