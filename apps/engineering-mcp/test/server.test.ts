@@ -21,6 +21,9 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     listWorkspaces: vi.fn<EngineeringInspectionRpcBinding["listWorkspaces"]>(
       async () => ({ region, items: [] }),
     ),
+    searchOrganizations: vi.fn<EngineeringInspectionRpcBinding["searchOrganizations"]>(
+      async () => ({ region, items: [] }),
+    ),
     listWorkstreams: vi.fn<EngineeringInspectionRpcBinding["listWorkstreams"]>(
       async () => ({ found: false }),
     ),
@@ -115,6 +118,8 @@ describe("Rally engineering MCP tools", () => {
     const result = response.result as { tools: Array<{ name: string; annotations?: Record<string, boolean> }> };
     expect(result.tools.map((tool) => tool.name)).toEqual([
       "list_workspaces",
+      "list_orgs",
+      "search_orgs",
       "list_workstreams",
       "list_substreams",
       "list_sidekicks",
@@ -609,5 +614,64 @@ describe("Rally engineering MCP tools", () => {
     expect(basin).not.toHaveBeenCalled();
     expect(logged.mock.calls.map((call) => JSON.parse(String(call[0])).error_code))
       .toEqual(["lakehouse_token_unconfigured"]);
+  });
+
+  function organization(id: string, name: string, memberCount: number, lastSeenAt: string | null, region: "global" | "enterprise") {
+    return {
+      workspaceId: asWorkspaceId(id),
+      name,
+      slug: name.toLowerCase(),
+      region,
+      plan: "starter",
+      createdAt: "2026-09-01T00:00:00.000Z",
+      abandonedAt: null,
+      memberCount,
+      lastSeenAt,
+    };
+  }
+
+  it("orders Organizations from both regions as one set, never-seen last, and takes the first N", async () => {
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    vi.mocked(global.searchOrganizations).mockResolvedValue({ region: "global", items: [
+      organization("00000000-0000-7000-8000-000000000ef1", "Acme", 3, null, "global"),
+      organization("00000000-0000-7000-8000-000000000ef2", "beta", 9, "2026-10-01T00:00:00.000Z", "global"),
+    ] });
+    vi.mocked(enterprise.searchOrganizations).mockResolvedValue({ region: "enterprise", items: [
+      organization("00000000-0000-7000-8000-000000000ef3", "Cobalt", 5, "2026-10-09T00:00:00.000Z", "enterprise"),
+    ] });
+    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
+    const names = async (name: string, args: Record<string, unknown>) => {
+      const response = await rpc(env, "tools/call", { name, arguments: args });
+      const result = response.result as { content: Array<{ text: string }> };
+      return (JSON.parse(result.content[0]!.text) as Array<{ name: string }>).map((item) => item.name);
+    };
+
+    await expect(names("list_orgs", {})).resolves.toEqual(["Acme", "beta", "Cobalt"]);
+    await expect(names("list_orgs", { orderBy: "memberCount", direction: "desc", limit: 2 }))
+      .resolves.toEqual(["beta", "Cobalt"]);
+    await expect(names("search_orgs", { orderBy: "lastSeenAt", direction: "desc" }))
+      .resolves.toEqual(["Cobalt", "beta", "Acme"]);
+    await expect(names("search_orgs", { orderBy: "lastSeenAt" }))
+      .resolves.toEqual(["beta", "Cobalt", "Acme"]);
+  });
+
+  it("sends search filters to every region and lists abandoned Organizations too", async () => {
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
+
+    await rpc(env, "tools/call", {
+      name: "search_orgs",
+      arguments: { query: "acme", plan: "growth", createdAfter: "2026-09-01T00:00:00Z", orderBy: "createdAt" },
+    });
+    await rpc(env, "tools/call", { name: "list_orgs", arguments: {} });
+
+    for (const binding of [global, enterprise]) {
+      expect(vi.mocked(binding.searchOrganizations).mock.calls).toEqual([
+        [{ query: "acme", plan: "growth", createdAfter: "2026-09-01T00:00:00Z" }],
+        [{ abandoned: "include" }],
+      ]);
+    }
   });
 });
