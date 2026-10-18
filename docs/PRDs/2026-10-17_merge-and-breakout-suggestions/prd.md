@@ -168,9 +168,8 @@ someone who has never seen one, the action, and a dismiss:
   caret; sentence "This might be a good time to merge this back into
   **GTM**."; the same cut line; action **Merge**.
 - `start_breakout` in a Thread: title "Breakout: **Starter tier**"; sentence
-  "Rally thinks this is its own piece of work. You'll edit the opening prompt
-  before it starts."; one cut line of the drafted opening prompt; action
-  **Start**.
+  "Want to break this out?"; one cut line of the drafted opening prompt;
+  action **Start**.
 
 Every chip ends with one line of the words it would post or start with, cut
 with an ellipsis to the chip's width: for a merge, the note Rally drafted
@@ -191,10 +190,10 @@ excerpt is left out, and the action opens the card with the turn's own
 words or the launch pane empty. A draft never blocks a suggestion. The title and the
 sentence are fixed strings per kind with one slot for a name; nothing in
 them is generated except a Breakout's subject, which the drafter returns
-beside the prompt. The sentence exists for a new person: it
-says why now and names the parent, and the excerpt shows what would be
-posted; nothing posts or starts without them, because the action opens the
-card or the launch pane to edit first. What a merge carries is not always a result, so the
+beside the prompt. The sentence is the ask, in one line: why now
+and where for a merge, and the question itself for a Breakout. The excerpt
+shows what would be posted or started; nothing posts or starts without the
+person, because the action opens the card or the launch pane to edit first. What a merge carries is not always a result, so the
 merge title names the target and claims nothing about the kind of thing. A
 typed form ("Rally thinks this is a decision Cold Outreach should see") is
 possible from a second classifier label the design records from the first

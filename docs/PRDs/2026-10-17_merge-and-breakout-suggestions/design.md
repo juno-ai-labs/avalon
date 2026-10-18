@@ -354,12 +354,10 @@ suggested; that button stays merge-back's phase 2.
   replaces it.
   `start_breakout`: title "Breakout: {subject}", the subject being a short
   label the drafter returns beside the prompt, and "Breakout" alone when
-  there is no draft; sentence "Rally thinks this is its own piece of work.
-  You'll edit the opening prompt before it starts." The breakout sentence's
-  second clause is there for a person who has never seen the chip: it says
-  nothing starts without them. The merge sentence says why now and names the
-  parent; the card that opens is what makes "nothing posts without them"
-  true.
+  there is no draft; sentence "Want to break this out?" Neither sentence
+  promises that nothing happens on its own; the card and the launch pane
+  that open on the action are what make that true, and the excerpt shows
+  what they will open with.
 - **The excerpt** is the last line of every chip: the words the action would
   post or start with, cut by the client to one line of the chip's width with
   an ellipsis, never stored cut. For `merge_up` it is the note the response
@@ -392,9 +390,9 @@ suggested; that button stays merge-back's phase 2.
 - **The skeleton.** While `draft.status` is `pending` the chip draws a
   shimmer where the excerpt goes and, for a Breakout, where the subject goes
   in the title; the action is disabled and Dismiss is not. `ready` fills
-  both in place; `failed` drops the excerpt, swaps the sentence's second
-  clause for one that says Rally could not draft the words, and enables the
-  action with its fallback. The shimmer respects `prefers-reduced-motion`.
+  both in place; `failed` drops the excerpt, adds a clause to the sentence
+  saying Rally could not draft the words, and enables the action with its
+  fallback. The shimmer respects `prefers-reduced-motion`.
 - **Accept breakout** calls `onStartSubstream(judgedTurnId)` and seeds the
   launch composer's draft with the drafted prompt. `ConversationSubstreamLaunch` gains
   an optional `initialDraft`, written to the launch composer's draft key once
