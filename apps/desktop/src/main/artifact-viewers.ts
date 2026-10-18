@@ -52,6 +52,12 @@ export interface ArtifactViewHandle {
    */
   setBorderRadius(radius: number): void;
   /**
+   * Show or hide the view without changing its size. A view loading behind the
+   * rail's "Opening…" is hidden this way rather than collapsed, so the site's
+   * startup code measures the pane it will be shown in, not a 0×0 viewport.
+   */
+  setVisible(visible: boolean): void;
+  /**
    * Navigate to an artifact, resolving `true` once the artifact's own document
    * is ready to show and `false` on a terminal failure. See
    * `loadArtifactDocument`.
@@ -551,11 +557,6 @@ export class ArtifactPreviewController {
   private pendingLoad: { view: ArtifactViewHandle; result: Promise<boolean> } | null = null;
   private bounds: PreviewBounds | null = null;
   private hiddenByOverlay = false;
-  /**
-   * Whether the view's artifact document is ready. Until it is, the view stays
-   * collapsed so the rail's own "Opening…" is what a person sees.
-   */
-  private loaded = false;
 
   constructor(
     private readonly window: ArtifactHostWindow,
@@ -584,16 +585,16 @@ export class ArtifactPreviewController {
       // one layout, so it must not ride along with the bounds a scroll
       // recomputes many times a second.
       created.setBorderRadius(request.cornerRadius);
+      // Hidden, at full size, until the site's own document is ready: the
+      // rail's "Opening…" is what a person sees over the redeem bootstrap.
+      created.setVisible(false);
       this.applyBounds();
       const result = created.load(request.url).then((loaded) => {
         // DNS, TLS, and terminal navigation failures should not leave an empty
         // composited view.
         if (this.view !== created) return loaded;
         if (!loaded) this.destroy();
-        else {
-          this.loaded = true;
-          this.applyBounds();
-        }
+        else created.setVisible(true);
         return loaded;
       });
       this.pendingLoad = { view: created, result };
@@ -630,7 +631,6 @@ export class ArtifactPreviewController {
     this.pendingLoad = null;
     this.bounds = null;
     this.hiddenByOverlay = false;
-    this.loaded = false;
     if (!view) return;
     // Each guard is about its own object, because the two die independently.
     // A destroyed window has already taken its children with it, so there is
@@ -658,7 +658,7 @@ export class ArtifactPreviewController {
     // be the one that returns. It stays because it names what `contentSize()`
     // needs, and that stops the day the two stop dying together.
     if (this.window.destroyed() || this.view.destroyed()) return;
-    if (this.hiddenByOverlay || !this.loaded) {
+    if (this.hiddenByOverlay) {
       // Collapsed rather than detached: a zero rectangle keeps the page loaded
       // and its state intact, so closing a dialog restores what the person was
       // looking at rather than reloading it under them.

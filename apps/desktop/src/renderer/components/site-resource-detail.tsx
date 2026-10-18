@@ -272,7 +272,7 @@ export function SiteResourceDetail({
     // on every scroll and mutation to move something that is not there.
     //
     // Tracked from access onward, not from `previewShown`: the main process
-    // holds the view collapsed until the site's document is ready and then
+    // holds the view hidden until the site's document is ready and then
     // reveals it at the last bounds it was sent. A dialog opened or a pane
     // moved during that load must already be reflected by then.
     if (!access || previewShown === false || showingData || surface.framed) return undefined;

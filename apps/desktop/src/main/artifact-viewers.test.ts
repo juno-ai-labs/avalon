@@ -457,6 +457,7 @@ describe('the rail preview controller', () => {
       url: string | null;
       bounds: PreviewBounds[];
       radii: number[];
+      visible: boolean[];
       closed: boolean;
       destroyed: boolean;
     }[] = [];
@@ -477,6 +478,7 @@ describe('the rail preview controller', () => {
           url: null as string | null,
           bounds: [] as PreviewBounds[],
           radii: [] as number[],
+          visible: [] as boolean[],
           closed: false,
           destroyed: false,
         };
@@ -487,6 +489,7 @@ describe('the rail preview controller', () => {
           destroyed: () => host.destroyed || state.destroyed,
           setBounds: (bounds: PreviewBounds) => state.bounds.push(bounds),
           setBorderRadius: (radius: number) => state.radii.push(radius),
+          setVisible: (visible: boolean) => state.visible.push(visible),
           load: async (url: string) => {
             state.url = url;
             return await loadArtifactInitialUrl(async () => {
@@ -546,19 +549,20 @@ describe('the rail preview controller', () => {
     expect(removed).toHaveLength(0);
   });
 
-  it('keeps the view collapsed until the artifact’s own document is ready', async () => {
+  it('keeps the view hidden, at the pane’s size, until the artifact’s own document is ready', async () => {
     // The access URL lands on the redeem bootstrap, which has its own
     // "Opening…". Shown from the start, it painted over the rail's placeholder:
-    // two loading looks for one open.
+    // two loading looks for one open. Hidden by collapsing instead, the site's
+    // startup scripts measured a 0×0 viewport and a chart sized once stayed empty.
     let finishLoad!: () => void;
     const loading = new Promise<void>((resolve) => { finishLoad = resolve; });
     const { controller, views } = harness(DOMAIN, null, async () => await loading);
     const presented = controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/__rally/open#code`, bounds, cornerRadius: 16 });
-    controller.setBounds({ ...bounds, y: 40 });
-    expect(views[0]?.bounds.at(-1)).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+    expect(views[0]?.visible).toEqual([false]);
+    expect(views[0]?.bounds.at(-1)).toEqual(bounds);
     finishLoad();
     expect(await presented).toBe(true);
-    expect(views[0]?.bounds.at(-1)).toEqual({ ...bounds, y: 40 });
+    expect(views[0]?.visible).toEqual([false, true]);
   });
 
   it('makes concurrent presenters await the same failed initial load', async () => {
