@@ -24,7 +24,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { AttachmentCursorError, openAttachmentCursor } from "../lib/attachment-cursor";
 import { logStructuredEvent } from "../observability/logger";
-import type { PaginatedHarnessTool } from "./tool-pagination";
+import { EARLIER_RUN_PAGE_NOTICE, type PaginatedHarnessTool } from "./tool-pagination";
 import {
   ATTACHMENT_TEXT_EXTRACTOR_VERSION,
   materializeAttachmentDerivative,
@@ -391,7 +391,7 @@ export function createWorkstreamAttachmentTools(
           : `The resource may have changed since that page, so restart the read: call ${tool} with ${JSON.stringify(args)}.`;
         return attachmentError(
           "page_id_from_earlier_message",
-          `This page ID came from an earlier message. Page IDs work only within the reply that returned them, so it cannot be used now. ${instruction}`,
+          `${EARLIER_RUN_PAGE_NOTICE} ${instruction}`,
           { resourceId: state.resourceId, suggestedCall: { tool, arguments: args } },
         );
       },

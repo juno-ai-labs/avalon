@@ -105,17 +105,14 @@ and concurrent consumers produce `page_already_consumed` and `page_in_progress`.
 These failures tell the caller to restart or use the completed page's next ID,
 naming the first-page tool; storage cannot, so the wrapper writes that text.
 
-An ID that an earlier run issued, to the same principal, connection and
-operation, is the one exception. A new message starts a new run, and the model
-still sees the last run's `nextPageId` in its history and may copy it. The claim returns that page's stored arguments as
-`earlierRunInputJson` instead of throwing, and the wrapper hands them to the
-tool's optional `explainEarlierRunPage`, never to `execute`. `read_resource`
-answers with `page_id_from_earlier_message`, the exact `resourceId` and
-`startCharacter` call that resumes the read (or a restart from the beginning
-when the derivative's version no longer matches the page's, since a bare offset
-carries no version fence), and `resourceId` in its details for
-the attachment grounding guard. A tool without the hook gets a generic
-`page_id_from_earlier_message` refusal naming its first-page tool.
+An ID an earlier run issued to the same principal, connection and operation
+fails with `page_id_from_earlier_message`: the claim hands its stored arguments
+to the tool's optional `explainEarlierRunPage`, never to `execute`, so the tool
+can name the call that resumes the read. `read_resource` names the
+`resourceId` and `startCharacter` (dropping the offset when the derivative's
+version changed) and reports the `resourceId` for the grounding guard; the
+lookup is an unindexed scan of the conversation's pages, run only on a miss.
+
 A repeated forward continuation instead returns the fetched content with
 `nextPageId: null` and a `paginationWarning` that coverage may be incomplete.
 It neither discards the fetched page nor presents a provider loop as proof of
@@ -162,7 +159,9 @@ the resource. Redeeming earlier-run pages was rejected: it breaks the run-scoped
 consume-once and cycle checks this document's invariants rest on. Clearing
 anonymous failures after any later read was rejected for the reason in
 [`agent-attachments.md`](agent-attachments.md). A future paginated tool whose
-continuation names a position should implement `explainEarlierRunPage`.
+continuation names a position should implement `explainEarlierRunPage`, and
+must re-check whatever fenced the original continuation (for reads, the
+derivative version) before offering an unfenced position.
 
 ### 2026-09-16 — Move cursor handling out of model-authored arguments
 
