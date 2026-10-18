@@ -77,6 +77,7 @@ export function defaultAgentModelRouting(env: Env, role: AgentModelRole): AgentM
     case "work_opportunity_admission":
     case "work_opportunity_ranking":
     case "workstream_description":
+    case "suggestion_draft":
       return { model: modelId(env.OPENROUTER_STRUCTURED_MODEL), fallbackModels };
     default: {
       const exhaustive: never = role;
