@@ -50,7 +50,8 @@ for pre-cutover receipts. Table queries retain their data-revision validation.
 ## Invariants
 
 - Page IDs match the run, principal, connection and operation. Copying an ID to
-  another scope cannot select that scope's credentials or arguments.
+  another scope cannot select that scope's credentials or arguments. An earlier
+  run's page is described to the same principal, never redeemed.
 - Redemption invokes the original authorized executor, so possession of a slug
   never replaces current authorization.
 - Raw cursors are extracted before response truncation. Otherwise a valid
@@ -101,7 +102,18 @@ the format does not prove issuance or scope; the receipt authority checks those.
 
 Unknown, wrong-scope, or uncommitted IDs fail with `page_id_invalid`; completed
 and concurrent consumers produce `page_already_consumed` and `page_in_progress`.
-These failures tell the caller to restart or use the completed page's next ID.
+These failures tell the caller to restart or use the completed page's next ID,
+naming the first-page tool; storage cannot, so the wrapper writes that text.
+
+An ID that an earlier run issued, to the same principal, connection and
+operation, is the one exception. A new message starts a new run, and the model
+still sees the last run's `nextPageId` in its history and may copy it. The claim returns that page's stored arguments as
+`earlierRunInputJson` instead of throwing, and the wrapper hands them to the
+tool's optional `explainEarlierRunPage`, never to `execute`. `read_resource`
+answers with `page_id_from_earlier_message`, the exact `resourceId` and
+`startCharacter` call that resumes the read, and `resourceId` in its details for
+the attachment grounding guard. A tool without the hook gets a generic
+`page_id_from_earlier_message` refusal naming its first-page tool.
 A repeated forward continuation instead returns the fetched content with
 `nextPageId: null` and a `paginationWarning` that coverage may be incomplete.
 It neither discards the fetched page nor presents a provider loop as proof of
@@ -133,6 +145,22 @@ Existing connector, attachment, table, tool-selection, grounding and receipt sui
 authorized executors. `workstream-object-schema.test.ts` covers migration shape.
 
 ## Changelog
+
+### 2026-10-18 — Say when a page ID came from an earlier message
+
+A thread's reply was replaced by "Attachment content unverified" although the
+agent had read the attachment. On a new message the model copied the previous
+run's `nextPageId`; the claim refused it as `page_id_invalid` ("not available for
+this operation and run"), which reads as a mistyped ID and named no tool. The
+model guessed `startCharacter` offsets and read the resource, but the failure
+carried no resource, so the grounding guard never cleared it. Storage now tells
+an earlier run's page apart from an unknown one and the tool explains it from the
+stored continuation, so the model gets the exact resuming call and the guard gets
+the resource. Redeeming earlier-run pages was rejected: it breaks the run-scoped
+consume-once and cycle checks this document's invariants rest on. Clearing
+anonymous failures after any later read was rejected for the reason in
+[`agent-attachments.md`](agent-attachments.md). A future paginated tool whose
+continuation names a position should implement `explainEarlierRunPage`.
 
 ### 2026-09-16 — Move cursor handling out of model-authored arguments
 
