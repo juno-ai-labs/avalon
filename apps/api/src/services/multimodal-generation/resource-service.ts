@@ -21,6 +21,7 @@ import {
   type VisibleWorkstreamResourceRow,
 } from "../workstream-resource-visibility";
 import { MultimodalGenerationError } from "./contract";
+import { AGENT_RESOURCE_TITLE_SQL } from "../agent-resource-title";
 
 interface PublishedImageRow {
   id: string;
@@ -327,7 +328,7 @@ async function publishEditedVersion(
   try {
     settled = await env.DB.prepare(
       `UPDATE resources
-          SET title = ?, mime_type = ?, content_ref = ?, content_sha256 = ?, metadata_json = ?,
+          SET title = ${AGENT_RESOURCE_TITLE_SQL}, mime_type = ?, content_ref = ?, content_sha256 = ?, metadata_json = ?,
               last_hydrated_at = ?, updated_at = ?,
               model_content_ref = NULL, model_mime_type = NULL, model_content_sha256 = NULL,
               model_metadata_json = NULL, model_content_status = 'pending',
@@ -341,7 +342,9 @@ async function publishEditedVersion(
       RETURNING id, resource_type, provider, title, mime_type, content_ref, content_sha256, metadata_json,
                 model_content_status, created_at`,
     ).bind(
-      input.title ?? existing.title,
+      input.title ?? null,
+      input.title ?? null,
+      input.title ?? null,
       MIME_TYPE,
       objectRef,
       digest,

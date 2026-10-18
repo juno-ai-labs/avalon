@@ -2190,6 +2190,14 @@ export class RallyApi {
     return this.getConversation(parentId);
   }
 
+  /** Rename an artifact the thread generated; its room hears `resource_updated`. */
+  async renameResource(parentId: string, resourceId: string, title: string): Promise<void> {
+    await this.requestVoid(`/conversations/${encodeURIComponent(parentId)}/resources/${encodeURIComponent(resourceId)}`, {
+      method: 'PATCH',
+      body: { title },
+    });
+  }
+
   async detachResource(parentId: string, resourceId: string): Promise<void> {
     await this.requestVoid(`/conversations/${encodeURIComponent(parentId)}/resources/${encodeURIComponent(resourceId)}`, {
       method: 'DELETE',

@@ -882,7 +882,11 @@ function toResourceRevision(row: Record<string, unknown>): ResourceRevision {
     resourceId: String(row.resource_id),
     version: Math.max(1, Number(row.version)),
     author: toVersionAuthor(row),
-    cause: cause.success ? cause.data : null,
+    // `renamed` crosses as none: a desktop build from before it parses the
+    // whole history with a closed enum and would list none of it, and no
+    // client shows a cause yet. Send it once those builds are gone; the
+    // contract already reads an unknown cause as none.
+    cause: cause.success && cause.data !== "renamed" ? cause.data : null,
     // Every row written so far is an ordinary bucket object, and a row that
     // predates the column was backfilled as one. Bounded because the column
     // deliberately has no CHECK, so its value is a writer's choice.
