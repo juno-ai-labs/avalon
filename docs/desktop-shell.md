@@ -322,6 +322,14 @@ from; reduced motion turns both off.
   thread**) and the message it started from. People (inviting to the
   Breakout alone) and Sidekicks as above;
   More is Icon and color, **Public to organization**, and **Archive breakout** last.
+- **Artifact menu** (`ResourcePanelMenu`, the right panel's pill): header names
+  the item, then tiles for Rename, Copy link and Pin/Unpin, the tiles a thread
+  offers, then New window, Open source and Refresh where they apply, Versions,
+  and **Archive** last. Rename, Copy link and Pin appear only for an artifact
+  in the thread's Main, the ones a pin or an `/a/` link can name; Copy link
+  also needs a Space for the link to name, so a guest's Channel outside every
+  Space has none. Rename asks for the title in a dialog and saves it through
+  `PATCH /conversations/:parentId/resources/:resourceId`.
 
 ### Breakouts
 
@@ -485,6 +493,25 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-18 — The artifact menu gains Rename, Copy link and Pin
+
+**What changed:** The right panel's artifact menu offers Rename, Copy link and
+Pin/Unpin as tiles, the same three a thread's menu offers. Rename is a new
+route, `PATCH /conversations/:parentId/resources/:resourceId`; the link is the
+existing `/a/` artifact link; the pin is the existing artifact pin.
+
+**Why:** The product owner asked for parity with the thread menu. Pins and
+artifact links already existed, reachable only from a citation card's menu
+and a pinned artifact's push.
+
+**Considered and rejected:** Putting Pin behind More as a switch, as a thread
+does. An artifact menu has no More level, and four tiles fit its row.
+
+**Consequences:** The `/a/` link is now minted where any desktop app can
+receive it; one older than that segment refuses it. All three actions are
+limited to an artifact in the thread's Main, since a pin and a link both open
+Main onto it.
 
 ### 2026-10-18 — The phone's menu leaves the crumbs' glass bridge
 

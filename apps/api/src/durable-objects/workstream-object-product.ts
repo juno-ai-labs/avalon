@@ -3509,6 +3509,56 @@ export class WorkstreamObjectProductService {
     return { outcome: "readback_failed" };
   }
 
+  /**
+   * Rename an artifact this thread generated, as the person asking. The title
+   * lives on the workspace's resource row, which every thread linking it reads
+   * live; this thread's frozen descriptor, which its message chips read, takes
+   * it too. Answers the resource for this room's `resource_updated`, or null
+   * when there is nothing to tell: the title was already this one here too, or
+   * the resource is one enumeration leaves out.
+   */
+  async renameResource(auth: AuthContext, resourceId: string, title: string): Promise<WorkstreamResource | null> {
+    await this.authorize(auth);
+    const linked = await this.readBackAttachedResource(auth.userId, resourceId);
+    if (!linked) throw new ApiError(404, "resource_not_found", "Resource not found");
+    if (linked.direction !== "artifact") {
+      throw new ApiError(409, "resource_not_artifact", "Only an artifact can be renamed");
+    }
+    const workspaceId = this.root().parent_workspace_key;
+    const result = await (await this.workspaceDirectory(workspaceId)).renameResource({
+      workspaceId, resourceId, title, renamedByUserId: auth.userId, at: new Date().toISOString(),
+    });
+    if (result.outcome === "not_found") throw new ApiError(404, "resource_not_found", "Resource not found");
+    // The same write a runtime republish makes to its link, so the projection
+    // that follows the inventory revision moves with it. It runs on
+    // `unchanged` too: a retry after this write failed finds the workspace
+    // already renamed, and only this descriptor still behind.
+    const changed = await this.objectStore.commitWithRegionalEffects(
+      (sql) => {
+        const now = Date.now();
+        const updated = sql.exec(
+          `UPDATE workstream_resource_links SET resource_json = json_set(resource_json, '$.title', ?), updated_at = ?
+            WHERE resource_id = ? AND json_extract(resource_json, '$.title') IS NOT ?
+            RETURNING resource_id`,
+          title, now, resourceId, title,
+        ).toArray().length > 0;
+        if (updated) {
+          sql.exec(
+            `INSERT INTO resource_inventory_revision(id, revision, updated_at) VALUES (1, 1, ?)
+             ON CONFLICT(id) DO UPDATE SET revision = revision + 1, updated_at = excluded.updated_at`,
+            now,
+          );
+        }
+        return updated;
+      },
+      (updated) => updated ? [{ partitionKey: "common", effect: this.commonEffect(this.root()) }] : [],
+    );
+    // A resource enumeration leaves out keeps its new title but is not
+    // advertised, as a runtime attach withholds its event.
+    if (!result.listed || (!changed && result.outcome === "unchanged")) return null;
+    return this.readBackAttachedResource(auth.userId, resourceId);
+  }
+
   async detachResource(auth: AuthContext, resourceId: string): Promise<void> {
     await this.authorize(auth);
     await this.objectStore.commitWithRegionalEffects(

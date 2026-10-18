@@ -1,4 +1,5 @@
 import { uuidV7 } from "../lib/uuid-v7";
+import { isUnlistedResourceMetadata } from "../services/resource-listing";
 import { boundParameterChunks } from "./bound-parameters";
 import {
   WorkspaceConnectorResourceResolveResultSchema,
@@ -13,6 +14,7 @@ import {
   WorkspaceResourceHydrationResultSchema,
   WorkspaceResourceObjectRemovalResultSchema,
   WorkspaceResourceObjectRetireResultSchema,
+  WorkspaceResourceRenameResultSchema,
   WorkspaceResourceSlugBacklogSchema,
   WorkspaceResourceSlugClaimResultSchema,
   WorkspaceResourceVersionListSchema,
@@ -38,6 +40,8 @@ import {
   type WorkspaceResourceHydrationPublishRequest,
   type WorkspaceResourceHydrationRefreshRequest,
   type WorkspaceResourceHydrationResult,
+  type WorkspaceResourceRenameRequest,
+  type WorkspaceResourceRenameResult,
   type WorkspaceResourceObjectFailureRequest,
   type WorkspaceResourceObjectRemovalResult,
   type WorkspaceResourceObjectRetireResult,
@@ -271,6 +275,39 @@ export function listWorkspaceResourceVersions(
     ...(request.version === null ? [] : [request.version]),
   ).toArray();
   return WorkspaceResourceVersionListSchema.parse({ items });
+}
+
+/**
+ * Rename a resource as a person, recording the version that rename makes as
+ * theirs and `renamed`. The same title writes nothing: the semantic-version
+ * trigger fires on `title` appearing in the SET list, not on it changing.
+ */
+export function renameWorkspaceResource(
+  storage: DurableObjectStorage,
+  request: WorkspaceResourceRenameRequest,
+): WorkspaceResourceRenameResult {
+  const current = storage.sql.exec<{ title: string; metadata_json: string }>(
+    `SELECT title, metadata_json FROM resources WHERE id = ? AND workspace_id = ?`,
+    request.resourceId,
+    request.workspaceId,
+  ).toArray()[0];
+  if (!current) return WorkspaceResourceRenameResultSchema.parse({ outcome: "not_found" });
+  const listed = !isUnlistedResourceMetadata(current.metadata_json);
+  if (current.title === request.title) return WorkspaceResourceRenameResultSchema.parse({ outcome: "unchanged", listed });
+  storage.sql.exec(
+    `UPDATE resources
+        SET title = ?, updated_at = ?,
+            revision_author_kind = 'member', revision_author_run_id = NULL,
+            revision_author_user_id = ?, revision_author_connection_id = NULL,
+            revision_cause = 'renamed'
+      WHERE id = ? AND workspace_id = ?`,
+    request.title,
+    request.at,
+    request.renamedByUserId,
+    request.resourceId,
+    request.workspaceId,
+  );
+  return WorkspaceResourceRenameResultSchema.parse({ outcome: "renamed", listed });
 }
 
 /** Record a re-fetch that produced the content the row already holds. */
