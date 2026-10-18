@@ -18,6 +18,8 @@ const SAMPLE_CHARACTERS = 8_000;
 /** The longest name kept, before the extension. A label scanned on a tile, not a sentence. */
 const NAME_MAX_LENGTH = 60;
 
+const PASTED_PREFIX = "Pasted - ";
+
 const PastedTextNameSchema = z.strictObject({ name: z.string() });
 
 const nameJsonSchema = {
@@ -104,7 +106,7 @@ async function nameFromContent(
 
 /**
  * Turns a long paste into the file it should be stored as: typed by
- * `detectTextType`, named from its content by the model, with the extension
+ * `detectTextType`, named `Pasted - <title>` from its content by the model, with the extension
  * that matches the type. Never throws on naming: when the model fails the file
  * keeps the client's stand-in stem under the detected extension.
  */
@@ -116,7 +118,10 @@ export async function preparePastedTextWithClient(
   const text = await request.file.text();
   const type = detectTextType(text);
   const name = infer ? await nameFromContent(env, infer, request, text, type.extension) : null;
-  return new File([text], `${name ?? stemOf(request.file.name)}.${type.extension}`, { type: type.mimeType });
+  // The prefix says where the file came from wherever the name travels; the
+  // stand-in already says it.
+  const stem = name ? `${PASTED_PREFIX}${name}` : stemOf(request.file.name);
+  return new File([text], `${stem}.${type.extension}`, { type: type.mimeType });
 }
 
 /**
