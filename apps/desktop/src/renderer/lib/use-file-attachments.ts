@@ -12,6 +12,8 @@ import {
 } from './draft-cache';
 import type { WorkstreamResource } from './types';
 import { isImageAttachment, isVideoAttachment } from './attachment-media';
+import { MAX_ATTACHMENTS } from './attachment-limits';
+import { isPastedText, markPastedText } from './pasted-text';
 
 export type PendingAttachmentStatus = 'uploading' | 'ready' | 'failed';
 
@@ -26,7 +28,6 @@ export interface PendingAttachment {
   error?: string;
 }
 
-export const MAX_ATTACHMENTS = 10;
 const MAX_ATTACHMENT_BYTES = 25_000_000;
 const DISCONNECTED_ERROR = 'Rally is not connected. Try again after reconnecting.';
 const UNSAVED_ERROR = 'This device is out of room to hold attachments, so they will be lost if you quit before sending.';
@@ -37,7 +38,7 @@ const DELETE_RETRY_DELAYS_MS = [0, 250, 1_250] as const;
 const NO_ATTACHMENTS: PendingAttachment[] = [];
 
 /** The attachment draft owns only upload and draft cleanup operations. */
-export type FileAttachmentsApi = Pick<RallyApi, 'deleteDraftResource' | 'uploadResource'>;
+export type FileAttachmentsApi = Pick<RallyApi, 'deleteDraftResource' | 'getResource' | 'uploadResource'>;
 
 /** Expired drafts are swept once per application run, not once per composer. */
 let prunedThisSession = false;
@@ -96,7 +97,8 @@ function resourceFromLocalDraft(attachment: PendingAttachment): WorkstreamResour
 }
 
 function restoredAttachment(cached: CachedDraftAttachment, connected: boolean): PendingAttachment {
-  const file = new File([cached.bytes], cached.fileName, { type: cached.mimeType, lastModified: cached.lastModified });
+  const rebuilt = new File([cached.bytes], cached.fileName, { type: cached.mimeType, lastModified: cached.lastModified });
+  const file = cached.pastedText ? markPastedText(rebuilt) : rebuilt;
   return {
     localId: cached.localId,
     file,
@@ -176,7 +178,9 @@ export function useFileAttachments(api: FileAttachmentsApi | null, draftKey: str
       controllers.current.delete(attachment.localId);
       if (uploadError instanceof DOMException && uploadError.name === 'AbortError') return;
       if (uploadError instanceof ApiError && uploadError.code === 'attachment_draft_exists') {
-        const resource = resourceFromLocalDraft(attachment);
+        // The stored row is the truth: a long paste was typed and renamed on
+        // the way in, so the local file no longer describes it.
+        const resource = await client.getResource(attachment.localId).catch(() => resourceFromLocalDraft(attachment));
         if (removed.current.has(attachment.localId)) {
           await deleteDraftWithRetry(client, resource.id).catch(() => undefined);
           return;
@@ -255,6 +259,7 @@ export function useFileAttachments(api: FileAttachmentsApi | null, draftKey: str
             lastModified: attachment.file.lastModified,
             bytes,
             ...(attachment.sha256 ? { sha256: attachment.sha256 } : {}),
+            ...(isPastedText(attachment.file) ? { pastedText: true } : {}),
           }, atEpoch).then((stored) => {
             // Silence would be the wrong failure mode here: the attachment
             // still uploads and still sends, but it will not come back.
@@ -370,6 +375,7 @@ export function useFileAttachments(api: FileAttachmentsApi | null, draftKey: str
         lastModified: attachment.file.lastModified,
         bytes: await attachment.file.arrayBuffer(),
         ...(attachment.sha256 ? { sha256: attachment.sha256 } : {}),
+        ...(isPastedText(attachment.file) ? { pastedText: true } : {}),
       }, atEpoch);
       if (stored && attachment.resource) {
         await updateDraftAttachment(

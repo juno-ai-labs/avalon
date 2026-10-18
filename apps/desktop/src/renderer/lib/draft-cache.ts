@@ -51,6 +51,8 @@ export interface CachedDraftAttachment {
    */
   bytes: ArrayBuffer;
   sha256?: string;
+  /** A long paste the API types and names; see `lib/pasted-text.ts`. */
+  pastedText?: boolean;
   resource?: WorkstreamResource;
   updatedAt: number;
 }
@@ -144,6 +146,7 @@ function parseCachedAttachment(value: unknown): CachedDraftAttachment | null {
     lastModified: typeof candidate['lastModified'] === 'number' ? candidate['lastModified'] : 0,
     bytes: bytes as ArrayBuffer,
     ...(typeof candidate['sha256'] === 'string' ? { sha256: candidate['sha256'] } : {}),
+    ...(candidate['pastedText'] === true ? { pastedText: true } : {}),
     ...(candidate['resource'] && typeof candidate['resource'] === 'object'
       ? { resource: candidate['resource'] as WorkstreamResource }
       : {}),

@@ -116,8 +116,10 @@ function looksLikeMarkdown(text: string): boolean {
 export function detectTextType(text: string): PastedTextType {
   const trimmed = text.trim();
   if (looksLikeJson(trimmed)) return JSON_TYPE;
+  // A declaration says XML outright, even when the document carries HTML inside it.
+  if (XML_DECLARATION.test(trimmed)) return XML;
   if (HTML_DOCUMENT.test(trimmed) || (trimmed.startsWith("<") && HTML_CLOSING_TAG.test(trimmed))) return HTML;
-  if (XML_DECLARATION.test(trimmed) || ELEMENT_DOCUMENT.test(trimmed)) return XML;
+  if (ELEMENT_DOCUMENT.test(trimmed)) return XML;
   if (looksLikeMarkdown(trimmed)) return MARKDOWN;
   const lines = trimmed.split(/\r?\n/u).filter((line) => line.trim().length > 0);
   if (isDelimited(lines, "\t")) return TSV;
