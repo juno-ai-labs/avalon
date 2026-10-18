@@ -42,6 +42,7 @@ interface Options {
   runs: number;
   timeoutMs: number;
   reasoningEffort: "none" | "low" | "medium" | "high" | undefined;
+  concurrency: number;
   limit: number | undefined;
 }
 
@@ -66,6 +67,8 @@ function options(argv: string[]): Options {
     throw new Error("--reasoning-effort must be none, low, medium, or high");
   }
   const limit = value("--limit");
+  const concurrency = Number(value("--concurrency") ?? "1");
+  if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error("--concurrency must be a positive integer");
   return {
     cases: resolve(cases),
     labels: value("--labels") ? resolve(value("--labels")!) : undefined,
@@ -76,6 +79,7 @@ function options(argv: string[]): Options {
     timeoutMs,
     reasoningEffort: reasoningEffort as Options["reasoningEffort"],
     limit: limit ? Number(limit) : undefined,
+    concurrency,
   };
 }
 
@@ -181,15 +185,23 @@ async function main(): Promise<void> {
   const results: TurnDispositionResult[] = [];
   for (const model of selected.models) {
     for (let run = 1; run <= selected.runs; run += 1) {
+      // Concurrency 1 (the default) is the latency measurement; a higher value
+      // is for coverage runs over the whole corpus, where each request's own
+      // latency is still recorded but shares the machine with the others.
+      const runResults = new Array<TurnDispositionResult>(cases.length);
+      let nextIndex = 0;
       let completed = 0;
-      for (const evaluationCase of cases) {
-        const result = await evaluateCase(keys, selected, model, run, evaluationCase);
-        results.push(result);
-        completed += 1;
-        if (completed % 25 === 0 || completed === cases.length) {
-          process.stderr.write(`${model} run ${run}: ${completed}/${cases.length}\n`);
+      await Promise.all(Array.from({ length: selected.concurrency }, async () => {
+        while (nextIndex < cases.length) {
+          const index = nextIndex++;
+          runResults[index] = await evaluateCase(keys, selected, model, run, cases[index]!);
+          completed += 1;
+          if (completed % 25 === 0 || completed === cases.length) {
+            process.stderr.write(`${model} run ${run}: ${completed}/${cases.length}\n`);
+          }
         }
-      }
+      }));
+      results.push(...runResults);
     }
   }
 
@@ -229,6 +241,7 @@ async function main(): Promise<void> {
     labeledCount: cases.filter((evaluationCase) => evaluationCase.expected !== null).length,
     target: selected.target,
     runs: selected.runs,
+    concurrency: selected.concurrency,
     timeoutMs: selected.timeoutMs,
     reasoningEffort: selected.reasoningEffort ?? null,
     sourceRevision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),

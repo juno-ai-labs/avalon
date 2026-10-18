@@ -8,10 +8,10 @@ import {
 } from "./turn-disposition";
 
 /**
- * One evaluation case: a settled Rally turn with its state, what production
- * did afterwards, and the golden label a person gave it. `expected` is null
- * for a case not yet labeled; the runner still calls the classifier on it and
- * reports it under coverage, not accuracy.
+ * One evaluation case: a message (a person's or Rally's) with its state, what
+ * production did afterwards, and the golden label a person gave it. `expected`
+ * is null for a case not yet labeled; the runner still calls the classifier on
+ * it and reports it under coverage, not accuracy.
  */
 export const TurnDispositionExpectedSchema = z.object({
   disposition: z.enum(TURN_DISPOSITION_CHOICES),
@@ -26,20 +26,29 @@ export const TurnDispositionCaseSchema = z.object({
   workstreamId: z.string().min(1),
   substreamId: z.string().min(1),
   turnId: z.string().min(1),
-  runId: z.string().min(1),
+  /** The run that produced a Rally message; null for a person's message. */
+  runId: z.string().nullable(),
   createdAt: z.number().int().nonnegative(),
   state: TurnDispositionStateSchema,
   production: z.object({
-    /** A merge marker landed in this conversation after this turn. */
+    authorType: z.enum(["member", "agent", "external"]),
+    conversationKind: z.enum(["thread", "breakout"]),
+    /** A Thread's system kind (for example `digest`), or null. */
+    systemKind: z.string().nullable(),
+    originType: z.string().nullable(),
+    /** The message's ordinal among the judged messages of its conversation, and their count. */
+    ordinal: z.number().int().positive(),
+    count: z.number().int().positive(),
+    lastMessage: z.boolean(),
+    /** A Rally message that was the final turn of a completed run. */
+    finalTurnOfCompletedRun: z.boolean(),
+    /** A Breakout of this Thread was created after this message and before the next one. */
+    breakoutStartedBeforeNext: z.boolean(),
+    /** Something from this conversation was merged into its parent after this message, before the next one, or at any later point. */
+    mergedBeforeNext: z.boolean(),
     mergedLater: z.boolean(),
-    /** The merge marker landed before the next completed run's final turn. */
-    mergedBeforeNextTurn: z.boolean(),
-    /** This turn was the newest completed run's final turn when exported. */
-    lastTurn: z.boolean(),
-    breakoutState: z.string(),
+    conversationState: z.string(),
     archived: z.boolean(),
-    turnOrdinal: z.number().int().positive(),
-    turnCount: z.number().int().positive(),
   }),
   expected: TurnDispositionExpectedSchema.nullable(),
 });
@@ -95,8 +104,12 @@ export interface TurnDispositionSummary {
   latencyMs: { p50: number; p90: number; p95: number; p99: number; mean: number; max: number };
   byDisposition: Record<TurnDisposition, { support: number; predicted: number; precision: number; recall: number; f1: number }>;
   confusion: Record<TurnDisposition, Record<TurnDisposition, number>>;
-  /** How often the golden label agrees with what production did: a merge later means carry-up. */
-  productionAgreement: { cases: number; agreeing: number; rate: number };
+  /**
+   * How often the golden label agrees with what production did: a merge later
+   * means carry-up, and a Breakout started before the next message means a
+   * side question.
+   */
+  productionAgreement: { cases: number; agreeing: number; rate: number; breakoutAgreeing: number; breakoutRate: number };
 }
 
 function ratio(numerator: number, denominator: number): number {
@@ -170,8 +183,13 @@ export function summarizeTurnDispositionEvaluation(
   const caseById = new Map(cases.map((evaluationCase) => [evaluationCase.id, evaluationCase]));
   const productionCases = labeled.map((result) => caseById.get(result.caseId)).filter((evaluationCase): evaluationCase is TurnDispositionCase =>
     evaluationCase !== undefined && evaluationCase.expected !== null);
+  // Production kept two outcomes this decision predicts: a merge from this
+  // conversation after the message, and a Breakout started before the next
+  // message. Each is compared with the label that would have suggested it.
   const productionAgreeing = productionCases.filter((evaluationCase) =>
     (evaluationCase.expected!.disposition === "worth_carrying_up") === evaluationCase.production.mergedLater).length;
+  const breakoutAgreeing = productionCases.filter((evaluationCase) =>
+    (evaluationCase.expected!.disposition === "side_question_worth_a_breakout") === evaluationCase.production.breakoutStartedBeforeNext).length;
   const mean = (values: number[]): number => ratio(values.reduce((total, value) => total + value, 0), values.length);
   return {
     target,
@@ -206,6 +224,8 @@ export function summarizeTurnDispositionEvaluation(
       cases: productionCases.length,
       agreeing: productionAgreeing,
       rate: ratio(productionAgreeing, productionCases.length),
+      breakoutAgreeing,
+      breakoutRate: ratio(breakoutAgreeing, productionCases.length),
     },
   };
 }
