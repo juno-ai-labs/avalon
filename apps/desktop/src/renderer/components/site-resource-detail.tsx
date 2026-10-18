@@ -236,9 +236,11 @@ export function SiteResourceDetail({
         // this detail. Its cleanup has already closed the native view by then,
         // so presenting here would resurrect an ownerless old preview.
         if (cancelled) return false;
+        // The frame reports itself shown from its own `load`, below: the
+        // bootstrap it lands on first never fires one, so that is the site.
         if (surface.framed) {
           setFrame({ resourceId, url: navigation.openUrl });
-          return true;
+          return null;
         }
         return await surface.present({
           artifactId: navigation.artifactId,
@@ -247,7 +249,7 @@ export function SiteResourceDetail({
           cornerRadius: paneCorner(),
         });
       })
-      .then((shown) => { if (!cancelled) setPreviewShown(shown); })
+      .then((shown) => { if (!cancelled && shown !== null) setPreviewShown(shown); })
       // A refused mint or a main process that cannot composite both land here.
       // Without this the pane keeps its `null` state and renders an empty box
       // with no message and no way out.
@@ -255,6 +257,9 @@ export function SiteResourceDetail({
     return () => {
       cancelled = true;
       setFrame(null);
+      // The next presentation starts unshown, so leaving the data view puts
+      // "Opening…" back rather than a frame still over its bootstrap.
+      setPreviewShown(null);
       void surface.close();
     };
   }, [access, measure, mintAccess, paneCorner, resourceId, showingData, surface]);
@@ -358,7 +363,12 @@ export function SiteResourceDetail({
         : (
           <div className="site-detail-pane" data-testid="site-preview-pane" ref={paneRef}>
             {accessError && <EmptyState description={accessError} title="This site could not be opened" />}
-            {!accessError && !access && <p className="site-detail-status">Opening…</p>}
+            {/*
+              Until the page itself is ready, not just the access: the view or
+              frame stays hidden over the redeem bootstrap, so this is the one
+              "Opening…" a person sees.
+            */}
+            {!accessError && previewShown === null && <p className="site-detail-status">Opening…</p>}
             {/*
               Nothing is rendered *into* the pane when the preview is live: the
               composited view covers it. This placeholder is what a person sees
@@ -367,6 +377,8 @@ export function SiteResourceDetail({
             {frameUrl && surface.framed && (
               <iframe
                 className="site-detail-frame"
+                data-loading={previewShown === true ? undefined : ''}
+                onLoad={() => setPreviewShown(true)}
                 sandbox={ARTIFACT_FRAME_SANDBOX}
                 src={frameUrl}
                 title={title}
