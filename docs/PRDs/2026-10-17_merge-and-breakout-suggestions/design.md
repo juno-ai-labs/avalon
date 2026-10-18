@@ -362,11 +362,19 @@ suggested; that button stays merge-back's phase 2.
   that open on the action are what make that true, and the excerpt shows
   what they will open with.
 - **The excerpt** is the last line of every chip: the words the action would
-  post or start with, in quotation marks, cut by the client to one line of
-  the chip's width with an ellipsis, never stored cut. The closing mark is
-  its own element outside the cut span, so an opening quote always has its
-  closing one however short the line; the response card's quote line of a
-  thread's first words is drawn the same way. For `merge_up` it is the note the response
+  post or start with, in quotation marks, cut by the client to one line,
+  never stored cut. The cut is by characters, not by CSS `text-overflow`:
+  the client takes the first `SUGGESTION_EXCERPT_CHARACTERS` of the words,
+  drops a trailing space, and appends an ellipsis, so the closing quote
+  follows the ellipsis directly. CSS truncation leaves up to a glyph of
+  blank between the ellipsis and whatever comes after it, which is why it is
+  not used here. The quotes are typographic marks that share the text's
+  baseline with no added gap, and the line keeps `white-space: nowrap` with
+  `overflow: hidden` as a guard for a narrow pane. The budget is a product
+  number: it is what fits one line of the chip at the narrowest pane the
+  desktop lays out, and it is set when the chip is built, cited to this
+  design. The response card's quote line of a thread's first words is drawn
+  the same way. For `merge_up` it is the note the response
   card opens with, which is the judged turn's text until merge-back's
   Summarize ships and the drafted summary after; for `start_breakout` it is
   the drafted opening prompt, and the line is left out when there is no
