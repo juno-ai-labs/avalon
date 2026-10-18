@@ -577,10 +577,10 @@ with the widened state above. This is the benchmark the production model is
 chosen from; the same corpus and labels are the dataset for the prompt
 optimization that follows.
 
-**Corpus.** 526 conversations from 27 Organizations: all 169 Breakouts and
-357 of the 480 Threads. That gave 3,931 cases: 1,474 a person's message,
-2,457 Rally's, 1,149 of those the final turn of a completed run. Two gaps,
-both named rather than hidden: 123 Threads (most of them in Juno Labs' own
+**Corpus.** 581 conversations from 27 Organizations: all 169 Breakouts and
+412 of the 480 Threads. That gave 4,188 cases: 1,594 a person's message,
+2,594 Rally's, 1,164 of those the final turn of a completed run. Two gaps,
+both named rather than hidden: 68 Threads (most of them in Juno Labs' own
 Organization) were not exported, because the export path, sub-agents
 re-keying transcripts out of the engineering MCP, was stopped by a safety
 classifier partway through each partition and no second path was taken; and
@@ -610,7 +610,7 @@ Breakout started, in a corpus whose merge-back shipped two days before.
 They are kept beside each case and reported, not used as truth.
 
 **Split.** Development and holdout halves are fixed by the conversation
-id's last hex digit, 1,756 and 2,175 cases. The v2 criteria were written
+id's last hex digit, 1,909 and 2,279 cases. The v2 criteria were written
 from the v1 criteria's errors on the development half of the earlier
 216-case Breakout final-turn run; nothing was tuned on the holdout.
 
@@ -620,16 +620,16 @@ through the same bounded state bytes. Coverage runs used concurrency;
 latency is from a separate sequential run over a fixed random sample of 300
 cases, end to end from the harness, request build to parsed answer.
 
-Over all 3,931 cases, against the merged labels:
+Over all 4,188 cases, against the merged labels:
 
 | | JEV, confidence > 0.6 | JEV, no threshold | Terra |
 | --- | --- | --- | --- |
-| Three-way agreement | 85.1% | 85.1% | 90.2% |
-| Carry-up precision / recall / F1 | 73.9% / 73.3% / 0.736 | 54.7% / 88.3% / 0.675 | 65.2% / 90.9% / 0.759 |
-| Side question TP / FP / FN | 35 / 48 / 62 | 68 / 176 / 29 | 58 / 90 / 39 |
-| Suggestions per Rally final turn | 24.8% | 39.9% | 33.7% |
-| Suggestions per person's message | 5.2% | 13.7% | 12.2% |
-| Same answer on both runs | 98.5% | 98.5% | not run |
+| Three-way agreement | 85.4% | 85.4% | 90.0% |
+| Carry-up precision / recall / F1 | 75.9% / 74.0% / 0.749 | 56.7% / 89.2% / 0.693 | 66.1% / 91.6% / 0.768 |
+| Side question TP / FP / FN | 37 / 48 / 65 | 71 / 179 / 31 | 62 / 97 / 40 |
+| Suggestions per Rally final turn | 24.7% | 39.7% | 33.5% |
+| Suggestions per person's message | 4.9% | 13.0% | 12.0% |
+| Same answer on both runs | 98.6% | 98.6% | not run |
 | Confidence, mean on correct / wrong | 0.79 / 0.51 | | 0.98 / 0.93 |
 | Latency, sequential, p50 / p90 / p99 | 83 / 123 / 165 ms | | 985 / 1,134 / 1,688 ms |
 
@@ -657,8 +657,8 @@ What the numbers say:
   wrong (0.79 against 0.51); Terra's is 0.98 and 0.93, so the gate's rule has
   nothing to read and Terra's precision can only be moved by rewriting the
   prompt. The threshold sweep puts JEV's F1 flat between 0.5 and 0.7
-  (0.729, 0.731, 0.729), with precision rising from 68% to 80% and recall
-  falling from 78% to 67% across it: the product owner's choice, as the
+  (0.745, 0.749, 0.738), with precision rising from 70% to 82% and recall
+  falling from 79% to 67% across it: the product owner's choice, as the
   limits document asks.
 - **The false positives are the same kind for both.** By the hand labels'
   notes, JEV's 62 at 0.6 are 14 Sidekick or system outputs, 5 test and QA
@@ -667,13 +667,13 @@ What the numbers say:
   classifier runs, and remove a third of JEV's and a third of Terra's.
   52 of JEV's 62 are also Terra's.
 - **A conversation with earlier outputs is the hard case for both.** On the
-  775 cases where the conversation had already produced something, JEV's
+  793 cases where the conversation had already produced something, JEV's
   carry-up F1 is 0.52 and Terra's 0.65: telling a rebuild that changes what
   the parent would receive from a revision that does not is where the
   criteria need the optimization run most.
 - **The side question is not ready for a surface.** 21 hand-labeled
-  positives; JEV calls 176 side questions without a threshold and 48 with,
-  Terra 90, against 58 and 35 right. Until the prompt work lifts it, the
+  positives; JEV calls 179 side questions without a threshold and 48 with,
+  Terra 97, against 71, 37 and 62 right. Until the prompt work lifts it, the
   Breakout suggestion should stay in shadow while the merge suggestion ships.
 - **JEV is twelve times faster, with no tail.** 83 ms at p50 and 165 ms at
   p99 fits inside the settlement step as designed; Terra's second at p50
