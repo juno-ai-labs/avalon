@@ -3826,6 +3826,10 @@ pre {
 .resource-more-shell:focus-within .resource-more-button,
 .resource-more-shell.is-open .resource-more-button { opacity: 1; }
 .resource-more-button:hover, .resource-more-shell.is-open .resource-more-button { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
+/* The shell takes the file card's own width, so the button lands inside the
+   card's end rather than at the far edge of the message column. In a card row
+   the cell is narrower and wins. */
+.resource-more-shell.is-row { width: min(340px, 100%); }
 .resource-more-shell.is-row .resource-more-button { right: 10px; top: 50%; transform: translateY(-50%); }
 .resource-more-shell.is-corner .resource-more-button { background: color-mix(in srgb, var(--av-sys-color-surface-elevated) 88%, transparent); backdrop-filter: blur(6px); right: 6px; top: 6px; }
 .resource-more-shell.is-row:hover .citation-card.is-file,
