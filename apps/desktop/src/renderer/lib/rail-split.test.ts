@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { openRailAtEvenSplit, railFillsPane, useRailFillsPane } from './rail-split';
+import { openRailAtEvenSplit, railFillsPane, restoreRail, useRailFillsPane } from './rail-split';
 import { useUiStore } from './ui-store';
 
 // Layout is the browser's, which jsdom does not do: the main pane starts 200px
@@ -55,6 +55,19 @@ describe('the width a panel opens at', () => {
     useUiStore.setState({ railOpen: false });
     openRailAtEvenSplit('conversation-a', openRail);
     useUiStore.getState().setRailScope('conversation-a');
+    expect(useUiStore.getState().railWidth).toBe(500);
+  });
+
+  it('restores a panel nobody resized at the even split', () => {
+    restoreRail('conversation-a', openRail);
+    expect(useUiStore.getState().railWidth).toBe(412);
+  });
+
+  it('restores a resized panel at the width it was dragged to', () => {
+    openRail();
+    useUiStore.getState().setRailWidth(500);
+    useUiStore.setState({ railOpen: false, railScope: null });
+    restoreRail('conversation-a', openRail);
     expect(useUiStore.getState().railWidth).toBe(500);
   });
 });
