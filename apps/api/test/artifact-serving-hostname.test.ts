@@ -149,19 +149,47 @@ function fixture(route: unknown | null, options: {
 }
 
 describe("artifact serving hostname routes", () => {
+  /**
+   * A same-origin redemption: the first request of an open that resolves the
+   * host. The bootstrap before it is served without one.
+   */
+  function redeem(host: string): Request {
+    return new Request(`https://${host}.rallyusercontent.test/__rally/redeem`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": "same-origin",
+      },
+      body: "code=one-shot",
+    });
+  }
+
   it("resolves a readable stub to the existing UUID-addressed supervisor", async () => {
-    const { env, readRoute, idFromName } = fixture({
+    const { env, readRoute, idFromName, redeemCode } = fixture({
       hostname_stub: STUB,
       artifact_id: ARTIFACT,
       region: "global",
     });
+    await artifactWorker.fetch(redeem(`${STUB}-g`), env, context());
+
+    expect(readRoute).toHaveBeenCalledOnce();
+    expect(idFromName).toHaveBeenCalledWith(expect.stringContaining(ARTIFACT));
+    expect(redeemCode).toHaveBeenCalledWith("one-shot");
+  });
+
+  it("serves the bootstrap without reading the route, for any host", async () => {
+    // The first step of every open: a D1 read here only delays it, and a 404
+    // for an unknown host would tell it apart from a known one.
+    const { env, readRoute, idFromName } = fixture(null);
     const response = await artifactWorker.fetch(new Request(
       `https://${STUB}-g.rallyusercontent.test/__rally/open`,
     ), env, context());
 
     expect(response.status).toBe(200);
-    expect(readRoute).toHaveBeenCalledOnce();
-    expect(idFromName).toHaveBeenCalledWith(expect.stringContaining(ARTIFACT));
+    expect(readRoute).not.toHaveBeenCalled();
+    expect(idFromName).not.toHaveBeenCalled();
   });
 
   it("keeps the Rally bootstrap same-origin without weakening artifact responses", async () => {
@@ -595,9 +623,7 @@ describe("artifact serving hostname routes", () => {
 
   it("returns the neutral 404 when the route is absent or crosses regions", async () => {
     const absent = fixture(null);
-    expect((await artifactWorker.fetch(new Request(
-      `https://${STUB}-g.rallyusercontent.test/__rally/open`,
-    ), absent.env, context())).status).toBe(404);
+    expect((await artifactWorker.fetch(redeem(`${STUB}-g`), absent.env, context())).status).toBe(404);
     expect(absent.idFromName).not.toHaveBeenCalled();
 
     const crossed = fixture({
@@ -605,18 +631,14 @@ describe("artifact serving hostname routes", () => {
       artifact_id: ARTIFACT,
       region: "enterprise",
     });
-    expect((await artifactWorker.fetch(new Request(
-      `https://${STUB}-g.rallyusercontent.test/__rally/open`,
-    ), crossed.env, context())).status).toBe(404);
+    expect((await artifactWorker.fetch(redeem(`${STUB}-g`), crossed.env, context())).status).toBe(404);
     expect(crossed.idFromName).not.toHaveBeenCalled();
   });
 
   it("keeps legacy UUID links working without a route lookup", async () => {
-    const { env, readRoute } = fixture(null);
-    const response = await artifactWorker.fetch(new Request(
-      `https://${ARTIFACT}-g.rallyusercontent.test/__rally/open`,
-    ), env, context());
-    expect(response.status).toBe(200);
+    const { env, readRoute, redeemCode } = fixture(null);
+    await artifactWorker.fetch(redeem(`${ARTIFACT}-g`), env, context());
     expect(readRoute).not.toHaveBeenCalled();
+    expect(redeemCode).toHaveBeenCalledWith("one-shot");
   });
 });
