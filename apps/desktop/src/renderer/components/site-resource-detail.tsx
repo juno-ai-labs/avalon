@@ -105,6 +105,27 @@ async function nextPaint(): Promise<void> {
   });
 }
 
+/**
+ * How long a menu or dialog waits, under the view, for the still before the
+ * view hides without one. The overlay is invisible and unclickable until the
+ * hide goes out, so a slow or hung `capturePage` must not hold it. Past this,
+ * the pane is blank under the overlay, as it was before stills existed.
+ * Set by the team (2026-10-18): a normal capture, resize and encode is
+ * roughly 20 to 80 ms, and 150 ms covers that with margin.
+ */
+const STILL_WAIT_MS = 150;
+
+/** The still, or `null` once `STILL_WAIT_MS` passes without one. */
+async function stillWithin(take: () => Promise<string | null>): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), STILL_WAIT_MS); });
+  try {
+    return await Promise.race([take().catch(() => null), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** The rectangle that collapses the composited view while keeping its page loaded. */
 const HIDDEN = { x: 0, y: 0, width: 0, height: 0 };
 
@@ -335,8 +356,7 @@ export function SiteResourceDetail({
           width: bounds.width,
           height: bounds.height,
         };
-        void surface.snapshot()
-          .catch(() => null)
+        void stillWithin(surface.snapshot)
           .then(async (image) => {
             // On screen before the hide is sent, or the pane shows empty for
             // the frames between the view collapsing and React painting.

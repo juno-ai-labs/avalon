@@ -603,8 +603,13 @@ shrink to.
 **Consequences:** The still must be taken, and painted in the pane, before
 the zero rectangle is sent (decode, `flushSync`, then wait a frame); a
 `setState` alone lets the view collapse before React draws it. The renderer holds every update while the capture is in flight so a
-mutation burst cannot collapse the view first. The still is a picture, not the
-page: nothing under an overlay is interactive, which it was not before either.
+mutation burst cannot collapse the view first. The overlay is invisible and
+unclickable until that hide goes out, so the wait is bounded: past
+`STILL_WAIT_MS` (150 ms, set by the team) the view hides with no still and the
+pane is blank, as before. The still is placed at the rectangle the view held,
+since a view clipped by the rail captures only its visible slice. The still is
+a picture, not the page: nothing under an overlay is interactive, which it was
+not before either.
 
 ### 2026-10-18 — One "Opening…" per open, and no route read before the bootstrap
 
