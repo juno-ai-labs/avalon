@@ -9,7 +9,7 @@ the device remembers only the view the person chose.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/lib/ui-store.ts` | Rail widths and collapse preferences. |
-| `apps/desktop/src/renderer/lib/rail-split.ts` | The even split an attachment or artifact panel opens at. |
+| `apps/desktop/src/renderer/lib/rail-split.ts` | The even split an attachment or artifact panel opens or restores at. |
 | `apps/desktop/src/renderer/lib/desktop-layout.ts` | Scoped local keys and artifact panel selection. `useSemanticScroll` is still exported and tested, but nothing calls it. |
 | `apps/desktop/src/renderer/components/app-shell.tsx`, `screens/workstream-landing.tsx` | Last route save and directory-checked startup restoration. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Artifact panel selection per Channel or Breakout. |
@@ -52,7 +52,8 @@ At phone width the panel is a full-width sheet.
 Switching items in a panel already open for the same conversation keeps the
 width the person dragged it to. The split itself is not saved: the width
 stored per conversation is the one last dragged to, and it is what a panel
-restored on relaunch comes back at. Double-click or `Enter` on the panel's
+restored on arrival or relaunch comes back at (`restoreRail`). A conversation
+with no stored width restores at the even split, the same width a click gives. Double-click or `Enter` on the panel's
 edge resets it to the even split it opened at; unlike the opening, the reset is
 the person's own act, so it is saved as the conversation's width like a drag.
 
@@ -124,6 +125,23 @@ The desktop acceptance check opens, moves, quits, and relaunches real Electron
 windows, and checks that rail positions and panels return visibly.
 
 ## Changelog
+
+### 2026-10-18 — A restored panel nobody resized opens at the even split
+
+**What changed:** Arriving at a conversation that had a panel open, or
+navigating to one with an artifact request, restores the panel through
+`restoreRail`. It uses the conversation's stored width when there is one and
+the even split when there is not. Before, it fell to the 320px default.
+
+**Why:** Only a click went through `openRailAtEvenSplit`. Since the split is
+never stored, an artifact opened by a click and never dragged came back at
+320px on the next visit, narrow enough that a generated site dropped into its
+phone layout.
+
+**Consequences:** A stored width still wins on restore, so a person's drag is
+kept. Storing the split itself, so restore needed no check, was rejected: it
+would make the split look like the person's choice and break the rule that
+only a drag or the edge's reset is saved.
 
 ### 2026-10-16 — Opening a panel no longer widens the window
 
