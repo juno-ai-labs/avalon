@@ -16,6 +16,9 @@ describe("detectTextType", () => {
     ['name,note\nA,"x,y"\nB,"say ""hi"", then go"', "text/csv", "csv"],
     ["Dear team,\nThe launch moves to Tuesday, as agreed, after the review.\nThanks, Adam", "text/plain", "txt"],
     ["name,count\nEU,12", "text/plain", "txt"],
+    ["#!/usr/bin/env python\nimport os\n\n# Load the config\ndef main():\n    return os.environ['X']\n", "text/plain", "txt"],
+    ["# Default values for chart\nreplicaCount: 1\nimage:\n  repository: nginx\n", "text/plain", "txt"],
+    ["# Setup\n\nInstall it, then run the server.\n\n```ts\nconst a = 1;\nconst b = 2;\nexport { a, b };\n```\n", "text/markdown", "md"],
     ["{ not json", "text/plain", "txt"],
     ["- one list is not enough on its own", "text/plain", "txt"],
   ])("reads %j as %s", (text, mimeType, extension) => {

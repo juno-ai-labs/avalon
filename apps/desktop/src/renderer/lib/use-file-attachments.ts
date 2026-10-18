@@ -26,7 +26,7 @@ export interface PendingAttachment {
   error?: string;
 }
 
-const MAX_ATTACHMENTS = 10;
+export const MAX_ATTACHMENTS = 10;
 const MAX_ATTACHMENT_BYTES = 25_000_000;
 const DISCONNECTED_ERROR = 'Rally is not connected. Try again after reconnecting.';
 const UNSAVED_ERROR = 'This device is out of room to hold attachments, so they will be lost if you quit before sending.';

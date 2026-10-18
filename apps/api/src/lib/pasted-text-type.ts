@@ -72,7 +72,35 @@ function isDelimited(lines: string[], separator: string): boolean {
   return count > 0 && lines.every((line) => separatorCount(line, separator) === count);
 }
 
+/**
+ * A line that reads as code or config rather than prose: it ends the way
+ * statements and blocks do, opens with a common keyword, or is a `key:` pair.
+ */
+const CODE_LINE = /(?:[{};]|:)\s*$|^\s*(?:def|class|import|from|function|const|let|var|return|if|elif|else|for|while|fn|pub|package|#include)\b|^\s*[\w.-]+:\s/u;
+
+/**
+ * A fifth or more of the lines outside fenced blocks read as code. `#` opens a
+ * comment in Python, shell, YAML, TOML and Ruby, so without this a commented
+ * script would be read as Markdown and its comments shown as headings.
+ */
+function looksLikeCode(lines: string[]): boolean {
+  let fenced = false;
+  let prose = 0;
+  let code = 0;
+  for (const line of lines) {
+    if (/^(?:```|~~~)/u.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced || line.trim().length === 0) continue;
+    if (CODE_LINE.test(line)) code += 1;
+    else prose += 1;
+  }
+  return code > 0 && code * 5 >= code + prose;
+}
+
 function looksLikeMarkdown(text: string): boolean {
+  if (looksLikeCode(text.split(/\r?\n/u))) return false;
   if (MARKDOWN_STRONG.some((pattern) => pattern.test(text))) return true;
   return MARKDOWN_WEAK.filter((pattern) => pattern.test(text)).length >= 2;
 }
@@ -81,8 +109,9 @@ function looksLikeMarkdown(text: string): boolean {
  * The most specific common type the text plainly is, checked from the
  * strictest test to the loosest: JSON has to parse, markup has to open and
  * close, a table has to keep its shape, and Markdown needs more than one hint.
- * Anything else is plain text. Source code lands there too: no cheap test
- * tells one language from another, and a wrong guess reads worse than `.txt`.
+ * Anything else is plain text. Source code lands there too, `#` comments
+ * included: no cheap test tells one language from another, and a wrong guess
+ * reads worse than `.txt`.
  */
 export function detectTextType(text: string): PastedTextType {
   const trimmed = text.trim();

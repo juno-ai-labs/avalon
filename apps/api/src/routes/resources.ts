@@ -10,7 +10,6 @@ import { workspaceRealtimeInvalidation } from "../middleware/workspace-realtime"
 import { getRequestMembership, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { ArtifactOpenService } from "../services/artifact-open-service";
 import { ResourceService } from "../services/resource-service";
-import { preparePastedText } from "../services/pasted-text-service";
 import { ConversationService } from "../services/conversation-service";
 
 const idParam = z.object({ id: IdSchema });
@@ -94,14 +93,10 @@ resourceRoutes.post("/upload", async (c) => {
   const draftId = IdSchema.safeParse(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.DRAFT_ID));
   if (!draftId.success) throw new ApiError(422, "draft_id_required", "A valid draft attachment ID is required");
   const title = typeof body.title === "string" ? body.title : undefined;
-  const auth = getWorkspaceAuth(c);
-  // A long paste arrives as plain text under a stand-in name; the server
+  // A long paste arrives as plain text under a stand-in name; the service
   // decides what type it is and what to call it before storing it.
-  const stored = body.pastedText === "true"
-    ? await preparePastedText(c.env, { workspaceId: auth.workspaceId, userId: auth.userId, file })
-    : file;
-  return c.json(ResourceSchema.parse(
-    await new ResourceService(c.env, auth).upload(stored, title, draftId.data)), 201);
+  return c.json(ResourceSchema.parse(await new ResourceService(c.env, getWorkspaceAuth(c))
+    .upload(file, title, draftId.data, undefined, body.pastedText === "true")), 201);
 });
 resourceRoutes.post("/resolve", zValidator("json", resolveBody), async (c) =>
   c.json(ResourceSchema.parse(await new ResourceService(c.env, getWorkspaceAuth(c)).resolve(c.req.valid("json"))), 201),
