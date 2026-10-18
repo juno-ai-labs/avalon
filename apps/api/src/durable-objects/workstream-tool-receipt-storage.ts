@@ -276,7 +276,7 @@ export class WorkstreamToolReceiptStorage {
     });
   }
 
-  claimPage(input: z.infer<typeof PageClaimSchema> & { fence: ToolReceiptFence }): { inputJson: string } | { earlierRunInputJson: string } {
+  claimPage(input: z.infer<typeof PageClaimSchema> & { fence: ToolReceiptFence }): { inputJson: string } {
     return this.storage.transactionSync(() => {
       this.#assertPageReceipt(input);
       return new ToolPageStorage(this.sql).claim(input);

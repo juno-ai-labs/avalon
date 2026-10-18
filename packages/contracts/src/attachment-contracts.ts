@@ -262,6 +262,9 @@ export const CharacterRangeSchema = z.strictObject({
 export type CharacterRange = z.infer<typeof CharacterRangeSchema>;
 
 export const SuggestedAttachmentToolCallSchema = z.discriminatedUnion("tool", [
+  // `startCharacter` is no longer suggested, but receipts written while it was
+  // carry it in their stored `errorJson`, and an invalid field discards the
+  // whole failure detail on reprojection, `resourceId` included.
   z.strictObject({
     tool: z.literal("read_resource"),
     arguments: z.strictObject({ resourceId: CanonicalUuidSchema, startCharacter: NonNegativeIntegerSchema.optional() }),
