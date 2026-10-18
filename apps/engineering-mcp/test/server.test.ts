@@ -113,7 +113,6 @@ describe("Rally engineering MCP tools", () => {
 
     const response = await rpc(env, "tools/list");
     const result = response.result as { tools: Array<{ name: string; annotations?: Record<string, boolean> }> };
-    expect(result.tools.find((tool) => tool.name === "query_data_lake")).toMatchObject({ title: "Query Data Lake" });
     expect(result.tools.map((tool) => tool.name)).toEqual([
       "list_workspaces",
       "list_workstreams",

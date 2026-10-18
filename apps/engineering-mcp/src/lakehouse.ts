@@ -1,3 +1,5 @@
+import { codeShaped } from "@rally/contracts/zod-diagnostics";
+
 import analyticsEvents from "../../../config/analytics-events-lakehouse.json";
 import inference from "../../../config/inference-lakehouse.json";
 import usage from "../../../config/usage-lakehouse.json";
@@ -41,8 +43,7 @@ export async function queryLakehouse(
   lakehouse: string,
   sql: string,
 ): Promise<unknown> {
-  const target = LAKEHOUSES[lakehouse];
-  if (!target) throw new LakehouseQueryError("lakehouse_unknown", `${lakehouse} is not a Rally lakehouse`);
+  const target = LAKEHOUSES[lakehouse]!;
   if (!token) {
     throw new LakehouseQueryError(
       "lakehouse_token_unconfigured",
@@ -60,7 +61,7 @@ export async function queryLakehouse(
   const body = await response.json().catch(() => null) as BasinSqlResponse | null;
   if (response.ok && body?.success === true) return body.result;
   const first = body?.errors?.[0];
-  const code = first?.code === undefined ? `http_${response.status}` : String(first.code);
+  const code = first?.code === undefined ? `http_${response.status}` : codeShaped(String(first.code));
   throw new LakehouseQueryError(
     `lakehouse_query_failed:${code}`,
     body?.errors?.length

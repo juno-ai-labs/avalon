@@ -117,13 +117,10 @@ the flag first and send it back with its change.
 ### Lakehouses
 
 `query_data_lake` sends one statement to Cloudflare's Basin SQL HTTP API
-(formerly R2 SQL) for one of the three Global lakehouses:
-
-| `lakehouse` | Table | Basin Catalog bucket | Owning document |
-| --- | --- | --- | --- |
-| `llm_inference` | `avalon.llm_inference` | `avalon-global-inference-lakehouse` | [`inference-lakehouse.md`](inference-lakehouse.md) |
-| `analytics_events` | `avalon.analytics_events` | `avalon-global-analytics-events-lakehouse` | [`analytics-lakehouse.md`](analytics-lakehouse.md) |
-| `usage_events` | `avalon.usage_events` | `avalon-global-usage-lakehouse` | [`usage-metering.md`](usage-metering.md) |
+(formerly R2 SQL) for one of the three Global lakehouses: the
+[inference](inference-lakehouse.md), [analytics events](analytics-lakehouse.md)
+and [usage](usage-metering.md) tables. Their bucket, namespace and table names
+come from `config/*-lakehouse.json`.
 
 Each bucket is its own catalog, so the tool takes the table and picks the
 bucket; a query cannot join across lakehouses. Basin SQL is read-only on
@@ -277,10 +274,6 @@ generation fences admit only the current active authority. Existing Access tests
 signature, issuer, audience, cookie, and header verification because this
 Worker imports that one verifier rather than forking it.
 
-The same file drives `query_data_lake` against a Basin SQL double, since the
-API cannot run here: the table picks the bucket, Cloudflare's result returns
-unchanged, a refusal logs only its code, and a missing token makes no request.
-
 `apps/ace/test/flag-administration.test.ts` drives the entrypoint against
 Flagship and OpenRouter doubles, the two APIs that cannot run here.
 
@@ -306,17 +299,16 @@ being replayed at the MCP origin.
 The SQL capability is production-destructive by design. Access membership is
 therefore equivalent to database-console access across both Rally regions.
 It also grants read access to every lakehouse row, including the raw prompts,
-connector data and model output in `llm_inference`. A tool response holding
-that content is production user content under the
-[runbook's handling rules](runbook.md#inspecting-a-runs-raw-inference).
+connector data and model output in `llm_inference`, which the
+[runbook's handling rules](runbook.md#inspecting-a-runs-raw-inference) cover.
+Policy changes, identity-provider changes, and client approval belong in the
+Cloudflare Access application, not in application code.
 
 `BASIN_SQL_API_TOKEN` is a runtime credential, like Ace's Flagship token, not
 the deployment token. Basin SQL requires R2 storage read/write on the buckets it
 reads, so create it as an R2 API token restricted to the three lakehouse
 buckets with Basin SQL Read, Basin Catalog Read, and R2 Storage Write. Never
 widen it to the account or reuse `CLOUDFLARE_API_TOKEN`.
-Policy changes, identity-provider changes, and client approval belong in the
-Cloudflare Access application, not in application code.
 
 ## Operations
 
@@ -325,13 +317,7 @@ including the first safe schema query and OAuth troubleshooting, live in
 [`internal-admin-mcp-server.md`](internal-admin-mcp-server.md).
 
 The provisioner requires `CLOUDFLARE_ACCOUNT_ID` and
-`CLOUDFLARE_API_TOKEN`. It injects the account ID as a Worker variable and,
-when the `ENGINEERING_MCP_BASIN_SQL_API_TOKEN` GitHub secret is set in the
-`api-production` environment, installs it as `BASIN_SQL_API_TOKEN`. Without the
-secret the deploy keeps whatever token the Worker already has, and
-`query_data_lake` fails as `lakehouse_token_unconfigured` if it has none: the
-MCP deploys inside the API release, and a missing analytics credential should
-not turn that release red. It requires the existing Ace Access application as the
+`CLOUDFLARE_API_TOKEN`. It requires the existing Ace Access application as the
 policy, identity-provider, and session-duration source; missing source state is
 a deployment failure, not permission to create a broader policy. Generated
 configuration contains the Access audience, is owner-readable, and is removed
@@ -340,6 +326,14 @@ configuration and administrator-added HTTPS redirect allowlist entries. It also
 ensures the supported Claude, ChatGPT, and Cursor hosted origins remain present.
 Changing that managed provider list remains an explicit Access administration
 decision.
+
+The provisioner also injects the account ID as a Worker variable and, when the
+`ENGINEERING_MCP_BASIN_SQL_API_TOKEN` GitHub secret is set in the
+`api-production` environment, installs it as `BASIN_SQL_API_TOKEN`. Without the
+secret the deploy keeps whatever token the Worker already has, and
+`query_data_lake` fails as `lakehouse_token_unconfigured` if it has none: the
+MCP deploys inside the API release, and a missing analytics credential should
+not turn that release red.
 
 Model routes support optional `routing.reasoningEffort` (`low`, `medium`, or
 `high`) through `list_model_flags` and `update_model_flag`. Omission restores
