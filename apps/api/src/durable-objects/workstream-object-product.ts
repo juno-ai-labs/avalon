@@ -3528,25 +3528,31 @@ export class WorkstreamObjectProductService {
       workspaceId, resourceId, title, renamedByUserId: auth.userId, at: new Date().toISOString(),
     });
     if (result.outcome === "not_found") throw new ApiError(404, "resource_not_found", "Resource not found");
-    if (result.outcome === "unchanged") return null;
     // The same write a runtime republish makes to its link, so the projection
-    // that follows the inventory revision moves with it.
-    await this.objectStore.commitWithRegionalEffects(
+    // that follows the inventory revision moves with it. It runs on
+    // `unchanged` too: a retry after this write failed finds the workspace
+    // already renamed, and only this descriptor still behind.
+    const changed = await this.objectStore.commitWithRegionalEffects(
       (sql) => {
         const now = Date.now();
-        sql.exec(
+        const updated = sql.exec(
           `UPDATE workstream_resource_links SET resource_json = json_set(resource_json, '$.title', ?), updated_at = ?
-            WHERE resource_id = ?`,
-          title, now, resourceId,
-        );
-        sql.exec(
-          `INSERT INTO resource_inventory_revision(id, revision, updated_at) VALUES (1, 1, ?)
-           ON CONFLICT(id) DO UPDATE SET revision = revision + 1, updated_at = excluded.updated_at`,
-          now,
-        );
+            WHERE resource_id = ? AND json_extract(resource_json, '$.title') IS NOT ?
+            RETURNING resource_id`,
+          title, now, resourceId, title,
+        ).toArray().length > 0;
+        if (updated) {
+          sql.exec(
+            `INSERT INTO resource_inventory_revision(id, revision, updated_at) VALUES (1, 1, ?)
+             ON CONFLICT(id) DO UPDATE SET revision = revision + 1, updated_at = excluded.updated_at`,
+            now,
+          );
+        }
+        return updated;
       },
-      () => [{ partitionKey: "common", effect: this.commonEffect(this.root()) }],
+      (updated) => updated ? [{ partitionKey: "common", effect: this.commonEffect(this.root()) }] : [],
     );
+    if (!changed && result.outcome === "unchanged") return null;
     return this.readBackAttachedResource(auth.userId, resourceId);
   }
 
