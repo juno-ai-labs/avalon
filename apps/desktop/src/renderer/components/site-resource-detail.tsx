@@ -85,6 +85,8 @@ export interface SiteResourceDetailProps {
  * `allow-same-origin` means the artifact's origin, never the app's. Widening
  * this is a security change: see `docs/live-web-artifacts.md`.
  */
+const ARTIFACT_FRAME_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
+
 /** Resolves once `src` is decoded, so mounting it paints on the next frame. */
 async function decoded(src: string): Promise<void> {
   const image = new Image();
@@ -105,8 +107,6 @@ async function nextPaint(): Promise<void> {
 
 /** The rectangle that collapses the composited view while keeping its page loaded. */
 const HIDDEN = { x: 0, y: 0, width: 0, height: 0 };
-
-const ARTIFACT_FRAME_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
 
 export function SiteResourceDetail({
   resourceId,
@@ -163,7 +163,11 @@ export function SiteResourceDetail({
    * overlay, and the pane it leaves is empty. This still stands in for it, so
    * the page stays in view beneath the overlay instead of going blank.
    */
-  const [snapshot, setSnapshot] = React.useState<string | null>(null);
+  const [snapshot, setSnapshot] = React.useState<{
+    src: string;
+    /** Where the view was, relative to the pane: a clipped view is a slice of it. */
+    placement: React.CSSProperties;
+  } | null>(null);
 
   /**
    * A fresh open code, for one navigation.
@@ -324,6 +328,13 @@ export function SiteResourceDetail({
         // view paints nothing to take. Updates in the meantime wait for it,
         // and the one it runs on finishing sees whatever is current then.
         capturing = true;
+        const pane = paneRef.current?.getBoundingClientRect();
+        const placement: React.CSSProperties = {
+          left: bounds.x - (pane?.left ?? 0),
+          top: bounds.y - (pane?.top ?? 0),
+          width: bounds.width,
+          height: bounds.height,
+        };
         void surface.snapshot()
           .catch(() => null)
           .then(async (image) => {
@@ -331,7 +342,14 @@ export function SiteResourceDetail({
             // the frames between the view collapsing and React painting.
             if (image) await decoded(image);
             if (disposed) return;
-            flushSync(() => setSnapshot(image));
+            if (!occluded()) {
+              // The overlay closed while the still was being taken: the view
+              // never left, so there is nothing to stand in for.
+              capturing = false;
+              update();
+              return;
+            }
+            flushSync(() => setSnapshot(image ? { src: image, placement } : null));
             await nextPaint();
             capturing = false;
             if (disposed) return;
@@ -456,7 +474,7 @@ export function SiteResourceDetail({
                 referrerPolicy="no-referrer"
               />
             )}
-            {snapshot && <img alt="" className="site-detail-snapshot" src={snapshot} />}
+            {snapshot && <img alt="" className="site-detail-snapshot" src={snapshot.src} style={snapshot.placement} />}
             {access && previewShown === false && (
               <EmptyState
                 description="Open it in your browser to see the live page."
