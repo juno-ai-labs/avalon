@@ -53,7 +53,6 @@ export {
   WorkstreamErrorState,
   acceptedMessageOverlayDeliveryState,
   branchProvenance,
-  conversationReplyCount,
   conversationReadAcknowledgement,
   highestVisibleAttentionSequence,
   initialTranscriptAnchorIndex,
@@ -890,7 +889,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       bridge: { mark: workstreamMark(breakoutId, selectedAppearance ?? undefined), name: title, action: 'Open breakout' },
       title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
       label: `Breakout menu: ${title}`,
-      ...(context.replyCount ? { meta: `${context.replyCount} ${context.replyCount === 1 ? 'reply' : 'replies'}` } : {}),
       menu: <BreakoutMenu
         actions={substreamActions}
         appearance={!channelWritable ? undefined : <AppearanceSubmenu
