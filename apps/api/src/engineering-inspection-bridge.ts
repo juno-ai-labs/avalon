@@ -34,6 +34,7 @@ import {
   type ListEngineeringWorkspacesResult,
   type SearchEngineeringOrganizationsResult,
 } from "@rally/contracts/engineering-inspection";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { z } from "zod";
 
@@ -243,6 +244,19 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
 
   async searchOrganizations(input: unknown): Promise<SearchEngineeringOrganizationsResult> {
     const filter = parseRpcInput(SearchEngineeringOrganizationsInputSchema, input, "searchOrganizations");
+    // A ZodError reaches the far side of RPC as a bare Error, so its field
+    // would be lost; the MCP reads a diagnostic-shaped message as the code.
+    try {
+      return await this.searchOrganizationsUnchecked(filter);
+    } catch (error) {
+      const code = zodDiagnosticCode(error, "searchOrganizations");
+      throw code ? new Error(code) : error;
+    }
+  }
+
+  private async searchOrganizationsUnchecked(
+    filter: z.infer<typeof SearchEngineeringOrganizationsInputSchema>,
+  ): Promise<SearchEngineeringOrganizationsResult> {
     const rows = await searchInspectionOrganizations(this.env, filter);
     return SearchEngineeringOrganizationsResultSchema.parse({
       region: this.env.AVALON_REGION,

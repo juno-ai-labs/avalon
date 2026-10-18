@@ -149,12 +149,14 @@ describe("engineering organization search", () => {
   const BETA = "00000000-0000-7000-8000-000000000ed2";
   const GONE = "00000000-0000-7000-8000-000000000ed3";
   const GUEST = "00000000-0000-7000-8000-000000000ed4";
+  const SUSPENDED = "00000000-0000-7000-8000-000000000ed6";
 
   function organizations() {
     const { database, env } = fixture();
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
-      VALUES ('${GUEST}', 'guest-user', 'guest@example.com', 'Guest', '${AT}', '${AT}');
+      VALUES ('${GUEST}', 'guest-user', 'guest@example.com', 'Guest', '${AT}', '${AT}'),
+             ('${SUSPENDED}', 'suspended-user', 'suspended@example.com', 'Suspended', '${AT}', '${AT}');
       INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at, plan)
       VALUES ('${ACME}', 'Acme Corp', 'acme', 'global', '${USER_ID}', '2026-09-01T00:00:00.000Z', '${AT}', 'growth'),
              ('${BETA}', 'Beta Labs', 'beta', 'global', '${USER_ID}', '2026-10-01T00:00:00.000Z', '${AT}', 'starter');
@@ -164,6 +166,8 @@ describe("engineering organization search", () => {
       VALUES ('${ACME}', '${USER_ID}', 'owner', 'active', '2026-10-10T00:00:00.000Z');
       INSERT INTO workspace_members (workspace_id, user_id, role, status, access_class, last_seen_at)
       VALUES ('${ACME}', '${GUEST}', NULL, 'active', 'guest', '2026-10-12T00:00:00.000Z');
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, last_seen_at)
+      VALUES ('${ACME}', '${SUSPENDED}', 'member', 'suspended', '2026-10-14T00:00:00.000Z');
     `);
     return env;
   }

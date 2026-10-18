@@ -6,24 +6,13 @@ import {
 } from "@rally/contracts/engineering-inspection";
 import { z } from "zod";
 
-/**
- * Rows per page when the caller sets no limit. Set by the team for a model of
- * middling skill with a large context window: about nine short fields per row
- * puts a page near 12-16k tokens, so most searches fit on one page and the
- * model rarely has to page at all. A caller may ask for more or fewer; nothing
- * caps it.
- */
+/** Rows per page when the caller sets no limit; docs/engineering-mcp.md says why. */
 export const DEFAULT_ORGANIZATION_PAGE_SIZE = 200;
 
 const OrderBySchema = z.enum(["createdAt", "name", "memberCount", "lastSeenAt"]);
 type OrderBy = z.infer<typeof OrderBySchema>;
 
-/**
- * Paging is a page number, not an opaque cursor: a model copies a small
- * integer and its own earlier arguments reliably, and garbles long random
- * tokens. The cost is that a row can repeat or be skipped across pages if an
- * Organization is created or removed between calls, which is rare here.
- */
+/** Page numbers rather than a cursor; docs/engineering-mcp.md says why. */
 export const organizationPageInputSchema = {
   orderBy: OrderBySchema.optional().describe(
     "Sort key; createdAt by default. Organizations never seen sort last for lastSeenAt in either direction.",
@@ -39,12 +28,7 @@ export const organizationPageInputSchema = {
   ),
 };
 
-export type OrganizationPageRequest = {
-  orderBy?: OrderBy | undefined;
-  direction?: "asc" | "desc" | undefined;
-  limit?: number | undefined;
-  page?: number | undefined;
-};
+export type OrganizationPageRequest = z.infer<z.ZodObject<typeof organizationPageInputSchema>>;
 
 export type OrganizationPage = {
   items: EngineeringOrganization[];
@@ -60,9 +44,10 @@ function compare(left: EngineeringOrganization, right: EngineeringOrganization, 
   const a = left[orderBy];
   const b = right[orderBy];
   if ((a === null) !== (b === null)) return a === null ? 1 : -1;
-  const order = typeof a === "number" && typeof b === "number"
-    ? a - b
-    : String(a ?? "").localeCompare(String(b ?? ""), undefined, orderBy === "name" ? { sensitivity: "base" } : undefined);
+  // createdAt and lastSeenAt are uniform UTC ISO strings, so plain comparison orders them.
+  const order = orderBy === "name"
+    ? left.name.localeCompare(right.name, undefined, { sensitivity: "base" })
+    : a! < b! ? -1 : a! > b! ? 1 : 0;
   return sign * order || left.workspaceId.localeCompare(right.workspaceId);
 }
 
