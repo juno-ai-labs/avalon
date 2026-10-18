@@ -66,11 +66,20 @@ The regional bridge uses D1 only for identity and routing:
 Each region applies the filters in D1 (a name, slug or ID substring, plan,
 abandoned state, and a creation window) and returns its matches unordered,
 with the active member count, guests excluded, and the latest `last_seen_at`
-of any member. The MCP merges the regions, then sorts by name, creation time,
-member count or last seen, and takes `limit` if given, so ordering and paging
-run once over the whole set. `list_orgs` includes abandoned Organizations;
+of any member. The MCP merges the regions, sorts by creation time (newest
+first by default), name, member count or last seen, and returns one page, so
+ordering and paging run once over the whole set. `list_orgs` includes abandoned Organizations;
 `search_orgs` leaves them out unless asked. They read D1 only and open no
 Durable Object, so an Organization whose authority is closed still appears.
+
+Paging is by page number: a result is `{ items, page, pageCount, total,
+nextPage }`, and the caller asks for the next page by repeating its arguments
+with `page` set to `nextPage`. An opaque cursor was rejected because models
+garble long random tokens when they copy them back, and the product's
+four-word page IDs need storage this stateless Worker does not have. The cost
+is that a row can repeat or be skipped if an Organization is created or
+removed between calls. The default page is 200 rows, about 12-16k tokens,
+chosen for a large context window so most searches fit on one page.
 
 `run_substream_sql` takes workspace, work-stream, and substream IDs. The parent
 IDs are not redundant: all three are part of the Durable Object's stable name.
@@ -357,7 +366,8 @@ primary and fallbacks. Ace owns validation and the atomic write.
 
 **What changed:** `list_orgs` and `search_orgs` call a new bridge method,
 `searchOrganizations`, that filters `workspaces` in each region's D1 and adds
-member count and last-seen time. The MCP orders and limits the merged set.
+member count and last-seen time. The MCP orders the merged set and pages it
+by number, 200 rows by default.
 
 **Why:** `list_workspaces` returns every Organization sorted by name with no
 filter, plan, age or activity, so finding one meant reading the whole list.
@@ -371,7 +381,8 @@ have to sort again anyway.
 
 **Consequences:** `list_workspaces` remains for existing clients and could be
 retired. A new filter goes into the D1 query and the input schema together; a
-new sort key goes into the MCP only.
+new sort key goes into the MCP only. Page numbers trade stability across a
+concurrent insert for a token a model copies reliably.
 
 ### 2026-10-18 — Query the Global lakehouses
 

@@ -12,9 +12,6 @@ import {
   InspectionSqlBindingSchema,
   ListEngineeringWorkspacesResultSchema,
   SearchEngineeringOrganizationsInputSchema,
-  SearchEngineeringOrganizationsResultSchema,
-  type EngineeringOrganization,
-  type SearchEngineeringOrganizationsInput,
 } from "@rally/contracts/engineering-inspection";
 import {
   ArtifactIdSchema,
@@ -34,6 +31,7 @@ import {
 import type { AccessPrincipal } from "./access";
 import type { Env } from "./env";
 import { LAKEHOUSE_TABLES, LAKEHOUSES, LakehouseQueryError, queryLakehouse } from "./lakehouse";
+import { organizationPage, organizationPageInputSchema } from "./organizations";
 
 type ToolResult = {
   content: [{ type: "text"; text: string }];
@@ -165,51 +163,6 @@ const sqlInputSchema = {
   ),
 };
 
-const organizationOrderSchema = {
-  orderBy: z.enum(["name", "createdAt", "memberCount", "lastSeenAt"]).optional().describe(
-    "Sort key; name by default. Organizations never seen sort last for lastSeenAt in either direction.",
-  ),
-  direction: z.enum(["asc", "desc"]).optional().describe("asc by default."),
-  limit: z.number().int().positive().optional().describe("Return only the first N after ordering."),
-};
-
-type OrganizationOrder = {
-  orderBy?: "name" | "createdAt" | "memberCount" | "lastSeenAt" | undefined;
-  direction?: "asc" | "desc" | undefined;
-  limit?: number | undefined;
-};
-
-function compareOrganizations(
-  left: EngineeringOrganization,
-  right: EngineeringOrganization,
-  orderBy: NonNullable<OrganizationOrder["orderBy"]>,
-): number {
-  switch (orderBy) {
-    case "name": return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
-    case "createdAt": return left.createdAt.localeCompare(right.createdAt);
-    case "memberCount": return left.memberCount - right.memberCount;
-    case "lastSeenAt": return (left.lastSeenAt ?? "").localeCompare(right.lastSeenAt ?? "");
-  }
-}
-
-/** Search every region, then order the merged set and take the first `limit`. */
-async function searchOrganizations(
-  env: Env,
-  filter: SearchEngineeringOrganizationsInput,
-  { orderBy = "name", direction = "asc", limit }: OrganizationOrder,
-): Promise<EngineeringOrganization[]> {
-  const results = await Promise.all(inspectionBindings(env).map((binding) => binding.searchOrganizations(filter)));
-  const sign = direction === "asc" ? 1 : -1;
-  const sorted = results.flatMap((result) => SearchEngineeringOrganizationsResultSchema.parse(result).items)
-    .sort((left, right) => {
-      if (orderBy === "lastSeenAt" && (left.lastSeenAt === null) !== (right.lastSeenAt === null)) {
-        return left.lastSeenAt === null ? 1 : -1;
-      }
-      return sign * compareOrganizations(left, right, orderBy) || left.workspaceId.localeCompare(right.workspaceId);
-    });
-  return limit === undefined ? sorted : sorted.slice(0, limit);
-}
-
 export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal): McpServer {
   const server = new McpServer({ name: "Rally engineering", version: "1.0.0" });
 
@@ -224,18 +177,18 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }));
 
   server.registerTool("list_orgs", {
-    description: "List every Rally Organization (stored as a workspace) across configured regions, abandoned ones included, with plan, creation time, active member count, and when a member was last seen.",
-    inputSchema: organizationOrderSchema,
+    description: "List every Rally Organization (stored as a workspace) across configured regions, abandoned ones included, newest first unless ordered otherwise, with plan, creation time, active member count, and when a member was last seen. Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
+    inputSchema: organizationPageInputSchema,
     annotations: { readOnlyHint: true, openWorldHint: false },
-  }, (order) => tool(principal, "list_orgs", {}, () =>
-    searchOrganizations(env, { abandoned: "include" }, order)));
+  }, (request) => tool(principal, "list_orgs", {}, () =>
+    organizationPage(inspectionBindings(env), { abandoned: "include" }, request)));
 
   server.registerTool("search_orgs", {
-    description: "Search Rally Organizations (stored as workspaces) across configured regions. Every filter narrows the result; abandoned Organizations are excluded unless asked for.",
-    inputSchema: { ...SearchEngineeringOrganizationsInputSchema.unwrap().shape, ...organizationOrderSchema },
+    description: "Search Rally Organizations (stored as workspaces) across configured regions, newest first unless ordered otherwise. Every filter narrows the result; abandoned Organizations are excluded unless asked for. Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
+    inputSchema: { ...SearchEngineeringOrganizationsInputSchema.unwrap().shape, ...organizationPageInputSchema },
     annotations: { readOnlyHint: true, openWorldHint: false },
-  }, ({ orderBy, direction, limit, ...filter }) => tool(principal, "search_orgs", {}, () =>
-    searchOrganizations(env, filter, { orderBy, direction, limit })));
+  }, ({ orderBy, direction, limit, page, ...filter }) => tool(principal, "search_orgs", {}, () =>
+    organizationPage(inspectionBindings(env), filter, { orderBy, direction, limit, page })));
 
   server.registerTool("list_workstreams", {
     description: "List every work stream in the authoritative WorkspaceDO for a workspace ID.",
