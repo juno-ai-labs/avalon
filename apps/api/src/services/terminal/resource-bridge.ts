@@ -52,6 +52,7 @@ import {
   type TerminalPublishedResourceOutput,
   type TerminalPublishedSiteOutput,
 } from "./tools";
+import { AGENT_RESOURCE_TITLE_SQL } from "../agent-resource-title";
 
 /** One captured revision, as `resource_versions` holds it. */
 interface VersionRow extends Record<string, unknown> {
@@ -247,10 +248,11 @@ async function swapPublishedContent(input: {
     : undefined);
   // A revision that names no title keeps the one participants already know the
   // document by; renaming it silently on every republish would be worse than
-  // ignoring the argument.
+  // ignoring the argument. One that repeats its old name keeps a person's
+  // rename (`AGENT_RESOURCE_TITLE_SQL`).
   const title = input.displayName?.trim()
     ? [...input.displayName.trim()].slice(0, 300).join("")
-    : existing.title;
+    : null;
   const metadata = JSON.stringify({
     sourcePath: input.filePath,
     size: bytes.byteLength,
@@ -278,7 +280,7 @@ async function swapPublishedContent(input: {
   try {
     swapped = await workspace.prepare(
       `UPDATE resources
-          SET title = ?, mime_type = ?, content_ref = ?, content_sha256 = ?, metadata_json = ?,
+          SET title = ${AGENT_RESOURCE_TITLE_SQL}, mime_type = ?, content_ref = ?, content_sha256 = ?, metadata_json = ?,
               updated_at = ?,
               model_content_ref = NULL, model_mime_type = NULL, model_content_sha256 = NULL,
               model_metadata_json = NULL, model_content_status = ?,
@@ -292,6 +294,8 @@ async function swapPublishedContent(input: {
       RETURNING id, title, mime_type, content_ref, content_sha256, metadata_json,
                 model_content_status, created_at`,
     ).bind(
+      title,
+      title,
       title,
       input.mimeType,
       objectRef,
