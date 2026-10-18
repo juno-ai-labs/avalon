@@ -494,9 +494,24 @@ describe("work-stream attachment tools", () => {
       details: { resourceId, suggestedCall: { tool: "read_resource", arguments: { resourceId, startCharacter: 12_000 } } },
     });
     expect(error!.message).toContain(`call read_resource with {"resourceId":"${resourceId}","startCharacter":12000}`);
-    await expect(read.execute({ resourceId, startCharacter: 12_000 }, context())).resolves.toMatchObject({
-      output: { resourceId, range: { start: 12_000 } },
-    });
+    const resumed = await read.execute({ resourceId, startCharacter: 12_000 }, context());
+    expect(resumed).toMatchObject({ output: { resourceId, range: { start: 12_000 } } });
+
+    // The bug this fixes, end to end: the refused page used to leave an
+    // anonymous failure that no later read could clear, so the reply was
+    // replaced by the unverified-attachment boundary.
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const policy = { capability: "workstream.resources.read" };
+    guard.onStarted({ type: "tool_started", toolCallId: "stale", toolName: "read_resource_next", pluginId: "rally:workstream",
+      policy, input: { pageId: "workstream_coral_bright_vibrant_harriot" } } as never);
+    guard.onFailed({ type: "tool_failed", toolCallId: "stale", toolName: "read_resource_next", pluginId: "rally:workstream",
+      policy, error: error!.message, data: readStructuredFailure(error), phase: "execution", outcome: "definitive_failure" } as never);
+    expect(guard.boundary()).toContain(resourceId);
+    guard.onStarted({ type: "tool_started", toolCallId: "resume", toolName: "read_resource", pluginId: "rally:workstream",
+      policy, input: { resourceId, startCharacter: 12_000 } } as never);
+    guard.onCompleted({ type: "tool_completed", toolCallId: "resume", toolName: "read_resource", pluginId: "rally:workstream",
+      policy, result: resumed } as never);
+    expect(guard.boundary()).toBeNull();
     await expect(read.explainEarlierRunPage!({ cursor: "not-a-cursor" }, context())).resolves.toBeNull();
 
     // Changed text invalidates the offset: the hint restarts the read rather

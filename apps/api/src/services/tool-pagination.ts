@@ -60,14 +60,13 @@ export function paginatedToolNames(definition: Pick<HarnessTool["definition"], "
   return [operation, `${operation}_next`, "read_resource_previous"];
 }
 
+/** What the model is told about a page ID an earlier run issued. */
+export const EARLIER_RUN_PAGE_NOTICE = "This page ID came from an earlier message. Page IDs work only within the reply that returned them, so it cannot be used now.";
+
 /**
- * An authored paginated tool, optionally able to say how to restart from a page
- * an earlier run issued.
- *
- * The hook receives that page's private continuation input and returns the
- * error the model should see, naming the first-page call that reaches the same
- * place, or null when it cannot. It describes the continuation and never runs
- * it: page IDs stay scoped to their run.
+ * An authored paginated tool that can say how to restart from an earlier run's
+ * page: given its stored continuation input, return the error the model sees,
+ * or null when it cannot.
  */
 export type PaginatedHarnessTool = HarnessTool & {
   explainEarlierRunPage?: (continuationInput: unknown, context: HarnessToolContext) => Promise<Error | null>;
@@ -110,24 +109,25 @@ export function withToolPagination(tool: PaginatedHarnessTool, host: PaginationH
     } catch (error) {
       let message = error instanceof ObjectPortError ? error.code : error instanceof Error ? error.message : "";
       // Storage cannot name the model's tools, so the instruction is written
-      // here. A page from an earlier message never reaches this branch.
+      // here. It covers wrong-scope and uncommitted pages too, where the ID
+      // was copied exactly, so it says only what to do next.
       const unknownPage = message.startsWith("page_id_invalid:");
       if (unknownPage) {
-        message = `page_id_invalid: This page ID does not match any page ${firstName} returned. Copy the ID exactly from the latest result, or call ${firstName} to start a new read.`;
+        message = `page_id_invalid: This page ID cannot be used here. Call ${firstName} to start a new read.`;
       }
       // Keep the attachment grounding guard's existing, bounded recovery
       // semantics when a model damages a page ID before resource resolution.
       if (operation === "read_resource" && unknownPage) {
         throw Object.assign(new Error(message), { code: "invalid_cursor" });
       }
-      if ((error instanceof ObjectPortError || unknownPage) && message.startsWith("page_")) throw new Error(message, { cause: error });
+      if (unknownPage || (error instanceof ObjectPortError && message.startsWith("page_"))) throw new Error(message, { cause: error });
       throw error;
     }
     if ("inputJson" in claimed) return claimed;
     const explained = await tool.explainEarlierRunPage?.(JSON.parse(claimed.earlierRunInputJson), context);
     if (explained) throw explained;
     throw Object.assign(new Error(
-      `page_id_from_earlier_message: This page ID came from an earlier message. Page IDs work only within the reply that returned them, so it cannot be used now. Call ${firstName} to start a new read.`,
+      `page_id_from_earlier_message: ${EARLIER_RUN_PAGE_NOTICE} Call ${firstName} to start a new read.`,
     ), { code: operation === "read_resource" ? "invalid_cursor" : "page_id_from_earlier_message" });
   }
   async function execute(input: unknown, context: HarnessToolContext): Promise<HarnessToolResult> {
