@@ -7,6 +7,7 @@ import {
   resolveInspectionWorkspaceRoute,
   resolveInspectionWorkstreamRoute,
   searchInspectionOrganizations,
+  searchInspectionUsers,
 } from "../src/engineering-inspection-routes";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -212,5 +213,69 @@ describe("engineering organization search", () => {
       createdBefore: "2026-10-01T00:00:00.001Z",
     });
     expect(window.map((row) => row.id)).toEqual([BETA]);
+  });
+});
+
+describe("engineering user search", () => {
+  const OTHER_ORG = "00000000-0000-7000-8000-000000000ee1";
+  const ZOE = "00000000-0000-7000-8000-000000000ee2";
+  const LONER = "00000000-0000-7000-8000-000000000ee3";
+
+  function users() {
+    const { database, env } = fixture();
+    database.exec(`
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('${OTHER_ORG}', 'Other Org', 'other', 'global', '${USER_ID}', '${AT}', '${AT}');
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('${ZOE}', 'zoe', 'zoe@Örebro.example', 'Zoë Ångström', '2026-09-10T00:00:00.000Z', '${AT}'),
+             ('${LONER}', 'loner', 'loner@example.com', 'Loner', '2026-10-10T00:00:00.000Z', '${AT}');
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, last_seen_at)
+      VALUES ('${WORKSPACE_ID}', '${ZOE}', 'admin', 'active', '2026-10-01T00:00:00.000Z'),
+             ('${OTHER_ORG}', '${ZOE}', 'member', 'suspended', '2026-10-05T00:00:00.000Z');
+    `);
+    return env;
+  }
+
+  it("returns each user with every membership, whatever its status, and none for a user without one", async () => {
+    const rows = await searchInspectionUsers(users(), { createdAfter: "2026-09-01T00:00:00Z" });
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    expect(byId.get(ZOE)?.memberships.sort((a, b) => a.workspace_id.localeCompare(b.workspace_id))).toEqual([
+      {
+        workspace_id: WORKSPACE_ID,
+        name: "Inspection workspace",
+        slug: "inspection-workspace",
+        role: "admin",
+        access_class: "member",
+        status: "active",
+        last_seen_at: "2026-10-01T00:00:00.000Z",
+      },
+      {
+        workspace_id: OTHER_ORG,
+        name: "Other Org",
+        slug: "other",
+        role: "member",
+        access_class: "member",
+        status: "suspended",
+        last_seen_at: "2026-10-05T00:00:00.000Z",
+      },
+    ].sort((a, b) => a.workspace_id.localeCompare(b.workspace_id)));
+    // The suspended membership's later visit does not count.
+    expect(byId.get(ZOE)?.last_seen_at).toBe("2026-10-01T00:00:00.000Z");
+    expect(byId.get(LONER)?.memberships).toEqual([]);
+    expect(byId.get(LONER)?.last_seen_at).toBeNull();
+    expect([...byId.keys()].sort()).toEqual([ZOE, LONER].sort());
+  });
+
+  it("matches name or email with non-ASCII capitals, and filters by a creation window", async () => {
+    const env = users();
+    await expect(searchInspectionUsers(env, { query: "ÅNGSTRÖM" })).resolves.toEqual([expect.objectContaining({ id: ZOE })]);
+    await expect(searchInspectionUsers(env, { query: "örebro" })).resolves.toEqual([expect.objectContaining({ id: ZOE })]);
+    const window = await searchInspectionUsers(env, {
+      createdAfter: "2026-10-09T20:00:00.001-04:00",
+      createdBefore: "2026-10-11T00:00:00Z",
+    });
+    expect(window.map((row) => row.id)).toEqual([]);
+    const later = await searchInspectionUsers(env, { createdAfter: "2026-10-09T20:00:00-04:00" });
+    expect(later.map((row) => row.id)).toEqual([LONER]);
   });
 });
