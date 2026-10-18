@@ -171,8 +171,9 @@ someone who has never seen one, the action, and a dismiss:
   "Want to break this out?"; one cut line of the drafted opening prompt;
   action **Start**.
 
-Every chip ends with one line of the words it would post or start with, cut
-with an ellipsis to the chip's width: for a merge, the note Rally drafted
+Every chip ends with one line of the words it would post or start with, in
+quotation marks, cut with an ellipsis to the chip's width and closed after
+the ellipsis so a cut line still reads as a quote: for a merge, the note Rally drafted
 for the parent's readers, which is what the response card opens with; for a
 Breakout, the drafted opening prompt. A person can judge the suggestion from
 the chip alone.
