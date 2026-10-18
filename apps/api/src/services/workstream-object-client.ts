@@ -1,6 +1,8 @@
 import { uuidV7 } from "../lib/uuid-v7";
 import { SearchLinkSchema } from '../durable-objects/conversation-link-search';
 import {
+  ConversationSuggestionDismissResultSchema,
+  type ConversationSuggestionDismissResult,
   ElicitationSchema,
   ParticipantSchema,
   WorkstreamResourceSchema,
@@ -308,6 +310,11 @@ export class WorkstreamObjectClient {
 
   async markUnread(): Promise<Workstream> {
     return WorkstreamSchema.parse(await this.request({ operation: "mark_unread" }));
+  }
+
+  /** Dismiss a conversation suggestion for everyone; replayed when it was already resolved. */
+  async dismissSuggestion(suggestionId: string): Promise<ConversationSuggestionDismissResult> {
+    return ConversationSuggestionDismissResultSchema.parse(await this.request({ operation: "dismiss_suggestion", suggestionId }));
   }
 
   async createMessage(

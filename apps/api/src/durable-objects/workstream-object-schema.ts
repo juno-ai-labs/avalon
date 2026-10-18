@@ -25,7 +25,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 74;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 75;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3449,6 +3449,57 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       // stalled behind a newer one cannot write the old colour back.
       `ALTER TABLE workstream ADD COLUMN channel_color_revision INTEGER NOT NULL DEFAULT 0
          CHECK (channel_color_revision >= 0)`,
+    ],
+  },
+  {
+    version: 75,
+    description: "conversation suggestions and the turn-disposition judgements behind them",
+    statements: [
+      // One row per judged turn that produced a suggestion: a quiet line under
+      // the turn offering to carry its result up or to break a side question
+      // out. Conversation state, not a transcript row, so a dismissal resolves
+      // it in place and nothing accumulates. `judged_turn_sequence` is kept
+      // beside the id so the newest-three expiry and the merge marker's
+      // resolution compare integers rather than looking the turn up again.
+      // `docs/conversation-suggestions.md` owns the lifecycle.
+      `CREATE TABLE conversation_suggestions (
+        suggestion_id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('merge_up', 'start_breakout')),
+        judged_turn_id TEXT NOT NULL,
+        judged_turn_sequence INTEGER NOT NULL CHECK (judged_turn_sequence >= 0),
+        run_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('open', 'accepted', 'dismissed', 'expired', 'withdrawn')),
+        draft_status TEXT NOT NULL CHECK (draft_status IN ('pending', 'ready', 'failed')),
+        draft_text TEXT,
+        draft_subject TEXT,
+        target_kind TEXT CHECK (target_kind IS NULL OR target_kind IN ('thread', 'channel')),
+        target_id TEXT,
+        target_title TEXT,
+        decision_choice TEXT NOT NULL,
+        decision_confidence REAL NOT NULL CHECK (decision_confidence >= 0 AND decision_confidence <= 1),
+        decision_model TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        resolved_at INTEGER,
+        resolved_by_user_id TEXT,
+        resolution TEXT CHECK (resolution IS NULL OR resolution IN ('accepted', 'dismissed', 'ignored'))
+      ) STRICT`,
+      `CREATE UNIQUE INDEX conversation_suggestions_one_per_turn ON conversation_suggestions (judged_turn_id)`,
+      `CREATE INDEX conversation_suggestions_pacing ON conversation_suggestions (kind, status, resolved_at)`,
+      // Every decision the classifier made for a run, shown or not: what makes
+      // a settlement retry idempotent on the run (gate 3) and what a later
+      // calibration re-scores without calling the provider again.
+      `CREATE TABLE turn_disposition_judgements (
+        run_id TEXT PRIMARY KEY,
+        judged_turn_id TEXT NOT NULL,
+        code TEXT NOT NULL,
+        choice TEXT,
+        confidence REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+        carried_item_kind TEXT,
+        model TEXT,
+        failure_kind TEXT,
+        suggestion_id TEXT,
+        created_at INTEGER NOT NULL
+      ) STRICT`,
     ],
   },
 ];

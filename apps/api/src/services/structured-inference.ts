@@ -37,6 +37,7 @@ type StructuredInferenceRole = Extract<
   | "work_opportunity_ranking"
   | "workstream_description"
   | "workstream_naming"
+  | "suggestion_draft"
 >;
 
 type StructuredInferenceSource = StructuredInferenceRole | "substream_context_summary";

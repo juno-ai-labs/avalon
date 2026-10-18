@@ -1465,6 +1465,30 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
+### 2026-10-18 — The settlement lane asks JEV what a settled turn calls for
+
+**What changed:** `settleAgentRun` gained a last step after the description
+loop: the turn-disposition observer, which runs deterministic gates and then
+`judgeTurnDisposition`, the third JEV caller beside addressing and the
+semantic trigger gate, over a state naming the parent, the conversation's
+charter, what it has produced so far, the newest three messages and the judged
+turn. Every provider call is recorded through the classifier diagnostic sink
+under `turn_disposition_classifier`. The step never fails settlement. The
+harness also gained the `suggestion_draft` prompts, golden-hashed. The
+mechanism is owned by [`conversation-suggestions.md`](conversation-suggestions.md);
+the question, its 0.6 threshold and its three recent messages are pinned to the
+corpus evaluation and the GEPA ablation in
+`docs/PRDs/2026-10-17_merge-and-breakout-suggestions/design.md`.
+
+**Why:** the settlement lane is already the platform's "something finished,
+look at the conversation" hook, durable on the run row and retried with
+backoff, and the two model calls it makes are slower than this one; a Queue
+hop with a return RPC would add a queue and a dispatch branch for a call the
+lane has room for. JEV rather than a generative judgement because the answer is
+one member of a closed set and the threshold has to be applied to a confidence
+the provider computed, the lesson `contextual-routing.md` recorded when the
+router was retired.
+
 ### 2026-10-09 — OpenRouter agent turns stream over the Responses API
 
 **What changed:** The OpenRouter streaming client sends agent turns to

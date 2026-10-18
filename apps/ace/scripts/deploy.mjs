@@ -159,6 +159,7 @@ await Promise.all([
   ensureModelFlag('agent-model-work-opportunity-ranking', 'Orders admitted suggestions for one person, accounting for freshness and impressions before storing the visible set.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.8-flash']),
   ensureModelFlag('agent-model-workstream-description', 'Re-evaluates the derived one-line description after terminal runs and rewrites it only when the work stream changed purpose.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.8-flash']),
   ensureModelFlag('agent-model-session-import', 'Drives the person\'s desktop browser (page script, page outline, screenshots, input) to read a ChatGPT or Claude conversation and its files into a new Channel. Must accept images.', 'openai/gpt-6.1-sol', ['google/gemini-3.8-flash']),
+  ensureModelFlag('agent-model-suggestion-draft', 'Writes the words a conversation suggestion carries after the classifier has judged a settled turn worth carrying up or breaking out: a merge note for the parent readers, or a Breakout opening prompt and subject. Runs only on a confident positive, after the chip is shown.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.8-flash']),
 ]);
 await verifyRuntimeQueuePermissions({ accountId, token: aceRuntimeToken });
 

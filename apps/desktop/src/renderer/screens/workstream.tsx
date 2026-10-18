@@ -317,6 +317,8 @@ function OpenWorkstreamScreen(): React.JSX.Element {
      */
     operationId: string;
     clientMessageId: string;
+    /** A suggestion's drafted opening prompt, seeded into the launch composer once. */
+    initialDraft?: string | undefined;
   } | null>(null);
   const [launching, setLaunching] = useState<LaunchingSubstream | null>(null);
   const [creationError, setCreationError] = useState<string | null>(null);
@@ -475,7 +477,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       void api.cancelSubstream(abandoned.parentId, abandoned.operationId).catch(() => undefined);
     }
   };
-  const startCreation = (throughTurnId: string | null): void => {
+  const startCreation = (throughTurnId: string | null, initialDraft?: string): void => {
     // As `openBreakout` does: a panel the thread holds would hide the new
     // breakout's launch surface.
     const rail = useUiStore.getState();
@@ -486,6 +488,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       throughTurnId,
       operationId: uuidV7(),
       clientMessageId: crypto.randomUUID(),
+      ...(initialDraft ? { initialDraft } : {}),
     });
   };
   useEffect(() => {
@@ -968,6 +971,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     substreamId="0"
     substreamLaunch={{
       throughTurnId: creation.throughTurnId,
+      ...(creation.initialDraft ? { initialDraft: creation.initialDraft } : {}),
       launching,
       ...(creationError ? { error: creationError } : {}),
       onCancel: resetCreation,

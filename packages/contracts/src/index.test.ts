@@ -281,6 +281,7 @@ describe("boundary contracts", () => {
       "work_opportunity_ranking",
       "workstream_description",
       "session_import",
+      "suggestion_draft",
     ]);
     expect(AGENT_MODEL_ROLES.map((role) => AGENT_MODEL_FLAG_KEYS[role])).toEqual([
       "agent-model-workstream",
@@ -290,6 +291,7 @@ describe("boundary contracts", () => {
       "agent-model-work-opportunity-ranking",
       "agent-model-workstream-description",
       "agent-model-session-import",
+      "agent-model-suggestion-draft",
     ]);
     expect(AgentModelRoutingSchema.parse({ model: "openai/gpt-6.1-sol", reasoningEffort: "low" })).toEqual({
       model: "openai/gpt-6.1-sol", fallbackModels: [], reasoningEffort: "low",

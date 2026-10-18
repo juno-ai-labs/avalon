@@ -581,6 +581,24 @@ substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
 
+### 2026-10-18 — A suggestion can open the launch pane with its words
+
+**What changed:** `ConversationSubstreamLaunch` and `SubstreamDraft` gained
+`initialDraft`: a drafted opening prompt the launch pane writes once into its
+draft key when it opens, over an empty draft only, and mounts the composer
+after the write so it hydrates the words, with the composer's notice saying
+"Drafted by Rally from this thread. Edit it, then start." until the words are
+edited. Once the child is ready, the service calls the parent's
+`resolveBreakoutSuggestion`, which resolves an open `start_breakout`
+suggestion on the cutoff turn as accepted; capture does not, so a preparation
+that fails or is abandoned leaves the chip standing.
+Both come from [`conversation-suggestions.md`](conversation-suggestions.md).
+
+**Why:** a Breakout suggestion's accept path is this pane at the judged turn,
+exactly as that turn's New breakout action opens it, and the drafted prompt is
+what the chip promised; a person who already typed here keeps their words,
+because the seed yields to anything in the draft.
+
 ### 2026-10-10 — The launch surface draws the breakout it becomes
 
 **What changed:** While a thread's breakout is launching, the launch surface
