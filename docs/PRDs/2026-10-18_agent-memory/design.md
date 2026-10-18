@@ -110,11 +110,17 @@ principal and is refused for a Sidekick run.
 ### `memory_forget`
 
 Description: "Retract one remembered fact a person asked Rally to forget,
-by the `factId` a recall returned. Retraction is immediate for every later
-run and cannot be undone by you."
+by the `factId` a recall returned. You may forget a fact about the person you
+are working for, or a fact this conversation itself established. A Channel's
+or the Organization's facts can be forgotten only when an administrator asks;
+otherwise say so and point them at the review surface. Retraction is
+immediate for every later run and cannot be undone by you."
 
 Input: `{ "factId": "uuid" }` (required, exactly one).
 Output: `{ "factId": "uuid", "retractedAt": "…", "revision": n }`.
+
+Authorization is a separate check from visibility (section 5): seeing a fact
+in a recall result never implies the right to retract it.
 
 ## 3. Discovery and sequencing
 
@@ -141,7 +147,8 @@ action, and only the detail keys listed. The model never translates a code.
 | --- | --- | --- | --- | --- |
 | `memory_query_too_long` | recall | "The query is longer than 2,000 characters. Shorten it to what the fact would be about and search again." | correct and retry | `maxLength` |
 | `memory_cursor_invalid` | recall | "That cursor is stale. Start the search again without a cursor." | retry without cursor | none |
-| `memory_fact_not_visible` | forget | "That fact is not one this conversation may change. Search again; if it is not in the results, say it could not be forgotten." | inspect, then stop | none |
+| `memory_fact_not_visible` | forget | "That fact is not one this conversation may see. Search again; if it is not in the results, say it could not be forgotten." | inspect, then stop | none |
+| `memory_fact_not_forgettable` | forget | "That fact belongs to a Channel or to the Organization, and only an administrator may forget it. Tell the person it can be removed from the review surface by an administrator." | stop | `subjectKind` |
 | `memory_fact_not_found` | forget | "No fact has that id. Search again and use a `factId` from the results." | correct and retry | none |
 | `memory_horizon_required` | remember | "A situational fact needs `validUntil`. Add the date the person gave, or record it as standing." | correct and retry | none |
 | `memory_horizon_forbidden` | remember | "A standing fact takes no `validUntil`. Remove it, or record the fact as situational." | correct and retry | none |
@@ -160,9 +167,25 @@ active fact word for word (returns that fact with `revision` unchanged and
   that are relevant, which facts are visible, the source of a remembered fact.
 - **Visibility** is computed in `WorkspaceDO` at call time from the acting
   person's current ability to open each fact's source conversation
-  (`mainOpenableSql` and the Breakout rule), intersected with the
-  conversation's participants for recall. The FTS index never grants access;
-  hits are reloaded and filtered before they leave the object.
+  (`mainOpenableSql` and the Breakout rule; for a fact whose source is a
+  Channel's own feed, the Channel's listing rule), intersected with the
+  conversation's participants for recall. Every fact has a source, an
+  Organization fact included: it was promoted *from* a conversation, and if
+  that conversation is later narrowed to private, people who may no longer
+  open it stop receiving the fact at their next read, with no write. The FTS
+  index never grants access; hits are reloaded and filtered before they
+  leave the object.
+- **Mutation authority** is a second check, independent of visibility.
+  `memory_forget` is permitted when the fact's subject is the acting person
+  (`person:<their id>`), or when the fact's subject is the conversation the
+  run is in (its Thread or this Breakout) and the acting person may open the
+  fact's source. A fact whose subject is a Channel or the Organization is
+  retractable only by an administrator principal or through the review
+  surface by an administrator; the tool answers `memory_fact_not_forgettable`
+  to anyone else. `memory_remember` writes only under the current
+  conversation or the acting person; it cannot write a Channel or
+  Organization fact, which only the sweep promotes. A Sidekick run may forget
+  only facts whose subject is its home conversation.
 - **Credentials:** none. The tools call `WorkspaceDO` over typed RPC.
 - **Cancellation and timeout:** a read that times out returns
   `memory_unavailable`; a write records its receipt before execution and a
@@ -221,19 +244,40 @@ facts not instructions, to give a horizon basis, and to record a
 disagreement between two people as one `conflict` fact at the Channel or
 Organization level rather than choosing.
 
-**Apply.** One `WorkspaceDO` transaction: verify `fromSeq` equals the stored
-receipt's `toSeq` for this conversation (else drop the batch), apply keyed
-supersession deterministically for any `factKey` match, apply the model's
-operations, write the sweep receipt, re-render the affected digests (this
+**Apply.** One `WorkspaceDO` transaction, `applySweep(conversation, fromSeq,
+toSeq, operations)`: compare `fromSeq` with the stored receipt's `toSeq` for
+this conversation. If they match, apply keyed supersession deterministically
+for any `factKey` match, apply the model's operations, write the sweep
+receipt (`fromSeq`, `toSeq`, the operations, the model and usage, the
+rendered digest text and hash), re-render the affected digests (this
 conversation, its Thread if a Breakout, each subject's other conversations
-lazily through their next refresh), and return the conversation's new digest.
-The consumer writes that digest to the conversation object's copy in the same
-job, then settles the cursor.
+lazily through their next refresh), and return
+`{ applied: true, receipt }`. If `fromSeq` is *behind* the stored `toSeq`,
+the batch was already applied by an earlier delivery: apply nothing and
+return `{ applied: false, receipt }` with the stored receipt for the range
+that covers `fromSeq`. If `fromSeq` is *ahead*, a sweep was skipped; refuse
+with `memory_sweep_cursor_ahead` so the lane re-reads from the stored
+`toSeq`. The consumer then does the same two things whichever branch
+answered: it writes `receipt.digest` to the conversation object's copy and
+settles the conversation's cursor to `receipt.toSeq` with a compare-and-swap
+on the claimed `fromSeq`. A delivery that commits in `WorkspaceDO` and then
+dies before the copy or the settle therefore finishes on its redelivery
+from the stored receipt rather than wedging the conversation on a range the
+fence drops forever. The conversation object's cursor settle is idempotent:
+settling to a `toSeq` it already holds is a no-op, and a settle whose
+`fromSeq` does not match its current cursor is refused and logged.
 
 **Failure.** A model failure throws, the row is released, the alarm retries
 at its gate; nothing is settled while the model is down (the thread-backfill
 rule). A schema failure names the field (`zodDiagnosticCode`). A refused
-operation is logged by code and skipped; the rest of the batch applies.
+operation is logged by code and skipped; the rest of the batch applies. A
+redelivery after a committed apply completes the copy and the settle from
+the stored receipt, as above. The lane is stopped by the `memory-sweep-enabled`
+product flag ([`prd.md` Rollout](prd.md#rollout)): a claim checks it before
+publishing, and a consumer checks it before calling the model, so turning the
+flag off stops new sweeps within one alarm tick without touching the model
+routing flag, whose resolver deliberately falls back to the Worker model when
+a flag is missing or disabled.
 
 ## 7. Digest
 

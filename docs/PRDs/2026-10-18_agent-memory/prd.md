@@ -173,7 +173,10 @@ the acting person may see, intersected with what this conversation's
 participants may see, and returns facts with their dates and a link to the
 message each came from. It has `memory_remember`, which writes a fact under
 the current conversation as source when a person asks, and `memory_forget`,
-which retracts one. The transcript shows these as ordinary tool activity rows.
+which retracts one. A member may forget their own facts and facts the
+current conversation established; a Channel's or the Organization's facts
+are forgotten only when an administrator asks, and the tool says so to
+anyone else. The transcript shows these as ordinary tool activity rows.
 
 **Reviewing.** In their Personal Channel a person sees "What Rally
 remembers": their own facts, each with the message it came from, its horizon
@@ -262,6 +265,18 @@ that produced it, evaluated at read time.
     `memory_recall` with its trust class shown. Rejected: treating all
     evidence alike, given the measured success of poisoning writes from
     external content.
+12. **A product kill switch, not the model flag.** `memory-sweep-enabled`,
+    default enabled, registered in Ace, checked by the sweep lane. Rejected:
+    relying on the `agent-model-memory-sweep` routing flag, whose resolver
+    falls back to the Worker model when disabled and so cannot stop anything.
+13. **Every fact keeps its source, Organization facts included.** Visibility
+    follows the source conversation's current reach, so narrowing a Channel
+    to private withdraws the facts promoted from it at the next read.
+    Rejected: a null source for promoted facts.
+14. **Forgetting is authorized apart from seeing.** Members retract their own
+    and the current conversation's facts; Channel and Organization facts need
+    an administrator. Rejected: letting any participant who can recall a
+    shared fact retract it.
 
 ## Data model
 
@@ -272,8 +287,11 @@ authoritative.
 
 - `memory_facts`: `fact_id`, `subject_kind` (`organization` | `channel` |
   `thread` | `breakout` | `person`), `subject_id`, `source_conversation`
-  (`<channelId>` or `<channelId>/<breakoutId>`, or null for an Organization
-  fact written from a Channel feed), `kind` (`standing` | `situational`),
+  (`<channelId>` for a Thread's Main, `<channelId>/<breakoutId>` for a
+  Breakout, `space:<spaceId>` for a Channel's own feed; never null, an
+  Organization fact included, so a fact promoted from a Channel that is later
+  narrowed to private follows the Channel's current reach), `kind`
+  (`standing` | `situational`),
   `text`, `fact_key` (nullable `(subject, relation)`), `observed_at`,
   `valid_from`, `valid_until`, `valid_until_basis` (`stated` | `event` |
   `assumed`), `recorded_at`, `superseded_at`, `superseded_by`, `retracted_at`,
@@ -309,7 +327,10 @@ historical memory is wanted.
   decision 11, out of the digest.
 - **Write authorization.** Only the sweep lane and the two person-initiated
   tools write. Every fact records its evidence and author; every sweep
-  records its receipt.
+  records its receipt. Retraction is authorized separately from visibility:
+  a member may retract their own facts and the current conversation's;
+  Channel and Organization facts need an administrator
+  ([`design.md` §5](design.md#5-authority-safety-lifecycle)).
 - **Principal-scoped reads.** `memory_recall` and the digest both filter by
   what the acting person may open, through the listing rules, and the
   intersection with the conversation's participants is applied to recall.
@@ -346,10 +367,18 @@ Ships to everybody on merge, in three steps, each a pull request:
    design decision 7, Sidekick admission recall replaced.
 3. **Review surface** in the Personal Channel.
 
-Turning it off: the sweep lane is gated by the `agent-model-memory-sweep`
-flag resolving to a route; an operator who disables the flag stops new facts,
-and existing digests remain. No product feature flag is added; none was asked
-for.
+Turning it off: one product flag, `memory-sweep-enabled`, a kill switch that
+**defaults enabled** and is registered in Ace in step 1. The sweep lane
+checks it before claiming a sweep and again before calling the model; off,
+no new facts are written and existing digests remain. The model-routing flag
+`agent-model-memory-sweep` is not the switch: its resolver deliberately
+falls back to the Worker-configured model when a flag is missing, disabled or
+invalid ([`feature-flags.md`](../../feature-flags.md)), so disabling it would
+keep sweeps running on the fallback model while an operator believed them
+stopped. The default is enabled because the feature ships to everybody on
+merge and the flag exists to stop it, not to stage it; it is a product flag
+and therefore fail-closed, so a Flagship outage stops sweeps rather than
+running them unmetered by policy.
 
 Numbers for the team, each open in step 1 ([research.md §9](research.md#9-numbers-the-team-has-to-set-and-open-decisions)
 has the arithmetic): sweep rest floor and ceiling; human-message and
