@@ -53,6 +53,7 @@ The regional bridge uses D1 only for identity and routing:
 | --- | --- | --- |
 | `list_workspaces` | Regional `workspaces` identity plus the open authority generation | D1 identity inventory from configured deployments |
 | `list_orgs`, `search_orgs` | None | D1 `workspaces` and `workspace_members` in every region, filtered there and ordered here |
+| `list_users`, `search_users` | None | D1 `users`, `workspace_members` and `workspaces` in every region, filtered there and ordered here |
 | `list_workstreams` | Regional workspace identity at the open authority generation | `channels` in WorkspaceDO |
 | `list_substreams` | Active work-stream route at the open regional authority generation | `parent_child_projections` and `parent_children` in WorkspaceDO for the parent, plus main substream `0` |
 | `list_sidekicks` | Regional workspace identity at the open authority generation | `automation_directory` in WorkspaceDO, every lifecycle |
@@ -76,6 +77,13 @@ A result is `{ items, page, pageCount, total, nextPage }`, 200 rows per page
 by default; the caller repeats its arguments with `page` set to `nextPage`. A
 row can repeat or be skipped if an Organization is created or removed between
 calls.
+
+`list_users` and `search_users` work the same way through `searchUsers`. Each
+region matches name, email or ID and a creation window, and returns each user
+with every membership in that region's Organizations, whatever its status, and
+the latest `last_seen_at` of the active ones. Users are regional rows, so a
+person with an account in two regions appears once per region. Both tool pairs
+share `src/paging.ts`, which orders the merged set and pages it.
 
 `run_substream_sql` takes workspace, work-stream, and substream IDs. The parent
 IDs are not redundant: all three are part of the Durable Object's stable name.
@@ -357,6 +365,25 @@ each selected model's configured default; an explicit value applies to the
 primary and fallbacks. Ace owns validation and the atomic write.
 
 ## Changelog
+
+### 2026-10-18 — List and search users with their Organizations
+
+**What changed:** `list_users` and `search_users` call a new bridge method,
+`searchUsers`, that returns each user with their memberships in one
+JSON-aggregating D1 query per region. Ordering and page-number paging moved
+out of the Organization tools into a shared `src/paging.ts`, which both pairs
+use.
+
+**Why:** Finding a person and the Organizations they belong to meant a
+`run_workspace_sql` per Organization or a direct D1 query.
+
+**Considered and rejected:** A second copy of the Organization ordering and
+paging code for users. Separate calls per user for memberships, which would
+cost one query per row.
+
+**Consequences:** A new listing tool supplies only its sort keys to
+`orderAndPage`. Users carry email addresses, which every Access member could
+already read through the SQL tools.
 
 ### 2026-10-18 — List and search Organizations
 

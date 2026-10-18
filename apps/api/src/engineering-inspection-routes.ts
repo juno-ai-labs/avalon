@@ -1,4 +1,7 @@
-import type { SearchEngineeringOrganizationsInput } from "@rally/contracts/engineering-inspection";
+import type {
+  SearchEngineeringOrganizationsInput,
+  SearchEngineeringUsersInput,
+} from "@rally/contracts/engineering-inspection";
 import { RegionSchema } from "@rally/contracts/regions";
 import { z } from "zod";
 
@@ -87,6 +90,24 @@ export async function resolveInspectionWorkstreamRoute(
   return row === null ? null : InspectionWorkstreamRouteSchema.parse(row);
 }
 
+/**
+ * Timestamps are stored as UTC ISO strings, so a bound is normalized to the
+ * same form before the text comparison.
+ */
+function utcBound(value: string | undefined): string | null {
+  return value ? new Date(value).toISOString() : null;
+}
+
+/**
+ * Case-insensitive substring match, run in JavaScript because SQLite's
+ * `lower()` folds only ASCII, so `École` would not match `école`.
+ */
+function matchesQuery(query: string | undefined, fields: string[]): boolean {
+  if (query === undefined) return true;
+  const needle = query.toLowerCase();
+  return fields.some((field) => field.toLowerCase().includes(needle));
+}
+
 const OrganizationRowSchema = z.strictObject({
   id: z.string(),
   name: z.string(),
@@ -103,18 +124,11 @@ export type OrganizationRow = z.infer<typeof OrganizationRowSchema>;
 /**
  * Every Organization in this region that matches the filters, unordered. The
  * caller merges the regions and orders the whole set.
- *
- * Timestamps are stored as UTC ISO strings, so a bound is normalized to the
- * same form before the text comparison. The text match runs here rather than
- * in SQL because SQLite's `lower()` folds only ASCII, so `École` would not
- * match `école`.
  */
 export async function searchInspectionOrganizations(
   env: InspectionRouteEnv,
   filter: SearchEngineeringOrganizationsInput,
 ): Promise<OrganizationRow[]> {
-  const after = filter.createdAfter ? new Date(filter.createdAfter).toISOString() : null;
-  const before = filter.createdBefore ? new Date(filter.createdBefore).toISOString() : null;
   const result = await env.DB.prepare(
     `SELECT workspace.id, workspace.name, workspace.slug, workspace.region, workspace.plan,
             workspace.created_at, workspace.abandoned_at,
@@ -138,12 +152,64 @@ export async function searchInspectionOrganizations(
     env.AVALON_REGION,
     filter.plan ?? null,
     filter.abandoned ?? "exclude",
-    after,
-    before,
+    utcBound(filter.createdAfter),
+    utcBound(filter.createdBefore),
   ).all<unknown>();
-  const rows = z.array(OrganizationRowSchema).parse(result.results ?? []);
-  const query = filter.query?.toLowerCase();
-  return query === undefined
-    ? rows
-    : rows.filter((row) => [row.name, row.slug, row.id].some((text) => text.toLowerCase().includes(query)));
+  return z.array(OrganizationRowSchema).parse(result.results ?? [])
+    .filter((row) => matchesQuery(filter.query, [row.name, row.slug, row.id]));
+}
+
+const UserMembershipSchema = z.strictObject({
+  workspace_id: z.string(),
+  name: z.string(),
+  slug: z.string(),
+  role: z.string().nullable(),
+  access_class: z.string(),
+  status: z.string(),
+  last_seen_at: z.string().nullable(),
+});
+
+const UserRowSchema = z.strictObject({
+  id: z.string(),
+  name: z.string(),
+  email: z.string(),
+  created_at: z.string(),
+  last_seen_at: z.string().nullable(),
+  memberships: z.string().transform((json) => z.array(UserMembershipSchema).parse(JSON.parse(json))),
+});
+export type UserRow = z.infer<typeof UserRowSchema>;
+
+/**
+ * Every user in this region that matches the filters, unordered, each with
+ * every membership in this region's Organizations whatever its status. The
+ * caller merges the regions and orders the whole set.
+ */
+export async function searchInspectionUsers(
+  env: InspectionRouteEnv,
+  filter: SearchEngineeringUsersInput,
+): Promise<UserRow[]> {
+  const result = await env.DB.prepare(
+    `SELECT person.id, person.name, person.email, person.created_at,
+            (SELECT json_group_array(json_object(
+                      'workspace_id', workspace.id, 'name', workspace.name, 'slug', workspace.slug,
+                      'role', member.role, 'access_class', member.access_class,
+                      'status', member.status, 'last_seen_at', member.last_seen_at))
+               FROM workspace_members member
+               JOIN workspaces workspace ON workspace.id = member.workspace_id
+              WHERE member.user_id = person.id AND workspace.region = ?1) AS memberships,
+            (SELECT MAX(member.last_seen_at)
+               FROM workspace_members member
+               JOIN workspaces workspace ON workspace.id = member.workspace_id
+              WHERE member.user_id = person.id AND workspace.region = ?1
+                AND member.status = 'active') AS last_seen_at
+       FROM users person
+      WHERE (?2 IS NULL OR person.created_at >= ?2)
+        AND (?3 IS NULL OR person.created_at < ?3)`,
+  ).bind(
+    env.AVALON_REGION,
+    utcBound(filter.createdAfter),
+    utcBound(filter.createdBefore),
+  ).all<unknown>();
+  return z.array(UserRowSchema).parse(result.results ?? [])
+    .filter((row) => matchesQuery(filter.query, [row.name, row.email, row.id]));
 }
