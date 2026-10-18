@@ -13,6 +13,8 @@ import {
   EngineeringWorkstreamListLookupSchema,
   ListEngineeringWorkspacesInputSchema,
   ListEngineeringWorkspacesResultSchema,
+  SearchEngineeringOrganizationsInputSchema,
+  SearchEngineeringOrganizationsResultSchema,
   EngineeringSpaceListLookupSchema,
   SubstreamSqlInspectionInputSchema,
   SubstreamInspectionInputSchema,
@@ -30,7 +32,9 @@ import {
   type EngineeringWorkspaceTargetLookup,
   type EngineeringWorkstreamListLookup,
   type ListEngineeringWorkspacesResult,
+  type SearchEngineeringOrganizationsResult,
 } from "@rally/contracts/engineering-inspection";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { z } from "zod";
 
@@ -42,6 +46,7 @@ import {
 import {
   resolveInspectionWorkspaceRoute,
   resolveInspectionWorkstreamRoute,
+  searchInspectionOrganizations,
   type InspectionWorkspaceRoute,
   type InspectionWorkstreamRoute,
 } from "./engineering-inspection-routes";
@@ -233,6 +238,38 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         region: row.region,
         placementAffinity: row.placement_affinity,
         authorityState: row.authority_state,
+      })),
+    });
+  }
+
+  async searchOrganizations(input: unknown): Promise<SearchEngineeringOrganizationsResult> {
+    const filter = parseRpcInput(SearchEngineeringOrganizationsInputSchema, input, "searchOrganizations");
+    // A ZodError reaches the far side of RPC as a bare Error, so its field
+    // would be lost; the MCP reads a diagnostic-shaped message as the code.
+    try {
+      return await this.searchOrganizationsUnchecked(filter);
+    } catch (error) {
+      const code = zodDiagnosticCode(error, "searchOrganizations");
+      throw code ? new Error(code) : error;
+    }
+  }
+
+  private async searchOrganizationsUnchecked(
+    filter: z.infer<typeof SearchEngineeringOrganizationsInputSchema>,
+  ): Promise<SearchEngineeringOrganizationsResult> {
+    const rows = await searchInspectionOrganizations(this.env, filter);
+    return SearchEngineeringOrganizationsResultSchema.parse({
+      region: this.env.AVALON_REGION,
+      items: rows.map((row) => ({
+        workspaceId: row.id,
+        name: row.name,
+        slug: row.slug,
+        region: row.region,
+        plan: row.plan,
+        createdAt: row.created_at,
+        abandonedAt: row.abandoned_at,
+        memberCount: row.member_count,
+        lastSeenAt: row.last_seen_at,
       })),
     });
   }

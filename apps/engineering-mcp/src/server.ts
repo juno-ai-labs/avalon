@@ -11,6 +11,7 @@ import {
   EngineeringWorkstreamListLookupSchema,
   InspectionSqlBindingSchema,
   ListEngineeringWorkspacesResultSchema,
+  SearchEngineeringOrganizationsInputSchema,
 } from "@rally/contracts/engineering-inspection";
 import {
   ArtifactIdSchema,
@@ -30,6 +31,7 @@ import {
 import type { AccessPrincipal } from "./access";
 import type { Env } from "./env";
 import { LAKEHOUSE_TABLES, LAKEHOUSES, LakehouseQueryError, queryLakehouse } from "./lakehouse";
+import { organizationPage, organizationPageInputSchema } from "./organizations";
 
 type ToolResult = {
   content: [{ type: "text"; text: string }];
@@ -173,6 +175,20 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     return results.flatMap((result) => ListEngineeringWorkspacesResultSchema.parse(result).items).sort((left, right) =>
       left.name.localeCompare(right.name) || left.workspaceId.localeCompare(right.workspaceId));
   }));
+
+  server.registerTool("list_orgs", {
+    description: "List every Rally Organization (stored as a workspace) across configured regions, abandoned ones included, newest first unless ordered otherwise, with plan, creation time, active member count, and when a member was last seen. Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
+    inputSchema: organizationPageInputSchema,
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "list_orgs", {}, () =>
+    organizationPage(inspectionBindings(env), { abandoned: "include" }, request)));
+
+  server.registerTool("search_orgs", {
+    description: "Search Rally Organizations (stored as workspaces) across configured regions, newest first unless ordered otherwise. Every filter narrows the result; abandoned Organizations are excluded unless asked for. Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
+    inputSchema: { ...SearchEngineeringOrganizationsInputSchema.unwrap().shape, ...organizationPageInputSchema },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, ({ orderBy, direction, limit, page, ...filter }) => tool(principal, "search_orgs", {}, () =>
+    organizationPage(inspectionBindings(env), filter, { orderBy, direction, limit, page })));
 
   server.registerTool("list_workstreams", {
     description: "List every work stream in the authoritative WorkspaceDO for a workspace ID.",
