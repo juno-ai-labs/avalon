@@ -3499,10 +3499,14 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
         setVisible: (visible) => view.setVisible(visible),
         load: async (url) => await loadArtifactDocument(contents, url),
         capture: async () => {
-          const image = await contents.capturePage();
-          // JPEG rather than PNG: this crosses IPC and is shown only while a
-          // menu or dialog sits over it, so size beats exactness.
-          return image.isEmpty() ? null : `data:image/jpeg;base64,${image.toJPEG(90).toString('base64')}`;
+          const captured = await contents.capturePage();
+          if (captured.isEmpty()) return null;
+          // Down to window points and JPEG rather than device pixels and PNG:
+          // this is encoded on the main thread while a menu waits to show, and
+          // it only ever sits under that menu, so speed beats exactness.
+          const { width, height } = view.getBounds();
+          const image = captured.resize({ width, height });
+          return `data:image/jpeg;base64,${image.toJPEG(80).toString('base64')}`;
         },
         close: () => contents.close(),
       };
@@ -4241,7 +4245,7 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window) return null;
-    return await artifactPreviews.get(window)?.snapshot().catch(() => null) ?? null;
+    return await artifactPreviews.get(window)?.snapshot() ?? null;
   });
   ipcMain.handle('artifact:set-preview-hidden', async (event, raw: unknown) => {
     assertTrustedIpcSender(event);
