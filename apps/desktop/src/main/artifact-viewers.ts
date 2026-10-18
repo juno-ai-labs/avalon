@@ -19,7 +19,7 @@
  *
  * See `docs/live-web-artifacts.md` and `docs/security.md`.
  */
-import { parseArtifactHost } from '@rally/contracts';
+import { ARTIFACT_RESERVED_PREFIX, parseArtifactHost } from '@rally/contracts';
 import type { Session } from 'electron';
 
 /**
@@ -51,7 +51,12 @@ export interface ArtifactViewHandle {
    * is what reaches the bottom corners of the surface holding it.
    */
   setBorderRadius(radius: number): void;
-  loadURL(url: string): Promise<void>;
+  /**
+   * Navigate to an artifact, resolving `true` once the artifact's own document
+   * is ready to show and `false` on a terminal failure. See
+   * `loadArtifactDocument`.
+   */
+  load(url: string): Promise<boolean>;
   close(): void;
 }
 
@@ -151,6 +156,67 @@ export async function loadArtifactInitialUrl(loadURL: () => Promise<void>): Prom
   } catch (error) {
     return typeof error === 'object' && error !== null && 'code' in error
       && error.code === 'ERR_ABORTED';
+  }
+}
+
+/** The events of an artifact's web contents that `loadArtifactDocument` reads. */
+export interface ArtifactDocumentContents {
+  loadURL(url: string): Promise<void>;
+  getURL(): string;
+  on(event: 'dom-ready' | 'destroyed', listener: () => void): unknown;
+  on(event: 'did-fail-load', listener: (
+    event: unknown, errorCode: number, errorDescription: string, url: string, isMainFrame: boolean,
+  ) => void): unknown;
+  removeListener(event: 'dom-ready' | 'destroyed' | 'did-fail-load', listener: (...args: never[]) => void): unknown;
+}
+
+/**
+ * Load an artifact and resolve once **the artifact's own document** is ready.
+ *
+ * The access URL is the redeem bootstrap, a Rally page with its own "Opening…"
+ * that lasts one round trip. Showing the view from the start painted that page
+ * over the rail's own "Opening…": two loading looks, one after the other, for
+ * one open. Waiting for the first `dom-ready` that is not the bootstrap keeps
+ * the rail's placeholder the only one. Chromium fires no `dom-ready` for the
+ * bootstrap in practice, since its form POST replaces it mid-parse; the path
+ * check is what makes that not matter.
+ *
+ * `ERR_ABORTED` is that same POST replacing the bootstrap, not a failure (see
+ * `loadArtifactInitialUrl`). Any other main-frame failure, or the contents
+ * going away, resolves `false`.
+ */
+export async function loadArtifactDocument(contents: ArtifactDocumentContents, url: string): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const finish = (shown: boolean): void => {
+      contents.removeListener('dom-ready', ready);
+      contents.removeListener('did-fail-load', failed);
+      contents.removeListener('destroyed', gone);
+      resolve(shown);
+    };
+    const ready = (): void => {
+      if (!isRedeemBootstrap(contents.getURL())) finish(true);
+    };
+    const failed = (_event: unknown, errorCode: number, _description: string, _url: string, isMainFrame: boolean): void => {
+      if (isMainFrame && errorCode !== ERR_ABORTED) finish(false);
+    };
+    const gone = (): void => finish(false);
+    contents.on('dom-ready', ready);
+    contents.on('did-fail-load', failed);
+    contents.on('destroyed', gone);
+    void loadArtifactInitialUrl(() => contents.loadURL(url)).then((loaded) => {
+      if (!loaded) finish(false);
+    });
+  });
+}
+
+/** Chromium's `net::ERR_ABORTED`, as `did-fail-load` reports it. */
+const ERR_ABORTED = -3;
+
+function isRedeemBootstrap(candidate: string): boolean {
+  try {
+    return new URL(candidate).pathname === `${ARTIFACT_RESERVED_PREFIX}/open`;
+  } catch {
+    return false;
   }
 }
 
@@ -485,6 +551,11 @@ export class ArtifactPreviewController {
   private pendingLoad: { view: ArtifactViewHandle; result: Promise<boolean> } | null = null;
   private bounds: PreviewBounds | null = null;
   private hiddenByOverlay = false;
+  /**
+   * Whether the view's artifact document is ready. Until it is, the view stays
+   * collapsed so the rail's own "Opening…" is what a person sees.
+   */
+  private loaded = false;
 
   constructor(
     private readonly window: ArtifactHostWindow,
@@ -514,11 +585,15 @@ export class ArtifactPreviewController {
       // recomputes many times a second.
       created.setBorderRadius(request.cornerRadius);
       this.applyBounds();
-      const result = loadArtifactInitialUrl(() => created.loadURL(request.url)).then((loaded) => {
+      const result = created.load(request.url).then((loaded) => {
         // DNS, TLS, and terminal navigation failures should not leave an empty
-        // composited view. `ERR_ABORTED` is the successful redemption handoff
-        // documented by `loadArtifactInitialUrl`, not a terminal failure.
-        if (!loaded && this.view === created) this.destroy();
+        // composited view.
+        if (this.view !== created) return loaded;
+        if (!loaded) this.destroy();
+        else {
+          this.loaded = true;
+          this.applyBounds();
+        }
         return loaded;
       });
       this.pendingLoad = { view: created, result };
@@ -555,6 +630,7 @@ export class ArtifactPreviewController {
     this.pendingLoad = null;
     this.bounds = null;
     this.hiddenByOverlay = false;
+    this.loaded = false;
     if (!view) return;
     // Each guard is about its own object, because the two die independently.
     // A destroyed window has already taken its children with it, so there is
@@ -582,7 +658,7 @@ export class ArtifactPreviewController {
     // be the one that returns. It stays because it names what `contentSize()`
     // needs, and that stops the day the two stop dying together.
     if (this.window.destroyed() || this.view.destroyed()) return;
-    if (this.hiddenByOverlay) {
+    if (this.hiddenByOverlay || !this.loaded) {
       // Collapsed rather than detached: a zero rectangle keeps the page loaded
       // and its state intact, so closing a dialog restores what the person was
       // looking at rather than reloading it under them.
