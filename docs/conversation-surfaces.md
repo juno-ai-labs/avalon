@@ -204,6 +204,13 @@ Radix's `disabled`, which would drop it from arrow-key focus, so a keyboard
 still reaches the tooltip that gives the reason. The Channel's composer uses it
 for **Import from Claude or ChatGPT** ([session import](session-import.md)).
 
+A paste of `LONG_PASTE_CHARACTERS` or more (`lib/pasted-text.ts`) attaches
+as a file instead of landing at the caret, unless the message already holds
+all the files it can. The client uploads it as plain text with
+`pastedText=true` and shows a skeleton card; `ResourceService.upload` hands it
+to `services/pasted-text-service.ts`, which types and names it, and the tile
+then shows the resource's title and type.
+
 The run's Stop action is an icon after Send, sharing the microphone's circular
 neutral background, with a tooltip that explains the
 current action or pending stop. Its mounted, inert-when-hidden slot animates its
@@ -744,6 +751,36 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-10-18 — A long paste attaches as a typed, named file
+
+**What changed:** Text pasted into a composer at or past 5,000 characters
+becomes an attachment instead of filling the field. The client uploads it as
+plain text and shows a skeleton card; the upload route detects JSON, HTML, XML,
+Markdown, TSV or CSV, sets the matching MIME type and extension, and names the
+file from its content with the naming model.
+
+**Why:** A pasted document filled the composer, buried whatever the person
+meant to say about it, and reached the agent as message text rather than as a
+document it can page through and cite. Typing the file keeps the attachment
+viewer and the agent's text projection on the right reader. The server does
+all of the deciding so there is one implementation of it, which any other
+client that uploads a paste gets for free.
+
+**Considered and rejected:** Detecting the type on the client, which showed a
+stand-in name and type that changed under the person when the upload
+returned; the skeleton claims nothing until the answer is in. Naming the file
+on the client before attaching, which leaves the paste showing nothing for the
+length of a model call. Renaming the resource after upload, which needs a
+rename route and races the send. Asking the model for the type as well as the
+name: the heuristics are right for the common cases and cost nothing.
+
+**Consequences:** The 5,000-character threshold and the 8,000-character sample
+the model reads are product choices placed here as a starting point; change
+them in `pasted-text.ts` and the service. Naming costs about a second before
+the attachment is ready to send. The draft cache keeps the paste marker, and
+an upload that finds its draft already stored reads the stored resource
+rather than describing it from the local file, since the server renamed it.
 
 ### 2026-10-17 — Arming turns an arc; red is only for capture that is running
 

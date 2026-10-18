@@ -137,6 +137,7 @@ import { resolveMentionPayload } from './mention-draft';
 import { newRequestId } from './perf-trace';
 import type { TelemetrySurfaceEntrypoint } from './telemetry';
 import { reportJavascriptError, reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './telemetry';
+import { isPastedText } from './pasted-text';
 import type {
   AgentModelOverride,
   DigestDeliveryTargetType,
@@ -2026,8 +2027,16 @@ export class RallyApi {
       }
       const form = new FormData();
       form.set('file', file, file.name);
+      if (isPastedText(file)) form.set('pastedText', 'true');
       request.send(form);
     });
+  }
+
+  async getResource(id: string): Promise<WorkstreamResource> {
+    return mapResource(await this.request(`/resources/${encodeURIComponent(id)}`, {
+      method: 'GET',
+      schema: WireResourceSchema,
+    }));
   }
 
   async deleteDraftResource(id: string): Promise<void> {

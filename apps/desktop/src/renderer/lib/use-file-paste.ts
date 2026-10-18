@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { LONG_PASTE_CHARACTERS, pastedTextFile } from './pasted-text';
 
 /**
  * Chromium hands a bitmap that was never a file on disk the generic name
@@ -72,31 +73,36 @@ function claimPaste(
   event: PasteEventLike,
   onFiles: (files: File[]) => void,
   nextOrdinal: (stamp: string) => number,
+  attachLongText: boolean,
 ): void {
   const clipboard = event.clipboardData;
   if (!clipboard) return;
   const files = Array.from(clipboard.files);
-  if (files.length === 0) return;
   const text = clipboard.getData('text/plain');
   // A path naming the files it arrived with is the system describing its own
   // clipboard, so it is not text anyone chose to copy.
-  const fromDisk = describesFiles(text, files);
+  const fromDisk = files.length > 0 && describesFiles(text, files);
   const copied = fromDisk ? '' : text.trim();
   const carried = copied.length > 0 ? files.filter((file) => !isSynthesizedImage(file)) : files;
-  if (carried.length === 0) return;
-  // Copied text still pastes at the caret alongside its files; only a paste with
-  // nothing to insert is taken over outright.
-  if (copied.length === 0) event.preventDefault();
+  const longText = attachLongText && copied.length >= LONG_PASTE_CHARACTERS;
+  if (carried.length === 0 && !longText) return;
+  // Copied text still pastes at the caret alongside its files unless it is long
+  // enough to travel as a file itself; only a paste with nothing left to insert
+  // is taken over outright.
+  if (copied.length === 0 || longText) event.preventDefault();
   const stamp = timestamp(new Date());
-  onFiles(carried.map((file) => !fromDisk && isSynthesizedImage(file)
-    ? new File([file], pastedImageName(file, stamp, nextOrdinal(stamp)), {
-      type: file.type,
-      lastModified: file.lastModified,
-    })
-    : file));
+  onFiles([
+    ...carried.map((file) => !fromDisk && isSynthesizedImage(file)
+      ? new File([file], pastedImageName(file, stamp, nextOrdinal(stamp)), {
+        type: file.type,
+        lastModified: file.lastModified,
+      })
+      : file),
+    ...(longText ? [pastedTextFile(text, stamp, nextOrdinal(stamp))] : []),
+  ]);
 }
 
-/** Keeps images that land in the same second apart without a shared clock. */
+/** Keeps pastes that land in the same second apart without a shared clock. */
 function useNameSequence(): (stamp: string) => number {
   const sequence = useRef({ stamp: '', used: 0 });
   return useCallback((stamp: string): number => {
@@ -118,16 +124,21 @@ function useNameSequence(): (stamp: string) => number {
  * carries text a person actually copied. A file's own name and a path
  * describing it are each enough to prove it was not such a rendering, and it
  * attaches either way, with any copied text still pasting beside it.
+ *
+ * Copied text at or past `LONG_PASTE_CHARACTERS` attaches as a file of its
+ * detected type instead of filling the field; see `pasted-text.ts`.
  */
 export function useFilePaste(
   onFiles: (files: File[]) => void,
   disabled = false,
+  /** False once the message holds all the files it can, so long text still pastes rather than vanishing. */
+  roomForText = true,
 ): (event: React.ClipboardEvent<HTMLElement>) => void {
   const nextOrdinal = useNameSequence();
   return useCallback((event: React.ClipboardEvent<HTMLElement>): void => {
     if (disabled) return;
-    claimPaste(event, onFiles, nextOrdinal);
-  }, [disabled, nextOrdinal, onFiles]);
+    claimPaste(event, onFiles, nextOrdinal, roomForText);
+  }, [disabled, nextOrdinal, onFiles, roomForText]);
 }
 
 /** A text surface handles its own paste, and a dialog owns everything inside it. */
@@ -153,7 +164,8 @@ export function useWindowFilePaste(onFiles: (files: File[]) => void, disabled = 
     if (disabled) return;
     const listener = (event: ClipboardEvent): void => {
       if (event.defaultPrevented || handledElsewhere(event.target)) return;
-      claimPaste(event, latest.current, nextOrdinal);
+      // Text with no field to land in is left alone, however long.
+      claimPaste(event, latest.current, nextOrdinal, false);
     };
     window.addEventListener('paste', listener);
     return () => window.removeEventListener('paste', listener);
