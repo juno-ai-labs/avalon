@@ -48,14 +48,28 @@ function looksLikeJson(trimmed: string): boolean {
 }
 
 /**
+ * Separators outside quoted fields, so `"x,y"` is one field. An escaped `""`
+ * toggles twice and leaves the state as it was.
+ */
+function separatorCount(line: string, separator: string): number {
+  let count = 0;
+  let quoted = false;
+  for (const character of line) {
+    if (character === '"') quoted = !quoted;
+    else if (character === separator && !quoted) count += 1;
+  }
+  return count;
+}
+
+/**
  * Three or more rows that each carry the same number of separators, and at
  * least one. A paste long enough to attach is many lines, and prose almost
  * never keeps its comma count steady across them.
  */
 function isDelimited(lines: string[], separator: string): boolean {
   if (lines.length < 3) return false;
-  const count = lines[0]!.split(separator).length - 1;
-  return count > 0 && lines.every((line) => line.split(separator).length - 1 === count);
+  const count = separatorCount(lines[0]!, separator);
+  return count > 0 && lines.every((line) => separatorCount(line, separator) === count);
 }
 
 function looksLikeMarkdown(text: string): boolean {
