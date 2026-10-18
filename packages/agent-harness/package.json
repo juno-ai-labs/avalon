@@ -15,6 +15,9 @@
     "eval:turn-disposition": "tsx evals/turn-disposition/run.ts",
     "eval:turn-disposition:build": "tsx evals/turn-disposition/build-cases.ts",
     "eval:turn-disposition:view": "tsx evals/turn-disposition/label-view.ts",
+    "eval:turn-disposition:judge-labels": "tsx evals/turn-disposition/labels-from-report.ts",
+    "eval:turn-disposition:merge-labels": "tsx evals/turn-disposition/merge-labels.ts",
+    "eval:turn-disposition:slices": "tsx evals/turn-disposition/report-slices.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },

@@ -46,19 +46,37 @@ async function main(): Promise<void> {
       if (line.trim().length > 0) labeled.add((JSON.parse(line) as { id: string }).id);
     }
   }
-  const cases = allCases.filter((evaluationCase) => !labeled.has(evaluationCase.id));
+  // --author person|rally and --kind thread|breakout narrow the slice, so a
+  // labeling pass can be stratified by who wrote the message and where.
+  const author = option(argv, "--author");
+  const kind = option(argv, "--kind");
+  const finalOnly = argv.includes("--final-only");
+  const nonFinalOnly = argv.includes("--non-final-only");
+  // --every N shows every Nth matching case, for a spread sample of a large slice.
+  const every = Number(option(argv, "--every") ?? "1");
+  const cases = allCases.filter((evaluationCase) => !labeled.has(evaluationCase.id)
+    && (!author || evaluationCase.state.judged_message.author === author)
+    && (!kind || evaluationCase.state.conversation.kind === kind)
+    && (!finalOnly || evaluationCase.production.finalTurnOfCompletedRun)
+    && (!nonFinalOnly || !evaluationCase.production.finalTurnOfCompletedRun))
+    .filter((_, index) => index % every === 0);
   process.stdout.write(`cases ${allCases.length}; unlabeled ${cases.length}; showing ${from}..${Math.min(to, cases.length) - 1}\n`);
   cases.slice(from, to).forEach((evaluationCase, offset) => {
     const index = from + offset;
     const { state, production } = evaluationCase;
     process.stdout.write(`\n### [${index}] ${evaluationCase.id}\n`);
-    process.stdout.write(`purpose: ${cut(state.conversation.purpose, 220)} | title: ${cut(state.conversation.title, 80)}\n`);
-    process.stdout.write(`turn ${production.turnOrdinal}/${production.turnCount}${production.lastTurn ? " (last)" : ""}; state ${production.breakoutState}; mergedLater ${production.mergedLater}\n`);
-    for (const message of state.conversation_context.recent_messages.slice(-contextCount)) {
+    process.stdout.write(`parent ${state.parent.kind}: ${cut(state.parent.title, 80)}${state.parent.purpose ? ` | ${cut(state.parent.purpose, 160)}` : ""}\n`);
+    process.stdout.write(`${state.conversation.kind}: ${cut(state.conversation.title, 80)} | purpose: ${cut(state.conversation.purpose, 220)}\n`);
+    if (state.conversation.opening_request) process.stdout.write(`opening: ${cut(state.conversation.opening_request, 200)}\n`);
+    process.stdout.write(`message ${production.ordinal}/${production.count}${production.lastMessage ? " (last)" : ""}; before ${state.conversation.messages_before}; outputs so far ${state.so_far.earlier_outputs.length}; carried ${state.so_far.carried_up_before}; summary ${state.so_far.summary ? "yes" : "no"}; merged later ${production.mergedLater}; breakout next ${production.breakoutStartedBeforeNext}\n`);
+    for (const message of state.recent_messages.slice(-contextCount)) {
       process.stdout.write(`  ${message.author}: ${cut(message.text, contextWidth)}\n`);
     }
-    const artifacts = state.settled_turn.artifacts?.length ?? 0;
-    process.stdout.write(`RALLY${artifacts > 0 ? ` [+${artifacts} artifact]` : ""}: ${cutBothEnds(state.settled_turn.text, turnWidth)}\n`);
+    const outputs = state.judged_message.outputs;
+    const outputNote = outputs.length > 0
+      ? ` [${outputs.length} output${outputs.length > 1 ? "s" : ""}: ${outputs.map((output) => output.first_time_here ? "new" : "revised").join(",")}]`
+      : "";
+    process.stdout.write(`${state.judged_message.author.toUpperCase()}${outputNote}: ${cutBothEnds(state.judged_message.text, turnWidth)}\n`);
   });
 }
 
