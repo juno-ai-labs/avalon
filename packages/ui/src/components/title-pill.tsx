@@ -196,7 +196,6 @@ export interface TitlePillLevel {
   title: ReactNode;
   /** The accessible name of the menu trigger, e.g. `Channel menu: Launch`. */
   label: string;
-  meta?: ReactNode;
   menu?: ReactNode;
   onSelect?: () => void;
   /**
@@ -220,7 +219,6 @@ export function TitlePill({ level, variant = 'current' }: {
   const body = <>
     <span className="title-pill-icon">{level.icon}</span>
     <span className="title-pill-title">{level.title}</span>
-    {level.meta ? <span className="title-pill-meta">{level.meta}</span> : null}
   </>;
   const [view, setView] = useState<TitleMenuView | null>(null);
   const [direction, setDirection] = useState<'in' | 'out'>('in');
@@ -292,7 +290,6 @@ export function TitlePill({ level, variant = 'current' }: {
           <DropdownMenu.Trigger aria-label={view ? `${level.label}, ${view.label}` : level.label} className="title-pill-menu-trigger has-title">
             <span className="title-pill-menu-trigger-body">
               {crumbTitle}
-              {!view && level.meta ? <span className="title-pill-meta">{level.meta}</span> : null}
               {crumb}
               {chevron}
             </span>
@@ -316,7 +313,6 @@ export function TitlePill({ level, variant = 'current' }: {
     <DropdownMenu.Trigger aria-label={view ? `${level.label}, ${view.label}` : level.label} className={clsx('title-pill', `is-${variant}`)}>
       <span className="title-pill-icon">{level.icon}</span>
       {crumbTitle}
-      {!view && level.meta ? <span className="title-pill-meta">{level.meta}</span> : null}
       {crumb}
       {chevron}
     </DropdownMenu.Trigger>
