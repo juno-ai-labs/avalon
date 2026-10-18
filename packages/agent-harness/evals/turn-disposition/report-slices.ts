@@ -7,6 +7,7 @@ import {
   type TurnDispositionResult,
 } from "../../src/turn-disposition-evaluation";
 import { assertProtectedEvaluationPaths } from "../addressing/secure-paths";
+import { isDevelopmentCase } from "./split";
 
 /**
  * Slice one report by who wrote the message, which kind of conversation it
@@ -33,13 +34,6 @@ interface Report {
 function option(argv: string[], name: string): string | undefined {
   const index = argv.indexOf(name);
   return index === -1 ? undefined : argv[index + 1];
-}
-
-/** Development half by the conversation id's last hex digit; the holdout is the rest. */
-export function isDevelopmentCase(evaluationCase: Pick<TurnDispositionCase, "workstreamId" | "substreamId">): boolean {
-  const conversation = evaluationCase.substreamId === "0" ? evaluationCase.workstreamId : evaluationCase.substreamId;
-  const digit = Number.parseInt(conversation.slice(-1), 16);
-  return Number.isNaN(digit) ? true : digit < 8;
 }
 
 interface Scored {

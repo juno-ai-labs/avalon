@@ -18,6 +18,7 @@
     "eval:turn-disposition:judge-labels": "tsx evals/turn-disposition/labels-from-report.ts",
     "eval:turn-disposition:merge-labels": "tsx evals/turn-disposition/merge-labels.ts",
     "eval:turn-disposition:slices": "tsx evals/turn-disposition/report-slices.ts",
+    "eval:turn-disposition:gepa": "tsx evals/turn-disposition/gepa.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
