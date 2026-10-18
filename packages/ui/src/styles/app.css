@@ -8946,28 +8946,28 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
    of the words in quotes, the action, and a dismiss. */
 .turn-host-content { display: flex; flex-direction: column; gap: 10px; margin: 10px 0 6px; padding: 0 10px; }
 .suggestion-chip {
+  align-items: flex-start;
   align-self: flex-start;
-  border: 1.5px dashed var(--av-sys-color-border-strong);
+  border: 1px dashed var(--av-sys-color-border-strong);
   border-radius: 14px;
   color: var(--av-sys-color-text-default);
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-width: min(560px, 100%);
+  gap: 10px;
+  max-width: min(600px, 100%);
   min-width: 0;
-  padding: 10px 12px 10px 14px;
+  padding: 9px 12px;
 }
-.suggestion-chip-head { align-items: center; display: flex; gap: 8px; min-width: 0; }
-.suggestion-chip-mark { color: var(--av-sys-color-text-muted); display: inline-grid; flex: none; place-items: center; }
-.suggestion-chip-title { flex: 1 1 auto; font-size: 13.5px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.suggestion-chip-title strong { font-weight: 650; }
-.suggestion-chip-dismiss { background: transparent; border: 0; border-radius: 50%; color: var(--av-sys-color-text-muted); cursor: pointer; display: inline-grid; flex: none; height: 22px; padding: 0; place-items: center; width: 22px; }
-.suggestion-chip-dismiss:hover { background: var(--av-sys-color-surface-sunken); color: var(--av-sys-color-text-default); }
-.suggestion-chip-sentence { color: var(--av-sys-color-text-subtle); font-size: 13px; line-height: 1.4; margin: 0; }
-.suggestion-chip-excerpt { color: var(--av-sys-color-text-muted); font-size: 12.5px; line-height: 1.4; margin: 0; overflow-wrap: anywhere; }
-.suggestion-chip-excerpt.is-pending { display: block; height: 1.4em; }
-.suggestion-chip-excerpt.is-pending .skeleton-bar { display: block; height: 10px; margin-top: 4px; width: min(320px, 70%); }
-.suggestion-chip-actions { display: flex; gap: 8px; margin-top: 2px; }
+.suggestion-chip-text { display: flex; flex: 1 1 auto; flex-direction: column; gap: 2px; min-width: 0; }
+.suggestion-chip-title { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: 13px; gap: 5px; min-width: 0; }
+.suggestion-chip-title > svg { color: var(--av-sys-color-text-muted); flex: none; }
+.suggestion-chip-title strong { color: var(--av-sys-color-text-default); font-weight: 600; }
+.suggestion-chip-caret { color: var(--av-sys-color-text-muted); }
+.suggestion-chip-subject-skeleton { display: inline-block; height: 12px; margin-left: 2px; vertical-align: middle; width: 84px; }
+.suggestion-chip-sentence { color: var(--av-sys-color-text-subtle); font-size: 12px; line-height: 17px; margin: 0; }
+.suggestion-chip-excerpt { color: var(--av-sys-color-text-muted); display: block; font-size: 12px; line-height: 17px; margin: 1px 0 0; min-width: 0; overflow: hidden; white-space: nowrap; }
+.suggestion-chip-excerpt.is-pending { align-items: center; display: flex; gap: 3px; }
+.suggestion-chip-excerpt.is-pending .skeleton-bar { height: 10px; width: min(260px, 72%); }
+.suggestion-chip-controls { align-items: center; display: flex; flex: none; gap: 8px; margin-top: 1px; }
 .suggestion-chip-action {
   align-items: center;
   border: 0;
@@ -8975,19 +8975,33 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   cursor: pointer;
   display: inline-flex;
   font: inherit;
-  font-size: 12.5px;
-  font-weight: 550;
+  font-size: 12px;
+  font-weight: 600;
   gap: 5px;
   height: 26px;
-  padding: 0 11px;
+  padding: 0 10px 0 8px;
+  white-space: nowrap;
 }
 .suggestion-chip.is-merge .suggestion-chip-action { background: var(--av-sys-color-success-fill); color: var(--av-sys-color-success-base); }
 .suggestion-chip.is-breakout .suggestion-chip-action { background: var(--av-sys-color-surface-sunken); color: var(--av-sys-color-text-default); }
 .suggestion-chip-action:hover:not(:disabled) { filter: brightness(.97); }
-.suggestion-chip-action:disabled { cursor: default; opacity: .55; }
-/* The response card: a merge block made editable, under the turn it was asked
-   from or at the end of the feed (docs/conversation-merge.md). */
-.merge-response-card { border: 1.5px dashed var(--av-sys-color-border-strong); border-radius: 14px; gap: 8px; max-width: min(600px, 100%); padding: 10px 14px 10px; width: 100%; }
+.suggestion-chip-action:disabled { cursor: default; opacity: .45; }
+.suggestion-chip-dismiss { background: transparent; border: 0; border-radius: 50%; color: var(--av-sys-color-text-muted); cursor: pointer; display: inline-grid; flex: none; height: 22px; padding: 0; place-items: center; width: 22px; }
+.suggestion-chip-dismiss:hover { background: var(--av-sys-color-surface-sunken); color: var(--av-sys-color-text-default); }
+/* The response card: the merge as the parent will draw it, editable, under
+   the turn it was asked from or at the end of the feed
+   (docs/conversation-merge.md). A solid card, where the chip was dashed:
+   this one is about to exist. */
+.merge-response-card {
+  background: var(--av-sys-color-surface-raised);
+  border-radius: 16px;
+  box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong), 0 2px 8px color-mix(in srgb, var(--av-sys-color-text-default) 3%, transparent);
+  gap: 10px;
+  max-width: min(600px, 100%);
+  padding: 12px 14px 10px;
+  width: 100%;
+}
+.merge-response-card-tag { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 10.5px; font-weight: 600; gap: 6px; letter-spacing: .06em; line-height: 16px; text-transform: uppercase; }
 .merge-response-card-input {
   background: transparent;
   border: 0;
@@ -9003,22 +9017,26 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   resize: none;
   width: 100%;
 }
-.merge-response-card-embeds { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
-.merge-response-card-embed { align-items: center; background: var(--av-sys-color-surface-sunken); border-radius: var(--av-sys-size-radius-pill); display: inline-flex; font-size: 12.5px; gap: 4px; height: 24px; padding: 0 4px 0 9px; }
-.merge-response-card-embed button { background: transparent; border: 0; border-radius: 50%; color: var(--av-sys-color-text-muted); cursor: pointer; display: inline-grid; height: 18px; padding: 0; place-items: center; width: 18px; }
+.merge-response-card-input::placeholder { color: var(--av-sys-color-text-muted); }
+.merge-response-card-embeds { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.merge-response-card-embed { align-items: center; background: var(--av-sys-color-surface-raised); border-radius: 10px; box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong); display: inline-flex; font-size: 13px; gap: 8px; height: 40px; max-width: 300px; padding: 0 6px 0 10px; }
+.merge-response-card-embed > svg { color: var(--av-sys-color-text-muted); flex: none; }
+.merge-response-card-embed-title { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.merge-response-card-embed button { background: transparent; border: 0; border-radius: 50%; color: var(--av-sys-color-text-muted); cursor: pointer; display: inline-grid; flex: none; height: 20px; padding: 0; place-items: center; width: 20px; }
 .merge-response-card-embed button:hover { color: var(--av-sys-color-text-default); }
 .merge-response-card-error { color: var(--av-sys-color-danger-base); font-size: 12.5px; margin: 0; }
-.merge-response-card-foot { align-items: center; display: flex; flex-wrap: wrap; gap: 8px 12px; justify-content: space-between; padding-top: 4px; }
-.merge-response-card-audience { align-items: center; color: var(--av-sys-color-text-subtle); display: inline-flex; font-size: 12px; gap: 6px; min-width: 0; }
-.merge-response-card-controls { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
-.merge-response-card-hint { color: var(--av-sys-color-text-subtle); font-size: 11.5px; }
-.merge-response-card-cancel { background: transparent; border: 0; border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-muted); cursor: pointer; font: inherit; font-size: 12.5px; height: 26px; padding: 0 9px; }
+.merge-response-card-audience { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: 12px; gap: 7px; margin: 0; min-width: 0; }
+.merge-response-card-audience > svg { flex: none; }
+.merge-response-card-foot { align-items: center; border-top: 1px solid color-mix(in srgb, var(--av-sys-color-border-strong) 60%, transparent); display: flex; flex-wrap: wrap; gap: 8px 12px; margin-top: 2px; padding-top: 10px; }
+.merge-response-card-foot-space { flex: 1 1 auto; }
+.merge-response-card-hint { color: var(--av-sys-color-text-muted); font-size: 12px; }
+.merge-response-card-cancel { background: var(--av-sys-color-surface-sunken); border: 0; border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-subtle); cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 500; height: 30px; padding: 0 12px; }
 .merge-response-card-cancel:hover:not(:disabled) { color: var(--av-sys-color-text-default); }
-.merge-response-card-submit { align-items: center; background: var(--av-sys-color-success-fill); border: 0; border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-success-base); cursor: pointer; display: inline-flex; font: inherit; font-size: 13px; font-weight: 550; gap: 5px; height: 26px; padding: 0 12px; }
-.merge-response-card-submit:disabled { cursor: default; opacity: .55; }
+.merge-response-card-submit { align-items: center; background: var(--av-cmp-composer-send-background); border: 0; border-radius: var(--av-sys-size-radius-pill); color: var(--av-cmp-composer-send-foreground); cursor: pointer; display: inline-flex; font: inherit; font-size: 13px; font-weight: 600; gap: 5px; height: 30px; padding: 0 12px 0 10px; }
+.merge-response-card-submit:disabled { cursor: default; opacity: .45; }
 .merge-response-card-end { padding: 0 10px 10px; }
 @media (prefers-reduced-motion: reduce) {
-  .suggestion-chip-excerpt.is-pending .skeleton-bar { animation: none; opacity: .6; }
+  .suggestion-chip .skeleton-bar { animation: none; opacity: .6; }
 }
 /* A merged result, the same block in a Thread and in a Channel: on the
    leading side, a line naming the source, who merged it and when, an optional

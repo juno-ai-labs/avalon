@@ -128,8 +128,13 @@ sentence are fixed strings with one slot: "Merge to **{target}**" and "This
 might be a good time to merge this back into **{target}**."; "Breakout:
 **{subject}**" and "Want to break this out?". The excerpt is the drafted words
 cut by `suggestionExcerpt` to `SUGGESTION_EXCERPT_CHARACTERS` with the ellipsis
-inside the closing quote. While the draft is pending the excerpt is a skeleton
-and the action is disabled; Dismiss works from the first frame.
+inside the closing quote; the line itself never wraps, and clips as a guard in
+a pane narrower than the budget was set for. The chip lays the title, the
+sentence and the excerpt in a column with the action pill and the dismiss
+beside them, as the PRD's mockups draw it: the merge pill in the merge target
+pill's green, the breakout pill neutral like the breakout chips, so the two
+never read as the same action. While the draft is pending the excerpt is a
+skeleton and the action is disabled; Dismiss works from the first frame.
 
 **Accept merge** opens the response card in the chip's place, prefilled with
 the drafted note and the suggestion's target; merging goes through the merge
