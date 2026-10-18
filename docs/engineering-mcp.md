@@ -6,7 +6,8 @@ web artifact Durable Object.
 It recreates the useful part of Cloudflare's dashboard database console through
 standard MCP tools at `https://mcp.internal.rallywith.ai/mcp`, including deliberate
 repair writes. It also reads and changes the feature flags and agent model
-routes that Ace manages, through Ace. It is not a product API and it is never
+routes that Ace manages, through Ace, and runs read-only queries against the
+Global analytical lakehouses. It is not a product API and it is never
 available to Rally users by virtue of product membership.
 
 ## Where the code lives
@@ -29,6 +30,9 @@ available to Rally users by virtue of product membership.
 - `apps/ace/src/flag-administration.ts` is the private named `WorkerEntrypoint`
   Ace exports for the flag tools. Its interface and input schemas live in
   `apps/ace/src/protocol.ts`, which this Worker compiles.
+- `apps/engineering-mcp/src/lakehouse.ts` is the Basin SQL client behind
+  `query_data_lake`. It takes bucket and table names from the checked-in
+  `config/*-lakehouse.json` manifests.
 - `.github/workflows/deploy-api.yml` deploys this Worker only after both
   regional API entrypoints are live and healthy.
 
@@ -110,6 +114,28 @@ each flag controls.
 left out of the call are deleted. The tool description tells the client to read
 the flag first and send it back with its change.
 
+### Lakehouses
+
+`query_data_lake` sends one statement to Cloudflare's Basin SQL HTTP API
+(formerly R2 SQL) for one of the three Global lakehouses: the
+[inference](inference-lakehouse.md), [analytics events](analytics-lakehouse.md)
+and [usage](usage-metering.md) tables. Their bucket, namespace and table names
+come from `config/*-lakehouse.json`.
+
+Each bucket is its own catalog, so the tool takes the table and picks the
+bucket; a query cannot join across lakehouses. Basin SQL is read-only on
+Cloudflare's side, so the tool passes the statement through and is annotated
+read-only. It returns Cloudflare's `result` unchanged: `schema`, `rows`, and
+`metrics` with bytes and files scanned. A refusal is returned to the engineer
+with Cloudflare's codes and messages and logged as
+`lakehouse_query_failed:<code>`, where the code is Basin SQL's own (for
+example `40004`) or `http_<status>` when the response carried none.
+
+The tool does not reach the exact per-event archive in `avalon-global-payloads`.
+An `llm_inference` row too large for Pipeline carries only
+`payload_object_key`; the [runbook](runbook.md#retrieve-the-exact-archived-record)
+still owns reading that object.
+
 The shared Durable Object base waits for the object's checked-in migrations,
 runs the supplied statement through `ctx.storage.sql.exec`, and returns column
 names, JSON-safe rows, and the platform's physical `rowsRead` and `rowsWritten`
@@ -165,6 +191,9 @@ counters. SQLite BLOB results are represented as `{ type: "blob", base64 }`.
   would put a second Flagship token on a second Worker.
 - Ace records `actor_subject` and `via: "engineering_mcp"` on every flag write
   it makes for this Worker, beside this Worker's own audit event.
+- The lakehouse token reaches only Basin SQL, from inside this Worker. It never
+  crosses to a client, and its permissions are scoped to the three lakehouse
+  buckets, not the account.
 
 ## Boundaries and non-goals
 
@@ -269,8 +298,17 @@ being replayed at the MCP origin.
 
 The SQL capability is production-destructive by design. Access membership is
 therefore equivalent to database-console access across both Rally regions.
+It also grants read access to every lakehouse row, including the raw prompts,
+connector data and model output in `llm_inference`, which the
+[runbook's handling rules](runbook.md#inspecting-a-runs-raw-inference) cover.
 Policy changes, identity-provider changes, and client approval belong in the
 Cloudflare Access application, not in application code.
+
+`BASIN_SQL_API_TOKEN` is a runtime credential, like Ace's Flagship token, not
+the deployment token. Basin SQL requires R2 storage read/write on the buckets it
+reads, so create it as an R2 API token restricted to the three lakehouse
+buckets with Basin SQL Read, Basin Catalog Read, and R2 Storage Write. Never
+widen it to the account or reuse `CLOUDFLARE_API_TOKEN`.
 
 ## Operations
 
@@ -289,10 +327,42 @@ ensures the supported Claude, ChatGPT, and Cursor hosted origins remain present.
 Changing that managed provider list remains an explicit Access administration
 decision.
 
+The provisioner also injects the account ID as a Worker variable and, when the
+`ENGINEERING_MCP_BASIN_SQL_API_TOKEN` GitHub secret is set in the
+`api-production` environment, installs it as `BASIN_SQL_API_TOKEN`. Without the
+secret the deploy keeps whatever token the Worker already has, and
+`query_data_lake` fails as `lakehouse_token_unconfigured` if it has none: the
+MCP deploys inside the API release, and a missing analytics credential should
+not turn that release red.
+
 Model routes support optional `routing.reasoningEffort` (`low`, `medium`, or
 `high`) through `list_model_flags` and `update_model_flag`. Omission restores
 each selected model's configured default; an explicit value applies to the
 primary and fallbacks. Ace owns validation and the atomic write.
+
+## Changelog
+
+### 2026-10-18 — Query the Global lakehouses
+
+**What changed:** `query_data_lake` runs read-only Basin SQL against
+`llm_inference`, `analytics_events`, or `usage_events`, using a bucket-scoped
+token installed as a Worker secret.
+
+**Why:** Reading a lakehouse meant minting a personal token, keeping it in
+`.env.local`, and hand-building curl requests from the runbook. Engineers
+already reach production through this MCP, behind the same Access policy.
+
+**Considered and rejected:** One tool per lakehouse, which would repeat the
+same code three times for what is one table choice. Proxying through a regional
+API Worker, which adds a hop and puts the token on a product Worker. Fetching
+the `PAYLOADS` archive too: it needs an R2 binding to a bucket that holds far
+more than inference records, and nobody has asked yet.
+
+**Consequences:** Access membership now includes reading raw inference
+content. The token needs R2 Storage Write because Basin SQL requires it, so it
+must stay restricted to the lakehouse buckets. The tool uses the `basin-sql`
+path; Cloudflare says the `r2-sql` path the runbook names still works but will
+be deprecated.
 
 ### 2026-10-06 — The Sidekick tools go with `SidekickDO`
 
