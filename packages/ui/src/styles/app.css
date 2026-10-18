@@ -8964,7 +8964,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .suggestion-chip-dismiss { background: transparent; border: 0; border-radius: 50%; color: var(--av-sys-color-text-muted); cursor: pointer; display: inline-grid; flex: none; height: 22px; padding: 0; place-items: center; width: 22px; }
 .suggestion-chip-dismiss:hover { background: var(--av-sys-color-surface-sunken); color: var(--av-sys-color-text-default); }
 .suggestion-chip-sentence { color: var(--av-sys-color-text-subtle); font-size: 13px; line-height: 1.4; margin: 0; }
-.suggestion-chip-excerpt { color: var(--av-sys-color-text-muted); font-size: 12.5px; line-height: 1.4; margin: 0; overflow: hidden; white-space: nowrap; }
+.suggestion-chip-excerpt { color: var(--av-sys-color-text-muted); font-size: 12.5px; line-height: 1.4; margin: 0; overflow-wrap: anywhere; }
 .suggestion-chip-excerpt.is-pending { display: block; height: 1.4em; }
 .suggestion-chip-excerpt.is-pending .skeleton-bar { display: block; height: 10px; margin-top: 4px; width: min(320px, 70%); }
 .suggestion-chip-actions { display: flex; gap: 8px; margin-top: 2px; }

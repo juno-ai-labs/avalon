@@ -5666,7 +5666,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         runId: input.harnessRunId,
         finalTurnId: outcome.finalTurnId ?? null,
         completed: outcome.status === "completed",
-        backgroundAgent: input.backgroundAgent !== undefined,
+        backgroundAgent: input.backgroundAgent === true,
         identity: identityRow
           ? { title: identityRow.title, description: identityRow.description, scope: identityRow.scope,
               archived_at: identityRow.archived_at, system_kind: identityRow.system_kind }
