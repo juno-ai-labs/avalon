@@ -7940,6 +7940,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   .title-pill-header { grid-template-columns: fit-content(45%) minmax(0, 1fr) auto; }
   .title-pill-current { display: flex; justify-content: center; justify-self: stretch; }
   .title-pill.is-ancestor .title-pill-menu-trigger { display: none; }
+  /* The pane's own name keeps the room: a breakout's reply count would
+     otherwise hold its width and squeeze the name to a letter. */
+  .title-pill-current .title-pill-meta { display: none; }
   .title-pill.is-ancestor .title-pill-title,
   .title-pill.is-ancestor .title-pill-meta,
   .title-pill.is-ancestor .title-pill-chevron,
