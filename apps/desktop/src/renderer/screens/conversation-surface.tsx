@@ -1931,9 +1931,11 @@ export function ConversationSurface({
   }, [ownsRail, panelExpanded, setRailExpanded]);
   const channelPane = useChannelPane();
   // Too narrow for the panel beside its conversation, a phone included, the
-  // panel covers the pane whether or not it was expanded.
+  // panel covers the pane whether or not it was expanded, so it offers
+  // neither Expand nor a Collapse that would change nothing. The expansion
+  // is kept for when the window widens.
   const panelFillsPane = useRailFillsPane(useUiStore((state) => state.sidebarWidth));
-  const panelExpandAction = expandToggle(panelExpanded, !panelFillsPane, setPanelExpanded);
+  const panelExpandAction = panelFillsPane ? undefined : expandToggle(panelExpanded, true, setPanelExpanded);
   // Alone on screen, the panel carries the crumbs of what it covers
   // (`docs/pane-stack.md`). A breakout's mark is seeded by its own id.
   const conversationTitle = routedDetail?.title ?? '';
