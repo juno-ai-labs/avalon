@@ -49,9 +49,11 @@ for pre-cutover receipts. Table queries retain their data-revision validation.
 
 ## Invariants
 
-- Page IDs match the run, principal, connection and operation. Copying an ID to
-  another scope cannot select that scope's credentials or arguments. An earlier
-  run's page is described to the same principal, never redeemed.
+- Page IDs match the conversation, principal, connection and operation, not
+  the run: a later message's run can redeem a page an earlier run issued.
+  Copying an ID to another scope cannot select that scope's credentials or
+  arguments. Consume-once holds across runs, because the claim is recorded on
+  the page's own row; forward-cycle detection follows one run's chain.
 - Redemption invokes the original authorized executor, so possession of a slug
   never replaces current authorization.
 - Raw cursors are extracted before response truncation. Otherwise a valid
@@ -105,13 +107,11 @@ and concurrent consumers produce `page_already_consumed` and `page_in_progress`.
 These failures tell the caller to restart or use the completed page's next ID,
 naming the first-page tool; storage cannot, so the wrapper writes that text.
 
-An ID an earlier run issued to the same principal, connection and operation
-fails with `page_id_from_earlier_message`: the claim hands its stored arguments
-to the tool's optional `explainEarlierRunPage`, never to `execute`, so the tool
-can name the call that resumes the read. `read_resource` names the
-`resourceId` and `startCharacter` (dropping the offset when the derivative's
-version changed) and reports the `resourceId` for the grounding guard; the
-lookup is an unindexed scan of the conversation's pages, run only on a miss.
+A claim tries the current run by primary key, then earlier runs. The second
+lookup is a deliberately unindexed scan of the conversation's pages, run only
+when the first misses; an index on `page_id` would add a write to every issue.
+IDs are unique per run only (about 1.07 billion per prefix), so an ID two
+earlier runs share is refused as `page_id_invalid` rather than guessed.
 
 A repeated forward continuation instead returns the fetched content with
 `nextPageId: null` and a `paginationWarning` that coverage may be incomplete.
@@ -124,8 +124,8 @@ attachment version and table expiry/version failures are preserved. Failed reads
 consume their incoming page, so transient failures can be retried.
 
 There is no new arbitrary page count, timeout, or general repeated-failure breaker.
-IDs last with the producing receipt/run; underlying provider cursors can expire
-sooner. Missing or changed durable producer results fail rather than silently
+IDs last as long as the producing receipt and run rows; underlying provider
+cursors can expire sooner, and the executor reports that as its own failure. Missing or changed durable producer results fail rather than silently
 rebinding a published ID to different arguments.
 
 ## Testing
@@ -144,6 +144,23 @@ Existing connector, attachment, table, tool-selection, grounding and receipt sui
 authorized executors. `workstream-object-schema.test.ts` covers migration shape.
 
 ## Changelog
+
+### 2026-10-18 — Scope page IDs to the conversation, not the run
+
+The earlier fix below explained an earlier run's page instead of refusing it,
+but each reuse still cost a failed call and another model turn, because the
+model sees every earlier `nextPageId` in its history and copying one is its
+natural move. Use-once and cycle detection, the reasons pages were run-scoped,
+protect one run's chain and did not need the ID to die with the run, and
+redemption re-runs the authorized executor, so scope beyond principal,
+connection and operation added no safety. Claims now fall back to earlier runs
+and record the consumer on the page's own row, which keeps use-once and the
+receipt dependency across runs; `explainEarlierRunPage` was removed as dead.
+Copying earlier pages into the current run was rejected: `UNIQUE(producer_id,
+slot)` forbids a second row, and a copy would split use-once across rows.
+Making IDs unique per conversation was rejected as a scan on every issue; a
+shared ID is refused instead. A future change that prunes runs must expect a
+later run to hold a claim on the pruned run's pages.
 
 ### 2026-10-18 — Say when a page ID came from an earlier message
 
