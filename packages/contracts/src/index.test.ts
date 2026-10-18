@@ -1475,6 +1475,11 @@ describe("resource version provenance", () => {
       .toMatchObject({ author: null, cause: null });
   });
 
+  it("lists a version whose cause this client does not know as one with none", () => {
+    expect(ResourceRevisionSchema.parse({ ...revision, cause: "renamed" }).cause).toBe("renamed");
+    expect(ResourceRevisionSchema.parse({ ...revision, cause: "merged" }).cause).toBeNull();
+  });
+
   it("defaults rollout-safe resource fields when an older response omits them", () => {
     // A resource row read before the backfill reaches it has no alias, and a
     // response written before the column existed has no key at all — neither

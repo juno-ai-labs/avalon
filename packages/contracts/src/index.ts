@@ -830,7 +830,12 @@ export const ResourceRevisionSchema = z.object({
    * surfaces say a version is unattributed rather than inventing an author.
    */
   author: ResourceVersionAuthorSchema.nullable(),
-  cause: ResourceVersionCauseSchema.nullable(),
+  /**
+   * A cause this client does not know reads as none, so a later cause leaves
+   * the history listable rather than failing the whole response, as
+   * `renamed` does for a desktop build from before it.
+   */
+  cause: ResourceVersionCauseSchema.nullable().catch(null),
   /**
    * What kind of thing the version's refs name — an immutable object in the
    * region's bucket for everything written so far. Deliberately not an enum:
