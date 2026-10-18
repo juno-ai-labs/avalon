@@ -21,7 +21,7 @@ describe("pasted text", () => {
 
     const file = await preparePastedTextWithClient(env, infer, request("# Q3 launch\n\nShip it."));
 
-    expect(file.name).toBe("Q3 launch plan.md");
+    expect(file.name).toBe("Pasted - Q3 launch plan.md");
     expect(file.type).toBe("text/markdown");
     expect(await file.text()).toBe("# Q3 launch\n\nShip it.");
   });

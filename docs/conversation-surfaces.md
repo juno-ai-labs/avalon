@@ -214,7 +214,8 @@ to `services/pasted-text-service.ts`, which picks the MIME type and extension
 with `lib/pasted-text-type.ts` (JSON that parses, HTML, XML, Markdown, TSV,
 CSV, else plain text; source code lands in plain text, since no cheap test
 tells languages apart), asks the naming model for a title (metered as
-`attachment_naming`), and stores the rebuilt file. The tile then shows the
+`attachment_naming`), names the file `Pasted - <title>.<ext>`, and stores the
+rebuilt file. The tile then shows the
 resource's title and type. Naming that fails or has no model key keeps the
 stand-in stem under the detected extension. The window-level paste does not do
 this: text with no field to land in is left alone.
