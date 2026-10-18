@@ -1677,6 +1677,7 @@ reopens a finished run (see
 | `runs`, `run_scopes`, `run_memory_contexts`, `run_plugin_activations`, `run_lifecycle_events`, `inference_attempts` | Subordinate execution receipts, frozen authority/context, and provider attempts. A run records restart context and loop provenance but is never the loop identity. |
 | `tool_effects`, `tool_effect_checkpoints`, `attachment_tool_receipts`, `plugin_activation_hints`, `elicitation_requests` | Planned/executed tools, replay fences, resumable activation, and human-input pauses. Each elicitation retains the stable Bind tool slot that its eventual answer must close. |
 | `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output keyed by an explicit transient `stream_id`, active compaction phase, and the room sequence. Canonical output identity remains the turn's `turn_id`; `active_agent_compaction` is a singleton operational checkpoint and immutable summary history remains below. |
+| `conversation_suggestions`, `turn_disposition_judgements` | One suggestion per judged turn (merge up, or start a Breakout) with its lifecycle, draft and resolution, and every turn-disposition decision per run; conversation-object schema v75. Owned by [`conversation-suggestions.md`](conversation-suggestions.md). |
 | `transcript_compaction_checkpoints`, `description_refresh_state` | Sequence/revision-fenced context derivations. Checkpoints reference immutable model-only facts per principal/run/sequence so a derived run can bind an exact compaction event rather than mutable “latest” state. |
 | `workstream_wakeups`, `due_work` | Agent-created timers and other child-local alarm jobs. |
 | `workstream_resource_links`, `resource_inventory_revision` | Links to workspace resources with a CHECK-constrained relationship (`attachment`, `message_attachment`, `origin`, `generated`, `inbound_email`, or `context`) and the authorization revision every relationship change advances. `generated` derives artifact direction; every other value derives source direction. |
@@ -1813,6 +1814,25 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-10-18 — The conversation object keeps one suggestion per judged turn
+
+**What changed:** Migration v75 adds `conversation_suggestions` and
+`turn_disposition_judgements`. The settlement lane's last step judges the
+run's final turn and may write one open row; the snapshot carries the open
+rows as `suggestions`, and `conversation_suggestion_changed` publishes each
+change. A `dismiss_suggestion` product operation resolves a row for everyone,
+admitted as a read. A `conversation_merged_into` marker appended through the
+message port resolves the merge rows at or before it in the marker's own
+commit; `captureInitialSubstreamContext` resolves the breakout row on its
+cutoff turn. Both halves are owned by
+[`conversation-suggestions.md`](conversation-suggestions.md).
+
+**Why:** a suggestion is conversation state keyed to a turn, resolved in
+place, which a transcript row cannot be: rows accumulate, take an attention
+ordinal and light unread, and an older client would draw their fallback text.
+The snapshot field and the event need no contract gate because the client's
+`safeParseSocketEvent` strips the unknown key and ignores the unknown type.
 
 ### 2026-10-05 — Presence for an unlisted Channel no longer closes the socket
 

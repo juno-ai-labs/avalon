@@ -35,6 +35,8 @@ import { UserTimezoneSchema, type UserTimezone } from "@rally/contracts";
 
 type SessionImportRun = z.infer<typeof SessionImportRunSchema>;
 import {
+  ConversationSuggestionDismissResultSchema,
+  type ConversationSuggestionDismissResult,
   AutomationDetailSchema as WireAutomationDetailSchema,
   AutomationExecutionPrincipalClaimSchema,
   AutomationRunSchema as WireAutomationRunSchema,
@@ -2259,6 +2261,14 @@ export class RallyApi {
       },
       schema: SubstreamCreationResultSchema,
     });
+  }
+
+  /** Dismiss a conversation suggestion for everyone (docs/conversation-suggestions.md). */
+  async dismissSuggestion(parentId: string, substreamId: string, suggestionId: string): Promise<ConversationSuggestionDismissResult> {
+    return this.request(
+      `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/suggestions/${encodeURIComponent(suggestionId)}/dismiss`,
+      { method: 'POST', schema: ConversationSuggestionDismissResultSchema },
+    );
   }
 
   async cancelSubstream(parentId: string, operationId: string): Promise<void> {

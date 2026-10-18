@@ -1734,10 +1734,14 @@ function MergeButton({ merge, text }: { merge: MessageMergeAction; text: string 
   );
 }
 
-/** Where a message's Merge action goes, as its host names it ("Merge to thread", "Merge to GTM"). */
+/**
+ * Where a message's Merge action goes, as its host names it ("Merge to thread",
+ * "Merge to GTM"). The turn is named so the host can open the response card
+ * under the message the merge was asked from.
+ */
 export interface MessageMergeAction {
   label: string;
-  onMerge: (text: string) => void;
+  onMerge: (text: string, turnId?: string) => void;
 }
 
 function AssistantMessageActions({ citations, mentions, onMerge, onStartSubstream, telemetry, text }: {
@@ -2913,8 +2917,10 @@ export function MessageBlock({
     ? () => onStartSubstream(cutoffTurnId)
     : undefined;
   // The same settled-text rule: a merge carries words that are done.
-  const mergeAction = merge && message.text && message.messageType === 'text'
-    && !message.streaming && !message.deliveryState ? merge : undefined;
+  const mergeAction: MessageMergeAction | undefined = merge && message.text && message.messageType === 'text'
+    && !message.streaming && !message.deliveryState
+    ? { label: merge.label, onMerge: (text) => merge.onMerge(text, cutoffTurnId) }
+    : undefined;
   const mergedFrom = message.mergedFrom;
   if (mergedFrom && message.text) {
     // A merged result reads as one, on the leading side, in the same block a

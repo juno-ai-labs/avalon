@@ -62,6 +62,12 @@ interface MessageFeedProps {
     /** Who started each one and when, as the host can name them. */
     renderMeta?: (breakout: BreakoutMark) => React.ReactNode;
   };
+  /**
+   * What the host draws under the last row of a turn besides its Breakout
+   * cards: a conversation suggestion, or the merge response card opened from
+   * that turn. Keyed by transcript turn id.
+   */
+  afterTurn?: ReadonlyMap<string, React.ReactNode>;
   /** Creates the automation a proposal card names; see its card. */
   onAcceptDraft?: (automationId: string) => void;
   acceptingDraftFor?: string | null;
@@ -179,6 +185,7 @@ export function measureMessageFeedRow(element: Element): number {
 }
 
 export function MessageFeed({
+  afterTurn,
   citations,
   currentUserId,
   currentUserName,
@@ -275,28 +282,33 @@ export function MessageFeed({
   // cards belong after the last of them, where the turn ends.
   const lastRowOfTurn = useMemo(() => {
     const last = new Map<string, number>();
-    if (!breakoutCards || breakoutCards.byTurn.size === 0) return last;
+    const tracked = (turnId: string): boolean => Boolean(breakoutCards?.byTurn.has(turnId)) || Boolean(afterTurn?.has(turnId));
+    if (!(breakoutCards && breakoutCards.byTurn.size > 0) && !(afterTurn && afterTurn.size > 0)) return last;
     messages.forEach((message, index) => {
-      if (message.transcriptTurnId && breakoutCards.byTurn.has(message.transcriptTurnId)) {
+      if (message.transcriptTurnId && tracked(message.transcriptTurnId)) {
         last.set(message.transcriptTurnId, index);
       }
     });
     return last;
-  }, [breakoutCards, messages]);
+  }, [afterTurn, breakoutCards, messages]);
   const cardsAfter = (message: Message, index: number): React.JSX.Element | null => {
     const turnId = message.transcriptTurnId;
-    if (!breakoutCards || !turnId || lastRowOfTurn.get(turnId) !== index) return null;
-    const breakouts = breakoutCards.byTurn.get(turnId) ?? [];
-    if (breakouts.length === 0) return null;
-    return <div aria-label="Breakouts from this message" className="breakout-card-list" role="group">
-      {breakouts.map((breakout) => <ConversationCard
-        conversation={breakout}
-        key={breakout.substreamId}
-        meta={breakoutCards.renderMeta?.(breakout)}
-        onOpen={() => breakoutCards.onOpen(breakout.substreamId)}
-        open={breakout.substreamId === breakoutCards.openSubstreamId}
-      />)}
-    </div>;
+    if (!turnId || lastRowOfTurn.get(turnId) !== index) return null;
+    const breakouts = breakoutCards?.byTurn.get(turnId) ?? [];
+    const hostContent = afterTurn?.get(turnId) ?? null;
+    if (breakouts.length === 0 && !hostContent) return null;
+    return <>
+      {breakouts.length > 0 && breakoutCards && <div aria-label="Breakouts from this message" className="breakout-card-list" role="group">
+        {breakouts.map((breakout) => <ConversationCard
+          conversation={breakout}
+          key={breakout.substreamId}
+          meta={breakoutCards.renderMeta?.(breakout)}
+          onOpen={() => breakoutCards.onOpen(breakout.substreamId)}
+          open={breakout.substreamId === breakoutCards.openSubstreamId}
+        />)}
+      </div>}
+      {hostContent && <div className="turn-host-content">{hostContent}</div>}
+    </>;
   };
   const row = (message: Message, index: number): React.JSX.Element => (
     <div className="message-arrival-layer" data-arrival-id={message.id} data-arrival-kind={message.messageType}>

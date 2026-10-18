@@ -2,8 +2,10 @@ import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, type WorkspaceInvitee
 import type { AgentModelOverride } from '../lib/agent-models';
 import { X } from 'lucide-react';
 import { IconCornerDownRight } from '@tabler/icons-react';
-import { type ReactNode, useRef, useState } from 'react';
+import {
+  useEffect, type ReactNode, useRef, useState } from 'react';
 import type { RallyApi, MentionIdentity } from '../lib/api';
+import { readDraftText, writeDraftText } from '../lib/draft-cache';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { optimisticMentionRendering } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
@@ -27,6 +29,8 @@ import { type ComposerConversation, WorkstreamComposer } from './workstream-comp
  * out of this surface costs a `setState` and leaves nothing behind.
  */
 export interface SubstreamDraft {
+  /** A drafted opening prompt to seed the composer with, once, over an empty draft. */
+  initialDraft?: string | undefined;
   /**
    * The main-conversation turn this branches from, or null when it was started
    * from the sidebar and branches from wherever the conversation has reached.
@@ -170,6 +174,20 @@ export function SubstreamLaunchSurface({
   // created is not carrying into — or worse, out of — the main conversation's
   // composer. `new` is not a substream id: every real one is a UUID.
   const draftKey = workstreamDraftKey(workspaceRegion, workspaceId, parent.id, PENDING_SUBSTREAM_DRAFT_ID);
+  // A suggestion's drafted opening prompt is written into the launch draft once,
+  // when the pane opens, and only over an empty draft: a person who already
+  // typed here is not overwritten. The composer mounts after the write so it
+  // hydrates the seeded words (docs/conversation-suggestions.md).
+  const [draftSeeded, setDraftSeeded] = useState(!draft.initialDraft);
+  useEffect(() => {
+    if (!draft.initialDraft) return;
+    let cancelled = false;
+    void readDraftText(draftKey).then(async (current) => {
+      if (!current?.text.trim()) await writeDraftText(draftKey, draft.initialDraft!);
+    }).finally(() => { if (!cancelled) setDraftSeeded(true); });
+    return () => { cancelled = true; };
+    // Once, on open: the draft is the pane's for as long as it stays open.
+  }, []);
   const attachmentDraft = useFileAttachments(api, draftKey);
   /**
    * The conversation the composer believes it is writing into.
@@ -356,7 +374,7 @@ export function SubstreamLaunchSurface({
         </div>
       </div>
       <div className="composer-stack">
-        <WorkstreamComposer
+        {draftSeeded && <WorkstreamComposer
           api={api ?? undefined}
           attachments={attachmentDraft.attachments}
           autoFocus
@@ -380,7 +398,7 @@ export function SubstreamLaunchSurface({
           uploading={attachmentDraft.uploading}
           draftKey={draftKey}
           workstream={pendingChild}
-        />
+        />}
       </div>
     </section>
   </>;

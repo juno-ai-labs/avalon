@@ -350,10 +350,14 @@ and one object per event: `{ suggestionId, kind, judgedTurnId, draft:
 { status, text, subject }, target: { kind, id, title } | null }`. The server computes `target` for `merge_up` the way the
 Merge label does (the Thread, or the Channel `channelMergeTarget` would pick);
 the client still applies `mergeTargetFor` for this viewer before drawing the
-action. The snapshot field is optional and the event type is new, so both go
-only to builds at a new client contract, 8, the mechanism merge-back used for
-7. `safeParseSocketEvent` strips unknown keys but an unknown event type fails
-the union, which is why the event is contract-gated rather than sent to all.
+action. The snapshot field is optional and the event type is new, and neither
+is contract-gated: as built, the conversation socket carries no client-contract
+claim at all (merge-back's contract 7 gated REST payloads only, and the
+version is already 8 for artifact updates), and the client's
+`safeParseSocketEvent` strips the unknown snapshot key and the desktop's frame
+handler ignores an event type that fails the union. A contracts test pins the
+first; the second is the handler's standing behaviour. So an older build is
+served the field and the event and shows nothing, without a gate to maintain.
 
 ### The suggestion drafter
 
@@ -832,7 +836,7 @@ open-value test.
 | --- | --- | --- |
 | `packages/agent-harness/src/turn-disposition.test.ts` (Node, stubbed provider) | The request bytes and key order; every outcome's mapping per conversation kind; the threshold's equality semantics; one case per way of not getting an answer; cancellation propagating | Unit-level; the literal is the only break available |
 | `apps/api/test-workers/turn-disposition-settlement.test.ts` (workerd) | A completed Breakout run with a fetch double answering `worth_carrying_up` leaves one open `merge_up` row and one event; a Thread run answering the breakout outcome leaves `start_breakout`; `continue_here` leaves nothing; a failed run and an unreachable provider leave settlement, naming and description untouched; a replayed settlement writes once; a merge marker resolves the row `accepted`; a capture at the judged turn resolves it; the third newer message expires it as `ignored` and the second does not; the row is published `pending` before the drafter is called and `ready` after, and `withdrawn` when the drafting route refuses; a retry that finds a `pending` row drafts without judging again; unread and the directory are unchanged | Skip the expiry write (the open row survives a fourth message); skip the idempotency gate (two rows); move the step before the terminal commit (the turn is not yet final); publish only after the draft (no `pending` event) |
-| `apps/api/test/conversation-suggestions-route.test.ts` (Node, typed double) | The dismiss route's admission and refusal codes; the snapshot field under contract 8 and its absence under 7 | Return the field to a contract-7 build |
+| `apps/api/test/conversation-suggestions-route.test.ts` (Node, typed double) | The dismiss route's addressing, admission and refusal codes; `packages/contracts/src/conversation-suggestions.test.ts` pins that an older parser strips the snapshot's field | Address the wrong object; keep the key on the older schema |
 | `apps/api/test/agent-model-flags.test.ts` | The new role is routed, flagged and metered; the exhaustiveness checks on `AGENT_MODEL_FLAG_KEYS` and `ORGANIZATION_PAYS` compile | Type-level |
 | Renderer (`screens/workstream.test.tsx`, `components/workstream-blocks.test.tsx`, a new `merge-response-card.test.tsx` in `packages/ui`) | The line draws under the judged turn for a viewer who can act and not for one who cannot; it draws on the third newest turn and not on the fourth; a `pending` draft draws the skeleton with the action disabled and Dismiss enabled, `ready` fills it, `withdrawn` removes it; the composer carries nothing and never enters merge mode; accept opens the card in the chip's place with the drafted note and embeds; the hover action and the title menu open the same card, under the turn and at the end of the feed; Merge calls the route with the kept `clientMessageId`; Esc restores the line; accept opens the launch pane with the draft; dismiss hides at once | Component-level |
 | `packages/agent-harness/evals/turn-disposition/` | The runner on the synthetic fixture; the corpus is never committed | Not a test; the eval |
@@ -851,7 +855,7 @@ moved, as `semantic-trigger-gate.ts` records.
 - `docs/jev-classifier-opportunities.md`: the candidate entry this PRD adds is
   deleted when the classifier ships, per that file's rule.
 - `docs/workstream-durable-object.md`: migration v75, the socket event, the
-  snapshot field, contract 8.
+  snapshot field, and why neither needs a contract gate.
 - `docs/conversation-merge.md`: the response card replaces the composer's
   merge mode for every merge (the drift from the frozen merge-back PRD is
   recorded there, per `prds.md`); `markSource` resolving a row.
@@ -879,8 +883,8 @@ Each phase is a pull request or two with its own acceptance gate. The
    repeated, baseline committed, request pinned. Gate: a threshold and a
    suggestion rate the product owner has seen and accepted, and a decision on
    Thread to Channel in the first visible version.
-3. **Surface.** Migration v75 and the slot; the socket event and snapshot field
-   under contract 8; the dismiss route; resolution from `markSource` and from
+3. **Surface.** Migration v75 and the slot; the socket event and snapshot field,
+   ungated; the dismiss route; resolution from `markSource` and from
    the capture; expiry by recency; gate 6 with its open constants and both tests;
    the line under the turn with the newest-three rule; the response card for
    every merge, with the composer's merge mode removed; the breakout accept
