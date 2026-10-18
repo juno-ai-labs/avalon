@@ -1,4 +1,4 @@
-import type { HarnessTool, HarnessToolContext, ModelMessageContentPart } from "@rally/agent-harness";
+import type { HarnessToolContext, ModelMessageContentPart } from "@rally/agent-harness";
 import {
   ATTACHMENT_LIST_RESOURCES_DESCRIPTION,
   AttachmentListResourcesArgumentsSchema,
@@ -24,6 +24,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { AttachmentCursorError, openAttachmentCursor } from "../lib/attachment-cursor";
 import { logStructuredEvent } from "../observability/logger";
+import type { PaginatedHarnessTool } from "./tool-pagination";
 import {
   ATTACHMENT_TEXT_EXTRACTOR_VERSION,
   materializeAttachmentDerivative,
@@ -112,7 +113,7 @@ export function createWorkstreamAttachmentTools(
   env: Env,
   input: WorkstreamWorkflowInput,
   options: WorkstreamAttachmentToolOptions = {},
-): HarnessTool[] {
+): PaginatedHarnessTool[] {
   const summarizeDerivative = options.summarizeDerivative ?? createAttachmentSummaryRunner(env);
   const modelToolPrefix = options.modelToolPrefix ?? "workstream";
   const capabilityPrefix = options.capabilityPrefix ?? "workstream.resources";
@@ -362,6 +363,14 @@ export function createWorkstreamAttachmentTools(
             ...(previous ? [{ operation: "read_resource_previous", slot: "previousPageId" as const, input: { cursor: previous } }] : []),
           ] },
         };
+      },
+      continuationDetails: async (continuationInput) => {
+        const continuation = z.object({ cursor: z.string() }).safeParse(continuationInput);
+        if (!continuation.success) return null;
+        const state = await openCursorState(
+          env, input, options, continuation.data.cursor, READ_CURSOR_PURPOSE, ReadCursorStateSchema,
+        );
+        return { resourceId: state.resourceId };
       },
     },
     {
