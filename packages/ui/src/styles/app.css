@@ -7871,6 +7871,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   z-index: 3;
 }
 .title-pill-ancestors { align-items: center; display: flex; gap: 6px; justify-self: start; max-width: 100%; min-width: 0; }
+/* A phone's menu button, ahead of the crumbs and outside their bridge. */
+.title-pill-navigation { display: flex; flex: none; }
 /* Breadcrumbs give way rather than run under the centred pill: each shrinks
    to its mark, its title ending in an ellipsis. A Channel's name is short and
    says where you are, so the thread beside it gives way first. */

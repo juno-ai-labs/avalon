@@ -134,7 +134,7 @@ describe('TitlePillHeader', () => {
     });
     const crumbs = [level('channel', 'General', { mark: channel, name: 'General', action: 'Open channel' }, vi.fn())];
 
-    it('leads the crumbs\' bridge with the menu mark, which opens the navigation', () => {
+    it('leads the crumbs with a menu button, which opens the navigation', () => {
       phoneWidth(true);
       const openNavigation = vi.fn();
       render(<PhoneHeaderContext value={header(openNavigation, vi.fn())}>
@@ -143,6 +143,8 @@ describe('TitlePillHeader', () => {
 
       const marks = screen.getAllByRole('button', { name: /^Open/u });
       expect(marks.map((mark) => mark.getAttribute('aria-label'))).toEqual(['Open navigation', 'Open channel: General']);
+      expect(marks[0]!.closest('.mark-bridge')).toBeNull();
+      expect(marks[1]!.closest('.mark-bridge')).not.toBeNull();
       fireEvent.click(marks[0]!);
       expect(openNavigation).toHaveBeenCalledOnce();
     });
