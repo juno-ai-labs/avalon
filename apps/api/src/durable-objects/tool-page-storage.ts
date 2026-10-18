@@ -52,6 +52,8 @@ export class ToolPageStorage {
       }
       return existing.page_id;
     }
+    // Cycle detection follows one run's chain. A page claimed from an earlier
+    // run has its row there, so a chain resumed across messages starts afresh.
     const parent = this.sql.exec<{ page_id: string }>(
       "SELECT page_id FROM tool_pages WHERE run_id = ? AND consumer_id = ?",
       input.runId, input.effectIntentId,
@@ -85,47 +87,48 @@ export class ToolPageStorage {
   }
 
   /**
-   * Redeem a page for this run, or say it belongs to an earlier one.
+   * Redeem a page issued anywhere in this conversation.
    *
-   * A page ID never crosses runs, but the model sees every earlier tool result
-   * in its history, so on a new message it often copies a `nextPageId` that an
-   * earlier run issued. Reporting that case apart from an unknown ID lets the
-   * caller say what happened and how to restart, instead of an error that reads
-   * as if the model mistyped the ID. The earlier page's arguments are returned
-   * only to the same principal, connection and operation, for the caller to
-   * describe, never to execute.
+   * A page is scoped to the conversation, not the run: each message starts a
+   * new run, and the model still sees every earlier `nextPageId` in its
+   * history, so a run-scoped ID looked valid and was not. The current run is
+   * tried first with a primary-key lookup. Only on a miss does the claim look
+   * across earlier runs, which is a deliberately unindexed scan of this
+   * conversation's pages; an index on `page_id` would add a write to every
+   * `issue` to speed up a continuation across messages.
    *
-   * The earlier-run lookup is deliberately unindexed: no index leads with
-   * `page_id`, so a miss scans this conversation's pages. It runs only on a
-   * miss, and an index would add a write to every `issue`.
+   * IDs are unique per run, not per conversation, so two earlier runs can
+   * share one. That is refused as unknown rather than guessed at: the model
+   * restarts, where a guess would silently read another page.
+   *
+   * Principal, connection and operation still match, the consumer rules are
+   * the same in every run, and the claim is recorded on the page's own row, so
+   * the consuming receipt is a dependency whichever run issued it.
    */
-  claim(raw: z.infer<typeof PageClaimSchema>): { inputJson: string } | { earlierRunInputJson: string } {
+  claim(raw: z.infer<typeof PageClaimSchema>): { inputJson: string } {
     const input = parsePage(PageClaimSchema, raw);
-    const row = this.sql.exec<{
-      input_json: string; consumer_id: string | null; consumer_status: string | null;
-    }>(`SELECT page.input_json, page.consumer_id, consumer.status AS consumer_status
+    type PageRow = { run_id: string; input_json: string; consumer_id: string | null; consumer_status: string | null };
+    const columns = `page.run_id, page.input_json, page.consumer_id, consumer.status AS consumer_status
       FROM tool_pages page JOIN tool_effects producer ON producer.effect_intent_id = page.producer_id
-      LEFT JOIN tool_effects consumer ON consumer.effect_intent_id = page.consumer_id
-      WHERE page.run_id = ? AND page.page_id = ? AND page.operation = ?
-        AND page.connection_id IS ? AND page.principal_json = ? AND producer.status = 'completed'`,
-    input.runId, input.pageId, input.operation, input.connectionId, input.principalJson).toArray()[0];
+      LEFT JOIN tool_effects consumer ON consumer.effect_intent_id = page.consumer_id`;
+    const scope = `page.page_id = ? AND page.operation = ?
+        AND page.connection_id IS ? AND page.principal_json = ? AND producer.status = 'completed'`;
+    const bindings = [input.pageId, input.operation, input.connectionId, input.principalJson];
+    let row = this.sql.exec<PageRow>(`SELECT ${columns} WHERE page.run_id = ? AND ${scope}`,
+      input.runId, ...bindings).toArray()[0];
     if (!row) {
-      const earlier = this.sql.exec<{ input_json: string }>(`SELECT page.input_json
-        FROM tool_pages page JOIN tool_effects producer ON producer.effect_intent_id = page.producer_id
-        WHERE page.run_id <> ? AND page.page_id = ? AND page.operation = ?
-          AND page.connection_id IS ? AND page.principal_json = ? AND producer.status = 'completed'
-        ORDER BY page.rowid DESC LIMIT 1`,
-      input.runId, input.pageId, input.operation, input.connectionId, input.principalJson).toArray()[0];
-      if (earlier) return { earlierRunInputJson: earlier.input_json };
-      throw new ToolPageError("page_id_invalid: Restart with the first-page tool; pageId is not available for this operation and run.");
+      const earlier = this.sql.exec<PageRow>(`SELECT ${columns} WHERE page.run_id <> ? AND ${scope} LIMIT 2`,
+        input.runId, ...bindings).toArray();
+      if (earlier.length === 1) row = earlier[0];
     }
+    if (!row) throw new ToolPageError("page_id_invalid: Restart with the first-page tool; pageId is not available for this operation.");
     if (row.consumer_id !== null && row.consumer_id !== input.effectIntentId && row.consumer_status !== "failed") {
       throw new ToolPageError(row.consumer_status === "completed"
         ? "page_already_consumed: Use nextPageId from the completed page, or restart with the first-page tool."
         : "page_in_progress: This page already has a call in progress.");
     }
     this.sql.exec("UPDATE tool_pages SET consumer_id = ? WHERE run_id = ? AND page_id = ?",
-      input.effectIntentId, input.runId, input.pageId);
+      input.effectIntentId, row.run_id, input.pageId);
     return { inputJson: row.input_json };
   }
 }
