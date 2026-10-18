@@ -85,14 +85,17 @@ export const TurnDispositionStateSchema = z.object({
 export type TurnDispositionState = z.infer<typeof TurnDispositionStateSchema>;
 
 /**
- * The bounds the state is sent under. Six recent messages rather than
- * addressing's ten, because the summary and the output history now carry what
- * the older messages carried; the judged message is kept whole up to a budget
+ * The bounds the state is sent under. Three recent messages rather than
+ * addressing's ten: the summary and the output history carry what the older
+ * messages carried, and the 2026-10-18 context ablation found three to score
+ * the same as six on the holdout at a fifth fewer bytes, while putting the
+ * judged message before the context cost three points of carry-up F1 and
+ * dropping the parent cost precision; the judged message is kept whole up to a budget
  * that held every production turn the first corpus contained, with its
  * opening and its conclusion kept around a middle ellipsis past that. The
  * summary bound holds a full six-section compaction handoff.
  */
-export const TURN_DISPOSITION_MAX_RECENT_MESSAGES = 6;
+export const TURN_DISPOSITION_MAX_RECENT_MESSAGES = 3;
 export const TURN_DISPOSITION_MAX_RECENT_MESSAGE_CODE_POINTS = 700;
 export const TURN_DISPOSITION_MAX_TURN_CODE_POINTS = 6_000;
 export const TURN_DISPOSITION_MAX_TITLE_CODE_POINTS = 200;

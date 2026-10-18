@@ -92,6 +92,28 @@ pnpm --filter @rally/agent-harness eval:turn-disposition:slices -- \
   --report "$EVAL_DIR/jev.json" --cases "$EVAL_DIR/cases.jsonl" --labels "$EVAL_DIR/labels-merged.jsonl" --threshold 0.5
 ```
 
+## Prompt optimization
+
+`gepa.ts` evolves the disposition question and the context policy together
+over the development half: a candidate is scored on every development case
+with JEV, a reflection model (`--reflector`, Astra by default) reads a
+parent's failures and proposes one child, and parents are drawn from the
+Pareto front over per-case scores. Every third child may change only the
+context policy, so what context the decision needs is tested on its own.
+`--holdout` then scores the baseline and the top candidates (plus any named
+with `--include`) on the untouched holdout, twice each, which is the only
+number that counts. A pool file of hand-written context variants run through
+`--holdout --top 0 --include …` is a clean ablation of the context alone.
+
+```bash
+dotenv -e .env.local -- pnpm --filter @rally/agent-harness eval:turn-disposition:gepa -- \
+  --cases "$EVAL_DIR/cases.jsonl" --labels "$EVAL_DIR/labels-merged.jsonl" \
+  --output "$EVAL_DIR/gepa-candidates.jsonl" --iterations 30 --concurrency 6
+pnpm --filter @rally/agent-harness eval:turn-disposition:gepa -- \
+  --cases "$EVAL_DIR/cases.jsonl" --labels "$EVAL_DIR/labels-merged.jsonl" \
+  --output "$EVAL_DIR/gepa-candidates.jsonl" --holdout --top 3 --include c08
+```
+
 Every report binds itself to the SHA-256 of the cases and the labels it
 read, and to the source files that shaped the request, so a stale report
 cannot pass for a current one. Only content-free aggregates leave the
