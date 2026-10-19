@@ -22,6 +22,7 @@ import { conversationObjectName, workspaceDOName } from "../src/durable-objects/
 import { prepareSessionImport } from "../src/services/session-import-files";
 import { SessionImportRunService } from "../src/services/session-import-run-service";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
+import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 import { useOpenRouterDouble, type ProviderCall } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
@@ -642,5 +643,54 @@ describe("a conversation import run", () => {
     expect(await runInDurableObject(child(run.workstreamId, run.substreamId), (_instance, state) =>
       state.storage.sql.exec<{ stop_requested_at: number | null }>(`SELECT stop_requested_at FROM substream_loops`).one().stop_requested_at)).toBeNull();
     expect(await service.abandon(crypto.randomUUID())).toEqual({ abandoned: false });
+  }, 60_000);
+
+  /** Make the Organization's watch on `workstreamId` due, and run its alarm. */
+  async function runReservationWatch(workstreamId: string): Promise<void> {
+    await runInDurableObject(workspace(), async (_instance, state) => {
+      state.storage.sql.exec("UPDATE import_reservation_reclaim SET due_at = ? WHERE parent_id = ?", Date.now() - 1, workstreamId);
+      await state.storage.setAlarm(Date.now());
+    });
+    await runDurableObjectAlarm(workspace());
+  }
+
+  const watchedReservations = (workstreamId: string) => runInDurableObject(workspace(), (_instance, state) => state.storage.sql
+    .exec<{ due_at: number }>("SELECT due_at FROM import_reservation_reclaim WHERE parent_id = ?", workstreamId).toArray());
+
+  it("archives an import reservation whose thread has not opened an hour on, with no window or run left to end it", async () => {
+    const spaceId = await importSpace();
+    const clientMessageId = crypto.randomUUID();
+    const reservedAt = Date.now();
+    // A start cut off right after its reservation: nothing launched, nothing retired.
+    const { workstreamId } = await new WorkstreamObjectCreationService(creationEnv(), AUTH).reserveImport({
+      title: "Cut off", objective: "Cut off", clientMessageId, participantUserIds: [], scope: "personal", spaceIds: [spaceId],
+    }, `session-import:${clientMessageId}:${SOURCE_URL}`);
+    const listed = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ archived_at: number | null }>(
+      `SELECT archived_at FROM channels WHERE workstream_id = ?`, workstreamId).one().archived_at);
+    const [watch] = await watchedReservations(workstreamId);
+    expect(watch!.due_at - reservedAt).toBeGreaterThanOrEqual(3_600_000);
+    expect(watch!.due_at - Date.now()).toBeLessThanOrEqual(3_600_000);
+    expect(await listed()).toBeNull();
+
+    await runReservationWatch(workstreamId);
+
+    expect(await listed()).not.toBeNull();
+    expect(await env.DB.prepare(`SELECT state, error_code FROM workstream_create_receipts WHERE workstream_id = ?`)
+      .bind(workstreamId).first()).toEqual({ state: "failed", error_code: "session_import_unfinished" });
+    expect(await watchedReservations(workstreamId)).toEqual([]);
+  }, 60_000);
+
+  it("drops the watch on an import that opened its thread, and leaves the thread", async () => {
+    const service = new SessionImportRunService(creationEnv(), AUTH);
+    const workstreamId = await openedThread(service);
+    expect(await watchedReservations(workstreamId)).toHaveLength(1);
+
+    await runReservationWatch(workstreamId);
+
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ archived_at: number | null }>(
+      `SELECT archived_at FROM channels WHERE workstream_id = ?`, workstreamId).one().archived_at)).toBeNull();
+    expect(await env.DB.prepare(`SELECT state FROM workstream_create_receipts WHERE workstream_id = ?`)
+      .bind(workstreamId).first()).toEqual({ state: "completed" });
+    expect(await watchedReservations(workstreamId)).toEqual([]);
   }, 60_000);
 });
