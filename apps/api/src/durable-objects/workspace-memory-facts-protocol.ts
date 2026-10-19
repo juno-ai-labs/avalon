@@ -204,6 +204,47 @@ export const WorkspaceMemoryForgetResultSchema = deferredZodSchema(() => z.discr
   z.strictObject({ outcome: z.literal("not_forgettable"), subjectKind: MemorySubjectKindSchema }),
 ]));
 
+// -- Review -------------------------------------------------------------------
+
+/**
+ * One person's review of what Rally remembers, outside any conversation: their
+ * own facts, and the Organization's and Channels' facts they may see. Expired
+ * facts are included and marked by the caller against its own clock, so the
+ * read takes no `now`.
+ */
+export const WorkspaceMemoryReviewRequestSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: IdSchema,
+  userId: z.string().min(1),
+}));
+
+export const WorkspaceMemoryReviewResultSchema = deferredZodSchema(() => z.strictObject({
+  /** The person's own active facts, newest first, expired included. */
+  own: z.array(MemoryFactSchema),
+  /** Organization facts, then Channel facts, each newest first, expired included. */
+  shared: z.array(MemoryFactSchema),
+  /** Display titles for the facts' subjects and sources, keyed as recall keys them. */
+  titles: z.array(z.strictObject({ key: z.string().min(1), title: z.string() })),
+  /** Whether the person administers the Organization, which is what removing a shared fact takes. */
+  administrator: z.boolean(),
+}));
+
+/** Removing one reviewed fact. Not receipted: a repeat answers `already_retracted`. */
+export const WorkspaceMemoryReviewForgetRequestSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: IdSchema,
+  userId: z.string().min(1),
+  factId: z.string().min(1),
+  now: InstantSchema,
+}));
+
+export const WorkspaceMemoryReviewForgetResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
+  z.strictObject({ outcome: z.literal("retracted"), fact: MemoryFactSchema, retractedAt: InstantSchema }),
+  z.strictObject({ outcome: z.literal("already_retracted"), fact: MemoryFactSchema, retractedAt: InstantSchema }),
+  /** No such fact, or not one this person's review lists: the two read the same, so neither leaks. */
+  z.strictObject({ outcome: z.literal("not_found") }),
+  /** A fact the person may see but not remove: the Organization's or a Channel's, to a non-administrator. */
+  z.strictObject({ outcome: z.literal("not_removable") }),
+]));
+
 // -- Sweep --------------------------------------------------------------------
 
 /**
@@ -350,3 +391,7 @@ export type WorkspaceMemorySweepCandidatesRequest = z.infer<typeof WorkspaceMemo
 export type WorkspaceMemorySweepCandidatesResult = z.infer<typeof WorkspaceMemorySweepCandidatesResultSchema>;
 export type WorkspaceMemoryApplySweepRequest = z.infer<typeof WorkspaceMemoryApplySweepRequestSchema>;
 export type WorkspaceMemoryApplySweepResult = z.infer<typeof WorkspaceMemoryApplySweepResultSchema>;
+export type WorkspaceMemoryReviewRequest = z.infer<typeof WorkspaceMemoryReviewRequestSchema>;
+export type WorkspaceMemoryReviewResult = z.infer<typeof WorkspaceMemoryReviewResultSchema>;
+export type WorkspaceMemoryReviewForgetRequest = z.infer<typeof WorkspaceMemoryReviewForgetRequestSchema>;
+export type WorkspaceMemoryReviewForgetResult = z.infer<typeof WorkspaceMemoryReviewForgetResultSchema>;

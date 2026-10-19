@@ -11,6 +11,10 @@ import {
   type WorkspaceInvitation,
   type WorkspaceInvitationPreview,
   type WorkspaceInvitationRole,
+  MemoryForgetResponseSchema,
+  MemoryReviewSchema,
+  type MemoryForgetResponse,
+  type MemoryReview,
 } from "@rally/contracts";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import type { OrganizationUsage, PlanId } from "@rally/contracts/usage";
@@ -33,6 +37,8 @@ import { SlackAgentService } from "./slack-agent-service";
 import { rebuildDigestSchedulesForTimezone } from "./digest-service";
 import { workspaceDOName } from "../durable-objects/names";
 import { PersonalSystemPromptRecordSchema } from "../durable-objects/personal-system-prompt";
+import type { MemoryFact } from "../durable-objects/workspace-memory-facts-protocol";
+import { parseMemorySource } from "../durable-objects/workspace-memory-facts-storage";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import {
   emitProductUsageTelemetry,
@@ -459,6 +465,50 @@ export class WorkspaceService {
         personalSystemPrompt: text,
       }));
     return { personalSystemPrompt };
+  }
+
+  /**
+   * What Rally remembers, as this person reviews it: their own facts, then the
+   * Organization's and Channels' they may see. `WorkspaceDO` decides which
+   * facts and whether the person administers; this names them for the client.
+   */
+  async getMyMemoryReview(): Promise<MemoryReview> {
+    const now = Date.now();
+    const review = await (await this.workspaceObject()).reviewMemoryFacts({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: this.auth.userId,
+    });
+    const titles = new Map(review.titles.map((entry) => [entry.key, entry.title]));
+    return MemoryReviewSchema.parse({
+      own: review.own.map((fact) => memoryReviewFact(fact, titles, now, true)),
+      shared: review.shared.map((fact) => memoryReviewFact(fact, titles, now, review.administrator)),
+    });
+  }
+
+  /** Remove one fact from this person's review; a repeat answers as the first did. */
+  async forgetMyMemory(factId: string): Promise<MemoryForgetResponse> {
+    const result = await (await this.workspaceObject()).forgetReviewedMemoryFact({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: this.auth.userId,
+      factId,
+      now: Date.now(),
+    });
+    switch (result.outcome) {
+      case "not_found":
+        throw new ApiError(404, "memory_fact_not_found", "That memory was not found");
+      case "not_removable":
+        throw new ApiError(
+          403,
+          "memory_fact_not_removable",
+          "Only an administrator can remove what Rally remembers about the Organization or a Channel",
+        );
+      case "retracted":
+      case "already_retracted":
+        return MemoryForgetResponseSchema.parse({
+          factId: result.fact.factId,
+          retractedAt: new Date(result.retractedAt).toISOString(),
+        });
+    }
   }
 
   async updateMyTimezone(timezone: string, followDevice = false) {
@@ -1289,4 +1339,39 @@ export async function reportDeviceTimezone(env: Env, userId: string, timezone: s
   ).bind(timezone, nowIso(), userId, timezone).first<{ id: string }>();
   if (moved) await rederiveDigestsForTimezone(env, userId, timezone);
   return readUserTimezone(env, userId);
+}
+
+/**
+ * One reviewed fact as the client reads it: instants as RFC 3339, expiry and
+ * a future start judged against `now`, and the first source conversation as
+ * the "from" link with its title.
+ */
+function memoryReviewFact(
+  fact: MemoryFact,
+  titles: ReadonlyMap<string, string>,
+  now: number,
+  removable: boolean,
+): unknown {
+  const first = fact.sourceConversations[0] ?? "";
+  const title = titles.get(first) ?? null;
+  const parsed = parseMemorySource(first);
+  const source = parsed.kind === "space"
+    ? { kind: "channel", spaceId: parsed.spaceId, title }
+    : { ...parsed, title };
+  return {
+    factId: fact.factId,
+    subjectKind: fact.subjectKind,
+    subjectTitle: fact.subjectKind === "channel" ? titles.get(`channel:${fact.subjectId}`) ?? null : null,
+    kind: fact.kind,
+    text: fact.text,
+    validFrom: fact.validFrom === null ? null : new Date(fact.validFrom).toISOString(),
+    validUntil: fact.validUntil === null ? null : new Date(fact.validUntil).toISOString(),
+    recordedAt: new Date(fact.createdAt).toISOString(),
+    expired: fact.validUntil !== null && fact.validUntil <= now,
+    upcoming: fact.validFrom !== null && fact.validFrom > now,
+    conflict: fact.conflict,
+    derivedFrom: fact.derivedFrom,
+    source,
+    removable,
+  };
 }
