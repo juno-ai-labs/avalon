@@ -785,8 +785,8 @@ column catalog; what follows is only what WorkspaceDO still holds.
   collections with natural-key deduplication and targeted queries. Prose
   memory is `memory_facts`, keyed by subject and carrying its source
   conversations, with `memory_sweep_receipts`, `memory_fact_receipts`, and the
-  digest copy-sync lane's `memory_digest_holders`, `memory_digest_sync` and
-  `memory_digest_sync_state` beside it (WorkspaceDO migration 117; each
+  digest copy-sync lane's `memory_digest_holders`, `memory_digest_holder_facts`,
+  `memory_digest_sync`, `memory_digest_sync_state` and `memory_revision` beside it (WorkspaceDO migration 117; each
   conversation object holds its `memory_digest_copies`, migration 77)
   ([`agent-memory.md`](agent-memory.md#data-model)); the retired
   `memory_items`, `memory_mutations` and `memory_index_outbox` were imported

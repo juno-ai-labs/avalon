@@ -2,44 +2,18 @@ import { WorkspaceIdSchema } from "@rally/contracts";
 import { RegionSchema } from "@rally/contracts/regions";
 import { z } from "zod";
 
-import { MemoryConversationSchema, memorySourceOf, type MemoryConversation } from "./workspace-memory-facts-protocol";
+import {
+  MemoryConversationSchema,
+  memoryConversationKeyOf,
+  type MemoryConversation,
+} from "./workspace-memory-facts-protocol";
 
 /**
- * Every conversation that holds a memory digest copy hears when that copy may
- * now show a fact it should not.
- *
- * A conversation keeps one digest copy per principal that acted in it (agent
- * memory step 2), refreshed from `memoryDigest` here. What decides a copy's
- * contents — the facts, and who may open each fact's sources and subject —
- * lives in this object, while the copy lives in the conversation's own object,
- * so keeping them in step is a cross-object write. It is done the way channel
- * colour sync does it (`channel-color-sync.ts`), one for one: `memoryDigest`
- * records each conversation it answers in `memory_digest_holders`; SQLite
- * triggers on every change that can withdraw a fact from a reader, the
- * retraction in `forgetMemoryFact`, and a sweep that retracts or supersedes a
- * fact (`applyMemorySweep`) mark the holders in `memory_digest_sync` in
- * the same transaction as the change; the alarm sends each due row to the
- * Queue; the consumer reads the conversation back through
- * `memoryDigestSyncWork`, refreshes its copies, and settles the row only if
- * nothing has marked it again since (`revision`).
- *
- * **Every holder, not the affected ones.** Which copies a scope change or a
- * retraction touches depends on which facts each copy holds and on the
- * sources those facts carry, which only the conversation knows. Marking every
- * holder is one statement and cannot miss one; the batch limit below keeps the
- * fan-out to one batch in flight per Organization.
- *
- * **Only what withdraws.** A scope change in either direction (a narrowing
- * withdraws, and a widening is cheap to answer the same way), and a person
- * stopping being a participant. There is no DELETE trigger on the viewer
- * tables: projection rebuilds delete and reinsert their rows in bulk, which
- * would mark every holder on every rebuild while withdrawing nothing the
- * `is_participant` update does not already cover. A fact being added is not
- * marked either: copies widen on their own refreshes (a run's settle, a sweep).
- *
- * **One batch in flight per Organization**, for colour sync's reason: each
- * message costs this object a call and the conversation a refresh that calls
- * back here. See `docs/agent-memory.md`.
+ * The copy-sync lane: `WorkspaceDO` marks every conversation holding a memory
+ * digest copy that may now show a fact its reader should not see, and the
+ * alarm hands each to the Queue for a refresh, channel colour sync's shape
+ * (`channel-color-sync.ts`). What marks, and why, is in
+ * `docs/agent-memory.md#the-digest`.
  */
 
 /**
@@ -49,45 +23,98 @@ import { MemoryConversationSchema, memorySourceOf, type MemoryConversation } fro
  */
 const NEXT_REVISION = "UPDATE memory_digest_sync_state SET revision = revision + 1 WHERE id = 1;";
 const CURRENT_REVISION = "(SELECT revision FROM memory_digest_sync_state WHERE id = 1)";
-const REMARK = "ON CONFLICT(conversation) DO UPDATE SET revision = excluded.revision, attempts = 0, not_before = 0, in_flight = 0;";
+/**
+ * A mark is a change in what some copy may show, so it also advances the
+ * token every digest read is stamped with: the refresh it asks for reads above
+ * every read taken before the change, and a copy keeps the newer read.
+ */
+const NEXT_MEMORY_REVISION = "UPDATE memory_revision SET revision = revision + 1 WHERE id = 1;";
+const REMARK = "ON CONFLICT(conversation) DO UPDATE SET revision = excluded.revision, attempts = 0, not_before = 0, in_flight = 0";
 
-/** Mark every holder; `WHERE true` keeps SQLite from reading `ON CONFLICT` as a join constraint. */
-const MARK = `${NEXT_REVISION}
+/** Mark the holders `holders` selects (a predicate over `memory_digest_holders`). */
+function markWhere(holders: string): string {
+  return `${NEXT_REVISION}
+     ${NEXT_MEMORY_REVISION}
      INSERT INTO memory_digest_sync(conversation, revision, attempts, not_before)
-       SELECT conversation, ${CURRENT_REVISION}, 0, 0 FROM memory_digest_holders WHERE true
-       ${REMARK}`;
+       SELECT conversation, ${CURRENT_REVISION}, 0, 0 FROM memory_digest_holders WHERE ${holders}
+       ${REMARK};`;
+}
+
+const MARK_ALL = markWhere("true");
+/** Every conversation of one thread: its Main and its Breakouts. */
+const THREAD_HOLDERS = "parent_kind = 'workstream' AND parent_id = NEW.workstream_id";
+const SPACE_HOLDERS = "parent_kind = 'space' AND parent_id = NEW.space_id";
+
+/** The holders whose copy was read with a fact one of whose sources matches `source` (over `source.value`). */
+function holdersOfFactsFrom(source: string): string {
+  return `conversation IN (
+         SELECT held.conversation FROM memory_digest_holder_facts held
+           JOIN memory_facts fact ON fact.fact_id = held.fact_id
+          WHERE EXISTS (SELECT 1 FROM json_each(fact.source_conversations_json) source WHERE ${source}))`;
+}
 
 /**
- * The triggers by table. Exported because a rebuild of any of these tables
- * drops its trigger and has to put the same text back (as migration 102 did for
- * channel colour sync's `spaces` trigger).
+ * A participant joining or leaving changes that conversation's audience, so
+ * its holders are marked. Leaving also takes the conversation away from the
+ * person, which withdraws what was learned there from their copies everywhere
+ * and from every copy whose audience includes them: the holders of a fact
+ * sourced here are marked too. Joining widens an audience and hides nothing.
+ */
+function participantTriggers(table: string, name: string, holders: string, source: string): readonly string[] {
+  return [
+    `CREATE TRIGGER memory_digest_${name}_participant_insert AFTER INSERT ON ${table}
+   WHEN NEW.is_participant = 1 BEGIN
+     ${markWhere(holders)}
+   END`,
+    `CREATE TRIGGER memory_digest_${name}_participant_update AFTER UPDATE OF is_participant ON ${table}
+   WHEN OLD.is_participant IS NOT NEW.is_participant BEGIN
+     ${markWhere(`(${holders}) OR (OLD.is_participant = 1 AND ${holdersOfFactsFrom(source)})`)}
+   END`,
+  ];
+}
+
+function visibilityTrigger(table: string, name: string): string {
+  return `CREATE TRIGGER memory_digest_${name}_visibility AFTER UPDATE OF scope, archived_at ON ${table}
+   WHEN OLD.scope IS NOT NEW.scope OR OLD.archived_at IS NOT NEW.archived_at BEGIN
+     ${MARK_ALL}
+   END`;
+}
+
+/**
+ * The triggers by table: one per column the visibility rule
+ * (`openableByPerson`, `conversationAudience`) reads. Exported because a
+ * rebuild of any of these tables drops its triggers and has to put the same
+ * text back (as migration 102 did for channel colour sync's `spaces` trigger).
+ *
+ * No `DELETE` triggers: projection rebuilds delete and reinsert viewer rows in
+ * bulk. A rebuild's reinserts mark that one thread's (or Channel's) holders,
+ * which is bounded; a participant a rebuild removed reaches copies at their
+ * next refresh.
  */
 export const MEMORY_DIGEST_SYNC_TRIGGERS = {
-  channels: `CREATE TRIGGER memory_digest_thread_scope AFTER UPDATE OF scope ON channels
+  channels: [visibilityTrigger("channels", "thread")],
+  breakouts: [visibilityTrigger("breakouts", "breakout")],
+  spaces: [visibilityTrigger("spaces", "space")],
+  // A thread's sources are its Main and its Breakouts, which it lists.
+  channel_viewers: participantTriggers("channel_viewers", "thread", THREAD_HOLDERS,
+    "source.value = NEW.workstream_id OR substr(source.value, 1, length(NEW.workstream_id) + 1) = NEW.workstream_id || '/'"),
+  breakout_viewers: participantTriggers("breakout_viewers", "breakout", THREAD_HOLDERS,
+    "source.value = NEW.workstream_id || '/' || NEW.substream_id"),
+  space_viewers: participantTriggers("space_viewers", "space", SPACE_HOLDERS, "source.value = 'space:' || NEW.space_id"),
+  // Member or guest, administrator, and active are what a person reader is
+  // resolved to; a revision that changed none of them withdraws nothing.
+  workspace_member_status: [`CREATE TRIGGER memory_digest_member_relationship AFTER UPDATE OF relationship_json, active ON workspace_member_status
+   WHEN OLD.active IS NOT NEW.active
+     OR json_extract(OLD.relationship_json, '$.accessClass') IS NOT json_extract(NEW.relationship_json, '$.accessClass')
+     OR json_extract(OLD.relationship_json, '$.role') IS NOT json_extract(NEW.relationship_json, '$.role')
+     OR json_extract(OLD.relationship_json, '$.status') IS NOT json_extract(NEW.relationship_json, '$.status') BEGIN
+     ${MARK_ALL}
+   END`],
+  automation_directory: [`CREATE TRIGGER memory_digest_sidekick_scope AFTER UPDATE OF scope ON automation_directory
    WHEN OLD.scope IS NOT NEW.scope BEGIN
-     ${MARK}
-   END`,
-  breakouts: `CREATE TRIGGER memory_digest_breakout_scope AFTER UPDATE OF scope ON breakouts
-   WHEN OLD.scope IS NOT NEW.scope BEGIN
-     ${MARK}
-   END`,
-  spaces: `CREATE TRIGGER memory_digest_space_scope AFTER UPDATE OF scope ON spaces
-   WHEN OLD.scope IS NOT NEW.scope BEGIN
-     ${MARK}
-   END`,
-  channel_viewers: `CREATE TRIGGER memory_digest_thread_participant AFTER UPDATE OF is_participant ON channel_viewers
-   WHEN OLD.is_participant = 1 AND NEW.is_participant = 0 BEGIN
-     ${MARK}
-   END`,
-  breakout_viewers: `CREATE TRIGGER memory_digest_breakout_participant AFTER UPDATE OF is_participant ON breakout_viewers
-   WHEN OLD.is_participant = 1 AND NEW.is_participant = 0 BEGIN
-     ${MARK}
-   END`,
-  space_viewers: `CREATE TRIGGER memory_digest_space_participant AFTER UPDATE OF is_participant ON space_viewers
-   WHEN OLD.is_participant = 1 AND NEW.is_participant = 0 BEGIN
-     ${MARK}
-   END`,
-} as const;
+     ${MARK_ALL}
+   END`],
+} as const satisfies Record<string, readonly string[]>;
 
 /** WorkspaceDO migration 117. */
 export const MEMORY_DIGEST_SYNC_MIGRATION: readonly string[] = [
@@ -98,6 +125,15 @@ export const MEMORY_DIGEST_SYNC_MIGRATION: readonly string[] = [
     substream_id TEXT NOT NULL,
     refreshed_at INTEGER NOT NULL
   ) STRICT`,
+  // Which facts each principal's copy in a conversation was last read with, so
+  // a retraction marks only the holders that hold the fact.
+  `CREATE TABLE memory_digest_holder_facts (
+    conversation TEXT NOT NULL,
+    principal TEXT NOT NULL,
+    fact_id TEXT NOT NULL,
+    PRIMARY KEY (conversation, principal, fact_id)
+  ) STRICT`,
+  `CREATE INDEX memory_digest_holder_facts_fact_idx ON memory_digest_holder_facts(fact_id)`,
   `CREATE TABLE memory_digest_sync (
     conversation TEXT PRIMARY KEY,
     revision INTEGER NOT NULL CHECK (revision > 0),
@@ -112,21 +148,69 @@ export const MEMORY_DIGEST_SYNC_MIGRATION: readonly string[] = [
   ) STRICT`,
   // Nothing holds a copy yet, so there is no backfill; the first mark is 1.
   "INSERT INTO memory_digest_sync_state(id, revision) VALUES (1, 0)",
-  ...Object.values(MEMORY_DIGEST_SYNC_TRIGGERS),
+  // The ordering token of every digest read (`WorkspaceMemoryDigestResultSchema`).
+  `CREATE TABLE memory_revision (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    revision INTEGER NOT NULL
+  ) STRICT`,
+  "INSERT INTO memory_revision(id, revision) VALUES (1, 0)",
+  ...Object.values(MEMORY_DIGEST_SYNC_TRIGGERS).flat(),
 ];
+
+/** Advance `memory_revision` inside the caller's transaction and answer the new value. */
+export function nextMemoryRevision(sql: SqlStorage): number {
+  return sql.exec<{ revision: number }>(
+    "UPDATE memory_revision SET revision = revision + 1 WHERE id = 1 RETURNING revision",
+  ).one().revision;
+}
+
+export function currentMemoryRevision(sql: SqlStorage): number {
+  return sql.exec<{ revision: number }>("SELECT revision FROM memory_revision WHERE id = 1").one().revision;
+}
 
 /** Mark every conversation holding a copy, inside the caller's transaction. */
 export function markMemoryDigestHolders(sql: SqlStorage): void {
-  sql.exec(MARK);
+  sql.exec(MARK_ALL);
 }
 
-/** Record that `conversation` holds a copy now, so the lane can reach it. */
-export function recordMemoryDigestHolder(sql: SqlStorage, conversation: MemoryConversation, now: number): void {
+/**
+ * Mark only the holders whose copy was read with one of `factIds`, inside the
+ * caller's transaction; `true` when any was marked.
+ */
+export function markMemoryDigestHoldersFor(sql: SqlStorage, factIds: readonly string[]): boolean {
+  if (factIds.length === 0) return false;
+  sql.exec(NEXT_REVISION);
+  sql.exec(NEXT_MEMORY_REVISION);
+  return sql.exec<{ conversation: string }>(
+    `INSERT INTO memory_digest_sync(conversation, revision, attempts, not_before)
+       SELECT DISTINCT conversation, ${CURRENT_REVISION}, 0, 0 FROM memory_digest_holder_facts
+        WHERE fact_id IN (SELECT value FROM json_each(?))
+       ${REMARK}
+     RETURNING conversation`,
+    JSON.stringify(factIds),
+  ).toArray().length > 0;
+}
+
+/**
+ * Record that one principal's copy in `conversation` now holds `factIds`, so
+ * the lane can reach it: the conversation as a holder, and its facts replaced.
+ */
+export function recordMemoryDigestHolder(
+  sql: SqlStorage,
+  input: { conversation: MemoryConversation; principal: string; factIds: readonly string[]; now: number },
+): void {
+  const key = memoryConversationKeyOf(input.conversation);
   sql.exec(
     `INSERT INTO memory_digest_holders(conversation, parent_kind, parent_id, substream_id, refreshed_at)
        VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(conversation) DO UPDATE SET refreshed_at = excluded.refreshed_at`,
-    memorySourceOf(conversation), conversation.parentKind, conversation.parentId, conversation.substreamId, now,
+    key, input.conversation.parentKind, input.conversation.parentId, input.conversation.substreamId, input.now,
+  );
+  sql.exec("DELETE FROM memory_digest_holder_facts WHERE conversation = ? AND principal = ?", key, input.principal);
+  sql.exec(
+    `INSERT INTO memory_digest_holder_facts(conversation, principal, fact_id)
+       SELECT ?, ?, value FROM json_each(?)`,
+    key, input.principal, JSON.stringify(input.factIds),
   );
 }
 
@@ -135,7 +219,7 @@ export const MemoryDigestSyncMessageSchema = z.strictObject({
   type: z.literal("memory_digest_sync"),
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
-  /** `memorySourceOf` the conversation: the holder's key. */
+  /** `memoryConversationKeyOf` the conversation: the holder's key. */
   conversation: z.string().min(1),
   revision: z.number().int().positive(),
 });
@@ -281,6 +365,7 @@ export function memoryDigestSyncWork(
   };
   if (!conversationLive(sql, conversation)) {
     sql.exec("DELETE FROM memory_digest_holders WHERE conversation = ?", input.conversation);
+    sql.exec("DELETE FROM memory_digest_holder_facts WHERE conversation = ?", input.conversation);
     completeMemoryDigestSync(sql, input.conversation, input.revision);
     return null;
   }

@@ -183,7 +183,7 @@ describe("prompt renderers", () => {
             }),
           ],
         }),
-        hash: "f4a0115120a608e1aa83d4eb293a471a06db92a7d1e334e20bdf1340d1b11f5c",
+        hash: "0a29ae883c12b127b3e3ebd5fbeea0d0eee289032a2ccc862aa1e59c6f734b60",
       },
       compactionCheckpoint: {
         actual: renderCompactionCheckpointContent(
@@ -601,7 +601,7 @@ describe("prompt renderers", () => {
     expect(transcript[0]!.text.endsWith("…")).toBe(true);
   });
 
-  it("bounds each sweep message and marks a window that dropped its older half", () => {
+  it("bounds each sweep message and marks a window the conversation continues past", () => {
     const long = "m".repeat(MAXIMUM_MEMORY_SWEEP_MESSAGE_CHARACTERS + 500);
     const rendered = renderMemorySweepMessages({
       now: "2026-10-19T09:00:00.000Z",
@@ -613,7 +613,7 @@ describe("prompt renderers", () => {
       }],
       windowTruncated: true,
     });
-    expect(rendered[1]!.content).toContain("older messages in this window were omitted");
+    expect(rendered[1]!.content).toContain("the conversation continues after this window and a later sweep reads it");
     const transcript = JSON.parse(rendered[1]!.content.split("\n").at(-1)!) as Array<{ text: string }>;
     expect(Array.from(transcript[0]!.text)).toHaveLength(MAXIMUM_MEMORY_SWEEP_MESSAGE_CHARACTERS + 1);
     expect(transcript[0]!.text.endsWith("…")).toBe(true);
@@ -1120,7 +1120,8 @@ describe("memory digest", () => {
       ],
     }).split("\n");
 
-    expect(lines.slice(3)).toEqual([
+    // No person fact, so no personal note: the heading, a blank line, then the group.
+    expect(lines.slice(2)).toEqual([
       "About the Organization:",
       "- Disagreement: The fiscal year starts in February. [o-conf01]",
       "- Juno Labs releases on Thursdays. [o-plain1]",
@@ -1181,6 +1182,40 @@ describe("memory digest", () => {
         memoryFact({ factId: "p-extern", subjectKind: "person", text: "A customer said the price is too high.", derivedFrom: "external" }),
       ],
     })).toBe("");
+  });
+
+  it("names each fact by its full id, which two facts minted in the same minute share the start of", () => {
+    const lines = renderMemoryDigest({
+      now: MEMORY_NOW,
+      budget: 4000,
+      facts: [
+        memoryFact({ factId: "0199f1a1-7c00-7000-8000-000000000001", subjectKind: "organization", text: "Releases are on Thursdays.", createdAt: MEMORY_NOW - 2 * MEMORY_DAY_MS }),
+        memoryFact({ factId: "0199f1a1-7c00-7000-8000-000000000002", subjectKind: "organization", text: "Standups are at ten." }),
+      ],
+    }).split("\n");
+
+    expect(lines.slice(3)).toEqual([
+      "- Standups are at ten. [0199f1a1-7c00-7000-8000-000000000002]",
+      "- Releases are on Thursdays. [0199f1a1-7c00-7000-8000-000000000001]",
+    ]);
+  });
+
+  it("says the person's facts are the sender's only while a person fact is shown", () => {
+    const organizationOnly = renderMemoryDigest({
+      now: MEMORY_NOW,
+      budget: 4000,
+      facts: [memoryFact({ factId: "o-std001", subjectKind: "organization", text: "Releases are on Thursdays." })],
+    });
+    expect(organizationOnly).toBe([MEMORY_HEADING, "", "About the Organization:", "- Releases are on Thursdays. [o-std001]"].join("\n"));
+
+    // A budget with room for the heading and the trailer alone cuts the
+    // person's only fact, and the note about the person goes with it.
+    const cut = [MEMORY_HEADING, "", "(1 more remembered fact was left out.)"].join("\n");
+    expect(renderMemoryDigest({
+      now: MEMORY_NOW,
+      budget: cut.length,
+      facts: [memoryFact({ factId: "p-std001", subjectKind: "person", text: "Prefers short answers." })],
+    })).toBe(cut);
   });
 
   it("opens with the heading that denies the facts authority", () => {
