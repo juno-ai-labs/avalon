@@ -792,7 +792,9 @@ export function createConversationsPlugin(
       const anchor = Date.parse(after.placedAt);
       return placed < anchor || (placed === anchor && channelItemId(item) > after.id);
     });
-    const names = await ports.userNames([...new Set(items.flatMap((item) => {
+    // Only the items this page can render: a feed page holds up to 250, and
+    // their authors would overrun one D1 statement's bound parameters.
+    const names = await ports.userNames([...new Set(items.slice(0, limit).flatMap((item) => {
       const userId = item.kind === "thread" ? item.thread.createdByUserId
         : item.message.author.kind === "member" ? item.message.author.userId : null;
       return userId ? [userId] : [];

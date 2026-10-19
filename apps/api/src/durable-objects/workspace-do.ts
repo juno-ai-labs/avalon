@@ -5386,6 +5386,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** This object's own `WORKSPACE_DOS` name; see {@link selfObjectName}. */
   private readonly searchPublications = new Map<string, Promise<void>>();
   private readonly resourceSearchPace: ResourceSearchPace = { nextBatchAt: 0 };
+  private readonly channelMessageSearchPace: ResourceSearchPace = { nextBatchAt: 0 };
   private objectName: string | null = null;
   /**
    * When this instance last ran any socket callback: one of the signals the
@@ -7558,7 +7559,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       authorization_delivery: () =>
         sql.exec<{ due: number | null }>("SELECT MIN(not_before) AS due FROM authorization_delivery").one().due,
       resource_search: () => nextResourceSearchDueAt(sql, this.env, this.resourceSearchPace),
-      channel_message_search: () => nextChannelMessageSearchDueAt(sql, this.env, this.resourceSearchPace),
+      channel_message_search: () => nextChannelMessageSearchDueAt(sql, this.env, this.channelMessageSearchPace),
       space_default_publish: () => this.spaceStorage().nextDefaultPublicationDueAt(),
       space_bootstrap: () => this.spaceStorage().nextBootstrapDueAt(),
       channel_color_sync: () => nextChannelColorSyncAt(sql),
@@ -7722,7 +7723,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         catch { logWarn(this.env, "resource_search_dispatch_deferred", { workspace_id: workspaceId }); }
       }
       if (due("channel_message_search")) {
-        try { await publishChannelMessageSearch(this.state.storage.sql, this.env, workspaceId, this.resourceSearchPace); }
+        try { await publishChannelMessageSearch(this.state.storage.sql, this.env, workspaceId, this.channelMessageSearchPace); }
         catch { logWarn(this.env, "channel_message_search_dispatch_deferred", { workspace_id: workspaceId }); }
       }
       if (due("space_default_publish")) await this.instrumentWorkspaceAlarmPhase("space_default_publish", undefined, async () => {
