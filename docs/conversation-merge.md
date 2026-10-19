@@ -163,8 +163,15 @@ person's own words go out on the trailing side. It is drawn as the design's
   on a page not yet loaded, it opens the thread instead of fetching pages
   until the card turns up.
 - **The body,** as markdown with its embeds.
-- **The host's actions** under it: the hover row in a Thread; none in a
-  Channel.
+- **The shared message hover row** under it, in both Threads and Channels:
+  Copy, Speak when playback is available, and Image/PDF on desktop. Thread
+  merges also retain their eligible New breakout and Merge controls. Hover
+  and keyboard focus reveal the row; speech and an export in progress keep it
+  visible. Exports use the body's same mention and embed context.
+
+A Breakout result in its Thread can be merged onward into a Channel from this
+same row. It is also a candidate for the shared merge suggestion observer;
+[`conversation-suggestions.md`](conversation-suggestions.md) owns that path.
 
 ### The waterline
 
