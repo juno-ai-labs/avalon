@@ -15,7 +15,7 @@ export interface WorkspacePlacementDecision {
   source: "request_longitude" | "missing_request_metadata";
 }
 
-const placementCache = new WeakMap<D1Database, Map<string, Promise<WorkspacePlacementAffinity>>>();
+const placementCache = new WeakMap<D1Database, Map<string, WorkspacePlacementAffinity>>();
 const WORKSPACE_PLACEMENT_CACHE_LIMIT = 1_024;
 
 export function fallbackWorkspacePlacementAffinity(region: Region): WorkspacePlacementAffinity {
@@ -331,34 +331,31 @@ export async function workspacePlacementAffinity(
   const cached = databaseCache.get(key);
   if (cached) return cached;
 
-  const pending = (async () => {
-    try {
-      const row = await env.DB.prepare(
-        "SELECT placement_affinity FROM workspaces WHERE id = ? AND region = ?",
-      ).bind(workspaceId, env.AVALON_REGION).first<{ placement_affinity: string }>();
-      if (!row || !isWorkspacePlacementAffinityForRegion(env.AVALON_REGION, row.placement_affinity)) {
-        throw new Error("workspace_placement_affinity_unavailable");
-      }
-      return row.placement_affinity;
-    } catch (error) {
-      // Focused unit doubles and pre-migration local databases do not always
-      // expose the routing column. Production and staging fail closed so an
-      // orphan child can never win first placement from an arbitrary caller.
-      if (env.APP_ENV === "production" || env.APP_ENV === "staging") throw error;
-      return fallbackWorkspacePlacementAffinity(env.AVALON_REGION);
+  let affinity: WorkspacePlacementAffinity;
+  try {
+    const row = await env.DB.prepare(
+      "SELECT placement_affinity FROM workspaces WHERE id = ? AND region = ?",
+    ).bind(workspaceId, env.AVALON_REGION).first<{ placement_affinity: string }>();
+    if (!row || !isWorkspacePlacementAffinityForRegion(env.AVALON_REGION, row.placement_affinity)) {
+      throw new Error("workspace_placement_affinity_unavailable");
     }
-  })();
-  if (databaseCache.size >= WORKSPACE_PLACEMENT_CACHE_LIMIT) {
+    affinity = row.placement_affinity;
+  } catch (error) {
+    // Focused unit doubles and pre-migration local databases do not always
+    // expose the routing column. Production and staging fail closed so an
+    // orphan child can never win first placement from an arbitrary caller.
+    if (env.APP_ENV === "production" || env.APP_ENV === "staging") throw error;
+    return fallbackWorkspacePlacementAffinity(env.AVALON_REGION);
+  }
+  // D1 promises belong to the initiating request. A cancelled request can
+  // leave one pending forever; other requests must never inherit its I/O.
+  // Cache only the immutable value, after this request's read completes.
+  if (!databaseCache.has(key) && databaseCache.size >= WORKSPACE_PLACEMENT_CACHE_LIMIT) {
     const oldest = databaseCache.keys().next().value;
     if (oldest) databaseCache.delete(oldest);
   }
-  databaseCache.set(key, pending);
-  try {
-    return await pending;
-  } catch (error) {
-    databaseCache.delete(key);
-    throw error;
-  }
+  databaseCache.set(key, affinity);
+  return affinity;
 }
 
 export async function durableObjectStubForWorkspace<
