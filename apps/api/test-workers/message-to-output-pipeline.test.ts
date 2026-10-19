@@ -827,6 +827,7 @@ describe("a member's message travels the whole pipeline", () => {
       origin: "scheduled_wakeup",
       executionPrincipal: { type: "user" as const, userId: USER_ID },
       scheduledWakeupId: wakeupId,
+      conversation: { parentKind: "workstream" as const, substreamId: "0" as const, backgroundAgent: false },
     };
     const { runId, workflowInput, providerRequests } = await (async () => {
       try {
