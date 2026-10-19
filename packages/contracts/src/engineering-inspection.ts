@@ -385,10 +385,14 @@ export const EngineeringSqlLookupSchema = deferredZodSchema(() => lookupResultSc
 export type EngineeringSqlLookup = z.infer<typeof EngineeringSqlLookupSchema>;
 
 /**
- * The regional API Worker's D1 bindings, named as its `Env` names them. Each
- * region binds all five; `PLATFORM_DB` is one database shared by every region.
+ * The regional API Worker's D1 bindings the console may reach, named as its
+ * `Env` names them. `PLATFORM_DB` is one database shared by every region.
+ *
+ * `AUDIT_DB` is left out on purpose: it records privileged actions such as
+ * impersonation and support access, D1 has no read-only binding to offer in
+ * its place, and the console's own log never records the SQL it ran.
  */
-export const ENGINEERING_D1_DATABASES = ["DB", "TELEMETRY_DB", "AUDIT_DB", "USAGE_DB", "PLATFORM_DB"] as const;
+export const ENGINEERING_D1_DATABASES = ["DB", "TELEMETRY_DB", "USAGE_DB", "PLATFORM_DB"] as const;
 export const EngineeringD1DatabaseSchema = z.enum(ENGINEERING_D1_DATABASES);
 export type EngineeringD1Database = z.infer<typeof EngineeringD1DatabaseSchema>;
 
