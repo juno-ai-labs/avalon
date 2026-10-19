@@ -90,7 +90,9 @@ cursor results are not declared interchangeable with page-ID results.
 Because input-schema descriptions participate in that digest, the private
 compatibility recipe restores the old prose for each changed connector field.
 Frozen hashes from pre-cutover definitions test this independently of the recipe;
-model-facing schemas retain only the new pagination instructions.
+model-facing schemas retain only the new pagination instructions. Operations introduced after
+the cutover are excluded from that historical surface; adding a tool must not
+invalidate receipts for unchanged operations.
 
 ## Failure modes and limits
 
@@ -151,6 +153,16 @@ Existing connector, attachment, table, tool-selection, grounding and receipt sui
 authorized executors. `workstream-object-schema.test.ts` covers migration shape.
 
 ## Changelog
+
+### 2026-10-19 — Exclude new operations from the historical surface
+
+Adding Google's availability query changed the reconstructed pre-pagination hash
+and would invalidate existing receipts for unchanged Google operations. The
+reconstruction now excludes that post-cutover operation before hashing, while
+current tool registration still exposes it. Replacing the frozen expected hash
+was rejected because it would conceal the compatibility break rather than fix
+it; future post-cutover additions must extend the exclusion recipe and preserve
+the independently frozen hashes.
 
 ### 2026-10-18 — Scope page IDs to the conversation, not the run
 
