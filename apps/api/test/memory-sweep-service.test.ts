@@ -180,13 +180,20 @@ describe("the sweep attempt at settlement", () => {
     }]);
     expect(state(objectStore)).toMatchObject({
       swept_through_seq: 0, claim_from_seq: 0, claim_to_seq: 10, claim_attempt: 1, claim_at: NOW,
-      rest_until: memorySweepRestUntil(NOW, 0), retry_at: null,
+      // The claim leaves the alarm its rest, so a delivery lost with its release is tried again.
+      rest_until: memorySweepRestUntil(NOW, 0), retry_at: memorySweepRestUntil(NOW, 0),
     });
     // A second settlement behind it finds the conversation resting with the
     // same messages behind the cursor, and leaves the alarm a time to retry.
     expect(await attemptMemorySweep(env, target)).toEqual({ status: "skipped", reason: "resting" });
     expect(sent).toHaveLength(1);
     expect(state(objectStore)?.retry_at).toBe(NOW + MEMORY_SWEEP_REST_FLOOR_MS);
+    // The delivery never settled or released. At the rest the claim has timed
+    // out, and the alarm's attempt claims the same window again.
+    vi.setSystemTime(NOW + MEMORY_SWEEP_REST_FLOOR_MS);
+    expect(await attemptMemorySweep(env, target)).toEqual({ status: "published", fromSeq: 0, toSeq: 10, attempt: 2 });
+    expect(sent).toHaveLength(2);
+    expect(state(objectStore)).toMatchObject({ claim_attempt: 2, claim_at: NOW + MEMORY_SWEEP_REST_FLOOR_MS });
   });
 
   it("never sweeps a Channel's own feed in this release", async () => {
@@ -249,6 +256,9 @@ describe("the sweep run in the consumer", () => {
       fromSeq: 0, toSeq: 5, model: "test/primary",
       operations: [expect.objectContaining({ op: "add", subjectKind: "thread", validUntil: Date.parse("2026-10-30T23:59:59.000Z") })],
       factIds: [expect.any(String)],
+      // The store is told who spoke and which candidates the model saw, and fences to both.
+      speakerIds: [USER_ID, OTHER_ID],
+      candidateFactIds: [],
     }));
     // The cursor moved to the applied range; a sweep that wrote rests at the floor.
     expect(state(objectStore)).toMatchObject({ swept_through_seq: 5, consecutive_quiet: 0, claim_at: null, retry_at: null });

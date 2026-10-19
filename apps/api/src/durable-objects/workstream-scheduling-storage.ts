@@ -723,6 +723,11 @@ export class WorkstreamSchedulingStorage {
    * together spend one sweep and a failing model is not retried by every run
    * behind it. `null` when the conversation is resting or another claim is
    * in flight within `claimTimeoutMs`, both re-checked inside the write.
+   *
+   * The claim leaves `retry_at` at its rest: a delivery lost together with its
+   * release would otherwise hold the lane until an unrelated run settled, since
+   * the alarm reads nothing but `retry_at`. At the rest the claim has timed out
+   * and the attempt claims again; a settle or release moves `retry_at` first.
    */
   claimMemorySweep(input: {
     now: number;
@@ -738,8 +743,8 @@ export class WorkstreamSchedulingStorage {
           `INSERT INTO memory_sweep_state
              (id, swept_through_seq, rest_until, consecutive_quiet, claim_from_seq, claim_to_seq,
               claim_attempt, claim_at, retry_at, version, created_at, updated_at)
-           VALUES (1, 0, ?, 0, ?, ?, 1, ?, NULL, 1, ?, ?)`,
-          input.restUntil, input.fromSeq, input.toSeq, input.now, input.now, input.now,
+           VALUES (1, 0, ?, 0, ?, ?, 1, ?, ?, 1, ?, ?)`,
+          input.restUntil, input.fromSeq, input.toSeq, input.now, input.restUntil, input.now, input.now,
         );
         return { attempt: 1 };
       }
@@ -752,9 +757,9 @@ export class WorkstreamSchedulingStorage {
       this.sql.exec(
         `UPDATE memory_sweep_state
             SET rest_until = ?, claim_from_seq = ?, claim_to_seq = ?, claim_attempt = ?, claim_at = ?,
-                retry_at = NULL, version = version + 1, updated_at = ?
+                retry_at = ?, version = version + 1, updated_at = ?
           WHERE id = 1`,
-        input.restUntil, input.fromSeq, input.toSeq, attempt, input.now, input.now,
+        input.restUntil, input.fromSeq, input.toSeq, attempt, input.now, input.restUntil, input.now,
       );
       return { attempt };
     });
