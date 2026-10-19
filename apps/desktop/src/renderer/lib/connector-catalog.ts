@@ -7,12 +7,6 @@ export const PERSONAL_CONNECT_LABEL = 'Connect for me';
 
 export const connectorProviders = [
   {
-    id: 'apollo' as const, provider: ConnectorConnectionCardCatalog.apollo.providerType,
-    name: 'Apollo.io', description: 'Prospects, companies, contact enrichment, lists, sequences, and sales tasks.',
-    mark: ConnectorConnectionCardCatalog.apollo.iconName, scopes: ['you'] as const,
-    capabilities: ['apollo.personal.mcp'],
-  },
-  {
     id: 'google-mail-calendar' as const,
     provider: ConnectorConnectionCardCatalog['google-mail-calendar'].providerType,
     name: 'Google Mail + Calendar',
@@ -38,6 +32,12 @@ export const connectorProviders = [
     mark: ConnectorConnectionCardCatalog.github.iconName,
     scopes: ['you', 'workspace'] as const,
     capabilities: ['github.metadata.read', 'github.contents.read', 'github.issues.read', 'github.issues.write', 'github.pull_requests.read', 'github.pull_requests.write', 'github.actions.read', 'github.checks.read'],
+  },
+  {
+    id: 'apollo' as const, provider: ConnectorConnectionCardCatalog.apollo.providerType,
+    name: 'Apollo.io', description: 'Prospects, companies, contact enrichment, lists, sequences, and sales tasks.',
+    mark: ConnectorConnectionCardCatalog.apollo.iconName, scopes: ['you'] as const,
+    capabilities: ['apollo.personal.mcp'],
   },
   {
     id: 'ashby' as const,

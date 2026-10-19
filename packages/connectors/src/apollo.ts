@@ -46,10 +46,9 @@ export function createApolloConnector(config: ApolloConnectorConfig): ConnectorA
     capabilityForConnection: () => ApolloCapabilities.personalMcp,
     oauth,
     withAccessToken: (connection, signal, operation) => {
-      requirePersonal(connection.scope);
       return withProviderReauthorization(connection, {
         refresh: refreshCredentials, signal,
-        canRefresh: (candidate) => candidate.scope === "personal" && Boolean(stringValue(candidate.credentials, "refreshToken")),
+        canRefresh: (candidate) => Boolean(stringValue(candidate.credentials, "refreshToken")),
         isRejection: (error) => isProviderCredentialRejection(error, (details) => details.status === 401),
       }, () => {
         const token = stringValue(connection.credentials, "accessToken");
@@ -68,7 +67,6 @@ export function createApolloConnector(config: ApolloConnectorConfig): ConnectorA
     if (scope !== "personal") throw new ConnectorError("invalid_configuration", "Apollo.io requires a personal connection.");
   }
   async function refreshCredentials(connection: ConnectorConnectionContext, signal: AbortSignal): Promise<Record<string, unknown>> {
-    requirePersonal(connection.scope);
     const refreshToken = stringValue(connection.credentials, "refreshToken");
     if (!refreshToken) throw reconnectRequired();
     try {
@@ -100,7 +98,6 @@ export function createApolloConnector(config: ApolloConnectorConfig): ConnectorA
     },
     refreshCredentials,
     async revoke(connection, signal) {
-      requirePersonal(connection.scope);
       const refreshToken = stringValue(connection.credentials, "refreshToken");
       const token = refreshToken ?? stringValue(connection.credentials, "accessToken");
       if (!token) return;
@@ -109,14 +106,20 @@ export function createApolloConnector(config: ApolloConnectorConfig): ConnectorA
     },
     async executeTool(name, args, context) {
       assertPrincipalAccess(context.connection, context.principal);
-      requirePersonal(context.connection.scope);
       return mcp.execute(context.connection, name, args, context.signal);
     },
     async healthCheck(connection, signal) {
       if (!connection) return { ok: true, message: "Apollo.io is available" };
-      requirePersonal(connection.scope);
-      const tools = await mcp.dynamicAgentTools.discover(connection, signal ?? new AbortController().signal);
-      return { ok: true, message: `Apollo.io authorization and live discovery succeeded (${tools.length} tools)` };
+      try {
+        const tools = await mcp.dynamicAgentTools.discover(connection, signal ?? new AbortController().signal);
+        return { ok: true, message: `Apollo.io authorization and live discovery succeeded (${tools.length} tools)` };
+      } catch (error) {
+        if (error instanceof ConnectorError && error.code === "unsupported_capability") return {
+          ok: false, reasonCode: "apollo_tools_unavailable",
+          message: "Apollo.io did not expose usable tools. Check this account's permissions and plan access.",
+        };
+        throw error;
+      }
     },
   };
 }
