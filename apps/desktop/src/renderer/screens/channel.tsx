@@ -656,7 +656,7 @@ function MessageCard({ author, focused, members, message, placedAt }: {
         </span>
         {/* The stored words, not the rendering: copy and speech take what was
             said, and a typed @name reads the same either way. */}
-        <MessageActions subject={rally ? 'response' : 'message'} telemetry={{ messageId: message.id }} text={message.body} />
+        <MessageActions subject={rally ? 'response' : 'message'} telemetry={{ messageId: message.id }} text={message.body} verbatim />
       </div>
     </div>
   </li>;
