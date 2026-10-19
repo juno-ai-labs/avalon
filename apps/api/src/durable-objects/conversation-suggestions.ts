@@ -1,4 +1,5 @@
 import {
+  ConversationMergeV1Schema,
   SUGGESTION_VISIBLE_WITHIN_NEWEST_TURNS,
   type ConversationSuggestion,
   type ConversationSuggestionKind,
@@ -17,13 +18,13 @@ import {
 /**
  * The conversation suggestion slot and the settlement observer that fills it.
  *
- * A suggestion is one quiet line under a settled Rally turn: carry this result
+ * A suggestion is one quiet line under a settled result: carry this result
  * up to the parent (`merge_up`), or break this side question out
  * (`start_breakout`). It is conversation state keyed to the judged turn, one
  * row per turn, resolved in place; never a transcript row, never in the
- * model's history, never an Activity row. The observer runs as the last step
- * of `settleAgentRun`, after the description loop, runs the deterministic
- * gates cheapest first, asks JEV once, records every decision, and writes a
+ * model's history, never an Activity row. The observer runs after
+ * `settleAgentRun`'s description loop and from a merged result's durable alarm.
+ * It runs the deterministic gates cheapest first, asks JEV once, records every decision, and writes a
  * row only for a confident positive. `docs/conversation-suggestions.md` owns
  * the lifecycle; `docs/PRDs/2026-10-17_merge-and-breakout-suggestions/design.md`
  * holds the contract and the evidence behind each gate.
@@ -250,18 +251,21 @@ export class ConversationSuggestionStorage {
   }
 
   /**
-   * The turn a backfill judges: the newest Rally turn among the newest
-   * {@link SUGGESTION_VISIBLE_WITHIN_NEWEST_TURNS} readable messages that is
-   * the final turn of a completed run, with that run. Older than that, a chip
+   * The backfill's candidate: the newest completed final output or incoming
+   * merge among the newest {@link SUGGESTION_VISIBLE_WITHIN_NEWEST_TURNS}
+   * readable messages. A merge's stable key is merge:<turnId>, since it starts
+   * no run. Older than that, a chip
    * could not be shown, and the judgement would only record `late`.
    */
   newestSettledTurn(): { runId: string; turnId: string } | null {
     const row = this.sql.exec<{ run_id: string; turn_id: string } & Record<string, SqlStorageValue>>(
-      `SELECT run.run_id, turn.id AS turn_id
-         FROM (SELECT id, sequence_number, author_type FROM canonical_conversation_turn_details
+      `SELECT CASE WHEN json_extract(turn.structured_content_json, '$.type') = 'conversation_merge'
+                   THEN 'merge:' || turn.id ELSE run.run_id END AS run_id, turn.id AS turn_id
+         FROM (SELECT id, sequence_number, author_type, structured_content_json FROM canonical_conversation_turn_details
                 WHERE ${READABLE_TURN} ORDER BY sequence_number DESC LIMIT ?) turn
-         JOIN runs run ON run.final_turn_id = turn.id AND run.status = 'completed'
-        WHERE turn.author_type = 'agent'
+         LEFT JOIN runs run ON run.final_turn_id = turn.id AND run.status = 'completed'
+        WHERE (turn.author_type = 'agent' AND run.run_id IS NOT NULL)
+           OR json_extract(turn.structured_content_json, '$.type') = 'conversation_merge'
         ORDER BY turn.sequence_number DESC LIMIT 1`,
       SUGGESTION_VISIBLE_WITHIN_NEWEST_TURNS,
     ).toArray()[0];
@@ -395,10 +399,13 @@ export type TurnDispositionObservation =
  */
 export async function observeTurnDisposition(input: TurnDispositionObservationInput): Promise<TurnDispositionObservation> {
   const threshold = input.threshold ?? TURN_DISPOSITION_CONFIDENCE_THRESHOLD;
-  // Gate 1: a completed run with a final text turn.
+  // Gate 1: a completed run's final output, or an admitted merged result. Merges
+  // start no run; their stable merge:<turnId> key uses the same judgement slot.
   if (!input.completed || !input.finalTurnId) return { outcome: "skipped", gate: "run_not_completed" };
   const judged = input.storage.turn(input.finalTurnId);
-  if (!judged || judged.message_type !== "text" || judged.author_type !== "agent" || !(judged.content ?? "").trim()) {
+  const mergedResult = judged?.structured_content_json != null
+    && ConversationMergeV1Schema.safeParse(JSON.parse(judged.structured_content_json)).success;
+  if (!judged || judged.message_type !== "text" || (judged.author_type !== "agent" && !mergedResult) || !(judged.content ?? "").trim()) {
     return { outcome: "skipped", gate: "final_turn_not_text" };
   }
   // Gate 2: a conversation people read.
@@ -424,7 +431,7 @@ export async function observeTurnDisposition(input: TurnDispositionObservationIn
   // decides only whether merge_up is also on the table.
   const parent = await input.readParent();
   const mergeOfferable = parent !== null;
-  if (conversationKind === "breakout" && !mergeOfferable) return { outcome: "skipped", gate: "nothing_offerable" };
+  if ((conversationKind === "breakout" || mergedResult) && !mergeOfferable) return { outcome: "skipped", gate: "nothing_offerable" };
   // Gate 5: not already carried up.
   const markers = input.storage.mergeMarkers(judged.sequence_number);
   if (markers.after > 0) return { outcome: "skipped", gate: "already_carried_up" };
@@ -454,7 +461,7 @@ export async function observeTurnDisposition(input: TurnDispositionObservationIn
 
   const offered = suggestionForTurnDisposition(decision, conversationKind, threshold);
   const kind: ConversationSuggestionKind | null = offered === "merge_up" && mergeOfferable ? "merge_up"
-    : offered === "start_breakout" ? "start_breakout"
+    : offered === "start_breakout" && !mergedResult ? "start_breakout"
     : null;
   let code: string = decision.code;
   if (decision.disposition !== null && decision.confidence !== null && decision.disposition !== "continue_here" && kind === null) {
@@ -568,7 +575,7 @@ export function buildTurnDispositionState(input: {
       text: row.content ?? "",
     })),
     judged_message: {
-      author: "rally",
+      author: input.judged.author_type === "agent" ? "rally" : "person",
       text: judgedText,
       outputs: judgedEmbeds.map((embed) => ({ title: embed.title, first_time_here: !seen.has(embed.id) })),
     },
