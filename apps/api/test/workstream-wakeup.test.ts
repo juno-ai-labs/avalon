@@ -15,6 +15,7 @@ import {
 } from "@rally/contracts";
 import { substreamLoopId } from "../src/durable-objects/names";
 import type { Env } from "../src/env";
+import { withLocalWorkstreamAuthorities } from "../src/runtime/local-authorities";
 import { __integrationTesting } from "../src/services/integrations";
 import { fireWorkstreamWakeup } from "../src/services/workstream-service";
 import {
@@ -38,6 +39,7 @@ import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
   seedWorkstreamRun,
+  testIdentityOperationStub,
   testMessagePort,
   testSchedulingPort,
   testSubstreamAgentsBinding,
@@ -816,6 +818,47 @@ describe("wake-up tools", () => {
   });
 });
 
+/**
+ * A child conversation as its own object stands: its own store, holding the
+ * wake-up its run scheduled, and the environment its alarm fires under, with
+ * this conversation's identity and transcript installed the way
+ * `localRuntimeEnvironment` installs them. A port that wrongly named Main
+ * would reach the fixture's Main store instead, which the tests check is
+ * left untouched.
+ */
+function childConversation(
+  fixtureEnv: Env,
+  objectStores: Map<string, DatabaseSync>,
+  substreamId: string,
+  prompt: string,
+): { store: DatabaseSync; env: Env; row: WorkstreamWakeupRow } {
+  const store = testWorkstreamObjectStore();
+  openDatabases.push(store);
+  seedWorkstreamObjectRoot(store, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
+  objectStores.set(`${WORKSTREAM_ID}:${substreamId}`, store);
+  const now = Date.now();
+  store.prepare(
+    `INSERT INTO workstream_wakeups
+       (wakeup_id, created_by_run_id, execution_principal_json, prompt, due_at,
+        status, idempotency_key, version, created_at, updated_at)
+     VALUES ('00000000-0000-4000-8000-0000000000d1', NULL, ?, ?, ?, 'pending', 'child-receipt', 1, ?, ?)`,
+  ).run(JSON.stringify({ type: "user", userId: USER_ID }), prompt, now - 1_000, now - 60_000, now - 60_000);
+  const transcript = testMessagePort(store) as unknown as
+    Record<string, (...args: unknown[]) => Promise<unknown>>;
+  const identity = testIdentityOperationStub(store);
+  const env = withLocalWorkstreamAuthorities(fixtureEnv, WORKSPACE_ID, WORKSTREAM_ID, substreamId, {
+    message: async (operation, args) => ({ ok: true, value: (await transcript[operation]!(...args)) ?? null }),
+    identity: async (operation, args) => JSON.parse(identity({ operation, args }).bodyJson) as { ok?: boolean; value?: unknown },
+  });
+  return { store, env, row: pendingRow(store, "00000000-0000-4000-8000-0000000000d1") };
+}
+
+function wakeupNotes(store: DatabaseSync): string[] {
+  return (store.prepare(
+    "SELECT content FROM canonical_conversation_turn_details WHERE message_type = 'system'",
+  ).all() as { content: string }[]).map((row) => row.content);
+}
+
 describe("firing a due wake-up", () => {
   it("claims the wake-up, notes it in the transcript, and starts a run carrying its id", async () => {
     const { objectStore, env, dispatches } = fixture();
@@ -854,18 +897,14 @@ describe("firing a due wake-up", () => {
   });
 
   it("starts a Breakout's wake-up in the Breakout's own loop, not Main's", async () => {
-    const { objectStore, objectStores, env, dispatches } = fixture();
+    const { objectStore, objectStores, env: base, dispatches } = fixture();
     const breakoutId = asSubstreamId("00000000-0000-4000-8000-0000000000b1");
-    const { schedule } = wakeupTools(env);
-    const scheduled = await schedule.execute(
-      { prompt: "Check the deploy", delay: "1 hour" },
-      context(),
-    );
+    const breakout = childConversation(base, objectStores, breakoutId, "Check the private deploy");
 
     const outcome = await fireWorkstreamWakeup(
-      executionEnvironment(env),
-      pendingRow(objectStore, (scheduled.output as { wakeupId: string }).wakeupId),
-      schedulingPort(objectStore),
+      breakout.env,
+      breakout.row,
+      schedulingPort(breakout.store),
       { parentKind: "workstream", substreamId: breakoutId },
     );
 
@@ -876,13 +915,17 @@ describe("firing a due wake-up", () => {
       substreamId: breakoutId,
       loopId: substreamLoopId(WORKSTREAM_ID, breakoutId),
     });
-    // The run's receipt is the Breakout's: Main's loop never sees it.
-    const breakoutStore = objectStores.get(`${WORKSTREAM_ID}:${breakoutId}`);
-    expect(breakoutStore && objectGet(
-      breakoutStore,
-      "SELECT origin FROM runs WHERE run_id = ?",
-      outcome.harnessRunId!,
-    )).toEqual({ origin: "scheduled_wakeup" });
+    // The claim, the transcript note and the run's receipt are all the
+    // Breakout's. Main sees none of them: its transcript would otherwise
+    // carry a private Breakout's prompt.
+    expect(objectGet(breakout.store, "SELECT status FROM workstream_wakeups WHERE wakeup_id = ?", breakout.row.id))
+      .toEqual({ status: "fired" });
+    expect(wakeupNotes(breakout.store)).toEqual([
+      "Rally woke this thread up as scheduled: Check the private deploy",
+    ]);
+    expect(objectGet(breakout.store, "SELECT origin FROM runs WHERE run_id = ?", outcome.harnessRunId!))
+      .toEqual({ origin: "scheduled_wakeup" });
+    expect(wakeupNotes(objectStore)).toEqual([]);
     expect(objectGet(objectStore, "SELECT run_id FROM runs WHERE run_id = ?", outcome.harnessRunId!))
       .toBeNull();
   });
@@ -919,22 +962,19 @@ describe("firing a due wake-up", () => {
     }
 
     it("continues the run that scheduled it, as the Sidekick's run-as user", async () => {
-      const { objectStore, env: base, dispatches } = fixture();
-      const { env, asked } = withSidekick(base, {
+      const { objectStore, objectStores, env: fixtureEnv, dispatches } = fixture();
+      const { env: base, asked } = withSidekick(fixtureEnv, {
         outcome: "continue",
         automationRun,
         executionPrincipal: { type: "user", userId: runAsUserId },
         stopGeneration: 4,
       });
-      const scheduled = await wakeupTools(env).schedule.execute(
-        { prompt: "Start the monitoring window", delay: "1 hour" },
-        context(),
-      );
+      const run = childConversation(base, objectStores, runId, "Start the monitoring window");
 
       const outcome = await fireWorkstreamWakeup(
-        executionEnvironment(env),
-        pendingRow(objectStore, (scheduled.output as { wakeupId: string }).wakeupId),
-        schedulingPort(objectStore),
+        run.env,
+        run.row,
+        schedulingPort(run.store),
         { parentKind: "automation", substreamId: runId },
       );
 
@@ -949,28 +989,29 @@ describe("firing a due wake-up", () => {
         automationRun,
         automationContinuation: { stopGeneration: 4, senderName: "Rally", source: { kind: "run" } },
       });
+      expect(wakeupNotes(run.store)).toEqual([
+        "Rally woke this thread up as scheduled: Start the monitoring window",
+      ]);
+      expect(wakeupNotes(objectStore)).toEqual([]);
     });
 
     it("consumes without running a wake-up the Sidekick refuses", async () => {
-      const { objectStore, env: base, dispatches } = fixture();
-      const { env } = withSidekick(base, { outcome: "refused", code: "sidekick_paused" });
-      const scheduled = await wakeupTools(env).schedule.execute(
-        { prompt: "Start the monitoring window", delay: "1 hour" },
-        context(),
-      );
-      const wakeupId = (scheduled.output as { wakeupId: string }).wakeupId;
+      const { objectStores, env: fixtureEnv, dispatches } = fixture();
+      const { env: base } = withSidekick(fixtureEnv, { outcome: "refused", code: "sidekick_paused" });
+      const run = childConversation(base, objectStores, runId, "Start the monitoring window");
 
       const outcome = await fireWorkstreamWakeup(
-        executionEnvironment(env),
-        pendingRow(objectStore, wakeupId),
-        schedulingPort(objectStore),
+        run.env,
+        run.row,
+        schedulingPort(run.store),
         { parentKind: "automation", substreamId: runId },
       );
 
       expect(outcome.fired).toBe(false);
       expect(dispatches).toHaveLength(0);
-      expect(objectGet(objectStore, "SELECT status FROM workstream_wakeups WHERE wakeup_id = ?", wakeupId))
+      expect(objectGet(run.store, "SELECT status FROM workstream_wakeups WHERE wakeup_id = ?", run.row.id))
         .toEqual({ status: "fired" });
+      expect(wakeupNotes(run.store)).toEqual([]);
     });
   });
 
