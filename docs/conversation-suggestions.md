@@ -1,7 +1,7 @@
 # Conversation suggestions
 
-After a run settles in a Thread's Main or in a Breakout, a cheap classifier
-judges Rally's final turn against the conversation's purpose and, rarely,
+After a run settles in a Thread's Main or in a Breakout, or a Breakout result
+lands in its Thread, a cheap classifier judges the result against the conversation's purpose and, rarely,
 offers one quiet suggestion under that turn: merge this result up to the
 parent, or start a Breakout on the side question. The suggestion is
 conversation state keyed to the judged turn, never a transcript row; a person
@@ -57,7 +57,7 @@ cheapest first, each the reason not to pay for the next:
 
 | # | Gate | Skipped as |
 | --- | --- | --- |
-| 1 | The run completed and its final turn is Rally's text | `run_not_completed`, `final_turn_not_text` |
+| 1 | A completed run's final Rally text, or an admitted `conversation_merge` result | `run_not_completed`, `final_turn_not_text` |
 | 2 | A conversation people read: not a background agent, not archived, not a system conversation such as a digest | `background_agent`, `archived`, `system_conversation` |
 | 3 | This run was not judged before (`turn_disposition_judgements` by `run_id`), checked again inside the write; a judgement recording a classifier failure does not count, and a row left `pending` by an interrupted settlement resumes at the draft instead, unless this object is drafting it right now | `already_judged`, `draft_in_flight`, or `resumed` |
 | 4 | At least one kind is offerable: a Breakout offers only `merge_up` and needs its Thread; a Thread always offers `start_breakout`, and `merge_up` too when it is placed in an Organization-wide Channel, private thread or not | `nothing_offerable` |
@@ -80,6 +80,16 @@ Every provider call is recorded through `createClassifierDiagnosticSink` under
 `turn_disposition_classifier`, which logs it as `structured_inference`, meters
 it, and archives it; the outcome of the step is one `turn_disposition_outcome`
 log line naming the gate or the code.
+
+An incoming Breakout merge starts no run. Publishing its canonical transcript
+turn from the durable realtime outbox defers the same observer through
+`waitUntil`, whether it landed immediately or waited behind pending input.
+The candidate picker includes these merged
+results among the same newest three readable messages, and the judgement uses
+`merge:<turnId>` as its stable key in the existing `run_id` slot. Replays resume
+a pending draft or reuse the judgement. Only `merge_up` is offerable for this
+candidate: the incoming result can move onward to a Channel, while an ordinary
+human message remains outside the classifier's candidates.
 
 ### The two-phase write
 
@@ -126,8 +136,8 @@ conversations get theirs through the [thread backfill](thread-backfill.md)
 lane: migration 115 lists every open thread under `suggestion_backfill`, and
 the handler, `backfillSuggestion`, asks each conversation's object (Main and
 each open Breakout) for `backfillTurnDisposition`. The object picks
-`newestSettledTurn`, the newest Rally turn among the newest three readable
-messages that is the final turn of a completed run, and runs it through
+`newestSettledTurn`, the newest completed final Rally turn or incoming merged
+result among the newest three readable messages, and runs it through
 `judgeSettledTurn` exactly as its settlement would have: gates, judgement,
 row, event and drafter. A conversation whose newest three messages hold no
 such turn answers `nothing_to_judge`, since a chip under an older turn would
@@ -166,7 +176,7 @@ empty draft only. **Dismiss** hides the line at once and calls the route.
 ## Invariants
 
 - One suggestion per judged turn (`conversation_suggestions_one_per_turn`),
-  one judgement per run (`turn_disposition_judgements.run_id`), and the row
+  one judgement per run or incoming merged turn (`turn_disposition_judgements.run_id`), and the row
   and its judgement are one transaction.
 - A suggestion is never a transcript row, never enters the model's history,
   never lights unread, Activity, push or a digest. The slot is conversation
@@ -235,6 +245,7 @@ What this version deliberately leaves out, and why:
 
 | Suite | Covers |
 | --- | --- |
+| `apps/api/test-workers/merge-suggestion-candidate.test.ts` (real workerd) | Canonical admission and queued delivery reach the observer without starting an agent run. Removing the publication hook makes the judgement assertion fail. |
 | `apps/api/test/conversation-suggestions.test.ts` (Node, real object schema, TypeSafe fetch double) | Every gate in order; one row and one judgement per confident positive; the recorded codes; a replayed settlement asking nothing and a pending row resumed; `late`; pacing at a finite and at the open value; the expiry at the third newer readable message and not the second; the three resolutions; a draft filled and a draft withdrawn; a recorded classifier failure asked again; a run judged by another caller during the call written nothing; a draft in flight not resumed; `newestSettledTurn` picking the newest completed final turn within three and nothing behind them or for a run still running. Proved by breaking: the expiry count, the idempotency gate, the failure re-ask and the completed-run join each made their test fail. |
 | `apps/api/test/suggestion-backfill-service.test.ts`, `apps/api/test/workspace-suggestion-backfill-migration.test.ts` | The backfill's answer to the lane (thrown on a classifier failure, settled on a missing key); migration 115 listing open threads and not archived ones. |
 | `apps/api/test/conversation-suggestions-route.test.ts` (Node, typed double) | The dismiss route's addressing (the Breakout's object, Main for `0`), read admission, and refusals. |
@@ -273,6 +284,17 @@ the Organization only to TypeSafe for the judgement and to the drafting route
 for the words, on the access-controlled inference path.
 
 ## Changelog
+
+### 2026-10-19 — Incoming Breakout results can be suggested for onward merge
+
+The candidate picker and observer now admit an incoming merged result as well
+as a completed Rally output. Canonical transcript publication defers the
+existing observer, using `merge:<turnId>` for replay identity. Previously a
+merge started no run and therefore never reached the settlement-only observer,
+so it could not be suggested for its next hop into a Channel. Starting an agent
+run for this would change the meaning of merge; duplicating the classifier
+would split its recency, resolution and draft rules. Ordinary human messages
+remain excluded, and incoming merges offer only merge suggestions.
 
 ### 2026-10-19 — Existing conversations judged once, through the thread backfill
 

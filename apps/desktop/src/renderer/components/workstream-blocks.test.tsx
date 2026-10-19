@@ -3014,9 +3014,11 @@ describe('MessageBlock merge-back', () => {
         message={{
           ...baseMessage,
           text: 'Approved **Sequence B**.',
+          transcriptTurnId: 'merged-result-turn',
           mergedFrom: { breakoutId: 'breakout-b', title: 'Sequence B', actingAgent: true },
         }}
         onOpenBreakout={onOpenBreakout}
+        merge={{ label: 'Merge to General', onMerge }}
       />,
     );
     // The shared merge block, not a person's bubble: the same one a Channel draws.
@@ -3025,6 +3027,12 @@ describe('MessageBlock merge-back', () => {
     expect(merge).toHaveTextContent(/Sequence B\s*· merged by.*Rally for .*Adam/u);
     // A merge renders as markdown, which a typed message's verbatim body does not.
     expect(screen.getByText('Sequence B', { selector: 'strong' })).toBeVisible();
+    fireEvent.click(within(merge).getByRole('button', { name: 'Copy response' }));
+    expect(copyText).toHaveBeenCalledWith('Approved **Sequence B**.');
+    expect(within(merge).getByRole('button', { name: 'Save response as an image' })).toBeInTheDocument();
+    expect(within(merge).getByRole('button', { name: 'Save response as a PDF' })).toBeInTheDocument();
+    fireEvent.click(within(merge).getByRole('button', { name: 'Merge to General' }));
+    expect(onMerge).toHaveBeenCalledWith('Approved **Sequence B**.', 'merged-result-turn');
     fireEvent.click(screen.getByRole('button', { name: 'Sequence B' }));
     expect(onOpenBreakout).toHaveBeenCalledExactlyOnceWith('breakout-b');
   });
