@@ -123,12 +123,13 @@ tombstones), and one more call confirms nothing changed. A Channel message
 (`space_messages`: Rally's posts in a Channel and the results threads merge
 into it) is indexed the same way from WorkspaceDO: migration 119's
 `channel_message_search_versions` holds each message's revision and its
-Channel, triggers on every writer and on a Channel's rename bump it, the
+Channel, triggers on every writer bump it, the
 `channel_message_search` alarm lane publishes references on the resource
 lane's shared pace, and `prepareChannelMessageSearch` returns one
 `channel_messages` document or its deletion watermark. Its audience is the
 Channel's `space:<id>` group, which every reader of the Channel already holds,
-and its title is the Channel's name, never the merged thread's. Only the agent's
+and its title is the Channel's name when it was indexed, never the merged
+thread's; a rename does not rewrite it, since nothing reads it. Only the agent's
 `conversation_search` reads that source today; the member search modal does
 not offer it yet. A turn's source
 delivery discovers canonical document IDs without loading bodies and publishes
@@ -734,8 +735,9 @@ the Channel's readers, for the artifacts a merge shared there. The merged
 thread's title on the row: a reader of the Channel may not be allowed to see
 it, and a row's display is the same for every reader.
 
-**Consequences:** A Channel rename rewrites all of its messages' rows.
-`removeChannelMessage` and a merge arm the alarm so their rows move at once;
+**Consequences:** A row's title is the Channel's name when it was indexed; a
+rename does not rewrite it, because nothing reads it yet. A surface that shows
+it needs a rename trigger in its own migration. `removeChannelMessage` and a merge arm the alarm so their rows move at once;
 a Channel's opening messages written at creation wait for the object's next
 wake. The lane shares `resourceSearchPace`, so a resource backlog delays
 Channel messages too. A reader holds a Channel's `space:` group by the same

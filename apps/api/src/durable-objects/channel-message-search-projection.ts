@@ -26,8 +26,9 @@ import { RESOURCE_SEARCH_BACKLOG_INTERVAL_MS } from "./resource-search-projectio
  * A row's audience is the Channel's `space:<id>` group: every reader of the
  * Channel sees every message in its feed, a private thread's merge included,
  * and `readSearchAudience` already gives that group to each person who may
- * list the Channel, unarchived. Its title is the Channel's name, never the
- * merged thread's, which a reader of the Channel may not be allowed to see.
+ * list the Channel, unarchived. Its title is the Channel's name as it was
+ * indexed, never the merged thread's, which a reader of the Channel may not be
+ * allowed to see.
  */
 
 export const CHANNEL_MESSAGE_SEARCH_SOURCE = "channel_messages";
@@ -44,8 +45,10 @@ export const ChannelMessageSearchRevisionRequestSchema = ChannelMessageSearchPro
 
 /**
  * WorkspaceDO migration 119. `space_id` is kept beside the revision because a
- * deleted message's document id is derived from it. A Channel's rename
- * rewrites its messages, since each row's title is the Channel's name.
+ * deleted message's document id is derived from it. A Channel's rename does
+ * not rewrite its rows: the row's title is the name when it was indexed, and
+ * nothing reads it (`conversation_search` names a match from its scope). A
+ * reader of row titles would add a rename trigger in a migration of its own.
  * Immutable once shipped: each statement is hashed into the migration receipt.
  */
 export const CHANNEL_MESSAGE_SEARCH_MIGRATION: readonly string[] = [
@@ -74,13 +77,6 @@ export const CHANNEL_MESSAGE_SEARCH_MIGRATION: readonly string[] = [
       INSERT INTO channel_message_search_versions(message_id, space_id, revision, pending, not_before)
       VALUES (NEW.message_id, NEW.space_id, 1, 1, 0)
       ON CONFLICT(message_id) DO UPDATE SET space_id = NEW.space_id, revision = revision + 1, pending = 1, not_before = 0;
-    END`,
-  `CREATE TRIGGER spaces_search_title_update AFTER UPDATE OF title ON spaces
-    WHEN OLD.title IS NOT NEW.title
-    BEGIN
-      INSERT INTO channel_message_search_versions(message_id, space_id, revision, pending, not_before)
-      SELECT message_id, space_id, 1, 1, 0 FROM space_messages WHERE space_id = NEW.space_id
-      ON CONFLICT(message_id) DO UPDATE SET revision = revision + 1, pending = 1, not_before = 0;
     END`,
   `INSERT INTO channel_message_search_versions(message_id, space_id, revision, pending, not_before)
    SELECT message_id, space_id, 1, 1, 0 FROM space_messages`,

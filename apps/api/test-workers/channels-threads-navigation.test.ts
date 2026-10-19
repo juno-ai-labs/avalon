@@ -1436,7 +1436,7 @@ describe("Channel merges", () => {
     const reference = (messageId: string) => ({ type: "channel_message_search_projection_v1" as const, region: "global" as const,
       workspaceId: WORKSPACE_ID, messageId });
 
-    it("given a merge, when its document is prepared, then it is the words under the Channel's name, readable by the Channel's readers; a rename rewrites it and a removal withdraws it", async () => {
+    it("given a merge, when its document is prepared, then it is the words under the Channel's name, readable by the Channel's readers; a removal withdraws it", async () => {
       const channelId = await channelWithThreads();
       const merged = await merge(channelId, "op-icp", "Resolution: our ICP is growth teams at Series A companies.");
       if (!merged.ok) throw new Error("merge refused");
@@ -1449,21 +1449,15 @@ describe("Channel merges", () => {
           url: null, mimeType: null, archived: false },
       }] });
 
-      await runInDurableObject(workspace(), (_instance, state) => {
-        state.storage.sql.exec("UPDATE spaces SET title = 'Go to market' WHERE space_id = ?", channelId);
-      });
-      expect(await workspace().prepareChannelMessageSearch(reference(merged.messageId))).toMatchObject({
-        documents: [{ revision: 2, display: { title: "Go to market" } }] });
-
       expect(await workspace().removeChannelMessage({ auth: auth(OWNER), spaceId: channelId, messageId: merged.messageId }))
         .toEqual({ ok: true });
       const removed = await workspace().prepareChannelMessageSearch(reference(merged.messageId));
       expect(removed).toEqual({ retry: false, documents: [{
         id: prepared.documents[0]!.id, source: "channel_messages", sourceId: merged.messageId, scopeId: channelId,
-        revision: 3, text: null,
+        revision: 2, text: null,
       }] });
       expect(await workspace().channelMessageSearchRevision({ workspaceId: WORKSPACE_ID, messageId: merged.messageId }))
-        .toBe(3);
+        .toBe(2);
     });
 
     it("given a reader of a Channel, when their search audience is read, then it holds the group a Channel message carries", async () => {
