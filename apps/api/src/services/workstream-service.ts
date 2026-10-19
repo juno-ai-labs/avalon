@@ -3,8 +3,10 @@ import type { ExternalBindingClaim } from "../durable-objects/workspace-external
 import { AutomationService } from "./automation-service";
 import { readWorkspaceRelationship } from "./workspace-relationship-service";
 import { ConversationService } from "./conversation-service";
+import { forgetReviewedMemory, readMemoryReview } from "./memory-review-service";
+import type { MemoryReviewScope } from "../durable-objects/workspace-memory-facts-protocol";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
-import type { SidekickAttachment, SidekickRecommendationOptions } from "@rally/contracts";
+import type { MemoryForgetResponse, MemoryReview, SidekickAttachment, SidekickRecommendationOptions } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import { memberSafeHarnessFailureMessage } from "@rally/agent-harness";
 import { HarnessFailureCodeSchema, asUserId, asHarnessRunId, asWorkspaceId, asWorkstreamId, asSubstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
@@ -531,6 +533,11 @@ function json<T>(value: unknown, fallback: T): T {
   }
 }
 
+/** A Thread's Main or one of its Breakouts, as a review scope. */
+function conversationMemoryScope(id: string, substreamId: string): MemoryReviewScope {
+  return { kind: "conversation", conversation: { parentKind: "workstream", parentId: id, substreamId } };
+}
+
 /**
  * The regional face of the work-stream product surface.
  *
@@ -672,6 +679,21 @@ export class WorkstreamService {
     await conversation.client(id,false,substreamId);
     if (removeId) await publishWorkspaceSync(this.env,this.auth.workspaceId,["automations"]);
     return { items };
+  }
+
+  /**
+   * What Rally remembers about this Thread (`substreamId` `"0"`) or one of its
+   * Breakouts, as this person may see it from inside. `WorkspaceDO` checks the
+   * conversation is open to them in the same read and answers one they may not
+   * open as not found, so there is no separate admission round trip.
+   */
+  getConversationMemory(id: string, substreamId = "0"): Promise<MemoryReview> {
+    return readMemoryReview(this.env, this.auth, conversationMemoryScope(id, substreamId));
+  }
+
+  /** Anyone who may open the conversation removes its own facts; see `mayForget`. */
+  forgetConversationMemory(id: string, factId: string, substreamId = "0"): Promise<MemoryForgetResponse> {
+    return forgetReviewedMemory(this.env, this.auth, conversationMemoryScope(id, substreamId), factId);
   }
 
   /**

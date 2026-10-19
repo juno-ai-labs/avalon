@@ -189,16 +189,18 @@ current conversation established; a Channel's or the Organization's facts
 are forgotten only when an administrator asks, and the tool says so to
 anyone else. The transcript shows these as ordinary tool activity rows.
 
-**Reviewing.** In their Personal Channel a person sees "What Rally
-remembers": their own facts, each with the message it came from, its horizon
-if any, and whether it is expired. They can remove any fact. Removal is
-immediate for recall, which reads the store, and reaches each conversation's
-digest copy through the copy-sync lane within one alarm tick; a run that
-starts in a conversation in the moments before its copy is refreshed can see
-the fact once more, and that is the whole lag ([`design.md` §7](design.md#7-digest)).
-Facts about the Organization and about Channels the person may open are
-listed below their own, read-only for a member and removable by an
-administrator.
+**Reviewing.** Memory is reviewed where it lives. The title pill above a
+Channel, a Thread or a Breakout opens a pop-out whose **Memory** level lists
+that conversation's own facts, each with the horizon if any and whether it is
+expired. A participant removes a Thread's or Breakout's facts there; a
+Channel's are removed by an administrator. A person's own facts are under
+Settings → Account, where they may remove any of them; the Organization's
+facts are under Settings → Organization, read-only for a member and removable
+by an administrator. Removal is immediate for recall, which reads the store,
+and reaches each conversation's digest copy through the copy-sync lane within
+one alarm tick; a run that starts in a conversation in the moments before its
+copy is refreshed can see the fact once more, and that is the whole lag
+([`design.md` §7](design.md#7-digest)).
 
 **Sidekicks.** A Sidekick keeps memory of its own, as its `sidekick` scope
 does today: facts with subject `sidekick:<automationId>`, swept from the
@@ -404,7 +406,7 @@ historical memory is wanted.
   The index never grants access; hits are reloaded from `WorkspaceDO`.
 - **Personal memory in shared rooms** is the accepted exposure of design
   decision 7, limited to the acting person's own activations and reviewable
-  in their Personal Channel.
+  under Settings → Account.
 - **Open limits**, each written at its open value with the `LIMIT UNSET`
   marker and handed back under Rollout: sweep rest floor and ceiling,
   human-message and character floors, window overlap, digest token budget per
@@ -441,7 +443,9 @@ Ships to everybody on merge, in three steps, each a pull request:
    triggering input per design decision 7: a person's message, a Sidekick
    run's trigger, a wake-up, a connector event. A Sidekick run's digest is
    its home conversation's, when it has one, plus the Sidekick's own facts.
-3. **Review surface** in the Personal Channel.
+3. **Review surface**: each conversation's facts in its title-pill pop-out,
+   a person's own under Settings → Account, the Organization's under
+   Settings → Organization.
 
 Turning it off: there is no feature flag (design decision 12). The lane is
 stopped the way any other background lane is, by reverting or deploying.
@@ -468,3 +472,12 @@ consolidation.
   persistent loop would replay. Copies are refreshed at settlement, after a
   sweep, by a forget, and by a copy-sync lane that marks every holder on a
   retraction or a scope narrowing ([`plan.md` §7](plan.md#7-step-2-digest-copies-and-injection)).
+- **2026-10-19, where memory is reviewed.** The product owner moved the review
+  surface out of the Personal Channel: "memory should be access from the
+  command pill on top of channels, threads, breakouts in the pop out. Org and
+  user memories should be in settings under account and under org." Each
+  conversation's facts are a level of its title-pill pop-out, a person's own
+  facts sit under Settings → Account, the Organization's under Settings →
+  Organization. The Personal Channel panel step 3 first built is removed; the
+  one visibility rule and the one removal rule are unchanged, only where they
+  are shown.

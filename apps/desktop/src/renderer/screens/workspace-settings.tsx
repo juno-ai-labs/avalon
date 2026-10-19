@@ -3,6 +3,7 @@ import { AshbyWorkspaceSetup, ConnectorInstallationDetails, useWorkspaceInstalla
 import { ConnectorApiKeyField, ConnectorApiKeyIssuingLink } from '../components/connector-api-key-field';
 import { CopyButton, CopyField } from '../components/copy-button';
 import { SupportAccessSetting } from '../components/support-access-setting';
+import { MemoryFactList, useMemoryFacts } from '../components/memory-review';
 import { CANVA_CONNECTION_DISCLOSURE, connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
 import { PersonalSetup } from './guided-onboarding';
 import { githubAvailabilityLabels, githubRemoteLabels, mcpAuthLabels } from '../settings/choices';
@@ -48,6 +49,7 @@ import { ConnectorEventConsoleProviders, ConnectorInstallationProviders, Workspa
 import type {
   ConnectorOAuthStart,
   CustomMcpToolPolicy,
+  MemoryReview,
 } from '@rally/contracts';
 import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
@@ -220,6 +222,27 @@ function PersonalSystemPromptSetting({ api, workspaceId }: { api: RallyApi; work
       {save.error && <InlineError>{save.error.message}</InlineError>}
     </div>
   );
+}
+
+/**
+ * A settings heading over one scope's remembered facts: the person's own under
+ * Account, the Organization's under Organization. Per Organization, so the key
+ * carries it; Remove shows where the server says the reader may remove a fact.
+ */
+function MemoryReviewSection({ emptyCopy, forget, heading, queryKey, read }: {
+  emptyCopy: string;
+  forget: (factId: string) => Promise<unknown>;
+  heading: string;
+  queryKey: readonly unknown[];
+  read: (signal: AbortSignal) => Promise<MemoryReview>;
+}): React.JSX.Element {
+  const memory = useMemoryFacts({ forget, queryKey, read });
+  return <>
+    <div className="settings-pane-heading settings-pane-heading-spaced"><h2>{heading}</h2></div>
+    <div className="settings-list-card">
+      <MemoryFactList {...memory} emptyCopy={emptyCopy} label={heading} />
+    </div>
+  </>;
 }
 
 /** Settings → Account → Agent: whether this person's transcripts show the agent's work. */
@@ -1534,6 +1557,13 @@ export function WorkspaceSettingsScreen({
                     <PersonalSystemPromptSetting api={api} key={workspace.id} workspaceId={workspace.id} />
                     <AgentWorkSetting api={api} workspaceId={workspace.id} />
                   </div>
+                  <MemoryReviewSection
+                    emptyCopy="Rally has not remembered anything about you yet."
+                    forget={(factId) => api.forgetMyMemory(factId)}
+                    heading="What Rally remembers about you"
+                    queryKey={['memory', 'me', workspace.id]}
+                    read={(signal) => api.getMyMemory(signal)}
+                  />
                 </>}
                 </>}
                 {browserHost && <>
@@ -1642,6 +1672,13 @@ export function WorkspaceSettingsScreen({
                 </div>
                 {renameWorkspace.error && <InlineError>{renameWorkspace.error.message}</InlineError>}
                 {updateWorkspaceTimezone.error && <InlineError>{updateWorkspaceTimezone.error.message}</InlineError>}
+                {api && <MemoryReviewSection
+                  emptyCopy="Rally has not remembered anything about the Organization yet."
+                  forget={(factId) => api.forgetOrganizationMemory(factId)}
+                  heading="What Rally remembers about the Organization"
+                  queryKey={['memory', 'organization', workspace.id]}
+                  read={(signal) => api.getOrganizationMemory(signal)}
+                />}
                 <UsageSettingsSection api={api ?? null} canChangePlan={isAdmin} organizationName={workspace.name} openRequest={usageRequest} />
                 <div className="settings-pane-heading settings-pane-heading-count settings-pane-heading-spaced">
                   <div><h2><SettingLabel setting={settings.members} /></h2><p>People with access to {workspace.name}.</p></div>

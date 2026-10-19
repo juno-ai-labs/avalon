@@ -1,6 +1,7 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   IconArchive,
+  IconBrain,
   IconCancel,
   IconCheck,
   IconCloudDownload,
@@ -17,6 +18,7 @@ import {
   IconUsers,
   IconWorld,
 } from '@tabler/icons-react';
+import type { MemoryReviewSource } from '@rally/contracts';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { compareAlphabeticalTitle } from '../lib/alphabetical';
@@ -30,6 +32,7 @@ import {
 } from '../lib/typed-addresses';
 import type { SidebarPresentation, WorkspaceMember } from '../lib/types';
 import { breakoutHasActivity, type BreakoutMark } from './breakout-marks';
+import { MemoryFactRows, type MemoryFactsState } from './memory-fact-rows';
 import { Avatar, Tip } from './primitives';
 import { ResourceIcon } from './resource-icon';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
@@ -80,6 +83,7 @@ const PEOPLE_SUGGESTIONS = 5;
 const PEOPLE_VIEW: TitleMenuView = { key: 'people', label: 'People' };
 const SIDEKICKS_VIEW: TitleMenuView = { key: 'sidekicks', label: 'Sidekicks' };
 const BREAKOUTS_VIEW: TitleMenuView = { key: 'breakouts', label: 'Breakouts' };
+const MEMORY_VIEW: TitleMenuView = { key: 'memory', label: 'Memory' };
 const MORE_VIEW: TitleMenuView = { key: 'more', label: 'More' };
 
 /**
@@ -137,6 +141,18 @@ export interface TitleMenuInvites {
   onRevoke?: ((email: string) => void) | undefined;
   /** The People level opened: the host loads pending invitations then, not on every open of the conversation. */
   onLoad?: (() => void) | undefined;
+}
+
+/**
+ * What Rally remembers about this conversation, for its Memory level: the
+ * facts whose subject is this Thread, Breakout or Channel. The host reads them
+ * and removes one; absent where the host has no reader for them.
+ */
+export interface TitleMenuMemory extends MemoryFactsState {
+  /** The Memory level opened: the host reads the facts then, not on every open of the conversation. */
+  onOpen?: (() => void) | undefined;
+  /** Opens the conversation a fact was learned in; the menu closes as it does. */
+  onOpenSource?: ((source: MemoryReviewSource) => void) | undefined;
 }
 
 /** One action on a person's row, behind a dots button. */
@@ -356,6 +372,34 @@ function SidekicksView({ addSidekick, failure, items, onMenuOpen, onOpen, onRefr
   </div>;
 }
 
+/** The Memory level: this conversation's own facts, newest first, each removable where the server allows. */
+function MemoryView({ memory, noun }: {
+  memory: TitleMenuMemory;
+  noun: 'thread' | 'channel' | 'breakout';
+}): React.JSX.Element {
+  const onOpen = useRef(memory.onOpen);
+  useEffect(() => { onOpen.current?.(); }, []);
+  const { facts, failure, onOpenSource } = memory;
+  return <div className="title-menu-memory">
+    {facts === undefined
+      ? failure
+        ? <p className="title-menu-error" role="alert">{failure}</p>
+        : <p className="title-menu-empty">Loading what Rally remembers…</p>
+      : facts.length === 0
+        ? <p className="title-menu-empty">Rally has not remembered anything about this {noun} yet.</p>
+        : <MemoryFactRows
+          facts={facts}
+          onRemove={memory.onRemove}
+          removals={memory.removals}
+          renderSource={(source, title) => onOpenSource
+            ? <DropdownMenu.Item asChild onSelect={() => onOpenSource(source)}>
+              <button className="memory-review-source" type="button">{title}</button>
+            </DropdownMenu.Item>
+            : title}
+        />}
+  </div>;
+}
+
 function BreakoutsView({ breakouts, onOpenBreakout, openSubstreamId, renderAge }: {
   breakouts: readonly BreakoutMark[] | undefined;
   onOpenBreakout: (substreamId: string) => void;
@@ -434,9 +478,15 @@ function PublicSwitch({ actions }: { actions: ConversationRowActions | undefined
   />;
 }
 
-function sidekickMeta(sidekicks: SidekickRow[] | undefined): string | undefined {
-  if (sidekicks === undefined) return undefined;
-  return sidekicks.length === 0 ? 'None yet' : `${sidekicks.length}`;
+/** A level row's count, or None yet; nothing while the list is unknown. */
+function countMeta(items: readonly unknown[] | undefined): string | undefined {
+  if (items === undefined) return undefined;
+  return items.length === 0 ? 'None yet' : `${items.length}`;
+}
+
+function MemoryLevelRow({ memory }: { memory: TitleMenuMemory | undefined }): React.JSX.Element | null {
+  if (!memory) return null;
+  return <LevelRow icon={<IconBrain aria-hidden="true" size={17} stroke={1.7} />} label="Memory" meta={countMeta(memory.facts)} view={MEMORY_VIEW} />;
 }
 
 function peopleMeta(count: number, scope: 'personal' | 'workspace' | undefined, pending: boolean): string | undefined {
@@ -447,7 +497,7 @@ function peopleMeta(count: number, scope: 'personal' | 'workspace' | undefined, 
 /**
  * The Channel's title-pill menu. Its root is the things most often done to
  * it as tiles, and one row each for its people,
- * Sidekicks and Breakouts; each row and **More** opens a level in place,
+ * Sidekicks, Breakouts and Memory; each row and **More** opens a level in place,
  * which the pill names as a breadcrumb. It replaces the Channel sidebar, so
  * between its levels it carries all of that sidebar's sections.
  */
@@ -457,6 +507,7 @@ export function ChannelMenu({
   appearance,
   breakouts,
   extraActions,
+  memory,
   onImportUpdates,
   onOpenArtifact,
   onOpenBreakout,
@@ -481,6 +532,7 @@ export function ChannelMenu({
   breakouts: readonly BreakoutMark[] | undefined;
   /** Host-only items placed in **More** after the shared ones, e.g. a debug copy. */
   extraActions?: ReactNode;
+  memory?: TitleMenuMemory | undefined;
   onImportUpdates?: (() => void) | undefined;
   onOpenArtifact?: ((id: string, returnFocus: HTMLElement) => void) | undefined;
   onOpenBreakout: (substreamId: string) => void;
@@ -513,6 +565,7 @@ export function ChannelMenu({
   if (nav.view?.key === 'breakouts') {
     return <BreakoutsView breakouts={breakouts} onOpenBreakout={onOpenBreakout} openSubstreamId={openSubstreamId} renderAge={renderAge} />;
   }
+  if (nav.view?.key === 'memory' && memory) return <MemoryView memory={memory} noun="thread" />;
   if (nav.view?.key === 'more') {
     return <>
       {appearance}
@@ -537,14 +590,16 @@ export function ChannelMenu({
     </ActionTiles>
     <MergeRow actions={actions} />
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(workstream.participants.length, workstream.scope, participantsPending)} view={PEOPLE_VIEW} />
-    <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
+    <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={countMeta(sidekicks)} view={SIDEKICKS_VIEW} />
     <LevelRow icon={<IconCornerDownRight aria-hidden="true" size={17} stroke={1.7} />} label="Breakouts" meta={breakouts?.length} view={BREAKOUTS_VIEW} />
+    <MemoryLevelRow memory={memory} />
   </>;
 }
 
 /**
  * A Channel's title-pill menu, for the Channel screen: a Channel holds threads
- * rather than a conversation, so its menu is its people and its Sidekicks, with
+ * rather than a conversation, so its menu is its people, its Sidekicks and what
+ * Rally remembers about it, with
  * the settings a Channel has (private or Organization-wide, pinned) and its
  * archive behind **More**, the same place a thread keeps them.
  *
@@ -558,6 +613,7 @@ export function ChannelContainerMenu({
   appearance,
   channel,
   members,
+  memory,
   onArchive,
   onCopyLink,
   onOpenSidekick,
@@ -573,6 +629,7 @@ export function ChannelContainerMenu({
   appearance?: ReactNode;
   channel: { name: string; scope: 'personal' | 'workspace' };
   members: readonly WorkspaceMember[];
+  memory?: TitleMenuMemory | undefined;
   /** Asks to archive the Channel; absent where the viewer may not (General, a guest). */
   onArchive?: (() => void) | undefined;
   onCopyLink?: (() => void) | undefined;
@@ -592,6 +649,7 @@ export function ChannelContainerMenu({
   if (nav.view?.key === 'sidekicks') {
     return <SidekicksView addSidekick={addSidekick} failure={sidekickFailure} items={sidekicks} onOpen={onOpenSidekick} />;
   }
+  if (nav.view?.key === 'memory' && memory) return <MemoryView memory={memory} noun="channel" />;
   if (nav.view?.key === 'more') {
     return <>
       {appearance}
@@ -611,14 +669,15 @@ export function ChannelContainerMenu({
       {(appearance || publicToOrganization || pinned || onArchive) && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
     </ActionTiles>
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(members.length, channel.scope, false)} view={PEOPLE_VIEW} />
-    <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
+    <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={countMeta(sidekicks)} view={SIDEKICKS_VIEW} />
+    <MemoryLevelRow memory={memory} />
   </>;
 }
 
 /**
  * The Breakout's title-pill menu: which Channel it belongs to and the message
- * it started from, its most used actions as tiles, and rows for its people and
- * Sidekicks, each opening a level in place.
+ * it started from, its most used actions as tiles, and rows for its people,
+ * Sidekicks and Memory, each opening a level in place.
  */
 export function BreakoutMenu({
   actions,
@@ -626,6 +685,7 @@ export function BreakoutMenu({
   appearance,
   breakout,
   channel,
+  memory,
   onOpenSidekick,
   onRefreshSidekicks,
   onShowInChannel,
@@ -643,6 +703,7 @@ export function BreakoutMenu({
   addSidekick?: ReactNode;
   /** The Breakout's icon-and-colour choice, as a submenu, when the viewer may change it. */
   appearance?: ReactNode;
+  memory?: TitleMenuMemory | undefined;
   onOpenSidekick?: (id: string) => void;
   onRefreshSidekicks?: (() => void) | undefined;
   onSidekickMenuOpen?: () => void;
@@ -662,6 +723,7 @@ export function BreakoutMenu({
   if (nav.view?.key === 'people') {
     return <PeopleView members={participants} noun="breakout" people={people} presentUserIds={presentUserIds} />;
   }
+  if (nav.view?.key === 'memory' && memory) return <MemoryView memory={memory} noun="breakout" />;
   if (nav.view?.key === 'sidekicks') {
     return <SidekicksView addSidekick={addSidekick} failure={sidekickFailure} items={sidekicks} onMenuOpen={onSidekickMenuOpen} onOpen={onOpenSidekick} onRefresh={onRefreshSidekicks} />;
   }
@@ -694,7 +756,8 @@ export function BreakoutMenu({
     </ActionTiles>
     <MergeRow actions={actions} />
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(participants.length, scope, participantsPending)} view={PEOPLE_VIEW} />
-    <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
+    <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={countMeta(sidekicks)} view={SIDEKICKS_VIEW} />
+    <MemoryLevelRow memory={memory} />
   </>;
 }
 
