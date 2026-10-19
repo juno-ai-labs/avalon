@@ -330,6 +330,24 @@ describe('a Channel', () => {
     expect(merge.queryByRole('button', { name: 'Remove' })).toBeNull();
   });
 
+  it('draws a merge from a thread the reader cannot open as from a private thread, with nothing to open', async () => {
+    api.getWorkspaceMembers.mockResolvedValueOnce([workspace.currentUser] as never);
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 3, items: [
+      { kind: 'message', placedAt: '2026-10-02T03:00:00.000Z', attentionSequenceNumber: 3, message: {
+        id: '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a66',
+        author: { kind: 'member', userId: 'me' },
+        body: 'Discounts over 20% now need finance sign-off.',
+        merge: { threadId: plan.id, title: '', summary: null, embeds: [], private: true },
+      } },
+    ] });
+    renderChannel();
+    const merge = within((await screen.findByText('Discounts over 20% now need finance sign-off.')).closest('li')!);
+    await waitFor(() => expect(merge.getByRole('article', { name: 'A private thread, merged by Me' })).toBeVisible());
+    expect(merge.getByText('Private thread')).toBeVisible();
+    expect(merge.queryByRole('button', { name: 'Private thread' })).toBeNull();
+    expect(merge.queryByRole('button', { name: /request access/iu })).toBeNull();
+  });
+
   it('scrolls and moves focus to a merged thread’s card from the merge’s quote, and opens the thread when the card is not loaded', async () => {
     const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView');
     api.getWorkspaceMembers.mockResolvedValueOnce([workspace.currentUser] as never);

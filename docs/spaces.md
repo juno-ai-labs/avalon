@@ -556,7 +556,9 @@ mechanism knows what a message is for.
 A thread's merged result is the first caller from outside WorkspaceDO
 (`mergeThreadIntoChannel`, `removeChannelMessage`), and a desktop before client
 contract 7 (`CHANNEL_MERGES_CLIENT_CONTRACT`) is served each merge as a plain
-message without `merge` or `attentionSequenceNumber`. That feature is
+message without `merge` or `attentionSequenceNumber`. A merge from a thread the
+reader cannot open is shown without the thread (`merge.private`), and a desktop
+before contract 9 is served the feed without it. That feature is
 [`conversation-merge.md`](conversation-merge.md).
 
 ### The cutover

@@ -178,11 +178,15 @@ describe("observeTurnDisposition", () => {
     expect(result).toMatchObject({ outcome: "judged", code: "late", suggestion: null });
   });
 
-  it("offers a Thread only start_breakout when it is private, and records a merge positive as not_offerable", async () => {
-    const { storage } = conversation(twoTurns);
+  it("offers a private Thread merge_up into its Channel, and records a merge positive with no Channel as not_offerable", async () => {
     const privateThread = { title: "t", description: "", scope: "private", archived_at: null, system_kind: null };
-    const merge = await observeTurnDisposition(observation(storage, { substreamId: "0", identity: privateThread, fetch: answering("worth_carrying_up", 0.9) }));
-    expect(merge).toMatchObject({ outcome: "judged", code: "not_offerable", suggestion: null });
+    const channel = async () => ({ kind: "channel" as const, id: "00000000-0000-7000-8000-0000000000c1", title: "Sales", purpose: undefined });
+    const { storage } = conversation(twoTurns);
+    const merge = await observeTurnDisposition(observation(storage, { substreamId: "0", identity: privateThread, readParent: channel, fetch: answering("worth_carrying_up", 0.9) }));
+    expect(merge.outcome === "judged" && merge.suggestion?.kind).toBe("merge_up");
+    const { storage: unplaced } = conversation(twoTurns);
+    const nowhere = await observeTurnDisposition(observation(unplaced, { substreamId: "0", identity: privateThread, readParent: async () => null, fetch: answering("worth_carrying_up", 0.9) }));
+    expect(nowhere).toMatchObject({ outcome: "judged", code: "not_offerable", suggestion: null });
     const { storage: second } = conversation(twoTurns);
     const breakout = await observeTurnDisposition(observation(second, { substreamId: "0", identity: privateThread, fetch: answering("side_question_worth_a_breakout", 0.9) }));
     expect(breakout.outcome === "judged" && breakout.suggestion?.kind).toBe("start_breakout");

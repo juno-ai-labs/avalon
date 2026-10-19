@@ -11,7 +11,7 @@ import type { SidekickRow } from '@rally/ui/components/sidekick-section';
 import { ChannelGlyph, spaceMark } from '@rally/ui/components/space-icon';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { TitleMenuItem, TitlePillAction, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { IconCloudDownload, IconPalette, IconPlus } from '@tabler/icons-react';
+import { IconCloudDownload, IconLock, IconPalette, IconPlus } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -548,13 +548,13 @@ function MergeCard({ author, focused, members, merge, message, onOpenThread, pla
       },
       open: (target) => {
         if (target.scheme === 'external') void openLink(target.url);
-        if (target.scheme !== 'resource') return;
+        if (target.scheme !== 'resource' || merge.private) return;
         // The artifact is attached to the thread, so it opens there, by its id
         // whichever spelling the body cited it by.
         onOpenThread(merge.threadId, embeds.get(target.resourceId)?.id);
       },
     };
-  }, [merge.embeds, merge.threadId, onOpenThread]);
+  }, [merge.embeds, merge.private, merge.threadId, onOpenThread]);
   const quote = merge.summary?.split('\n').find((line) => line.trim() !== '')?.trim();
   const appearance = useCachedWorkstreamAppearance(merge.threadId);
   const { Icon, tint, ink } = resolveWorkstreamAppearance(merge.threadId, appearance);
@@ -568,13 +568,18 @@ function MergeCard({ author, focused, members, merge, message, onOpenThread, pla
     card.scrollIntoView({ block: 'center' });
     card.querySelector('button')?.focus({ preventScroll: true });
   };
+  // A thread this reader cannot open is named only as private: no title, no
+  // quote line, nothing to open.
   return <li className={clsx('channel-feed-item is-message is-merge', focused && 'is-focused')} data-message-id={message.id}>
     <MergeMessage
-      label={`${merge.title || 'A thread'}, merged by ${merger}`}
+      label={`${merge.private ? 'A private thread' : merge.title || 'A thread'}, merged by ${merger}`}
       mergedBy={<>{author && <Avatar member={author} size="small" title={null} />}{merger}</>}
       onQuote={showThread}
-      quote={quote}
-      source={{
+      quote={merge.private ? null : quote}
+      source={merge.private ? {
+        mark: <IconLock aria-hidden="true" size={10} stroke={2} />,
+        title: 'Private thread',
+      } : {
         mark: <Icon size={10} strokeWidth={2} />,
         tint: { background: tint, ink },
         title: merge.title || 'A thread',

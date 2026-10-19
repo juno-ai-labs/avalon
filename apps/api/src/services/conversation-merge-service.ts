@@ -41,7 +41,6 @@ export class ConversationMergeRefusal extends ApiError {
 
 const MERGE_REFUSAL_STATUS = {
   merge_channel_not_placed: 409,
-  merge_thread_private: 409,
   merge_target_not_writable: 403,
   merge_resource_not_shareable: 403,
   conversation_archived: 409,
@@ -50,7 +49,6 @@ const MERGE_REFUSAL_STATUS = {
 
 const MERGE_REFUSAL_MESSAGE: Record<ConversationMergeErrorCode, string> = {
   merge_channel_not_placed: "That channel does not hold this thread",
-  merge_thread_private: "Only an Organization-wide thread can merge into a channel",
   merge_target_not_writable: "You cannot post there",
   merge_resource_not_shareable: "An embedded artifact cannot be shared there",
   conversation_archived: "That conversation is archived",
@@ -280,7 +278,7 @@ function refusalFor(error: unknown, notFound: ConversationMergeErrorCode): unkno
 }
 
 function channelRefusal(
-  code: "space_access_denied" | "workstream_not_found" | "conversation_archived" | "merge_thread_private"
+  code: "space_access_denied" | "workstream_not_found" | "conversation_archived"
     | "merge_channel_not_placed" | "merge_target_not_writable",
   channels: ConversationMergeChannel[],
 ): ConversationMergeRefusal {
