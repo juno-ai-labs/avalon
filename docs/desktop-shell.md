@@ -271,7 +271,7 @@ drops its lift to the bare ring.
 
 Each menu has a root and levels. The root is a row of action tiles (Add people,
 Rename, Copy link, More), under a header on a Breakout, and one row each for People,
-Sidekicks and, on a thread, Breakouts and Channels, with a count beside each. A row, or the
+Sidekicks, on a thread Breakouts and Channels, and Memory, with a count beside each. A row, or the
 Add people and More tiles, opens its level in place (`useTitleMenuNav`), and the
 pill becomes a breadcrumb, the title quietened and the level after it. The
 title, Escape or the left arrow step back to the root before anything closes,
@@ -322,6 +322,13 @@ from; reduced motion turns both off.
   thread**) and the message it started from. People (inviting to the
   Breakout alone) and Sidekicks as above;
   More is Icon and color, **Public to organization**, and **Archive breakout** last.
+- **Memory** (thread, Breakout and Channel menus, `TitleMenuMemory`): what
+  Rally remembers about this conversation alone, newest first, drawn by
+  `MemoryFactRows` (`packages/ui`), the same renderer the Settings sections
+  use ([`agent-memory.md`](agent-memory.md#the-review-surface)). The host
+  reads the facts only once the level opens, through `useMemoryFacts` with
+  `lazy`, and every later open reads again; the row's count is empty until
+  then. A fact's source is a menu item, so opening it closes the menu.
 - **Artifact menu** (`ResourcePanelMenu`, the right panel's pill): header names
   the item, then tiles for Rename, Copy link and Pin/Unpin, the tiles a thread
   offers, then New window, Open source and Refresh where they apply, Versions,
@@ -493,6 +500,28 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-19 — Thread, Breakout and Channel menus gain a Memory level
+
+**What changed:** Each of the three conversation menus has a Memory row and
+level listing the facts Rally remembers about that conversation, with Remove
+where the server allows it. The Personal Channel's "What Rally remembers"
+panel, which sat between the Channel's header and its feed, is gone; a
+person's own and the Organization's facts moved to Settings.
+
+**Why:** The product owner decided memory is reviewed where its subject
+lives: a conversation's facts in that conversation's menu, beside its People
+and Sidekicks, rather than one list of everything in one Channel.
+
+**Considered and rejected:** Reading the facts with the conversation, so the
+row's count shows on the menu's first open. That is a read on every
+conversation opened for a level most opens never visit; the count waits for
+the level instead.
+
+**Consequences:** `packages/ui` cannot import the desktop's API, so the menus
+take the facts and the removal as a prop and the screens own the query. The
+shared clock (`useNow`) moved to `packages/ui/src/lib/clock.ts` so the rows'
+horizons tick inside the menu as they do on a page.
 
 ### 2026-10-18 — The artifact menu gains Rename, Copy link and Pin
 

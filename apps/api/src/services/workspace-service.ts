@@ -11,6 +11,8 @@ import {
   type WorkspaceInvitation,
   type WorkspaceInvitationPreview,
   type WorkspaceInvitationRole,
+  type MemoryForgetResponse,
+  type MemoryReview,
 } from "@rally/contracts";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import type { OrganizationUsage, PlanId } from "@rally/contracts/usage";
@@ -33,6 +35,7 @@ import { SlackAgentService } from "./slack-agent-service";
 import { rebuildDigestSchedulesForTimezone } from "./digest-service";
 import { workspaceDOName } from "../durable-objects/names";
 import { PersonalSystemPromptRecordSchema } from "../durable-objects/personal-system-prompt";
+import { forgetReviewedMemory, readMemoryReview } from "./memory-review-service";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import {
   emitProductUsageTelemetry,
@@ -459,6 +462,25 @@ export class WorkspaceService {
         personalSystemPrompt: text,
       }));
     return { personalSystemPrompt };
+  }
+
+  /** What Rally remembers about this person; see `readMemoryReview`. */
+  getMyMemory(): Promise<MemoryReview> {
+    return readMemoryReview(this.env, this.auth, { kind: "own" });
+  }
+
+  /** What Rally remembers about the Organization, as this person may see it. */
+  getOrganizationMemory(): Promise<MemoryReview> {
+    return readMemoryReview(this.env, this.auth, { kind: "organization" });
+  }
+
+  forgetMyMemory(factId: string): Promise<MemoryForgetResponse> {
+    return forgetReviewedMemory(this.env, this.auth, { kind: "own" }, factId);
+  }
+
+  /** An administrator's removal; anybody else is answered `memory_fact_not_removable`. */
+  forgetOrganizationMemory(factId: string): Promise<MemoryForgetResponse> {
+    return forgetReviewedMemory(this.env, this.auth, { kind: "organization" }, factId);
   }
 
   async updateMyTimezone(timezone: string, followDevice = false) {

@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { Link, MemoryRouter, parsePath, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
-import type { ChannelStats } from '@rally/contracts';
+import type { ChannelStats, MemoryReview, MemoryReviewFact } from '@rally/contracts';
 import { OPEN_EXPANDED, openResourceRequest, revealChannelMessageState } from '../lib/navigation-routes';
 import { CHANNEL_STATS_QUERY_KEY } from '../lib/sidebar-list-store';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
@@ -19,6 +19,8 @@ const api = vi.hoisted(() => ({
   updateSpacePresentation: vi.fn(),
   updateSpaceAudience: vi.fn(),
   acknowledgeChannelRead: vi.fn(),
+  getChannelMemory: vi.fn<(spaceId: string, signal?: AbortSignal) => Promise<MemoryReview>>(async () => ({ facts: [] })),
+  forgetChannelMemory: vi.fn(async (_spaceId: string, factId: string) => ({ factId, retractedAt: '2026-10-19T12:00:00.000Z' })),
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session: null }) }));
 const spaces = vi.hoisted(() => ({ data: undefined as unknown }));
@@ -54,9 +56,9 @@ const workspace: Workspace = {
   currentUser: { id: 'me', name: 'Me', email: 'me@rally.test', timezone: 'UTC', role: 'member', accessClass: 'member' },
 };
 
-function outbound(reach: 'organization' | 'participant' | 'through_channel') {
+function outbound(reach: 'organization' | 'participant' | 'through_channel', scope: 'workspace' | 'individual' = 'workspace') {
   return { waterline: 1, items: [{
-    id: 'outbound', name: 'Outbound', iconKey: 'briefcase', colorKey: 'blue', scope: 'workspace', status: 'active',
+    id: 'outbound', name: 'Outbound', iconKey: 'briefcase', colorKey: 'blue', scope, status: 'active',
     systemRole: null, revision: 1, reach, participants: [], channelCount: 2, attentionCount: 0,
     defaultResourceIds: [], defaultSidekickIds: [], createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
   }] };
@@ -114,6 +116,35 @@ describe('a Channel', () => {
     expect(rows[0]).toHaveTextContent('A four-week outbound setup plan.');
     expect(within(rows[0]!).getByRole('button', { name: 'Q4 plan' })).toBeInTheDocument();
     expect(screen.getByText('composer')).toBeInTheDocument();
+  });
+
+  it('lists the Channel’s own facts in its pill’s Memory level, read only once the level opens', async () => {
+    const remembered = (factId: string, text: string, removable: boolean): MemoryReviewFact => ({
+      factId, subjectKind: 'channel', subjectTitle: 'Outbound', kind: 'standing', text,
+      validFrom: null, validUntil: null, recordedAt: '2026-10-01T12:00:00.000Z', conflict: false, derivedFrom: 'person',
+      source: { kind: 'thread', workstreamId: 'plan', title: 'Q4 plan' }, removable,
+    });
+    api.getChannelMemory.mockResolvedValue({ facts: [
+      remembered('f1', 'Outbound targets mid-market accounts.', true),
+      remembered('f2', 'Demos run on Thursdays.', true),
+    ] });
+    renderChannel();
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Outbound' }), { button: 0, ctrlKey: false });
+
+    const level = await screen.findByRole('menuitem', { name: /^Memory/u });
+    expect(api.getChannelMemory).not.toHaveBeenCalled();
+    fireEvent.click(level);
+
+    expect(await screen.findByText('Outbound targets mid-market accounts.')).toBeInTheDocument();
+    expect(api.getChannelMemory).toHaveBeenCalledWith('outbound', expect.anything());
+    fireEvent.click(screen.getByRole('button', { name: 'Remove “Demos run on Thursdays.”' }));
+    await waitFor(() => expect(screen.queryByText('Demos run on Thursdays.')).toBeNull());
+    expect(api.forgetChannelMemory).toHaveBeenCalledWith('outbound', 'f2');
+
+    // A fact's source opens its thread, and the menu closes.
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Q4 plan' }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/workstreams/plan'));
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 
   it('opens a thread expanded over the Channel from its chip, and Collapse puts it beside the Channel', async () => {

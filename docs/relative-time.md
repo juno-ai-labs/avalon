@@ -14,7 +14,7 @@ the render that produced it.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/lib/clock.ts` | The one clock. `useNow()` subscribes to a single interval shared by every label on screen; `RELATIVE_TIME_REFRESH_MS` is how often it advances. |
+| `packages/ui/src/lib/clock.ts` (re-exported by `apps/desktop/src/renderer/lib/clock.ts`) | The one clock. `useNow()` subscribes to a single interval shared by every label on screen; `RELATIVE_TIME_REFRESH_MS` is how often it advances. It lives in `@rally/ui` so a shared component (a remembered fact's horizon in `memory-fact-rows.tsx`) ticks on the same interval. |
 | `apps/desktop/src/renderer/components/relative-time.tsx` | `RelativeTime` — the only component that renders a relative label, and the only caller of `formatRelative`. Carries the absolute-time tooltip. |
 | `apps/desktop/src/renderer/components/message-byline.tsx` | `MessageByline` — the identity line over a turn: who, when, and the optional labels between them. |
 | `apps/desktop/src/renderer/lib/format.ts` | The vocabularies. `formatRelative` is the default; `formatDateTime` is what the tooltip says; `formatSidebarActivityTime` is the calendar one the sidebar's hover preview passes in. |

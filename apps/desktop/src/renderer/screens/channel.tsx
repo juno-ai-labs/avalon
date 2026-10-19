@@ -17,6 +17,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { ChannelComposer } from '../components/channel-composer';
+import { openMemorySource, useMemoryFacts } from '../components/memory-review';
 import { MarkdownBody } from '../components/workstream-blocks';
 import type { CitationContext } from '../components/markdown-citations';
 import { openLink } from '../lib/browser-rail-links';
@@ -605,6 +606,14 @@ function ChannelHeader({ members, space, workspace }: {
   const pinnedChannels = usePinnedIds('channel');
   const pin = usePinAction(api);
   const library = useQuery<AutomationSummary[]>({ queryKey: ['automations'], queryFn: async () => [], enabled: false });
+  // The Channel's own facts, read once its Memory level opens.
+  const memory = useMemoryFacts({
+    queryKey: ['memory', 'channel', space.id],
+    read: (signal) => api!.getChannelMemory(space.id, signal),
+    forget: (factId) => api!.forgetChannelMemory(space.id, factId),
+    enabled: api !== null,
+    lazy: true,
+  });
   const member = workspace.currentUser.accessClass !== 'guest';
   const editable = member && space.reach !== 'through_channel';
   const general = space.systemRole === 'general';
@@ -771,6 +780,7 @@ function ChannelHeader({ members, space, workspace }: {
       /> : undefined}
       channel={{ name: space.name, scope: audienceScope }}
       members={roster}
+      memory={api ? { ...memory, onOpenSource: (source) => openMemorySource(source, (to) => void navigate(to)) } : undefined}
       onArchive={editable && !general && !personal ? () => setArchiving('confirm') : undefined}
       onCopyLink={copyLink}
       onOpenSidekick={(id) => void desktopBridge().openSidekicks(id)}
