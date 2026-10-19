@@ -423,7 +423,7 @@ export async function observeTurnDisposition(input: TurnDispositionObservationIn
   // only merge_up; a Thread always offers start_breakout, so the parent read
   // decides only whether merge_up is also on the table.
   const parent = await input.readParent();
-  const mergeOfferable = conversationKind === "breakout" ? parent !== null : parent !== null && input.identity.scope === "workspace";
+  const mergeOfferable = parent !== null;
   if (conversationKind === "breakout" && !mergeOfferable) return { outcome: "skipped", gate: "nothing_offerable" };
   // Gate 5: not already carried up.
   const markers = input.storage.mergeMarkers(judged.sequence_number);

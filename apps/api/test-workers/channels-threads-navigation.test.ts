@@ -1375,13 +1375,10 @@ describe("Channel merges", () => {
       .toEqual([["Shipped, with the follow-ups.", 4]]);
   });
 
-  it("given a private thread, or a Channel that does not hold the thread, when it merges, then it is refused and nothing is posted", async () => {
+  it("given a Channel that does not hold the thread, when it merges, then it is refused and nothing is posted", async () => {
     const channelId = await channelWithThreads();
     const elsewhere = await reserveChannel("Elsewhere");
 
-    expect(await workspace().mergeThreadIntoChannel({
-      auth: auth(OWNER), workstreamId: PRIVATE_THREAD, spaceId: null, body: "Done", operationId: "op-p", embeds: [],
-    })).toEqual({ ok: false, code: "merge_thread_private", channels: [] });
     expect(await merge(elsewhere, "op-e")).toEqual({
       ok: false, code: "merge_channel_not_placed", channels: [{ id: channelId, name: "Outbound" }],
     });
@@ -1389,15 +1386,36 @@ describe("Channel merges", () => {
     expect(await messages(elsewhere, OWNER)).toEqual([]);
   });
 
-  it("given a merge whose thread was made private since, when a member who cannot open it reads the Channel, then the merge is not shown and not news", async () => {
+  it("given a private thread, when its participant merges it, then a member who cannot open it sees the result as news without the thread's name, summary or embeds, and the participant sees it whole", async () => {
     const channelId = await channelWithThreads();
     await workspace().acknowledgeSpaceRead({ workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId, readThroughSequenceNumber: 2 });
+
+    expect(await workspace().mergeThreadIntoChannel({
+      auth: auth(OWNER), workstreamId: PRIVATE_THREAD, spaceId: null, body: "Bands are set.", operationId: "op-p",
+      embeds: [{ id: "resource-2", title: "Comp model", kind: "document" }],
+    })).toMatchObject({ ok: true, spaceId: channelId, name: "Outbound", replayed: false });
+
+    expect((await messages(channelId, MEMBER)).map((item) => item.message)).toEqual([{
+      id: expect.any(String),
+      author: { kind: "member", userId: OWNER },
+      body: "Bands are set.",
+      merge: { threadId: PRIVATE_THREAD, title: "", summary: null, embeds: [], private: true },
+    }]);
+    expect(await stats(MEMBER, channelId)).toMatchObject({ hasUnread: true, firstUnread: 3 });
+    expect((await messages(channelId, OWNER))[0]?.message.merge).toEqual({
+      threadId: PRIVATE_THREAD, title: "Comp bands", summary: "Comp bands summary",
+      embeds: [{ id: "resource-2", title: "Comp model", kind: "document" }],
+    });
+  });
+
+  it("given a merge whose thread was made private since, when a member who cannot open it reads the Channel, then the merge stays, without its thread's name or embeds", async () => {
+    const channelId = await channelWithThreads();
     await merge(channelId, "op-1");
     await publish(OPEN_THREAD, [threadEffect("Cold outreach", { scope: "personal" }), viewerEffect(OWNER)], undefined, 2);
 
-    expect(await messages(channelId, MEMBER)).toEqual([]);
-    expect(await stats(MEMBER, channelId)).toMatchObject({ hasUnread: false, firstUnread: null });
-    expect(await messages(channelId, OWNER)).toHaveLength(1);
+    expect((await messages(channelId, MEMBER)).map((item) => item.message.merge))
+      .toEqual([{ threadId: OPEN_THREAD, title: "", summary: null, embeds: [], private: true }]);
+    expect((await messages(channelId, OWNER))[0]?.message.merge).toMatchObject({ title: "Cold outreach" });
   });
 
   it("given a merge, when each person reads Activity, then the member sees a merged row naming the Channel and its author does not", async () => {

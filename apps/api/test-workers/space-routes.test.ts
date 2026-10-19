@@ -1139,6 +1139,34 @@ describe("the navigation routes", () => {
     expect(await activityRows("6")).toEqual([]);
   });
 
+  it("serves a private thread's merge, without the thread, to a build that reads private merges, and leaves it out for one that does not", async () => {
+    const opened = await workspace().openGeneralSpace({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId("00000000-0000-7000-8000-00000000d2a7"),
+    });
+    if (!opened.ok || "absent" in opened) throw new Error("openGeneralSpace refused");
+    const threadId = "00000000-0000-7000-8000-00000000d2a8";
+    await workspace().reserveChild({
+      workspaceId: WORKSPACE_ID, parentId: threadId, substreamId: asSubstreamId("0"), kind: "main",
+      createdByUserId: OWNER, authorityGeneration: 1,
+      directory: { title: "Comp bands", description: "", scope: "personal", systemKind: null, emailAddress: null,
+        titleStatus: "settled", createdAt: "2026-10-16T00:00:00.000Z" },
+    });
+    await runInDurableObject(workspace(), (instance) => {
+      (instance as unknown as { spaceStorage(): { postMessage(spaceId: string, draft: unknown, postedAt: number): unknown } })
+        .spaceStorage().postMessage(opened.space.id, {
+          author: { kind: "member", userId: OWNER }, body: "Bands are set.", key: `merge:${threadId}`, replace: true,
+          sourceWorkstreamId: threadId, embeds: [{ id: "resource-2", title: "Comp model", kind: "document" }], operationId: "op-p",
+        }, Date.now());
+    });
+    const path = `/spaces/${opened.space.id}/feed`;
+    const merged = (body: unknown) => (body as { items: Array<{ kind: string; message?: Record<string, unknown> }> }).items
+      .flatMap((item) => (item.message?.body === "Bands are set." ? [item] : []));
+    expect(merged((await request(path, MEMBER_AUTH, undefined, "GET", "9")).body)).toEqual([expect.objectContaining({
+      message: expect.objectContaining({ merge: { threadId, title: "", summary: null, embeds: [], private: true } }),
+    })]);
+    expect(merged((await request(path, MEMBER_AUTH, undefined, "GET", "8")).body)).toEqual([]);
+  });
+
   it("answers nobody who is not signed in", async () => {
     const response = await app.request("/navigation/threads", {}, routeEnv(), createExecutionContext());
     expect(response.status).toBe(401);

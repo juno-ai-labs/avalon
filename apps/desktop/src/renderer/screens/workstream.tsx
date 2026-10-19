@@ -783,7 +783,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   };
 
   // The same read the thread's pane makes, so the menu names the same default.
-  const mergeChannelOrder = useMergeChannelOrder(api, id, !guest && parent.data?.scope === 'workspace');
+  const mergeChannelOrder = useMergeChannelOrder(api, id, !guest && parent.data !== undefined);
   // The title menu's Merge opens the composer's merge mode in that pane.
   const [mergeRequest, setMergeRequest] = useState<{ substreamId: string; nonce: number } | null>(null);
   const threadMerge = mergeTargetFor({

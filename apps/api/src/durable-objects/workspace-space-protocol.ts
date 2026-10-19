@@ -853,7 +853,6 @@ const ChannelMergeRefusalSchema = z.strictObject({
     "space_access_denied",
     "workstream_not_found",
     "conversation_archived",
-    "merge_thread_private",
     "merge_channel_not_placed",
     "merge_target_not_writable",
   ]),
@@ -888,7 +887,7 @@ export const WorkspaceThreadMergePlacementResultSchema = z.union([
   z.strictObject({ ok: z.literal(true), spaceId: SpaceIdSchema, title: z.string() }),
   z.strictObject({
     ok: z.literal(false),
-    code: z.enum(["workstream_not_found", "conversation_archived", "merge_thread_private", "merge_channel_not_placed"]),
+    code: z.enum(["workstream_not_found", "conversation_archived", "merge_channel_not_placed"]),
   }),
 ]);
 export type WorkspaceThreadMergePlacementResult = z.infer<typeof WorkspaceThreadMergePlacementResultSchema>;
