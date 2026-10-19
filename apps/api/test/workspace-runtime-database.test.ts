@@ -245,6 +245,7 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "channel_color_sync", // Its triggers, the alarm lane and the channel-colour RPCs only.
   "channel_color_sync_state", // The revision counter those triggers number marks from.
   "thread_backfill", // The alarm lane and the thread-backfill RPCs only.
+  "import_reservation_reclaim", // Armed by the import reservation, read by its alarm lane.
   "memory_digest_holders", // Conversations holding a memory digest copy; `memoryDigest` and the lane only.
   "memory_digest_holder_facts", // The fact ids each holder's copy was read with; `memoryDigest` and the marks only.
   "memory_revision", // The ordering token of digest reads; the fact writes and marks advance it.

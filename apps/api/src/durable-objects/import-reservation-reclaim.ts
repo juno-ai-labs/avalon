@@ -3,12 +3,6 @@
  * import whose main conversation has not opened within
  * `IMPORT_RESERVATION_RECLAIM_AFTER_MS` is presumed abandoned, and archived.
  *
- * The import's other exits all need a party that may never come: the window's
- * discard or abandon needs the window, and the run-end reclaim needs a run. A
- * start cut off before admitting its run, from a window that is gone, leaves
- * none of them, and the thread stays listed with a conversation that can never
- * open. This lane needs nothing but time.
- *
  * Armed in the reservation's own transaction, so no reservation exists that the
  * watch does not know about. At its due time the lane retires the create key in
  * D1 first, which refuses any import that `complete` has claimed, then archives
@@ -21,7 +15,7 @@
  *
  * - **Without it:** a start cut off before its run was admitted, from a window
  *   that then closed, leaves a listed thread whose conversation never opens and
- *   that its creator cannot remove (one did, from 2026-10-06 until this lane).
+ *   that its creator cannot remove.
  * - **Who causes it:** a dropped connection, a deploy reset or a crashed window,
  *   not a caller choosing it.
  * - **Why nothing else stops it:** discard and abandon need the window, and the
