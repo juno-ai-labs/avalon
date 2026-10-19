@@ -145,6 +145,7 @@ import { MergeResponseCard } from '@rally/ui/components/merge-response-card';
 import {
   ConnectorConnectionsProvider,
   connectorConnectionCardInput,
+  isUnrecognizedConnectorConnectionCard,
   connectorResourceAuthorizationRequest,
 } from '../components/connector-mentions';
 import type { ComposerMenuAction } from '../components/composer-input';
@@ -2062,6 +2063,7 @@ function ConversationSurfaceContent({
             groupPluginToolMessages(showAgentWork ? composed : withoutAgentWork(composed, (message) => (
               connectorResourceAuthorizationRequest(message) !== null
                 || connectorConnectionCardInput(message) !== null
+                || isUnrecognizedConnectorConnectionCard(message)
             ))),
           ),
         ),
