@@ -230,7 +230,7 @@ Annotation = {
   target: {
     resourceId: string,
     version: number,
-    locator: Locator,   // differs by kind; see the table above
+    locator: Locator,
   },
   content: {
     exact: string,      // source text, cell table, or trimmed HTML
@@ -238,11 +238,28 @@ Annotation = {
     before: string,
     after: string,
     truncated: boolean,
-    image?: AttachmentRef, // image crop or site screenshot
+    imageAttachmentId?: string, // draft upload of a crop or site screenshot
   },
   comment: string,      // may be empty
 }
+
+Locator =               // discriminated by type, not by the resource's kind
+  | { type: "markdown", start, end, headingPath }
+  | { type: "text", start, end, lines }
+  | { type: "pdf-text", page, start, end }
+  | { type: "document-text", headingPath, start, end }
+  | { type: "cells", sheet, range }          // "B3:D5"
+  | { type: "slide-text", slide, start, end }
+  | { type: "region", x, y, w, h }           // fractions of the image
+  | { type: "element", pagePath?, css, box } // HTML file or live site
+  | { type: "file" }
 ```
+
+- **The locator names its own type.** `AttachmentKind` cannot tell an HTML file
+  from plain text: `.html` is classed as `text`. So the validator checks the
+  locator's `type` against what the resource's MIME type allows (an HTML file
+  allows `element` and `text`), and the projection picks its guidance from the
+  same `type`.
 
 - **No client-supplied kind or size.** The server derives the kind from the
   resource row it already loads for the access check, so a request cannot
@@ -253,8 +270,13 @@ Annotation = {
   refuses a message with neither text nor an attachment. Its refine widens to
   accept a message whose only content is annotations, as long as at least one
   has a comment.
-- **Crops and screenshots are uploads.** The client uploads each one as a
-  resource before sending, the same way a composer attachment is uploaded.
+- **Crops and screenshots are draft attachments.** The client uploads each one
+  as a draft, the same way a composer attachment is uploaded. It puts the
+  draft's id in both `content.imageAttachmentId` and the message's
+  `attachmentIds`. So it goes through the existing `reserveAttachmentDrafts`
+  admission, which accepts only the sender's own unsent drafts, and it counts
+  toward the existing cap of 10 attachments per message. The server refuses an
+  `imageAttachmentId` that is not also in `attachmentIds`.
 
 One builder and validator for annotations lives in `@rally/contracts`, so the
 client and the server trim and check annotations the same way.
@@ -262,9 +284,19 @@ client and the server trim and check annotations the same way.
 ## Security and trust model
 
 - **Content is the person's own view.** An annotation quotes a resource the
-  sender can already read. The server checks that the sender can read
-  `resourceId` at `version`, and every `content.image` reference, before it
-  accepts the message, the same as an attachment.
+  sender can already read. This is a new read check, not the attachment path.
+  Attachment admission (`reserveAttachmentDrafts`) accepts only the sender's
+  own unsent drafts, and would refuse every annotation on an existing artifact
+  or sent attachment. Before it accepts the message, the server checks:
+  - `resourceId` is visible to the sender under the existing resource access
+    rules ([authorization](../../authorization.md)) for the thread or
+    workspace the message is posted in
+  - `version` exists in that resource's version history
+  - nothing is reserved
+
+  Crops and screenshots go through attachment admission instead (see Data
+  model).
+
 - **Quoted content is untrusted.** It is projected to the model as quoted data
   inside the user turn, never as instructions.
 - **One picker script, two transports** (Key design decision 8). Every HTML
@@ -334,8 +366,10 @@ message text:
 - For HTML files and live sites (`source="rendered"`), it says `<selected>` is
   the rendered element, not source. The model finds that element in the source
   before editing, using the CSS path, the visible text and the screenshot.
-- For PDF, Word, Excel and PowerPoint (`source="converted"`), it says the text
-  is converted. The model must rebuild the file rather than string-replace it.
+- For PDF, Word, Excel, CSV and PowerPoint (`source="converted"`), it says the
+  text is converted. A spreadsheet range arrives as a Markdown table, which is
+  never the file's own bytes, even for a CSV. The model must rebuild the file
+  rather than string-replace it.
 - When `truncated` is true, it says the selection was cut, and that the model
   should run `read_resource` before editing.
 - Image crops and site screenshots ride as image parts beside the annotation.
@@ -378,8 +412,8 @@ review.
 ## Open questions
 
 1. **Size guards.** Per [the limits rule](../../adding-security-defensive-and-other-limits.md),
-   three guards are defined, wired at the open value, and left for the team to
-   set. None blocks the build. All live in the shared annotation builder
+   two guards are defined, wired at the open value, and left for the team to
+   set. Neither blocks the build. Both live in the shared annotation builder
    in `@rally/contracts`, so the client and the server apply the same numbers.
    - **Most characters of `content.exact` in one annotation.** This one
      truncates rather than rejects: it cuts the middle, keeps the head and
@@ -391,11 +425,11 @@ review.
      rejects. The composer blocks Send and says the pins are too large to send
      together. The server refuses a message over it with the code
      `annotations_too_large`.
-   - **Image parts per message.** An image pin sends a crop plus the whole
-     image, and a site pin a screenshot, so ten image pins send eleven or more
-     image parts. The guard counts the crops and screenshots in one message,
-     and the existing attachment limit still governs their bytes. Over the
-     guard, the same Send block and the same refusal code apply.
+
+   Images need no new guard. Crops and screenshots are draft attachments, so the
+   existing cap of 10 attachments per message and the existing upload limits
+   already bound them.
+
 2. **Context window size.** How many characters go in `before` and `after`.
    This is a product choice, not a guard; about 200 each is the proposal.
 3. **HTML trimming.** What to strip from `outerHTML` before measuring. The
