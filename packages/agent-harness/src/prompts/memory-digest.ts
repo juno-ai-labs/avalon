@@ -54,12 +54,17 @@ function day(instant: number): string {
   return new Date(instant).toISOString().slice(0, 10);
 }
 
+/** The start date of a fact that has not begun yet, or null for a current one. */
+function upcomingFrom(fact: MemoryDigestFactInput, now: number): number | null {
+  return fact.validFrom !== null && fact.validFrom > now ? fact.validFrom : null;
+}
+
 /** Current facts render as `- text`; upcoming ones as `- From <date>: text`. Both carry a horizon when they have one. */
 function line(fact: MemoryDigestFactInput, now: number): string {
-  const upcoming = fact.validFrom !== null && fact.validFrom > now;
+  const from = upcomingFrom(fact, now);
   const body = `${fact.conflict ? "Disagreement: " : ""}${fact.text.trim()}`;
   const horizon = fact.validUntil === null ? "" : ` (until ${day(fact.validUntil)})`;
-  return `- ${upcoming ? `From ${day(fact.validFrom!)}: ` : ""}${body}${horizon} [${fact.factId.slice(0, 8)}]`;
+  return `- ${from === null ? "" : `From ${day(from)}: `}${body}${horizon} [${fact.factId.slice(0, 8)}]`;
 }
 
 /** Expired, and external evidence, never reach the digest (PRD design decision 11). */
@@ -72,7 +77,7 @@ interface Group {
   key: string;
   kind: MemoryDigestSubjectKind;
   title: string;
-  /** Kept in render order: standing before situational, newest first. */
+  /** Kept in render order: current before upcoming, standing before situational, newest first. */
   facts: MemoryDigestFactInput[];
 }
 
@@ -91,8 +96,11 @@ function groups(facts: readonly MemoryDigestFactInput[], now: number): Group[] {
   const ordered = [...byKey.values()].sort((a, b) =>
     SUBJECT_ORDER.indexOf(a.kind) - SUBJECT_ORDER.indexOf(b.kind) || a.title.localeCompare(b.title));
   for (const group of ordered) {
+    // An upcoming fact renders after the current facts of its subject (PRD
+    // design section 7), so a planned absence never reads as a present one.
     group.facts.sort((a, b) =>
-      (a.kind === b.kind ? 0 : a.kind === "standing" ? -1 : 1)
+      Number(upcomingFrom(a, now) !== null) - Number(upcomingFrom(b, now) !== null)
+      || (a.kind === b.kind ? 0 : a.kind === "standing" ? -1 : 1)
       || b.createdAt - a.createdAt
       || a.factId.localeCompare(b.factId));
   }
@@ -122,8 +130,7 @@ export function renderMemoryDigest(input: MemoryDigestRenderInput): string {
   while (text.length > input.budget) {
     const widest = ordered.find((group) => group.facts.length > 0);
     if (!widest) break;
-    // Oldest last within its kind; situational after standing, so the
-    // oldest situational goes before any standing fact of the same subject.
+    // Oldest by `createdAt` across the whole group, whatever its kind.
     const oldest = widest.facts.reduce((candidate, fact) => fact.createdAt < candidate.createdAt ? fact : candidate);
     widest.facts.splice(widest.facts.indexOf(oldest), 1);
     leftOut += 1;

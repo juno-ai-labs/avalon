@@ -266,6 +266,8 @@ import { createArtifactDataToolContext } from "./workstream-artifact-data-wiring
 import type { MessageObjectPort } from "../durable-objects/workstream-message-protocol";
 import { transcriptLister } from "../runtime/message-projection";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
+import type { MemoryDigestFact } from "../durable-objects/workspace-memory-facts-protocol";
+import { PERSONAL_SYSTEM_PROMPT_REASONS } from "../durable-objects/personal-system-prompt";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import {
@@ -288,6 +290,7 @@ import {
 import {
   createMemoryTools,
 } from "./memory-service";
+import { digestPrincipalKey, digestReaderFor, renderMemoryDigestSection } from "./memory-digest-service";
 import { automationScopeMemoryTables, createMemoryTableTools } from "./memory-table-service";
 import type { MaterializedMemoryTable } from "./memory-table-service";
 import { MAX_SESSION_IMPORT_RUN_MS, workstreamRunLimits } from "./workstream-run-policy";
@@ -2487,6 +2490,8 @@ export async function runWorkstreamHarness(
       contextWindowTokensByModel(): Promise<Readonly<Record<string, number>>>;
       /** This conversation's copy of a member's personal system prompt; empty for none. */
       personalSystemPrompt?(userId: string): string;
+      /** This conversation's memory digest copy for a principal (`digestPrincipalKey`); null for none. */
+      memoryDigest?(principal: string): MemoryDigestFact[] | null;
       readSidekickSkills(): SidekickSkillSnapshot | null;
       assignSidekickSkillNames(sources: SidekickSkillSnapshot["sources"]): Map<string, string>;
       attachedSidekickIds(): string[];
@@ -2725,7 +2730,7 @@ export async function runWorkstreamHarness(
       additionalMessages: [],
     })
     : loadRunPromptContext(env, input, workstream, runDefinitionPreparation));
-  const personalSystemPrompt = profile ? "" : personalSystemPromptFor(input, runtime?.persistentLoop?.personalSystemPrompt);
+  const principalSystemSection = profile ? "" : principalSystemSectionFor(input, runtime?.persistentLoop);
   const toolsPreparation = new Preparation(() => profile
     ? Promise.resolve(profileHarnessTools(profile.plugins(input,
       localWorkstreamAuthority(env, input.workspaceId, input.parentId, "desktopAction"))))
@@ -3324,7 +3329,7 @@ export async function runWorkstreamHarness(
       },
       systemPrompt: promptContext.systemPrompt,
       // Its own field so compaction can keep it out of the shared summary.
-      ...(personalSystemPrompt ? { principalSystemSection: personalSystemPrompt } : {}),
+      ...(principalSystemSection ? { principalSystemSection } : {}),
       // A persistent loop bootstraps from canonical transcript history once.
       // Activation-only wrappers cross the separately fenced durable boundary
       // below; a resumed execution must never replace the Bind head with a
@@ -4667,25 +4672,13 @@ async function loadConnectorTriggerContext(
  * the empty string.
  *
  * Only a run a person started for themselves carries it, so the reason is an
- * allowlist of their own acts: a message, an answer, or a retry, in Rally or
- * from a linked Slack account. Every other reason runs as a user without that
- * user acting (a digest, a wake-up an earlier run scheduled, a connector
- * trigger, an inbound email), and a Sidekick run (`run_as_user_id`) or a
- * background agent inherits a principal it was not given by a message. The
- * text is the conversation's own copy; see docs/personal-system-prompt.md.
+ * allowlist of their own acts (`PERSONAL_SYSTEM_PROMPT_REASONS`). Every other
+ * reason runs as a user without that user acting (a digest, a wake-up an
+ * earlier run scheduled, a connector trigger, an inbound email), and a Sidekick
+ * run (`run_as_user_id`) or a background agent inherits a principal it was not
+ * given by a message. The text is the conversation's own copy; see
+ * docs/personal-system-prompt.md.
  */
-const PERSONAL_SYSTEM_PROMPT_REASONS = new Set([
-  "opening_message",
-  "human_message",
-  "elicitation_answer",
-  "manual_retry",
-  // The member's own message, resumed after they authorized a resource for it.
-  "resource_authorization",
-  "slack_workspace_opening_message",
-  "slack_workspace_message",
-  "slack_workspace_elicitation_answer",
-]);
-
 function personalSystemPromptFor(
   input: WorkstreamWorkflowInput,
   read: ((userId: string) => string) | undefined,
@@ -4693,6 +4686,32 @@ function personalSystemPromptFor(
   if (!read || input.executionPrincipal.type !== "user" || !PERSONAL_SYSTEM_PROMPT_REASONS.has(input.reason)
     || input.automationRun || input.backgroundAgent || input.parentKind === "automation") return "";
   return renderPersonalSystemPrompt(read(input.executionPrincipal.userId));
+}
+
+/**
+ * What the system message carries for the principal acting in this run: the
+ * memory digest first, then the personal system prompt, each left out when
+ * empty, so a run with neither changes no byte of the prefix.
+ *
+ * Both are read from the conversation object's own copies, synchronously; no
+ * refresh happens here. Both travel as `principalSystemSection` because it is
+ * rendered per request and never written to the transcript, and the compaction
+ * summariser reads the system message without it, so one person's facts or
+ * instructions cannot reach a later speaker through the shared summary. See
+ * docs/agent-memory.md#the-digest and docs/personal-system-prompt.md.
+ */
+function principalSystemSectionFor(
+  input: WorkstreamWorkflowInput,
+  copies: {
+    personalSystemPrompt?(userId: string): string;
+    memoryDigest?(principal: string): MemoryDigestFact[] | null;
+  } | undefined,
+  now: number = Date.now(),
+): string {
+  const facts = copies?.memoryDigest?.(digestPrincipalKey(digestReaderFor(input))) ?? null;
+  const digest = facts ? renderMemoryDigestSection(facts, now) : "";
+  const personal = personalSystemPromptFor(input, copies?.personalSystemPrompt?.bind(copies));
+  return [digest, personal].filter((section) => section.length > 0).join("\n\n");
 }
 
 /**
@@ -8827,6 +8846,7 @@ async function recordToolAudit(
 
 export const __integrationTesting = {
   personalSystemPromptFor,
+  principalSystemSectionFor,
   executeAuthorizedConnectorTool,
   assertFrozenConnectionAuthorized,
   prePaginationTool,

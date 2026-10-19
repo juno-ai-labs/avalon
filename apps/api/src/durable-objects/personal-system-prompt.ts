@@ -40,3 +40,22 @@ export const PersonalSystemPromptRecordSchema = z.strictObject({
   revision: z.number().int().nonnegative(),
 });
 export type PersonalSystemPromptRecord = z.infer<typeof PersonalSystemPromptRecordSchema>;
+
+/**
+ * The run reasons that are a member's own act: a message, an answer, or a
+ * retry, in Rally or from a linked Slack account. Only these carry the
+ * member's personal system prompt, and only these read the member's own
+ * memory digest (`services/memory-digest-service.ts`). Every other reason runs
+ * as a user without that user acting, so the list allows rather than denies.
+ */
+export const PERSONAL_SYSTEM_PROMPT_REASONS: ReadonlySet<string> = new Set([
+  "opening_message",
+  "human_message",
+  "elicitation_answer",
+  "manual_retry",
+  // The member's own message, resumed after they authorized a resource for it.
+  "resource_authorization",
+  "slack_workspace_opening_message",
+  "slack_workspace_message",
+  "slack_workspace_elicitation_answer",
+]);
