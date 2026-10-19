@@ -6104,6 +6104,11 @@ function prePaginationTool(tool: HarnessTool): HarnessTool {
     "calendar.read:calendar.list_events": {
       maxResults: "Maximum occurrences to return in one page. Defaults to 25; follow the returned page token for the rest of the window.",
     },
+    "calendar.write:calendar.update_event": {
+      addAttendeeEmails: "Addresses to add to the event's current guest list. Everyone already invited stays.",
+      removeAttendeeEmails: "Addresses to remove from the event's current guest list.",
+      replaceAllAttendeeEmails: "The event's complete guest list after the update. Anyone omitted is removed. Cannot be combined with addAttendeeEmails or removeAttendeeEmails.",
+    },
     "slack.messages.read:read_channel": {
       limit: "Maximum messages to return, newest first. Defaults to 50; follow `next_cursor` for older ones.",
     },

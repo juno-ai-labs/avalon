@@ -563,7 +563,7 @@ Every Google tool parses its arguments with a strict schema, so an undeclared ke
 
   A relative change carries each existing guest across whole rather than rebuilding them from an address, so `responseStatus`, `optional`, `displayName`, and a room's `resource` flag survive an addition; re-sending bare addresses would reset every RSVP and re-invite everyone. The read is uncapped and an `attendeesOmitted` response is refused rather than patched from, because `maxAttendees` returns only the participant past its cap rather than a prefix — a capped read is how a large event loses its guest list. Resolving a calendar by name needs the connection's calendar read capability, and says so rather than failing as an opaque provider error.
 
-  Attendee changes are stated relatively. Google's event PATCH replaces the whole `attendees` array, so `google_calendar_update_event` takes `addAttendeeEmails` and `removeAttendeeEmails`, which it applies to the event's current guest list after reading it, and `replaceAllAttendeeEmails` for the rare case of setting the list outright. The create-shaped `attendeeEmails` is deliberately absent from the update schema: reaching for it fails the strict parse instead of silently deleting everyone who was already invited. Any attendee change emails everyone remaining on the event, and creating an event with attendees sends real invitations — both tools say so in their descriptions.
+  Attendee changes are stated relatively. Google's event PATCH replaces the whole `attendees` array, so `google_calendar_update_event` takes `addAttendeeEmails` and `removeAttendeeEmails`, which it applies to the event's current guest list after reading it, and `replaceAllAttendeeEmails` for the rare case of setting the list outright. Empty attendee arrays are treated as omitted, so an empty replacement never clears the list; to remove everyone, name them in `removeAttendeeEmails`, or use Google Calendar if the guest list is incomplete. The create-shaped `attendeeEmails` is deliberately absent from the update schema: reaching for it fails the strict parse instead of silently deleting everyone who was already invited. Any attendee change emails everyone remaining on the event, and creating an event with attendees sends real invitations — both tools say so in their descriptions.
 - Drive: `google_drive_search`, `google_drive_get_metadata`, `google_drive_download`, and `google_drive_export`. Search matches a plain-text `query` against file **names and indexed contents** — it is not a Drive query expression, so an operator written into it is matched literally — and narrows through its own `fileType` (named as a person would: `document`, `spreadsheet`, `pdf`, …), `modifiedAfter`, and `orderBy` parameters rather than through query syntax. A name-only search made a request for what a document *says* come back empty, which the plugin message then licensed reporting as the content not existing.
 - Docs: `google_docs_read_document`, `google_docs_create_document`, `google_docs_append_text`, and `google_docs_replace_text`.
 - Sheets: `google_sheets_read_spreadsheet`, `google_sheets_read_values`, `google_sheets_create_spreadsheet`, `google_sheets_update_values`, and `google_sheets_append_values`.
@@ -1504,6 +1504,18 @@ active workspace guest is insufficient after the addressed share is revoked.
 Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
+
+### 2026-10-19: Empty attendee changes are omitted
+
+**What changed:** Calendar event updates normalize empty add, remove, and replacement attendee arrays to omitted values before validation and execution.
+
+The private pre-pagination receipt recipe retains the original attendee-field descriptions, so the new model-facing guidance does not change historical tool-surface hashes.
+
+**Why:** A production guest invitation repeatedly failed because the agent supplied an empty replacement array alongside an addition. Presence-based exclusivity made the unused field block a valid change.
+
+**Rejected:** Merely relaxing the conflict check would leave an empty replacement able to clear the guest list during execution. Normalizing once in the shared argument schema gives preflight validation and execution the same meaning.
+
+**Consequences:** Nonempty replacement and relative changes remain exclusive. Clearing every guest requires explicit removals, with at most 50 addresses per call; if the guest list is incomplete, clearing guests requires Google Calendar. An update with only empty attendee arrays is refused as having no change.
 
 ### 2026-10-15: A connection that cannot reach a resource hands the call to one that can
 
