@@ -1320,11 +1320,15 @@ change takes too), so another window's dot follows without rebuilding a whole
 Space snapshot. There is no mark-unread route. A support session reads without moving the
 person's position (`docs/impersonation.md`).
 
-**What the reader acknowledges.** The feed's first page carries
+**What the reader acknowledges.** The Channel opens at the server's first unread
+row, with preceding context; a caught-up Channel opens at the end. The client
+captures that opening position before acknowledging any rows, and advances the
+read waterline only through rows overlapping the visible feed viewport.
+The feed's first page carries
 `latestAttentionSequenceNumber`, the Channel's waterline read in the same
-synchronous turn as the page. Every placement at or below it is on that page or
-no longer listed, so the client acknowledges the higher of it and the newest
-row it holds. Acknowledging only listed rows left the dot standing for good
+synchronous turn as the page. When the reader reaches the end, the client
+acknowledges the higher of it and the newest row it holds, covering placements
+that have since been removed or archived. Acknowledging only listed rows left the dot standing for good
 once the newest placement was removed or its thread archived. Neither a Channel
 hidden behind its thread or a breakout nor a thread hidden behind its breakout
 acknowledges anything (`PaneVisibility`).
