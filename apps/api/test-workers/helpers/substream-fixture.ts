@@ -361,6 +361,7 @@ export async function admitFixturePendingInput(
     inputId: string;
     text: string;
     mode?: "steer" | "queue";
+    startsRun?: boolean;
     clientMessageId?: string;
     loopId?: string;
     now?: number;
@@ -443,6 +444,7 @@ export async function admitFixturePendingInput(
     }),
     attachmentsJson: "[]",
     mentionsJson: "[]",
+    startsRun: input.startsRun ?? true,
     now,
   });
 }
