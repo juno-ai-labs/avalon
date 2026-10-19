@@ -948,11 +948,15 @@ restoration are owned by [artifact annotations](artifact-annotations.md).
 
 ### 2026-10-19 — Preserve source spans for artifact selection
 
-A rendered list or emphasis node drops the Markdown bytes `edit_file` needs.
-Parser positions now let annotation previews quote the original slice while
-retaining normal Markdown presentation, rather than guessing by visible-text
-search. Future rendering transforms in this mode must preserve those offsets;
-searching repeated text is not an acceptable restoration fallback.
+**What changed:** Parser positions let active annotation previews quote original Markdown slices.
+
+**Why:** Rendered list and emphasis nodes omit the exact syntax needed for source edits.
+
+**Considered and rejected:** Visible-text searching is ambiguous for repeated words and markup, so the source mapper retains parser offsets.
+
+**Consequences:** Transforms used while picking or restoring selections must preserve offsets; ordinary previews avoid the extra span rendering. See [artifact annotations](artifact-annotations.md).
+
+PR #1322; design: `docs/PRDs/2026-10-19_artifact-annotations/prd.md`.
 
 
 ### 2026-10-13 — A glance draws mentions as chips

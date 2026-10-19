@@ -367,6 +367,7 @@ export type DesktopArtifactWindowRequest =
   | DesktopGeneratedArtifactWindowRequest;
 
 export interface DesktopRestorableArtifactWindow {
+  annotationScope?: string;
   id: string;
   kind: 'site' | 'generated';
   resourceId: string;

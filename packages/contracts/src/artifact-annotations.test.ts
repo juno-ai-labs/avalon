@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AnnotationSchema, AnnotationsSchema, CreateMessageRequestSchema, CreateWorkstreamRequestSchema, annotationAllowedForResource, buildAnnotation, renderAnnotations } from './index';
+import { AnnotationSchema, AnnotatedMessageContentSchema, AnnotationsSchema, MESSAGE_MAX_CHARACTERS, isHtmlResource, CreateMessageRequestSchema, CreateWorkstreamRequestSchema, annotationAllowedForResource, buildAnnotation, renderAnnotations } from './index';
 const resourceId = '00000000-0000-7000-8000-0000000000a1';
 const pin = () => buildAnnotation({ target: { resourceId, version: 4, locator: { type: 'markdown', start: 9, end: 15, headingPath: ['Plans'] } }, content: { exact: '**$12**', source: 'exact', before: 'Starter: ', after: ' yearly', truncated: false }, comment: 'Make this monthly' });
 describe('artifact annotations', () => {
@@ -44,4 +44,24 @@ describe('artifact annotations', () => {
     expect(render('rendered',true)).toContain('read_resource before editing');
     expect(render('converted')).not.toContain('<comment>');
   });
+  it('decodes XML quoting exactly once before exact replacements',()=>{
+    const exact='Say "tea & <milk>" and keep &amp; literally.';
+    const rendered=renderAnnotations({kind:'artifact_annotations',annotations:[{...pin(),content:{...pin().content,exact}}]});
+    expect(rendered).toContain('<selected>Say &quot;tea &amp; &lt;milk&gt;&quot; and keep &amp;amp; literally.</selected>');
+    expect(rendered).toContain('decode XML entities exactly once');
+  });
+
+  it('applies comment limits only to newly admitted content',()=>{
+    const annotation={...pin(),comment:'x'.repeat(MESSAGE_MAX_CHARACTERS+1)};
+    expect(AnnotationsSchema.safeParse([annotation]).success).toBe(false);
+    expect(AnnotatedMessageContentSchema.parse({kind:'artifact_annotations',annotations:[annotation]}).annotations[0]?.comment).toHaveLength(MESSAGE_MAX_CHARACTERS+1);
+  });
+  it('uses a shared normalized HTML policy for uploads and connectors',()=>{
+    expect(isHtmlResource({fileName:'page.htm',mimeType:null})).toBe(true);
+    expect(isHtmlResource({fileName:'page.html',mimeType:'application/octet-stream'})).toBe(true);
+    expect(isHtmlResource({fileName:'page',mimeType:'TEXT/HTML; charset=UTF-8'})).toBe(true);
+    expect(isHtmlResource({fileName:'page.html',mimeType:'image/png'})).toBe(false);
+    expect(isHtmlResource({fileName:'page.html',mimeType:'text/plain'})).toBe(false);
+  });
+
 });

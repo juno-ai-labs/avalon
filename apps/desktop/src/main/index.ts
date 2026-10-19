@@ -3607,7 +3607,6 @@ function openArtifactWindow(request: DesktopArtifactWindowRequest, owner?: WebCo
     ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
     webPreferences: { preload: preloadPath(), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true },
   });
-  artifactWebContents.add(window.webContents);
   const stateId = previous?.id ?? crypto.randomUUID();
   let loadFailed = false;
   const record = (): void => {
@@ -3620,8 +3619,9 @@ function openArtifactWindow(request: DesktopArtifactWindowRequest, owner?: WebCo
       id: stateId, workspaceId, userId, kind: latest?.kind ?? request.kind,
       resourceId: request.resourceId, version: poppedOutArtifacts.get(window)?.version ?? request.version,
       title: window.getTitle(),
+      ...(request.annotationScope?{annotationScope:request.annotationScope}:{}),
       ...((latest?.kind ?? request.kind) === 'generated'
-        ? { mimeType: latest?.mimeType ?? (request.kind === 'generated' ? request.mimeType : undefined) }
+        ? { mimeType: latest?.mimeType ?? (request.kind === 'generated' ? request.sourceMimeType ?? request.mimeType : undefined) }
         : {}),
       bounds, displayId: electronScreen.getDisplayMatching(bounds).id,
     };
@@ -3686,7 +3686,7 @@ async function updatePoppedOutArtifact(request: DesktopArtifactWindowRequest): P
   }
   const [target, previous] = windows[0]!;
   // The owning renderer supplies a fresh site code for each updated window.
-  poppedOutArtifacts.set(target, { ...previous, version: request.version, request: { ...request, ...(previous.request.annotationScope ? { annotationScope: previous.request.annotationScope } : {}) } });
+  poppedOutArtifacts.set(target, { ...previous, version: request.version, request: { ...request, ...(previous.request.annotationScope ? { annotationScope: previous.request.annotationScope } : {}), ...(request.kind==='generated' && !request.sourceMimeType && previous.request.kind==='generated' ? {sourceMimeType:previous.request.sourceMimeType}: {}) } });
   target.setTitle(request.title);
   target.webContents.send('artifact:window-updated');
   const saved = artifactWindowStates().find((item) => item.id === previous.stateId);
@@ -3694,7 +3694,7 @@ async function updatePoppedOutArtifact(request: DesktopArtifactWindowRequest): P
     saved.kind = request.kind;
     saved.version = request.version;
     saved.title = request.title;
-    if (request.kind === 'generated') saved.mimeType = request.mimeType;
+    if (request.kind === 'generated') saved.mimeType = request.sourceMimeType ?? request.mimeType;
     else delete saved.mimeType;
     saveArtifactWindowStates();
   }
@@ -4017,7 +4017,7 @@ function registerIpc(): void {
   // previous theme's canvas before the first paint. An unrecognised value is
   // dropped rather than thrown on: nothing the caller does depends on it.
   ipcMain.handle('theme:set-window', async (event, choice: unknown) => {
-    assertTrustedIpcSender(event);
+    assertArtifactSurfaceSender(event);
     const parsed = parseThemeChoice(choice);
     if (!parsed || sameThemeChoice(parsed, windowThemeChoice)) return;
     windowThemeChoice = parsed;
@@ -4035,7 +4035,7 @@ function registerIpc(): void {
     // the Mac was already dark resolved to the same appearance, returned here,
     // and left every other window still believing it was following the Mac —
     // no visible difference in that moment, and the wrong one at sunrise.
-    for (const window of rallyWindows()) {
+    for (const window of [...rallyWindows(),...poppedOutArtifacts.keys()]) {
       if (window.webContents !== event.sender) window.webContents.send('theme:changed', parsed);
     }
     await updateStoredApplicationSettings(userDataDirectory(), { themeChoice: parsed });
@@ -4183,7 +4183,7 @@ function registerIpc(): void {
     return logout();
   });
   ipcMain.handle('system:copy-text', (event, text: unknown) => {
-    assertTrustedIpcSender(event);
+    assertArtifactSurfaceSender(event);
     if (typeof text !== 'string' || text.length === 0 || text.length > 4_000) {
       throw new Error('Invalid clipboard text');
     }
@@ -4257,7 +4257,7 @@ function registerIpc(): void {
     });
   });
   ipcMain.handle('system:open-external', async (event, rawUrl: unknown) => {
-    assertTrustedIpcSender(event);
+    assertArtifactSurfaceSender(event);
     if (typeof rawUrl !== 'string' || !isAllowedExternalUrl(rawUrl)) {
       throw new Error('Blocked external URL');
     }
@@ -4368,8 +4368,8 @@ function registerIpc(): void {
     if (!workspaceId || !userId) return [];
     const open = new Set([...poppedOutArtifacts.values()].map((item) => item.stateId));
     return artifactWindowStates().filter((item) => item.workspaceId === workspaceId
-      && item.userId === userId && !open.has(item.id)).map(({ id, kind, resourceId, version, title, mimeType }) =>
-      ({ id, kind, resourceId, version, title, ...(mimeType ? { mimeType } : {}) }));
+      && item.userId === userId && !open.has(item.id)).map(({ id, kind, resourceId, version, title, mimeType, annotationScope }) =>
+      ({ id, kind, resourceId, version, title, ...(mimeType ? { mimeType } : {}), ...(annotationScope?{annotationScope}: {}) }));
   });
   ipcMain.handle('artifact:forget-window', async (event, raw: unknown) => {
     assertTrustedIpcSender(event);

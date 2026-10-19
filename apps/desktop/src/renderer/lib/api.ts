@@ -2437,6 +2437,12 @@ export class RallyApi {
    * per-version preview, which is why the rail only offers to open a version
    * whose own type the preview surface can render from source bytes.
    */
+  async getResourceVersionPreview(resourceId:string,version:number,signal?:AbortSignal):Promise<Blob> {
+    const response=await this.execute(`/resources/${encodeURIComponent(resourceId)}/versions/${version}/preview`,{method:'GET',...(signal?{signal}: {})});
+    if(!response.ok)return this.throwResponseError(response);
+    return response.blob();
+  }
+
   async getResourceVersionContent(resourceId: string, version: number, signal?: AbortSignal, representation: "model" | "original" = "original"): Promise<Blob> {
     const response = await this.execute(
       `/resources/${encodeURIComponent(resourceId)}/versions/${encodeURIComponent(version)}/${representation === "model" ? "model-content" : "content"}`,

@@ -20,14 +20,14 @@ export function ArtifactWindow(): React.JSX.Element {
     {preview && <ArtifactWindowContent preview={preview} files={files.current} />}
   </AnnotationDraftProvider></Tooltip.Provider>;
 }
-function ArtifactWindowContent({preview,files}: {preview:DesktopArtifactWindowRequest;files:Map<string,File>}): React.JSX.Element {
+export function ArtifactWindowContent({preview,files}: {preview:DesktopArtifactWindowRequest;files:Map<string,File>}): React.JSX.Element {
   const draft = useAnnotationDraft();
   const [src,setSrc] = useState<string>();
   const [error,setError] = useState<string>();
   const [actions,setActions] = useState<readonly IconGroupAction[]>([]);
   const [sending,setSending] = useState(false);
   useEffect(() => {
-    if (preview.kind !== 'generated' || !preview.mimeType.startsWith('image/')) { setSrc(undefined); return; }
+    if (preview.kind !== 'generated' || !/^(image|audio|video)\//u.test(preview.mimeType)) { setSrc(undefined); return; }
     const url = URL.createObjectURL(new Blob([Uint8Array.from(preview.content)],{type:preview.mimeType})); setSrc(url);
     return () => URL.revokeObjectURL(url);
   },[preview]);
@@ -44,10 +44,10 @@ function ArtifactWindowContent({preview,files}: {preview:DesktopArtifactWindowRe
     } catch(e) { setError(e instanceof Error?e.message:'The pins could not be added.'); }
     finally {setSending(false);}
   };
-  return <DetailHeaderActionsHost onActions={setActions}><main className="artifact-annotation-window"><header><strong>{preview.title}</strong><span>v{preview.version}</span><IconGroup actions={actions.filter((a)=>a.key==='comment-mode').map((a)=>({...a,alwaysVisible:true}))} /></header>
-    {preview.kind==='generated' ? <div className="artifact-annotation-window-body"><AnnotationSurface resourceId={preview.resourceId} version={preview.version} name={preview.title} mimeType={preview.sourceMimeType ?? preview.mimeType} src={src} text={preview.mimeType.startsWith('image/')?undefined:new TextDecoder().decode(preview.content)} /></div>
+  return <DetailHeaderActionsHost onActions={setActions}><main className="artifact-annotation-window"><header><strong>{preview.title}</strong><span>v{preview.version}</span><IconGroup actions={actions.filter((a)=>a.key==='comment-mode').map((a)=>({...a,alwaysVisible:true,...(!preview.annotationScope?{disabledReason:'Open this artifact from a conversation to comment on it.'}: {})}))} /></header>
+    {preview.kind==='generated' ? <div className="artifact-annotation-window-body">{preview.mimeType.startsWith('audio/') ? <audio controls src={src} aria-label={preview.title} /> : preview.mimeType.startsWith('video/') ? <video controls src={src} aria-label={preview.title} /> : <AnnotationSurface resourceId={preview.resourceId} version={preview.version} name={preview.title} mimeType={preview.sourceMimeType ?? preview.mimeType} src={src} text={preview.mimeType.startsWith('image/')?undefined:new TextDecoder().decode(preview.content)} />}</div>
       : <ArtifactSiteWindow preview={preview} />}
-    <footer><AnnotationChips />{error && <p role="alert">{error}</p>}<button disabled={!draft?.pins.length||draft.uploading||sending} onClick={()=>void send()} type="button">{sending?'Adding pins…':'Add pins to message'}</button></footer>
+    <footer><AnnotationChips />{error && <p role="alert">{error}</p>}<button disabled={!preview.annotationScope||!draft?.pins.length||draft.uploading||sending} onClick={()=>void send()} type="button">{sending?'Adding pins…':'Add pins to message'}</button></footer>
   </main></DetailHeaderActionsHost>;
 }
 

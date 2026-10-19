@@ -1,7 +1,7 @@
 import type { Plugin } from 'vite';
 import { artifactFrameScript } from '../../packages/contracts/src/artifact-picker';
 
-/** Same trusted asset in desktop builds, the web client and their dev servers. */
+/** Trusted picker asset for native renderer builds and their dev server. */
 export function artifactPickerPlugin(): Plugin {
   return {
     name: 'rally-artifact-frame-picker',

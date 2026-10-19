@@ -589,20 +589,12 @@ this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 Comment mode in Rally's Mac preview installs the shared inspector into an
 isolated JavaScript world and captures the selected element as a PNG crop. No
 picker script is added to published site responses. Browser live-site previews
-remain view-only. Saved annotations reopen frozen version assets without running
+remain view-only. The authorized `GET /resources/:id/versions/:version/site-preview` route reopens frozen HTML assets without running
 old site code; a missing or mismatched element shows its saved quote and image.
 The selector and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
-
-### 2026-10-19 — Pick native live-site elements without changing publication
-
-People needed to point at rendered elements and send their HTML plus a visual
-crop. An isolated Electron picker supplies that capability without reloading the
-page or allowing its scripts to impersonate picker callbacks. Public-response
-injection was rejected after native-only website scope was accepted. Historical
-previews remain frozen assets and must never execute an old site's worker.
 
 
 ### 2026-10-18 — An overlay covers the page instead of blanking it

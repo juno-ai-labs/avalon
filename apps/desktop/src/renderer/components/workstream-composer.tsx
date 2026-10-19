@@ -1,3 +1,4 @@
+import { MAX_ATTACHMENTS } from '../lib/attachment-limits';
 import { AnnotationsSchema } from '@rally/contracts';
 import { AnnotationChips, useAnnotationDraft } from './artifact-annotations';
 import clsx from 'clsx';
@@ -217,8 +218,15 @@ export function WorkstreamComposer({
   const annotationDraft = annotationsEnabled ? inheritedAnnotationDraft : null;
   const annotationPayloadValid = AnnotationsSchema.safeParse(annotationDraft?.pins.map((p) => p.annotation) ?? []).success;
   const annotationAttachmentCount = annotationDraft?.pins.filter((p) => p.annotation.content.imageAttachmentId).length ?? 0;
-  const annotationBlocked = !annotationPayloadValid || annotationAttachmentCount + attachments.length > 10 || annotationDraft?.uploading;
+  const annotationBlocked = (Boolean(sending) && Boolean(annotationDraft?.pins.length)) || !annotationPayloadValid || annotationAttachmentCount + attachments.length > MAX_ATTACHMENTS || annotationDraft?.uploading;
   const hasCommentedPin = annotationDraft?.pins.some((p) => p.annotation.comment.trim()) ?? false;
+  const annotationSendPending = useRef(false);
+  const submitMessage: typeof onSend = async (...args) => {
+    const withPins=Boolean(annotationDraft?.pins.length);
+    if(withPins&&annotationSendPending.current)throw new Error('Your artifact comments are still sending.');
+    if(withPins)annotationSendPending.current=true;
+    try {await onSend(...args);} finally {if(withPins)annotationSendPending.current=false;}
+  };
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRevisionRef = useRef(0);
   const {
@@ -443,7 +451,7 @@ export function WorkstreamComposer({
     const submittedDeliveryMode = workstream.harnessStatus === 'running' ? 'steer' as const : undefined;
     resetDraft();
     try {
-      await onSend(trimmed, mentions, undefined, submittedDeliveryMode, ...invitedArgument(invitedEmails));
+      await submitMessage(trimmed, mentions, undefined, submittedDeliveryMode, ...invitedArgument(invitedEmails));
     } catch {
       restoreDraft(trimmed, mentions, revision);
     }
@@ -461,7 +469,7 @@ export function WorkstreamComposer({
     setPendingConfirmation(null);
     resetDraft();
     try {
-      await onSend(
+      await submitMessage(
         submitted.text,
         submitted.mentions,
         submitted.members.map((member) => member.id),
@@ -537,7 +545,7 @@ export function WorkstreamComposer({
         attachments={attachments}
         autoFocus={autoFocus}
         {...(className ? { className } : {})}
-        error={!annotationPayloadValid ? 'These pins are too large to send together.' : annotationAttachmentCount + attachments.length > 10 ? 'Send no more than 10 images and attachments together.' : error}
+        error={!annotationPayloadValid ? 'These pins are too large to send together.' : annotationAttachmentCount + attachments.length > MAX_ATTACHMENTS ? 'Send no more than 10 images and attachments together.' : error}
         {...(footerHint ? { footerHint } : {})}
         {...(notice ? { notice } : {})}
         {...(toolsAccessory ? { toolsAccessory } : {})}

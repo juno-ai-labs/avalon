@@ -122,6 +122,12 @@ describe('refreshing detached artifact windows', () => {
 });
 
 describe('restoring detached artifact windows', () => {
+  it('retains the originating composer and generic source MIME for converted previews',async()=>{
+    const popOutArtifact=vi.fn(async()=>true);
+    await restorePoppedOutArtifacts({bridge:{getRestorableArtifactWindows:async()=>[{id:'saved',kind:'generated',resourceId:'resource',version:1,title:'Plan.docx',annotationScope:'conversation:0'}],popOutArtifact,forgetRestorableArtifactWindow:async()=>{}},getResourceVersions:async()=>[{version:2,title:'Plan.docx',mimeType:null}],loadResourceContent:async()=>new Blob(['# Converted text'],{type:'text/markdown'}),openSiteArtifact:async()=>{throw new Error('Not a site');},signal:new AbortController().signal});
+    expect(popOutArtifact).toHaveBeenCalledWith(expect.objectContaining({kind:'generated',version:2,mimeType:'text/markdown',sourceMimeType:'application/octet-stream',annotationScope:'conversation:0'}));
+  });
+
   it('reads current authorized bytes before opening a saved generated window', async () => {
     const popOutArtifact = vi.fn(async () => true);
     const loadResourceContent = vi.fn(async () => new Blob(['current'], { type: 'text/plain' }));

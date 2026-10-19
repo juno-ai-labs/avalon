@@ -6470,7 +6470,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         });
         return;
       }
-      this.sendError(socket, rejection.code, rejection.message);
+      this.sendError(socket, "invalid_event", `${rejection.code}: ${rejection.message}`);
       return;
     }
 

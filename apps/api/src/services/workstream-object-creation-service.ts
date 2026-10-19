@@ -1,6 +1,6 @@
-import type { ModelAttachmentSource } from "./attachment-model-content";
+import { annotationCommentText } from "@rally/contracts";
 import { ResourceService } from "./resource-service";
-import { WorkstreamCreationFieldsSchema, annotationAllowedForResource } from "@rally/contracts";
+import { WorkstreamCreationFieldsSchema } from "@rally/contracts";
 import type { ConversationInitialization, PreparedConversation } from "@rally/contracts";
 import { CreateWorkstreamRequestSchema, asUserId, asWorkstreamId } from "@rally/contracts";
 import type {
@@ -267,25 +267,6 @@ export class WorkstreamObjectCreationService {
   } | { reserved: WorkstreamId }> {
     const span = options.span ?? noFlowSpan;
     const body = ((options.initialization?.kind === "history") ? WorkstreamCreationFieldsSchema : CreateWorkstreamRequestSchema).parse(input);
-    if (body.annotations?.length) {
-      if (options.initialization?.kind === "history" || options.openingStructuredContent) throw new ApiError(422, "annotation_opening_conflict", "Annotations require an ordinary opening message");
-      const names: Record<string,string> = {};
-      const images: ModelAttachmentSource[] = [];
-      const resources = new ResourceService(this.env,this.auth);
-      // Several pins usually share one version. Validate that target once per
-      // message rather than paying the same canonical reads for every pin.
-      const targets = new Map<string,ReturnType<ResourceService['annotationTarget']>>();
-      for (const annotation of body.annotations) {
-        const key = `${annotation.target.resourceId}:${annotation.target.version}`;
-        const target = targets.get(key) ?? resources.annotationTarget(annotation.target.resourceId,annotation.target.version);
-        targets.set(key,target);
-        const resource = await target;
-        if (!annotationAllowedForResource(annotation,{fileName:resource.title,mimeType:resource.mimeType})) throw new ApiError(422,"annotation_locator_type_mismatch","The annotation locator does not match this resource");
-        names[annotation.target.resourceId] = resource.title;
-        if (resource.image && !images.some((image) => image.id === resource.image?.id)) images.push(resource.image);
-      }
-      options = {...options, openingStructuredContent:{kind:"artifact_annotations",annotations:body.annotations,names,...(images.length ? {images} : {})}};
-    }
     // Named for the second read it is: `POST /workstreams` already resolved the
     // authority control row before choosing this service, and a span of its own
     // is where that duplicated round trip becomes visible instead of hiding
@@ -342,6 +323,10 @@ export class WorkstreamObjectCreationService {
     // covers the ones that did not (connector, import and Sidekick parents).
     // One statement, so nothing can anchor the id between the check and the
     // claim.
+    if (body.annotations?.length && (await this.receipt(body.clientMessageId))?.state !== 'completed') {
+      if (options.initialization?.kind === 'history' || options.openingStructuredContent) throw new ApiError(422,'annotation_opening_conflict','Annotations require an ordinary opening message');
+      options = {...options,openingStructuredContent:await new ResourceService(this.env,this.auth).annotationContent(body.annotations)};
+    }
     const proposedId = body.workstreamId ?? newId();
     await span.step("workstream.create.receipt.reserve", () => this.env.DB.prepare(
       `INSERT OR IGNORE INTO workstream_create_receipts
@@ -419,9 +404,10 @@ export class WorkstreamObjectCreationService {
     }
     span.setAttributes({ "rally.create.path": "fresh" });
 
+    const authoredOpening = annotationCommentText(body.openingMessage,body.annotations);
     const workstreamId = asWorkstreamId(receipt.workstream_id);
     const objective = body.objective
-      ?? provisionalWorkstreamDescription(body.openingMessage, "Review the attached files");
+      ?? provisionalWorkstreamDescription(authoredOpening, "Review the attached files");
     const title = body.title ?? provisionalWorkstreamTitle(objective, "New thread");
     const routeInput = {
       region: this.env.AVALON_REGION,
@@ -645,7 +631,7 @@ export class WorkstreamObjectCreationService {
           workstreamId: receipt.workstream_id,
           userId: this.auth.userId,
           objective,
-          openingMessage: body.openingMessage,
+          openingMessage: annotationCommentText(body.openingMessage,body.annotations),
           provisionalTitle: title,
           useConversationContext: options.initialization?.kind === "history",
           ...((input.descriptionSource ?? "derived") === "derived" ? { provisionalDescription: objective } : {}),

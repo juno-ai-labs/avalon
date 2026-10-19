@@ -3,6 +3,7 @@ const resourceId='00000000-0000-7000-8000-000000000001';
 const base:Annotation={target:{resourceId,version:4,locator:{type:'markdown',start:0,end:30,headingPath:['Plans']}},content:{exact:'**Starter**: $12, billed yearly.',source:'exact',before:'## Plans\n\n',after:'\n**Team**: $24.',truncated:false},comment:'Make this monthly'};
 const cases=[
   {name:'one exact annotation',pins:[base],request:'Apply the requested change.',action:'edit_file',quotes:[base.content.exact]},
+  {name:'escaped exact annotation',pins:[{...base,content:{...base.content,exact:'Say "tea & <milk>" and keep &amp; literally.'}}],request:'Apply the requested change.',action:'edit_file',quotes:['Say "tea & <milk>" and keep &amp; literally.']},
   {name:'several annotations',pins:[base,{...base,content:{...base.content,exact:'**Team**: $24, billed yearly.'},comment:'Lead with Sidekicks'}],request:'Apply both comments.',action:'edit_file',quotes:[base.content.exact,'**Team**: $24, billed yearly.']},
   {name:'truncated selection',pins:[{...base,content:{...base.content,exact:'**Starter**: $12… yearly.',truncated:true}}],request:'Apply the comment.',action:'read_resource'},
   {name:'older version',pins:[base],request:'This annotation is from v4. The current artifact is v7. Apply the comment without overwriting intervening changes.',action:'read_resource'},

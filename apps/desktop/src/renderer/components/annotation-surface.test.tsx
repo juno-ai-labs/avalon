@@ -53,6 +53,7 @@ describe('annotation source picker',()=>{
   it('maps highlighted code tokens to exact source offsets without including its fence',()=>{
     const text='# Example\n\n```js\nconst price = 12;\n```\n';
     const {container}=render(<AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Code.md" mimeType="text/markdown" text={text} /><Observe /></AnnotationDraftProvider>);
+    fireEvent.click(screen.getByRole('button',{name:'Comment mode'}));
     const code=container.querySelector('pre code')!;
     const walker=document.createTreeWalker(code,NodeFilter.SHOW_TEXT);
     let node=walker.nextNode();while(node && !node.textContent?.includes('price'))node=walker.nextNode();
@@ -64,6 +65,7 @@ describe('annotation source picker',()=>{
   it('maps a code word to the body rather than the same word in its fence language',()=>{
     const text='```js\njs\n```';
     const {container}=render(<AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Code.md" mimeType="text/markdown" text={text} /><Observe /></AnnotationDraftProvider>);
+    fireEvent.click(screen.getByRole('button',{name:'Comment mode'}));
     const code=container.querySelector('pre code')!;const walker=document.createTreeWalker(code,NodeFilter.SHOW_TEXT);const node=walker.nextNode()!;
     expect(sourceSelectionPoint(node,0,text)).toBe(6);
     expect(sourceSelectionPoint(node,2,text)).toBe(8);
@@ -73,6 +75,14 @@ describe('annotation source picker',()=>{
     fireEvent.click(screen.getByRole('button',{name:'Comment mode'}));
     const paragraph=screen.getByText(/Second paragraph/u);fireEvent.mouseMove(paragraph);fireEvent.click(paragraph,{detail:1});
     expect(JSON.parse(screen.getByTestId('pins').textContent??'[]')[0].content.exact).toBe('Second  paragraph.\nContinued.');
+  });
+
+  it('reveals the saved quote when its original image cannot load',()=>{
+    const saved={target:{resourceId,version:1,locator:{type:'region' as const,x:0,y:0,w:1,h:1}},content:{exact:'Region of Layout.png',source:'exact' as const,before:'',after:'',truncated:false},comment:'Use more contrast'};
+    render(<AnnotationSurface resourceId={resourceId} version={1} name="Layout.png" mimeType="image/png" src="broken-original.png" saved={saved}/>);
+    fireEvent.error(screen.getByRole('img',{name:'Layout.png'}));
+    expect(screen.getByText('Region of Layout.png')).toBeVisible();
+    expect(screen.getByText('Use more contrast')).toBeVisible();
   });
 
 });

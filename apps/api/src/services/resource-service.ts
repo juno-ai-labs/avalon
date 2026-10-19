@@ -1,4 +1,6 @@
-import { ArtifactManifestSchema, artifactAssetKey } from "@rally/contracts";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
+import { resolveShareableResources } from './resource-share-rules';
+import { annotationAllowedForResource, type Annotation, ArtifactManifestSchema, artifactAssetKey } from "@rally/contracts";
 import { resolveAssetPath } from "../artifacts/serving-policy";
 import { protectCanvaReference, readCanvaReference } from "./canva-resource-access";
 import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
@@ -359,17 +361,42 @@ export class ResourceService {
 
   /** Annotation targets are existing readable resources, never attachment reservations. */
   async annotationTarget(id: string, version: number): Promise<{ title: string; mimeType: string | null; image: ModelAttachmentSource | null }> {
-    await this.authorizeRead(id);
-    const resource = await this.loadResource(id);
-    if (resource.provider === 'avalon_upload' && resource.attachment_status !== 'attached') {
-      throw new ApiError(409, 'annotation_target_draft', 'Send this upload before annotating it');
+    const sharing = await resolveShareableResources(this.env,this.auth,[id],{readCheck:true});
+    if (!sharing.ok) throw new ApiError(sharing.code === 'attachment_draft_requires_message' ? 409 : 404,
+      sharing.code === 'attachment_draft_requires_message' ? 'annotation_target_draft' : sharing.code,'This resource cannot be shared as an annotation');
+    return this.loadAnnotationTarget(id,version);
+  }
+
+  /** Validate distinct targets concurrently before any participant or attachment writes. */
+  async annotationContent(annotations: readonly Annotation[]) {
+    const sharing = await resolveShareableResources(this.env,this.auth,annotations.map((a)=>a.target.resourceId),{readCheck:true});
+    if (!sharing.ok) throw new ApiError(sharing.code === 'attachment_draft_requires_message' ? 409 : 404,
+      sharing.code === 'attachment_draft_requires_message' ? 'annotation_target_draft' : sharing.code,'This resource cannot be shared as an annotation');
+    const targets = new Map<string,ReturnType<ResourceService['loadAnnotationTarget']>>();
+    for (const annotation of annotations) {
+      const {resourceId,version} = annotation.target;
+      const key = `${resourceId}:${version}`;
+      if (!targets.has(key)) targets.set(key,this.loadAnnotationTarget(resourceId,version));
     }
+    const names:Record<string,string> = {};
+    const images:ModelAttachmentSource[] = [];
+    await Promise.all(annotations.map(async (annotation)=>{
+      const target = await targets.get(`${annotation.target.resourceId}:${annotation.target.version}`)!;
+      if (!annotationAllowedForResource(annotation,{fileName:target.title,mimeType:target.mimeType})) throw new ApiError(422,'annotation_locator_type_mismatch','The annotation locator does not match this resource');
+      names[annotation.target.resourceId] = target.title;
+      if (target.image && !images.some((image)=>image.id===target.image!.id && image.resourceVersion===target.image!.resourceVersion)) images.push(target.image);
+    }));
+    return {kind:'artifact_annotations' as const,annotations:[...annotations],names,...(images.length ? {images}: {})};
+  }
+
+  private async loadAnnotationTarget(id:string,version:number): Promise<{title:string;mimeType:string|null;image:ModelAttachmentSource|null}> {
     const revision = await this.loadVersion(id, version);
     if (!revision) throw new ApiError(404, 'resource_version_not_found', 'The annotated version does not exist');
     await this.authorizeRead(id);
     const image = classifyAttachmentKind({ fileName: revision.title, mimeType: revision.mime_type }) === 'image'
-      ? { id, workspaceId: this.auth.workspaceId, fileName: revision.title, mimeType: revision.mime_type ?? 'application/octet-stream', sizeBytes: 0,
-          contentRef: revision.content_ref, modelContentRef: revision.model_content_ref,
+      ? { id, resourceVersion:version, workspaceId: this.auth.workspaceId, fileName: `${revision.title} · v${version}`, mimeType: revision.mime_type ?? 'application/octet-stream', sizeBytes: 0,
+          contentRef: revision.content_ref, contentSha256: revision.content_sha256, modelContentRef: revision.model_content_ref,
+          modelMimeType:revision.model_mime_type,modelContentSha256:revision.model_content_sha256,modelMetadataJson:revision.model_metadata_json,
           modelContentStatus: revision.model_content_ref ? 'ready' as const : null } : null;
     return { title: revision.title, mimeType: revision.mime_type, image };
   }
@@ -448,10 +475,42 @@ export class ResourceService {
     return resourceObjectResponse(object);
   }
 
+  /** Same preview policy as current resources, bound to one immutable revision. */
+  async versionPreview(id:string,version:number):Promise<Response> {
+    await this.authorizeRead(id);
+    const row=await this.loadVersion(id,version);
+    if(!row)throw new ApiError(404,'resource_version_not_found','Resource version not found');
+    const mime=row.mime_type?.split(';',1)[0]?.trim().toLowerCase()??'';
+    const kind=classifyAttachmentKind({fileName:row.title,mimeType:row.mime_type});
+    if(kind==='image'&&requiresBrowserImageNormalization(mime,row.title)) {
+      const image=await loadBrowserCompatibleImage(this.env.PAYLOADS,{id,fileName:row.title,mimeType:mime,contentRef:row.content_ref,modelContentRef:row.model_content_ref,modelMimeType:row.model_mime_type,modelContentSha256:row.model_content_sha256,modelMetadataJson:row.model_metadata_json},{images:this.env.IMAGES,documentProcessor:this.env.DOCUMENT_PROCESSOR});
+      if(!image)throw new ApiError(422,'resource_preview_unsupported','This image format cannot be previewed');
+      await this.authorizeRead(id);
+      return resourceBytesResponse(image.bytes,image.mimeType,row.title);
+    }
+    const original=kind==='image'||kind==='audio'||kind==='markdown'||kind==='text'||mime.startsWith('text/');
+    const ref=original?row.content_ref:row.model_content_ref;
+    if(!ref)throw new ApiError(404,'resource_version_content_unavailable','This preview is unavailable for the resource version');
+    const object=await this.env.PAYLOADS.get(ref);
+    if(!object)throw new ApiError(404,'resource_version_content_unavailable','Stored resource version content was not found');
+    await this.authorizeRead(id);
+    return resourceObjectResponse(object,row.title);
+  }
+
   /** Frozen HTML assets only: historical server modules are never executed. */
   async annotationSitePreview(id: string, version: number, pagePath: string): Promise<Response> {
-    const original = await this.versionContent(id, version, 'original');
-    const manifest = ArtifactManifestSchema.parse(await original.json());
+    await this.authorizeRead(id);
+    const revision=await this.loadVersion(id,version);
+    if(!revision||revision.mime_type!=='application/vnd.rally.site-manifest+json'||!revision.content_ref)throw new ApiError(404,'annotation_original_page_unavailable','The original page cannot be shown again');
+    const original=await this.env.PAYLOADS.get(revision.content_ref);
+    if(!original)throw new ApiError(404,'annotation_original_page_unavailable','The original page cannot be shown again');
+    const parsed = ArtifactManifestSchema.safeParse(await original.json().catch(()=>null));
+    if (!parsed.success) {
+      const diagnostic=zodDiagnosticCode(parsed.error,'artifact_manifest');
+      if(diagnostic)throw new ApiError(500,diagnostic,'The saved artifact manifest is invalid');
+      throw parsed.error;
+    }
+    const manifest = parsed.data;
     const registry = await this.env.DB.prepare('SELECT artifact_id FROM artifact_registry WHERE workspace_id = ? AND resource_id = ?')
       .bind(this.auth.workspaceId,id).first<{artifact_id:string}>();
     if (!registry || registry.artifact_id !== manifest.artifactId) throw new ApiError(404,'artifact_not_found','The artifact is unavailable');

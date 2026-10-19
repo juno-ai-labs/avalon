@@ -1101,7 +1101,7 @@ pin messages and their frame source only while Comment mode is on. Native live
 sites install the shared inspector in isolated world 1001 and obtain crops from
 main-process `capturePage`, rather than accepting image bytes from page scripts.
 
-The annotation security review exercised a hostile static file in real Electron:
+Local implementation checks exercised a hostile static file in real Electron:
 its own script remained blocked and its frame origin was `null`, while the
 trusted picker outlined and pinned its button. A native site defining the same
 picker-global name could not access the isolated callback; main captured the
@@ -1114,13 +1114,15 @@ Canonical target read/version checks precede message admission. See
 
 ### 2026-10-19 — Isolate annotation picking from resource scripts
 
-Pointing at HTML needs trusted script execution without giving a file the app
-origin. Opaque nonce-gated frames and isolated live-site worlds preserve that
-boundary. Inline picker execution was rejected because `srcdoc` inherits the
-app CSP; a bundled trusted script satisfies both policies. Browser serving
-injection was removed after the product accepted native-only website picking,
-avoiding a same-origin forgery boundary. Future picker changes must preserve
-sender checks, native screenshot ownership and the pop-out's narrow IPC scope.
+**What changed:** Opaque static frames and isolated live-site worlds run trusted picker code; main owns screenshots and popouts receive narrow sender-checked IPC.
+
+**Why:** Pointing at model-authored HTML must not give its scripts app authority or let synthetic input impersonate user selection.
+
+**Considered and rejected:** Published-response injection was removed after native-only website scope was accepted; bundled external code satisfies inherited CSP where an inline nonce does not.
+
+**Consequences:** Preserve opaque frames, trusted-input checks, native screenshot ownership, narrow IPC and an active original composer scope for transfer. See [artifact annotations](artifact-annotations.md).
+
+PR #1322; design: `docs/PRDs/2026-10-19_artifact-annotations/prd.md`.
 
 
 ### 2026-10-02 — Isolate persistent browser orchestration from the app

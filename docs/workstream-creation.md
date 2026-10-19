@@ -557,11 +557,15 @@ and canonical opening turns carry the same payload. See
 
 ### 2026-10-19 — Carry annotations through the opening turn
 
-A person viewing an artifact from a Channel needs to start work with its pins,
-just as a person replying in a thread can. The ordinary create now admits and
-validates that payload before creating anything, rather than dropping pins or
-requiring a throwaway first message. The existing request receipt and opening
-structured-content path remain authoritative.
+**What changed:** Ordinary creation accepts a commented annotation-only opening and derives its provisional title from authored comments.
+
+**Why:** A person viewing an artifact from a Channel needs to begin work with its selections without a throwaway first message.
+
+**Considered and rejected:** The existing receipt and opening structured-content path carry annotations rather than a separate creation endpoint.
+
+**Consequences:** Fresh creates validate sharing before placement; completed receipts replay even after the original target is deleted. See [artifact annotations](artifact-annotations.md).
+
+PR #1322; design: `docs/PRDs/2026-10-19_artifact-annotations/prd.md`.
 
 
 ### 2026-10-19 — A starting thread shows its opening's mentions and attachments
