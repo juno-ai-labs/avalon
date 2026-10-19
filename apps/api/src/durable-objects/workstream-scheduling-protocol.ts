@@ -42,9 +42,10 @@ export const AnswerElicitationExternallyInputSchema = z.strictObject({
  * added there without a name here is a type error at the
  * `SCHEDULING_OPERATIONS` declaration instead of a silent gap over the wire.
  *
- * What is specific to this port rather than shared is `WAKEUP_MUTATIONS`: the
- * other three authorities have no operation that has to leave the object's own
- * alarm index and sidebar projection consistent with the row it just wrote.
+ * What is specific to this port rather than shared is `WAKEUP_MUTATIONS` and
+ * `DERIVED_ALARM_MUTATIONS`: the other three authorities have no operation that
+ * has to leave the object's own alarm and sidebar projection consistent with
+ * the row it just wrote.
  */
 type LocalOnlySchedulingOperation =
   | "prepareOpenElicitationMessage"
@@ -115,6 +116,28 @@ const WAKEUP_MUTATIONS = new Set<SchedulingOperation>([
 
 export function mutatesWakeups(operation: SchedulingOperation): boolean {
   return WAKEUP_MUTATIONS.has(operation);
+}
+
+/**
+ * The operations that write a column the object derives its alarm from,
+ * rather than a row in its alarm index.
+ *
+ * The memory sweep's four writes all move `memory_sweep_state.retry_at`,
+ * which `nextMemorySweepAt` reads and nothing else arms. Called from the
+ * Queue consumer, a release or settle would otherwise leave a quiet
+ * conversation asleep past the time it asked to be tried again. These need
+ * the alarm re-derived and nothing more: no wake-up index to reconcile and no
+ * sidebar projection to commit beside the row.
+ */
+const DERIVED_ALARM_MUTATIONS = new Set<SchedulingOperation>([
+  "claimMemorySweep",
+  "settleMemorySweep",
+  "releaseMemorySweep",
+  "deferMemorySweep",
+]);
+
+export function armsDerivedAlarm(operation: SchedulingOperation): boolean {
+  return DERIVED_ALARM_MUTATIONS.has(operation);
 }
 
 export const isSchedulingOperation = operationGuard(SCHEDULING_OPERATIONS);
