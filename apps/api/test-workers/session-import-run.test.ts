@@ -13,7 +13,7 @@
 
 import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asSpaceId, asSubstreamId, asUserId, asWorkspaceId, type SpaceId } from "@rally/contracts";
 
@@ -170,6 +170,33 @@ async function openDesktop(workstreamId: string, substreamId: string, membership
 }
 
 afterEach(() => { delete (env as { TOOL_DEFAULT_TIMEOUT_MS?: string }).TOOL_DEFAULT_TIMEOUT_MS; });
+
+/**
+ * `creationEnv()` with the Organization object answering the named methods as
+ * a deploy's reset does: every other call reaches the real object.
+ */
+function resettingEnv(methods: readonly string[]): Env {
+  const namespace = env.WORKSPACE_DOS;
+  const resetting = new Proxy(namespace, {
+    get: (target, property) => {
+      const value: unknown = Reflect.get(target, property);
+      if (property !== "get" || typeof value !== "function") {
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+      return (...args: Parameters<typeof namespace.get>) => new Proxy(namespace.get(...args), {
+        get: (stub, method) => typeof method === "string" && methods.includes(method)
+          ? async () => { throw new Error("Durable Object reset because its code was updated."); }
+          : Reflect.get(stub, method),
+      });
+    },
+  });
+  return new Proxy(creationEnv(), {
+    get: (current, property, receiver) => property === "WORKSPACE_DOS" ? resetting
+      : property === "LOG_LEVEL" ? "warn"
+        : Reflect.get(current, property, receiver),
+  });
+}
+
 
 describe("a conversation import run", () => {
   it("keeps a committing import alive past the ordinary tool deadline and settles its durable receipt", async () => {
@@ -548,5 +575,47 @@ describe("a conversation import run", () => {
       source: { provider: "chatgpt", url: SOURCE_URL, sessionId: CONVERSATION_ID },
       content: { messages: [{ role: "user", text: "late", sourceMessageId: "m1" }] },
     })).rejects.toMatchObject({ code: "workstream_create_discarded" });
+  }, 60_000);
+
+  it("takes back by its create key a Channel whose start failed and could not retire it", async () => {
+    const spaceId = await importSpace();
+    const clientMessageId = crypto.randomUUID();
+    const listed = (workstreamId: string) => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ archived_at: number | null }>(
+      `SELECT archived_at FROM channels WHERE workstream_id = ?`, workstreamId).one().archived_at);
+    // The launch fails after the reservation, and the retire behind it fails
+    // the same way: the desktop gets an error and no ids.
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(new SessionImportRunService(resettingEnv(["reserveHiddenChild", "discardReservedMain"]), AUTH)
+      .start({ sourceUrl: SOURCE_URL, title: "Stranded", spaceIds: [spaceId], clientMessageId }))
+      .rejects.toThrow("Durable Object reset");
+    const receipt = await env.DB.prepare(`SELECT workstream_id FROM workstream_create_receipts WHERE client_message_id = ?`)
+      .bind(clientMessageId).first<{ workstream_id: string }>();
+    expect(await listed(receipt!.workstream_id)).toBeNull();
+    expect(warned.mock.calls.map(([entry]) => entry as Record<string, unknown>)
+      .filter((entry) => entry.event === "session_import_retire_failed")
+      .map(({ workstream_id, reason }) => ({ workstream_id, reason })))
+      .toEqual([{ workstream_id: receipt!.workstream_id, reason: "session_import_retire_failed:durable_object_code_updated" }]);
+    warned.mockRestore();
+
+    const service = new SessionImportRunService(creationEnv(), AUTH);
+    expect(await service.abandon(clientMessageId)).toEqual({ abandoned: true });
+    expect(await listed(receipt!.workstream_id)).not.toBeNull();
+    await expect(service.complete(receipt!.workstream_id, {
+      title: "Stranded", clientMessageId, spaceIds: [spaceId],
+      source: { provider: "chatgpt", url: SOURCE_URL, sessionId: CONVERSATION_ID },
+      content: { messages: [{ role: "user", text: "late", sourceMessageId: "m1" }] },
+    })).rejects.toMatchObject({ code: "workstream_create_discarded" });
+  }, 60_000);
+
+  it("refuses to abandon a key a completing import has claimed, before stopping its agent", async () => {
+    const spaceId = await importSpace();
+    const clientMessageId = crypto.randomUUID();
+    const service = new SessionImportRunService(creationEnv(), AUTH);
+    const run = await service.start({ sourceUrl: SOURCE_URL, title: "Opening", spaceIds: [spaceId], clientMessageId });
+    await env.DB.prepare(`UPDATE workstream_create_receipts SET state = 'initialized' WHERE workstream_id = ?`).bind(run.workstreamId).run();
+    await expect(service.abandon(clientMessageId)).rejects.toMatchObject({ code: "session_import_already_open" });
+    expect(await runInDurableObject(child(run.workstreamId, run.substreamId), (_instance, state) =>
+      state.storage.sql.exec<{ stop_requested_at: number | null }>(`SELECT stop_requested_at FROM substream_loops`).one().stop_requested_at)).toBeNull();
+    expect(await service.abandon(crypto.randomUUID())).toEqual({ abandoned: false });
   }, 60_000);
 });

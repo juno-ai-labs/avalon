@@ -16,6 +16,7 @@ import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
+import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { resolveAgentModelRouting } from "./agent-model-flags";
@@ -125,14 +126,28 @@ export class SessionImportRunService {
       const othersRun = admitted === "exists" || (admitted === null && await createHarnessRunObjectPort(
         this.env, this.auth.workspaceId, workstreamId, undefined, childId,
       ).run({ runId }).then((found) => found != null, () => false));
-      if (!othersRun) await this.retire(workstreamId, input.clientMessageId).catch(() => undefined);
+      // The launch's own error is what the caller gets; a retire that fails
+      // too leaves the Channel listed until the desktop abandons the key, so
+      // it is logged rather than lost.
+      if (!othersRun) {
+        await this.retire(workstreamId, input.clientMessageId).catch((retireError: unknown) => {
+          logWarn(this.env, "session_import_retire_failed", {
+            workspace_id: this.auth.workspaceId,
+            workstream_id: workstreamId,
+            reason: diagnosticErrorCode(retireError, "session_import_retire_failed"),
+          });
+        });
+      }
       throw error;
     }
     return { workstreamId, substreamId: childId };
   }
 
-  /** Stop the caller's earlier import agents on a Channel, so one runs at a time. */
-  private async stopEarlierImports(workstreamId: string): Promise<void> {
+  /**
+   * Stop the caller's import agents on a Channel: an update's earlier runs, so
+   * one runs at a time, and whatever an abandoned start left running.
+   */
+  private async stopImports(workstreamId: string): Promise<void> {
     const workspaceId = this.auth.workspaceId;
     const parent = await this.parent();
     const earlier = await parent.hiddenChildren({ workspaceId, parentId: workstreamId, userId: this.auth.userId });
@@ -252,7 +267,7 @@ export class SessionImportRunService {
     if (!recorded?.url) throw new ApiError(409, "session_import_source_missing", "This thread has no updateable source session");
     const checkpoint = await client.importedSessionCheckpoint();
     const source = browserConversationSource(recorded.url);
-    await this.stopEarlierImports(workstreamId);
+    await this.stopImports(workstreamId);
     const substreamId = uuidV7(Date.now());
     await this.launch(workstreamId, source, checkpoint.map((entry) => entry.sourceMessageId), substreamId, uuidV7(Date.now()));
     return { workstreamId, substreamId };
@@ -414,6 +429,36 @@ export class SessionImportRunService {
     }
     await this.retire(input.workstreamId, input.clientMessageId);
     return { discarded: true };
+  }
+
+  /**
+   * End a new import by its create key alone: stop the caller's import agents
+   * on its Channel and, while the Channel has never opened, archive it.
+   *
+   * For a start whose answer never reached the desktop (a launch that failed
+   * with a retire that failed too, or an invocation cut off mid-launch), so
+   * the window holds no ids for `discard`, only the key it sent. No run may
+   * exist to end, so the run-end reclaim cannot cover it either.
+   *
+   * Reaches only the caller's own key, and only while its receipt is
+   * `reserved` or `failed`: a key `complete` has claimed is refused before any
+   * agent is stopped. A `failed` receipt is retired again, because a retire
+   * that failed after the receipt was written left its Channel listed. A key
+   * that reserved nothing answers `abandoned: false`.
+   */
+  async abandon(clientMessageId: string): Promise<{ abandoned: boolean }> {
+    const receipt = await this.env.DB.prepare(
+      `SELECT workstream_id, state FROM workstream_create_receipts
+        WHERE workspace_id = ? AND creator_user_id = ? AND client_message_id = ?`,
+    ).bind(this.auth.workspaceId, this.auth.userId, clientMessageId)
+      .first<{ workstream_id: string; state: string }>();
+    if (!receipt) return { abandoned: false };
+    if (receipt.state !== "reserved" && receipt.state !== "failed") {
+      throw new ApiError(409, "session_import_already_open", "This thread has already opened; archive it instead");
+    }
+    await this.stopImports(receipt.workstream_id);
+    await this.retire(receipt.workstream_id, clientMessageId);
+    return { abandoned: true };
   }
 }
 
