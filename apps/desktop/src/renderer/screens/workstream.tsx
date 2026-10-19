@@ -37,6 +37,7 @@ import { launchedSubstreamDetail, optimisticOpeningTranscript } from '../lib/lau
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import { holdCachedWorkstreamArchive, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import { SidekickPicker } from '../components/sidekick-picker';
+import { openMemorySource, useMemoryFacts, type MemoryFacts } from '../components/memory-review';
 import { workstreamSidekickRows } from '../components/sidekick-section';
 import { useChannelRail } from '../lib/channel-rails';
 import { type LaunchingSubstream, type SubstreamLaunchProps } from '../components/substream-launch';
@@ -680,6 +681,23 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   // beside its Channel takes it, and a panel either conversation opens takes
   // it from the other, which is hidden but stays mounted.
   const openBreakoutId = selectedSubstreamId !== '0' ? selectedSubstreamId : null;
+  // The Thread's and the open Breakout's own facts, each read once its Memory
+  // level opens. A reader scoped to a Breakout cannot open the Thread's Main,
+  // so the Thread's are not theirs to review.
+  const threadMemory = useMemoryFacts({
+    queryKey: ['memory', 'conversation', id, '0'],
+    read: (signal) => api!.getConversationMemory(id, '0', signal),
+    forget: (factId) => api!.forgetConversationMemory(id, '0', factId),
+    enabled: api !== null && !conversationScoped,
+    lazy: true,
+  });
+  const breakoutMemory = useMemoryFacts({
+    queryKey: ['memory', 'conversation', id, openBreakoutId ?? ''],
+    read: (signal) => api!.getConversationMemory(id, openBreakoutId!, signal),
+    forget: (factId) => api!.forgetConversationMemory(id, openBreakoutId!, factId),
+    enabled: api !== null && openBreakoutId !== null,
+    lazy: true,
+  });
   const creatingHere = creation?.parentId === id;
   const breakoutPaneOpen = openBreakoutId !== null || creatingHere;
   const railScope = useUiStore((state) => state.railScope);
@@ -756,6 +774,8 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     openThreadAlone();
     showInChannel(merge.messageId);
   };
+  // A fact's source opens like any link, and the menu closes as it does.
+  const memoryLevel = (memory: MemoryFacts) => ({ ...memory, onOpenSource: (source: Parameters<typeof openMemorySource>[0]) => openMemorySource(source, (to) => void navigate(to)) });
   const openBreakout = (substreamId: string): void => {
     // A panel the Channel has open would hide the Breakout being asked for.
     if (mainOwnsRail) closeRail();
@@ -839,6 +859,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         /> : undefined}
         addSidekick={(context || channelRail) && <SidekickPicker substreamId="0" workstreamId={id} />}
         breakouts={breakoutMarks}
+        memory={api && !conversationScoped ? memoryLevel(threadMemory) : undefined}
         // The update re-runs the import in the embedded browser, which only the Mac app has.
         onImportUpdates={api && desktopServicesAvailable() && importedSourceUpdatable(importedSource.data) ? () => setImportUpdateOpen(true) : undefined}
         onOpenArtifact={context?.openArtifact}
@@ -905,6 +926,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         />}
         breakout={{ substreamId: breakoutId, title }}
         channel={{ id, title: railTitle ?? '', appearance: channelAppearance }}
+        memory={api ? memoryLevel(breakoutMemory) : undefined}
         onShowInChannel={mainVisible ? () => showInChannel(openBreakoutMark?.originTurnId) : undefined}
         origin={context.origin}
         addSidekick={<SidekickPicker substreamId={breakoutId} workstreamId={id} />}

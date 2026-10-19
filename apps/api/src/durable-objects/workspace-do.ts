@@ -525,6 +525,8 @@ import {
   WorkspaceMemoryForgetRequestSchema,
   WorkspaceMemoryRecallRequestSchema,
   WorkspaceMemoryRememberRequestSchema,
+  WorkspaceMemoryReviewForgetRequestSchema,
+  WorkspaceMemoryReviewRequestSchema,
   WorkspaceMemorySweepCandidatesRequestSchema,
   type MemoryReader,
   type WorkspaceMemoryApplySweepResult,
@@ -532,16 +534,20 @@ import {
   type WorkspaceMemoryForgetResult,
   type WorkspaceMemoryRecallResult,
   type WorkspaceMemoryRememberResult,
+  type WorkspaceMemoryReviewForgetResult,
+  type WorkspaceMemoryReviewResult,
   type WorkspaceMemorySweepCandidatesResult,
 } from "./workspace-memory-facts-protocol";
 import {
   MEMORY_FACTS_MIGRATION,
   applyMemorySweep,
   forgetMemoryFact,
+  forgetReviewedMemoryFact,
   memoryDigestFacts,
   memorySweepCandidates,
   recallMemoryFacts,
   rememberMemoryFact,
+  reviewMemoryFacts,
 } from "./workspace-memory-facts-storage";
 import {
   MEMORY_DIGEST_SYNC_MIGRATION,
@@ -15318,6 +15324,33 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceMemoryDigestRequestSchema, input, "memory_digest");
     this.assertWorkspace(request.workspaceId);
     return memoryDigestFacts(this.state.storage, request, await this.memoryReaderRelationship(request));
+  }
+
+  /**
+   * What Rally remembers in one scope, as one person reviews it: their own
+   * facts, the Organization's, or one Thread's, Breakout's or Channel's.
+   */
+  async reviewMemoryFacts(input: unknown): Promise<WorkspaceMemoryReviewResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceMemoryReviewRequestSchema, input, "review_memory_facts");
+    this.assertWorkspace(request.workspaceId);
+    return reviewMemoryFacts(this.state.storage, request, await this.memoryReaderRelationship({
+      workspaceId: request.workspaceId, reader: { kind: "person", userId: request.userId },
+    }));
+  }
+
+  /** Remove one fact from a scope's review, when the person may; see `reviewMemoryFacts`. */
+  async forgetReviewedMemoryFact(input: unknown): Promise<WorkspaceMemoryReviewForgetResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceMemoryReviewForgetRequestSchema, input, "forget_reviewed_memory_fact");
+    this.assertWorkspace(request.workspaceId);
+    const result = forgetReviewedMemoryFact(this.state.storage, request, await this.memoryReaderRelationship({
+      workspaceId: request.workspaceId, reader: { kind: "person", userId: request.userId },
+    }));
+    // A retraction marked every digest holder; the lane sends them without
+    // waiting on an unrelated wake.
+    if (result.outcome === "retracted") await this.armNextAlarm();
+    return result;
   }
 
   /** The facts a sweep of this conversation may read and revise, and where the conversation sits. */
