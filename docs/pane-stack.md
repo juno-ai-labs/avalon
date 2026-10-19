@@ -32,6 +32,7 @@ The routes are the stack:
 | --- | --- | --- |
 | `/channels/:c` | Channel | — |
 | `/channels/:c/threads/:t` | Channel, thread | — |
+| `/channels/:c/artifacts/:r` | Channel, an artifact a merge shared with it | — |
 | `/channels/:c/threads/:t?substream=:b` | thread, breakout | Channel |
 | …and the breakout opens a panel | breakout, panel | Channel, thread |
 | …a thread's panel, expanded | panel | Channel, thread |
@@ -168,6 +169,28 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
   window under Xvfb, per [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-19 — A Channel opens an artifact in its own panel
+
+**What changed:** `/channels/:c/artifacts/:r` opens an artifact beside the
+Channel's feed, in the same `InspectorRail` resource panel a thread uses,
+which now takes the resource from its host (`resource`) when there is no
+conversation to look it up in. A Channel merge's embeds open there.
+
+**Why:** A merge now shares its artifacts with the Channel
+([`conversation-merge.md`](conversation-merge.md)), and a reader who cannot
+open the thread they came from had nowhere to open them: the thread's panel
+closes any artifact not attached to that thread.
+
+**Considered and rejected:** A separate artifact window, which shows only
+generated artifacts with a preview.
+
+**Consequences:** The panel sits inside the Channel pane, not in the stack's
+second slot, so opening a thread replaces it, and it has no Expand yet. It
+claims the shell's rail (`railScope` `channel:<id>`) while mounted, as a
+thread's panel does, which is what makes the shell narrow the Channel beside
+it. The
+route keeps it across a reload, as a thread's does.
 
 ### 2026-10-17 — A panel standing alone carries its crumbs, as one glass bridge
 

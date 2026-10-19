@@ -70,18 +70,18 @@ describe('who a merge reaches, as the composer says it', () => {
     expect(mergeAudience(thread, null, null, ['A', 'B', 'C'])).toBe('Everyone in Cold Outreach will see this and can open 3 artifacts.');
   });
 
-  it('says when a private Channel’s merge shares its artifacts wider than the Channel', () => {
+  it('shares a Channel merge’s artifacts with the Channel’s readers, private Channel or not', () => {
     const target: Parameters<typeof mergeAudience>[0] = { kind: 'channel', channels: [], threadPrivate: false };
     expect(mergeAudience(target, { name: 'GTM', scope: 'workspace' }, null, ['Deck', 'Model']))
       .toBe('Everyone in GTM will see this and can open Deck and Model.');
     expect(mergeAudience(target, { name: 'Board', scope: 'personal' }, null, ['Deck']))
-      .toBe('People in Board will see this. Everyone in your organization can open Deck.');
+      .toBe('People in Board will see this and can open Deck.');
   });
 
-  it('says a private thread’s name stays hidden and its artifacts stay with its people', () => {
+  it('says a private thread’s name stays hidden, and its artifacts go to the Channel', () => {
     const target: Parameters<typeof mergeAudience>[0] = { kind: 'channel', channels: [], threadPrivate: true };
     expect(mergeAudience(target, { name: 'Sales', scope: 'workspace' }, null, ['Discount policy v2']))
-      .toBe('Everyone in Sales will see this, but not the thread’s name. Only the thread’s people can open Discount policy v2.');
+      .toBe('Everyone in Sales will see this and can open Discount policy v2, but not the thread’s name.');
     expect(mergeAudience(target, { name: 'Board', scope: 'personal' }, null, []))
       .toBe('People in Board will see this, but not the thread’s name.');
   });

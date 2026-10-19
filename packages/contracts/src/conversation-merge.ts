@@ -158,9 +158,10 @@ export const ChannelMergeSourceSchema = z.strictObject({
   summary: z.string().nullable(),
   embeds: z.array(MergeEmbedSchema),
   /**
-   * The reader cannot open the thread, so its title, summary and embeds are
-   * withheld (empty) and the merge reads as from a private thread. Served
-   * only to a build at `CHANNEL_PRIVATE_MERGES_CLIENT_CONTRACT` or later.
+   * The reader cannot open the thread, so its title and summary are withheld
+   * (empty) and the merge reads as from a private thread. Its embeds are not:
+   * the merge shared them with the Channel. Served only to a build at
+   * `CHANNEL_PRIVATE_MERGES_CLIENT_CONTRACT` or later.
    */
   private: z.literal(true).optional(),
 });
