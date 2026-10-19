@@ -685,6 +685,9 @@ function ChannelArtifactPanel({ channelId, onClose, resourceId, space }: {
   const loadResourceContent = useCallback((id: string, signal?: AbortSignal) => api
     ? api.getResourcePreviewContent(id, signal)
     : Promise.reject(new Error('No API session')), [api]);
+  const loadOriginalResourceContent = useCallback((id: string, signal?: AbortSignal) => api
+    ? api.getResourceContent(id, signal)
+    : Promise.reject(new Error('No API session')), [api]);
   const expandAction = fillsPane ? undefined : expandToggle(expanded, true, setExpanded);
   if (olderVersion) {
     return <AttachmentPanel
@@ -697,7 +700,7 @@ function ChannelArtifactPanel({ channelId, onClose, resourceId, space }: {
     />;
   }
   return <InspectorRail
-    {...(api ? { loadResourceContent } : {})}
+    {...(api ? { loadResourceContent, loadOriginalResourceContent } : {})}
     onOpenResourceVersion={openResourceVersion}
     panel={{
       resourceId,

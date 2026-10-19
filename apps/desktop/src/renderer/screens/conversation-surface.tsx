@@ -1765,6 +1765,12 @@ function ConversationSurfaceContent({
     },
     [api],
   );
+  const loadOriginalResourceContent = useCallback(
+    (resourceId: string, signal?: AbortSignal) => api
+      ? api.getResourceContent(resourceId, signal)
+      : Promise.reject(new Error('No API session')),
+    [api],
+  );
   const siteArtifacts = useSiteArtifacts(api);
   useEffect(() => {
     if (!resourcePanel) return;
@@ -3901,7 +3907,7 @@ function ConversationSurfaceContent({
           ancestors: panelAncestors,
         }}
         dropTarget={railDrop}
-        {...(api ? { loadResourceContent: loadResourceContent } : {})}
+        {...(api ? { loadResourceContent, loadOriginalResourceContent } : {})}
         failure={watchResource.error
           ? 'watch'
           : detachResource.error

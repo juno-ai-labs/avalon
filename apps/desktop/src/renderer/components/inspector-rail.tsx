@@ -2,9 +2,10 @@ import { useAnnotationDraft } from './artifact-annotations';
 import { AnnotationSurface } from './annotation-surface';
 import { openLink } from '../lib/browser-rail-links';
 import { desktopBridge } from '../lib/platform';
+import { downloadPreview } from './attachment-lightbox';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { IconArchive, IconArrowLeft, IconChevronRight, IconChevronsRight, IconExternalLink, IconEye, IconFileText, IconHistory, IconLink, IconLoader2, IconPencil, IconPin, IconPinnedOff, IconPlus, IconRefresh, IconUserPlus, IconWindowMaximize, IconX } from '@tabler/icons-react';
+import { IconArchive, IconArrowLeft, IconChevronRight, IconChevronsRight, IconDownload, IconExternalLink, IconEye, IconFileText, IconHistory, IconLink, IconLoader2, IconPencil, IconPin, IconPinnedOff, IconPlus, IconRefresh, IconUserPlus, IconWindowMaximize, IconX } from '@tabler/icons-react';
 import { ActionTile, ActionTiles, LevelRow, TitleMenuHeader, TitleMenuItem, TitleMenuSeparator, TitlePillClose, TitlePillHeader, useTitleMenuNav, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { classifyAttachmentKind } from '@rally/contracts';
 import { DetailHeaderActionsHost } from './detail-header-actions';
@@ -49,6 +50,8 @@ interface InspectorRailProps {
    * where the detail stays the metadata card it has always been.
    */
   loadResourceContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
+  /** Original file bytes for downloads, independent of readable derivatives. */
+  loadOriginalResourceContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
   /**
    * Everything the live-artifact detail needs, or absent.
    *
@@ -561,7 +564,9 @@ const VERSIONS_VIEW = { key: 'versions', label: 'Versions' };
  * The resource panel's title-pill menu: what the resource is, then what can be
  * done to it, in the same tiles and levels a thread's menu uses.
  */
-function ResourcePanelMenu({ onArchive, onCopyLink, onOpenSource, onPopOut, onRefresh, onRename, pinned, popOutDisabled, refreshing, resource, versions }: {
+function ResourcePanelMenu({ downloading, onDownload, onArchive, onCopyLink, onOpenSource, onPopOut, onRefresh, onRename, pinned, popOutDisabled, refreshing, resource, versions }: {
+  downloading: boolean;
+  onDownload?: (() => void) | undefined;
   onArchive?: (() => void) | undefined;
   onCopyLink?: (() => void) | undefined;
   onOpenSource?: (() => void) | undefined;
@@ -583,6 +588,7 @@ function ResourcePanelMenu({ onArchive, onCopyLink, onOpenSource, onPopOut, onRe
       title={resource.title}
     />
     <ActionTiles>
+      {onDownload && <ActionTile disabled={downloading} icon={<IconDownload aria-hidden="true" size={20} stroke={1.6} />} label="Download" onSelect={onDownload} />}
       {onRename && <ActionTile icon={<IconPencil aria-hidden="true" size={20} stroke={1.6} />} label="Rename" onSelect={onRename} />}
       {onCopyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={onCopyLink} />}
       {pinned && <ActionTile
@@ -709,6 +715,8 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const annotationDraft = useAnnotationDraft();
   const [popOutFailed, setPopOutFailed] = useState(false);
   const [poppingOut, setPoppingOut] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadFailed, setDownloadFailed] = useState(false);
   const [copyLinkFailed, setCopyLinkFailed] = useState(false);
   const [renameTarget, setRenameTarget] = useState<WorkstreamResource | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
@@ -723,6 +731,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
     setPopOutFailed(false);
     setPoppingOut(false);
     setCopyLinkFailed(false);
+    setDownloadFailed(false);
     setRenameTarget(null);
     setRenameFailed(false);
     setRenaming(false);
@@ -785,6 +794,20 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
     }
   };
 
+  const downloadResource = async (): Promise<void> => {
+    const loadOriginal = props.loadOriginalResourceContent;
+    if (!resource?.contentAvailable || !loadOriginal || isSiteResource(resource) || downloading) return;
+    setDownloading(true);
+    setDownloadFailed(false);
+    try {
+      await downloadPreview({ name: resource.title, loadContent: () => loadOriginal(resource.id) });
+    } catch {
+      setDownloadFailed(true);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const closeArchive = (): void => {
     if (archiving) return;
     setArchiveTarget(null);
@@ -832,6 +855,9 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         title: headerTitle,
         label: `${resource?.direction === 'artifact' ? 'Artifact' : 'Resource'} menu: ${headerTitle}`,
         ...(resource ? { menu: <ResourcePanelMenu
+          downloading={downloading}
+          {...(resource.contentAvailable && props.loadOriginalResourceContent && !isSiteResource(resource)
+            ? { onDownload: () => void downloadResource() } : {})}
           {...(props.onDetachResource ? { onArchive: () => { setArchiveFailed(false); setArchiveTarget(resource); } } : {})}
           {...(resource.canonicalUrl ? { onOpenSource: () => void openLink(resource.canonicalUrl!) } : {})}
           {...(resource.direction === 'artifact' && props.onRenameResource
@@ -954,6 +980,9 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       </>}
       <DetailHeaderActionsHost onActions={setDetailActions}>
       <div className="rail-scroll">
+        {downloadFailed && <div className="rail-inline-error"><InlineError>
+          Download failed. Please try again.
+        </InlineError></div>}
         {popOutFailed && <div className="rail-inline-error"><InlineError>
           The artifact couldn’t be opened in a new window.
         </InlineError></div>}
