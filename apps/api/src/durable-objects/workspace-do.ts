@@ -837,6 +837,7 @@ import {
   type ChannelColorWork,
 } from "./channel-color-sync";
 import {
+  SUGGESTION_BACKFILL_MIGRATION,
   THREAD_BACKFILL_MIGRATION,
   ThreadBackfillMessageSchema,
   completeThreadBackfill,
@@ -4549,6 +4550,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "one ledger of every new resource version, for open previews and pinned artifacts alike",
   // See WORKSPACE_RESOURCE_VERSION_CHANGES_MIGRATION and docs/websocket-architecture.md.
   statements: WORKSPACE_RESOURCE_VERSION_CHANGES_MIGRATION,
+}, {
+  version: 115,
+  description: "every open thread listed for the suggestion backfill",
+  // See SUGGESTION_BACKFILL_MIGRATION and docs/conversation-suggestions.md.
+  statements: SUGGESTION_BACKFILL_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {

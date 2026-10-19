@@ -978,6 +978,16 @@ export function harnessErrorFrames(error: unknown): string | null {
 
 const PRODUCT_SESSION_AUTH_MAX_AGE_MS = 300_000;
 
+/**
+ * What judging one settled turn came to (`judgeSettledTurn`): the outcome for
+ * the log, and the classifier's failure kind when it could not answer, which
+ * the backfill reads to retry rather than settle.
+ */
+export interface SettledTurnJudgement {
+  outcome: string;
+  failureKind: string | null;
+}
+
 export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly recentEvents: ServerSocketEvent[] = [];
@@ -5667,7 +5677,58 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     input: WorkstreamWorkflowInput,
     outcome: AgentTerminalOutcome,
   ): Promise<void> {
-    const substreamId = input.substreamId ?? "0";
+    await this.judgeSettledTurn(executionEnv, {
+      workspaceId: input.workspaceId,
+      parentId: input.parentId,
+      substreamId: input.substreamId ?? "0",
+      harnessRunId: input.harnessRunId,
+      finalTurnId: outcome.finalTurnId ?? null,
+      completed: outcome.status === "completed",
+      backgroundAgent: input.backgroundAgent === true,
+    });
+  }
+
+  /**
+   * The backfill's one call (docs/thread-backfill.md, `suggestion_backfill`):
+   * the newest settled Rally turn among the newest three messages is judged
+   * exactly as its settlement would have judged it, gates, record, row and
+   * drafter included. A run already judged is skipped by the observer's own
+   * idempotency gate, so running twice costs nothing. The answer is the
+   * observer's outcome, for the backfill's log line.
+   */
+  async backfillTurnDisposition(input: { workspaceId: string; workstreamId: string; substreamId: string }): Promise<SettledTurnJudgement> {
+    await this.initialized;
+    const settled = this.suggestions.newestSettledTurn();
+    if (!settled) return { outcome: "nothing_to_judge", failureKind: null };
+    const background = this.state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM background_agent").one().n > 0;
+    return this.judgeSettledTurn(this.env, {
+      workspaceId: input.workspaceId,
+      parentId: input.workstreamId,
+      substreamId: input.substreamId,
+      harnessRunId: settled.runId,
+      finalTurnId: settled.turnId,
+      completed: true,
+      backgroundAgent: background,
+    });
+  }
+
+  /**
+   * One settled turn through the observer and, for a confident positive, the
+   * drafter: the settlement step's last act, and the backfill's whole act.
+   * Never throws; the answer names what happened (`skipped:<gate>`,
+   * `judged:<code>`, `resumed`, `failed:<reason>`) and, for a
+   * `classifier_unavailable` judgement, the provider's failure kind.
+   */
+  private async judgeSettledTurn(executionEnv: Env, input: {
+    workspaceId: string;
+    parentId: string;
+    substreamId: string;
+    harnessRunId: string;
+    finalTurnId: string | null;
+    completed: boolean;
+    backgroundAgent: boolean;
+  }): Promise<SettledTurnJudgement> {
+    const substreamId = input.substreamId;
     try {
       await this.expireSuggestionsBestEffort();
       const traceId = uuidV7(Date.now());
@@ -5686,9 +5747,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         workstreamId: input.parentId,
         substreamId,
         runId: input.harnessRunId,
-        finalTurnId: outcome.finalTurnId ?? null,
-        completed: outcome.status === "completed",
-        backgroundAgent: input.backgroundAgent === true,
+        finalTurnId: input.finalTurnId,
+        completed: input.completed,
+        backgroundAgent: input.backgroundAgent,
         identity: identityRow
           ? { title: identityRow.title, description: identityRow.description, scope: identityRow.scope,
               archived_at: identityRow.archived_at, system_kind: identityRow.system_kind }
@@ -5717,24 +5778,30 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const row = observation.outcome === "judged" ? observation.suggestion
         : observation.outcome === "resumed" ? observation.suggestion
         : null;
-      if (!row) return;
+      const answer: SettledTurnJudgement = observation.outcome === "skipped" ? { outcome: `skipped:${observation.gate}`, failureKind: null }
+        : observation.outcome === "judged" ? { outcome: `judged:${observation.code}`, failureKind: observation.failureKind }
+        : { outcome: "resumed", failureKind: null };
+      if (!row) return answer;
       if (observation.outcome === "judged") await this.publishSuggestionChanged(row);
-      await this.draftSuggestionWords(executionEnv, input, substreamId, row);
+      await this.draftSuggestionWords(executionEnv, { workspaceId: input.workspaceId, parentId: input.parentId }, substreamId, row);
+      return answer;
     } catch (error) {
+      const reason = diagnosticErrorCode(error, "turn_disposition_step_failed");
       logWarn(executionEnv, "turn_disposition_step_failed", {
         workspace_id: input.workspaceId,
         workstream_id: input.parentId,
         substream_id: substreamId,
         harness_run_id: input.harnessRunId,
-        reason: diagnosticErrorCode(error, "turn_disposition_step_failed"),
+        reason,
       });
+      return { outcome: `failed:${reason}`, failureKind: null };
     }
   }
 
   /** The two-phase write's second phase: the words, then the row filled or withdrawn, then the event. */
   private async draftSuggestionWords(
     executionEnv: Env,
-    input: WorkstreamWorkflowInput,
+    input: { workspaceId: string; parentId: string },
     substreamId: string,
     row: SuggestionRow,
   ): Promise<void> {
