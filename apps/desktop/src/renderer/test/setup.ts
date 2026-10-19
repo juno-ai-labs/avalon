@@ -49,6 +49,12 @@ class ResizeObserverStub implements ResizeObserver {
 }
 globalThis.ResizeObserver ??= ResizeObserverStub;
 
+// Like Element geometry, text-range geometry has no layout in jsdom. Real
+// text fitting is verified in Electron; DOM tests only need the API to exist.
+Range.prototype.getBoundingClientRect ??= function getBoundingClientRect(): DOMRect {
+  return new DOMRect();
+};
+
 /**
  * jsdom implements no `scrollIntoView` either, and a component that keeps a
  * highlighted row under the reader calls it. Left undefined, the call throws
