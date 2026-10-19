@@ -11,6 +11,7 @@ const connectorName: Record<ConnectorProvider, string> = {
   custom_mcp: 'The MCP server',
   google: 'Google',
   github: 'GitHub',
+  apollo: 'Apollo.io',
   ashby: 'Ashby',
   canva: 'Canva',
   fireflies: 'Fireflies',

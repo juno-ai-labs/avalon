@@ -24,7 +24,7 @@ was incorrect and must not be used to introduce confirmations.
 | `packages/connectors/src/types.ts` | `ConnectorDynamicAgentTools`, the adapter facet that declares which grants and connection scopes use a live tool surface. |
 | `apps/api/src/services/integrations.ts` | Converts a dynamic connector facet into one connection-specific `HarnessPlugin.loadTools`, validates the live surface against the frozen grant, and routes execution back to the adapter. |
 | `packages/agent-harness/src/bind-runtime.ts` | Loads the tools after authorization at `load_plugin`, replaces the empty deferred plugin in the Bind registry, and caches that surface for the run. |
-| `packages/connectors/src/{ashby,fireflies,granola,slack,notion}.ts` | Small provider declarations: endpoint, accepted capability, token accessor/refresh wrapper, and the personal-versus-workspace branch. |
+| `packages/connectors/src/{apollo,ashby,fireflies,granola,slack,notion}.ts` | Small provider declarations: endpoint, accepted capability, token accessor/refresh wrapper, and the personal-versus-workspace branch. |
 
 ### Declaring a pass-through connector
 
@@ -76,6 +76,13 @@ API keys and webhook management are a separate authorization path and do not
 enter the MCP transport. See [provider prerequisites](provider-apps.md#ashby-personal-oauth-and-workspace-api-keys)
 for metadata observations and outstanding live acceptance.
 
+Apollo.io uses `https://mcp.apollo.io/mcp`, personal capability
+`apollo.personal.mcp`, and trusted authorization origin `https://mcp.apollo.io`.
+The shared lifecycle handles its regional callback, refresh, reconnect and
+revocation; its live catalog is never checked in. Its account identifier is a
+resource URL, with no verified provider user. See
+[Apollo prerequisites](provider-apps.md#apolloio-personal-oauth-and-sidekick-events).
+
 ### Discovery and activation
 
 The model first sees only Rally's trusted connector catalog entry. The API
@@ -116,6 +123,7 @@ while every newly opened MCP session uses the Rally initialization identity.
 
 | Provider | Personal connection | Workspace connection |
 | --- | --- | --- |
+| Apollo.io | Live hosted-MCP tools under `apollo.personal.mcp`. | Not supported. |
 | Fireflies | Live hosted-MCP tools under `fireflies.personal.read`. | Three fixed GraphQL reads and a signed meeting webhook the administrator registers by hand. |
 | Granola | Live hosted-MCP tools under `granola.personal.read`. | Fixed Workspace API reads and signed note webhooks. |
 | Slack | Live hosted-MCP tools under `slack.personal.mcp`; legacy granular personal grants remain on their fixed reviewed Web API tools until reconnect. | Fixed reviewed Web API tools, Agent, events, and deterministic delivery. |
@@ -281,6 +289,18 @@ current `tools/list` response when a formerly working prompt loses a tool—do n
 patch a historical snapshot into Rally.
 
 ## Changelog
+
+### 2026-10-19 — Apollo.io uses the provider's OAuth and live MCP catalog
+
+Apollo.io personal connections reuse hosted MCP discovery, PKCE, token rotation,
+revocation and exact operation forwarding, with no workspace grant. Maintaining
+an API-shaped copy of its prospecting and outreach tools would duplicate a
+surface Apollo already owns. Its public API does not document general event
+subscription management: the API's enrichment callbacks are request results,
+while useful business events require a human-configured Apollo Workflow. The
+connector therefore advertises no polling, watches or webhook triggers; a future
+Sidekick event integration must establish an authenticated payload and personal
+audience contract rather than infer events by repeatedly scanning contacts.
 
 ### 2026-09-19 — Preserve Workers fetch invocation and provider OAuth metadata
 

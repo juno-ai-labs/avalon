@@ -132,6 +132,8 @@ describe('pluginGroup', () => {
   });
 
   it.each([
+    ['Apollo.io', 'apollo'],
+    ['Canva', 'canva'],
     ['GitHub', 'github'],
     ['Google Mail + Calendar', 'google'],
     ['Google Drive + Docs + Sheets', 'google-drive'],
@@ -146,6 +148,8 @@ describe('pluginGroup', () => {
   });
 
   it.each([
+    ['apollo', 'Apollo.io'],
+    ['canva', 'Canva'],
     ['github', 'GitHub'],
     ['google', 'Google Mail + Calendar'],
     ['google', 'Google Drive + Docs + Sheets'],
@@ -166,12 +170,14 @@ describe('pluginGroup', () => {
     // The plug is the fallback for a connector this list has not learned about,
     // and every shipped adapter is on the list. A new one that reaches the feed
     // still drawing a plug means this mapping was not updated with it.
-    const shipped = ['Ashby', 'Fireflies', 'GitHub', 'Google Workspace', 'Granola', 'Linear', 'Notion', 'Slack', 'X'];
+    const shipped = ['Apollo.io', 'Ashby', 'Canva', 'Fireflies', 'GitHub', 'Google Workspace', 'Granola', 'Linear', 'Notion', 'Slack', 'X'];
     expect(shipped.filter((name) => pluginGroup('connection:one', name)?.icon === 'plug')).toEqual([]);
   });
 
   it('does not claim a later connector that merely starts with x', () => {
     expect(pluginGroup('connection:one', 'Xero')?.icon).toBe('plug');
+    expect(pluginGroup('connection:one', 'Apollo GraphQL')?.icon).toBe('plug');
+    expect(pluginGroup('connection:custom', 'Apollo.io', 'custom_mcp')?.icon).toBe('model-context-protocol');
   });
 
   it('keeps the backend icon names working for the rows that still carry them', () => {

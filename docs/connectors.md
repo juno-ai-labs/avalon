@@ -66,6 +66,8 @@ card latches that success: a historical card does not turn back into a recovery
 action if the provider later revokes the grant; a new agent state read owns that
 later decision.
 
+Apollo.io uses the personal-only [hosted-MCP connector](hosted-mcp-connectors.md).
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -309,7 +311,9 @@ instead of repeating a provider lookup of their own. The mapping is tried strong
    identity is the actor. The member authorized that account themselves, so an exact match is
    that member. The comparison uses the `providerTenantId`/`providerUserId` pair every OAuth
    callback writes to `config_json`, not `provider_account_id`, which is provider-shaped:
-   `<team>:<user>` for Slack, the organization for Linear.
+   `<team>:<user>` for Slack, the organization for Linear. An explicit null user ID
+   excludes the connection from identity matching and directory sync; only older
+   connections that omit the field may fall back to their provider account ID.
 3. **`verified_email`** — a provider-verified address held by exactly one active workspace
    member. An ambiguous or unknown address resolves to nobody.
 

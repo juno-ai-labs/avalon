@@ -12,6 +12,7 @@ import Slack from '@thesvg/react/slack';
 import X from '@thesvg/react/x';
 import type { ComponentType } from 'react';
 import Ashby from './brand-marks/ashby';
+import Apollo from './brand-marks/apollo';
 import Fireflies from './brand-marks/fireflies';
 
 /**
@@ -55,9 +56,10 @@ export type PluginBrandMarkComponent =
  * is what a custom MCP server wears when its name spells out no company here.
  */
 export const PLUGIN_BRAND_MARKS: Record<
-  'apple' | 'ashby' | 'canva' | 'cloudflare' | 'fireflies' | 'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'model-context-protocol' | 'notion' | 'slack' | 'x',
+  'apollo' | 'apple' | 'ashby' | 'canva' | 'cloudflare' | 'fireflies' | 'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'model-context-protocol' | 'notion' | 'slack' | 'x',
   PluginBrandMarkComponent
 > = {
+  apollo: { Mark: Apollo, mono: true },
   apple: { Mark: Apple, mono: true },
   canva: { Mark: Canva, mono: true },
   cloudflare: { Mark: Cloudflare, mono: true },
@@ -108,6 +110,7 @@ export function connectorBrandMark(
   displayName?: string,
 ): PluginBrandMark | null {
   switch (connectorType) {
+    case 'apollo': return 'apollo';
     case 'ashby': return 'ashby';
     case 'canva': return 'canva';
     case 'fireflies': return 'fireflies';
@@ -129,12 +132,12 @@ export function connectorBrandMark(
  * A custom server has no connector type of its own to key on, and the list
  * Settings draws from carries only the name its creator gave it — "Cloudflare
  * API", "Linear (staging)". Whole words, longest first, so "Google Drive" is
- * Drive and "Ex" or "Next" never reads as X. `x` and `apple` are left out: one
- * letter is no evidence, and nobody connects an Apple MCP server. The protocol's
- * own mark is the fallback, not a name to match.
+ * Drive and "Ex" or "Next" never reads as X. `x`, `apple` and `apollo` are left out:
+ * those words alone cannot identify a company (Apollo may mean Apollo GraphQL).
+ * The protocol's own mark is the fallback, not a name to match.
  */
 const namedMarks = (Object.keys(PLUGIN_BRAND_MARKS) as PluginBrandMark[])
-  .filter((mark) => mark !== 'x' && mark !== 'apple' && mark !== 'model-context-protocol')
+  .filter((mark) => mark !== 'x' && mark !== 'apple' && mark !== 'apollo' && mark !== 'model-context-protocol')
   .sort((a, b) => b.length - a.length);
 function markNamedIn(displayName: string): PluginBrandMark | null {
   const words = ` ${displayName.toLowerCase().split(/[^a-z0-9]+/u).join(' ')} `;
