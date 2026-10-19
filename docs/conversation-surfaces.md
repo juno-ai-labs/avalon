@@ -55,6 +55,12 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
   the human, assistant, tool, activity, attachment, and failure rows it
   composes. Both adapters render `MessageFeed`; windowing is the one thing it
   takes from its host, because only the paging surface needs it.
+- `MessageActions` in `workstream-blocks.tsx` is the one hover row under a
+  message, on every surface that draws one: Rally's turn, a person's turn and a
+  merged result in a Thread or Breakout, and a Channel's own messages and merges
+  (`screens/channel.tsx`). The host passes what it can offer (New breakout,
+  Merge, whether the text actions apply); the row owns order, labels, fade and
+  metrics, styled by the single `.message-actions` class in `app.css`.
 - `apps/desktop/src/renderer/components/message-text-menu.tsx` is the Radix
   right-click menu on a feed `MarkdownBody` — assistant and human prose, not
   glances, stills, the inspector, or the lightbox. Copy writes the rendered
@@ -751,6 +757,36 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-10-19 — One hover row for every message, Channels included
+
+**What changed:** The agent row (`AssistantMessageActions`), the person's row
+(an inline footer) and the merge row (a third inline footer) are now one
+exported `MessageActions`, with one `.message-actions` class in place of
+`.agent-message-actions` and `.human-message-actions`. A Channel's own message
+and a merge into a Channel now carry it too: Copy, Speak, Image and PDF, since a
+Channel has nothing to branch from or merge into. A merged result in a Thread
+gains the same text actions beside its New breakout and Merge. A person's
+message in a Channel says
+"Copy message" rather than "Copy response", through the row's `subject` prop.
+The row is revealed by hovering or focusing any `.message-block` or
+`.channel-feed-item`, and its hit-testing now follows the fade on every
+surface, with speech and a save in flight holding both up.
+
+**Why:** Channels had no row at all, and each surface that wanted one would
+have rebuilt it a fourth time. The three copies had already drifted: the merge
+row in a Thread was classed `.agent-message-actions` inside an article that is
+not `.agent-message`, so its hover rule never matched and New breakout and Merge
+under a merged result could not be seen. One component and one reveal rule
+keyed on the message's container is what stops the next surface from repeating
+that.
+
+**Consequences:** A new surface that draws messages renders `MessageActions`
+and gets the row; if its container is neither `.message-block` nor
+`.channel-feed-item`, add it to the reveal rule rather than writing a second
+one. A person's turn in a Thread still passes `textActions={false}`, as before.
+A Channel's message copies its stored body, so a typed @name copies as typed
+and exports without a chip.
 
 ### 2026-10-18 — A long paste attaches as a typed, named file
 

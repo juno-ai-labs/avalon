@@ -1678,7 +1678,7 @@ function exportStatusMessage(saving: MessageExportFormat | null, failed: Message
  * line.
  *
  * Nothing here states its own opacity or metrics; the row owns the fade and
- * `:is(.agent-message-actions, .human-message-actions) button` owns the rest.
+ * `.message-actions button` owns the rest.
  */
 function MessageAction({ children, description, ...props }: PropsWithChildren<
   Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label' | 'aria-labelledby' | 'type'>
@@ -1744,13 +1744,42 @@ export interface MessageMergeAction {
   onMerge: (text: string, turnId?: string) => void;
 }
 
-function AssistantMessageActions({ citations, mentions, onMerge, onStartSubstream, telemetry, text }: {
+/**
+ * The hover row under a message: the one row every surface that shows messages
+ * draws, so a Channel, a Thread and a Breakout offer the same actions in the
+ * same order with the same metrics. The host says what it can offer; the row
+ * decides how it is drawn, revealed and announced.
+ *
+ * - `onStartSubstream` and `onMerge` are the host's, because only it knows
+ *   whether this message can be a cutoff or has somewhere to merge to.
+ * - `textActions` (copy, speech, the two exports) default on. A person's own
+ *   turn in a Thread turns them off, as it always has: the row under a bubble
+ *   is for moving work between levels, not for taking a person's words back.
+ * - `subject` names the message in each action's sentence, so a person's
+ *   message in a Channel is not called a "response".
+ *
+ * The row is always laid out, even empty: under a person's bubble it is the
+ * slot that keeps the next turn off it (see `.human-message .message-actions`).
+ */
+export function MessageActions({
+  citations,
+  mentions = NO_MENTIONS,
+  onMerge,
+  onStartSubstream,
+  subject = 'response',
+  telemetry,
+  text,
+  textActions = true,
+}: {
   citations?: CitationContext;
-  mentions: MessageMention[];
+  mentions?: MessageMention[];
   onMerge?: MessageMergeAction;
   onStartSubstream?: () => void;
-  telemetry?: MessageCopyTelemetry;
+  subject?: 'response' | 'message';
+  /** A Channel's own message is in no Thread, so it reports no `workstreamId`. */
+  telemetry?: { messageId: string; workstreamId?: string };
   text: string;
+  textActions?: boolean;
 }): React.JSX.Element {
   const [saving, setSaving] = useState<MessageExportFormat | null>(null);
   const [failed, setFailed] = useState<MessageExportFormat | null>(null);
@@ -1764,7 +1793,8 @@ function AssistantMessageActions({ citations, mentions, onMerge, onStartSubstrea
     await desktopBridge().copyText(text);
     if (telemetry) reportTelemetryProductIntent({
       kind: 'content_copied', contentType: 'message_response', resourceType: 'message',
-      resourceId: telemetry.messageId, workstreamId: telemetry.workstreamId,
+      resourceId: telemetry.messageId,
+      ...(telemetry.workstreamId ? { workstreamId: telemetry.workstreamId } : {}),
     });
   };
 
@@ -1802,6 +1832,7 @@ function AssistantMessageActions({ citations, mentions, onMerge, onStartSubstrea
   // an empty clipboard, silence, or a blank card. So the row still appears for
   // the branch alone, with nothing on it that has nothing to work on.
   const hasText = text.length > 0;
+  const offersText = textActions && hasText;
 
   return (
     // One group for the row: the first tip waits, and reading along the rest of
@@ -1810,7 +1841,7 @@ function AssistantMessageActions({ citations, mentions, onMerge, onStartSubstrea
     // app that happens to mount one.
     <TipGroup>
       <footer
-        className={clsx('agent-message-actions', speaking && 'is-speaking')}
+        className={clsx('message-actions', speaking && 'is-speaking')}
         // The row itself is transient, so the failure on it should be too: it has
         // been read by the time the pointer leaves, and a stale "Image failed"
         // sitting under a turn the next day reads as a broken feature rather than
@@ -1819,23 +1850,23 @@ function AssistantMessageActions({ citations, mentions, onMerge, onStartSubstrea
       >
         {onStartSubstream && <StartSubstreamButton onStart={onStartSubstream} />}
         {hasText && onMerge && <MergeButton merge={onMerge} text={text} />}
-        {hasText && (
-          <MessageAction description="Copy response" onClick={() => void copyResponse().catch(() => undefined)}><Clipboard size={12} /> Copy</MessageAction>
+        {offersText && (
+          <MessageAction description={`Copy ${subject}`} onClick={() => void copyResponse().catch(() => undefined)}><Clipboard size={12} /> Copy</MessageAction>
         )}
-        {hasText && speech && (
+        {offersText && speech && (
           <MessageAction
-            description={speaking ? 'Stop speaking' : 'Speak response'}
+            description={speaking ? 'Stop speaking' : `Speak ${subject}`}
             onClick={() => speaking ? speech.stop() : speech.speak(speechId, text)}
           >
             {speaking ? <Square aria-hidden="true" fill="currentColor" size={11} /> : <Volume2 aria-hidden="true" size={12} />}
             {speaking ? 'Stop speaking' : 'Speak'}
           </MessageAction>
         )}
-        {hasText && exportsAvailable && (
+        {offersText && exportsAvailable && (
           <>
             <MessageAction
               aria-busy={saving === 'image' || undefined}
-              description="Save response as an image"
+              description={`Save ${subject} as an image`}
               disabled={saving !== null}
               onClick={() => void save('image')}
             >
@@ -1846,7 +1877,7 @@ function AssistantMessageActions({ citations, mentions, onMerge, onStartSubstrea
             </MessageAction>
             <MessageAction
               aria-busy={saving === 'pdf' || undefined}
-              description="Save response as a PDF"
+              description={`Save ${subject} as a PDF`}
               disabled={saving !== null}
               onClick={() => void save('pdf')}
             >
@@ -1900,7 +1931,7 @@ export function AssistantMessageContent({
       ) : null}
       {afterText}
       {showCopy && !streaming && (text !== '' || onStartSubstream !== undefined) && (
-        <AssistantMessageActions
+        <MessageActions
           citations={citations}
           mentions={mentions}
           onMerge={onMerge}
@@ -2834,7 +2865,7 @@ export function MessageBlock({
             {/* The same slot every person's turn ends with — see the authored
                 row below. An answer is never a cutoff, so it is always empty
                 here, and it is the clearance the next turn sits under. */}
-            <footer className="human-message-actions" />
+            <footer className="message-actions" />
           </div>
         </article>
       );
@@ -2928,14 +2959,14 @@ export function MessageBlock({
     const author = message.author;
     return (
       <MergeMessage
-        actions={(mergeAction || startSubstream) ? (
-          <footer className="agent-message-actions">
-            <TipGroup>
-              {startSubstream && <StartSubstreamButton onStart={startSubstream} />}
-              {mergeAction && <MergeButton merge={mergeAction} text={message.text} />}
-            </TipGroup>
-          </footer>
-        ) : undefined}
+        actions={<MessageActions
+          citations={citations}
+          mentions={message.mentions}
+          onMerge={mergeAction}
+          onStartSubstream={startSubstream}
+          telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
+          text={message.text}
+        />}
         className="message-block"
         id={`message-${message.id}`}
         label={`${mergedFrom.title || 'A breakout'}, merged by ${humanAuthorName}`}
@@ -3030,14 +3061,12 @@ export function MessageBlock({
               the main one, the launch provenance) still needs that clearance,
               and so does a turn that is not yet a cutoff; leaving the slot out
               there handed the next turn a 4px clearance on the bubble itself. */}
-          <footer className="human-message-actions">
-            {(mergeAction || startSubstream) && (
-              <TipGroup>
-                {startSubstream && <StartSubstreamButton onStart={startSubstream} />}
-                {mergeAction && message.text && <MergeButton merge={mergeAction} text={message.text} />}
-              </TipGroup>
-            )}
-          </footer>
+          <MessageActions
+            onMerge={mergeAction}
+            onStartSubstream={startSubstream}
+            text={message.text ?? ''}
+            textActions={false}
+          />
         </div>
       ) : (
         <>
