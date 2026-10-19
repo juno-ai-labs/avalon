@@ -237,7 +237,7 @@ describe("a Sidekick's home conversation", () => {
       scope: sidekickScope() });
     expect(listed.conversations).toEqual([{
       conversationId: `${ROOM_ID}/${breakout}`, parentId: ROOM_ID, substreamId: breakout,
-      kind: "breakout", title: "Weekly call", isHome: true, isOwn: false,
+      kind: "breakout", title: "Weekly call", isHome: true, isOwn: false, isParent: false,
     }]);
     // Leaving the conversation out of a post means the home.
     expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,

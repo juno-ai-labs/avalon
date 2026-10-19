@@ -20,7 +20,11 @@ export const ConversationToolScopeSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("sidekick"), automationId: IdSchema }),
   z.strictObject({ kind: z.literal("conversation"), parentId: IdSchema, substreamId: SubstreamIdSchema }),
 ]);
-/** Whose conversations a tool call reaches: a Sidekick's, or a loop's own and its Channel's Main. */
+/**
+ * Whose conversations a tool call reaches: a Sidekick's, or a Thread or
+ * Breakout loop's own, the Thread's Main for a Breakout, and the Channels the
+ * Thread is in.
+ */
 export type ConversationToolScope = z.input<typeof ConversationToolScopeSchema>;
 
 /**
@@ -50,14 +54,23 @@ export const ConversationToolScopeRequestSchema = z.strictObject({
 });
 export type ConversationToolScopeRequest = z.input<typeof ConversationToolScopeRequestSchema>;
 
+/**
+ * One conversation a tool can reach. `kind` is in storage words and is the
+ * host's to route on, never the model's to see: a Thread's Main (`channel`,
+ * read from its conversation object), a Breakout (`breakout`, the same), or a
+ * Channel (`space`, read from WorkspaceDO's feed, with `parentId` the Space's
+ * id and `substreamId` "0"). `isParent` marks a conversation this one sits
+ * inside: a Breakout's Thread, or a Thread's Channel.
+ */
 export const ConversationToolEntrySchema = z.strictObject({
   conversationId: z.string().min(1),
   parentId: IdSchema,
   substreamId: SubstreamIdSchema,
-  kind: z.enum(["channel", "breakout"]),
+  kind: z.enum(["channel", "breakout", "space"]),
   title: z.string(),
   isHome: z.boolean(),
   isOwn: z.boolean(),
+  isParent: z.boolean(),
 });
 export type ConversationToolEntry = z.infer<typeof ConversationToolEntrySchema>;
 

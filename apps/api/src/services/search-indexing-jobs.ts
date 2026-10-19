@@ -1,10 +1,13 @@
 import { z } from 'zod';
+import { ChannelMessageSearchProjectionSchema } from '../durable-objects/channel-message-search-projection';
 import { ResourceSearchProjectionSchema } from '../durable-objects/resource-search-projection';
 import { SearchProjectionMessageSchema } from '../durable-objects/search-projection-outbox';
 import { SearchDocumentSchema } from './search-document';
 import { SEARCH_EMBEDDING_BATCH_SIZE } from './search-embedding';
 
-export const SearchSourceReferenceSchema = z.union([ResourceSearchProjectionSchema, SearchProjectionMessageSchema]);
+export const SearchSourceReferenceSchema = z.union([
+  ResourceSearchProjectionSchema, SearchProjectionMessageSchema, ChannelMessageSearchProjectionSchema,
+]);
 export type SearchSourceReference = z.infer<typeof SearchSourceReferenceSchema>;
 
 /** One document per planning delivery, even when a turn contains many pages. */
