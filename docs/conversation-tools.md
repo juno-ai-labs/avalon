@@ -1,11 +1,15 @@
 # Conversation tools
 
-`rally:conversations` is the built-in plugin that lets an agent list, read, and
-post to Rally conversations (a Channel's Main conversation or a Breakout). It is
-one set of tools and a **scope**: a function from the loop's input to the
-conversations it may reach and the tools it is offered. Adding a new kind of
-agent means adding a scope, never new tools. The model never supplies, names,
-or widens a scope.
+`rally:conversations` is the built-in plugin that lets an agent list, read,
+search, and post to Rally conversations. It is one set of tools and a
+**scope**: a function from the loop's input to the conversations it may reach
+and the tools it is offered. Adding a new kind of agent means adding a scope,
+never new tools. The model never supplies, names, or widens a scope.
+
+To the model every conversation is the same thing: an id, a title, and
+messages. A Channel, a Thread's Main and a Breakout are read from different
+places (WorkspaceDO's feed, or the conversation's own object), but that is the
+host's routing on the entry's internal `kind`, which no tool output carries.
 
 Read this before changing what an agent can read or post to outside its own
 conversation, and before giving a new kind of loop these tools. The tool design
@@ -17,11 +21,11 @@ attachments are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/services/conversation-tools.ts` | The plugin: `conversationToolAccess` (the one place a scope and tool set are derived from a loop), the four tools, the refusal table (`conversationRefusalError`), the system message, the page-size and character-budget placeholders, and `conversationToolPorts`, the calls the tools make. |
+| `apps/api/src/services/conversation-tools.ts` | The plugin: `conversationToolAccess` (the one place a scope and tool set are derived from a loop), the tools, the refusal table (`conversationRefusalError`), a Channel's feed rendered as messages (`channelItemText`), the system message, the page-size and character-budget placeholders, and `conversationToolPorts`, the calls the tools make, `searchMessages` among them. |
 | `apps/api/src/services/integrations.ts` | `loadHarnessTools` builds the plugin next to the Sidekick plugin and passes the pagination wrapper under the `conversation` prefix. |
 | `apps/api/src/durable-objects/workspace-conversation-tool-protocol.ts` | The scope, the WorkspaceDO request schemas and discriminated outcomes with the refusal codes, and the post request `appendConversationPost` takes. |
 | `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | Conversation ids, the scope read over `channels`, `breakouts` and their viewer rows, title lookup, and the attachment write. |
-| `apps/api/src/durable-objects/workspace-do.ts` | `conversationToolScope`, `resolveConversationToolTarget`, `attachSidekickConversation`: scope from the directories, then admission through the hosted parent's `authorizeViewer`. |
+| `apps/api/src/durable-objects/workspace-do.ts` | `conversationToolScope`, `resolveConversationToolTarget`, `attachSidekickConversation`: scope from the directories, then admission through the hosted parent's `authorizeViewer`. `conversationToolChannels`: the Channels a Thread or Breakout loop's thread is in, from Space storage. `listChannelFeed`, the Channel screen's own read, is what a Channel's read calls. |
 | `apps/api/src/durable-objects/substream-agent.ts` | `appendConversationPost`: a post appended to any Channel or Breakout conversation, keyed on its client message id, without waking that conversation's agent. |
 | `apps/api/src/durable-objects/workstream-message-storage.ts` | `readableMessagesBefore`: a conversation's messages newest first, without tool cards or suggestions. |
 | `packages/agent-harness/src/tool-activity.ts` | The transcript wording for each `conversation_*` tool. |
@@ -32,15 +36,16 @@ attachments are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 
 | Loop | Scope | Tools | Acts as |
 | --- | --- | --- | --- |
-| Breakout (`parentKind: workstream`, substream not `"0"`) | Its own conversation and its Channel's Main | list, read, merge | The person it works for, admitted to Main by the Breakout |
-| Thread Main (`parentKind: workstream`, substream `"0"`) | Its own thread, for merge | merge | The person it works for |
-| Sidekick configuration (`parentKind: automation`, substream `"0"`, no run) | The Sidekick's home and attachments | list, read, post, attach | The person talking to it |
-| Sidekick run (`automationRun` present) | The Sidekick's home and attachments | list, read, post | The run-as user |
+| Breakout (`parentKind: workstream`, substream not `"0"`) | Its own conversation, its Thread's Main, and the Channels the Thread is in | list, read, search, merge | The person it works for, admitted to Main by the Breakout |
+| Thread Main (`parentKind: workstream`, substream `"0"`) | Its own thread and the Channels it is in | list, read, search, merge | The person it works for |
+| Sidekick configuration (`parentKind: automation`, substream `"0"`, no run) | The Sidekick's home and attachments | list, read, search, post, attach | The person talking to it |
+| Sidekick run (`automationRun` present) | The Sidekick's home and attachments | list, read, search, post | The run-as user |
 
-A Thread's Main loop gets `merge` alone: the only conversation it would list
-or read is the one it is in. A loop under workspace authority gets nothing, nor
-a run
-child woken without its `automationRun`. The plugin is `preload: true` and
+A Thread's Channels are the ones `channelSpaceIds` lists for the acting person
+today, unarchived, Organization-wide first: the person's own reach, never the
+thread's placement, so a member outside a private Channel is not offered it
+even from a thread in it. A loop under workspace authority gets nothing, nor a
+run child woken without its `automationRun`. The plugin is `preload: true` and
 `explicit: true`, and loading it reads nothing: the first tool call is the
 first read.
 
@@ -55,11 +60,13 @@ exact title of a conversation in scope (compared without case); `attach` also
 accepts a Rally link, which the Worker turns into an id before WorkspaceDO sees
 it.
 
-- **list** returns `{ conversations: [{ conversationId, kind, title, isHome, isOwn }] }`
-  and a `nextPageId`. The home comes first, then (for a Breakout loop) Main,
-  then attachments in the order they were made. Every call re-reads the
-  directories for the acting person and omits what they can no longer open
-  and anything archived.
+- **list** returns `{ conversations: [{ conversationId, title, isHome, isOwn, isParent }] }`
+  and a `nextPageId`. The home (or the loop's own) comes first, then (for a
+  Breakout loop) Main, then the thread's Channels, then attachments in the
+  order they were made. `isParent` marks a conversation this one sits inside: a
+  Breakout's Main, a Thread's Channel. Every call re-reads the directories for
+  the acting person and omits what they can no longer open and anything
+  archived. A Channel's id is its Space id, a UUID no Thread shares.
 - **read** takes `conversation` and `limit` and returns
   `{ conversationId, title, messages, nextPageId }`, newest first. Each message
   has an author (`person`, `agent`, `external`, `system`) with a name, `sentAt`,
@@ -70,6 +77,39 @@ it.
   continuation is private: the conversation id, the sequence to read before,
   and the page size, stored by the pagination wrapper beside the loop's
   receipts. Every page is admitted again.
+
+  A Channel reads through `listChannelFeed` as the acting person, so a read
+  shows exactly what their Channel screen shows. Its items become messages:
+  a thread placed there reads as its starter writing `Started the conversation
+  "<title>": <description>`, and a merge as the person who merged it writing
+  `Merged the result of "<title>" here:` and the body, or `of a conversation`
+  when the thread is private to this reader. The feed's pages are larger than a
+  read's, so a Channel's continuation is the feed cursor of the page being read
+  and the last item returned from it (its placement time and id); the next
+  read fetches that page again and resumes after that item in the feed's own
+  order. Not after a count: a merge landing, or a message removed, between two
+  pages moves every item below it, and an offset would repeat or skip one.
+- **search** takes `query`, an optional `conversation` and `limit`, and returns
+  `{ matches: [{ conversationId, title, messageId, sentAt, text, textTruncated }] }`,
+  newest first, within the read budget. It searches the loop's scope, never
+  everything the person may read: in a shared Thread a search as the asker
+  would otherwise show their private threads to the room. The matching is
+  member search's (`docs/text-search.md`): one substring query over the shared
+  index, Thread and Breakout messages under `messages` and Channel messages
+  under `channel_messages`. Its audience is the groups the scope's
+  conversations carry (`conversationSearchGroups`), not the person's own:
+  search reaches up exactly as far as read does. A Breakout member who cannot
+  open its Thread reads the Thread's Main through the Breakout, so they find
+  what was said there too; every group names a conversation already admitted,
+  and hits are named from those conversations. The index ranks substring
+  candidates by document id, a hash, and stores `occurred_at` unindexed
+  (`filterable: false`), so it cannot order by time and the newest match can be
+  on any page. `newestSearchHits` reads every candidate page and keeps the
+  newest `limit`; `MAXIMUM_SEARCH_CANDIDATE_PAGES` is the open bound on how many
+  pages one search reads (`LIMIT UNSET`). Indexing `occurred_at` would let the
+  index sort, at an indexing cost on every row; that is the team's call. The
+  tool has no continuation: a narrower query, or a read of the conversation,
+  finds more than `limit`.
 - **post** takes `text` and `conversation`, and returns
   `{ conversationId, messageId, replayed }`. `conversation` may be left out to
   post to the Sidekick's home when there is one: a run knows from its
@@ -163,11 +203,11 @@ Each refusal is a typed failure with a stable `code`, a model-visible sentence
 
 | Tools | `code` | `details` |
 | --- | --- | --- |
-| read, post | `conversation_not_in_scope` | `available` |
-| read, post, attach | `conversation_ambiguous` | `available` |
+| read, search, post | `conversation_not_in_scope` | `available` |
+| read, search, post, attach | `conversation_ambiguous` | `available` |
 | attach | `conversation_not_found` | `field` |
-| read, post, attach | `conversation_archived` | `resourceId` |
-| read, post, attach | `conversation_access_denied` | `resourceId` |
+| read, search, post, attach | `conversation_archived` | `resourceId` |
+| read, search, post, attach | `conversation_access_denied` (a Channel's feed refused included) | `resourceId` |
 | post | `invalid_arguments` (no home, `conversation` left out) | `field`, `expected` |
 | merge | `invalid_arguments` (empty `body`, or any other field) | `field`, `expected` |
 | merge | `merge_target_not_writable` (no Channel the person can post in) | none |
@@ -181,8 +221,9 @@ other reason throws `conversation_post_refused:<code>`.
 
 Limits, all placeholders for the team to set per
 [`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md),
-written as the numbers the design named: a page of 25 by default and at most 50
-for list and read (`list_resources`' numbers), and a read budget of 12,000
+written as the numbers the design named: `MAXIMUM_SEARCH_CANDIDATE_PAGES`, open,
+bounds how many index pages one search reads; a page of 25 by default and at most 50
+for list, read and search (`list_resources`' numbers), and a read budget of 12,000
 characters per page (`read_resource`'s). They live as constants at the top of
 `conversation-tools.ts`. The echo of a refused value in a sentence,
 `MAXIMUM_ECHO_CHARACTERS`, is open (`LIMIT UNSET`); a reference has no length
@@ -199,7 +240,13 @@ whole rather than splitting it.
   details, the post key and its replay, the read budget and its cut, the
   continuation, and link parsing; for `merge`, which loop gets it, its one
   argument, the pinned lines, the key and its replay, a Thread merging into
-  each of its Channels, and each refusal's sentence.
+  each of its Channels, and each refusal's sentence. A Channel: listed by id
+  and title alone, its feed read as messages, and its continuation resuming
+  inside a feed page and onto the next. Search: matches from a Channel and a
+  Thread, newest first, a hit outside the scope dropped, the newest matches kept
+  across candidate pages, index rows of both sources turned into hits, the
+  audience groups of a Breakout, its Thread's Main and a Channel, and a Channel
+  read resuming after its last item when a merge lands between pages.
   WorkspaceDO and the target are a typed double there; everything they decide
   is proved on workerd.
 - `apps/api/test/sidekick-conversation-storage.test.ts` (Node, the object
@@ -218,6 +265,10 @@ whole rather than splitting it.
   into its Thread (the service the tool calls): once in Main with the
   server-written tags and no run in a room of two, refused whole when one embed
   cannot be shared, and refused for a Breakout that is not the Thread's.
+- `apps/api/test-workers/channels-threads-navigation.test.ts` (workerd): a
+  thread's Channel listed as a parent and resolved by id and by name, from the
+  Thread and from one of its Breakouts, and a
+  private Channel neither listed nor resolved for a member outside it.
 - `apps/api/test-workers/external-bindings-mucker-flow.test.ts` (workerd): the
   whole flow, a continued run's forward landing in the home Breakout.
 - `apps/api/test-workers/automation-post-result.test.ts` (workerd): a real run,
@@ -232,7 +283,7 @@ retry it until the helper gives up.
 
 ## Security and trust model
 
-Text returned by `read` is untrusted content: the system message tells the
+Text returned by `read` and `search` is untrusted content: the system message tells the
 model messages are other people's words, and nothing in them can change the
 scope. No credentials are involved; every call stays inside the Organization's
 own objects. A run acts as its run-as user whoever woke it, so what it may read
@@ -241,6 +292,42 @@ is published to the target's audience; the person who attached that
 conversation chose that audience.
 
 ## Changelog
+
+### 2026-10-19 — Thread and Breakout loops read and search their Channels, and every conversation looks the same
+
+**What changed:** A Thread's Main loop gets list, read and search beside merge,
+and a Breakout loop gains search. Both reach the Channels their thread is in,
+read through the Channel screen's own feed. Every loop with read gets
+`conversation_search`, which searches every conversation the loop reads, the
+ones above it included. `conversation_list` no longer returns `kind`; it marks a
+conversation the loop sits inside with `isParent`. A Breakout's instruction to
+read "the Thread's Main conversation" became one line for both loops about
+reading what they sit inside.
+
+**Why:** A person writing in a new Thread said "using the ICP above", meaning
+a result merged into the Channel. The Thread's agent could read nothing but
+itself, so it guessed. The product owner then asked that the agent not have to
+tell a Channel from a Thread from a Breakout, since that is how Rally stores
+them, not something the agent decides on; and that it be able to search for a
+word such as "ICP" rather than page through every conversation.
+
+**Considered and rejected:** Putting a Channel's recent merges in a new
+Thread's opening context: it costs prompt space in every Thread and goes stale
+as merges land. Admitting a Channel through the thread's placement: it would
+show a member a private Channel they cannot open. Searching everything the
+person can read: in a shared Thread it would show the asker's private threads
+to everyone in the room. Admitting search by the person's own audience groups:
+a Breakout member outside its Thread could read Main but not search it, and
+the owner's rule is that a loop can always search up. A search in WorkspaceDO's SQL beside the index, which
+the first draft had: the owner asked for one search path, so Channel messages
+went into the index instead (`text-search.md`).
+
+**Consequences:** The scope of a Thread or Breakout loop now spans two
+authorities: conversation objects for Threads and Breakouts, and WorkspaceDO's
+Space storage for Channels. A new tool that acts on a listed conversation must
+route on the entry's `kind` and must not expose it. A Channel cannot be posted
+to or attached; neither loop with Channels in scope is offered post or attach,
+and offering one would need a Channel write path first.
 
 ### 2026-10-16 — Breakout and Thread Main loops can merge their result up
 

@@ -1391,6 +1391,82 @@ describe("Channel merges", () => {
       .toEqual([["Shipped, with the follow-ups.", 4]]);
   });
 
+  describe("read by a thread's agent as a conversation", () => {
+    const threadScope = (workstreamId: WorkstreamId) => ({ kind: "conversation" as const, parentId: workstreamId,
+      substreamId: asSubstreamId("0") });
+    const channelsOf = async (userId: UserId, workstreamId: WorkstreamId) =>
+      (await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId, scope: threadScope(workstreamId) }))
+        .conversations.filter((entry) => entry.kind === "space");
+
+    it("given a thread in a Channel, when its agent lists conversations, then the Channel is a parent it can resolve by id or name", async () => {
+      const channelId = await channelWithThreads();
+      const entry = { conversationId: channelId, parentId: channelId, substreamId: "0", kind: "space", title: "Outbound",
+        isHome: false, isOwn: false, isParent: true };
+      expect(await channelsOf(MEMBER, OPEN_THREAD)).toEqual([entry]);
+      for (const reference of [channelId, "outbound"]) {
+        expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: MEMBER,
+          scope: threadScope(OPEN_THREAD), reference })).toEqual({ ok: true, conversation: entry, sidekickName: null });
+      }
+    });
+
+    it("given a breakout of a thread in a Channel, when its agent lists conversations, then its thread's Channel is a parent too", async () => {
+      const channelId = await channelWithThreads();
+      const scope = { kind: "conversation" as const, parentId: OPEN_THREAD, substreamId: BREAKOUT };
+      const listed = await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: MEMBER, scope });
+      expect(listed.conversations.filter((entry) => entry.kind === "space"))
+        .toEqual([{ conversationId: channelId, parentId: channelId, substreamId: "0", kind: "space", title: "Outbound",
+          isHome: false, isOwn: false, isParent: true }]);
+      expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: MEMBER, scope,
+        reference: "Outbound" })).toMatchObject({ ok: true, conversation: { conversationId: channelId } });
+    });
+
+    it("given a thread in a private Channel, when a member outside it lists or names it, then it is not theirs to reach", async () => {
+      const channelId = await channelWithThreads();
+      await workspace().noteSpaceAudience({
+        workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId, audience: { scope: "personal", participantUserIds: [OWNER] },
+      });
+      expect(await channelsOf(MEMBER, OPEN_THREAD)).toEqual([]);
+      expect(await channelsOf(OWNER, OPEN_THREAD)).toHaveLength(1);
+      expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: MEMBER,
+        scope: threadScope(OPEN_THREAD), reference: channelId })).toMatchObject({ ok: false, code: "conversation_not_in_scope" });
+    });
+  });
+
+  describe("in the search index", () => {
+    const reference = (messageId: string) => ({ type: "channel_message_search_projection_v1" as const, region: "global" as const,
+      workspaceId: WORKSPACE_ID, messageId });
+
+    it("given a merge, when its document is prepared, then it is the words under the Channel's name, readable by the Channel's readers; a removal withdraws it", async () => {
+      const channelId = await channelWithThreads();
+      const merged = await merge(channelId, "op-icp", "Resolution: our ICP is growth teams at Series A companies.");
+      if (!merged.ok) throw new Error("merge refused");
+      const prepared = await workspace().prepareChannelMessageSearch(reference(merged.messageId));
+      expect(prepared).toEqual({ retry: false, documents: [{
+        id: expect.stringMatching(/^[a-f0-9]{64}$/u), source: "channel_messages", sourceId: merged.messageId,
+        scopeId: channelId, revision: 1, text: "Resolution: our ICP is growth teams at Series A companies.",
+        audience: [`space:${channelId}`],
+        display: { title: "Outbound", sourceLabel: "Outbound", occurredAt: expect.any(Number), transcriptSequence: null,
+          url: null, mimeType: null, archived: false },
+      }] });
+
+      expect(await workspace().removeChannelMessage({ auth: auth(OWNER), spaceId: channelId, messageId: merged.messageId }))
+        .toEqual({ ok: true });
+      const removed = await workspace().prepareChannelMessageSearch(reference(merged.messageId));
+      expect(removed).toEqual({ retry: false, documents: [{
+        id: prepared.documents[0]!.id, source: "channel_messages", sourceId: merged.messageId, scopeId: channelId,
+        revision: 2, text: null,
+      }] });
+      expect(await workspace().channelMessageSearchRevision({ workspaceId: WORKSPACE_ID, messageId: merged.messageId }))
+        .toBe(2);
+    });
+
+    it("given a reader of a Channel, when their search audience is read, then it holds the group a Channel message carries", async () => {
+      const channelId = await channelWithThreads();
+      const [group] = await searchAudienceGroupIds([`space:${channelId}`]);
+      expect(await workspace().readSearchAudience({ workspaceId: WORKSPACE_ID, userId: MEMBER })).toContain(group);
+    });
+  });
+
   it("given a Channel that does not hold the thread, when it merges, then it is refused and nothing is posted", async () => {
     const channelId = await channelWithThreads();
     const elsewhere = await reserveChannel("Elsewhere");

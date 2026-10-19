@@ -259,18 +259,31 @@ async function loadSearchSource(env: Env, reference: SearchSourceReference, capt
       workspaceDOName(reference.region, reference.workspaceId));
     return stub.prepareResourceSearchDocument(reference, documentId);
   }
+  if (reference.type === 'channel_message_search_projection_v1') {
+    // A Channel message is one document, so the id needs no selecting.
+    const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, reference.workspaceId,
+      workspaceDOName(reference.region, reference.workspaceId));
+    return stub.prepareChannelMessageSearch(reference);
+  }
   const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, reference.workspaceId,
     conversationObjectName(reference.region, reference.workspaceId, reference.parentId, reference.substreamId));
   return stub.prepareSearchTurnDocument(reference, documentId, captureLinks);
 }
 
 /**
- * A resource's watermark, without extracting its text. Every input of a
- * resource's search text bumps it (`resource-search-projection.ts`), so an
- * equal revision is equal text. A turn has no such read: a link capture can
+ * A resource's or a Channel message's watermark, without extracting its
+ * text. Every input of its search text bumps it (`resource-search-projection.ts`,
+ * `channel-message-search-projection.ts`), so an equal revision is equal text. A turn has no such read: a link capture can
  * change a page's text at the same revision, so a turn is re-read in full.
  */
 function searchSourceRevision(env: Env, reference: SearchSourceReference): (() => Promise<number | null>) | undefined {
+  if (reference.type === 'channel_message_search_projection_v1') {
+    return async () => {
+      const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, reference.workspaceId,
+        workspaceDOName(reference.region, reference.workspaceId));
+      return stub.channelMessageSearchRevision({ workspaceId: reference.workspaceId, messageId: reference.messageId });
+    };
+  }
   if (reference.type !== 'resource_search_projection_v1') return undefined;
   return async () => {
     const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, reference.workspaceId,

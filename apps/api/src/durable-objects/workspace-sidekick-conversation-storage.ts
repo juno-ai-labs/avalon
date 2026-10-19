@@ -12,8 +12,9 @@ import type { ConversationToolScope } from "./workspace-conversation-tool-protoc
  *   `owning_substream_id`) and every conversation attached to it in
  *   `sidekick_conversation_attachments`. The home is always attached, so it is
  *   never a row there.
- * - A **Channel or Breakout loop** reaches its own conversation and its
- *   Channel's Main conversation.
+ * - A **Thread or Breakout loop** reaches its own conversation and, for a
+ *   Breakout, its Thread's Main conversation. The Channels the Thread is in
+ *   are added by WorkspaceDO from its Space storage, not here.
  *
  * This is not `sidekick_attachments` (per conversation) or `parent_sidekicks`
  * (per Channel). Those record that a conversation may load a Sidekick as a
@@ -42,6 +43,8 @@ export interface ScopedConversation extends ConversationAddress {
   title: string;
   isHome: boolean;
   isOwn: boolean;
+  /** A conversation the loop's own sits inside: a Breakout loop's Thread Main. */
+  isParent: boolean;
   archived: boolean;
   /** Whether the directories say this person can open it. */
   readable: boolean;
@@ -161,17 +164,18 @@ function sidekickExists(sql: SqlStorage, automationId: string): boolean {
  * were made.
  */
 export function scopeConversations(sql: SqlStorage, scope: ConversationToolScope, userId: string): ScopedConversation[] {
-  const addresses: Array<ConversationAddress & { isHome: boolean; isOwn: boolean }> = [];
+  const addresses: Array<ConversationAddress & { isHome: boolean; isOwn: boolean; isParent: boolean }> = [];
   if (scope.kind === "conversation") {
     addresses.push({ parentKind: "workstream", parentId: scope.parentId, substreamId: scope.substreamId,
-      isHome: false, isOwn: true });
+      isHome: false, isOwn: true, isParent: false });
     if (scope.substreamId !== "0") {
-      addresses.push({ parentKind: "workstream", parentId: scope.parentId, substreamId: "0", isHome: false, isOwn: false });
+      addresses.push({ parentKind: "workstream", parentId: scope.parentId, substreamId: "0",
+        isHome: false, isOwn: false, isParent: true });
     }
   } else {
     if (!sidekickExists(sql, scope.automationId)) return [];
     const home = sidekickHome(sql, scope.automationId);
-    if (home) addresses.push({ ...home, isHome: true, isOwn: false });
+    if (home) addresses.push({ ...home, isHome: true, isOwn: false, isParent: false });
     for (const row of sql.exec<{ parent_id: string; substream_id: string }>(
       `SELECT parent_id, substream_id FROM sidekick_conversation_attachments
         WHERE automation_id = ? ORDER BY attached_at, parent_id, substream_id`,
@@ -179,7 +183,7 @@ export function scopeConversations(sql: SqlStorage, scope: ConversationToolScope
     ).toArray()) {
       if (home && home.parentId === row.parent_id && home.substreamId === row.substream_id) continue;
       addresses.push({ parentKind: "workstream", parentId: row.parent_id, substreamId: row.substream_id,
-        isHome: false, isOwn: false });
+        isHome: false, isOwn: false, isParent: false });
     }
   }
   const scoped: ScopedConversation[] = [];

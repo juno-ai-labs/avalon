@@ -32,8 +32,9 @@ before a search needs it.
 - `apps/api/src/services/workspace-search-service.ts` and `routes/search.ts`: member
   source selection, current authorization, canonical excerpts, and the protected API.
 - `apps/api/src/durable-objects/search-projection-outbox.ts`,
-  `resource-search-projection.ts`, and `conversation-link-search.ts`: transactional
-  indexing intent, Queue dispatch, and asynchronous Browser Run capture.
+  `resource-search-projection.ts`, `channel-message-search-projection.ts` and
+  `conversation-link-search.ts`: transactional indexing intent, Queue dispatch,
+  and asynchronous Browser Run capture.
 - `apps/desktop/src/renderer/components/search-modal.tsx`: the member UI: five content tabs, plus Channels and Spaces tabs it answers itself.
 - `apps/api/test/text-search.test.ts`: source grant and canonical loading tests.
 
@@ -118,7 +119,23 @@ private conversations before claiming the percentile targets are met.
 
 A resource's source delivery indexes it in place: one `prepareResourceSearch`
 call returns its three category documents (at most one live, the others
-tombstones), and one more call confirms nothing changed. A turn's source
+tombstones), and one more call confirms nothing changed. A Channel message
+(`space_messages`: Rally's posts in a Channel and the results threads merge
+into it) is indexed the same way from WorkspaceDO: migration 120's
+`channel_message_search_versions` holds each message's revision and its
+Channel, triggers on every writer bump it, the
+`channel_message_search` alarm lane publishes references on its own pace (at
+the resource lane's interval), and `prepareChannelMessageSearch` returns one
+`channel_messages` document or its deletion watermark. Each reference goes
+out as a document-phase job (`search_embedding_batch_v1`) rather than a
+message type of its own, so a consumer on an older build retries it instead of
+acknowledging it as unknown. The lane is null for an Organization held below
+migration 120, which has no table. Its audience is the
+Channel's `space:<id>` group, which every reader of the Channel already holds,
+and its title is the Channel's name when it was indexed, never the merged
+thread's; a rename does not rewrite it, since nothing reads it. Only the agent's
+`conversation_search` reads that source today; the member search modal does
+not offer it yet. A turn's source
 delivery discovers canonical document IDs without loading bodies and publishes
 document-phase jobs; turn discovery reconciles link metadata and selects only
 IDs, including retained deletions. Each document delivery captures only its selected page (when needed), writes
@@ -700,6 +717,39 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-10-19 — A Channel's own messages are indexed
+
+**What changed:** WorkspaceDO projects `space_messages` into the shared index
+as source `channel_messages` (migration 120, `channel-message-search-projection.ts`),
+following the resource projection: a version table kept by triggers, an alarm
+lane that publishes references, and a Queue delivery that calls back for the
+document. Every existing Channel message is queued once. The agent's
+`conversation_search` queries it beside `messages`.
+
+**Why:** A Thread's agent asked to use "the ICP above" had to find a result
+merged into its Channel, and merges are Channel messages, which nothing
+indexed. The first draft searched them with SQL inside WorkspaceDO; the product
+owner asked for one search path instead of two.
+
+**Considered and rejected:** A search in WorkspaceDO's SQL: a second matching
+rule (SQLite's ASCII-only `lower`) and a second place that decides what a
+merge tells a reader. A new audience group: `space:<id>` already admits exactly
+the Channel's readers, for the artifacts a merge shared there. The merged
+thread's title on the row: a reader of the Channel may not be allowed to see
+it, and a row's display is the same for every reader.
+
+**Consequences:** A row's title is the Channel's name when it was indexed; a
+rename does not rewrite it, because nothing reads it yet. A surface that shows
+it needs a rename trigger in its own migration. `removeChannelMessage` and a merge arm the alarm so their rows move at once;
+a Channel's opening messages written at creation wait for the object's next
+wake. The lane has its own pace: shared with resources, a resource backlog
+would hold every Channel message back until it drained. A reference is
+published as a document-phase job, never a new top-level message type, because
+an older consumer acknowledges a type it does not know and the row would be
+lost; that envelope it retries. A reader holds a Channel's `space:` group by the same
+listing rule (`spaceListing`) that decides which Channels the agent's tools
+list, so a Channel the tools offer is one whose messages search can find.
 
 ### 2026-10-05 — Channels and Spaces tabs in the search modal
 
