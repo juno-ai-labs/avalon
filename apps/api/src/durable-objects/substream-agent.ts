@@ -1037,6 +1037,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private resources!: WorkstreamResourceStorage;
   private identityRows!: WorkstreamIdentityStorage;
   private suggestions!: ConversationSuggestionStorage;
+  /** Suggestion rows this object is drafting right now; the observer resumes none of them. */
+  private readonly draftsInFlight = new Set<string>();
   private harnessRuns!: WorkstreamHarnessRunStorage;
   private desktopActions!: WorkstreamDesktopActionStorage;
   /**
@@ -5760,6 +5762,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         now: () => Date.now(),
         newId: () => uuidV7(Date.now()),
         commit: (mutate) => this.state.storage.transactionSync(mutate),
+        draftInFlight: (suggestionId) => this.draftsInFlight.has(suggestionId),
       });
       logInfo(executionEnv, "turn_disposition_outcome", {
         workspace_id: input.workspaceId,
@@ -5800,6 +5803,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   /** The two-phase write's second phase: the words, then the row filled or withdrawn, then the event. */
   private async draftSuggestionWords(
+    executionEnv: Env,
+    input: { workspaceId: string; parentId: string },
+    substreamId: string,
+    row: SuggestionRow,
+  ): Promise<void> {
+    this.draftsInFlight.add(row.suggestion_id);
+    try {
+      await this.draftSuggestionWordsUnguarded(executionEnv, input, substreamId, row);
+    } finally {
+      this.draftsInFlight.delete(row.suggestion_id);
+    }
+  }
+
+  private async draftSuggestionWordsUnguarded(
     executionEnv: Env,
     input: { workspaceId: string; parentId: string },
     substreamId: string,
