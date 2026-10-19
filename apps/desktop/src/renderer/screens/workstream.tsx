@@ -12,7 +12,7 @@ import { useLocation, useNavigate, useParams, useSearchParams } from 'react-rout
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import { asSubstreamId, asWorkspaceId, asWorkstreamId, conversationNeedsViewer, type ConversationMergeResult, type HarnessStatus } from '@rally/contracts';
 import { logError } from '../../common/logger';
-import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
+import { useCollaborationSession, useOptionalCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { mainOmitted, mainReachable, useConversationDirectory } from '../lib/conversation-directory';
 
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
@@ -27,6 +27,7 @@ import { RelativeTime } from '../components/relative-time';
 
 import type { WorkstreamChildDirectory } from '../lib/channel-viewer-state';
 import type { MessageMergedInto, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
+import { EmailMentionContext, emailMentionDirectory, NO_INVITEES, useWorkspaceInvitees } from '../lib/workspace-invitees';
 import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
 import { Button, InlineError, Modal, TitleSkeleton } from '../components/primitives';
 import { SessionImportUpdateDialog, importedSourceUpdatable } from '../components/session-import-update-dialog';
@@ -162,18 +163,47 @@ const workstreamSidebarFailureCopy: Record<WorkstreamSidebarFailure, FailureCopy
 export function WorkstreamScreen(): React.JSX.Element {
   const { id = '' } = useParams();
   const row = useCachedWorkstreamSummary(id);
-  if (row?.pending) {
-    return (
+  if (row?.pending) return <PendingWorkstreamScreen row={row} />;
+  return <OpenWorkstreamScreen />;
+}
+
+/**
+ * The opening as the room will draw it, with the same email-mention directory
+ * the composer and the open conversation use, so no chip changes when the
+ * create answers. The session is optional: an import's screen is mounted
+ * without one, and it needs the API only to read previews.
+ */
+function PendingWorkstreamScreen({ row }: { row: WorkstreamSummary }): React.JSX.Element {
+  const api = useOptionalCollaborationSession()?.api;
+  const { guest } = useShellCapabilities();
+  // Stable, so a pending-row update does not restart the previews' reads.
+  const loadAttachmentContent = useCallback(
+    (resourceId: string, signal?: AbortSignal) => api!.getResourcePreviewContent(resourceId, signal),
+    [api],
+  );
+  const members = useQuery({
+    queryKey: ['workspace-members'],
+    queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
+    enabled: Boolean(api),
+    staleTime: 60_000,
+  });
+  const invitees = useWorkspaceInvitees(api, !guest);
+  const emailMentions = useMemo(
+    () => emailMentionDirectory(members.data ?? [], invitees.data ?? NO_INVITEES),
+    [members.data, invitees.data],
+  );
+  return (
+    <EmailMentionContext.Provider value={emailMentions}>
       <ConversationOpeningSkeleton
         caption
         label={row.pendingOrigin === 'import' ? 'Importing conversation…' : 'Starting…'}
+        loadAttachmentContent={api ? loadAttachmentContent : undefined}
         openingAuthorId={row.createdByUserId}
-        openingMessage={row.pendingOrigin === 'import' ? undefined : row.objective}
+        openingMessage={row.pendingOpening}
         parentKind="workstream"
       />
-    );
-  }
-  return <OpenWorkstreamScreen />;
+    </EmailMentionContext.Provider>
+  );
 }
 
 function OpenWorkstreamScreen(): React.JSX.Element {
