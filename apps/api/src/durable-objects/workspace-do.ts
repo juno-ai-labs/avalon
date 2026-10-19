@@ -6873,7 +6873,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** A Channel message's search watermark, without reading the message. */
   async channelMessageSearchRevision(input: unknown): Promise<number | null> {
     await this.initialized;
-    const request = ChannelMessageSearchRevisionRequestSchema.parse(input);
+    const request = parseRpcInput(ChannelMessageSearchRevisionRequestSchema, input, "channel_message_search_revision");
     this.assertWorkspace(request.workspaceId);
     return channelMessageSearchRevision(this.state.storage.sql, request.messageId);
   }
@@ -6881,7 +6881,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** A Channel message's search document, or its deletion watermark; see channel-message-search-projection.ts. */
   async prepareChannelMessageSearch(input: unknown) {
     await this.initialized;
-    const request = ChannelMessageSearchProjectionSchema.parse(input);
+    const request = parseRpcInput(ChannelMessageSearchProjectionSchema, input, "prepare_channel_message_search");
     this.assertWorkspace(request.workspaceId);
     if (request.region !== this.env.AVALON_REGION) throw new Error("search_projection_region_mismatch");
     return prepareChannelMessageSearch(this.state.storage.sql, request.messageId);
