@@ -16,6 +16,7 @@ import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
+import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { resolveAgentModelRouting } from "./agent-model-flags";
@@ -125,14 +126,26 @@ export class SessionImportRunService {
       const othersRun = admitted === "exists" || (admitted === null && await createHarnessRunObjectPort(
         this.env, this.auth.workspaceId, workstreamId, undefined, childId,
       ).run({ runId }).then((found) => found != null, () => false));
-      if (!othersRun) await this.retire(workstreamId, input.clientMessageId).catch(() => undefined);
+      // Logged, not swallowed: a failed retire leaves the Channel listed.
+      if (!othersRun) {
+        await this.retire(workstreamId, input.clientMessageId).catch((retireError: unknown) => {
+          logWarn(this.env, "session_import_retire_failed", {
+            workspace_id: this.auth.workspaceId,
+            workstream_id: workstreamId,
+            reason: diagnosticErrorCode(retireError, "session_import_retire_failed"),
+          });
+        });
+      }
       throw error;
     }
     return { workstreamId, substreamId: childId };
   }
 
-  /** Stop the caller's earlier import agents on a Channel, so one runs at a time. */
-  private async stopEarlierImports(workstreamId: string): Promise<void> {
+  /**
+   * Stop the caller's import agents on a Channel: an update's earlier runs, so
+   * one runs at a time, and whatever an abandoned start left running.
+   */
+  private async stopImports(workstreamId: string): Promise<void> {
     const workspaceId = this.auth.workspaceId;
     const parent = await this.parent();
     const earlier = await parent.hiddenChildren({ workspaceId, parentId: workstreamId, userId: this.auth.userId });
@@ -252,7 +265,7 @@ export class SessionImportRunService {
     if (!recorded?.url) throw new ApiError(409, "session_import_source_missing", "This thread has no updateable source session");
     const checkpoint = await client.importedSessionCheckpoint();
     const source = browserConversationSource(recorded.url);
-    await this.stopEarlierImports(workstreamId);
+    await this.stopImports(workstreamId);
     const substreamId = uuidV7(Date.now());
     await this.launch(workstreamId, source, checkpoint.map((entry) => entry.sourceMessageId), substreamId, uuidV7(Date.now()));
     return { workstreamId, substreamId };
@@ -414,6 +427,23 @@ export class SessionImportRunService {
     }
     await this.retire(input.workstreamId, input.clientMessageId);
     return { discarded: true };
+  }
+
+  /**
+   * `discard` for a failed start, by the caller's create key alone. Retires
+   * before stopping anything, so a `complete` that claims the key first wins
+   * the receipt and keeps its agent. See `docs/session-import.md`, step 5.
+   */
+  async abandon(clientMessageId: string): Promise<{ abandoned: boolean }> {
+    const receipt = await this.env.DB.prepare(
+      `SELECT workstream_id FROM workstream_create_receipts
+        WHERE workspace_id = ? AND creator_user_id = ? AND client_message_id = ?`,
+    ).bind(this.auth.workspaceId, this.auth.userId, clientMessageId)
+      .first<{ workstream_id: string }>();
+    if (!receipt) return { abandoned: false };
+    await this.retire(receipt.workstream_id, clientMessageId);
+    await this.stopImports(receipt.workstream_id);
+    return { abandoned: true };
   }
 }
 

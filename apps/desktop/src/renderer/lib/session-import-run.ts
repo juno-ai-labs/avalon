@@ -75,7 +75,7 @@ export function assemblePreview(
 
 export type SessionImportApi = Pick<RallyApi,
   'startSessionImport' | 'startSessionImportUpdate' | 'completeSessionImport' | 'discardSessionImport'
-  | 'startBreakoutImport' | 'completeBreakoutImport'
+  | 'abandonSessionImport' | 'startBreakoutImport' | 'completeBreakoutImport'
   | 'updateImportedSession' | 'importedSessionSource' | 'getSocketTicket'>
   & Partial<Pick<RallyApi, 'confirmSocketTicket'>>;
 
@@ -394,6 +394,11 @@ export function startSessionImportRun(input: {
       await connect();
     } catch (error) {
       finish({ kind: 'error', message: messageOf(error) });
+      // A failed start may still have reserved its Channel; take it back by key.
+      // Not awaited: the request has no timeout, and the error must not wait on it.
+      if (!run && input.mode.kind === 'create') {
+        void input.api.abandonSessionImport({ clientMessageId: input.mode.clientMessageId }).catch(() => undefined);
+      }
     }
   })();
 
