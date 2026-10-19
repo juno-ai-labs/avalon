@@ -786,7 +786,9 @@ and gets the row; if its container is neither `.message-block` nor
 `.channel-feed-item`, add it to the reveal rule rather than writing a second
 one. A person's turn in a Thread still passes `textActions={false}`, as before.
 A Channel's message copies its stored body, so a typed @name copies as typed
-and exports without a chip.
+and exports without a chip. It also passes `verbatim`, so its image and PDF keep
+the line breaks the feed drew and skip model-text repairs; a host that draws
+text verbatim must pass it, or the saved card differs from the screen.
 
 ### 2026-10-18 — A long paste attaches as a typed, named file
 

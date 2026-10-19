@@ -9,6 +9,7 @@ import {
   createConnectorMentionToken,
   ElicitationPanel,
   MarkdownBody,
+  MessageActions,
   MessageBlock,
   splitStreamingMarkdown,
   withConnectorMentionLinks,
@@ -1649,6 +1650,15 @@ describe('MessageBlock export actions', () => {
     expect(request?.contentHtml).toContain('<h2>Quarterly pipeline review</h2>');
     expect(request?.contentHtml).toContain('<strong>Northwind</strong>');
     expect(request?.logoDataUrl).toMatch(/^data:image\/png;base64,/u);
+  });
+
+  it('saves a verbatim message with the line breaks it was drawn with', async () => {
+    render(<MessageActions subject="message" text={'First line\nSecond line'} verbatim />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save message as an image' }));
+
+    await waitFor(() => expect(exportMessage).toHaveBeenCalledTimes(1));
+    expect(exportMessage.mock.calls[0]?.[0].contentHtml).toMatch(/First line<br\/?>\s*Second line/u);
   });
 
   it('asks for a PDF from the button beside it', async () => {
