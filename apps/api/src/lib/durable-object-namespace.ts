@@ -350,7 +350,7 @@ export async function workspacePlacementAffinity(
   // D1 promises belong to the initiating request. A cancelled request can
   // leave one pending forever; other requests must never inherit its I/O.
   // Cache only the immutable value, after this request's read completes.
-  if (databaseCache.size >= WORKSPACE_PLACEMENT_CACHE_LIMIT) {
+  if (!databaseCache.has(key) && databaseCache.size >= WORKSPACE_PLACEMENT_CACHE_LIMIT) {
     const oldest = databaseCache.keys().next().value;
     if (oldest) databaseCache.delete(oldest);
   }

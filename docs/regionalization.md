@@ -52,7 +52,8 @@ affinity strings. In-flight D1 reads belong to their initiating request and
 must never be shared through module scope: if that request is cancelled, its
 promise can remain unresolved and block unrelated requests that reuse it.
 Concurrent cold lookups perform their own reads; later lookups reuse the
-immutable value. Failed reads and local development fallbacks are not cached.
+immutable value. Raced completions for one key consume one slot and evict at
+most one warm entry. Failed reads and local development fallbacks are not cached.
 
 ## Invariants
 
