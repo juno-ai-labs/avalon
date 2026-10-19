@@ -65,6 +65,8 @@ export interface ArtifactViewHandle {
   load(url: string): Promise<boolean>;
   /** The page as painted now, as an image data URL, or `null` when nothing is painted. */
   capture(): Promise<string | null>;
+  pick?: () => Promise<unknown>;
+  stopPicking?: () => Promise<void>;
   close(): void;
 }
 
@@ -634,6 +636,14 @@ export class ArtifactPreviewController {
     if (!view || view.destroyed() || this.hiddenByOverlay || this.pendingLoad?.view === view) return null;
     return await view.capture();
   }
+
+  async pick(): Promise<unknown> {
+    const view = this.view;
+    if (!view || view.destroyed() || this.pendingLoad?.view === view) return null;
+    const result = await view.pick?.() ?? null;
+    return this.view === view && !view.destroyed() ? result : null;
+  }
+  async stopPicking(): Promise<void> { await this.view?.stopPicking?.(); }
 
   destroy(): void {
     const view = this.view;

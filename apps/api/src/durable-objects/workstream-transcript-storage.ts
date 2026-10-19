@@ -1,3 +1,4 @@
+import { AnnotatedMessageContentSchema } from "@rally/contracts";
 import { stableUuid } from "../lib/stable-uuid";
 import {
   automationActivationName,
@@ -593,7 +594,7 @@ export class WorkstreamTranscriptStorage {
         const said = turn.blocks.flatMap((block) => block.type === "text"
           && (block.messageType ?? "text") === (sidekick ? "automation_activation" : "text") ? [block] : []);
         const blocks = said.map((block) => ({
-          text: block.text, mentions: block.mentions ?? [], attachments: block.attachments ?? [],
+          text: block.text, mentions: block.mentions ?? [], attachments: block.attachments ?? [], ...(AnnotatedMessageContentSchema.safeParse(block.structuredContent).success?{structuredContent:AnnotatedMessageContentSchema.parse(block.structuredContent)}:{}),
         }));
         if (blocks.length === 0) continue;
         messages.push(SubstreamContextMessageSchema.parse({
@@ -4028,6 +4029,7 @@ export class WorkstreamTranscriptStorage {
           userId: pending.author_user_id,
           displayName: pending.author_name_snapshot,
         },
+        structuredContent: material.payload.structuredContent,
         text: material.payload.content,
         mentions: material.mentions.map((mention) => ({
           type: mention.mentionKind,
@@ -4522,6 +4524,7 @@ export class WorkstreamTranscriptStorage {
               userId: turn.authorUserId,
               displayName: turn.authorSnapshot?.displayName ?? null,
             },
+        structuredContent: text.structuredContent,
         externalFraming,
         text: text.text,
         mentions: (text.mentions ?? []).map((mention) => ({

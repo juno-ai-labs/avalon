@@ -543,7 +543,30 @@ see
   transition. **A change to the animation or to either state's geometry still has
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
+### Starting with annotated resources
+
+The Channel's transient annotation provider covers its resource previews and
+composer. `POST /workstreams` accepts commented annotations as opening-message
+content, validates target reads and versions before reservation, and initializes
+the existing turn's structured content. Crop IDs remain ordinary draft
+attachments. The annotations participate in the create request hash; optimistic
+and canonical opening turns carry the same payload. See
+[artifact annotations](artifact-annotations.md).
+
 ## Changelog
+
+### 2026-10-19 — Carry annotations through the opening turn
+
+**What changed:** Ordinary creation accepts a commented annotation-only opening and derives its provisional title from authored comments.
+
+**Why:** A person viewing an artifact from a Channel needs to begin work with its selections without a throwaway first message.
+
+**Considered and rejected:** The existing receipt and opening structured-content path carry annotations rather than a separate creation endpoint.
+
+**Consequences:** Fresh creates validate sharing before placement; completed receipts replay even after the original target is deleted. See [artifact annotations](artifact-annotations.md).
+
+PR #1322; design: `docs/PRDs/2026-10-19_artifact-annotations/prd.md`.
+
 
 ### 2026-10-19 — A starting thread shows its opening's mentions and attachments
 

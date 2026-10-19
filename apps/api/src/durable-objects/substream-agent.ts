@@ -1,4 +1,4 @@
-import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
+import { zodDiagnosticCode, describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import { cleanupCanvaTransactions } from "../services/canva-transaction-cleanup";
 import { parseRpcInput } from "../lib/rpc-input";
 import { ToolPageError } from "./tool-page-storage";
@@ -6455,6 +6455,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (isUnknownSocketEvent(decoded, ClientSocketEventTypeSchema)) return;
     const parsed = safeParseSocketEvent(ClientSocketEventSchema, decoded);
     if (!parsed.success) {
+      const tooLarge = parsed.error.issues.some((issue) => issue.code === 'custom' && issue.message === 'annotations_too_large');
+      const rejection = { status: tooLarge ? 422 : 400, code: tooLarge ? 'annotations_too_large' : zodDiagnosticCode(parsed.error,'invalid_event') ?? 'invalid_event', message: tooLarge ? 'These pins are too large to send together' : 'The socket event contains an invalid field.' };
       const recognizableMutation = recognizableSocketMutation(decoded);
       if (recognizableMutation) {
         this.sendSocketCommandResult(socket, {
@@ -6464,11 +6466,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           ...(recognizableMutation.clientMessageId
             ? { clientMessageId: recognizableMutation.clientMessageId }
             : {}),
-          error: { status: 400, code: "invalid_event", message: "The socket event is not valid." },
+          error: rejection,
         });
         return;
       }
-      this.sendError(socket, "invalid_event", "The socket event is not valid.");
+      this.sendError(socket, "invalid_event", `${rejection.code}: ${rejection.message}`);
       return;
     }
 
@@ -6826,9 +6828,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         harnessRunId: result.harnessRunId,
       });
     } catch (error) {
-      const safe = error instanceof ApiError
-        ? error
-        : new ApiError(500, "substream_command_failed", "The substream command could not be completed");
+      const diagnostic = zodDiagnosticCode(error, 'substream_command');
+      const annotationsTooLarge = error instanceof z.ZodError && error.issues.some((issue) => issue.code === 'custom' && issue.message === 'annotations_too_large');
+      const safe = error instanceof ApiError ? error
+        : annotationsTooLarge ? new ApiError(422, 'annotations_too_large', 'These pins are too large to send together')
+          : diagnostic ? new ApiError(500, diagnostic, 'Stored command data contains an invalid field')
+            : new ApiError(500, "substream_command_failed", "The substream command could not be completed");
       this.sendSocketCommandResult(socket, {
         type: "client_command_failed",
         command: command.type,
@@ -6856,15 +6861,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           user_id: attachment.userId,
           command: command.type,
           operation_id: command.operationId,
-          reason: validation
-            ? "schema_validation_failed"
-            : diagnosticErrorCode(error, "socket_command_threw"),
+          reason: diagnostic ?? diagnosticErrorCode(error, "socket_command_threw"),
           ...(validation
             ? {
-              validation_issues: validation.issues.slice(0, 25).map((issue) => ({
-                path: issue.path.map(String).join(".") || "(root)",
-                code: issue.code,
-              })),
+              validation_issues: describeZodIssues(validation),
             }
             : {}),
           // `stack`, matching this file's other two `harnessErrorFrames` sites:
@@ -6941,9 +6941,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         });
         span.mark("workstream.room.create_message.respond");
       } catch (error) {
-        const safe = error instanceof ApiError
-          ? error
-          : new ApiError(500, "message_write_failed", "The message could not be sent");
+        const diagnostic = zodDiagnosticCode(error,'message_write');
+        const tooLarge = error instanceof z.ZodError && error.issues.some((issue) => issue.code === 'custom' && issue.message === 'annotations_too_large');
+        const safe = error instanceof ApiError ? error
+          : tooLarge ? new ApiError(422,'annotations_too_large','These pins are too large to send together')
+            : diagnostic ? new ApiError(500,diagnostic,'Stored message data contains an invalid field')
+              : new ApiError(500, "message_write_failed", "The message could not be sent");
         this.sendSocketCommandResult(socket, {
           type: "client_command_failed",
           command: "create_message",
@@ -6963,7 +6966,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             substream_id: attachment.substreamId,
             user_id: attachment.userId,
             client_message_id: command.payload.clientMessageId,
-            reason: error instanceof Error ? error.message : "unknown",
+            reason: diagnostic ?? diagnosticErrorCode(error,"message_write_failed"),
+            ...(error instanceof z.ZodError ? {validation_issues:describeZodIssues(error)} : {}),
           });
         }
         span.setError(safe.code, safe.message);

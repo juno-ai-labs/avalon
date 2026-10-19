@@ -1,3 +1,6 @@
+export * from './artifact-picker';
+import { AnnotationsSchema, validateAnnotationAttachments } from './artifact-annotations';
+export * from './artifact-annotations';
 import { z } from "zod";
 import { AttachmentKindSchema, ResourceSlugSchema, parseStoredSuggestedAttachmentToolCall } from "./attachment-contracts";
 import { AutomationLifecycleStateSchema,
@@ -2134,6 +2137,7 @@ export const WorkstreamCreationFieldsSchema = z.object({
   mentions: z.array(MentionSchema).default([]),
   clientMessageId: z.string().min(1).max(120),
   attachmentIds: z.array(IdSchema).max(10).default([]),
+  annotations: AnnotationsSchema.optional(),
   /**
    * Pins every run of this work stream to one OpenRouter model, ahead of the
    * `agent-model-workstream` flag. Sent only by the composer's developer-mode
@@ -2144,8 +2148,8 @@ export const WorkstreamCreationFieldsSchema = z.object({
 });
 
 /** Interactive creation starts a run; prepared history uses the same creation fields. */
-export const CreateWorkstreamRequestSchema = WorkstreamCreationFieldsSchema.refine((value) => value.openingMessage.trim().length > 0 || value.attachmentIds.length > 0, {
-  message: "An opening message must include text or an attachment",
+export const CreateWorkstreamRequestSchema = WorkstreamCreationFieldsSchema.superRefine(validateAnnotationAttachments).refine((value) => value.openingMessage.trim().length > 0 || value.attachmentIds.length > 0 || value.annotations?.some((annotation) => annotation.comment.trim().length > 0), {
+  message: "An opening message must include text, an attachment or a commented annotation",
 });
 
 export const WorkOpportunitySchema = z.object({
@@ -2311,8 +2315,9 @@ export const CreateMessageRequestSchema = z.object({
   confirmedParticipantUserIds: z.array(IdSchema).default([]),
   attachmentIds: z.array(IdSchema).max(10).default([]),
   /** Steer yields the in-flight loop at a turn boundary; queue never interrupts it. */
+  annotations: AnnotationsSchema.optional(),
   runMode: z.enum(["steer", "queue"]).optional(),
-}).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0, {
+}).superRefine(validateAnnotationAttachments).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0 || value.annotations?.some((a) => a.comment.trim()), {
   message: "A message must include text or an attachment",
 });
 

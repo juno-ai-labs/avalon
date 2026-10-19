@@ -1,6 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { act, render, renderHook, screen } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { RAIL_EXIT_FADE_MS, RailSurface, useRailExitFade } from './rail-surface';
 
@@ -85,6 +85,18 @@ describe('RailSurface', () => {
       </Tooltip.Provider>,
     );
   }
+
+  it('does not reclaim focus from a control opened before its arrival frame',()=>{
+    let arrive:FrameRequestCallback=()=>{};
+    const frame=vi.spyOn(window,'requestAnimationFrame').mockImplementation((callback)=>{arrive=callback;return 1;});
+    onTestFinished(()=>frame.mockRestore());
+    renderSurface(false);
+    const menu=document.createElement('button');menu.textContent='Open menu item';document.body.append(menu);
+    onTestFinished(()=>menu.remove());
+    menu.focus();
+    act(()=>arrive(0));
+    expect(document.activeElement).toBe(menu);
+  });
 
   it('gives the sidebar one grab handle while it holds the slot', () => {
     renderSurface(false);

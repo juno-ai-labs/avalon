@@ -142,6 +142,10 @@ writes its result to the cache under the key it started on, so looking away from
 composer costs nothing; only the unmounted hook aborts, and the bytes are still on
 disk to try again with.
 
+Unsent artifact pins are deliberately in-memory state and never enter this
+cache. [Artifact annotations](artifact-annotations.md) owns their scope and
+accepted-send cleanup; closing the app discards them.
+
 ### What is not cached
 
 - Automation drafts under construction: the definition revisions, the

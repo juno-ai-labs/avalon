@@ -98,8 +98,14 @@ export function RailSurface({
   useEffect(() => {
     if (arrivedLeaving.current) return;
     previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    requestAnimationFrame(() => surfaceRef.current?.focus());
+    const arrivedFocus = document.activeElement;
+    const frame = requestAnimationFrame(() => {
+      // The person can open a portalled menu before this frame. Do not steal
+      // its focus and dismiss it when the panel's deferred arrival runs.
+      if (document.activeElement === arrivedFocus || document.activeElement === document.body) surfaceRef.current?.focus();
+    });
     return () => {
+      cancelAnimationFrame(frame);
       // A panel fading out unmounts well after it stopped holding the slot, so
       // it hands focus back only when the sidebar is gone rather than in other
       // hands — where the panel that took it has already claimed focus.

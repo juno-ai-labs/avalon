@@ -1,3 +1,4 @@
+import {AnnotationDraftProvider} from './artifact-annotations';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { cleanup, fireEvent, render as renderBare, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
@@ -18,6 +19,28 @@ function render(ui: React.JSX.Element) {
 }
 
 describe('attachment presentation', () => {
+  it('opens bytes immediately and resolves a version only when commenting',async()=>{
+    const readResource=vi.fn(async()=>({currentVersion:2}));
+    const readResourceVersion=vi.fn(async()=>new Blob(['# Version two'],{type:'text/markdown'}));
+    render(<AnnotationDraftProvider readResource={readResource} readResourceVersion={readResourceVersion}><AttachmentLightbox preview={{name:'Plan.md',mimeType:'text/markdown',resourceId:'00000000-0000-7000-8000-000000000001',loadContent:async()=>new Blob(['# Initial preview'],{type:'text/markdown'})}} onClose={()=>{}}/></AnnotationDraftProvider>);
+    expect(await screen.findByText('Initial preview')).toBeVisible();
+    expect(readResource).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button',{name:'Comment mode'}));
+    expect(await screen.findByText('Version two')).toBeVisible();
+    expect(readResourceVersion).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000001',2,expect.any(AbortSignal));
+  });
+
+  it('pins a whole file without requiring unsupported preview bytes', async () => {
+    const readResource = vi.fn(async () => ({currentVersion: 2}));
+    const readResourceVersion = vi.fn(async () => {throw new Error('Preview unsupported');});
+    render(<AnnotationDraftProvider readResource={readResource} readResourceVersion={readResourceVersion}><AttachmentLightbox preview={{name:'archive.bin',mimeType:'application/octet-stream',resourceId:'00000000-0000-7000-8000-000000000001'}} onClose={()=>{}}/></AnnotationDraftProvider>);
+    fireEvent.click(screen.getByRole('button', {name:'Comment mode'}));
+    await waitFor(() => expect(screen.getByRole('button', {name:'Comment mode'})).toHaveAttribute('aria-pressed','true'));
+    fireEvent.click(screen.getByText('archive.bin', {selector:'.annotation-body p'}));
+    expect(await screen.findByRole('textbox', {name:'Comment on selection'})).toBeVisible();
+    expect(readResourceVersion).not.toHaveBeenCalled();
+  });
+
   it('shows unavailable content without a spinner or a dead download action', () => {
     render(<AttachmentLightbox preview={{ name: 'Unavailable.pdf' }} onClose={vi.fn()} />);
     expect(screen.getByRole('alert')).toHaveTextContent('no preview available');
@@ -421,12 +444,11 @@ describe('attachment presentation', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Preview debug.log' }));
     const text = await screen.findByText(/\*\*literal\*\*/u);
-    expect(text.tagName).toBe('PRE');
-    expect(text).toHaveClass('attachment-lightbox-text');
+    expect(text.closest('pre')).toHaveClass('attachment-lightbox-text');
     expect(screen.queryByText('literal', { selector: 'strong' })).not.toBeInTheDocument();
   });
 
-  it('shows CSV source content as literal text', async () => {
+  it('shows CSV source content as a selectable grid', async () => {
     const attachment: MessageAttachment = {
       id: 'resource-csv',
       fileName: 'metrics.csv',
@@ -443,8 +465,9 @@ describe('attachment presentation', () => {
     render(<Example />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Preview metrics.csv' }));
-    const text = await screen.findByText(/month,total/u);
-    expect(text.tagName).toBe('PRE');
+    expect(await screen.findByRole('cell',{name:'July'})).toBeVisible();
+    expect(screen.getByRole('cell',{name:'42'})).toBeVisible();
+    expect(screen.getByRole('cell',{name:'month'})).toBeVisible();
   });
 
   it('fades a name past 200 characters instead of growing the chip without bound', () => {
