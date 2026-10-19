@@ -540,6 +540,7 @@ jobs:
         if: env.DEPLOY_GLOBAL == 'true'
         env:
           ENGINEERING_MCP_BASIN_SQL_API_TOKEN: ${{ secrets.ENGINEERING_MCP_BASIN_SQL_API_TOKEN }}
+          ENGINEERING_MCP_WORKERS_OBSERVABILITY_API_TOKEN: ${{ secrets.ENGINEERING_MCP_WORKERS_OBSERVABILITY_API_TOKEN }}
         run: pnpm --filter @rally/engineering-mcp run deploy
 
       - name: Verify the engineering MCP advertises OAuth to non-browser clients
