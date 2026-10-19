@@ -321,13 +321,22 @@ function conversationOf(input: WorkstreamWorkflowInput): MemoryConversation {
 }
 
 /**
- * Who is acting, from the frozen principal: a person, the Sidekick whose
- * conversation this is, or the conversation itself when a workspace principal
- * runs in a Thread and nobody in particular is asking.
+ * Who is acting: the Sidekick, for any run of a Sidekick or in its
+ * conversation; otherwise a person from the frozen principal, or the
+ * conversation itself when a workspace principal runs in a Thread and nobody
+ * in particular is asking.
+ *
+ * The Sidekick is checked first. A Sidekick run carries the principal it runs
+ * as (`run_as_user`), and reading as that person would hand the run — and
+ * whoever reads its output — that person's own facts.
  */
-function readerOf(input: WorkstreamWorkflowInput): MemoryReader {
+function readerOf(
+  input: Pick<WorkstreamWorkflowInput, "automationRun" | "parentKind" | "parentId" | "executionPrincipal">,
+): MemoryReader {
+  if (input.automationRun || input.parentKind === "automation") {
+    return { kind: "sidekick", automationId: input.automationRun?.automationId ?? input.parentId };
+  }
   if (input.executionPrincipal.type === "user") return { kind: "person", userId: input.executionPrincipal.userId };
-  if (input.parentKind === "automation") return { kind: "sidekick", automationId: input.parentId };
   return { kind: "conversation" };
 }
 

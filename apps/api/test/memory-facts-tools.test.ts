@@ -1,5 +1,5 @@
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
-import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId, type WorkstreamWorkflowInput } from "@rally/contracts";
+import { asAutomationId, asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId, type WorkstreamWorkflowInput } from "@rally/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Env } from "../src/env";
@@ -32,6 +32,10 @@ const OPEN_THREAD = asWorkstreamId("00000000-0000-4000-8000-000000000112");
 const OWNER_RUN = asHarnessRunId("00000000-0000-4000-8000-000000000121");
 const MEMBER_RUN = asHarnessRunId("00000000-0000-4000-8000-000000000122");
 const OWNER_OPEN_RUN = asHarnessRunId("00000000-0000-4000-8000-000000000123");
+/** A Sidekick whose runs act as the owner (`run_as_user`). */
+const SIDEKICK_ID = asAutomationId("00000000-0000-4000-8000-000000000131");
+const SIDEKICK_RUN = asHarnessRunId("00000000-0000-4000-8000-000000000132");
+const SIDEKICK_THREAD_RUN = asHarnessRunId("00000000-0000-4000-8000-000000000133");
 
 class SqliteD1Statement {
   private values: unknown[] = [];
@@ -105,6 +109,8 @@ function fixture(): { env: Env; objectDatabase: DatabaseSync } {
     [PRIVATE_THREAD, OWNER_RUN, OWNER_ID, "lease-owner"],
     [OPEN_THREAD, MEMBER_RUN, MEMBER_ID, "lease-member"],
     [OPEN_THREAD, OWNER_OPEN_RUN, OWNER_ID, "lease-owner-open"],
+    [SIDEKICK_ID, SIDEKICK_RUN, OWNER_ID, "lease-sidekick"],
+    [OPEN_THREAD, SIDEKICK_THREAD_RUN, OWNER_ID, "lease-sidekick-thread"],
   ];
   for (const [workstreamId, runId, userId, leaseOwner] of runs) {
     let store = objectStores.get(workstreamId);
@@ -175,6 +181,32 @@ function tool(env: Env, who: Who, name: "recall" | "remember" | "forget") {
   const found = createMemoryTools(env, input(who)).find((candidate) => candidate.definition.name === name);
   if (!found) throw new Error(`missing tool ${name}`);
   return { execute: (args: unknown, receipt: string) => found.execute(args, context(input(who), receipt)), definition: found.definition };
+}
+
+/** A Sidekick run executing as the owner: in the Sidekick's own conversation, or posting into a thread. */
+function sidekickRunInput(where: "own" | "thread"): WorkstreamWorkflowInput {
+  const [parentKind, parentId, runId] = where === "own"
+    ? ["automation" as const, SIDEKICK_ID, SIDEKICK_RUN]
+    : ["workstream" as const, OPEN_THREAD, SIDEKICK_THREAD_RUN];
+  return {
+    region: "global",
+    workspaceId: WORKSPACE_ID,
+    parentKind,
+    parentId,
+    loopId: `${parentKind}:${parentId}:substream:0:loop`,
+    harnessRunId: runId,
+    triggerMessageId: null,
+    activityId: null,
+    executionPrincipal: { type: "user", userId: OWNER_ID },
+    automationRun: {
+      schemaVersion: 1,
+      automationId: SIDEKICK_ID,
+      runId,
+      definitionRevision: 1,
+      trigger: { kind: "manual", requestedByUserId: OWNER_ID },
+    },
+    reason: "human_message",
+  };
 }
 
 type Recalled = { facts: Array<{ factId: string; text: string; subject: { kind: string; label: string }; source: { conversationId: string; title: string | null } }> };
@@ -275,6 +307,27 @@ describe("the rally:memory tools", () => {
     expect((await tool(env, "owner-open", "forget").execute({ factId: "fact-org" }, "receipt-forget-5")).summary).toBe("That fact was already forgotten");
     await expect(tool(env, "owner-open", "forget").execute({ factId: "no-such-fact" }, "receipt-forget-6"))
       .rejects.toMatchObject({ code: "memory_fact_not_found" });
+  });
+
+  it("reads a Sidekick run as the Sidekick, never as the person it runs as", async () => {
+    const { env, objectDatabase } = fixture();
+    // The owner's own fact, which their Sidekick must not be handed.
+    await tool(env, "owner-open", "remember").execute(
+      { text: "Owner prefers release notes as bullets.", kind: "standing", about: "me" }, "receipt-owner-own",
+    );
+    for (const where of ["own", "thread"] as const) {
+      const runInput = sidekickRunInput(where);
+      const found = createMemoryTools(env, runInput);
+      const call = (name: string, args: unknown, receipt: string) =>
+        found.find((candidate) => candidate.definition.name === name)!.execute(args, context(runInput, receipt));
+      // A Sidekick is nobody, so it has no "me" to remember about...
+      await expect(call("remember", { text: "Owner likes short summaries.", kind: "standing", about: "me" }, `receipt-${where}-me`))
+        .rejects.toMatchObject({ code: "memory_personal_unavailable" });
+      // ...and the person it runs as does not lend it their facts.
+      const recalled = await call("recall", { query: "release notes bullets" }, `receipt-${where}-recall`);
+      expect((recalled.output as Recalled).facts).toEqual([]);
+    }
+    expect(objectDatabase.prepare(`SELECT COUNT(*) AS n FROM memory_facts WHERE subject_kind = 'person'`).get()).toEqual({ n: 1 });
   });
 
   it("names the horizon mistakes a model makes, before any write", async () => {
