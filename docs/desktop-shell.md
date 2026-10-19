@@ -342,13 +342,15 @@ from; reduced motion turns both off.
   `lazy`, and every later open reads again; the row's count is empty until
   then. A fact's source is a menu item, so opening it closes the menu.
 - **Artifact menu** (`ResourcePanelMenu`, the right panel's pill): header names
-  the item, then tiles for Rename, Copy link and Pin/Unpin, the tiles a thread
-  offers, then New window, Open source and Refresh where they apply, Versions,
+  the item, then Download for available file content, Rename, Copy link and
+  Pin/Unpin, then New window, Open source and Refresh where they apply, Versions,
   and **Archive** last. Rename, Copy link and Pin appear only for an artifact
   in the thread's Main, the ones a pin or an `/a/` link can name; Copy link
   also needs a Space for the link to name, so a guest's Channel outside every
   Space has none. Rename asks for the title in a dialog and saves it through
   `PATCH /conversations/:parentId/resources/:resourceId`.
+  Download reads original bytes, separately from the inspector's readable
+  derivative, and is available for files whose format has no preview too.
 
 ### Breakouts
 
