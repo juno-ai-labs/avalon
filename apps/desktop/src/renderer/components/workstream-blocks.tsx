@@ -1757,6 +1757,8 @@ export interface MessageMergeAction {
  *   is for moving work between levels, not for taking a person's words back.
  * - `subject` names the message in each action's sentence, so a person's
  *   message in a Channel is not called a "response".
+ * - `verbatim` says the host drew the text as typed (kept line breaks, no
+ *   model repairs), so the exports draw it the same way.
  *
  * The row is always laid out, even empty: under a person's bubble it is the
  * slot that keeps the next turn off it (see `.human-message .message-actions`).
@@ -1770,6 +1772,7 @@ export function MessageActions({
   telemetry,
   text,
   textActions = true,
+  verbatim = false,
 }: {
   citations?: CitationContext;
   mentions?: MessageMention[];
@@ -1780,6 +1783,7 @@ export function MessageActions({
   telemetry?: { messageId: string; workstreamId?: string };
   text: string;
   textActions?: boolean;
+  verbatim?: boolean;
 }): React.JSX.Element {
   const [saving, setSaving] = useState<MessageExportFormat | null>(null);
   const [failed, setFailed] = useState<MessageExportFormat | null>(null);
@@ -1809,7 +1813,14 @@ export function MessageActions({
         // text in the file somebody keeps. `still` is what the card does not
         // share with the turn — nothing in a picture can be hovered, so the
         // sources a pill's popover holds are printed under it instead.
-        content: <MarkdownBody citations={citations} mentions={mentions} still>{text}</MarkdownBody>,
+        content: <MarkdownBody
+          citations={citations}
+          mentions={mentions}
+          preserveLineBreaks={verbatim}
+          rallyMentions={verbatim}
+          still
+          verbatim={verbatim}
+        >{text}</MarkdownBody>,
         // The file name slugs the first line the way the card *shows* it — a
         // saved image named `…-backlog-rightarrow-done` outlives the render
         // that repaired the text it pictures. Copy stays the stored bytes.
