@@ -124,6 +124,11 @@ audience, a link may explain a suggestion but can only ever target the audience
 member. It runs at low reasoning effort, like the ranking's elimination rounds:
 it is a coarse gate asked tens of thousands of times a day.
 
+Personal OAuth connections with an explicit `providerUserId: null` do not
+contribute verified aliases. Their provider account may identify a shared MCP
+resource rather than a person. Older connections that omit the field retain
+the provider-account fallback.
+
 The context every admission call carries — up to 250 members with their
 verified aliases, the 20 most recent work streams the audience may see, and up
 to 12 existing opportunities — is bounded per opportunity by
@@ -427,6 +432,16 @@ tournaments are starting and never finishing. From there, check
 `suggested_work_sets.status` — a claim never overwrites it, so it is a true record
 of how the last ranking ended — and `request_seq` against the scheduler's claimed
 value.
+
+## Changelog
+
+### 2026-10-19 — Shared MCP resources are not verified people
+
+Apollo authenticates each owner against the same MCP resource URL. Treating that
+URL as a verified subject made successive owners overwrite one another in the
+identity directory. Directory sync now honors an explicit null provider user
+ID; inferring a person from the resource was rejected. Omitted IDs retain the
+legacy account fallback, so existing verified connectors keep working.
 
 ### 2026-09-11 — The last consumer went away; the producer stayed
 

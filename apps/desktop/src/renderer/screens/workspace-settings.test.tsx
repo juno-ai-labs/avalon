@@ -1871,6 +1871,18 @@ describe('Organization settings', () => {
     await waitFor(() => expect(api.connectorInstallation).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000022'));
   });
 
+  it.each(['desktop', 'browser'] as const)('connects Apollo.io through personal OAuth on %s', async (host) => {
+    sessionHost.current = host;
+    api.getAvailableConnectorTypes.mockResolvedValue(['apollo']);
+    renderSettings();
+    openSettingsSection('Connections');
+    const card = (await screen.findByText('Apollo.io')).closest('article')!;
+    expect(within(card).queryByRole('button', { name: 'Connect for organization' })).not.toBeInTheDocument();
+    fireEvent.click(await enabledConnectAction(card, 'Connect for me'));
+    await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith('apollo', 'you', ['apollo.personal.mcp']));
+    expect(openExternal).toHaveBeenCalled();
+  });
+
   it('offers Fireflies to a person and never to the organization', async () => {
     api.getAvailableConnectorTypes.mockResolvedValue(['fireflies']);
     api.getConnections.mockResolvedValue([{

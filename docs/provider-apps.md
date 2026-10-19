@@ -39,6 +39,25 @@ A connector review therefore asks whether each ingestion, read, and retention pa
 is purpose-bound, authorization-preserving, and bounded — not whether the
 implementation literally stores zero copies.
 
+### Apollo.io personal OAuth and Sidekick events
+
+The official [Apollo MCP guide](https://docs.apollo.io/docs/apollo-mcp) publishes
+`https://mcp.apollo.io/mcp` with Streamable HTTP and OAuth. Rally uses each
+region's `/connections/apollo/callback`; no API key or server secret is needed.
+Metadata checked on 2026-10-19 advertises PKCE S256, dynamic registration,
+refresh and revocation. A live probe received HTTP 201 from registration and
+built the authorization URL; account consent and authenticated execution remain
+unverified. The grant uses Apollo's advertised scopes, including credit-consuming
+operations, and Apollo prohibits model training on MCP data.
+
+The separate [partner API OAuth flow](https://docs.apollo.io/docs/use-oauth-20-authorization-flow-to-access-apollo-user-information-partners)
+requires app registration and credentials; partner integrations may also require
+Apollo approval. That approval is distinct from successful dynamic registration.
+Apollo business events require human-configured
+[Workflows](https://knowledge.apollo.io/hc/en-us/articles/4413804036109-Create-a-Workflow),
+with no documented subscription-management API, so this connector advertises no
+triggers. Scheduled Sidekicks can use its live tools.
+
 ### Canva personal OAuth
 
 Canva uses DCR with backend-held client credentials while the server callback

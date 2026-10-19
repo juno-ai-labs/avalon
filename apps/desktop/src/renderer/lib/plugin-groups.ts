@@ -315,6 +315,8 @@ function isUnnamedFirstPartyPlugin(pluginId: string, displayName: string | undef
  */
 function connectorTypeForName(displayName: string): string | null {
   const name = displayName.toLowerCase();
+  if (name.startsWith('apollo.io')) return 'apollo';
+  if (name.startsWith('canva')) return 'canva';
   if (name.startsWith('google')) return 'google';
   if (name.startsWith('slack')) return 'slack';
   if (name.startsWith('github')) return 'github';
