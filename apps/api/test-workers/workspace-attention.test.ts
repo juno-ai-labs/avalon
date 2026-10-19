@@ -229,7 +229,7 @@ describe("WorkspaceDO attention", () => {
     await runInDurableObject(workspace(), (_instance, state) => {
       const insert = (input: {
         id: string; latest: number; seen: number; unseen?: boolean; listable: boolean;
-        state?: string; archivedAt?: number;
+        state?: string; archivedAt?: number; scope?: "personal" | "workspace"; participant?: boolean;
       }) => {
         state.storage.sql.exec(
           `INSERT INTO breakouts
@@ -238,9 +238,9 @@ describe("WorkspaceDO attention", () => {
               created_by_user_id, last_activity_at, completed_at, archived_at,
               latest_attention_ordinal, unread_tracking_start_ordinal,
               source_created_at, source_updated_at, projected_at)
-           VALUES (?, ?, 1, 1, ?, 'fnv1a64:0000000000000000', ?, '', 'personal',
+           VALUES (?, ?, 1, 1, ?, 'fnv1a64:0000000000000000', ?, '', ?,
                    ?, 'settled', NULL, 1, NULL, ?, ?, 0, 1, 1, 1)`,
-          channelId, input.id, `breakout-event-${input.id}`, input.id, input.state ?? "idle",
+          channelId, input.id, `breakout-event-${input.id}`, input.id, input.scope ?? "personal", input.state ?? "idle",
           input.archivedAt ?? null, input.latest,
         );
         state.storage.sql.exec(
@@ -250,8 +250,8 @@ describe("WorkspaceDO attention", () => {
               you_are_mentioned, unseen, listable, seen_attention_ordinal,
               manual_unread_from_ordinal, manual_unread_generation,
               latest_mention_attention_ordinal, projected_at)
-           VALUES (?, ?, ?, 1, 1, ?, 'fnv1a64:0000000000000000', 1, 0, 0, ?, ?, ?, NULL, 0, 0, 1)`,
-          channelId, input.id, MEMBER, `breakout-viewer-${input.id}`,
+           VALUES (?, ?, ?, 1, 1, ?, 'fnv1a64:0000000000000000', ?, 0, 0, ?, ?, ?, NULL, 0, 0, 1)`,
+          channelId, input.id, MEMBER, `breakout-viewer-${input.id}`, input.participant === false ? 0 : 1,
           input.unseen ? 1 : 0, input.listable ? 1 : 0, input.seen,
         );
       };
@@ -261,6 +261,8 @@ describe("WorkspaceDO attention", () => {
       insert({ id: breakout(3), latest: 3, seen: 1, listable: false });
       insert({ id: breakout(4), latest: 2, seen: 2, listable: true, state: "needs_input" });
       insert({ id: breakout(5), latest: 3, seen: 1, listable: true, archivedAt: 1 });
+      // Organization-wide and listed, but the reader is not in it: not in their Threads list.
+      insert({ id: breakout(6), latest: 3, seen: 1, listable: true, scope: "workspace", participant: false });
     });
 
     await expect(workspace().attention({ workspaceId: WORKSPACE_ID, userId: MEMBER }))

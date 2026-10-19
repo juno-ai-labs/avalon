@@ -95,7 +95,10 @@ anybody reported. Mentions are not lost: mentioning somebody who is not in a
 thread adds them to it.
 
 **Consequences:** Unread activity in an Organization-wide thread the reader
-is not in now shows only in the Channels tab and Activity. A new place that
+is not in now shows only in the Channels tab and Activity. The Breakout arm's
+participation check also closes an older disagreement: the APNs count included
+unread Organization-wide Breakouts the reader was not in, which the client,
+reading only their own Breakout list, never counted. A new place that
 lists threads for a reader must take part in the same rule or the badge and
 the list will disagree again.
 
