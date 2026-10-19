@@ -644,6 +644,41 @@ describe('WorkstreamComposer mention confirmation', () => {
     expect([...document.querySelectorAll('.composer-mention')].map((mark) => mark.textContent)).toEqual(['@Adam']);
   });
 
+  it('lists people without the participation tag when the host turns it off', async () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          draftKey="test-draft"
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          markNonParticipants={false}
+          members={[creator, bob]}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={vi.fn(async () => undefined)}
+          onStop={async () => undefined}
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    fireEvent.change(screen.getByLabelText('Message the thread'), { target: { value: '@' } });
+
+    expect((await screen.findAllByRole('option')).map(mentionOptionCopy)).toEqual([
+      { badge: 'AI', description: null, label: 'Rally' },
+      { badge: 'Member', description: 'adam@example.com', label: 'Adam' },
+      { badge: 'Member', description: 'bob@example.com', label: 'Bob Builder' },
+    ]);
+  });
+
   it('walks the mention list with the arrow keys and inserts the highlighted candidate on Enter', async () => {
     const onSend = vi.fn(async () => undefined);
     renderComposer(onSend);

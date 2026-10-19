@@ -90,6 +90,12 @@ interface WorkstreamComposerProps {
   autoFocus?: boolean;
   api?: RealtimeDictationApi;
   workstream: ComposerConversation;
+  /**
+   * Whether the mention list tags people outside `workstream.participants` as
+   * not participating. Off for a thread a Channel is about to start: its only
+   * participant is the person writing, so the tag would land on everyone else.
+   */
+  markNonParticipants?: boolean;
   /** The key the unsent draft is cached under; see `lib/draft-keys.ts`. */
   draftKey: string;
   substreamId?: string;
@@ -181,6 +187,7 @@ export function WorkstreamComposer({
   autoFocus = false,
   api,
   workstream,
+  markNonParticipants = true,
   draftKey,
   substreamId = '0',
   members,
@@ -229,7 +236,7 @@ export function WorkstreamComposer({
     .map((member) => ({
       id: member.id,
       label: member.name,
-      description: participantIds.has(member.id) ? member.email : `${member.email} · not participating`,
+      description: !markNonParticipants || participantIds.has(member.id) ? member.email : `${member.email} · not participating`,
       kind: 'person' as const,
       member,
     })),
@@ -238,7 +245,7 @@ export function WorkstreamComposer({
     label: invitee.email,
     description: '',
     kind: 'invitee' as const,
-  }))], [invitees, members, participantIds]);
+  }))], [invitees, markNonParticipants, members, participantIds]);
 
   const mentionLabels = useMemo(() => candidates.map((candidate) => candidate.label), [candidates]);
   const visibleCandidates = mentionQuery === null
