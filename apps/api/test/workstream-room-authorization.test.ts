@@ -259,15 +259,17 @@ describe("message commands over the SubstreamAgent socket", () => {
       },
     }));
 
-    expect(JSON.parse(socket.sent.at(-1)!)).toMatchObject({
+    // Admission can be followed by live run-status frames before this await
+    // returns. The command receipt, not the last transport frame, proves it.
+    expect(socket.sent.map((payload) => JSON.parse(payload))).toContainEqual(expect.objectContaining({
       type: "client_command_succeeded",
       command: "create_message",
       clientMessageId,
-      turn: {
+      turn: expect.objectContaining({
         clientMessageId,
         turnId: expect.any(String),
-      },
-    });
+      }),
+    }));
     expect(socket.closes).toEqual([]);
   });
 });

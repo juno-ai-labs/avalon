@@ -1,3 +1,4 @@
+import type { Annotation } from '@rally/contracts';
 import { classifyAttachmentKind } from '@rally/contracts';
 import clsx from 'clsx';
 import { Download, File, FileText, Film, Music2, Pause, Play, RefreshCcw, Table2, X } from 'lucide-react';
@@ -8,9 +9,13 @@ import { isImageAttachment, isVideoAttachment } from '../lib/attachment-media';
 import { isPastedText } from '../lib/pasted-text';
 
 export interface AttachmentPreview {
+  annotation?: Annotation;
+  loadAnnotationImage?: ((signal?: AbortSignal) => Promise<Blob>) | undefined;
+  version?: number;
   name: string;
   /** The resource this previews, when it is one: what a pinned artifact's seen version is reported for. */
   resourceId?: string;
+  sizeBytes?: number;
   mimeType?: string;
   src?: string;
   loadContent?: (signal?: AbortSignal) => Promise<Blob>;
@@ -225,6 +230,7 @@ function RemoteImageAttachment({ image, gallery, index, onOpen }: {
 }): React.JSX.Element {
   const { attachment, src } = image;
   const preview = gallery[index] ?? {
+    resourceId: attachment.id,
     name: attachment.fileName,
     mimeType: attachment.mimeType,
     ...(src ? { src } : {}),
@@ -256,7 +262,7 @@ function RemoteFileAttachment({ attachment, loadContent, onOpen, showDownload = 
   const name = splitFileName(attachment.fileName);
   const content = useMemo(() => (signal?: AbortSignal) => loadContent(attachment.id, signal), [attachment.id, loadContent]);
   const kind = pendingFileKind(attachment.mimeType, attachment.fileName);
-  const preview: AttachmentPreview = { name: attachment.fileName, mimeType: attachment.mimeType, loadContent: content };
+  const preview: AttachmentPreview = { resourceId: attachment.id, sizeBytes:attachment.sizeBytes, name: attachment.fileName, mimeType: attachment.mimeType, loadContent: content };
   const [downloadError, setDownloadError] = useState(false);
   if (kind === 'audio' || isVideoAttachment(attachment.mimeType, attachment.fileName)) {
     return <AttachmentMediaTile name={attachment.fileName} mimeType={attachment.mimeType} loadContent={content}
@@ -343,6 +349,8 @@ function RemoteImageGroup({ attachments, loadContent, onOpen }: {
 }): React.JSX.Element {
   const images = useLoadedImages(attachments, loadContent);
   const gallery = useMemo<AttachmentPreview[]>(() => images.map(({ attachment, src }) => ({
+    resourceId:attachment.id,
+    sizeBytes:attachment.sizeBytes,
     name: attachment.fileName,
     mimeType: attachment.mimeType,
     ...(src ? { src } : {}),

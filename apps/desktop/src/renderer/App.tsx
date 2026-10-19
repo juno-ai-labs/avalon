@@ -1,3 +1,4 @@
+import { ArtifactWindow } from './screens/artifact-window';
 import { AppErrorBoundary } from "@rally/ui/components/app-error-boundary";
 import { createQueryClient } from "./lib/query-client";
 import * as Tooltip from '@radix-ui/react-tooltip';
@@ -569,6 +570,10 @@ export function SessionGate(): React.JSX.Element {
 }
 
 export default function App(): React.JSX.Element {
+  return new URLSearchParams(window.location.search).get('surface') === 'artifact-preview'
+    ? <ArtifactWindow /> : <Application />;
+}
+function Application(): React.JSX.Element {
   useEffect(() => installRendererErrorTelemetry(), []);
   // Above the deep-link branch below, so every window this renderer draws —
   // including the ones that return before the providers — can tell an app

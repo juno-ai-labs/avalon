@@ -1,3 +1,5 @@
+import { ArtifactManifestSchema, artifactAssetKey } from "@rally/contracts";
+import { resolveAssetPath } from "../artifacts/serving-policy";
 import { protectCanvaReference, readCanvaReference } from "./canva-resource-access";
 import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
 import {
@@ -28,7 +30,7 @@ import {
   type AuthorizedDerivativeResource,
 } from "./attachment-derivative-service";
 import { verifyAttachmentMimeType } from "./attachment-mime-verification";
-import { loadBrowserCompatibleImage } from "./attachment-model-content";
+import { type ModelAttachmentSource, loadBrowserCompatibleImage } from "./attachment-model-content";
 import type { AccessContext } from './authorization-policy';
 import { createAccessContext, requireAuthorizedRead } from './authorization-service';
 import { withAuthorizedConnection } from "./connector-connection-access";
@@ -355,6 +357,23 @@ export class ResourceService {
     return this.toResource(row);
   }
 
+  /** Annotation targets are existing readable resources, never attachment reservations. */
+  async annotationTarget(id: string, version: number): Promise<{ title: string; mimeType: string | null; image: ModelAttachmentSource | null }> {
+    await this.authorizeRead(id);
+    const resource = await this.loadResource(id);
+    if (resource.provider === 'avalon_upload' && resource.attachment_status !== 'attached') {
+      throw new ApiError(409, 'annotation_target_draft', 'Send this upload before annotating it');
+    }
+    const revision = await this.loadVersion(id, version);
+    if (!revision) throw new ApiError(404, 'resource_version_not_found', 'The annotated version does not exist');
+    await this.authorizeRead(id);
+    const image = classifyAttachmentKind({ fileName: revision.title, mimeType: revision.mime_type }) === 'image'
+      ? { id, workspaceId: this.auth.workspaceId, fileName: revision.title, mimeType: revision.mime_type ?? 'application/octet-stream', sizeBytes: 0,
+          contentRef: revision.content_ref, modelContentRef: revision.model_content_ref,
+          modelContentStatus: revision.model_content_ref ? 'ready' as const : null } : null;
+    return { title: revision.title, mimeType: revision.mime_type, image };
+  }
+
   /** Opening a search result repeats the same attachment authority checks. */
   async searchPreview(id: string, signal: AbortSignal): Promise<Response> {
     const before = await this.loadSearchResource(id);
@@ -427,6 +446,21 @@ export class ResourceService {
     if (!object) throw new ApiError(404, "resource_version_content_unavailable", "Stored resource version content was not found");
     await this.authorizeRead(id);
     return resourceObjectResponse(object);
+  }
+
+  /** Frozen HTML assets only: historical server modules are never executed. */
+  async annotationSitePreview(id: string, version: number, pagePath: string): Promise<Response> {
+    const original = await this.versionContent(id, version, 'original');
+    const manifest = ArtifactManifestSchema.parse(await original.json());
+    const registry = await this.env.DB.prepare('SELECT artifact_id FROM artifact_registry WHERE workspace_id = ? AND resource_id = ?')
+      .bind(this.auth.workspaceId,id).first<{artifact_id:string}>();
+    if (!registry || registry.artifact_id !== manifest.artifactId) throw new ApiError(404,'artifact_not_found','The artifact is unavailable');
+    const path = resolveAssetPath(new URL(pagePath,'https://artifact.invalid').pathname,new Set(manifest.assets.filter((asset) => asset.contentType.startsWith('text/html')).map((asset) => asset.path)));
+    if (!path) throw new ApiError(404,'annotation_original_page_unavailable','The original page cannot be shown again');
+    const object = await this.env.PAYLOADS.get(artifactAssetKey(manifest.artifactId,manifest.artifactVersion,path));
+    if (!object) throw new ApiError(404,'annotation_original_page_unavailable','The original page cannot be shown again');
+    await this.authorizeRead(id);
+    return new Response(object.body,{headers:{'content-type':'text/html; charset=utf-8','content-security-policy':"default-src 'none'",'cache-control':'private, no-store'}});
   }
 
   private async loadVersion(id: string, version: number) {

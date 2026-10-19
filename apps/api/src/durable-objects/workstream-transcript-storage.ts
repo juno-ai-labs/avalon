@@ -4028,6 +4028,7 @@ export class WorkstreamTranscriptStorage {
           userId: pending.author_user_id,
           displayName: pending.author_name_snapshot,
         },
+        structuredContent: material.payload.structuredContent,
         text: material.payload.content,
         mentions: material.mentions.map((mention) => ({
           type: mention.mentionKind,
@@ -4522,6 +4523,7 @@ export class WorkstreamTranscriptStorage {
               userId: turn.authorUserId,
               displayName: turn.authorSnapshot?.displayName ?? null,
             },
+        structuredContent: text.structuredContent,
         externalFraming,
         text: text.text,
         mentions: (text.mentions ?? []).map((mention) => ({

@@ -40,10 +40,11 @@ export function DetailHeaderActionsHost({
  * Declare the detail's actions, from anywhere inside the host. Pass a memoised
  * array: each new one is sent to the host, and the host re-renders on it.
  */
-export function useDetailHeaderActions(actions: readonly IconGroupAction[]): void {
+export function useDetailHeaderActions(actions: readonly IconGroupAction[]): boolean {
   const sink = useContext(DetailHeaderActionsSink);
   useEffect(() => {
     sink?.(actions);
   }, [actions, sink]);
   useEffect(() => () => sink?.([]), [sink]);
+  return sink !== null;
 }

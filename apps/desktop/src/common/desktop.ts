@@ -1,3 +1,4 @@
+import type { Annotation, ArtifactPickerPin } from "@rally/contracts";
 import type { ClientSession } from "@rally/contracts/client-session";
 import type { NetworkRecoveryState, NetworkTicketObservation } from './network-recovery';
 import type {
@@ -336,6 +337,7 @@ export interface DesktopArtifactPreviewRequest {
 }
 
 export interface DesktopSiteArtifactWindowRequest {
+  annotationScope?: string;
   kind: 'site';
   restoreId?: string;
   resourceId: string;
@@ -347,6 +349,8 @@ export interface DesktopSiteArtifactWindowRequest {
 }
 
 export interface DesktopGeneratedArtifactWindowRequest {
+  annotationScope?: string;
+  sourceMimeType?: string;
   kind: 'generated';
   restoreId?: string;
   resourceId: string;
@@ -555,11 +559,19 @@ export interface RallyDesktopBridge {
    */
   setArtifactPreviewHidden: (hidden: boolean) => Promise<void>;
   /** A still of the live preview as an image data URL, or `null` when none is showing. */
+  pickArtifactPreview?: () => Promise<ArtifactPickerPin | null>;
+  stopPickingArtifactPreview?: () => Promise<void>;
   snapshotArtifactPreview: () => Promise<string | null>;
   /** Tear the preview down: the detail closed, or the work stream changed. */
   closeArtifactPreview: () => Promise<void>;
   /** Open a generated artifact in its own isolated window. */
   /** Resolves false when the host refuses or blocks the new window. */
+  readArtifactWindow?: () => Promise<DesktopArtifactWindowRequest | null>;
+  registerAnnotationComposer?: (scope: string, active: boolean) => Promise<void>;
+  returnArtifactAnnotations?: (pins: { annotation: Annotation; image?: Uint8Array }[]) => Promise<boolean>;
+  completeArtifactAnnotationTransfer?: (transferId:string, accepted:boolean) => Promise<void>;
+  onArtifactAnnotations?: (listener: (value: { transferId:string; scope: string; name: string; pins: { annotation: Annotation; image?: Uint8Array }[] }) => void) => () => void;
+  onArtifactWindowUpdated?: (listener: () => void) => () => void;
   popOutArtifact: (request: DesktopArtifactWindowRequest) => Promise<boolean>;
   getRestorableArtifactWindows: () => Promise<DesktopRestorableArtifactWindow[]>;
   forgetRestorableArtifactWindow: (id: string) => Promise<void>;

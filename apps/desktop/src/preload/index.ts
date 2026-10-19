@@ -1,3 +1,4 @@
+import type { ArtifactPickerPin } from "@rally/contracts";
 import type { AccountOnboarding, OrganizationNameSuggestion, SupportPerson, SupportWorkspace } from '@rally/contracts';
 import { NETWORK_RECOVERY_IPC, NetworkRecoveryInbox } from '../common/network-recovery';
 import { contextBridge, ipcRenderer } from 'electron';
@@ -278,8 +279,16 @@ const bridge: RallyDesktopBridge = {
     ipcRenderer.invoke('artifact:set-preview-bounds', bounds) as Promise<void>,
   setArtifactPreviewHidden: (hidden) =>
     ipcRenderer.invoke('artifact:set-preview-hidden', hidden) as Promise<void>,
+  pickArtifactPreview: () => ipcRenderer.invoke('artifact:pick-preview') as Promise<ArtifactPickerPin | null>,
+  stopPickingArtifactPreview: () => ipcRenderer.invoke('artifact:stop-picking-preview') as Promise<void>,
   snapshotArtifactPreview: () => ipcRenderer.invoke('artifact:snapshot-preview') as Promise<string | null>,
   closeArtifactPreview: () => ipcRenderer.invoke('artifact:close-preview') as Promise<void>,
+  readArtifactWindow: () => ipcRenderer.invoke('artifact:read-window') as ReturnType<NonNullable<RallyDesktopBridge['readArtifactWindow']>>,
+  registerAnnotationComposer: (scope, active) => ipcRenderer.invoke('artifact:register-composer', scope, active) as Promise<void>,
+  returnArtifactAnnotations: (pins) => ipcRenderer.invoke('artifact:return-annotations', pins) as Promise<boolean>,
+  completeArtifactAnnotationTransfer: (transferId, accepted) => ipcRenderer.invoke('artifact:complete-transfer', transferId, accepted) as Promise<void>,
+  onArtifactAnnotations: (listener) => { const receive = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]) => listener(value); ipcRenderer.on('artifact:annotations', receive); return () => { ipcRenderer.removeListener('artifact:annotations', receive); }; },
+  onArtifactWindowUpdated: (listener) => { const receive = () => listener(); ipcRenderer.on('artifact:window-updated', receive); return () => { ipcRenderer.removeListener('artifact:window-updated', receive); }; },
   popOutArtifact: (request) => ipcRenderer.invoke('artifact:pop-out', request) as Promise<boolean>,
   getRestorableArtifactWindows: () => ipcRenderer.invoke('artifact:restorable-windows') as Promise<DesktopRestorableArtifactWindow[]>,
   forgetRestorableArtifactWindow: (id) => ipcRenderer.invoke('artifact:forget-window', id) as Promise<void>,

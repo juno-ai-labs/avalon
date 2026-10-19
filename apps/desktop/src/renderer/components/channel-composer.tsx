@@ -1,7 +1,10 @@
+import { loadAnnotationPreview } from '../lib/annotation-preview';
+import { useAnnotationDraft } from './artifact-annotations';
+import type { Annotation } from '@rally/contracts';
 import { asSubstreamId, asWorkspaceId, asWorkstreamId, MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, type SpaceColorKey } from '@rally/contracts';
 import { IconCloudDownload } from '@tabler/icons-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useContext, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import { useNavigate } from 'react-router-dom';
 
@@ -25,6 +28,8 @@ import type { ComposerMenuAction } from './composer-input';
 import { type ComposerConversation, WorkstreamComposer } from './workstream-composer';
 
 interface CreateThreadInput {
+  annotations: Annotation[];
+  pinIds: string[];
   attachmentIds: string[];
   attachmentLocalIds: string[];
   attachments: MessageAttachment[];
@@ -107,6 +112,7 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
   workspace: Workspace;
 }): React.JSX.Element {
   const { api } = useAppSession();
+  const annotationDraft = useAnnotationDraft();
   const visible = useContext(ConversationVisibilityContext);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -114,6 +120,12 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
   const draftKey = `${newWorkstreamDraftKey(workspace.region, workspace.id)}:space:${channelId}`;
   const [modelOverride, setModelOverride] = useState<AgentModelOverride | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
+  const setAnnotationPreviewOpener=annotationDraft?.setPreviewOpener;
+  useEffect(()=>{
+    if(!api)return;
+    setAnnotationPreviewOpener?.((preview)=>{void loadAnnotationPreview(api,preview,()=>setAttachmentPreview(null)).then(setAttachmentPreview);});
+    return()=>setAnnotationPreviewOpener?.(null);
+  },[api,setAnnotationPreviewOpener]);
   const [tooLong, setTooLong] = useState(false);
   const attachmentDraft = useFileAttachments(api, draftKey);
   useWindowFilePaste(attachmentDraft.addFiles, !visible || threadOpen);
@@ -145,6 +157,7 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
       return trace.step('create_request', () => api!.createWorkstream({
         workstreamId: input.threadId,
         openingMessage: input.openingMessage,
+        ...(input.annotations.length ? { annotations:input.annotations } : {}),
         participantIds: input.participantIds,
         spaceIds: [channelId],
         ...(input.mentions.length > 0 ? { mentions: input.mentions } : {}),
@@ -198,12 +211,14 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
           clientMessageId: created.clientMessageId,
           createdAt: created.createdAt,
           text: input.openingMessage,
+          ...(input.annotations.length ? {annotationContent:{kind:'artifact_annotations',annotations:input.annotations}} : {}),
           mentions: input.mentions,
           attachments: input.attachments,
         }, workspace.currentUser, members.data ?? []),
       );
       void queryClient.invalidateQueries({ queryKey: ['workstream', created.workstream.id], exact: true });
       attachmentDraft.consume(input.attachmentLocalIds);
+      annotationDraft?.clear(input.pinIds);
       if (createTrace.current) holdCreationTraceUntilSendReady(
         createTrace.current,
         created.workstream.id,
@@ -231,6 +246,9 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
     }
     setTooLong(false);
     const readyAttachments = attachmentDraft.ready;
+    const pins = annotationDraft?.pins ?? [];
+    const annotations = pins.map((pin) => pin.annotation);
+    const cropIds = annotations.flatMap((annotation) => annotation.content.imageAttachmentId ? [annotation.content.imageAttachmentId] : []);
     const participantIds = [...new Set([
       ...mentions.flatMap((mention) => mention.type === 'person' && mention.userId ? [mention.userId] : []),
       ...confirmedParticipantUserIds,
@@ -258,7 +276,8 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
     });
     void navigate(threadRoute(threadId, channelId), { state: OPEN_EXPANDED });
     await create.mutateAsync({
-      attachmentIds: readyAttachments.map((attachment) => attachment.resource!.id),
+      annotations, pinIds:pins.map((pin) => pin.id),
+      attachmentIds: [...readyAttachments.map((attachment) => attachment.resource!.id),...cropIds],
       attachmentLocalIds: readyAttachments.map((attachment) => attachment.localId),
       attachments,
       modelOverride,
@@ -269,7 +288,7 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
       threadId,
       startedAt: createdAt,
     });
-  }, [attachmentDraft.ready, channelColor, channelId, channelScope, create, members.data, modelOverride, navigate, queryClient, workspace.currentUser.id]);
+  }, [annotationDraft, attachmentDraft.ready, channelColor, channelId, channelScope, create, members.data, modelOverride, navigate, queryClient, workspace.currentUser.id]);
 
   // The same import the Channel header offers, beside the other ways to bring
   // something into a new thread. Only the Mac app has the embedded browser it

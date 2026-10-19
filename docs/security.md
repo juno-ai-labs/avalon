@@ -1091,7 +1091,37 @@ XHR/blob readers retain their existing behavior. Chrome cookie writers use a
 regional Web Lock so an older renewal cannot replace a later login cookie.
 [Browser client](browser-client.md) owns these host-specific boundaries.
 
+### Artifact annotation pickers
+
+Website selection is native-only. Static HTML runs the bundled picker in an
+opaque `allow-scripts` iframe with a fresh nonce; `allow-same-origin` is never
+added. The external app-origin picker satisfies both the inherited app CSP and
+the frame's nonce policy without admitting file scripts. The parent validates
+pin messages and their frame source only while Comment mode is on. Native live
+sites install the shared inspector in isolated world 1001 and obtain crops from
+main-process `capturePage`, rather than accepting image bytes from page scripts.
+
+The annotation security review exercised a hostile static file in real Electron:
+its own script remained blocked and its frame origin was `null`, while the
+trusted picker outlined and pinned its button. A native site defining the same
+picker-global name could not access the isolated callback; main captured the
+actual selected button. Pop-outs have a narrow sender-checked preview/transfer
+bridge, require an active originating composer scope and wait for its ACK.
+Canonical target read/version checks precede message admission. See
+[artifact annotations](artifact-annotations.md) for the protocol and failure modes.
+
 ## Changelog
+
+### 2026-10-19 — Isolate annotation picking from resource scripts
+
+Pointing at HTML needs trusted script execution without giving a file the app
+origin. Opaque nonce-gated frames and isolated live-site worlds preserve that
+boundary. Inline picker execution was rejected because `srcdoc` inherits the
+app CSP; a bundled trusted script satisfies both policies. Browser serving
+injection was removed after the product accepted native-only website picking,
+avoiding a same-origin forgery boundary. Future picker changes must preserve
+sender checks, native screenshot ownership and the pop-out's narrow IPC scope.
+
 
 ### 2026-10-02 — Isolate persistent browser orchestration from the app
 
