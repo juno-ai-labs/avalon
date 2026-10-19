@@ -174,13 +174,21 @@ workspaceRoutes.put("/me/system-prompt", zValidator("json", PersonalSystemPrompt
     await new WorkspaceService(c.env, getAuth(c)).updateMyPersonalSystemPrompt(
       c.req.valid("json").personalSystemPrompt))),
 );
-/** What Rally remembers, for this person to review; `docs/agent-memory.md` owns which facts and who may remove them. */
+/** What Rally remembers about this person; `docs/agent-memory.md` owns which facts and who may remove them. */
 workspaceRoutes.get("/me/memory", async (c) =>
-  c.json(MemoryReviewSchema.parse(await new WorkspaceService(c.env, getAuth(c)).getMyMemoryReview())),
+  c.json(MemoryReviewSchema.parse(await new WorkspaceService(c.env, getAuth(c)).getMyMemory())),
 );
 workspaceRoutes.delete("/me/memory/:factId", zValidator("param", memoryFactParam), async (c) =>
   c.json(MemoryForgetResponseSchema.parse(
     await new WorkspaceService(c.env, getAuth(c)).forgetMyMemory(c.req.valid("param").factId))),
+);
+/** What Rally remembers about the Organization, as this person may see it; removing takes an administrator. */
+workspaceRoutes.get("/memory", async (c) =>
+  c.json(MemoryReviewSchema.parse(await new WorkspaceService(c.env, getAuth(c)).getOrganizationMemory())),
+);
+workspaceRoutes.delete("/memory/:factId", zValidator("param", memoryFactParam), async (c) =>
+  c.json(MemoryForgetResponseSchema.parse(
+    await new WorkspaceService(c.env, getAuth(c)).forgetOrganizationMemory(c.req.valid("param").factId))),
 );
 /**
  * One person's order for one list they arranged by hand.

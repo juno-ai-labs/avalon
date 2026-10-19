@@ -207,31 +207,45 @@ export const WorkspaceMemoryForgetResultSchema = deferredZodSchema(() => z.discr
 // -- Review -------------------------------------------------------------------
 
 /**
- * One person's review of what Rally remembers, outside any conversation: their
- * own facts, and the Organization's and Channels' facts they may see. Expired
- * facts are included and marked by the caller against its own clock, so the
- * read takes no `now`.
+ * Which facts a review lists: a person's own, the Organization's, or one
+ * conversation's own (a Thread's Main, a Breakout, or, with a `space` parent,
+ * a Channel). Every scope is one subject; the store decides who sees and who
+ * may remove each fact in it.
+ */
+export const MemoryReviewScopeSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("own") }),
+  z.strictObject({ kind: z.literal("organization") }),
+  z.strictObject({ kind: z.literal("conversation"), conversation: MemoryConversationSchema }),
+]);
+export type MemoryReviewScope = z.infer<typeof MemoryReviewScopeSchema>;
+
+/**
+ * One person's review of one scope. Expired facts are included and marked by
+ * the caller against its own clock, so the read takes no `now`.
  */
 export const WorkspaceMemoryReviewRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   userId: z.string().min(1),
+  scope: MemoryReviewScopeSchema,
 }));
 
-export const WorkspaceMemoryReviewResultSchema = deferredZodSchema(() => z.strictObject({
-  /** The person's own active facts, newest first, expired included. */
-  own: z.array(MemoryFactSchema),
-  /** Organization facts, then Channel facts, each newest first, expired included. */
-  shared: z.array(MemoryFactSchema),
-  /** Display titles for the facts' subjects and sources, keyed as recall keys them. */
-  titles: z.array(z.strictObject({ key: z.string().min(1), title: z.string() })),
-  /** Whether the person administers the Organization, which is what removing a shared fact takes. */
-  administrator: z.boolean(),
-}));
+export const WorkspaceMemoryReviewResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
+  z.strictObject({
+    outcome: z.literal("listed"),
+    /** The scope's active facts the person may see, newest first, expired included, each with whether they may remove it. */
+    facts: z.array(z.strictObject({ fact: MemoryFactSchema, removable: z.boolean() })),
+    /** Display titles for the facts' subjects and sources, keyed as recall keys them. */
+    titles: z.array(z.strictObject({ key: z.string().min(1), title: z.string() })),
+  }),
+  /** A conversation scope the person may not open: it reads as no such conversation. */
+  z.strictObject({ outcome: z.literal("not_found") }),
+]));
 
 /** Removing one reviewed fact. Not receipted: a repeat answers `already_retracted`. */
 export const WorkspaceMemoryReviewForgetRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   userId: z.string().min(1),
+  scope: MemoryReviewScopeSchema,
   factId: z.string().min(1),
   now: InstantSchema,
 }));
@@ -239,7 +253,7 @@ export const WorkspaceMemoryReviewForgetRequestSchema = deferredZodSchema(() => 
 export const WorkspaceMemoryReviewForgetResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
   z.strictObject({ outcome: z.literal("retracted"), fact: MemoryFactSchema, retractedAt: InstantSchema }),
   z.strictObject({ outcome: z.literal("already_retracted"), fact: MemoryFactSchema, retractedAt: InstantSchema }),
-  /** No such fact, or not one this person's review lists: the two read the same, so neither leaks. */
+  /** No such fact, or not one this scope's review lists to this person: the two read the same, so neither leaks. */
   z.strictObject({ outcome: z.literal("not_found") }),
   /** A fact the person may see but not remove: the Organization's or a Channel's, to a non-administrator. */
   z.strictObject({ outcome: z.literal("not_removable") }),

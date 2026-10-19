@@ -15,6 +15,8 @@ import {
   type ChannelFeedPage,
   type ChannelStats,
   type ChannelStatsList,
+  type MemoryForgetResponse,
+  type MemoryReview,
   type MyThreadsPage,
   type PinKind,
   type PinList,
@@ -64,6 +66,8 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { spaceAccessError } from "./channel-access-service";
+import { forgetReviewedMemory, readMemoryReview } from "./memory-review-service";
+import type { MemoryReviewScope } from "../durable-objects/workspace-memory-facts-protocol";
 import { pendingInvitees } from "./workspace-service";
 import { ResourceService } from "./resource-service";
 import { chooseSpaceIcon } from "./workstream-naming-service";
@@ -187,6 +191,11 @@ export type SpaceIntentResumeOutcome =
  * A Space grants no reader, so nothing here or in WorkspaceDO writes a
  * Channel's audience, and every Space change is one WorkspaceDO transaction.
  */
+/** A Channel's own feed is the conversation its review is scoped to. */
+function channelMemoryScope(spaceId: SpaceId): MemoryReviewScope {
+  return { kind: "conversation", conversation: { parentKind: "space", parentId: spaceId, substreamId: "0" } };
+}
+
 export class SpaceService {
   constructor(private readonly env: Env, private readonly auth: AuthContext) {}
 
@@ -235,6 +244,19 @@ export class SpaceService {
     }));
     if (!result.ok) throw spaceRefusal(result.code, "");
     return result.page;
+  }
+
+  /**
+   * What Rally remembers about this Channel, as this person may see it.
+   * `WorkspaceDO` checks the Channel is listed to them in the same read, as
+   * the feed does; removing takes an administrator.
+   */
+  getChannelMemory(spaceId: SpaceId): Promise<MemoryReview> {
+    return readMemoryReview(this.env, this.auth, channelMemoryScope(spaceId));
+  }
+
+  forgetChannelMemory(spaceId: SpaceId, factId: string): Promise<MemoryForgetResponse> {
+    return forgetReviewedMemory(this.env, this.auth, channelMemoryScope(spaceId), factId);
   }
 
   /**

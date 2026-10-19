@@ -15326,8 +15326,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * What Rally remembers, as one person reviews it outside any conversation:
-   * their own facts, and the Organization's and Channels' facts they may see.
+   * What Rally remembers in one scope, as one person reviews it: their own
+   * facts, the Organization's, or one Thread's, Breakout's or Channel's.
    */
   async reviewMemoryFacts(input: unknown): Promise<WorkspaceMemoryReviewResult> {
     await this.initialized;
@@ -15338,7 +15338,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }));
   }
 
-  /** Remove one fact from a person's review, when they may; see `reviewMemoryFacts`. */
+  /** Remove one fact from a scope's review, when the person may; see `reviewMemoryFacts`. */
   async forgetReviewedMemoryFact(input: unknown): Promise<WorkspaceMemoryReviewForgetResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceMemoryReviewForgetRequestSchema, input, "forget_reviewed_memory_fact");

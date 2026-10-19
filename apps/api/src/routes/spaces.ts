@@ -17,6 +17,8 @@ import {
   UpdateSpacePresentationRequestSchema,
   WorkstreamIdSchema,
   IdSchema,
+  MemoryForgetResponseSchema,
+  MemoryReviewSchema,
 } from "@rally/contracts";
 import { Hono, type Context } from "hono";
 import { z } from "zod";
@@ -31,6 +33,7 @@ import { SpaceService } from "../services/space-service";
 const idParam = z.strictObject({ id: SpaceIdSchema });
 const channelParam = z.strictObject({ id: SpaceIdSchema, workstreamId: WorkstreamIdSchema });
 const channelBody = z.strictObject({ workstreamId: WorkstreamIdSchema });
+const memoryFactParam = z.strictObject({ id: SpaceIdSchema, factId: z.string().min(1) });
 const defaultParam = z.strictObject({
   id: SpaceIdSchema,
   kind: SpaceDefaultKindSchema,
@@ -167,6 +170,19 @@ spaceRoutes.patch(
     // The caller left a private Channel: it is not theirs to be described.
     return space === null ? c.body(null, 204) : c.json(SpaceSummarySchema.parse(forClient(c)(space)));
   },
+);
+
+/**
+ * What Rally remembers about this Channel, as the person may see it; removing
+ * takes an administrator. `docs/agent-memory.md` owns which facts and who may
+ * remove them. Members only, as every review route is.
+ */
+spaceRoutes.get("/:id/memory", zValidator("param", idParam), async (c) =>
+  c.json(MemoryReviewSchema.parse(await new SpaceService(c.env, getAuth(c)).getChannelMemory(c.req.valid("param").id))),
+);
+spaceRoutes.delete("/:id/memory/:factId", zValidator("param", memoryFactParam), async (c) =>
+  c.json(MemoryForgetResponseSchema.parse(
+    await new SpaceService(c.env, getAuth(c)).forgetChannelMemory(c.req.valid("param").id, c.req.valid("param").factId))),
 );
 
 /** The Organization invitees a Space lists; see `SpaceInviteesSchema` for why this is not on the summary. */

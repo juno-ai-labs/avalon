@@ -17,7 +17,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { ChannelComposer } from '../components/channel-composer';
-import { MemoryReviewPanel } from '../components/memory-review';
+import { openMemorySource, useMemoryFacts } from '../components/memory-review';
 import { MarkdownBody } from '../components/workstream-blocks';
 import type { CitationContext } from '../components/markdown-citations';
 import { openLink } from '../lib/browser-rail-links';
@@ -361,13 +361,10 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
   // Only a member may start a thread in a private Channel; a thread placed
   // there is the Channel's to accept (`canEdit` on the server).
   const canStart = workspace.currentUser.accessClass !== 'guest' && space.reach !== 'through_channel';
-  // A person's own Channel is where they review what Rally remembers.
-  const reviewsMemory = space.scope === 'individual' && api !== null;
-  return <div className={clsx('channel-screen has-message-capsule', reviewsMemory && 'has-memory-review')}>
+  return <div className="channel-screen has-message-capsule">
     {/* Keyed so a confirmation still open when the route changes (a leave,
         a removal, an archive) cannot be continued against the next Channel. */}
     <ChannelHeader key={space.id} members={members.data ?? []} space={space} workspace={workspace} />
-    {reviewsMemory && <MemoryReviewPanel api={api} workspaceId={workspace.id} />}
     <div
       className="channel-feed transcript-scroll"
       onScroll={(event) => {
@@ -609,6 +606,14 @@ function ChannelHeader({ members, space, workspace }: {
   const pinnedChannels = usePinnedIds('channel');
   const pin = usePinAction(api);
   const library = useQuery<AutomationSummary[]>({ queryKey: ['automations'], queryFn: async () => [], enabled: false });
+  // The Channel's own facts, read once its Memory level opens.
+  const memory = useMemoryFacts({
+    queryKey: ['memory', 'channel', space.id],
+    read: (signal) => api!.getChannelMemory(space.id, signal),
+    forget: (factId) => api!.forgetChannelMemory(space.id, factId),
+    enabled: api !== null,
+    lazy: true,
+  });
   const member = workspace.currentUser.accessClass !== 'guest';
   const editable = member && space.reach !== 'through_channel';
   const general = space.systemRole === 'general';
@@ -775,6 +780,7 @@ function ChannelHeader({ members, space, workspace }: {
       /> : undefined}
       channel={{ name: space.name, scope: audienceScope }}
       members={roster}
+      memory={api ? { ...memory, onOpenSource: (source) => openMemorySource(source, (to) => void navigate(to)) } : undefined}
       onArchive={editable && !general && !personal ? () => setArchiving('confirm') : undefined}
       onCopyLink={copyLink}
       onOpenSidekick={(id) => void desktopBridge().openSidekicks(id)}
