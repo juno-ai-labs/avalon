@@ -639,6 +639,7 @@ describe("Rally engineering MCP tools", () => {
         from: "2026-10-19T10:00:00Z",
         to: "2026-10-19T11:00:00+00:00",
         filters,
+        needle: "timeout",
         limit: 50,
       },
     });
@@ -656,7 +657,7 @@ describe("Rally engineering MCP tools", () => {
       dry: true,
       timeframe: { from: 1792404000000, to: 1792407600000 },
       limit: 50,
-      parameters: { filters, limit: 50 },
+      parameters: { filters, needle: { value: "timeout" }, limit: 50 },
     });
   });
 
