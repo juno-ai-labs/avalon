@@ -443,6 +443,32 @@ describe("a conversation import run", () => {
     })).rejects.toMatchObject({ code: "workstream_create_discarded" });
   }, 60_000);
 
+  it("archives a Channel its run ended without opening when an abandon retired its key but could not archive it", async () => {
+    const spaceId = await importSpace();
+    const service = new SessionImportRunService(creationEnv(), AUTH);
+    const run = await service.start({ sourceUrl: SOURCE_URL, title: "Raced", spaceIds: [spaceId], clientMessageId: crypto.randomUUID() });
+    // Where an abandon leaves a start it raced: the key retired before the
+    // reservation published, so its archive found nothing and the Channel stayed.
+    await env.DB.prepare(`UPDATE workstream_create_receipts SET state = 'failed', error_code = 'session_import_discarded' WHERE workstream_id = ?`)
+      .bind(run.workstreamId).run();
+    const agent = child(run.workstreamId, run.substreamId);
+    const desktop = await openDesktop(run.workstreamId, run.substreamId, 1);
+    const alarm = runDurableObjectAlarm(agent);
+    const evaluate = await desktop.nextAction("browser.script");
+    desktop.answer(evaluate.id, { ok: true, result: { output: [{ type: "text", text: "1" }] } });
+    const finish = await desktop.nextAction("session_import.finish");
+    desktop.answer(finish.id, { ok: false, code: "import_rejected", message: "Rally refused the import." });
+    desktop.socket.close();
+    await alarm;
+    await expect.poll(() => runInDurableObject(agent, (_instance, state) =>
+      state.storage.sql.exec<{ status: string }>(`SELECT status FROM runs`).one().status), { timeout: 10_000 }).toBe("completed");
+
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ archived_at: number | null }>(
+      `SELECT archived_at FROM channels WHERE workstream_id = ?`, run.workstreamId).one().archived_at)).not.toBeNull();
+    expect(await env.DB.prepare(`SELECT error_code FROM workstream_create_receipts WHERE workstream_id = ?`).bind(run.workstreamId)
+      .first<{ error_code: string }>()).toEqual({ error_code: "session_import_discarded" });
+  }, 60_000);
+
   it("admits one run for two starts of the same import at once", async () => {
     const spaceId = await importSpace();
     const clientMessageId = crypto.randomUUID();
