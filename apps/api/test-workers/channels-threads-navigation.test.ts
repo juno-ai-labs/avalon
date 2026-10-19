@@ -1409,6 +1409,17 @@ describe("Channel merges", () => {
       }
     });
 
+    it("given a breakout of a thread in a Channel, when its agent lists conversations, then its thread's Channel is a parent too", async () => {
+      const channelId = await channelWithThreads();
+      const scope = { kind: "conversation" as const, parentId: OPEN_THREAD, substreamId: BREAKOUT };
+      const listed = await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: MEMBER, scope });
+      expect(listed.conversations.filter((entry) => entry.kind === "space"))
+        .toEqual([{ conversationId: channelId, parentId: channelId, substreamId: "0", kind: "space", title: "Outbound",
+          isHome: false, isOwn: false, isParent: true }]);
+      expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: MEMBER, scope,
+        reference: "Outbound" })).toMatchObject({ ok: true, conversation: { conversationId: channelId } });
+    });
+
     it("given a thread in a private Channel, when a member outside it lists or names it, then it is not theirs to reach", async () => {
       const channelId = await channelWithThreads();
       await workspace().noteSpaceAudience({
