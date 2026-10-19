@@ -50,7 +50,7 @@ export const ChannelMessageSearchRevisionRequestSchema = ChannelMessageSearchPro
   .pick({ workspaceId: true, messageId: true });
 
 /**
- * WorkspaceDO migration 119. `space_id` is kept beside the revision because a
+ * WorkspaceDO migration 120. `space_id` is kept beside the revision because a
  * deleted message's document id is derived from it. A Channel's rename does
  * not rewrite its rows: the row's title is the name when it was indexed, and
  * nothing reads it (`conversation_search` names a match from its scope). A
@@ -99,7 +99,7 @@ const CHANNEL_MESSAGE_SEARCH_BATCH = 100;
 
 /**
  * When the next batch is due, or null for an Organization held below
- * migration 119 (the meeting-notes retirement holds some at 57), which has no
+ * migration 120 (the meeting-notes retirement holds some at 57), which has no
  * table. The pace is this lane's own, at the resource lane's interval: each job
  * calls this object back once, the load that interval was set against, and a
  * shared pace would let a resource backlog hold every Channel message back

@@ -121,7 +121,7 @@ A resource's source delivery indexes it in place: one `prepareResourceSearch`
 call returns its three category documents (at most one live, the others
 tombstones), and one more call confirms nothing changed. A Channel message
 (`space_messages`: Rally's posts in a Channel and the results threads merge
-into it) is indexed the same way from WorkspaceDO: migration 119's
+into it) is indexed the same way from WorkspaceDO: migration 120's
 `channel_message_search_versions` holds each message's revision and its
 Channel, triggers on every writer bump it, the
 `channel_message_search` alarm lane publishes references on its own pace (at
@@ -130,7 +130,7 @@ the resource lane's interval), and `prepareChannelMessageSearch` returns one
 out as a document-phase job (`search_embedding_batch_v1`) rather than a
 message type of its own, so a consumer on an older build retries it instead of
 acknowledging it as unknown. The lane is null for an Organization held below
-migration 119, which has no table. Its audience is the
+migration 120, which has no table. Its audience is the
 Channel's `space:<id>` group, which every reader of the Channel already holds,
 and its title is the Channel's name when it was indexed, never the merged
 thread's; a rename does not rewrite it, since nothing reads it. Only the agent's
@@ -721,7 +721,7 @@ budgets require team policy; no arbitrary new caps are introduced here.
 ### 2026-10-19 — A Channel's own messages are indexed
 
 **What changed:** WorkspaceDO projects `space_messages` into the shared index
-as source `channel_messages` (migration 119, `channel-message-search-projection.ts`),
+as source `channel_messages` (migration 120, `channel-message-search-projection.ts`),
 following the resource projection: a version table kept by triggers, an alarm
 lane that publishes references, and a Queue delivery that calls back for the
 document. Every existing Channel message is queued once. The agent's
