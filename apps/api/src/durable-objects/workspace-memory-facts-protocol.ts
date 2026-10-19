@@ -69,17 +69,14 @@ export function memorySourceOf(conversation: MemoryConversation): string {
  * The key naming one conversation, where `memorySourceOf` names what a fact
  * was learned from. They differ for a Sidekick: every conversation of one
  * Sidekick (its own at substream `"0"` and one child per run) is the single
- * source `sidekick:<automationId>`, but each holds its own digest copies.
+ * source `sidekick:<automationId>`, but each has its own transcript, cursor
+ * and digest copies. A sweep's receipt and a digest holder are both keyed by
+ * this; Thread, Breakout and Channel keys are their sources.
  */
 export function memoryConversationKeyOf(conversation: MemoryConversation): string {
-  switch (conversation.parentKind) {
-    case "workstream":
-      return memorySourceOf(conversation);
-    case "automation":
-      return `sidekick:${conversation.parentId}/${conversation.substreamId}`;
-    case "space":
-      return `space:${conversation.parentId}`;
-  }
+  return conversation.parentKind === "automation"
+    ? `sidekick:${conversation.parentId}/${conversation.substreamId}`
+    : memorySourceOf(conversation);
 }
 
 /**
@@ -298,7 +295,8 @@ export const MemorySweepOperationSchema = deferredZodSchema(() => z.discriminate
     validFrom: InstantSchema.nullable(),
     validUntil: InstantSchema.nullable(),
     validUntilBasis: MemoryValidUntilBasisSchema.nullable(),
-    derivedFrom: z.enum(["person", "agent", "external"]),
+    /** The trust class of the cited messages, computed by the host from their authors. */
+    derivedFrom: MemoryDerivedFromSchema,
     conflict: z.boolean(),
     confidence: z.number().min(0).max(1),
     evidence: EvidenceSchema,
@@ -308,6 +306,8 @@ export const MemorySweepOperationSchema = deferredZodSchema(() => z.discriminate
     factId: z.string().min(1),
     text: SweepTextSchema,
     validUntil: InstantSchema.nullable(),
+    /** The class of this update's evidence; the store writes `mixed` when it differs from the predecessor's. */
+    derivedFrom: MemoryDerivedFromSchema,
     evidence: EvidenceSchema,
   }),
   z.strictObject({
@@ -343,6 +343,7 @@ export const WorkspaceMemoryApplySweepRequestSchema = deferredZodSchema(() => z.
 }));
 
 export const MemorySweepReceiptSchema = deferredZodSchema(() => z.strictObject({
+  /** `memoryConversationKeyOf` the swept conversation, not its fact source. */
   conversation: z.string().min(1),
   fromSeq: z.number().int().nonnegative(),
   toSeq: z.number().int().nonnegative(),

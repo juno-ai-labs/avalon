@@ -22,14 +22,14 @@ conversation.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/workspace-memory-facts-storage.ts` | The store: migration 116, the visibility rules (`openableBy`, `subjectAdmits`, `sourcesOpenToAudience`), recall, remember, forget, sweep candidates and `applyMemorySweep`. Every rule about who sees a fact is here. |
-| `apps/api/src/durable-objects/workspace-memory-facts-protocol.ts` | The typed RPC shapes, the subject and reader vocabularies, `memorySourceOf` (what a fact was learned from), `memoryConversationKeyOf` (which conversation holds a copy), `digestPrincipalKey`, the sweep operation schema and refusal codes. |
+| `apps/api/src/durable-objects/workspace-memory-facts-protocol.ts` | The typed RPC shapes, the subject and reader vocabularies, `memorySourceOf` (what a fact was learned from), `memoryConversationKeyOf` (one conversation: a sweep's cursor fence and a digest holder), `digestPrincipalKey`, the sweep operation schema and refusal codes. |
 | `apps/api/src/durable-objects/workspace-do.ts` | The RPC methods (`recallMemoryFacts`, `rememberMemoryFact`, `forgetMemoryFact`, `memorySweepCandidates`, `applyMemorySweep`, `memoryDigest`, and the three copy-sync RPCs), the `memory_digest_sync` alarm lane, and the person reader's relationship read. |
 | `apps/api/src/durable-objects/memory-digest-sync.ts` | The copy-sync lane: migration 117 (`memory_digest_holders`, `memory_digest_holder_facts`, `memory_digest_sync`, its revision counter, `memory_revision` and the marking triggers), `markMemoryDigestHolders`, `markMemoryDigestHoldersFor`, and the publish, work, complete and release halves, the colour-sync shape. |
-| `apps/api/src/durable-objects/workstream-scheduling-storage.ts` | `memory_sweep_state`: the cursor, the rest, the claim, the settle, the release and the alarm's retry time (conversation-object migration 76). `memory_digest_copies`: one principal's copy, its store, the principal list and the per-fact removal (migration 77). |
+| `apps/api/src/durable-objects/workstream-scheduling-storage.ts` | `memory_sweep_state`: the cursor, the rest, the claim, the settle, the release and the alarm's retry time (conversation-object migration 76). `memory_digest_copies`: one principal's copy, its store, the principal list and the per-fact removal (migration 77). `workstream-scheduling-protocol.ts` names the four sweep writes in `DERIVED_ALARM_MUTATIONS`, so the endpoint re-arms the alarm after each. |
 | `apps/api/src/services/memory-digest-service.ts` | The digest's conversation half: `digestReaderFor`, the copy refreshes (`refreshMemoryDigestCopy`, `refreshMemoryDigestCopies`), `renderMemoryDigestSection`, and the digest's open limits. |
 | `packages/agent-harness/src/prompts/memory-digest.ts` | `renderMemoryDigest`: the one implementation of the digest's text. Golden-hashed in `prompts.test.ts`. |
 | `apps/api/src/services/memory-sweep-service.ts` | The lane: `attemptMemorySweep` (gates, claim, one Queue send) and `runMemorySweep` (window, candidates, model, apply, settle). The open limits. |
-| `apps/api/src/services/memory-service.ts` | The `rally:memory` tools (`recall`, `remember`, `forget`), the trust class of a remembered fact, and the scope resolution `rally_tables` still uses. |
+| `apps/api/src/services/memory-service.ts` | The `rally:memory` tools (`recall`, `remember`, `forget`), who a run reads as (`readerOf`), the trust class of a remembered fact, and the scope resolution `rally_tables` still uses. |
 | `packages/agent-harness/src/prompts/memory-sweep.ts` | The sweep prompt and its strict JSON schema. Golden-hashed in `prompts.test.ts`. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The two sweep triggers (the settlement step after the description loop, and the alarm lane `nextMemorySweepAt`), the digest copy refresh at settlement, and the synchronous copy read the run renders from (`memoryDigest` on the persistent-loop runtime). |
 | `apps/api/src/services/integrations.ts` | `principalSystemSectionFor`: the digest and the personal system prompt composed into the harness's per-principal system section. |
@@ -44,7 +44,8 @@ One or two plain sentences, with: a `subjectKind` and `subjectId`; a `kind`,
 `standing` (true until it changes) or `situational` (with a `validUntil` and the
 basis for it: `stated`, `event`, `assumed`); an optional `validFrom` for
 something that starts later; `derivedFrom`, the trust class of what established
-it (`person`, `agent`, `external`, or `mixed` after an update joined two);
+it (`person`, `agent`, `external`, or `mixed` when its evidence, or an update
+and its predecessor, span two);
 `conflict`, set when two people disagree and the fact states both positions;
 `evidence`, transcript sequence numbers; and `sourceConversations`, one or more
 of `<channelId>` (a Thread's Main), `<channelId>/<breakoutId>`,
@@ -62,13 +63,19 @@ Channel's own feed is not swept: PRD non-goal 9). The conversation object's
 alarm calls the same attempt when `memory_sweep_state.retry_at` is due.
 
 **Gate**, cheapest first: model access; the conversation exists and is not
-archived; the window since the cursor holds at least
-`MEMORY_SWEEP_MINIMUM_PERSON_MESSAGES` person messages with
-`MEMORY_SWEEP_MINIMUM_PERSON_CHARACTERS` between them (agent turns and tool rows
-never count); the conversation has rested (`rest_until`). A rested-later
-conversation with enough behind the cursor sets `retry_at = rest_until` so the
-alarm comes back; every other skip clears `retry_at`, which is what keeps the
-alarm from waking into the same answer.
+archived; the conversation has rested (`rest_until`); the window since the
+cursor holds at least `MEMORY_SWEEP_MINIMUM_PERSON_MESSAGES` person messages
+with `MEMORY_SWEEP_MINIMUM_PERSON_CHARACTERS` between them (agent turns and
+tool rows never count). The rest is checked before the window is read: a
+resting conversation asks one existence question (`hasMessageAfter`, any
+non-tool row after the cursor) and sets `retry_at = rest_until` when the
+answer is yes, so the alarm comes back and checks the floors then. Every other
+skip clears `retry_at`, which is what keeps the alarm from waking into the same
+answer. A window that cannot grow (a page that came back at its row limit, the
+window plus its overlap plus one, or a window the character budget cut) and
+still misses the floors would miss them from this cursor forever: the attempt
+records what it read as swept with no model call (an empty receipt in
+`WorkspaceDO`, then the settle) and reads on from there at the next rest.
 
 **Claim.** `claimMemorySweep` pushes `rest_until` to the floor and records the
 range *before* anything is sent, the description loop's claim: two runs settling
@@ -85,7 +92,11 @@ releases the claim.
 **Run** (`runMemorySweep`, in the consumer). Re-read the window through the
 message port from `fromSeq` minus an overlap of context messages to `toSeq`,
 dropping tool rows and empty rows and labelling authors person, external, agent
-or system. Ask `WorkspaceDO` for the **placement** (the conversation's subject,
+or system. The context rows are kept whole; the fresh ones are kept oldest
+first until `MEMORY_SWEEP_MAXIMUM_WINDOW_CHARACTERS` runs out, and the attempt
+ends the range at the last one kept, so what did not fit is the next sweep's
+rather than skipped. Members are named from the regional `users` table, on
+their messages and in the placement's people. Ask `WorkspaceDO` for the **placement** (the conversation's subject,
 its Thread, the Channels it sits in, whether it is Organization-wide, the
 speakers who may be the subject of a `person` fact) and the **candidates**:
 active facts on the conversation's subjects matching the window's terms, plus
@@ -97,13 +108,22 @@ participant may list, a person fact only for a speaker). Render the prompt, call
 `runStructuredInference` on role `memory_sweep` (flag
 `agent-model-memory-sweep`, default the primary model, metered `memory_sweep`,
 Organization pays). The model returns a flat list of operations (`add`,
-`update`, `confirm`, `retract`); the service drops incoherent rows (an `add`
-without text, an `update` without an id), converts horizons to instants, mints
-one fact id per operation, and calls `applyMemorySweep` with the speakers and
+`update`, `confirm`, `retract`). Only the envelope is held strictly: each
+operation is checked on its own, and one that fails its schema (a date that is
+not RFC 3339, a confidence outside 0..1, too much evidence) is dropped and
+logged as `memory_sweep_operation_dropped` with its `zodDiagnosticCode`, so one
+bad row does not cost the paid call. The service also drops incoherent rows (an
+`add` without text, an `update` without an id), converts horizons to instants,
+and sets each operation's `derivedFrom` from the authors of the messages it
+cites (one class is that class, two or more are `mixed`; with nothing citable
+the model's word stands and its silence is `agent`, never `person`). It mints
+one fact id per operation and calls `applyMemorySweep` with the speakers and
 the candidate ids it was handed.
 
 **Apply**, one `WorkspaceDO` transaction. Compare `fromSeq` with the stored
-receipt's `to_seq` for this conversation: behind it, the range was already
+receipt's `to_seq` for this conversation (`memoryConversationKeyOf`: a Sidekick's
+own conversation and each of its runs share the fact source
+`sidekick:<id>` but each keeps its own receipt, `sidekick:<id>/<substreamId>`): behind it, the range was already
 applied and the stored receipt is answered; ahead of it, a range was skipped and
 `cursor_ahead` names the stored `to_seq`; equal, the operations apply in order.
 An `add` is refused by code when its subject is wider than the placement allows
@@ -116,7 +136,11 @@ every participant may open under a subject the placement admits
 an untrusted transcript as readily as off the candidate list, so the list the
 store returned is the only one it accepts back. An `update` inserts a new fact
 that supersedes and links
-its predecessor and carries the union of both facts' sources. The receipt
+its predecessor and carries the union of both facts' sources. An update that
+cites this window puts this conversation first, because `evidence` indexes the
+first source; one that cites nothing keeps the predecessor's evidence and
+order. Its `derivedFrom` is the predecessor's when the two agree and `mixed`
+when they do not. The receipt
 (`memory_sweep_receipts`, one row per conversation) is written in the same
 transaction and the refusals are returned, not thrown.
 
@@ -124,11 +148,20 @@ transaction and the refusals are returned, not thrown.
 `toSeq` with `settleMemorySweep`, a compare-and-swap on the claimed `fromSeq`
 that is a no-op at an equal `toSeq`, so a redelivery after a committed apply
 finishes from the receipt rather than wedging the conversation. A sweep that
-wrote rests at the floor; a quiet one doubles the rest up to the ceiling. On
-`cursor_ahead` the cursor is rewound to the store's `to_seq`. A model or store
-failure releases the claim (`retry_at = rest_until`) and rethrows; the consumer
-acks either way, because the conversation's own claim decides when it is tried
-again.
+wrote rests at the floor; a quiet one doubles the rest up to the ceiling. The
+settle takes the floor and ceiling as numbers and computes the rest itself,
+because it is called over the scheduling port and a function does not cross
+it. It sets `retry_at` to the new rest when the transcript already holds a
+message past the settled range (a run that settled mid-sweep asked the alarm
+back, and clearing that would strand its messages), and clears it otherwise. On
+`cursor_ahead` the cursor is rewound to the store's `to_seq`. A delivery with
+nothing to sweep (the conversation gone from the directory, or no fresh
+messages) writes an empty receipt before it settles, so the store's fence and
+the cursor never part. A model or store failure releases the claim
+(`retry_at = rest_until`) and rethrows; the consumer acks either way, because
+the conversation's own claim decides when it is tried again. Each of the four
+sweep writes re-arms the conversation object's alarm when it commits
+(`armsDerivedAlarm`), whoever made it.
 
 ### Visibility
 
@@ -154,7 +187,10 @@ SQL (one query per source kind over a JSON list, never one per fact):
 A reader is a person (resolved to their relationship: access class and whether
 they administer), a Sidekick (opens itself and its home; sees Organization facts
 only when its scope is `workspace`), or the conversation itself (a workspace
-principal acting in a Thread, which reads what every participant may). The FTS
+principal acting in a Thread, which reads what every participant may). A run of
+a Sidekick, or any run in its conversation, reads as the Sidekick even though
+it executes as a person (`run_as_user`): `readerOf` checks the Sidekick first,
+or the run would be handed that person's own facts. The FTS
 index never grants access: hits are reloaded and filtered before they leave the
 object.
 
@@ -352,8 +388,11 @@ nine items in one Organization and none to one elsewhere when this shipped.
   `memorySweepCandidates` and `applyMemorySweep`; the workerd suite above.
 - **The cursor fence is the store's, not the consumer's.** A range is applied
   once; a replay answers from the receipt; a gap is refused. Breaking it
-  double-writes facts on a Queue redelivery. Guard: `test-workers/memory-facts.test.ts`
-  ("applies a sweep once behind the cursor fence…").
+  double-writes facts on a Queue redelivery. The cursor never moves without a
+  receipt, including for a range passed with no model call, or the next sweep
+  is rewound over it. Guard: `test-workers/memory-facts.test.ts`
+  ("applies a sweep once behind the cursor fence…", "keeps a cursor fence per
+  Sidekick conversation…") and `test/memory-sweep-service.test.ts`.
 - **Every attempt moves `retry_at`.** The alarm lane reads nothing else, and
   an attempt that left it where it was would wake the object into the same
   answer forever (`onScheduledAlarmStalled`). Guard:
@@ -411,9 +450,11 @@ vector-index facts (Turbopuffer, when wanted:
 
 ## Failure modes and limits
 
-- **Model unavailable or schema-invalid:** the run throws after releasing the
-  claim; `memory_sweep_failed` names the reason (`zodDiagnosticCode` for a
-  schema failure). The alarm retries at the claim's rest. No cursor moves.
+- **Model unavailable or envelope schema-invalid:** the run throws after
+  releasing the claim; `memory_sweep_failed` names the reason
+  (`zodDiagnosticCode` for a schema failure). The alarm retries at the claim's
+  rest. No cursor moves. A single malformed operation is dropped instead, and
+  `memory_sweep_operation_dropped` names it.
 - **`WorkspaceDO` unreachable from a tool:** `memory_unavailable` to the model,
   `memory_tool_unavailable` with the cause in the log.
 - **Lost Queue delivery:** the claim times out after
@@ -421,8 +462,12 @@ vector-index facts (Turbopuffer, when wanted:
   rest, claims again there, as does any settlement before it. The store's fence
   makes the late delivery, if it arrives, a replay.
 - **Conversation archived or deleted between claim and run:** candidates
-  answer `conversation_missing`; the cursor settles to `toSeq` with nothing
-  written.
+  answer `conversation_missing`; an empty receipt is written and the cursor
+  settles to `toSeq`.
+- **A page of tool and agent rows:** a window that cannot grow and cannot
+  meet the floors is passed with an empty receipt (`memory_sweep_page_skipped`);
+  the person messages in it, fewer than the floor, are not swept. It counts as a
+  quiet sweep, so a long run of such pages is read at a lengthening rest.
 - **A model operation outside the placement:** refused by code and logged;
   the rest of the batch applies.
 - **A digest copy refresh fails:** `memory_digest_refresh_failed` with the
@@ -460,9 +505,10 @@ defensive numbers.
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test-workers/memory-facts.test.ts` | Migration 116 on a populated object at 115 (subjects, sources, FTS, the drop, the retired alarm row); `applyMemorySweep`'s fence, receipt replay and `cursor_ahead`; placement refusals; candidate and recall audience fencing; `memoryDigest`, the revision it answers and the holder and holder facts it records, one holder per conversation of a Sidekick; the copy-sync lane: a retraction marks only the holders of its fact and an update none, a participant joining marks that Thread's holders only, a participant leaving marks the copies elsewhere holding a fact learned there, a member becoming a guest and an archive mark every holder, one batch publishes, work, complete and release settle the row. Run with `pnpm --filter @rally/api test:workers`. |
-| `apps/api/test/memory-facts-tools.test.ts` | The three tools over a real `WorkspaceDO` (node:sqlite) and real conversation objects: person facts follow their person and nobody else, conversation facts stay with their subject, forget authority, dedupe, receipt replay, horizon errors. The fixture uses `migratedSqliteDatabase()` because the object reads a person's relationship from current `workspace_members`. |
-| `apps/api/test/memory-sweep-service.test.ts` | The attempt's gates and claim, the Queue message, rest and `retry_at`; the run's window, candidates, prompt, apply, settle, release on model failure, replay and rewind, quiet rests. The model is a stubbed `fetch`; `WorkspaceDO` is a stub recording its calls. |
+| `apps/api/test-workers/memory-facts.test.ts` | Migration 116 on a populated object at 115 (subjects, sources, FTS, the drop, the retired alarm row); `applyMemorySweep`'s fence, receipt replay and `cursor_ahead`, one fence per Sidekick conversation; an update's source order and `mixed`; placement refusals; candidate and recall audience fencing; `memoryDigest`, the revision it answers and the holder and holder facts it records, one holder per conversation of a Sidekick; the copy-sync lane: a retraction marks only the holders of its fact and an update none, a participant joining marks that Thread's holders only, a participant leaving marks the copies elsewhere holding a fact learned there, a member becoming a guest and an archive mark every holder, one batch publishes, work, complete and release settle the row. Run with `pnpm --filter @rally/api test:workers`. |
+| `apps/api/test/memory-facts-tools.test.ts` | The three tools over a real `WorkspaceDO` (node:sqlite) and real conversation objects: person facts follow their person and nobody else, a Sidekick run reads as the Sidekick, conversation facts stay with their subject, forget authority, dedupe, receipt replay, horizon errors. The fixture uses `migratedSqliteDatabase()` because the object reads a person's relationship from current `workspace_members`. |
+| `apps/api/test/memory-sweep-service.test.ts` | The attempt's gates and claim, the Queue message, rest and `retry_at` (resting, keyless, the follow-up a settle keeps); the window's character budget, and a full page or an over-budget run of agent text passed without a model call; the run's window, names, candidates, prompt, per-operation parsing, trust class from evidence, apply, settle, the empty receipt, release on model failure, replay and rewind, quiet rests. The model is a stubbed `fetch`; `WorkspaceDO` is a stub recording its calls. |
+| `apps/api/test-workers/memory-sweep-state.test.ts` | `memory_sweep_state` through the real scheduling port, as the consumer reaches it: a settle's arguments cross the binding, and a release re-arms the object's alarm at the rest. |
 | `packages/agent-harness/src/prompts.test.ts` | The sweep prompt's golden hash, injection isolation, bounding, and load-bearing lines; the digest's golden hash, group order, horizons, full fact ids, the `external` exclusion, the budget cut and its trailer, and the personal note only beside a person fact. |
 | `apps/api/test/memory-digest-service.test.ts` | The digest over a real `WorkspaceDO` and real conversation objects: who reads as whom (`digestReaderFor`), a copy holds what its reader may see and nobody else's facts, an older revision never replaces a newer copy, a forget drops the fact from every copy and refuses a read from before it, `external` facts never take a copy's place, and the section composes digest then personal prompt. |
 | `apps/api/test-workers/sidekick-run-continuation.test.ts` | A Sidekick run's first activation starts with the Sidekick's facts, copied in at provisioning. |
@@ -478,7 +524,8 @@ object below it has no row and `nextMemorySweepAt` reads `null`.
 ## Data model
 
 `WorkspaceDO`: `memory_facts` (indexed on subject and activity, FTS5 shadow
-`memory_facts_fts`), `memory_sweep_receipts` (one row per conversation),
+`memory_facts_fts`), `memory_sweep_receipts` (one row per conversation, keyed by
+`memoryConversationKeyOf`),
 `memory_fact_receipts` (tool replays), `memory_digest_holders` (every
 conversation holding a digest copy, keyed by `memoryConversationKeyOf`),
 `memory_digest_holder_facts` (the facts each principal's copy there was read
@@ -498,7 +545,9 @@ Transcript text, remembered facts, titles and names are untrusted data in the
 prompt's user message; the system prompt carries policy only
 ([`writing-prompts.md`](writing-prompts.md)). A fact's `derivedFrom` keeps the
 trust class of its evidence so a later step can keep `external` facts out of
-anything injected automatically (PRD design decision 11). The model's
+anything injected automatically (PRD design decision 11). The host computes it
+from the cited messages' authors; the model's own `derivedFrom` is used only
+when nothing it cites is in the window, and never defaults to `person`. The model's
 `subjectKind` is a request the host checks against the placement, never an
 authority. `retracted_by` records who forgot a fact.
 

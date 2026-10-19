@@ -601,7 +601,7 @@ describe("prompt renderers", () => {
     expect(transcript[0]!.text.endsWith("…")).toBe(true);
   });
 
-  it("bounds each sweep message and marks a window that dropped its older half", () => {
+  it("bounds each sweep message and marks a window the conversation continues past", () => {
     const long = "m".repeat(MAXIMUM_MEMORY_SWEEP_MESSAGE_CHARACTERS + 500);
     const rendered = renderMemorySweepMessages({
       now: "2026-10-19T09:00:00.000Z",
@@ -613,7 +613,7 @@ describe("prompt renderers", () => {
       }],
       windowTruncated: true,
     });
-    expect(rendered[1]!.content).toContain("older messages in this window were omitted");
+    expect(rendered[1]!.content).toContain("the conversation continues after this window and a later sweep reads it");
     const transcript = JSON.parse(rendered[1]!.content.split("\n").at(-1)!) as Array<{ text: string }>;
     expect(Array.from(transcript[0]!.text)).toHaveLength(MAXIMUM_MEMORY_SWEEP_MESSAGE_CHARACTERS + 1);
     expect(transcript[0]!.text.endsWith("…")).toBe(true);
