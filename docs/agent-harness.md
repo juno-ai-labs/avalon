@@ -1462,7 +1462,7 @@ memory context hash, and the preparation breakdown has no `memory_context_ms`
 or `memory_recall_required`. A run's scope hash no longer includes a memory
 hash; `run_scopes.memory_context_hash` is always NULL.
 
-Design: `docs/PRDs/2026-10-18_agent-memory/prd.md`.
+Shipped in #1300. Design: `docs/PRDs/2026-10-18_agent-memory/prd.md`.
 
 ### 2026-10-18 — The settlement lane asks JEV what a settled turn calls for
 
