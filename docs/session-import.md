@@ -12,7 +12,8 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 | `packages/contracts/src/substream-content.ts` | Source content/files, resolved prepared conversations, initialization modes and import provenance. |
 | `apps/api/src/services/session-import.ts` | Which conversation a source URL names and which provider owns it (`browserConversationSource`, `sessionSourceUrlProvider`). |
 | `apps/api/src/services/session-import-run-service.ts` | An import run: reserve the Channel (or a Breakout of an existing thread), launch the agent's hidden child, complete, discard. |
-| `apps/api/src/services/session-import-reclaim.ts` | Archive a new import's Channel its run ended without opening (the `session_import` profile's `ended` hook). |
+| `apps/api/src/services/session-import-reclaim.ts` | Archive a new import's Channel its run ended without opening (the `session_import` profile's `ended` hook), and `retireUnopenedImportKey`, the D1 retire it shares with the reservation watch. |
+| `apps/api/src/durable-objects/import-reservation-reclaim.ts` | The Organization's watch on every import reservation (WorkspaceDO migration 119 and alarm lane): archive a thread still unopened `IMPORT_RESERVATION_RECLAIM_AFTER_MS` after its reservation. |
 | `apps/api/src/services/session-import-files.ts` | Upload reconciliation of the files an import carries, unavailable outcomes, and trusted attribution. |
 | `apps/api/src/services/workstream-object-creation-service.ts` | `reserveImport` / `openReservedImport`: the Channel is placed first and initialized when the import completes. |
 | `apps/api/src/durable-objects/hosted-parent.ts` | `reserveHiddenChild` (the agent's conversation), `ownsHiddenChild` / `hiddenChildren` (which import children are the caller's), and `discardReservedMain` (archive a Channel that never opened). |
@@ -179,11 +180,17 @@ contract 1.
    turn, so a reservation still unopened at the end never will be; an update's
    Channel has a completed receipt and is untouched.
 
-   One path is still uncovered: a start that never admits a run, from a
-   window that dies before it can abandon the key. No run means no run-end,
-   so the Channel stays listed until someone retires it by hand. Closing that
-   needs a watchdog that presumes a launch dead after some time, and that
-   time is a limit for the team to set, not one this lane guesses.
+   A start that never admits a run, from a window that dies before it can
+   abandon the key, has no run to end. So the reservation is also watched by
+   the Organization itself: `reserveChannelInSpaces` arms a row in the same
+   transaction as the thread (`reclaimUnopened`, set only by the import's
+   reserve stage), due `IMPORT_RESERVATION_RECLAIM_AFTER_MS` (one hour) later.
+   When it is due, WorkspaceDO's `import_reservation_reclaim` alarm lane runs
+   the same D1 retire as the run-end reclaim (`retireUnopenedImportKey`) and,
+   when it matches, archives the thread through `discardReservedMain`. A key
+   `complete` has claimed or finished is refused, so an import that opened is
+   never touched; its row is simply dropped. A reclaim that throws keeps its
+   row and retries at its own gate.
 
 ### Importing as a Breakout
 
@@ -340,6 +347,11 @@ This provides an executable eval seam, not a scheduler or scoring database.
   listed Channel whose conversation never opens, which no run-end reaches
   because no run was admitted. Guard: the Workers abandon tests, and the
   desktop test of a failed start.
+- Every new-thread import reservation is watched from the transaction that
+  makes it. Otherwise a start cut off before its run, from a window that is
+  gone, leaves a thread that nothing archives: a production thread from 2026-10-06
+  stayed listed for two weeks this way. Guard: the Workers reservation-watch
+  tests and `test/workspace-import-reservation-reclaim-migration.test.ts`.
 - Discard stops only the caller's own hidden import child. Otherwise one member
   could stop another's agent, or a Channel's own run, by naming it. Guard: the
   Workers ownership test.
@@ -435,6 +447,11 @@ placeholder is expected on every import, discarded or not. A context the main wi
 sends to the import window during a run (another Space, another update) waits
 until the run ends: a run drives the tab, and nothing else may navigate it.
 
+An import whose thread has not opened an hour after its reservation
+(`IMPORT_RESERVATION_RECLAIM_AFTER_MS`, the team's number) is presumed dead
+and archived, and its `complete` is refused. A real import opens its thread in
+20 to 60 seconds; one still running at an hour loses its result.
+
 HTML/code artifacts remain stored files; importing does not launch a site.
 
 ## Testing
@@ -445,7 +462,10 @@ HTML/code artifacts remain stored files; importing does not launch a site.
   socket, completion, an answer kept across a lost waiter, admission, discard
   and its ownership check, a Channel archived when its run ends unopened, and
   one taken back by its create key after a start whose launch and retire both
-  failed.
+  failed, and the Organization's reservation watch: archiving a start cut off
+  after its reservation, and dropping the watch on one that opened.
+- `test/workspace-import-reservation-reclaim-migration.test.ts`: migration 119
+  watches each listed, unopened import reservation and no other thread.
 - `test/session-import.test.ts`: which conversation and provider a source URL names.
 - `test/desktop-action-tools.test.ts`: the import tools' finish and fail, and
   the profile lookup.
@@ -501,6 +521,37 @@ These deterministic checks do not measure model compliance: live runs across
 these variations are still required to establish it.
 
 ## Changelog
+
+### 2026-10-19 — The Organization watches every import reservation
+
+**What changed:** A new-thread import's reservation now arms a row in
+WorkspaceDO (`import_reservation_reclaim`, migration 119) in the same
+transaction that lists the thread. An hour later its alarm lane retires the
+create key in D1 and archives the thread unless the import has opened it.
+Migration 119 seeds a row for every reservation already waiting. The D1
+retire is now one function, `retireUnopenedImportKey`, shared with the run-end
+reclaim.
+
+**Why:** The earlier exits each need someone to show up: the window for
+discard and abandon, a run for the run-end reclaim. A start cut off before
+admitting its run, from a window that then closed, had neither, which is how
+a production thread stayed listed and unopenable from 2026-10-06. The team set the
+timeout to one hour.
+
+**Considered and rejected:** Arming in `reserveHiddenChild`, which is
+import-only already but runs after the thread is listed, so a start that
+died in between would go unwatched. Also rejected: asking the hidden child
+whether a run exists before archiving. An admitted run that was never
+activated never ends either, so the check would need its own timeout and
+would still miss that case. Age alone, with D1 refusing any key `complete`
+claimed, covers every case.
+
+**Consequences:** An import still running an hour after its reservation is
+archived and loses its result. Every import costs one row and one alarm wake
+an hour on, and a D1 statement only when its thread has not visibly opened.
+The migration reaches an Organization when it next wakes; force WorkspaceDO
+from the migration tracker to reach all of them
+([`durable-object-migration-tracking.md`](durable-object-migration-tracking.md)).
 
 ### 2026-10-19 — Take back a failed start by its create key
 
