@@ -211,6 +211,8 @@ describe("tool activity names", () => {
       .toBe("Posted to a conversation");
     expect(toolActivityName({ toolName: "conversation_merge", status: "completed" }))
       .toBe("Merged the result");
+    expect(toolActivityName({ toolName: "conversation_search", status: "started" }))
+      .toBe("Searching conversations");
     // `send_message` is the agent tool whose bare name still does not say who it
     // reaches, so the row says it for it.
     expect(toolActivityName({ toolName: "send_message", status: "completed" }))

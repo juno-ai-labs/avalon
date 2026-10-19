@@ -93,6 +93,7 @@ export function createSearchIndexingPipeline(env: Env) {
     const ignored = ignoredSearchDocumentKeys(raw);
     if (ignored.length) logWarn(env, 'search_document_keys_ignored', { workspace_id: reference.workspaceId,
       ...(reference.type === 'resource_search_projection_v1' ? { resource_id: reference.resourceId }
+        : reference.type === 'channel_message_search_projection_v1' ? { channel_message_id: reference.messageId }
         : { parent_id: reference.parentId, substream_id: reference.substreamId, turn_id: reference.turnId }),
       ignored_keys: ignored.join(',') });
     const input = SearchDocumentBatchSchema.parse(raw);
