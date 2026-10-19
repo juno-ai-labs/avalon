@@ -221,7 +221,7 @@ export function useCitations({ actions, loadResourceContent, onOpenPreview, onOp
 
   const attachmentPreview = useCallback((resourceId: string, returnFocus: HTMLElement): AttachmentPreview | undefined => {
     const entry = local.get(resourceId);
-    if (!entry || entry.citation.resourceType === 'generated_site') return undefined;
+    if (!entry || entry.citation.resourceType === 'generated_site' || entry.citation.resourceType === 'generated_file') return undefined;
     return {
       name: entry.citation.title,
       resourceId: entry.citation.id,
@@ -237,7 +237,9 @@ export function useCitations({ actions, loadResourceContent, onOpenPreview, onOp
   const openPreview = useCallback((resourceId: string, returnFocus: HTMLElement, resourceIds?: readonly string[], selectedIndex?: number): void => {
     const entry = local.get(resourceId);
     if (!entry) return;
-    if (entry.citation.resourceType === 'generated_site') {
+    // Generated resources open with their artifact controls, regardless of
+    // file format. Attachment previews are for sources and their galleries.
+    if (entry.citation.resourceType === 'generated_site' || entry.citation.resourceType === 'generated_file') {
       onOpenResourceDetails(entry.citation.id, returnFocus);
       return;
     }
