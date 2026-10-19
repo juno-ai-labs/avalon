@@ -52,7 +52,7 @@ export interface MemorySweepPromptInput {
   placement: MemorySweepPlacementInput;
   candidates: MemorySweepCandidateInput[];
   messages: MemorySweepMessageInput[];
-  /** True when the window hit its ceiling and older messages were dropped. */
+  /** True when the window hit its ceiling: the conversation continues past it, and a later sweep reads the rest. */
   windowTruncated: boolean;
 }
 
@@ -103,7 +103,7 @@ export function renderMemorySweepMessages(input: MemorySweepPromptInput): Prompt
         }))),
         "",
         `UNTRUSTED TRANSCRIPT WINDOW (${input.messages.length} messages, oldest first${
-          input.windowTruncated ? "; older messages in this window were omitted" : ""
+          input.windowTruncated ? "; the conversation continues after this window and a later sweep reads it" : ""
         }):`,
         JSON.stringify(input.messages.map((message) => ({
           seq: message.seq,
@@ -119,10 +119,17 @@ export function renderMemorySweepMessages(input: MemorySweepPromptInput): Prompt
   ];
 }
 
+/** The most operations one sweep may return, and the most messages one operation may cite. */
+export const MAXIMUM_MEMORY_SWEEP_OPERATIONS = 64;
+export const MAXIMUM_MEMORY_SWEEP_EVIDENCE = 32;
+
 /**
  * The strict JSON schema the model is held to. One flat operation shape with
  * every field present and the inapplicable ones null, because a strict schema
- * carries no discriminated union well; the host narrows it.
+ * carries no discriminated union well; the host narrows it. The bounds the
+ * host checks per operation are declared here too, so a provider that
+ * enforces them never returns a row the host would drop. `format: date-time`
+ * is left out, as in every strict schema beside this one; the host checks RFC 3339.
  */
 export const memorySweepJsonSchema: Record<string, unknown> = {
   type: "object",
@@ -131,6 +138,7 @@ export const memorySweepJsonSchema: Record<string, unknown> = {
   properties: {
     operations: {
       type: "array",
+      maxItems: MAXIMUM_MEMORY_SWEEP_OPERATIONS,
       items: {
         type: "object",
         additionalProperties: false,
@@ -152,8 +160,8 @@ export const memorySweepJsonSchema: Record<string, unknown> = {
           validUntilBasis: { type: ["string", "null"], enum: ["stated", "event", "assumed", null] },
           derivedFrom: { type: ["string", "null"], enum: ["person", "external", "agent", null] },
           conflict: { type: "boolean" },
-          confidence: { type: "number" },
-          evidence: { type: "array", items: { type: "integer" } },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+          evidence: { type: "array", maxItems: MAXIMUM_MEMORY_SWEEP_EVIDENCE, items: { type: "integer", minimum: 0 } },
           factId: { type: ["string", "null"] },
           reason: { type: ["string", "null"] },
         },
