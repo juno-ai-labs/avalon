@@ -369,7 +369,7 @@ describe('a Channel', () => {
         }), { ...outboundStats(), channelId: 'empty', latestAttentionSequenceNumber: 0,
           readThroughSequenceNumber: 0, firstUnreadSequenceNumber: null, hasUnread: false }]);
       });
-      await screen.findByText('No threads yet. Describe the work below and Rally starts a thread for it.');
+      await screen.findByText(/^Channels in Rally act as places to gather related work\./);
       fireEvent.click(screen.getByRole('link', { name: 'Outbound Channel' }));
       await waitFor(() => expect(container.querySelector('.channel-feed')!.scrollTop).toBe(200));
       expect(api.getChannelFeed).toHaveBeenCalledWith('outbound', 'older', expect.anything());
@@ -450,7 +450,7 @@ describe('a Channel', () => {
       feed.scrollTop = 700;
       fireEvent.scroll(feed);
       fireEvent.click(screen.getByRole('link', { name: 'Empty Channel' }));
-      await screen.findByText('No threads yet. Describe the work below and Rally starts a thread for it.');
+      await screen.findByText(/^Channels in Rally act as places to gather related work\./);
       feed.scrollTop = 0;
       fireEvent.scroll(feed);
       fireEvent.click(screen.getByRole('link', { name: 'Outbound Channel' }));
