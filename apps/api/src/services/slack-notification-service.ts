@@ -77,6 +77,8 @@ interface WorkstreamSlackDelivery {
   /** Seeds the per-chunk `client_msg_id`, so a retry posts the same message. */
   sourceId: string;
   kind: "mention" | "participant_added" | "activity";
+  /** The link, when the caller has one; otherwise the thread's canonical URL. */
+  url?: string;
   chunks: (target: string, maximum: number) => string[];
 }
 
@@ -140,6 +142,8 @@ export interface WorkstreamSlackActivity {
   workspaceName: string;
   workstreamId: string;
   substreamId?: string;
+  /** Where the message links, when not the thread: a Channel merge opens its Channel. */
+  url?: string;
   title: string;
   body: string;
 }
@@ -153,6 +157,7 @@ export async function sendWorkstreamActivitySlack(
   return deliverWorkstreamSlack(env, {
     workspaceId: input.workspaceId,
     ...(input.substreamId ? { substreamId: input.substreamId } : {}),
+    ...(input.url ? { url: input.url } : {}),
     recipientUserId: input.recipientUserId,
     recipientEmail: input.recipientEmail,
     sourceId: input.itemId,
@@ -347,7 +352,7 @@ async function deliverWorkstreamSlack(
       channel_id: channelId,
       outcome: "opened",
     });
-    const target = await canonicalWorkstreamUrl(env, {
+    const target = input.url ?? await canonicalWorkstreamUrl(env, {
       region: env.AVALON_REGION,
       workspaceId: input.workspaceId,
     ...(input.substreamId ? { substreamId: input.substreamId } : {}),

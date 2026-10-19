@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 
 import type { ChannelStats, MemoryReview, MemoryReviewFact } from '@rally/contracts';
 import { OPEN_EXPANDED, revealChannelMessageState } from '../lib/navigation-routes';
+import { useUiStore } from '../lib/ui-store';
 import { CHANNEL_STATS_QUERY_KEY } from '../lib/sidebar-list-store';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { ChannelScreen } from './channel';
@@ -496,6 +497,25 @@ describe('a Channel', () => {
     expect(screen.getByRole('list', { name: 'Outbound feed' })).toBeInTheDocument();
     expect(await screen.findByRole('complementary', { name: 'Resource: Price model' })).toBeInTheDocument();
     expect(api.getResource).toHaveBeenCalledWith('res-1');
+  });
+
+  it('expands the artifact over the Channel and collapses it back, as a thread’s panel does', async () => {
+    api.getResource.mockResolvedValue({
+      id: 'res-1', title: 'Price model', resourceType: 'generated_file', provider: 'avalon_generated',
+      mimeType: 'text/markdown', contentAvailable: true, currentVersion: 1, updatedAt: '2026-10-02T03:00:00.000Z',
+      refreshSupported: false, watchEnabled: false, watchStatus: 'unsupported', relationshipType: 'generated', direction: 'artifact',
+    });
+    // Wide enough for the panel to sit beside the Channel.
+    const width = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1_800);
+    onTestFinished(() => width.mockRestore());
+    renderChannel('/channels/outbound/artifacts/res-1');
+    await screen.findByRole('complementary', { name: 'Resource: Price model' });
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+    expect(await screen.findByRole('button', { name: 'Collapse' })).toBeInTheDocument();
+    expect(useUiStore.getState().railExpanded).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse' }));
+    expect(await screen.findByRole('button', { name: 'Expand' })).toBeInTheDocument();
+    expect(useUiStore.getState().railExpanded).toBe(false);
   });
 
   it('says so when the artifact it opens cannot be read', async () => {

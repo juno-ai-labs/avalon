@@ -24,6 +24,7 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { ConversationService } from "./conversation-service";
 import type { WorkstreamObjectClient } from "./workstream-object-client";
+import { mergeEmbedsOf, resolveShareableResources } from "./resource-share-rules";
 
 /**
  * A refused merge: one of {@link ConversationMergeErrorCode}, with only the
@@ -217,21 +218,21 @@ export class ConversationMergeService {
       this.channelTarget(threadId, request.channelId ?? null),
     ]);
     // The embeds are shared with the Channel, not the thread: whoever reads
-    // the Channel opens them, whether or not they can open the thread.
+    // the Channel opens them, whether or not they can open the thread. They
+    // pass the rules every attach and merge applies.
+    const shareable = await resolveShareableResources(this.env, this.auth, mergeResourceIds(request.body), { readCheck: true });
+    if (!shareable.ok) {
+      throw new ConversationMergeRefusal("merge_resource_not_shareable", { field: `body.resources[${shareable.index}]` });
+    }
     const merged = await (await this.workspace()).mergeThreadIntoChannel({
       auth: this.actor(),
       workstreamId: asWorkstreamId(threadId),
       spaceId: asSpaceId(target.id),
       body: request.body,
-      resources: mergeResourceIds(request.body),
+      embeds: mergeEmbedsOf(shareable.rows),
       operationId: request.clientMessageId,
     });
-    if (!merged.ok) {
-      if (merged.code === "merge_resource_not_shareable") {
-        throw new ConversationMergeRefusal("merge_resource_not_shareable", { field: `body.resources[${merged.index}]` });
-      }
-      throw channelRefusal(merged.code, merged.channels);
-    }
+    if (!merged.ok) throw channelRefusal(merged.code, merged.channels);
     return {
       mergedInto: { kind: "channel", id: merged.spaceId, title: merged.name },
       messageId: merged.messageId,

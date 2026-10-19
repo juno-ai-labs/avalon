@@ -2,6 +2,7 @@ import {
   ExecutionPrincipalSchema,
   asUserId,
   asWorkspaceId,
+  spaceCanonicalUrl,
   type ActivityItem,
   type ActivityItemKind,
 } from "@rally/contracts";
@@ -242,15 +243,20 @@ export async function renderUnreadDigest(
     const rows = items.filter((item) => item.kind === kind);
     if (!rows.length) continue;
     const lines = await Promise.all(rows.map(async (item) => {
-      const url = await canonicalWorkstreamUrl(env, {
-        region: env.AVALON_REGION,
-        workspaceId,
-        workstreamId: item.threadId,
-        // A merge links where it landed: a breakout's merge is in its thread.
-        ...(item.breakout && item.kind !== "merged" ? { substreamId: item.breakout.substreamId } : {}),
-      });
+      // A merge links where it landed: a thread's into its Channel, a
+      // breakout's into its thread.
+      const url = item.kind === "merged" && item.mergedInto
+        ? spaceCanonicalUrl(env.PUBLIC_WEB_BASE_URL, { region: env.AVALON_REGION, workspaceId, spaceId: item.mergedInto.channelId })
+        : await canonicalWorkstreamUrl(env, {
+          region: env.AVALON_REGION,
+          workspaceId,
+          workstreamId: item.threadId,
+          ...(item.breakout && item.kind !== "merged" ? { substreamId: item.breakout.substreamId } : {}),
+        });
       const actor = escapeMarkdown(item.actorUserId === null ? item.actorLabel : names.get(item.actorUserId) ?? "Someone");
-      const thread = `[${escapeMarkdown(item.threadTitle.trim() || UNNAMED_THREAD)}](${url})`;
+      // A merge from a thread this reader cannot open names no thread.
+      const thread = item.mergedInto?.threadPrivate ? `[a private thread](${url})`
+        : `[${escapeMarkdown(item.threadTitle.trim() || UNNAMED_THREAD)}](${url})`;
       const breakout = item.breakout ? `[${escapeMarkdown(item.breakout.title.trim() || UNNAMED_BREAKOUT)}](${url})` : null;
       switch (item.kind) {
         case "mentioned": return `- ${actor} mentioned you in ${breakout ?? thread}`;

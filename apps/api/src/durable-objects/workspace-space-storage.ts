@@ -1409,10 +1409,12 @@ export class WorkspaceSpaceStorage {
 
   /**
    * The Activity tab's `merged` rows for a thread's merges into Channels:
-   * news merge messages in Channels this viewer may list, about a thread they
-   * may open, by somebody else, newest first after `after`. Shaped as the
-   * feed's keys. The id carries `posted_at`, so a merge replaced later is a
-   * new row (and a new push) rather than the old one moved.
+   * news merge messages in Channels this viewer may list, by somebody else,
+   * newest first after `after`, as the Channel feed shows them to every
+   * reader. `merged_thread_private` marks a thread this viewer may not open,
+   * whose row must not name it. Shaped as the feed's keys. The id carries
+   * `posted_at`, so a merge replaced later is a new row (and a new push)
+   * rather than the old one moved.
    */
   mergeActivityKeys(viewer: Viewer, after: { occurredAt: number; id: string } | null, limit: number): Array<{
     id: string;
@@ -1425,6 +1427,7 @@ export class WorkspaceSpaceStorage {
     attention_ordinal: number;
     merged_channel_id: string;
     merged_channel_name: string;
+    merged_thread_private: number;
   }> {
     const spaceIds = this.visibleSpaceIds(viewer);
     if (spaceIds.length === 0) return [];
@@ -1439,13 +1442,15 @@ export class WorkspaceSpaceStorage {
       attention_ordinal: number;
       merged_channel_id: string;
       merged_channel_name: string;
+      merged_thread_private: number;
     } & Record<string, SqlStorageValue>>(
       `SELECT * FROM (
          SELECT 'merged:' || m.message_id || ':' || m.posted_at AS id, 'merged' AS kind,
                 m.posted_at AS occurred_at, m.author_user_id AS actor_user_id, '' AS actor_label,
                 m.source_workstream_id AS thread_id, '0' AS substream_id,
                 m.attention_ordinal AS attention_ordinal,
-                m.space_id AS merged_channel_id, space.title AS merged_channel_name
+                m.space_id AS merged_channel_id, space.title AS merged_channel_name,
+                CASE WHEN ${mainOpenableSql("directory", "viewer", viewer.accessClass)} THEN 0 ELSE 1 END AS merged_thread_private
            FROM space_messages m
            JOIN spaces space ON space.space_id = m.space_id
            JOIN channels directory ON directory.workstream_id = m.source_workstream_id
@@ -1457,8 +1462,7 @@ export class WorkspaceSpaceStorage {
             AND m.attention_ordinal IS NOT NULL
             AND (m.author_user_id IS NULL OR m.author_user_id <> ?1)
             AND m.space_id IN (SELECT value FROM json_each(?2))
-            AND directory.archived_at IS NULL
-            AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)})
+            AND directory.archived_at IS NULL)
         WHERE (?3 IS NULL OR occurred_at < ?3 OR (occurred_at = ?3 AND id < ?4))
         ORDER BY occurred_at DESC, id DESC
         LIMIT ?5`,

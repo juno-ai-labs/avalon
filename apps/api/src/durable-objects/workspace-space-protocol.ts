@@ -12,7 +12,7 @@ import {
   ActivityPageSchema,
   ChannelFeedPageSchema,
   ConversationMergeChannelSchema,
-  MergeResourceTokenSchema,
+  MergeEmbedSchema,
   MESSAGE_MAX_CHARACTERS,
   ChannelStatsListSchema,
   ChannelStatsSchema,
@@ -896,11 +896,11 @@ export type WorkspaceThreadMergePlacementResult = z.infer<typeof WorkspaceThread
 export const WorkspaceChannelMergeRequestSchema = WorkspaceChannelMergeTargetRequestSchema.extend({
   body: z.string().trim().min(1).max(MESSAGE_MAX_CHARACTERS),
   /**
-   * What the body embeds, as it cites them (an id or an alias). WorkspaceDO
-   * resolves and checks each and links every one to the Channel in the
-   * merge's own commit.
+   * What the body embeds, resolved and checked by the caller
+   * (`resolveShareableResources`); WorkspaceDO links every one to the Channel
+   * in the merge's own commit.
    */
-  resources: z.array(MergeResourceTokenSchema),
+  embeds: z.array(MergeEmbedSchema),
   operationId: z.string().min(1).max(200),
 }).strict();
 export type WorkspaceChannelMergeRequest = z.infer<typeof WorkspaceChannelMergeRequestSchema>;
@@ -916,8 +916,6 @@ export const WorkspaceChannelMergeResultSchema = z.union([
     linked: z.array(z.string()),
   }),
   ChannelMergeRefusalSchema,
-  /** An embed that cannot be shared, by its position in `resources`; nothing was written. */
-  z.strictObject({ ok: z.literal(false), code: z.literal("merge_resource_not_shareable"), index: z.number().int().nonnegative() }),
 ]);
 export type WorkspaceChannelMergeResult = z.infer<typeof WorkspaceChannelMergeResultSchema>;
 

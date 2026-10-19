@@ -42,6 +42,9 @@ import { EmailMentionContext, emailMentionDirectory, NO_INVITEES, useWorkspaceIn
 import type { AutomationSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useUiStore } from '../lib/ui-store';
+import { useRailFillsPane } from '../lib/rail-split';
+import { useSiteArtifacts } from '../lib/use-site-artifacts';
+import { expandToggle } from '../components/pane-expand-toggle';
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { useCachedWorkstreamAppearance, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { RemoveParticipantDialog } from './conversation-surface';
@@ -432,6 +435,7 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
     </div>
     {openArtifactId && <ChannelArtifactPanel
       channelId={channelId}
+      space={space}
       key={openArtifactId}
       onClose={() => void navigate(channelRoute(channelId))}
       resourceId={openArtifactId}
@@ -444,12 +448,31 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
  * in. It is read by its id alone: the Channel holds no conversation, and its
  * reader may not be able to open the thread it came from.
  */
-function ChannelArtifactPanel({ channelId, onClose, resourceId }: {
+function ChannelArtifactPanel({ channelId, onClose, resourceId, space }: {
   channelId: string;
   onClose: () => void;
   resourceId: string;
+  space: SpaceSummary;
 }): React.JSX.Element {
   const { api } = useAppSession();
+  const siteArtifacts = useSiteArtifacts(api);
+  // Expanded over the Channel or beside it, with the same controls and
+  // crumbs a thread's panel has (`docs/pane-stack.md`).
+  const { expanded, setExpanded } = usePaneExpansion(`resource:${resourceId}`);
+  const setRailExpanded = useUiStore((state) => state.setRailExpanded);
+  useEffect(() => {
+    setRailExpanded(expanded);
+    return () => setRailExpanded(false);
+  }, [expanded, setRailExpanded]);
+  const fillsPane = useRailFillsPane(useUiStore((state) => state.sidebarWidth));
+  const ancestors: TitlePillLevel[] | undefined = !expanded && !fillsPane ? undefined : [{
+    key: `panel-channel:${channelId}`,
+    icon: <ChannelGlyph space={space} />,
+    bridge: { mark: spaceMark(space), name: space.name, action: 'Open channel' },
+    title: space.name,
+    label: `Show ${space.name}`,
+    onSelect: () => (fillsPane ? onClose() : setExpanded(false)),
+  }];
   // The shell makes room for the right slot while it is open, so the panel
   // claims it as a thread's does, scoped to this Channel, and gives it back.
   useEffect(() => {
@@ -472,8 +495,14 @@ function ChannelArtifactPanel({ channelId, onClose, resourceId }: {
     : Promise.reject(new Error('No API session')), [api]);
   return <InspectorRail
     {...(api ? { loadResourceContent } : {})}
-    panel={{ resourceId, onClose }}
+    panel={{
+      resourceId,
+      onClose,
+      expandAction: fillsPane ? undefined : expandToggle(expanded, true, setExpanded),
+      ancestors,
+    }}
     resource={resource.data ?? (resource.isError ? null : undefined)}
+    {...(siteArtifacts ? { siteArtifacts } : {})}
   />;
 }
 
