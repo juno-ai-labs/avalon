@@ -33,9 +33,17 @@ export const MemoryValidUntilBasisSchema = z.enum(["stated", "event", "assumed"]
 const InstantSchema = z.number().int().nonnegative();
 
 /**
+ * `WorkspaceDO`'s `memory_revision`: advanced in every transaction that writes
+ * a fact and by every mark of the copy-sync lane, so it orders the reads a
+ * digest copy is refreshed from (`docs/agent-memory.md#the-digest`).
+ */
+const RevisionSchema = z.number().int().nonnegative();
+
+/**
  * The conversation a call acts in: a Thread's Main (`substreamId` `"0"`), a
  * Breakout, a Sidekick's own conversation or run, or a Channel's own feed.
- * `memorySourceOf` renders it as the source string a fact stores.
+ * `memorySourceOf` renders it as the source string a fact stores, and
+ * `memoryConversationKeyOf` as the key that names this one conversation.
  */
 export const MemoryConversationSchema = z.strictObject({
   parentKind: z.enum(["workstream", "automation", "space"]),
@@ -58,13 +66,14 @@ export function memorySourceOf(conversation: MemoryConversation): string {
 }
 
 /**
- * The key a sweep's cursor fence is kept under: one per conversation, which
- * is not one per source. A Sidekick's own conversation and each of its runs
- * share the source `sidekick:<id>` (what they learn is the Sidekick's), but
- * each has its own transcript and its own cursor, so their receipts are kept
- * apart by substream. Thread, Breakout and Channel keys are their sources.
+ * The key naming one conversation, where `memorySourceOf` names what a fact
+ * was learned from. They differ for a Sidekick: every conversation of one
+ * Sidekick (its own at substream `"0"` and one child per run) is the single
+ * source `sidekick:<automationId>`, but each has its own transcript, cursor
+ * and digest copies. A sweep's receipt and a digest holder are both keyed by
+ * this; Thread, Breakout and Channel keys are their sources.
  */
-export function memoryReceiptKeyOf(conversation: MemoryConversation): string {
+export function memoryConversationKeyOf(conversation: MemoryConversation): string {
   return conversation.parentKind === "automation"
     ? `sidekick:${conversation.parentId}/${conversation.substreamId}`
     : memorySourceOf(conversation);
@@ -82,6 +91,15 @@ export const MemoryReaderSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("conversation") }),
 ]);
 export type MemoryReader = z.infer<typeof MemoryReaderSchema>;
+
+/** The digest copy's row key for a reader: `user:<id>`, `sidekick:<automationId>`, or `conversation`. */
+export function digestPrincipalKey(reader: MemoryReader): string {
+  switch (reader.kind) {
+    case "person": return `user:${reader.userId}`;
+    case "sidekick": return `sidekick:${reader.automationId}`;
+    case "conversation": return "conversation";
+  }
+}
 
 export const MemoryFactSchema = deferredZodSchema(() => z.strictObject({
   factId: z.string().min(1),
@@ -126,6 +144,51 @@ export const WorkspaceMemoryRecallResultSchema = deferredZodSchema(() => z.stric
   titles: z.array(z.strictObject({ key: z.string().min(1), title: z.string() })),
 }));
 
+// -- Digest -------------------------------------------------------------------
+
+/**
+ * One fact as a conversation's digest copy holds it: what the renderer needs
+ * and nothing it does not (`renderMemoryDigest`), with the subject's title
+ * resolved here so the run reads nothing beyond its own object.
+ */
+export const MemoryDigestFactSchema = deferredZodSchema(() => z.strictObject({
+  factId: z.string().min(1),
+  subjectKind: MemorySubjectKindSchema,
+  /** The subject's display title; null for the Organization and for the person themselves. */
+  subjectLabel: z.string().nullable(),
+  kind: MemoryFactKindSchema,
+  text: z.string(),
+  validFrom: InstantSchema.nullable(),
+  validUntil: InstantSchema.nullable(),
+  conflict: z.boolean(),
+  derivedFrom: MemoryDerivedFromSchema,
+  createdAt: InstantSchema,
+}));
+export type MemoryDigestFact = z.infer<typeof MemoryDigestFactSchema>;
+
+/**
+ * The facts one principal's digest copy in one conversation is refreshed
+ * from: recall with no query, as the reader, leaving out `external` facts
+ * before the limit (they never render), and the conversation recorded as a
+ * holder of those facts so the copy-sync lane can reach it.
+ */
+export const WorkspaceMemoryDigestRequestSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: IdSchema,
+  reader: MemoryReaderSchema,
+  conversation: MemoryConversationSchema,
+  now: InstantSchema,
+  limit: z.number().int().positive(),
+}));
+
+export const WorkspaceMemoryDigestResultSchema = deferredZodSchema(() => z.strictObject({
+  facts: z.array(MemoryDigestFactSchema),
+  /** `memory_revision` when the facts were read; a copy keeps the newest read. */
+  revision: RevisionSchema,
+}));
+
+export type WorkspaceMemoryDigestRequest = z.infer<typeof WorkspaceMemoryDigestRequestSchema>;
+export type WorkspaceMemoryDigestResult = z.infer<typeof WorkspaceMemoryDigestResultSchema>;
+
 // -- Remember -----------------------------------------------------------------
 
 export const WorkspaceMemoryRememberRequestSchema = deferredZodSchema(() => z.strictObject({
@@ -166,7 +229,8 @@ export const WorkspaceMemoryForgetRequestSchema = deferredZodSchema(() => z.stri
 }));
 
 export const WorkspaceMemoryForgetResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
-  z.strictObject({ outcome: z.literal("retracted"), fact: MemoryFactSchema }),
+  /** `revision` is the retraction's: a digest read below it may still show the fact. */
+  z.strictObject({ outcome: z.literal("retracted"), fact: MemoryFactSchema, revision: RevisionSchema }),
   z.strictObject({ outcome: z.literal("already_retracted"), fact: MemoryFactSchema }),
   z.strictObject({ outcome: z.literal("not_found") }),
   z.strictObject({ outcome: z.literal("not_visible") }),
@@ -279,7 +343,7 @@ export const WorkspaceMemoryApplySweepRequestSchema = deferredZodSchema(() => z.
 }));
 
 export const MemorySweepReceiptSchema = deferredZodSchema(() => z.strictObject({
-  /** `memoryReceiptKeyOf` the swept conversation, not its fact source. */
+  /** `memoryConversationKeyOf` the swept conversation, not its fact source. */
   conversation: z.string().min(1),
   fromSeq: z.number().int().nonnegative(),
   toSeq: z.number().int().nonnegative(),
@@ -306,6 +370,10 @@ export const WorkspaceMemoryApplySweepResultSchema = deferredZodSchema(() => z.d
     outcome: z.literal("applied"),
     receipt: MemorySweepReceiptSchema,
     refused: z.array(z.strictObject({ index: z.number().int().nonnegative(), code: MemorySweepRefusalSchema })),
+    /** `memory_revision` after the apply; advanced when any operation applied. */
+    revision: RevisionSchema,
+    /** Whether a retraction marked a digest holder, so the caller wakes the copy-sync lane. */
+    markedHolders: z.boolean(),
   }),
   /** `fromSeq` is behind the stored `toSeq`: an earlier delivery applied this range. */
   z.strictObject({ outcome: z.literal("already_applied"), receipt: MemorySweepReceiptSchema }),

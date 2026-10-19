@@ -110,6 +110,7 @@ const EXPECTED_TABLES = [
   "inference_attempts",
   "inference_delay_status",
   "member_attention",
+  "memory_digest_copies",
   "memory_sweep_state",
   "object_retirement",
   "object_versions",
