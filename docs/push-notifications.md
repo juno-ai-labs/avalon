@@ -369,29 +369,30 @@ signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
 
-### 2026-10-19 — A Channel merge reaches the Channel, and opens it
+### 2026-10-19 — A Channel merge reaches the Channel's readers
 
 **What changed:** A thread's merge into a Channel is pushed, emailed or sent to
 Slack to everyone who reads the Channel (`ActivityPushSubject.channelId`):
 every member for an Organization-wide Channel, its participants and the
-thread's readers for a private one. Push, email and Slack link to the Channel
-(`spaceCanonicalUrl`), not the thread. A reader who cannot open the thread is
-told "Maya merged a private thread into GTM", and the macOS menu bar names the
-Channel and opens it.
+thread's readers for a private one. A reader who cannot open the thread is
+told "Maya merged a private thread into GTM", and the link opens the Channel
+(`spaceCanonicalUrl`); everyone else's still opens the thread. The macOS menu
+bar opens the Channel for every Channel merge, as the Activity tab does.
 
 **Why:** The product owner's call: a private thread may now merge into its
 Channel, and the Channel feed shows the merge to all its readers, so the
 notification had to reach the same people. Their audience used to be the
-thread's, which for a private thread left out everyone it was meant for. A
-merge opens where it landed, as the Activity row already did; the push opened
-the thread, which such a reader cannot.
+thread's, which for a private thread left out everyone it was meant for.
 
-**Considered and rejected:** Keeping the thread's audience and adding the
-missing readers by hand: the Channel's scope and its participants already
-answer who reads it.
+**Considered and rejected:** Linking every Channel merge to the Channel: the
+iOS build parses no Channel link, so its taps would land on "This Rally view
+does not exist". A reader who can open the thread keeps the thread link every
+client follows.
 
 **Consequences:** An Organization-wide thread's merge into a private Channel
-now notifies the Channel's people rather than the whole Organization.
+now notifies the Channel's people rather than the whole Organization. An iOS
+tap on a private thread's merge still opens nothing until the app reads
+Channel links.
 
 ### 2026-10-16 — Merges push
 

@@ -191,7 +191,12 @@ second slot, so opening a thread replaces it. It claims the shell's rail
 what makes the shell narrow the Channel beside it. Its Expand, its crumb back
 to the Channel and its live artifacts are the thread panel's own:
 `usePaneExpansion`, `expandToggle`, `useRailFillsPane` and `useSiteArtifacts`,
-which both panels now share. The
+which both panels now share. So are its versions (`resourceVersionsQueryKey`,
+an older one opening in an `AttachmentPanel` in its place) and its new
+versions (`useResourceHeads` with `withResourceHead`). The resource read
+carries no link and so no direction; the panel treats what it shows as an
+artifact, as the merge card does. While the panel is expanded or fills the
+pane it covers the feed, so the feed does not acknowledge its read. The
 route keeps it across a reload, as a thread's does.
 
 ### 2026-10-17 — A panel standing alone carries its crumbs, as one glass bridge

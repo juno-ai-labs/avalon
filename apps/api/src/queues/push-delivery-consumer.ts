@@ -51,7 +51,7 @@ type PushContent =
     substreamId: string | null;
     /** The artifact the notification opens its thread onto, expanded. */
     artifactId?: string;
-    /** A thread's merge opens where it landed: this Channel, not the thread. */
+    /** A merge from a thread the person cannot open opens its Channel instead. */
     channelId?: string;
   };
 
@@ -113,11 +113,13 @@ async function activityContent(env: Env, workspace: WorkspaceStub, message: Push
     substreamId: item.kind === "merged" ? null : item.breakout?.substreamId ?? null,
     // A pinned artifact's update opens the artifact, not just its thread.
     ...(item.kind === "artifact_updated" && item.artifact ? { artifactId: item.artifact.resourceId } : {}),
-    ...(item.kind === "merged" && item.mergedInto ? { channelId: item.mergedInto.channelId } : {}),
+    // The thread when the person can open it, which every client can follow
+    // (the iOS build parses no Channel link); otherwise the Channel it landed in.
+    ...(item.kind === "merged" && item.mergedInto?.threadPrivate ? { channelId: item.mergedInto.channelId } : {}),
   };
 }
 
-/** Where a delivery links: the Channel a merge landed in, else the thread. */
+/** Where a delivery links: the Channel a private thread's merge landed in, else the thread. */
 async function contentUrl(env: Env, workspaceId: string, content: Extract<PushContent, { outcome: "ready" }>): Promise<string> {
   if (content.channelId) {
     return spaceCanonicalUrl(env.PUBLIC_WEB_BASE_URL, { region: env.AVALON_REGION, workspaceId, spaceId: content.channelId });

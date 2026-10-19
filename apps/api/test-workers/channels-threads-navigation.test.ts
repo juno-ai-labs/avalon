@@ -1370,6 +1370,13 @@ describe("Channel merges", () => {
 
     // A retry shares nothing new: the first attempt already linked the embed.
     expect(await merge(channelId, "op-1", "A retry's words")).toEqual({ ...first, replayed: true, linked: [] });
+    // Nor does a retry that names an embed the merge never had: it wrote nothing.
+    await storeResource(OTHER_ARTIFACT, "Comp model");
+    expect(await workspace().mergeThreadIntoChannel({
+      auth: auth(OWNER), workstreamId: OPEN_THREAD, spaceId: channelId, body: "Shipped the sequence.", operationId: "op-1",
+      embeds: [{ id: OTHER_ARTIFACT, title: "Comp model", kind: "generated_file" }],
+    })).toMatchObject({ ok: true, replayed: true, linked: [] });
+    expect(await sharedThrough(OWNER, OTHER_ARTIFACT)).toBeNull();
     expect((await messages(channelId, OWNER)).map((item) => [item.message.body, item.attentionSequenceNumber]))
       .toEqual([["Shipped the sequence.", 3]]);
 

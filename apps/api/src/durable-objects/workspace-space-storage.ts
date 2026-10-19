@@ -1393,7 +1393,6 @@ export class WorkspaceSpaceStorage {
     return this.storage.transactionSync(() => {
       const target = this.channelMergeTarget(viewer, request.workstreamId, request.spaceId);
       if (!target.ok) return target;
-      const linked = linkSpaceResources(this.storage.sql, target.spaceId, request.embeds.map((embed) => embed.id));
       const posted = this.postMessage(target.spaceId, {
         author: { kind: "member", userId: asUserId(viewer.userId) },
         body: request.body,
@@ -1403,6 +1402,10 @@ export class WorkspaceSpaceStorage {
         embeds: request.embeds,
         operationId: request.operationId,
       }, now);
+      // Only a merge that was written shares what it embeds: a replay wrote
+      // nothing, so embeds a retry adds are not the merge's and stay unshared.
+      const linked = posted.replayed ? []
+        : linkSpaceResources(this.storage.sql, target.spaceId, request.embeds.map((embed) => embed.id));
       return { ok: true, spaceId: target.spaceId, name: target.name, ...posted, linked };
     });
   }
@@ -5257,7 +5260,7 @@ export class WorkspaceSpaceStorage {
   }
 
   /** Active Spaces this viewer may see, in creation order. */
-  private visibleSpaceIds(viewer: Viewer): string[] {
+  visibleSpaceIds(viewer: Viewer): string[] {
     if (!this.ready()) return [];
     const listed = this.spaceListing(viewer);
     return this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(

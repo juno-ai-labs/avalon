@@ -8,7 +8,9 @@ import type { ChannelStats, MemoryReview, MemoryReviewFact } from '@rally/contra
 import { OPEN_EXPANDED, revealChannelMessageState } from '../lib/navigation-routes';
 import { useUiStore } from '../lib/ui-store';
 import { CHANNEL_STATS_QUERY_KEY } from '../lib/sidebar-list-store';
-import type { Workspace, WorkstreamSummary } from '../lib/types';
+import { mapResource } from '../lib/api';
+import { RESOURCE_HEADS_QUERY_KEY } from '../lib/resource-heads';
+import type { ResourceVersion, Workspace, WorkstreamSummary } from '../lib/types';
 import { ChannelScreen } from './channel';
 
 const api = vi.hoisted(() => ({
@@ -16,6 +18,8 @@ const api = vi.hoisted(() => ({
   getChannelFeed: vi.fn(),
   getResource: vi.fn(),
   getResourcePreviewContent: vi.fn(async () => new Blob(['The model, in full.'], { type: 'text/markdown' })),
+  getResourceVersions: vi.fn(async (): Promise<ResourceVersion[]> => []),
+  getResourceVersionContent: vi.fn(async () => new Blob(['The first model.'], { type: 'text/markdown' })),
   getWorkspaceMembers: vi.fn(async () => []),
   getWorkspaceInvitees: vi.fn(async () => []),
   archiveSpace: vi.fn(),
@@ -86,6 +90,17 @@ function outboundStats(overrides: Partial<ChannelStats> = {}): ChannelStats {
 function Location(): React.JSX.Element {
   const location = useLocation();
   return <div data-state={JSON.stringify(location.state)} data-testid="location">{location.pathname}</div>;
+}
+
+/** What `GET /resources/:id` answers, through the client's own mapping: no link, so no direction. */
+function priceModel(overrides: { slug?: string } = {}) {
+  return mapResource({
+    id: 'res-1', slug: overrides.slug ?? null, workspaceId: 'ws', connectionId: null, resourceType: 'generated_file',
+    provider: 'avalon', providerResourceId: null, title: 'Price model', mimeType: 'text/markdown', canonicalUrl: null,
+    refreshSupported: false, watchEnabled: false, watchStatus: 'unsupported', lastHydratedAt: null,
+    createdAt: '2026-10-02T03:00:00.000Z', updatedAt: '2026-10-02T03:00:00.000Z',
+    contentAvailable: true, sizeBytes: 19, currentVersion: 2,
+  } as Parameters<typeof mapResource>[0]);
 }
 
 function renderChannel(path = '/channels/outbound', seed: (client: QueryClient) => void = () => undefined, state: unknown = null) {
@@ -486,11 +501,7 @@ describe('a Channel', () => {
     ] });
     renderChannel();
     const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
-    api.getResource.mockResolvedValue({
-      id: 'res-1', slug: 'calm-river-quiet-lamp', title: 'Price model', resourceType: 'generated_file', provider: 'avalon_generated',
-      mimeType: 'text/markdown', contentAvailable: true, currentVersion: 1, updatedAt: '2026-10-02T03:00:00.000Z',
-      refreshSupported: false, watchEnabled: false, watchStatus: 'unsupported', relationshipType: 'generated', direction: 'artifact',
-    });
+    api.getResource.mockResolvedValue(priceModel({ slug: 'calm-river-quiet-lamp' }));
     fireEvent.click(await feed.findByText('Price model'));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/artifacts/res-1'));
     // The Channel stays, and the artifact opens beside it, read by its id.
@@ -500,11 +511,7 @@ describe('a Channel', () => {
   });
 
   it('expands the artifact over the Channel and collapses it back, as a thread’s panel does', async () => {
-    api.getResource.mockResolvedValue({
-      id: 'res-1', title: 'Price model', resourceType: 'generated_file', provider: 'avalon_generated',
-      mimeType: 'text/markdown', contentAvailable: true, currentVersion: 1, updatedAt: '2026-10-02T03:00:00.000Z',
-      refreshSupported: false, watchEnabled: false, watchStatus: 'unsupported', relationshipType: 'generated', direction: 'artifact',
-    });
+    api.getResource.mockResolvedValue(priceModel());
     // Wide enough for the panel to sit beside the Channel.
     const width = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1_800);
     onTestFinished(() => width.mockRestore());
@@ -516,6 +523,36 @@ describe('a Channel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Collapse' }));
     expect(await screen.findByRole('button', { name: 'Expand' })).toBeInTheDocument();
     expect(useUiStore.getState().railExpanded).toBe(false);
+  });
+
+  it('offers a shared artifact’s own window and its versions, and opens an older one in its place', async () => {
+    api.getResource.mockResolvedValue(priceModel());
+    api.getResourceVersions.mockResolvedValue([
+      { version: 2, capturedAt: '2026-10-02T03:00:00.000Z', author: null, cause: null, contentAvailable: true, title: 'Price model', mimeType: 'text/markdown' },
+      { version: 1, capturedAt: '2026-10-01T03:00:00.000Z', author: null, cause: null, contentAvailable: true, title: 'Price model, draft', mimeType: 'text/markdown' },
+    ]);
+    const width = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1_800);
+    onTestFinished(() => width.mockRestore());
+    renderChannel('/channels/outbound/artifacts/res-1');
+    await screen.findByRole('complementary', { name: 'Resource: Price model' });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Artifact menu: Price model' }), { button: 0, ctrlKey: false });
+    expect(await screen.findByRole('menuitem', { name: 'New window' })).toBeVisible();
+    fireEvent.click(screen.getByRole('menuitem', { name: /Versions/u }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /V1/u }));
+    expect(await screen.findByText('Version 1 · not current')).toBeInTheDocument();
+    expect(api.getResourceVersionContent).toHaveBeenCalledWith('res-1', 1, expect.anything());
+  });
+
+  it('moves to a version published while the panel is open', async () => {
+    api.getResource.mockResolvedValue(priceModel());
+    const { client } = renderChannel('/channels/outbound/artifacts/res-1');
+    await screen.findByRole('complementary', { name: 'Resource: Price model' });
+    client.setQueryData(RESOURCE_HEADS_QUERY_KEY, { 'res-1': {
+      resourceId: 'res-1', version: 3, title: 'Price model, final', mimeType: 'text/markdown',
+      updatedAt: '2026-10-03T03:00:00.000Z', contentAvailable: true, sizeBytes: 30,
+    } });
+    expect(await screen.findByRole('complementary', { name: 'Resource: Price model, final' })).toBeInTheDocument();
+    await waitFor(() => expect(api.getResourcePreviewContent).toHaveBeenCalledTimes(2));
   });
 
   it('says so when the artifact it opens cannot be read', async () => {
@@ -827,6 +864,23 @@ describe('a Channel', () => {
       expect(api.recordActivityEvents).toHaveBeenCalledWith([
         { kind: 'read', subject: { kind: 'channel', channelId: 'outbound' }, through: 2 },
       ]);
+    });
+
+    it('acknowledges nothing while an artifact covers the feed, and reads it once the artifact closes', async () => {
+      api.getResource.mockResolvedValue(priceModel());
+      api.acknowledgeChannelRead.mockResolvedValue(outboundStats({
+        readThroughSequenceNumber: 2, firstUnreadSequenceNumber: null, hasUnread: false,
+      }));
+      // A narrow window, where the panel fills the pane.
+      const width = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(900);
+      onTestFinished(() => width.mockRestore());
+      renderChannel('/channels/outbound/artifacts/res-1', (seeded) => seeded.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats()]));
+
+      await screen.findByRole('complementary', { name: 'Resource: Price model' });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(api.acknowledgeChannelRead).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Close panel' }));
+      await waitFor(() => expect(api.acknowledgeChannelRead).toHaveBeenCalledWith('outbound', 2));
     });
 
     it('puts the dot back when the read was not recorded, and does not try again', async () => {
