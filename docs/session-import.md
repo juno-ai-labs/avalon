@@ -189,8 +189,9 @@ contract 1.
    the same D1 retire as the run-end reclaim (`retireUnopenedImportKey`) and,
    when it matches, archives the thread through `discardReservedMain`. A key
    `complete` has claimed or finished is refused, so an import that opened is
-   never touched; its row is simply dropped. A reclaim that throws keeps its
-   row and retries at its own gate.
+   never touched; its row is simply dropped. Each row is claimed, its gate
+   advanced, before the D1 call, so a reclaim that throws or a pass cut off
+   part way keeps its row and retries at that gate.
 
 ### Importing as a Breakout
 
@@ -463,7 +464,8 @@ HTML/code artifacts remain stored files; importing does not launch a site.
   and its ownership check, a Channel archived when its run ends unopened, and
   one taken back by its create key after a start whose launch and retire both
   failed, and the Organization's reservation watch: archiving a start cut off
-  after its reservation, and dropping the watch on one that opened.
+  after its reservation, dropping the watch on one that opened, and gating a
+  failed reclaim for a retry.
 - `test/workspace-import-reservation-reclaim-migration.test.ts`: migration 119
   watches each listed, unopened import reservation and no other thread.
 - `test/session-import.test.ts`: which conversation and provider a source URL names.

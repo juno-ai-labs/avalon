@@ -23,6 +23,7 @@ import { prepareSessionImport } from "../src/services/session-import-files";
 import { SessionImportRunService } from "../src/services/session-import-run-service";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
+import { reclaimDueImportReservations } from "../src/durable-objects/import-reservation-reclaim";
 import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 import { useOpenRouterDouble, type ProviderCall } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
@@ -693,4 +694,27 @@ describe("a conversation import run", () => {
       .bind(workstreamId).first()).toEqual({ state: "completed" });
     expect(await watchedReservations(workstreamId)).toEqual([]);
   }, 60_000);
+
+  it("keeps a reservation whose reclaim fails, gated for a retry rather than due again at once", async () => {
+    const parentId = "00000000-0000-7000-8000-0000000001e1";
+    const failures: string[] = [];
+    const watch = await runInDurableObject(workspace(), async (_instance, state) => {
+      const now = Date.now();
+      state.storage.sql.exec(
+        "INSERT INTO import_reservation_reclaim(parent_id, user_id, due_at, attempts) VALUES (?, ?, ?, 0)",
+        parentId, USER_ID, now - 1,
+      );
+      await reclaimDueImportReservations({
+        sql: state.storage.sql,
+        now,
+        reclaim: async () => { throw new Error("D1_ERROR: Network connection lost."); },
+        retryAt: (attempt) => now + attempt * 60_000,
+        onFailure: ({ parentId: failed }) => { failures.push(failed); },
+      });
+      return { now, row: state.storage.sql.exec<{ due_at: number; attempts: number }>(
+        "SELECT due_at, attempts FROM import_reservation_reclaim WHERE parent_id = ?", parentId).one() };
+    });
+    expect(watch.row).toEqual({ due_at: watch.now + 60_000, attempts: 1 });
+    expect(failures).toEqual([parentId]);
+  });
 });
