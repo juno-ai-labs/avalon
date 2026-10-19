@@ -1,11 +1,19 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { describe, expect, it, vi } from 'vitest';
-import type { EmbeddedBrowserCommand, EmbeddedBrowserState, EmbeddedBrowserTab } from '../../common/embedded-browser';
+import type { EmbeddedBrowserCommand, EmbeddedBrowserHostRequest, EmbeddedBrowserState, EmbeddedBrowserTab } from '../../common/embedded-browser';
 import { useRef } from 'react';
 import { EmbeddedBrowserTabs, useEmbeddedBrowserShortcuts } from './embedded-browser-view';
 
-vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ onEmbeddedBrowserFocusAddress: () => () => undefined }) }));
+const hostRequests = vi.hoisted(() => new Set<(request: EmbeddedBrowserHostRequest) => void>());
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => ({
+    onEmbeddedBrowserHostRequest: (listener: (request: EmbeddedBrowserHostRequest) => void) => {
+      hostRequests.add(listener);
+      return () => hostRequests.delete(listener);
+    },
+  }),
+}));
 
 const tab = (id: string, title: string, extra: Partial<EmbeddedBrowserTab> = {}): EmbeddedBrowserTab => ({
   id, title, url: `https://${id}.example/`, loading: false, canGoBack: false, canGoForward: false, favicon: null, ...extra,
@@ -52,7 +60,7 @@ describe('the browser tab strip', () => {
     expect(onNewTab).toHaveBeenCalledOnce();
   });
 
-  it('hands closing the only blank tab to the host, and closes any other tab', () => {
+  it('hands closing the only tab to the host, closing it first unless it is blank', () => {
     const command = vi.fn<(input: EmbeddedBrowserCommand) => Promise<void>>(async () => undefined);
     const onCloseLast = vi.fn();
     const only = (extra: Partial<EmbeddedBrowserTab>): EmbeddedBrowserState => ({ activeTabId: 'a', tabs: [tab('a', '', extra)] });
@@ -69,10 +77,10 @@ describe('the browser tab strip', () => {
     </Tooltip.Provider>);
     fireEvent.click(screen.getByRole('button', { name: 'Close New tab' }));
     expect(command).toHaveBeenLastCalledWith({ action: 'close', tabId: 'a' });
-    expect(onCloseLast).toHaveBeenCalledTimes(3);
+    expect(onCloseLast).toHaveBeenCalledTimes(4);
   });
 
-  it('hands the close shortcut on the only blank tab to the host, and closes any other tab', () => {
+  it('hands the close shortcut on the only tab to the host, closing it first unless it is blank', () => {
     const command = vi.fn<(input: EmbeddedBrowserCommand) => Promise<void>>(async () => undefined);
     const onCloseLast = vi.fn();
     function Host({ state }: { state: EmbeddedBrowserState }): React.JSX.Element {
@@ -90,7 +98,12 @@ describe('the browser tab strip', () => {
     rerender(<Host state={only({})} />);
     fireEvent.keyDown(window, { key: 'w', code: 'KeyW', ctrlKey: true, metaKey: true });
     expect(command).toHaveBeenLastCalledWith({ action: 'close', tabId: 'a' });
-    expect(onCloseLast).toHaveBeenCalledOnce();
+    expect(onCloseLast).toHaveBeenCalledTimes(2);
+    // ⌘W inside the page reaches the host as a request from main.
+    command.mockClear();
+    for (const listener of hostRequests) listener('close-last-tab');
+    expect(command).toHaveBeenCalledExactlyOnceWith({ action: 'close', tabId: 'a' });
+    expect(onCloseLast).toHaveBeenCalledTimes(3);
   });
 
   it('moves a dragged tab to where it is dropped', () => {

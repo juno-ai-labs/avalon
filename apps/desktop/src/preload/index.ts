@@ -19,7 +19,7 @@ import type {
 import type { MessageExportResult } from '../common/message-export';
 import type { DesktopReleaseChannel } from '../common/release-channels';
 import type { DesktopRealtimeSocketEvent } from '../common/realtime-socket';
-import type { EmbeddedBrowserResult, EmbeddedBrowserState } from '../common/embedded-browser';
+import type { EmbeddedBrowserHostRequest, EmbeddedBrowserResult, EmbeddedBrowserState } from '../common/embedded-browser';
 import type { BrowserImportContext, BrowserImportProgress } from '../common/browser-import';
 import {
   REALTIME_SOCKET_IPC_CHANNELS,
@@ -240,10 +240,10 @@ const bridge: RallyDesktopBridge = {
   commandEmbeddedBrowser: (command) => ipcRenderer.invoke('embedded-browser:command', command) as Promise<EmbeddedBrowserResult>,
   setEmbeddedBrowserBounds: (bounds) => ipcRenderer.invoke('embedded-browser:bounds', bounds) as Promise<void>,
   setEmbeddedBrowserVisible: (visible) => ipcRenderer.invoke('embedded-browser:visible', visible) as Promise<void>,
-  onEmbeddedBrowserFocusAddress: (listener) => {
-    const handler = (): void => listener();
-    ipcRenderer.on('embedded-browser:focus-address', handler);
-    return () => ipcRenderer.removeListener('embedded-browser:focus-address', handler);
+  onEmbeddedBrowserHostRequest: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, request: EmbeddedBrowserHostRequest): void => listener(request);
+    ipcRenderer.on('embedded-browser:host-request', handler);
+    return () => ipcRenderer.removeListener('embedded-browser:host-request', handler);
   },
   onEmbeddedBrowserState: (listener) => {
     embeddedBrowserListeners.add(listener);
