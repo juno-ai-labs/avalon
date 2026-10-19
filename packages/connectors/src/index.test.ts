@@ -1,6 +1,6 @@
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { z } from "zod";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { alreadyAborted, neverAborts } from "./test-signals";
 import { NormalizedActivitySchema } from "@rally/contracts";
 import { createAshbyConnector } from "./ashby";
@@ -1572,7 +1572,10 @@ describe("connectors", () => {
     });
   });
 
-  it("adds an attendee without dropping the ones the event already has", async () => {
+  it.each([
+    { addAttendeeEmails: ["new@example.com"] },
+    { addAttendeeEmails: ["new@example.com"], removeAttendeeEmails: [], replaceAllAttendeeEmails: [] }
+  ])("adds an attendee without dropping the ones the event already has: %j", async (attendeeChange) => {
     const requests: Array<{ method: string; url: URL; body: Record<string, unknown> }> = [];
     const fetcher: typeof fetch = async (input, init) => {
       const url = requestUrl(input);
@@ -1587,7 +1590,7 @@ describe("connectors", () => {
     };
     await googleAdapter(fetcher).executeTool(
       "calendar.update_event",
-      { eventId: "event-existing", addAttendeeEmails: ["new@example.com"] },
+      { eventId: "event-existing", ...attendeeChange },
       {
         connection: googleConnection(["calendar.read", "calendar.write"]),
         principal: { type: "user", userId: TEST_USER_ID },
@@ -1621,7 +1624,12 @@ describe("connectors", () => {
     };
     await googleAdapter(fetcher).executeTool(
       "calendar.update_event",
-      { eventId: "event-existing", replaceAllAttendeeEmails: ["kept@example.com", "added@example.com"] },
+      {
+        eventId: "event-existing",
+        addAttendeeEmails: [],
+        removeAttendeeEmails: [],
+        replaceAllAttendeeEmails: ["kept@example.com", "added@example.com"]
+      },
       {
         connection: googleConnection(["calendar.read", "calendar.write"]),
         principal: { type: "user", userId: TEST_USER_ID },
@@ -1632,6 +1640,60 @@ describe("connectors", () => {
       { email: "kept@example.com", responseStatus: "accepted" },
       { email: "added@example.com" }
     ]);
+  });
+
+  it("removes an attendee when the unused attendee changes are empty", async () => {
+    let patched: Record<string, unknown> = {};
+    const fetcher: typeof fetch = async (input, init) => {
+      if ((init?.method ?? "GET") === "GET") {
+        return googleJson({ attendees: [{ email: "kept@example.com" }, { email: "removed@example.com" }] });
+      }
+      patched = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return googleJson({ id: "event-existing" });
+    };
+    await googleAdapter(fetcher).executeTool(
+      "calendar.update_event",
+      {
+        eventId: "event-existing",
+        addAttendeeEmails: [],
+        removeAttendeeEmails: ["removed@example.com"],
+        replaceAllAttendeeEmails: []
+      },
+      {
+        connection: googleConnection(["calendar.read", "calendar.write"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: neverAborts()
+      }
+    );
+    expect(patched.attendees).toEqual([{ email: "kept@example.com" }]);
+  });
+
+  it("rejects an update with only empty attendee changes before contacting Google", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    await expect(googleAdapter(fetcher).executeTool(
+      "calendar.update_event",
+      { eventId: "event-existing", addAttendeeEmails: [], removeAttendeeEmails: [], replaceAllAttendeeEmails: [] },
+      {
+        connection: googleConnection(["calendar.write"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: neverAborts()
+      }
+    )).rejects.toThrow(/Choose at least one event field to update/u);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("rejects nonempty replacement and relative attendee changes together", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    await expect(googleAdapter(fetcher).executeTool(
+      "calendar.update_event",
+      { eventId: "event-existing", addAttendeeEmails: ["new@example.com"], replaceAllAttendeeEmails: ["kept@example.com"] },
+      {
+        connection: googleConnection(["calendar.write"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: neverAborts()
+      }
+    )).rejects.toThrow(/Use replaceAllAttendeeEmails alone/u);
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("does not mail the guest list when the requested change leaves it identical", async () => {
@@ -1802,7 +1864,7 @@ describe("connectors", () => {
     };
     await googleAdapter(recording).executeTool(
       "calendar.update_event",
-      { eventId: "event-existing", summary: "Renamed", addAttendeeEmails: [] },
+      { eventId: "event-existing", summary: "Renamed", addAttendeeEmails: [], removeAttendeeEmails: [], replaceAllAttendeeEmails: [] },
       {
         connection: googleConnection(["calendar.read", "calendar.write"]),
         principal: { type: "user", userId: TEST_USER_ID },
