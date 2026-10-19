@@ -122,18 +122,24 @@ stateful artifact runs. See [`live-web-artifacts.md`](live-web-artifacts.md).
 
 ### D1
 
-`run_d1_sql` runs SQL against one of the five D1 databases the regional API
-Worker binds: `DB`, `TELEMETRY_DB`, `AUDIT_DB`, `USAGE_DB` and `PLATFORM_DB`.
+`run_d1_sql` runs SQL against four of the five D1 databases the regional API
+Worker binds: `DB`, `TELEMETRY_DB`, `USAGE_DB` and `PLATFORM_DB`. `AUDIT_DB`
+is left out: it records privileged actions such as impersonation and support
+access, D1 offers no read-only binding, and this Worker's log does not record
+the SQL it ran, so a write there would erase the record without leaving one.
 The caller names the region and the binding, and the bridge's `runD1Sql` runs
-the statement through that binding. There is nothing to resolve: a D1 database
-has no authority generation, and naming it cannot create one. `PLATFORM_DB` is
-one database every region binds, so any region reaches the same rows.
+the statement through that binding. `PLATFORM_DB` is one database every region
+binds, so any region reaches the same rows.
 
-The result has the Durable Object tools' shape. D1 returns rows as objects, so
-`columns` comes from the first row and is empty when no row returns; it returns
+The result has the Durable Object tools' shape, with two differences D1
+forces. D1 returns rows as objects, so `columns` comes from the first row and is
+empty when no row returns; `raw({ columnNames: true })` would name them but
+drops `rows_read` and `rows_written`. For the same reason a later column
+overwrites an earlier one of the same name, so a JOIN aliases its duplicates. Given several statements, D1 runs them all
+only when the last alone has parameters, and answers with the last one's rows
+and counters, so `rowsWritten` misses an earlier statement's writes. D1 returns
 a BLOB as an array of bytes, which the bridge turns into `{ type: "blob",
-base64 }`. Given several statements D1 runs them all and answers with the last
-one's rows and counters. D1 refuses `BEGIN` and `SAVEPOINT`.
+base64 }`, and refuses `BEGIN` and `SAVEPOINT`.
 
 ### Feature and model flags
 
@@ -207,7 +213,6 @@ names the view only; filter values and the needle can quote product data.
 ## Invariants and contracts
 
 - D1 locates authority; it never substitutes for Durable Object product state.
-  `run_d1_sql` reads and repairs D1's own rows, not a copy of an object's.
 - The bridge accepts workspace identity only in the current
   `durable_object_open` generation with a compatible serving contract.
   The regional `workspaces` row is the deterministic WorkspaceDO route;
@@ -432,8 +437,8 @@ primary and fallbacks. Ace owns validation and the atomic write.
 ### 2026-10-19 — Read and write D1
 
 **What changed:** `run_d1_sql` runs SQL against a named region's `DB`,
-`TELEMETRY_DB`, `AUDIT_DB`, `USAGE_DB` or `PLATFORM_DB` through a new bridge
-method, `runD1Sql`, and returns the Durable Object tools' result shape.
+`TELEMETRY_DB`, `USAGE_DB` or `PLATFORM_DB` through a new bridge method,
+`runD1Sql`, and returns the Durable Object tools' result shape.
 
 **Why:** The console reached every Durable Object database but not D1, so
 reading or repairing a user, membership or route row meant `wrangler d1
@@ -441,15 +446,19 @@ execute` with a deployment token, or the Cloudflare dashboard.
 
 **Considered and rejected:** Cloudflare's D1 HTTP API from this Worker, which
 needs an account token able to write every D1 database in the account; the
-regional Worker already holds exactly these five bindings. One tool per
+regional Worker already holds these bindings. Reaching `AUDIT_DB` too, which
+would let any Access member erase the impersonation and support-access record
+untraced; a read-only check on D1's `rows_written` runs only after the write.
+One tool per
 database, which repeats one call for what is one argument. Resolving the
 region from an ID, as the object tools do: a D1 row has no single owning ID,
 so the caller names the region.
 
 **Consequences:** Access membership now includes writing every regional D1
-database, the usage ledger and the shared platform routing table included. A
-new D1 binding on the API Worker is reachable once it is added to
-`ENGINEERING_D1_DATABASES`.
+database but the audit trail, the usage ledger and the shared platform routing
+table included. A new D1 binding on the API Worker is reachable once it is
+added to `ENGINEERING_D1_DATABASES`; reading `AUDIT_DB` here needs a read-only
+path D1 does not provide today.
 
 ### 2026-10-19 — Query Workers Logs and Traces
 

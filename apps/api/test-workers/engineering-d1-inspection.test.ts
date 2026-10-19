@@ -11,7 +11,7 @@ const TEST_ENV: Env = env;
 
 beforeEach(async () => {
   await reset();
-  await env.AUDIT_DB.prepare("CREATE TABLE inspected (id INTEGER PRIMARY KEY, label TEXT, payload BLOB)").run();
+  await env.TELEMETRY_DB.prepare("CREATE TABLE inspected (id INTEGER PRIMARY KEY, label TEXT, payload BLOB)").run();
 });
 
 describe("engineering inspection of a D1 database", () => {
@@ -19,31 +19,45 @@ describe("engineering inspection of a D1 database", () => {
     const inspection = new EngineeringInspectionBridge(createExecutionContext(), TEST_ENV);
 
     await expect(inspection.runD1Sql({
-      database: "AUDIT_DB",
+      database: "TELEMETRY_DB",
       query: { sql: "INSERT INTO inspected (id, label, payload) VALUES (?, ?, X'0102FF')", bindings: [1, "first"] },
     })).resolves.toMatchObject({
       region: "global",
-      database: "AUDIT_DB",
+      database: "TELEMETRY_DB",
       result: { rows: [], rowsWritten: 1 },
     });
 
     await expect(inspection.runD1Sql({
-      database: "AUDIT_DB",
+      database: "TELEMETRY_DB",
       query: { sql: "SELECT id, label, payload FROM inspected", bindings: [] },
     })).resolves.toMatchObject({
       region: "global",
-      database: "AUDIT_DB",
+      database: "TELEMETRY_DB",
       result: {
         columns: ["id", "label", "payload"],
         rows: [{ id: 1, label: "first", payload: { type: "blob", base64: "AQL/" } }],
       },
     });
 
-    const audit = await env.AUDIT_DB.prepare("SELECT label FROM inspected").all();
-    expect(audit.results).toEqual([{ label: "first" }]);
+    const telemetry = await env.TELEMETRY_DB.prepare("SELECT label FROM inspected").all();
+    expect(telemetry.results).toEqual([{ label: "first" }]);
     await expect(inspection.runD1Sql({
-      database: "TELEMETRY_DB",
+      database: "DB",
       query: { sql: "SELECT label FROM inspected", bindings: [] },
     })).rejects.toThrow(/no such table/);
+  });
+
+  it("refuses the audit database without running the statement", async () => {
+    await env.AUDIT_DB.prepare("CREATE TABLE audited (id INTEGER PRIMARY KEY)").run();
+    await env.AUDIT_DB.prepare("INSERT INTO audited (id) VALUES (1)").run();
+    const inspection = new EngineeringInspectionBridge(createExecutionContext(), TEST_ENV);
+
+    await expect(inspection.runD1Sql({
+      database: "AUDIT_DB",
+      query: { sql: "DELETE FROM audited", bindings: [] },
+    } as never)).rejects.toThrow();
+
+    const audit = await env.AUDIT_DB.prepare("SELECT id FROM audited").all();
+    expect(audit.results).toEqual([{ id: 1 }]);
   });
 });
