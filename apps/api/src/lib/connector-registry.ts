@@ -194,6 +194,7 @@ function buildConnectorRegistry(env: Env) {
     observer: (level, event, fields) => logStructuredEvent(env, level, event, fields),
     documents: connectorDocumentReader(env),
     customMcp,
+    apollo: { redirectUri: new URL("/connections/apollo/callback", env.PUBLIC_API_BASE_URL).toString() },
     ashby: { redirectUri: new URL("/connections/ashby/callback", env.PUBLIC_API_BASE_URL).toString() },
     canva,
     ...(fireflies ? { fireflies } : {}),

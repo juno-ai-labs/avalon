@@ -56,6 +56,7 @@ const CATALOG: Readonly<Record<string, CatalogEntry>> = {
     name: 'GitHub',
     description: cardDescription('github'),
   },
+  apollo: { name: 'Apollo.io', description: cardDescription('apollo') },
   ashby: {
     name: 'Ashby',
     description: cardDescription('ashby'),

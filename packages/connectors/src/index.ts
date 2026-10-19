@@ -84,6 +84,8 @@ export {
 } from "./hosted-mcp";
 import { createCustomMcpConnector, type CustomMcpConnectorConfig } from "./custom-mcp";
 import { createGitHubConnector, type GitHubConnectorConfig } from "./github";
+import { createApolloConnector, type ApolloConnectorConfig } from "./apollo";
+export { createApolloConnector, ApolloCapabilities, ApolloAgentPluginDescriptor, APOLLO_MCP_URL, type ApolloConnectorConfig } from "./apollo";
 import { createAshbyConnector, type AshbyConnectorConfig } from "./ashby";
 import { createFirefliesConnector, type FirefliesConnectorConfig } from "./fireflies";
 import { createGranolaConnector, type GranolaConnectorConfig } from "./granola";
@@ -5425,6 +5427,7 @@ export function connectorSupportsSurface(
 export function createConnectorRegistry(input: {
   observer?: ConnectorObserver;
   customMcp?: CustomMcpConnectorConfig;
+  apollo?: ApolloConnectorConfig;
   ashby?: AshbyConnectorConfig;
   canva?: CanvaConnectorConfig;
   fireflies?: FirefliesConnectorConfig;
@@ -5454,6 +5457,10 @@ export function createConnectorRegistry(input: {
   if (input.ashby) adapters.push(createAshbyConnector({
     ...input.ashby,
     fetch: instrumentConnectorFetch("ashby", input.ashby.fetch ?? globalThis.fetch, input.observer),
+  }));
+  if (input.apollo) adapters.push(createApolloConnector({
+    ...input.apollo,
+    fetch: instrumentConnectorFetch("apollo", input.apollo.fetch ?? globalThis.fetch, input.observer),
   }));
   if (input.canva) adapters.push(createCanvaConnector(input.canva));
   if (input.fireflies) adapters.push(createFirefliesConnector({

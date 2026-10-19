@@ -317,6 +317,7 @@ const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, re
   // A configured server publishes its own scopes through protected-resource
   // metadata, and Rally asks for exactly those. There is no Rally-authored
   // scope vocabulary to map a capability onto here.
+  apollo: { "apollo.personal.mcp": [] },
   canva: { "canva.personal.mcp": [] },
   ashby: { "ashby.personal.mcp": [] },
   custom_mcp: {
@@ -1738,7 +1739,7 @@ export class ConnectionService {
         throw new ApiError(409, "connector_account_mismatch", `Reconnect the same ${adapter.manifest.displayName} account`);
       }
       existingCredentials = (await this.context(existing)).credentials;
-    } else if (provider === "ashby" || provider === "canva") {
+    } else if (provider === "apollo" || provider === "ashby" || provider === "canva") {
       existing = await this.env.DB.prepare("SELECT * FROM connector_connections WHERE workspace_id = ? AND owner_user_id = ? AND connector_type = ? AND scope = 'personal' AND status <> 'disabled'")
         .bind(row.workspace_id, row.user_id, provider).first<StoredConnection>();
       if (existing) { connectionId = existing.id; existingCredentials = (await this.context(existing)).credentials; }
@@ -1876,6 +1877,9 @@ export class ConnectionService {
           at,
         ), attemptId, connectionId);
       } catch (error) {
+        if (provider === "apollo" && isUniqueConstraintError(error)) {
+          throw new ApiError(409, "apollo_connection_exists", "Your Apollo.io account is already connected. Reopen its connection in Settings.");
+        }
         if (provider === "ashby" && isUniqueConstraintError(error)) {
           throw new ApiError(409, "ashby_connection_exists", "Your Ashby account is already connected. Reopen its connection in Settings.");
         }
@@ -2200,6 +2204,7 @@ export class ConnectionService {
       || connection.connector_type === "notion"
       || connection.connector_type === "slack"
       || (connection.connector_type === "ashby" && connection.scope === "personal")
+      || connection.connector_type === "apollo"
       || connection.connector_type === "canva"
       || (connection.connector_type === "fireflies" && connection.scope === "personal")
       || (connection.connector_type === "granola" && connection.scope === "personal")
@@ -4714,7 +4719,7 @@ function verifiedIdentityConfig(
   // same reason: the authorization publishes no user identity, so there is none
   // to join on. Falling through would split the URL on its scheme colon and
   // record every Fireflies member's tenant as "https".
-  if (provider === "fireflies" || provider === "canva") return {
+  if (provider === "apollo" || provider === "fireflies" || provider === "canva") return {
     providerTenantId: providerAccountId,
     providerUserId: null,
     handle: null,

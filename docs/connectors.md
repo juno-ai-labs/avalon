@@ -66,6 +66,14 @@ card latches that success: a historical card does not turn back into a recovery
 action if the provider later revokes the grant; a new agent state read owns that
 later decision.
 
+Apollo.io is a personal-only hosted-MCP connector (`apollo.personal.mcp`) on
+web and desktop. It uses provider OAuth and live tools for prospecting,
+enrichment and sales work; it has no workspace connection or event ingestion.
+[Hosted MCP](hosted-mcp-connectors.md) owns its protocol and
+[provider prerequisites](provider-apps.md#apolloio-personal-oauth-and-sidekick-events)
+record why Apollo's manually configured Workflow webhooks are a separate future
+Sidekick integration rather than an API subscription Rally can install.
+
 ## Where the code lives
 
 | Path | Responsibility |

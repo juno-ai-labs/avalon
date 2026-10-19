@@ -12,6 +12,7 @@ import Slack from '@thesvg/react/slack';
 import X from '@thesvg/react/x';
 import type { ComponentType } from 'react';
 import Ashby from './brand-marks/ashby';
+import Apollo from './brand-marks/apollo';
 import Fireflies from './brand-marks/fireflies';
 
 /**
@@ -55,9 +56,10 @@ export type PluginBrandMarkComponent =
  * is what a custom MCP server wears when its name spells out no company here.
  */
 export const PLUGIN_BRAND_MARKS: Record<
-  'apple' | 'ashby' | 'canva' | 'cloudflare' | 'fireflies' | 'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'model-context-protocol' | 'notion' | 'slack' | 'x',
+  'apollo' | 'apple' | 'ashby' | 'canva' | 'cloudflare' | 'fireflies' | 'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'model-context-protocol' | 'notion' | 'slack' | 'x',
   PluginBrandMarkComponent
 > = {
+  apollo: { Mark: Apollo, mono: true },
   apple: { Mark: Apple, mono: true },
   canva: { Mark: Canva, mono: true },
   cloudflare: { Mark: Cloudflare, mono: true },
@@ -108,6 +110,7 @@ export function connectorBrandMark(
   displayName?: string,
 ): PluginBrandMark | null {
   switch (connectorType) {
+    case 'apollo': return 'apollo';
     case 'ashby': return 'ashby';
     case 'canva': return 'canva';
     case 'fireflies': return 'fireflies';
