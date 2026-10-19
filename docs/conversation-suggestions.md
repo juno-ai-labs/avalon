@@ -82,8 +82,16 @@ it, and archives it; the outcome of the step is one `turn_disposition_outcome`
 log line naming the gate or the code.
 
 An incoming Breakout merge starts no run. Publishing its canonical transcript
-turn from the durable realtime outbox defers the same observer through
-`waitUntil`, whether it landed immediately or waited behind pending input.
+turn persists and arms a `merge_suggestion` entry in the shared durable alarm
+store before acknowledging the realtime reference, whether it landed immediately
+or waited behind pending input. The alarm runs the same observer and is retired
+only after a terminal judgement and draft state. Isolate loss leaves the intent
+to replay; a pending draft resumes through the observer's existing gate.
+Transient classifier failures and step failures reuse the backfill's retry
+policy and the shared scheduler's backoff. Missing provider credentials settle
+without a suggestion, as they do in the backfill. A merge with no eligible
+Channel skips before context construction or a provider call. The classifier
+receives the stored author's kind, so a person's merged result is `person`.
 The candidate picker includes these merged
 results among the same newest three readable messages, and the judgement uses
 `merge:<turnId>` as its stable key in the existing `run_id` slot. Replays resume
@@ -245,7 +253,7 @@ What this version deliberately leaves out, and why:
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test-workers/merge-suggestion-candidate.test.ts` (real workerd) | Canonical admission and queued delivery reach the observer without starting an agent run. Removing the publication hook makes the judgement assertion fail. |
+| `apps/api/test-workers/merge-suggestion-candidate.test.ts` (real workerd) | Canonical admission and queued delivery reach the observer without starting an agent run; eviction with a pending draft resumes the draft and retires its durable intent. Removing the publication hook makes the judgement assertion fail. |
 | `apps/api/test/conversation-suggestions.test.ts` (Node, real object schema, TypeSafe fetch double) | Every gate in order; one row and one judgement per confident positive; the recorded codes; a replayed settlement asking nothing and a pending row resumed; `late`; pacing at a finite and at the open value; the expiry at the third newer readable message and not the second; the three resolutions; a draft filled and a draft withdrawn; a recorded classifier failure asked again; a run judged by another caller during the call written nothing; a draft in flight not resumed; `newestSettledTurn` picking the newest completed final turn within three and nothing behind them or for a run still running. Proved by breaking: the expiry count, the idempotency gate, the failure re-ask and the completed-run join each made their test fail. |
 | `apps/api/test/suggestion-backfill-service.test.ts`, `apps/api/test/workspace-suggestion-backfill-migration.test.ts` | The backfill's answer to the lane (thrown on a classifier failure, settled on a missing key); migration 115 listing open threads and not archived ones. |
 | `apps/api/test/conversation-suggestions-route.test.ts` (Node, typed double) | The dismiss route's addressing (the Breakout's object, Main for `0`), read admission, and refusals. |
@@ -288,13 +296,18 @@ for the words, on the access-controlled inference path.
 ### 2026-10-19 — Incoming Breakout results can be suggested for onward merge
 
 The candidate picker and observer now admit an incoming merged result as well
-as a completed Rally output. Canonical transcript publication defers the
-existing observer, using `merge:<turnId>` for replay identity. Previously a
+as a completed Rally output. Canonical transcript publication persists a
+`merge_suggestion` alarm before acknowledging realtime delivery, using
+`merge:<turnId>` for replay identity. The alarm retains the intent through
+classification and drafting, including isolate loss while a draft is pending.
+Previously a
 merge started no run and therefore never reached the settlement-only observer,
 so it could not be suggested for its next hop into a Channel. Starting an agent
 run for this would change the meaning of merge; duplicating the classifier
 would split its recency, resolution and draft rules. Ordinary human messages
-remain excluded, and incoming merges offer only merge suggestions.
+remain excluded, incoming merges offer only merge suggestions, and a missing
+eligible Channel skips the classifier entirely. Judged authors retain the same
+person/Rally attribution as the recent context.
 
 ### 2026-10-19 — Existing conversations judged once, through the thread backfill
 
