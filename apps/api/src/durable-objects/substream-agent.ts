@@ -94,7 +94,7 @@ import {
 import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
 import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { uuidV7 } from "../lib/uuid-v7";
-import { ConversationSuggestionStorage, observeTurnDisposition, suggestionForClient, type SuggestionParent, type SuggestionRow } from "./conversation-suggestions";
+import { ConversationSuggestionStorage, mergeJudgementKey, observeTurnDisposition, suggestionForClient, type SuggestionParent, type SuggestionRow } from "./conversation-suggestions";
 import { createClassifierDiagnosticSink } from "../services/classifier-diagnostics";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { AUTHORITY_FENCED_CODE } from "../runtime/object-port-error";
@@ -4138,7 +4138,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             }
           : {}),
         ...(authorization.agentExchange ? { agentExchange: authorization.agentExchange } : {}),
-        backgroundAgent: this.state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM background_agent").one().n > 0,
+        backgroundAgent: this.isBackgroundAgent(),
         ...(authorization.telemetryOperationId
           ? {
               telemetryOperationId: authorization.telemetryOperationId,
@@ -5735,7 +5735,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     await this.initialized;
     const settled = this.suggestions.newestSettledTurn();
     if (!settled) return { outcome: "nothing_to_judge", failureKind: null };
-    const background = this.state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM background_agent").one().n > 0;
+    const background = this.isBackgroundAgent();
     return this.judgeSettledTurn(this.env, {
       workspaceId: input.workspaceId,
       parentId: input.workstreamId,
@@ -5748,6 +5748,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     });
   }
 
+  private isBackgroundAgent(): boolean {
+    return this.state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM background_agent").one().n > 0;
+  }
+
   /** The stored alarm retains this result until classification and drafting finish. */
   private async observeMergedResult(turnId: string): Promise<void> {
     const identity = this.objectStore.identity();
@@ -5756,14 +5760,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       workspaceId: identity.workspaceId,
       parentId: identity.parentId,
       substreamId: this.externalSubstreamId(),
-      harnessRunId: `merge:${turnId}`,
+      harnessRunId: mergeJudgementKey(turnId),
       finalTurnId: turnId,
       completed: true,
-      backgroundAgent: this.state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM background_agent").one().n > 0,
+      backgroundAgent: this.isBackgroundAgent(),
       parentReadFailure: "throw",
     });
     settledBackfillOutcome(judgement);
-    const row = this.suggestions.byRun(`merge:${turnId}`);
+    const row = this.suggestions.byRun(mergeJudgementKey(turnId));
     if (row?.status === "open" && row.draft_status === "pending") throw new Error("merge_suggestion_draft_pending");
   }
 
@@ -6400,13 +6404,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     for (const reference of pending) {
       try {
         const event = this.semanticRealtimeEvent(reference);
-        await this.deliverCommittedRealtimeEvent(event);
-        // Persist and arm a separate intent before acknowledging the realtime
-        // reference. The alarm survives isolate loss during either provider
-        // call, and never holds up the message's publication on the classifier.
+        // Arm before attempting publication: a failed realtime delivery must
+        // not hold back classification of the already committed merge.
         if (event.type === "transcript_turn_upserted" && event.turn.blocks.some((block) =>
           block.type === "text" && block.structuredContent?.["type"] === "conversation_merge",
         )) await this.scheduleAlarm({ kind: MERGE_SUGGESTION_ALARM_KIND, key: event.turn.turnId, dueAt: Date.parse(event.occurredAt) });
+        await this.deliverCommittedRealtimeEvent(event);
         if (!this.objectStore.acknowledgeSemanticRealtime(reference.messageId, reference.sequence)) {
           throw new Error("semantic_realtime_acknowledgement_lost");
         }

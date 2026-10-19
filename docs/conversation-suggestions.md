@@ -59,8 +59,8 @@ cheapest first, each the reason not to pay for the next:
 | --- | --- | --- |
 | 1 | A completed run's final Rally text, or an admitted `conversation_merge` result | `run_not_completed`, `final_turn_not_text` |
 | 2 | A conversation people read: not a background agent, not archived, not a system conversation such as a digest | `background_agent`, `archived`, `system_conversation` |
-| 3 | This run was not judged before (`turn_disposition_judgements` by `run_id`), checked again inside the write; a judgement recording a classifier failure does not count, and a row left `pending` by an interrupted settlement resumes at the draft instead, unless this object is drafting it right now | `already_judged`, `draft_in_flight`, or `resumed` |
-| 4 | At least one kind is offerable: a Breakout offers only `merge_up` and needs its Thread; a Thread always offers `start_breakout`, and `merge_up` too when it is placed in an Organization-wide Channel, private thread or not | `nothing_offerable` |
+| 3 | This run or incoming merged turn was not judged before (`turn_disposition_judgements` by `run_id`), checked again inside the write; a judgement recording a classifier failure does not count, and a row left `pending` by an interrupted settlement resumes at the draft instead, unless this object is drafting it right now | `already_judged`, `draft_in_flight`, or `resumed` |
+| 4 | At least one kind is offerable: a Breakout offers only `merge_up` and needs its Thread; an incoming merge offers only `merge_up` and needs its Channel; other Thread outputs always offer `start_breakout`, and `merge_up` too when placed in an Organization-wide Channel, private thread or not | `nothing_offerable` |
 | 5 | The turn was not already carried up: no `conversation_merged_into` marker after it | `already_carried_up` |
 
 Past the gates it builds the state the design specifies, reading only this
@@ -83,7 +83,7 @@ log line naming the gate or the code.
 
 An incoming Breakout merge starts no run. Publishing its canonical transcript
 turn persists and arms a `merge_suggestion` entry in the shared durable alarm
-store before acknowledging the realtime reference, whether it landed immediately
+store before attempting realtime publication, whether it landed immediately
 or waited behind pending input. The alarm runs the same observer and is retired
 only after a terminal judgement and draft state. Isolate loss leaves the intent
 to replay; a pending draft resumes through the observer's existing gate.
@@ -92,12 +92,21 @@ policy and the shared scheduler's backoff. Missing provider credentials settle
 without a suggestion, as they do in the backfill. A merge with no eligible
 Channel skips before context construction or a provider call. The classifier
 receives the stored author's kind, so a person's merged result is `person`.
-The candidate picker includes these merged
-results among the same newest three readable messages, and the judgement uses
-`merge:<turnId>` as its stable key in the existing `run_id` slot. Replays resume
+Separately, `judged_message.merged_from` identifies its Breakout origin by kind
+and title, using the existing title bound. The JEV question and evaluation
+prompt both explain that origin alone does not mean the parent needs the result.
+The candidate picker includes these merged results among the same newest three
+readable messages, and live alarms and backfill share `mergeJudgementKey` to use
+`merge:<turnId>` as the stable key in the existing `run_id` slot. Replays resume
 a pending draft or reuse the judgement. Only `merge_up` is offerable for this
 candidate: the incoming result can move onward to a Channel, while an ordinary
 human message remains outside the classifier's candidates.
+
+Each re-upsert can schedule the same turn again. A repeated schedule at the
+same instant preserves the durable alarm's retry gate; a terminal judgement
+skips another provider call. As with the backfill, a judgement recording a
+classifier failure permits a later re-upsert to ask again, including after
+credentials become available.
 
 ### The two-phase write
 
@@ -253,13 +262,14 @@ What this version deliberately leaves out, and why:
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test-workers/merge-suggestion-candidate.test.ts` (real workerd) | Canonical admission and queued delivery reach the observer without starting an agent run; eviction with a pending draft resumes the draft and retires its durable intent. Removing the publication hook makes the judgement assertion fail. |
+| `apps/api/test-workers/merge-suggestion-candidate.test.ts` (real workerd) | Canonical admission and queued delivery reach the observer without starting an agent run; a persistent realtime publication failure leaves delivery pending while classification proceeds; eviction with a pending draft resumes the draft and retires its durable intent. Removing the publication hook or moving it after publication makes the corresponding judgement assertion fail. |
 | `apps/api/test/conversation-suggestions.test.ts` (Node, real object schema, TypeSafe fetch double) | Every gate in order; one row and one judgement per confident positive; the recorded codes; a replayed settlement asking nothing and a pending row resumed; `late`; pacing at a finite and at the open value; the expiry at the third newer readable message and not the second; the three resolutions; a draft filled and a draft withdrawn; a recorded classifier failure asked again; a run judged by another caller during the call written nothing; a draft in flight not resumed; `newestSettledTurn` picking the newest completed final turn within three and nothing behind them or for a run still running. Proved by breaking: the expiry count, the idempotency gate, the failure re-ask and the completed-run join each made their test fail. |
 | `apps/api/test/suggestion-backfill-service.test.ts`, `apps/api/test/workspace-suggestion-backfill-migration.test.ts` | The backfill's answer to the lane (thrown on a classifier failure, settled on a missing key); migration 115 listing open threads and not archived ones. |
 | `apps/api/test/conversation-suggestions-route.test.ts` (Node, typed double) | The dismiss route's addressing (the Breakout's object, Main for `0`), read admission, and refusals. |
 | `apps/api/test/workstream-object-schema.test.ts` | Migration v75 and the table list. |
 | `packages/contracts/src/conversation-suggestions.test.ts` | The visibility rule; the event and snapshot shapes; an older parser stripping the key. |
 | `packages/agent-harness/src/prompts.test.ts` | The two drafter prompts' golden hashes. |
+| `packages/agent-harness/src/turn-disposition-provenance.test.ts` | Breakout provenance survives state validation and prompt serialization; ordinary messages omit it. The API observer test separately checks that stored merge metadata reaches the classifier request. |
 | `apps/desktop/src/renderer/screens/workstream-suggestions.test.tsx` | The chip under the judged turn with the drafted excerpt; visible with two newer messages, hidden at the third; the pending skeleton with the action disabled; accept opening the response card in the chip's place and the composer staying ordinary; the card merging through the route; the hover action opening the same card under its turn; dismiss hiding at once and calling the route; no merge chip for a viewer with no target; the Breakout chip opening the launch pane seeded with the prompt. |
 | `apps/desktop/src/renderer/components/conversation-suggestion.test.tsx` | The excerpt cut, the chip's controls and pending state, the card's keys and controls. |
 
@@ -292,6 +302,17 @@ the Organization only to TypeSafe for the judgement and to the drafting route
 for the words, on the access-controlled inference path.
 
 ## Changelog
+
+### 2026-10-19 — Preserve merge provenance and schedule before publication
+
+The classifier now receives the merged result's Breakout kind and title separately
+from its author. Previously the incoming result looked like an ordinary message,
+so the classifier lacked the source context needed to judge its next hop. The
+question keeps the same criteria: origin does not itself justify carrying it up.
+The existing durable alarm is now armed before realtime publication is attempted,
+because a publication failure otherwise deferred classification of committed
+content. Live observation and backfill share the judgement key; no second
+classifier or scheduling mechanism is introduced.
 
 ### 2026-10-19 — Incoming Breakout results can be suggested for onward merge
 

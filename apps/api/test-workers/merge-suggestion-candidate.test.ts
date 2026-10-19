@@ -1,14 +1,15 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env, evictDurableObject, reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import { ConversationSuggestionStorage } from "../src/durable-objects/conversation-suggestions";
 import { ScheduledAlarmStore } from "../src/durable-objects/scheduled-alarms";
 import { admitFixturePendingInput, holdLoopExecuting, releaseHeldLoop, seedWorkspaceControlPlane, USER_ID, WORKSPACE_ID, WORKSTREAM_ID } from "./helpers/substream-fixture";
 
 beforeEach(async () => { await reset(); });
+afterEach(() => { vi.restoreAllMocks(); });
 
-async function admitMerge(queued: boolean) {
+async function admitMerge(queued: boolean, failRealtime = false) {
   const workstreamId = WORKSTREAM_ID;
   const sessionId = "00000000-0000-7000-8000-0000000009f2";
   await seedWorkspaceControlPlane(env.DB, { workspaceId: WORKSPACE_ID, userId: USER_ID, sessionId });
@@ -37,6 +38,12 @@ async function admitMerge(queued: boolean) {
     state.storage.sql.exec(`INSERT INTO participants
       (user_id, participation_reason, added_by_user_id, status, participant_epoch, added_at, updated_at)
       VALUES (?, 'creator', ?, 'active', 0, 1, 1)`, USER_ID, USER_ID);
+  });
+  if (failRealtime) await runInDurableObject(stub, (instance) => {
+    // Fault-inject only the publication boundary; admission, SQLite, alarms,
+    // and the observer still execute on real workerd.
+    const publisher = instance as unknown as { deliverCommittedRealtimeEvent(event: unknown): Promise<void> };
+    vi.spyOn(publisher, "deliverCommittedRealtimeEvent").mockRejectedValue(new Error("forced_realtime_delivery_failure"));
   });
   if (queued) await runInDurableObject(stub, async (_instance, state) => {
     holdLoopExecuting(state);
@@ -74,6 +81,16 @@ it.each([false, true])("judges a merged result without starting a run (queued: %
   expect(await runInDurableObject(stub, (_instance, state) =>
     state.storage.sql.exec("SELECT COUNT(*) AS n FROM runs").one().n,
   )).toBe(0);
+});
+
+it("judges a committed merge while realtime delivery keeps failing", async () => {
+  const stub = await admitMerge(false, true);
+  await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+    state.storage.sql.exec("SELECT code FROM turn_disposition_judgements").toArray(),
+  )).toEqual([{ code: "classifier_unavailable" }]);
+  expect(await runInDurableObject(stub, (_instance, state) =>
+    state.storage.sql.exec("SELECT COUNT(*) AS n FROM durable_outbox WHERE channel = 'semantic_realtime_v1' AND state = 'pending'").one().n,
+  )).toBeGreaterThan(0);
 });
 
 it("resumes a pending merge draft after eviction and retires its durable intent", async () => {

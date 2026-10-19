@@ -45,8 +45,8 @@ export type CarriedItemKind = (typeof CARRIED_ITEM_KINDS)[number];
  *   revision of it, and the carried-up count what they have already received.
  * - `recent_messages`: the last exchange, to tell whether the loop is still
  *   turning and whether a side question is new.
- * - `judged_message`: the message itself, who wrote it, and whether each
- *   output it names is appearing here for the first time.
+ * - `judged_message`: the message itself, who wrote it, its Breakout origin
+ *   when merged here, and whether each output is appearing for the first time.
  */
 export const TurnDispositionStateSchema = z.object({
   parent: z.object({
@@ -75,6 +75,7 @@ export const TurnDispositionStateSchema = z.object({
   })),
   judged_message: z.object({
     author: z.enum(["person", "rally"]),
+    merged_from: z.object({ kind: z.literal("breakout"), title: z.string() }).optional(),
     text: z.string(),
     outputs: z.array(z.object({
       title: z.string(),
@@ -159,6 +160,10 @@ export function boundTurnDispositionState(state: TurnDispositionState): TurnDisp
       })),
     judged_message: {
       author: state.judged_message.author,
+      ...(state.judged_message.merged_from ? { merged_from: {
+        kind: state.judged_message.merged_from.kind,
+        title: headTruncate(state.judged_message.merged_from.title, TURN_DISPOSITION_MAX_TITLE_CODE_POINTS),
+      } } : {}),
       text: centerTruncate(state.judged_message.text, TURN_DISPOSITION_MAX_TURN_CODE_POINTS),
       outputs: state.judged_message.outputs
         .slice(0, TURN_DISPOSITION_MAX_OUTPUTS)
@@ -183,7 +188,7 @@ export const turnDispositionQuestions = {
   disposition: jevChoiceQuestion<TurnDisposition>({
     instructions: {
       question: "Read as the owner of `parent`: what does `judged_message` call for?",
-      focus: "`parent` is the conversation that would receive a merge and who reads it. `conversation.opening_request` and `conversation.purpose` are what this conversation exists to do. `so_far.summary`, when present, is where the work stood before the recent messages; `so_far.earlier_outputs` are the things already produced here, and `so_far.carried_up_before` how many times something was already carried to the parent. Use `recent_messages` only to tell whether the purpose is still in motion and whether a side question is new. `judged_message.outputs[].first_time_here` says whether an output is new or a revision.",
+      focus: "`parent` is the conversation that would receive a merge and who reads it. `conversation.opening_request` and `conversation.purpose` are what this conversation exists to do. `so_far.summary`, when present, is where the work stood before the recent messages; `so_far.earlier_outputs` are the things already produced here, and `so_far.carried_up_before` how many times something was already carried to the parent. Use `recent_messages` only to tell whether the purpose is still in motion and whether a side question is new. `judged_message.outputs[].first_time_here` says whether an output is new or a revision. Optional `judged_message.merged_from` identifies a result carried here from a Breakout; origin alone does not mean the parent needs it.",
       decision: "Choose exactly one.",
     },
     criteria: {
