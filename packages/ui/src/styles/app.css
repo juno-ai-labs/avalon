@@ -8920,15 +8920,21 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .memory-review-facts { display: flex; flex-direction: column; list-style: none; margin: 0; padding: 0; }
 .memory-review-fact { align-items: flex-start; border-top: .5px solid var(--av-sys-color-border-subtle); display: flex; gap: 12px; justify-content: space-between; padding: 8px 0; }
 .memory-review-fact:first-child { border-top: 0; }
+.memory-review-fact > .button-quiet { align-self: center; flex: none; }
 .memory-review-fact-body { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
 .memory-review-fact-body p { margin: 0; }
 .memory-review-conflict { margin-left: 8px; vertical-align: 1px; }
 .memory-review-fact-meta { color: var(--av-sys-color-text-muted); display: flex; flex-wrap: wrap; font-size: 12px; gap: 0 10px; }
-.memory-review-expired { color: var(--av-sys-color-text-subtle); }
+.memory-review-expired { color: var(--av-sys-color-text-disabled); }
 /* A link on a page, a button in a settings window or a menu: one look. */
 .memory-review-source { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; text-decoration: underline; text-decoration-color: var(--av-sys-color-border-default); text-underline-offset: 2px; }
 .memory-review-source:hover, .memory-review-source:focus-visible { color: var(--av-sys-color-text-default); }
 .title-menu-memory .memory-review-facts { font-size: 13.5px; padding: 0 8px; }
+/* A settings card carries no padding of its own; its rows do, as
+   `.settings-preference-row` does, so the facts line up with every other row. */
+.settings-list-card > .memory-review .memory-review-fact { padding: 10px 14px; }
+.settings-list-card > .memory-review .memory-review-empty,
+.settings-list-card > .memory-review .center-state { padding: 12px 14px; }
 /* No scrim: the feed scrolls in the row above, not behind the dock. */
 .channel-composer-dock {
   background: none;
