@@ -547,26 +547,20 @@ see
 
 ### 2026-10-19 — A starting thread shows its opening's mentions and attachments
 
-**What changed:** The pending row carries a client-only `pendingOpening`: the
-opening message as the transcript will draw it (mention Markdown from
-`optimisticMentionRendering`, its mentions, its attachments). The "Starting…"
-screen draws it with `MarkdownBody` and `MessageAttachments`, the same parts
-the transcript uses, instead of the bare `objective` text. `settledRow` drops
-it and `keepPendingWorkstreams` carries it while the server describes the row.
+**What changed:** The pending row carries a client-only `pendingOpening`, the
+opening as the transcript will draw it, and the "Starting…" screen draws it
+with `HumanMessageBody`, the part a person's turn uses.
 
-**Why:** The pending screen showed `@Name` as plain text and no attachments,
-then the transcript swapped in chips and thumbnails a moment later. The
-opening should look the same before and after the create answers.
+**Why:** The screen showed `@Name` as plain text and no attachments, then the
+transcript swapped in chips and thumbnails a moment later.
 
-**Considered and rejected:** Seeding the ordered transcript cache before the
-create answers. Its turn id comes from the create's answer, and a seed under
-another id would leave the socket upsert a second row to reconcile.
+**Considered and rejected:** Seeding the ordered transcript before the create
+answers. Its turn id comes from that answer, and a seed under another id
+would leave the socket upsert a second row to reconcile.
 
-**Consequences:** A new launcher that wants its opening drawn whole passes
-`opening` to `addPendingWorkstream`; without it the screen falls back to
-`objective` as plain text. Attachment previews on that screen read through
-`getResourcePreviewContent` before the thread exists, so they rely on an
-uploaded resource being readable by its uploader.
+**Consequences:** Previews on that screen read through
+`getResourcePreviewContent` before the thread exists, which relies on an
+uploader being able to read their own draft upload.
 
 ### 2026-10-10 — A thread starts from its Channel's composer, and starts private in a private Channel
 

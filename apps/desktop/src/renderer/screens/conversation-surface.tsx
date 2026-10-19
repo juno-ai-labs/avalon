@@ -130,9 +130,9 @@ import { AgentCompactionIndicator, AgentWorkTiming, RunStopAcknowledgement, type
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentPanel } from '../components/attachment-panel';
-import { type AttachmentPreview, MessageAttachments } from '../components/attachments';
+import type { AttachmentPreview } from '../components/attachments';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
-import { MarkdownBody } from '../components/workstream-blocks';
+import { HumanMessageBody } from '../components/workstream-blocks';
 import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
 import { ConversationAccessRequest } from '../components/conversation-access-request';
 import { useAccessRequests, useDecideAccessRequest } from '../lib/access-requests';
@@ -247,24 +247,14 @@ function ConversationOpeningFeed({ label, parentKind, caption = false, openingMe
           {openingMessage ? <div className="transcript-column conversation-opening-messages">
             <article className="message-block human-message own-human-message" style={bubbleStyle}>
               <div className="human-message-content">
-                {openingMessage.text ? <div className="human-message-bubble">
-                  <div className="human-message-bubble-body">
-                    <MarkdownBody
-                      mentions={openingMessage.mentions}
-                      preserveLineBreaks
-                      rallyMentions
-                      speechKind="message"
-                      verbatim
-                    >{openingMessage.text}</MarkdownBody>
-                  </div>
-                </div> : null}
-                {openingMessage.attachments.length > 0 && loadAttachmentContent ? (
-                  <MessageAttachments
-                    attachments={openingMessage.attachments}
-                    loadContent={loadAttachmentContent}
-                    onOpen={setAttachmentPreview}
-                  />
-                ) : null}
+                <HumanMessageBody
+                  attachments={openingMessage.attachments}
+                  loadAttachmentContent={loadAttachmentContent}
+                  mentions={openingMessage.mentions}
+                  messageId="opening"
+                  onOpenAttachment={setAttachmentPreview}
+                  text={openingMessage.text}
+                />
               </div>
             </article>
             <p aria-hidden="true" className="conversation-opening-caption">{label}</p>
