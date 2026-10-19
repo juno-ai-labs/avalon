@@ -8925,7 +8925,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .memory-review-fact-body p { margin: 0; }
 .memory-review-conflict { margin-left: 8px; vertical-align: 1px; }
 .memory-review-fact-meta { color: var(--av-sys-color-text-muted); display: flex; flex-wrap: wrap; font-size: 12px; gap: 0 10px; }
-.memory-review-expired { color: var(--av-sys-color-text-disabled); }
+.memory-review-expired { color: var(--av-sys-color-text-muted); font-style: italic; }
 /* A link on a page, a button in a settings window or a menu: one look. */
 .memory-review-source { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; text-decoration: underline; text-decoration-color: var(--av-sys-color-border-default); text-underline-offset: 2px; }
 .memory-review-source:hover, .memory-review-source:focus-visible { color: var(--av-sys-color-text-default); }
