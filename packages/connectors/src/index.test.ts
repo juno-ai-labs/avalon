@@ -1498,6 +1498,188 @@ describe("connectors", () => {
     expect((result.output as { items: unknown[] }).items).toHaveLength(1);
   });
 
+  // Google is the external capability double; no local runtime implements its API.
+  it("queries availability directly for unlisted calendars and preserves per-calendar failures", async () => {
+    const requests: Array<{ url: string; method: string; body: unknown }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      requests.push({ url: requestUrl(input).toString(), method: init?.method ?? "GET", body: JSON.parse(String(init?.body)) });
+      return googleJson({ calendars: {
+        "adam@example.com": { busy: [{ start: "2026-10-20T10:00:00-07:00", end: "2026-10-20T10:15:00-07:00", summary: "private" }] },
+        "alex@example.com": { busy: [] },
+        "private@example.com": { errors: [{ domain: "global", reason: "notFound", message: "private provider text" }], busy: [] },
+        "refused@example.com": { errors: [{ reason: "forbidden" }], busy: [] },
+        "new-error@example.com": { errors: [{ reason: "private unknown reason", message: "private" }] },
+      } });
+    };
+    const result = await googleAdapter(fetcher).executeTool("calendar.query_availability", {
+      calendarIds: ["adam@example.com", "alex@example.com", "private@example.com", "refused@example.com", "new-error@example.com", "missing@example.com", "adam@example.com"],
+      timeMin: "2026-10-20T10:00:00-07:00", timeMax: "2026-10-20T10:30:00-07:00", timeZone: "America/Los_Angeles",
+    }, {
+      connection: googleConnection(["calendar.read"]),
+      principal: { type: "user", userId: TEST_USER_ID }, signal: neverAborts(),
+    });
+    expect(requests).toEqual([{
+      url: "https://www.googleapis.com/calendar/v3/freeBusy", method: "POST",
+      body: { timeMin: "2026-10-20T10:00:00-07:00", timeMax: "2026-10-20T10:30:00-07:00", timeZone: "America/Los_Angeles", items: [
+        { id: "adam@example.com" }, { id: "alex@example.com" }, { id: "private@example.com" }, { id: "refused@example.com" }, { id: "new-error@example.com" }, { id: "missing@example.com" },
+      ] },
+    }]);
+    expect(result.output).toEqual({
+      timeMin: "2026-10-20T10:00:00-07:00", timeMax: "2026-10-20T10:30:00-07:00", timeZone: "America/Los_Angeles",
+      items: [
+        { calendarId: "adam@example.com", status: "busy", busy: [{ start: "2026-10-20T10:00:00-07:00", end: "2026-10-20T10:15:00-07:00" }], errors: [] },
+        { calendarId: "alex@example.com", status: "free", busy: [], errors: [] },
+        { calendarId: "private@example.com", status: "unknown", busy: null, errors: [expect.objectContaining({ reason: "notFound" })] },
+        { calendarId: "refused@example.com", status: "unknown", busy: null, errors: [expect.objectContaining({ reason: "forbidden" })] },
+        { calendarId: "new-error@example.com", status: "unknown", busy: null, errors: [expect.objectContaining({ reason: "unrecognized_provider_error" })] },
+        { calendarId: "missing@example.com", status: "unknown", busy: null, errors: [expect.objectContaining({ reason: "missing_calendar_result" })] },
+      ],
+    });
+  });
+
+  it.each([
+    {
+      calendar: { errors: [{ reason: "notFound", message: "private provider text" }] },
+      reason: "notFound",
+      message: "Google could not find this calendar or expose it to the connected account.",
+      nextStep: "Verify the calendar ID and its sharing permissions. Keep availability unknown until a query succeeds.",
+    },
+    {
+      calendar: { errors: [{ reason: "forbidden" }] },
+      reason: "forbidden",
+      message: "The connected account does not have permission to query this calendar's availability.",
+      nextStep: "Ask the calendar owner to share free/busy access with the connected account, or use an account that already has access.",
+    },
+    {
+      calendar: { errors: [{ reason: "internalError" }] },
+      reason: "internalError",
+      message: "Google encountered an internal error while checking this calendar's availability.",
+      nextStep: "Retry the availability query. If it continues to fail, check availability directly in Google Calendar.",
+    },
+    {
+      calendar: { errors: [{ reason: "groupTooBig" }] },
+      reason: "groupTooBig",
+      message: "Google could not expand the requested group because it contains too many members.",
+      nextStep: "Query individual calendar IDs or verified email addresses instead of a group address.",
+    },
+    {
+      calendar: { errors: [{ reason: "tooManyCalendarsRequested" }] },
+      reason: "tooManyCalendarsRequested",
+      message: "Google could not process all calendars included in this request.",
+      nextStep: "Split the request into smaller batches of individual calendar IDs and query each batch separately.",
+    },
+    {
+      calendar: { errors: [{ reason: "private unknown reason", message: "private provider text" }] },
+      reason: "unrecognized_provider_error",
+      message: "Google returned an error that Rally does not recognize, so this calendar's availability is unknown.",
+      nextStep: "Retry the availability query. If it continues to fail, check the calendar ID and access directly in Google Calendar.",
+    },
+    {
+      calendar: null,
+      reason: "missing_calendar_result",
+      message: "Google did not return an availability result for this calendar.",
+      nextStep: "Retry using this calendar's ID alone. If no result is returned, verify the ID and sharing permissions directly in Google Calendar.",
+    },
+    {
+      calendar: { busy: [], errors: "private malformed errors" },
+      reason: "invalid_errors_field",
+      message: "Google returned an unreadable errors field for this calendar, so its availability cannot be determined.",
+      nextStep: "Retry the availability query. If the response remains unreadable, report the diagnostic code to Rally support and check availability directly in Google Calendar.",
+    },
+    {
+      calendar: { busy: [{ start: "2026-10-20T18:00:00Z", end: "2026-10-20T17:00:00Z" }] },
+      reason: "calendar_availability_invalid:busy.0.end:custom",
+      message: "Google returned missing or invalid busy intervals, so this calendar's availability cannot be determined.",
+      nextStep: "Retry the availability query. If the response remains invalid, report the diagnostic code to Rally support and check availability directly in Google Calendar.",
+    },
+  ])("explains availability error $reason and gives a next step", async ({ calendar, reason, message, nextStep }) => {
+    const result = await googleAdapter(async () => googleJson({ calendars: { "alex@example.com": calendar } })).executeTool("calendar.query_availability", {
+      calendarIds: ["alex@example.com"], timeMin: "2026-10-20T17:00:00Z", timeMax: "2026-10-20T18:00:00Z",
+    }, {
+      connection: googleConnection(["calendar.read"]), principal: { type: "user", userId: TEST_USER_ID }, signal: neverAborts(),
+    });
+    expect(result.output).toEqual({
+      timeMin: "2026-10-20T17:00:00Z", timeMax: "2026-10-20T18:00:00Z", timeZone: "UTC",
+      items: [{ calendarId: "alex@example.com", status: "unknown", busy: null, errors: [{ reason, message, nextStep }] }],
+    });
+  });
+
+  it("defaults availability to UTC and returns an empty successful busy list as free", async () => {
+    const result = await googleAdapter(async (_input, init) => {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        timeMin: "2026-10-20T17:00:00Z", timeMax: "2026-10-20T18:00:00Z", items: [{ id: "alex@example.com" }],
+      });
+      return googleJson({ calendars: { "alex@example.com": { busy: [], errors: [] } } });
+    }).executeTool("calendar.query_availability", {
+      calendarIds: ["alex@example.com"], timeMin: "2026-10-20T17:00:00Z", timeMax: "2026-10-20T18:00:00Z",
+    }, {
+      connection: googleConnection(["calendar.read"]), principal: { type: "user", userId: TEST_USER_ID }, signal: neverAborts(),
+    });
+    expect(result.output).toEqual({
+      timeMin: "2026-10-20T17:00:00Z", timeMax: "2026-10-20T18:00:00Z", timeZone: "UTC",
+      items: [{ calendarId: "alex@example.com", status: "free", busy: [], errors: [] }],
+    });
+  });
+
+  it("names the availability argument Google rejects on a failed request", async () => {
+    await expect(googleAdapter(async () => googleJson({ error: {
+      code: 400, message: "private provider text", errors: [{ reason: "invalid", locationType: "parameter", location: "timeZone" }],
+    } }, 400)).executeTool("calendar.query_availability", {
+      calendarIds: ["alex@example.com"], timeMin: "2026-10-20T17:00:00Z", timeMax: "2026-10-20T18:00:00Z", timeZone: "invalid",
+    }, {
+      connection: googleConnection(["calendar.read"]), principal: { type: "user", userId: TEST_USER_ID }, signal: neverAborts(),
+    })).rejects.toMatchObject({
+      code: "provider_error", message: "Google API failed (400); it rejected the `timeZone` argument",
+      details: { reason: "invalid_parameter", field: "timeZone" },
+    });
+  });
+
+  it.each([
+    [{}, "calendar_availability_invalid:busy:invalid_type"],
+    [{ busy: [null] }, "calendar_availability_invalid:busy.0:invalid_type"],
+    [{ busy: [{ start: "bad", end: "2026-10-20T18:00:00Z" }] }, "calendar_availability_invalid:busy.0.start:invalid_format:busy.0.end:custom"],
+    [{ busy: [{ start: "2026-10-20T18:00:00Z", end: "2026-10-20T17:00:00Z" }] }, "calendar_availability_invalid:busy.0.end:custom"],
+    [{ busy: [], errors: "notFound" }, "invalid_errors_field"],
+    [{ busy: [], errors: [null] }, "unrecognized_provider_error"],
+  ])("reports malformed calendar availability as unknown: %j", async (calendar, reason) => {
+    const result = await googleAdapter(async () => googleJson({ calendars: { "alex@example.com": calendar } })).executeTool("calendar.query_availability", {
+      calendarIds: ["alex@example.com"], timeMin: "2026-10-20T17:00:00Z", timeMax: "2026-10-20T18:00:00Z",
+    }, {
+      connection: googleConnection(["calendar.read"]), principal: { type: "user", userId: TEST_USER_ID }, signal: neverAborts(),
+    });
+    expect(result.output).toMatchObject({
+      timeMin: "2026-10-20T17:00:00Z", timeMax: "2026-10-20T18:00:00Z", timeZone: "UTC",
+      items: [{ calendarId: "alex@example.com", status: "unknown", busy: null, errors: [{ reason }] }],
+    });
+  });
+
+  it.each([
+    { calendarIds: [] },
+    { calendarIds: Array.from({ length: 51 }, (_, i) => `calendar${i}@example.com`) },
+    { timeMin: "2026-10-20" },
+    { timeMax: "2026-10-20T16:00:00Z" },
+    { invented: true },
+  ])("rejects invalid availability arguments before calling Google: %j", async (overrides) => {
+    let calls = 0;
+    const adapter = googleAdapter(async () => { calls++; return googleJson({}); });
+    await expect(adapter.executeTool("calendar.query_availability", {
+      calendarIds: ["alex@example.com"], timeMin: "2026-10-20T17:00:00Z", timeMax: "2026-10-20T18:00:00Z", ...overrides,
+    }, {
+      connection: googleConnection(["calendar.read"]), principal: { type: "user", userId: TEST_USER_ID }, signal: neverAborts(),
+    })).rejects.toBeInstanceOf(z.ZodError);
+    expect(calls).toBe(0);
+  });
+
+  it("requires calendar read permission to query availability", async () => {
+    let calls = 0;
+    await expect(googleAdapter(async () => { calls++; return googleJson({}); }).executeTool("calendar.query_availability", {
+      calendarIds: ["alex@example.com"], timeMin: "2026-10-20T17:00:00Z", timeMax: "2026-10-20T18:00:00Z",
+    }, {
+      connection: googleConnection(["gmail.read"]), principal: { type: "user", userId: TEST_USER_ID }, signal: neverAborts(),
+    })).rejects.toMatchObject({ code: "unsupported_capability" });
+    expect(calls).toBe(0);
+  });
+
   it("creates and updates Google Calendar events with bounded event fields", async () => {
     const requests: Array<{ url: URL; method: string; body: Record<string, unknown> }> = [];
     const fetcher: typeof fetch = async (input, init) => {

@@ -22,6 +22,7 @@ import {
   type ToolDefinition,
 } from "@rally/contracts";
 import { z } from "zod";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import {
   assertPrincipalAccess,
   ConnectorError,
@@ -498,6 +499,7 @@ function withArticle(noun: string): string {
 const GOOGLE_TOOL_ARGUMENT_BY_PARAMETER = {
   "gmail.search": { q: "query", maxResults: "maxResults", pageToken: "pageToken" },
   "calendar.list_calendars": { maxResults: "maxResults", pageToken: "pageToken" },
+  "calendar.query_availability": { timeMin: "timeMin", timeMax: "timeMax", timeZone: "timeZone", items: "calendarIds" },
   "calendar.list_events": {
     q: "query",
     timeMin: "timeMin",
@@ -670,6 +672,79 @@ const emailToolInputSchema = z.toJSONSchema(EmailArgsSchema, {
   },
 });
 
+// Google's free/busy endpoint expands at most 50 calendars per request:
+// https://developers.google.com/workspace/calendar/api/v3/reference/freebusy/query
+const CalendarAvailabilityArgsSchema = z.strictObject({
+  calendarIds: z.array(z.string().trim().min(1)).min(1).max(50)
+    .describe("Calendar IDs or verified email addresses, including public/shared calendars absent from list_calendars. Use IDs, not display names; source addresses from the user or tool results."),
+  timeMin: z.string().datetime({ offset: true }).describe("Start of the window as an RFC 3339 timestamp with a timezone offset."),
+  timeMax: z.string().datetime({ offset: true }).describe("Exclusive end of the window as an RFC 3339 timestamp with a timezone offset; must follow timeMin."),
+  timeZone: z.string().min(1).optional().describe("Response timezone, for example America/Los_Angeles. Defaults to UTC."),
+}).refine((args) => Date.parse(args.timeMax) > Date.parse(args.timeMin), {
+  path: ["timeMax"], message: "timeMax must follow timeMin",
+});
+
+const CalendarBusyIntervalsSchema = z.object({
+  busy: z.array(z.object({
+    start: z.string().datetime({ offset: true }),
+    end: z.string().datetime({ offset: true }),
+  }).refine((interval) => Date.parse(interval.end) > Date.parse(interval.start), {
+    path: ["end"], message: "end must follow start",
+  })),
+});
+
+// Provider messages and unknown reason text can contain data. Only declared
+// Google error codes cross into the tool result.
+const CalendarAvailabilityErrorReasonSchema = z.enum([
+  "notFound", "forbidden", "internalError", "groupTooBig", "tooManyCalendarsRequested", "unrecognized_provider_error",
+]).catch("unrecognized_provider_error");
+
+const calendarAvailabilityErrorGuidance = {
+  notFound: {
+    message: "Google could not find this calendar or expose it to the connected account.",
+    nextStep: "Verify the calendar ID and its sharing permissions. Keep availability unknown until a query succeeds.",
+  },
+  forbidden: {
+    message: "The connected account does not have permission to query this calendar's availability.",
+    nextStep: "Ask the calendar owner to share free/busy access with the connected account, or use an account that already has access.",
+  },
+  internalError: {
+    message: "Google encountered an internal error while checking this calendar's availability.",
+    nextStep: "Retry the availability query. If it continues to fail, check availability directly in Google Calendar.",
+  },
+  groupTooBig: {
+    message: "Google could not expand the requested group because it contains too many members.",
+    nextStep: "Query individual calendar IDs or verified email addresses instead of a group address.",
+  },
+  tooManyCalendarsRequested: {
+    message: "Google could not process all calendars included in this request.",
+    nextStep: "Split the request into smaller batches of individual calendar IDs and query each batch separately.",
+  },
+  unrecognized_provider_error: {
+    message: "Google returned an error that Rally does not recognize, so this calendar's availability is unknown.",
+    nextStep: "Retry the availability query. If it continues to fail, check the calendar ID and access directly in Google Calendar.",
+  },
+  missing_calendar_result: {
+    message: "Google did not return an availability result for this calendar.",
+    nextStep: "Retry using this calendar's ID alone. If no result is returned, verify the ID and sharing permissions directly in Google Calendar.",
+  },
+  invalid_errors_field: {
+    message: "Google returned an unreadable errors field for this calendar, so its availability cannot be determined.",
+    nextStep: "Retry the availability query. If the response remains unreadable, report the diagnostic code to Rally support and check availability directly in Google Calendar.",
+  },
+  invalid_busy_intervals: {
+    message: "Google returned missing or invalid busy intervals, so this calendar's availability cannot be determined.",
+    nextStep: "Retry the availability query. If the response remains invalid, report the diagnostic code to Rally support and check availability directly in Google Calendar.",
+  },
+} as const;
+
+function calendarAvailabilityError(
+  kind: keyof typeof calendarAvailabilityErrorGuidance,
+  reason: string | null = kind,
+) {
+  return { reason, ...calendarAvailabilityErrorGuidance[kind] };
+}
+
 export const googleTools: ToolDefinition[] = [
   {
     name: "gmail.read_profile",
@@ -788,7 +863,7 @@ export const googleTools: ToolDefinition[] = [
   {
     name: "calendar.list_calendars",
     pagination: { cursorParameter: "pageToken" },
-    description: "List the calendars this account can see, each with the id and name the other calendar tools accept. Call this to discover a calendar id, or pass a calendar's name directly to those tools and they will resolve it.",
+    description: "List calendars on this account's calendar list, each with its id and name. This is not every calendar the account can access. Use calendar.query_availability with known calendar IDs or verified email addresses to check public/shared availability even when a calendar is absent here.",
     capability: "calendar.read",
     mode: "read",
     idempotency: "safe",
@@ -800,6 +875,14 @@ export const googleTools: ToolDefinition[] = [
         pageToken: GOOGLE_PAGE_TOKEN_SCHEMA
       }
     }
+  },
+  {
+    name: "calendar.query_availability",
+    description: "Check attendees' availability across public or shared calendars without reading event details. Query known calendar IDs or verified email addresses directly, even when absent from calendar.list_calendars; absence from that list does not imply lack of access. Returns busy intervals and a status per calendar: free means a successful empty busy list for the entire window, busy means at least one busy interval, and unknown means an error or incomplete response. Every per-calendar error includes a diagnostic reason, a plain-language message, and a nextStep to follow. Never treat unknown as free. Google enforces the connected account's access permissions.",
+    capability: "calendar.read",
+    mode: "read",
+    idempotency: "safe",
+    inputSchema: z.toJSONSchema(CalendarAvailabilityArgsSchema, { io: "input" }),
   },
   {
     name: "calendar.list_events",
@@ -2642,13 +2725,15 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     validateToolInput(name, rawArgs) {
       const schema = name === "gmail.create_draft" || name === "gmail.send"
         ? EmailArgsSchema
-        : name === "calendar.create_event"
-          ? CalendarEventCreateArgsSchema
-          : name === "calendar.update_event"
-            ? CalendarEventUpdateArgsSchema
-            : name === "sheets.update_values" || name === "sheets.append_values"
-              ? SheetValuesWriteArgsSchema
-              : undefined;
+        : name === "calendar.query_availability"
+          ? CalendarAvailabilityArgsSchema
+          : name === "calendar.create_event"
+            ? CalendarEventCreateArgsSchema
+            : name === "calendar.update_event"
+              ? CalendarEventUpdateArgsSchema
+              : name === "sheets.update_values" || name === "sheets.append_values"
+                ? SheetValuesWriteArgsSchema
+                : undefined;
       return zodToolInputValidationError(schema, rawArgs);
     },
 
@@ -2872,6 +2957,56 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           output: boundedToolOutput({ items: calendars }),
           pagination: { continuations: readString(payload, "nextPageToken") ? [{ operation: name, slot: "nextPageId", input: { ...args, pageToken: readString(payload, "nextPageToken") } }] : [] },
           summary: `Found ${calendars.length} Google calendars`
+        };
+      }
+      if (name === "calendar.query_availability") {
+        const args = CalendarAvailabilityArgsSchema.parse(rawArgs);
+        const calendarIds = [...new Set(args.calendarIds)];
+        const payload = await api(context.connection,
+          "https://www.googleapis.com/calendar/v3/freeBusy", {
+            method: "POST",
+            signal: context.signal,
+            body: JSON.stringify({
+              timeMin: args.timeMin,
+              timeMax: args.timeMax,
+              ...(args.timeZone ? { timeZone: args.timeZone } : {}),
+              items: calendarIds.map((id) => ({ id })),
+            }),
+          }, [], GOOGLE_TOOL_ARGUMENT_BY_PARAMETER["calendar.query_availability"]
+        ).then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES));
+        const calendars = readRecord(payload, "calendars");
+        const items = calendarIds.map((calendarId) => {
+          const calendar = readRecord(calendars, calendarId);
+          if (!calendar) return {
+            calendarId, status: "unknown", busy: null,
+            errors: [calendarAvailabilityError("missing_calendar_result")],
+          };
+          if (Array.isArray(calendar.errors) && calendar.errors.length > 0) return {
+            calendarId, status: "unknown", busy: null,
+            errors: calendar.errors.map((error) => {
+              const { reason } = z.object({
+                reason: CalendarAvailabilityErrorReasonSchema,
+              }).catch({ reason: "unrecognized_provider_error" }).parse(error);
+              return calendarAvailabilityError(reason);
+            }),
+          };
+          const parsed = CalendarBusyIntervalsSchema.safeParse(calendar);
+          if (!parsed.success) return {
+            calendarId, status: "unknown", busy: null,
+            errors: [calendarAvailabilityError("invalid_busy_intervals", zodDiagnosticCode(parsed.error, "calendar_availability"))],
+          };
+          if (calendar.errors !== undefined && !Array.isArray(calendar.errors)) return {
+            calendarId, status: "unknown", busy: null,
+            errors: [calendarAvailabilityError("invalid_errors_field")],
+          };
+          return {
+            calendarId, status: parsed.data.busy.length ? "busy" : "free",
+            busy: parsed.data.busy, errors: [],
+          };
+        });
+        return {
+          output: boundedToolOutput({ timeMin: args.timeMin, timeMax: args.timeMax, timeZone: args.timeZone ?? "UTC", items }),
+          summary: `Checked availability for ${items.length} Google calendars`,
         };
       }
       if (name === "calendar.list_events") {
