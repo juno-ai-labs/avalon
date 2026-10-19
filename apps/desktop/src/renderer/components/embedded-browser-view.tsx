@@ -139,15 +139,20 @@ export function EmbeddedBrowserNavigation({ active, command, className, addressR
 }
 
 /**
- * Closes a tab, or hands the close to `onCloseLast` when it is the only tab
- * and blank: main would replace it with another blank tab, so the host closes
- * the browser instead.
+ * Closes a tab, and hands the close to `onCloseLast` too when it is the only
+ * tab: main replaces a closed last tab with a blank one, so the host closes
+ * the browser rather than show it. A blank tab is left in place, since closing
+ * it would only open another.
  */
 function closeTab(state: EmbeddedBrowserState, tabId: string, command: (input: EmbeddedBrowserCommand) => Promise<void>,
   onCloseLast: (() => void) | undefined): void {
   const only = state.tabs.length === 1 ? state.tabs[0] : undefined;
-  if (onCloseLast && only?.id === tabId && only.url === 'about:blank') onCloseLast();
-  else void command({ action: 'close', tabId });
+  if (!onCloseLast || only?.id !== tabId) {
+    void command({ action: 'close', tabId });
+    return;
+  }
+  if (only.url !== 'about:blank') void command({ action: 'close', tabId });
+  onCloseLast();
 }
 
 /** Focuses and selects the address field, once the host has rendered it. */
@@ -203,7 +208,10 @@ export function useEmbeddedBrowserShortcuts({ state, command, addressRef, scope,
       }
     };
     window.addEventListener('keydown', onKey);
-    const unsubscribe = desktopBridge().onEmbeddedBrowserFocusAddress(() => focusAddress(addressRef));
+    const unsubscribe = desktopBridge().onEmbeddedBrowserHostRequest((request) => {
+      if (request === 'focus-address') focusAddress(addressRef);
+      else if (latest.current.activeTabId) closeTab(latest.current, latest.current.activeTabId, command, closeLast.current);
+    });
     return () => {
       window.removeEventListener('keydown', onKey);
       unsubscribe();
