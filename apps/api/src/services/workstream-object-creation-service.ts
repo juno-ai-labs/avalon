@@ -434,6 +434,7 @@ export class WorkstreamObjectCreationService {
         requestedParticipantUserIds: body.participantUserIds.map(asUserId),
         ...(options.narrowInPrivateSpaces ? { narrowInPrivateSpaces: true } : {}),
         authorityGeneration: control.generation,
+        ...(stage === "reserve" ? { reclaimUnopened: true as const } : {}),
         directory: {
           title,
           description: objective,

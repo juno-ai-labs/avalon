@@ -834,6 +834,13 @@ import {
   type ChannelColorWork,
 } from "./channel-color-sync";
 import {
+  IMPORT_RESERVATION_RECLAIM_MIGRATION,
+  armImportReservationReclaim,
+  nextImportReservationReclaimAt,
+  reclaimDueImportReservations,
+} from "./import-reservation-reclaim";
+import { retireUnopenedImportKey } from "../services/session-import-reclaim";
+import {
   SUGGESTION_BACKFILL_MIGRATION,
   THREAD_BACKFILL_MIGRATION,
   ThreadBackfillMessageSchema,
@@ -1218,6 +1225,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "workspace_socket_unheard", // The first-frame watch's ledger.
   "channel_color_sync", "channel_color_sync_state", // Its triggers, the alarm lane and the channel-colour RPCs.
   "thread_backfill", // The alarm lane and the thread-backfill RPCs.
+  "import_reservation_reclaim", // Armed by the import reservation, read by its alarm lane.
   // Recorded by `memoryDigest`, marked by triggers and retractions, and read by
   // the alarm lane and the memory-digest-sync RPCs.
   "memory_digest_holders", "memory_digest_holder_facts", "memory_digest_sync", "memory_digest_sync_state",
@@ -4570,6 +4578,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "every earlier Channel merge's embeds are linked to its Channel",
   // See SPACE_MERGE_EMBED_LINKS_MIGRATION and docs/authorization.md.
   statements: SPACE_MERGE_EMBED_LINKS_MIGRATION,
+}, {
+  version: 119,
+  description: "a watch on every conversation import's reservation, archiving one whose thread has not opened an hour on",
+  // See IMPORT_RESERVATION_RECLAIM_MIGRATION and docs/session-import.md.
+  statements: IMPORT_RESERVATION_RECLAIM_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -7514,6 +7527,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       space_bootstrap: () => this.spaceStorage().nextBootstrapDueAt(),
       channel_color_sync: () => nextChannelColorSyncAt(sql),
       thread_backfill: () => nextThreadBackfillAt(sql),
+      import_reservation_reclaim: () => nextImportReservationReclaimAt(sql),
       memory_digest_sync: () => nextMemoryDigestSyncAt(sql),
       activity_reap: () => {
         const oldest = sql.exec<{ created_at: number | null }>(
@@ -7746,6 +7760,26 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           });
         }
       });
+      // Import reservations whose thread never opened; see import-reservation-reclaim.ts.
+      if (due("import_reservation_reclaim")) await isolated("import_reservation_reclaim", () => reclaimDueImportReservations({
+        sql: this.state.storage.sql,
+        now,
+        reclaim: async ({ parentId, userId }) => {
+          if (!await retireUnopenedImportKey(this.env.DB, { workspaceId, workstreamId: parentId, userId })) return;
+          const result = await this.discardReservedMain({ workspaceId, parentId, userId });
+          if (result.status === "refused") {
+            logWarn(this.env, "import_reservation_reclaim_refused", {
+              workspace_id: workspaceId, workstream_id: parentId, code: result.code,
+            });
+          }
+        },
+        retryAt: (attempt) => now + scheduledAlarmRetryDelay(attempt),
+        onFailure: ({ parentId }, error) => logWarn(this.env, "import_reservation_reclaim_failed", {
+          workspace_id: workspaceId,
+          workstream_id: parentId,
+          reason: diagnosticErrorCode(error, "import_reservation_reclaim_failed"),
+        }),
+      }));
       // Conversations whose memory digest copies may show a withdrawn fact; see memory-digest-sync.ts.
       if (due("memory_digest_sync")) await this.instrumentWorkspaceAlarmPhase("memory_digest_sync", undefined, async () => {
         try {
@@ -10827,6 +10861,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             ...(color ? { appearance: { icon: null, color } } : {}),
           },
         });
+        if (request.reclaimUnopened) {
+          armImportReservationReclaim(this.state.storage.sql, { parentId: workstreamId, userId: request.userId, now: Date.now() });
+        }
         if (request.externalBinding) {
           const claimed = this.externalBindings().claim(request.externalBinding, {
             kind: "conversation", parentKind: "workstream", parentId: workstreamId, substreamId: "0",

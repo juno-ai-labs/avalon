@@ -22,6 +22,8 @@ import { conversationObjectName, workspaceDOName } from "../src/durable-objects/
 import { prepareSessionImport } from "../src/services/session-import-files";
 import { SessionImportRunService } from "../src/services/session-import-run-service";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
+import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
+import { reclaimDueImportReservations } from "../src/durable-objects/import-reservation-reclaim";
 import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 import { useOpenRouterDouble, type ProviderCall } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
@@ -643,4 +645,76 @@ describe("a conversation import run", () => {
       state.storage.sql.exec<{ stop_requested_at: number | null }>(`SELECT stop_requested_at FROM substream_loops`).one().stop_requested_at)).toBeNull();
     expect(await service.abandon(crypto.randomUUID())).toEqual({ abandoned: false });
   }, 60_000);
+
+  /** Make the Organization's watch on `workstreamId` due, and run its alarm. */
+  async function runReservationWatch(workstreamId: string): Promise<void> {
+    await runInDurableObject(workspace(), async (_instance, state) => {
+      state.storage.sql.exec("UPDATE import_reservation_reclaim SET due_at = ? WHERE parent_id = ?", Date.now() - 1, workstreamId);
+      await state.storage.setAlarm(Date.now());
+    });
+    await runDurableObjectAlarm(workspace());
+  }
+
+  const watchedReservations = (workstreamId: string) => runInDurableObject(workspace(), (_instance, state) => state.storage.sql
+    .exec<{ due_at: number }>("SELECT due_at FROM import_reservation_reclaim WHERE parent_id = ?", workstreamId).toArray());
+
+  it("archives an import reservation whose thread has not opened an hour on, with no window or run left to end it", async () => {
+    const spaceId = await importSpace();
+    const clientMessageId = crypto.randomUUID();
+    const reservedAt = Date.now();
+    // A start cut off right after its reservation: nothing launched, nothing retired.
+    const { workstreamId } = await new WorkstreamObjectCreationService(creationEnv(), AUTH).reserveImport({
+      title: "Cut off", objective: "Cut off", clientMessageId, participantUserIds: [], scope: "personal", spaceIds: [spaceId],
+    }, `session-import:${clientMessageId}:${SOURCE_URL}`);
+    const listed = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ archived_at: number | null }>(
+      `SELECT archived_at FROM channels WHERE workstream_id = ?`, workstreamId).one().archived_at);
+    const [watch] = await watchedReservations(workstreamId);
+    expect(watch!.due_at - reservedAt).toBeGreaterThanOrEqual(3_600_000);
+    expect(watch!.due_at - Date.now()).toBeLessThanOrEqual(3_600_000);
+    expect(await listed()).toBeNull();
+
+    await runReservationWatch(workstreamId);
+
+    expect(await listed()).not.toBeNull();
+    expect(await env.DB.prepare(`SELECT state, error_code FROM workstream_create_receipts WHERE workstream_id = ?`)
+      .bind(workstreamId).first()).toEqual({ state: "failed", error_code: "session_import_unfinished" });
+    expect(await watchedReservations(workstreamId)).toEqual([]);
+  }, 60_000);
+
+  it("drops the watch on an import that opened its thread, and leaves the thread", async () => {
+    const service = new SessionImportRunService(creationEnv(), AUTH);
+    const workstreamId = await openedThread(service);
+    expect(await watchedReservations(workstreamId)).toHaveLength(1);
+
+    await runReservationWatch(workstreamId);
+
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ archived_at: number | null }>(
+      `SELECT archived_at FROM channels WHERE workstream_id = ?`, workstreamId).one().archived_at)).toBeNull();
+    expect(await env.DB.prepare(`SELECT state FROM workstream_create_receipts WHERE workstream_id = ?`)
+      .bind(workstreamId).first()).toEqual({ state: "completed" });
+    expect(await watchedReservations(workstreamId)).toEqual([]);
+  }, 60_000);
+
+  it("keeps a reservation whose reclaim fails, gated for a retry rather than due again at once", async () => {
+    const parentId = "00000000-0000-7000-8000-0000000001e1";
+    const failures: string[] = [];
+    const watch = await runInDurableObject(workspace(), async (_instance, state) => {
+      const now = Date.now();
+      state.storage.sql.exec(
+        "INSERT INTO import_reservation_reclaim(parent_id, user_id, due_at, attempts) VALUES (?, ?, ?, 0)",
+        parentId, USER_ID, now - 1,
+      );
+      await reclaimDueImportReservations({
+        sql: state.storage.sql,
+        now,
+        reclaim: async () => { throw new Error("D1_ERROR: Network connection lost."); },
+        retryAt: (attempt) => now + attempt * 60_000,
+        onFailure: ({ parentId: failed }) => { failures.push(failed); },
+      });
+      return { now, row: state.storage.sql.exec<{ due_at: number; attempts: number }>(
+        "SELECT due_at, attempts FROM import_reservation_reclaim WHERE parent_id = ?", parentId).one() };
+    });
+    expect(watch.row).toEqual({ due_at: watch.now + 60_000, attempts: 1 });
+    expect(failures).toEqual([parentId]);
+  });
 });

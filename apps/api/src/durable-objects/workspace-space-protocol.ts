@@ -321,6 +321,12 @@ export const WorkspaceChannelReservationRequestSchema = SpaceActorSchema.extend(
    */
   externalBinding: ExternalBindingClaimSchema.optional(),
   /**
+   * A conversation import's reservation, whose Channel opens only when the
+   * import completes. Watched in this same transaction, and archived if it
+   * has not opened in time; see `import-reservation-reclaim.ts`.
+   */
+  reclaimUnopened: z.literal(true).optional(),
+  /**
    * Who the Channel's parent row names as its creator, when that is not the
    * member acting on the Spaces: a connector ingress placing a Channel for a
    * provider sender with no Rally identity acts as the member who linked the
