@@ -166,7 +166,7 @@ search, with `feature` required.
 ## 5. Tests
 
 - workerd: `memory-facts.test.ts` (remember, recall visibility per reader,
-  forget authority, apply fence and receipt replay, migration 115 import on a
+  forget authority, apply fence and receipt replay, migration 116 import on a
   populated object following `navigation-migrations.test.ts`), sweep-state
   claim and settle in `workstream-scheduling` coverage.
 - Node: tools against a doubled WorkspaceDO RPC; `runMemorySweep` with a

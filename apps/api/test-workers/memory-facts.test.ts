@@ -69,7 +69,7 @@ function seedMember(sql: SqlStorage, userId: string, role: "owner" | "member") {
   );
 }
 
-describe("migration 115 on workerd", () => {
+describe("migration 116 on workerd", () => {
   it("imports every live prose memory as a fact with its subject and source, drops the item store, and clears the retired alarm", async () => {
     const stub = env.MIGRATION_PROBE_DO!.getByName("memory-facts-v115");
     await stub.ping();

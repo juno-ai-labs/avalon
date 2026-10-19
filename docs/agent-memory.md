@@ -21,7 +21,7 @@ conversation.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/durable-objects/workspace-memory-facts-storage.ts` | The store: migration 115, the visibility rules (`openableBy`, `subjectAdmits`, `sourcesOpenToAudience`), recall, remember, forget, sweep candidates and `applyMemorySweep`. Every rule about who sees a fact is here. |
+| `apps/api/src/durable-objects/workspace-memory-facts-storage.ts` | The store: migration 116, the visibility rules (`openableBy`, `subjectAdmits`, `sourcesOpenToAudience`), recall, remember, forget, sweep candidates and `applyMemorySweep`. Every rule about who sees a fact is here. |
 | `apps/api/src/durable-objects/workspace-memory-facts-protocol.ts` | The typed RPC shapes, the subject and reader vocabularies, `memorySourceOf`, the sweep operation schema and refusal codes. |
 | `apps/api/src/durable-objects/workspace-do.ts` | The five RPC methods (`recallMemoryFacts`, `rememberMemoryFact`, `forgetMemoryFact`, `memorySweepCandidates`, `applyMemorySweep`) and the person reader's relationship read. |
 | `apps/api/src/durable-objects/workstream-scheduling-storage.ts` | `memory_sweep_state`: the cursor, the rest, the claim, the settle, the release and the alarm's retry time (conversation-object migration 76). |
@@ -332,7 +332,7 @@ source conversations; the tools are `memory_recall`, `memory_remember` and
 `memory_forget`. The prose half of scoped memory (`memory_items`, its FTS and
 Vectorize index, the index outbox, the four `memory_search/add/update/invalidate`
 tools) is gone, and so is admission-time recall for every run kind. Live items
-were imported as facts by migration 115. The team struck the planned
+were imported as facts by migration 116. The team struck the planned
 `memory-sweep-enabled` kill switch before implementation; the lane ships on and
 is stopped by a revert or a deploy.
 
