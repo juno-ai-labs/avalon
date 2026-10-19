@@ -2,7 +2,12 @@ import type { SqlStorageValue } from "@cloudflare/workers-types";
 import type { WorkspaceRelationship } from "@rally/contracts/scope-grants";
 
 import { owningChannelAdmitsMember, sidekickAdmitsMember } from "../services/authorization-policy";
-import { markMemoryDigestHolders, recordMemoryDigestHolder } from "./memory-digest-sync";
+import {
+  currentMemoryRevision,
+  markMemoryDigestHoldersFor,
+  nextMemoryRevision,
+  recordMemoryDigestHolder,
+} from "./memory-digest-sync";
 import {
   admitsOrganizationWide,
   breakoutListedSql,
@@ -13,6 +18,7 @@ import {
 } from "./listing-rules";
 import { workspaceIdentityFencesFor } from "./workspace-domain-schema";
 import {
+  digestPrincipalKey,
   memorySourceOf,
   type MemoryConversation,
   type MemoryDigestFact,
@@ -814,9 +820,22 @@ export function memoryFtsMatch(words: readonly string[]): string | null {
   return [...tokens].map((token) => `"${token}"`).join(" OR ");
 }
 
-function activeFactsOn(sql: SqlStorage, subjectKeys: readonly string[], now: number, limit: number, match: string | null): MemoryFact[] {
+/**
+ * Active facts on the subjects, best match first for an FTS `match`, newest
+ * first without one. `excludeExternal` leaves out facts derived from external
+ * evidence before the limit, for the digest, which never renders them.
+ */
+function activeFactsOn(
+  sql: SqlStorage,
+  subjectKeys: readonly string[],
+  now: number,
+  limit: number,
+  match: string | null,
+  excludeExternal = false,
+): MemoryFact[] {
   if (subjectKeys.length === 0) return [];
-  const keyed = `(fact.subject_kind || ':' || fact.subject_id) IN (SELECT value FROM json_each(?))`;
+  const keyed = `(fact.subject_kind || ':' || fact.subject_id) IN (SELECT value FROM json_each(?))${
+    excludeExternal ? " AND fact.derived_from <> 'external'" : ""}`;
   const rows = match === null
     ? sql.exec<FactRow>(
       `SELECT ${FACT_COLUMNS} FROM memory_facts fact
@@ -850,13 +869,14 @@ function readableFacts(
   request: Pick<WorkspaceMemoryRecallRequest, "workspaceId" | "reader" | "conversation" | "now" | "limit">,
   match: string | null,
   relationship: WorkspaceRelationship | null,
+  excludeExternal = false,
 ): MemoryFact[] {
   const reader = resolveReader(sql, request.reader, relationship, request.conversation);
   if (!reader) return [];
   const subjects = conversationSubjects(sql, request.workspaceId, request.conversation);
   if (reader.kind === "person") subjects.keys.push(subjectKey("person", reader.userId));
   // Over-read so the visibility filter below still fills the page.
-  const candidates = activeFactsOn(sql, subjects.keys, request.now, request.limit * 4, match);
+  const candidates = activeFactsOn(sql, subjects.keys, request.now, request.limit * 4, match, excludeExternal);
   return visibleFacts(sql, reader, request.conversation, candidates).slice(0, request.limit);
 }
 
@@ -873,10 +893,12 @@ export function recallMemoryFacts(
 
 /**
  * What one principal's digest copy in this conversation is refreshed from:
- * recall with no query, newest first, each fact cut to what the renderer
- * needs and its subject named. The conversation is recorded as a holder in the
- * same transaction, so a change that withdraws a fact can reach this copy
- * through the copy-sync lane (`memory-digest-sync.ts`).
+ * recall with no query, newest first, `external` facts left out before the
+ * limit (the digest never renders them), each fact cut to what the renderer
+ * needs and its subject named, stamped with `memory_revision`. The
+ * conversation is recorded as a holder of these facts in the same
+ * transaction, so a change that withdraws one can reach this copy through the
+ * copy-sync lane (`memory-digest-sync.ts`).
  */
 export function memoryDigestFacts(
   storage: DurableObjectStorage,
@@ -885,10 +907,15 @@ export function memoryDigestFacts(
 ): WorkspaceMemoryDigestResult {
   return storage.transactionSync(() => {
     const sql = storage.sql;
-    const readAt = Date.now();
-    const facts = readableFacts(sql, request, null, relationship);
+    const revision = currentMemoryRevision(sql);
+    const facts = readableFacts(sql, request, null, relationship, true);
     const titles = new Map(titlesFor(sql, facts).map((entry) => [entry.key, entry.title]));
-    recordMemoryDigestHolder(sql, request.conversation, readAt);
+    recordMemoryDigestHolder(sql, {
+      conversation: request.conversation,
+      principal: digestPrincipalKey(request.reader),
+      factIds: facts.map((fact) => fact.factId),
+      now: Date.now(),
+    });
     return {
       facts: facts.map((fact): MemoryDigestFact => ({
         factId: fact.factId,
@@ -906,7 +933,7 @@ export function memoryDigestFacts(
         derivedFrom: fact.derivedFrom,
         createdAt: fact.createdAt,
       })),
-      readAt,
+      revision,
     };
   });
 }
@@ -1056,6 +1083,7 @@ export function rememberMemoryFact(
       updatedAt: request.now,
     };
     insertFact(sql, request.workspaceId, fact);
+    nextMemoryRevision(sql);
     writeReceipt(sql, request, "remember", { fact, deduplicated: false });
     return { outcome: "written", fact };
   });
@@ -1109,10 +1137,14 @@ export function forgetMemoryFact(
       `UPDATE memory_facts SET retracted_at = ?, retracted_by = ?, updated_at = ? WHERE fact_id = ?`,
       request.now, by, request.now, request.factId,
     );
-    // Every conversation holding a digest copy may be showing this fact; the
-    // copy-sync lane refreshes them (`memory-digest-sync.ts`).
-    markMemoryDigestHolders(sql);
-    const result: WorkspaceMemoryForgetResult = { outcome: "retracted", fact: { ...fact, retractedAt: request.now, updatedAt: request.now } };
+    // Every conversation whose copy was read with this fact may be showing
+    // it; the copy-sync lane refreshes them (`memory-digest-sync.ts`).
+    markMemoryDigestHoldersFor(sql, [fact.factId]);
+    const result: WorkspaceMemoryForgetResult = {
+      outcome: "retracted",
+      fact: { ...fact, retractedAt: request.now, updatedAt: request.now },
+      revision: nextMemoryRevision(sql),
+    };
     writeReceipt(sql, request, "forget", result);
     return result;
   });
@@ -1234,11 +1266,14 @@ export function applyMemorySweep(
     if (request.fromSeq > storedToSeq) return { outcome: "cursor_ahead", storedToSeq };
     const placed = sweepPlacement(sql, request.workspaceId, request.conversation, request.speakerIds);
     const refused: Array<{ index: number; code: MemorySweepRefusal }> = [];
-    // A retract or an update takes a fact out of circulation in every other
-    // conversation's digest copy; an add or a confirm does not (the swept
-    // conversation's own copies are refreshed by the sweep consumer, and a new
-    // fact reaches the rest at their next refresh).
-    let withdrew = false;
+    let applied = false;
+    // A retraction withdraws its fact from every copy read with it, so those
+    // holders are marked. An update supersedes its predecessor without
+    // withdrawing access: a copy showing the old wording is stale, not wrong
+    // about who may read it, and catches up at its next refresh, as an add
+    // or a confirm does (the swept conversation's own copies are refreshed by
+    // the sweep consumer).
+    const retracted: string[] = [];
     // An update, confirm or retract may touch only a fact this sweep was
     // handed as a candidate, and only while every participant may still open
     // it: the model reads a fact id off an untrusted transcript as readily as
@@ -1314,6 +1349,7 @@ export function applyMemorySweep(
           createdAt: request.now,
           updatedAt: request.now,
         });
+        applied = true;
         return;
       }
       if (!candidateIds.has(operation.factId)) { refused.push({ index, code: "fact_not_candidate" }); return; }
@@ -1323,6 +1359,7 @@ export function applyMemorySweep(
       if (!touchable.has(fact.factId)) { refused.push({ index, code: "fact_not_candidate" }); return; }
       if (operation.op === "confirm") {
         sql.exec(`UPDATE memory_facts SET confirmed_at = ?, updated_at = ? WHERE fact_id = ?`, request.now, request.now, fact.factId);
+        applied = true;
         return;
       }
       if (operation.op === "retract") {
@@ -1330,7 +1367,8 @@ export function applyMemorySweep(
           `UPDATE memory_facts SET retracted_at = ?, retracted_by = 'sweep', updated_at = ? WHERE fact_id = ?`,
           request.now, request.now, fact.factId,
         );
-        withdrew = true;
+        applied = true;
+        retracted.push(fact.factId);
         return;
       }
       // An update is a new fact that supersedes and links its predecessor, and
@@ -1355,9 +1393,10 @@ export function applyMemorySweep(
         updatedAt: request.now,
       });
       sql.exec(`UPDATE memory_facts SET superseded_by_fact_id = ?, updated_at = ? WHERE fact_id = ?`, factId, request.now, fact.factId);
-      withdrew = true;
+      applied = true;
     });
-    if (withdrew) markMemoryDigestHolders(sql);
+    const markedHolders = markMemoryDigestHoldersFor(sql, retracted);
+    const revision = applied ? nextMemoryRevision(sql) : currentMemoryRevision(sql);
     sql.exec(
       `INSERT INTO memory_sweep_receipts (conversation, workspace_id, from_seq, to_seq, operations_json, model, input_tokens, output_tokens, applied_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1372,6 +1411,8 @@ export function applyMemorySweep(
       outcome: "applied",
       receipt: { conversation: here, fromSeq: request.fromSeq, toSeq: request.toSeq, appliedAt: request.now, operationCount: request.operations.length },
       refused,
+      revision,
+      markedHolders,
     };
   });
 }

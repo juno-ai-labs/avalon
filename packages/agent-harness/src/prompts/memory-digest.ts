@@ -5,7 +5,8 @@
  * the same bytes wherever it is rendered and its hash can name it.
  *
  * Everything here is data the model is told not to obey: the heading denies it
- * authority, and a second line says the person's own facts are the sender's.
+ * authority, and, when any are shown, a second line says the person's own
+ * facts are the sender's.
  */
 
 export type MemoryDigestSubjectKind = "organization" | "channel" | "thread" | "breakout" | "sidekick" | "person";
@@ -59,12 +60,17 @@ function upcomingFrom(fact: MemoryDigestFactInput, now: number): number | null {
   return fact.validFrom !== null && fact.validFrom > now ? fact.validFrom : null;
 }
 
-/** Current facts render as `- text`; upcoming ones as `- From <date>: text`. Both carry a horizon when they have one. */
+/**
+ * Current facts render as `- text`; upcoming ones as `- From <date>: text`.
+ * Both carry a horizon when they have one, and the full fact id, which
+ * `memory_forget` matches exactly (a UUIDv7's leading digits are a timestamp
+ * every fact minted in the same minute shares).
+ */
 function line(fact: MemoryDigestFactInput, now: number): string {
   const from = upcomingFrom(fact, now);
   const body = `${fact.conflict ? "Disagreement: " : ""}${fact.text.trim()}`;
   const horizon = fact.validUntil === null ? "" : ` (until ${day(fact.validUntil)})`;
-  return `- ${from === null ? "" : `From ${day(from)}: `}${body}${horizon} [${fact.factId.slice(0, 8)}]`;
+  return `- ${from === null ? "" : `From ${day(from)}: `}${body}${horizon} [${fact.factId}]`;
 }
 
 /** Expired, and external evidence, never reach the digest (PRD design decision 11). */
@@ -111,7 +117,8 @@ function render(ordered: readonly Group[], now: number, leftOut: number): string
   const sections = ordered.filter((group) => group.facts.length > 0).map((group) =>
     [`${group.title}:`, ...group.facts.map((fact) => line(fact, now))].join("\n"));
   const trailer = leftOut > 0 ? [`(${leftOut} more remembered ${leftOut === 1 ? "fact was" : "facts were"} left out.)`] : [];
-  return [HEADING, PERSONAL_NOTE, "", ...sections.flatMap((section) => [section, ""]), ...trailer].join("\n").trimEnd();
+  const personal = ordered.some((group) => group.kind === "person" && group.facts.length > 0) ? [PERSONAL_NOTE] : [];
+  return [HEADING, ...personal, "", ...sections.flatMap((section) => [section, ""]), ...trailer].join("\n").trimEnd();
 }
 
 /**
