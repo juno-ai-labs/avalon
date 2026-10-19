@@ -297,25 +297,20 @@ const AVALON_TOOL_PROSE: Record<string, ToolProse> = {
   import_fail: { started: "Stopping the import run", settled: "Stopped the import run", failed: "Could not stop the import run" },
   load_skill: { started: "Loading instructions", settled: "Loaded instructions", failed: "Could not load instructions" },
   read_skill_resource: { started: "Reading instructions", settled: "Read instructions", failed: "Could not read instructions" },
-  memory_search: {
-    started: "Searching memory",
-    settled: "Searched memory",
-    failed: "Could not search memory",
+  memory_recall: {
+    started: "Recalling what Rally remembers",
+    settled: "Recalled what Rally remembers",
+    failed: "Could not recall memory",
   },
-  memory_add: {
-    started: "Saving to memory",
-    settled: "Saved to memory",
-    failed: "Could not save to memory",
+  memory_remember: {
+    started: "Remembering a fact",
+    settled: "Remembered a fact",
+    failed: "Could not remember the fact",
   },
-  memory_update: {
-    started: "Updating memory",
-    settled: "Updated memory",
-    failed: "Could not update memory",
-  },
-  memory_invalidate: {
-    started: "Clearing a memory entry",
-    settled: "Cleared a memory entry",
-    failed: "Could not clear a memory entry",
+  memory_forget: {
+    started: "Forgetting a fact",
+    settled: "Forgot a fact",
+    failed: "Could not forget the fact",
   },
   table_search: {
     started: "Searching durable tables",

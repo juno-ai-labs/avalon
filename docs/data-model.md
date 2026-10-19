@@ -780,9 +780,14 @@ column catalog; what follows is only what WorkspaceDO still holds.
   migration 1 and drops them with its identity row.
 
 - `memory_scopes` owns durable work-stream, user, workspace, and Sidekick
-  memory authority. `memory_items` stores compact prose facts; `memory_tables`,
+  table authority. `memory_tables`,
   `memory_table_columns`, `memory_table_rows`, and `memory_table_cells` store typed
-  collections with natural-key deduplication and targeted queries. A
+  collections with natural-key deduplication and targeted queries. Prose
+  memory is `memory_facts`, keyed by subject and carrying its source
+  conversations, with `memory_sweep_receipts` and `memory_fact_receipts`
+  beside it ([`agent-memory.md`](agent-memory.md#data-model)); the retired
+  `memory_items`, `memory_mutations` and `memory_index_outbox` were imported
+  and dropped by WorkspaceDO migration 116. A
   Sidekick's chat and its runs resolve one scope of kind `sidekick` (stored as
   `automation` before WorkspaceDO migration 50) keyed by the Sidekick id, beside
   the workspace scope; there is no Sidekick memory engine elsewhere. A run creates the tables its definition describes through

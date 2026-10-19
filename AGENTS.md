@@ -134,7 +134,7 @@ read [`docs/durable-object-sqlite.md`](docs/durable-object-sqlite.md).
   schema, so a test there declares the tables it needs; a query or a constraint
   is proved in the Node suite instead, which applies the checked-in migrations
   rather than stubbing a database. A double stands in for something that
-  _cannot_ run here — Workers AI, Vectorize, Flagship, a provider's API — never
+  _cannot_ run here — Workers AI, Flagship, a provider's API — never
   for setup that was inconvenient.
 - **A test runs the subject and asserts its observable output against a
   literal.** It never asserts on the text of a source, stylesheet, HTML or

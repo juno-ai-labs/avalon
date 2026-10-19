@@ -25,7 +25,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 75;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 76;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3500,6 +3500,34 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
         suggestion_id TEXT,
         created_at INTEGER NOT NULL
       ) STRICT`,
+    ],
+  },
+  {
+    version: 76,
+    description: "the memory sweep's cursor and cadence, and the retired admission-recall table dropped",
+    statements: [
+      // One row: how far the sweep has read this conversation, when it may
+      // look again, and the claim in flight. The description refresh's shape
+      // (`description_refresh_state`) for the same reason: a claim pushes
+      // `rest_until` before the model call. `docs/agent-memory.md#the-sweep`.
+      `CREATE TABLE memory_sweep_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        swept_through_seq INTEGER NOT NULL CHECK (swept_through_seq >= 0),
+        rest_until INTEGER NOT NULL CHECK (rest_until >= 0),
+        consecutive_quiet INTEGER NOT NULL CHECK (consecutive_quiet >= 0),
+        claim_from_seq INTEGER CHECK (claim_from_seq IS NULL OR claim_from_seq >= 0),
+        claim_to_seq INTEGER CHECK (claim_to_seq IS NULL OR claim_to_seq >= 0),
+        claim_attempt INTEGER NOT NULL CHECK (claim_attempt >= 0),
+        claim_at INTEGER CHECK (claim_at IS NULL OR claim_at >= 0),
+        retry_at INTEGER CHECK (retry_at IS NULL OR retry_at >= 0),
+        version INTEGER NOT NULL CHECK (version >= 1),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT`,
+      // Admission recall froze its results here; nothing reads or writes the
+      // table since the agent-memory redesign. `run_scopes.memory_context_hash`
+      // stays, always NULL, because `run_scopes` is a referenced parent.
+      `DROP TABLE run_memory_contexts`,
     ],
   },
 ];

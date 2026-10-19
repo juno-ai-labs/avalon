@@ -92,8 +92,31 @@ export interface DescriptionRefreshRow extends Record<string, SqlStorageValue> {
   evaluated_through_sequence: number;
 }
 
+/** The memory sweep's cursor and cadence for this conversation (`docs/agent-memory.md#the-sweep`). */
+export interface MemorySweepStateRow extends Record<string, SqlStorageValue> {
+  swept_through_seq: number;
+  rest_until: number;
+  consecutive_quiet: number;
+  claim_from_seq: number | null;
+  claim_to_seq: number | null;
+  claim_attempt: number;
+  claim_at: number | null;
+  retry_at: number | null;
+  version: number;
+}
+
 function first<T>(cursor: SqlStorageCursor<T extends Record<string, SqlStorageValue> ? T : never>) {
   return cursor.toArray()[0];
+}
+
+/**
+ * The rest a conversation has earned after a sweep: the floor, doubling once
+ * per consecutive quiet sweep, up to the ceiling. The numbers are the lane's
+ * (`memory-sweep-service.ts`); the arithmetic is here so the settle that
+ * applies it needs nothing but numbers.
+ */
+export function memorySweepRestUntil(now: number, quiet: number, floorMs: number, ceilingMs: number): number {
+  return now + Math.min(ceilingMs, floorMs * 2 ** Math.max(0, quiet));
 }
 
 export class WorkstreamSchedulingStorage {
@@ -687,6 +710,145 @@ export class WorkstreamSchedulingStorage {
       );
       return this.#changed() > 0;
     });
+  }
+
+  // ------------------------------------------------------- memory sweep
+
+  /**
+   * The sweep's standing state, or nothing before the first claim. Read first
+   * because it is the cheapest of the gates: a conversation that has not
+   * rested is not looked at, whatever was said in it.
+   */
+  memorySweepState(): MemorySweepStateRow | undefined {
+    return first(this.sql.exec<MemorySweepStateRow>(
+      `SELECT swept_through_seq, rest_until, consecutive_quiet, claim_from_seq, claim_to_seq,
+              claim_attempt, claim_at, retry_at, version
+         FROM memory_sweep_state WHERE id = 1`,
+    ));
+  }
+
+  /**
+   * Claim one sweep of `fromSeq..toSeq`, pushing the rest forward before any
+   * model call is made (the description loop's claim), so two runs settling
+   * together spend one sweep and a failing model is not retried by every run
+   * behind it. `null` when the conversation is resting or another claim is
+   * in flight within `claimTimeoutMs`, both re-checked inside the write.
+   *
+   * The claim leaves `retry_at` at its rest: a delivery lost together with its
+   * release would otherwise hold the lane until an unrelated run settled, since
+   * the alarm reads nothing but `retry_at`. At the rest the claim has timed out
+   * and the attempt claims again; a settle or release moves `retry_at` first.
+   */
+  claimMemorySweep(input: {
+    now: number;
+    fromSeq: number;
+    toSeq: number;
+    restUntil: number;
+    claimTimeoutMs: number;
+  }): { attempt: number } | null {
+    return this.storage.transactionSync(() => {
+      const existing = this.memorySweepState();
+      if (!existing) {
+        this.sql.exec(
+          `INSERT INTO memory_sweep_state
+             (id, swept_through_seq, rest_until, consecutive_quiet, claim_from_seq, claim_to_seq,
+              claim_attempt, claim_at, retry_at, version, created_at, updated_at)
+           VALUES (1, 0, ?, 0, ?, ?, 1, ?, ?, 1, ?, ?)`,
+          input.restUntil, input.fromSeq, input.toSeq, input.now, input.restUntil, input.now, input.now,
+        );
+        return { attempt: 1 };
+      }
+      if (existing.rest_until > input.now) return null;
+      if (existing.swept_through_seq !== input.fromSeq) return null;
+      const inFlight = existing.claim_at !== null && existing.claim_to_seq !== null
+        && existing.claim_at + input.claimTimeoutMs > input.now;
+      if (inFlight) return null;
+      const attempt = existing.claim_attempt + 1;
+      this.sql.exec(
+        `UPDATE memory_sweep_state
+            SET rest_until = ?, claim_from_seq = ?, claim_to_seq = ?, claim_attempt = ?, claim_at = ?,
+                retry_at = ?, version = version + 1, updated_at = ?
+          WHERE id = 1`,
+        input.restUntil, input.fromSeq, input.toSeq, attempt, input.now, input.restUntil, input.now,
+      );
+      return { attempt };
+    });
+  }
+
+  /**
+   * Move the cursor to what the store applied, and set the rest that outcome
+   * earned: a sweep that wrote returns to the floor, a quiet one doubles it.
+   * The rest is computed here from numbers, because this is called over the
+   * scheduling port from the Queue consumer and a closure does not cross it.
+   *
+   * Compare-and-swap on the claimed `fromSeq`: a settle whose `fromSeq` is not
+   * the cursor is refused, and settling to a `toSeq` the cursor already holds
+   * is a no-op, so a redelivery after a committed apply finishes cleanly.
+   *
+   * `retry_at` goes to the new rest when the transcript already holds more
+   * than the settled range: a run that settled while this sweep was in flight
+   * found the conversation resting and asked the alarm back, and clearing that
+   * here would leave its messages unswept until something else happened.
+   */
+  settleMemorySweep(input: {
+    fromSeq: number;
+    toSeq: number;
+    /** The delivery's claim, for the record; the fence is `fromSeq`, and a range skipped without a claim passes 0. */
+    attempt: number;
+    wrote: boolean;
+    restFloorMs: number;
+    restCeilingMs: number;
+    now: number;
+  }): "settled" | "already_settled" | "refused" {
+    return this.storage.transactionSync(() => {
+      const existing = this.memorySweepState();
+      if (!existing) return "refused";
+      if (existing.swept_through_seq === input.toSeq && existing.claim_at === null) return "already_settled";
+      if (existing.swept_through_seq !== input.fromSeq) return "refused";
+      const quiet = input.wrote ? 0 : existing.consecutive_quiet + 1;
+      const restUntil = memorySweepRestUntil(input.now, quiet, input.restFloorMs, input.restCeilingMs);
+      const retryAt = this.messages.hasMessageAfter({ afterSequence: input.toSeq }) ? restUntil : null;
+      this.sql.exec(
+        `UPDATE memory_sweep_state
+            SET swept_through_seq = ?, consecutive_quiet = ?, rest_until = ?, claim_from_seq = NULL,
+                claim_to_seq = NULL, claim_at = NULL, retry_at = ?, version = version + 1, updated_at = ?
+          WHERE id = 1`,
+        input.toSeq, quiet, restUntil, retryAt, input.now,
+      );
+      return "settled";
+    });
+  }
+
+  /**
+   * Let a sweep the consumer could not finish stop holding the next one back.
+   * Only the latest claim releases, and the rest set at claim time still
+   * decides when the alarm tries again.
+   */
+  releaseMemorySweep(input: { attempt: number; now: number }): boolean {
+    return this.storage.transactionSync(() => first(this.sql.exec<{ id: number } & Record<string, SqlStorageValue>>(
+      `UPDATE memory_sweep_state
+          SET claim_from_seq = NULL, claim_to_seq = NULL, claim_at = NULL, retry_at = rest_until,
+              version = version + 1, updated_at = ?
+        WHERE id = 1 AND claim_attempt = ? AND claim_at IS NOT NULL
+        RETURNING id`,
+      input.now, input.attempt,
+    )) !== undefined);
+  }
+
+  /**
+   * Ask the alarm to try again at `retryAt` (a resting conversation with
+   * messages after the cursor), or at nothing. The alarm lane reads this and
+   * nothing else, so every attempt has to move it.
+   */
+  deferMemorySweep(input: { retryAt: number | null; now: number }): void {
+    this.sql.exec(
+      `INSERT INTO memory_sweep_state
+         (id, swept_through_seq, rest_until, consecutive_quiet, claim_from_seq, claim_to_seq,
+          claim_attempt, claim_at, retry_at, version, created_at, updated_at)
+       VALUES (1, 0, 0, 0, NULL, NULL, 0, NULL, ?, 1, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET retry_at = excluded.retry_at, updated_at = excluded.updated_at`,
+      input.retryAt, input.now, input.now,
+    );
   }
 
   /** Rows written by the statement that just ran, in this transaction. */

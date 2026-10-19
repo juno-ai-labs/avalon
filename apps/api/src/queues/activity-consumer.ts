@@ -14,6 +14,7 @@ import { AuthorizationProjectionJobSchema } from '../durable-objects/authorizati
 import { ChannelColorSyncMessageSchema } from "../durable-objects/channel-color-sync";
 import { ThreadBackfillMessageSchema, type ThreadBackfillJob } from "../durable-objects/thread-backfill";
 import { backfillSuggestion } from "../services/suggestion-backfill-service";
+import { MemorySweepMessageSchema, runMemorySweep } from "../services/memory-sweep-service";
 import { summarizeExistingDescription } from "../services/workstream-naming-service";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { projectAuthorization } from '../services/authorization-projection-service';
@@ -615,6 +616,32 @@ async function consumeOne(message: Message<unknown>, env: Env,
           reason: diagnosticErrorCode(error, "thread_backfill_failed"),
         });
         await workspace.releaseThreadBackfill(target).catch(() => undefined);
+      }
+    }
+    message.ack();
+    return;
+  }
+  const memorySweep = MemorySweepMessageSchema.safeParse(message.body);
+  if (memorySweep.success) {
+    const target = memorySweep.data;
+    if (target.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    // Acked whatever happens, as colour sync and the backfill are: the
+    // conversation's own claim and rest decide when it is tried again, and
+    // `runMemorySweep` has already released the claim before it throws.
+    try {
+      await runMemorySweep(env, target);
+    } catch (error) {
+      if (!isRetirementRefusal(error)) {
+        logWarn(env, "memory_sweep_delivery_failed", {
+          workspace_id: target.workspaceId,
+          workstream_id: target.parentId,
+          substream_id: target.substreamId,
+          attempt: target.attempt,
+          reason: diagnosticErrorCode(error, "memory_sweep_delivery_failed"),
+        });
       }
     }
     message.ack();

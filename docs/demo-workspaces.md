@@ -713,7 +713,7 @@ the auth middleware never sets it, and every socket-ticket issuer refuses it.
 The readiness barrier reads as the member membership says the viewer is and
 refuses a viewer the workspace does not seat; it never fabricates a role. Seed
 prose is pack data behind a schema, never a member's or a model's input, and
-a seeded run skips admission-time memory recall as a human message does, so
+no run recalls memory at admission, so
 the seed's `fetch` is the only provider it reaches — and the run is routed to
 the client that `fetch` belongs to: an OpenRouter-only model with no fallbacks
 and no Azure transport, because production's default model is Azure-first
@@ -1014,9 +1014,9 @@ what `POST /sidekicks/:id/run` reaches, and a seed on that request shape would
 let a member script their own Sidekick's output and keep it as history. Keep the
 two request shapes apart. The recurrence's zone stays required in the pack: a
 null one resolves against the persona the Sidekick runs as, which has no zone.
-And a seeded run is now the gate on admission-time memory recall — that recall
-used to be skipped by looking at the run's reason, which for a Sidekick run is
-its trigger's, so the seed itself decides. A run carrying a seed must reach no
+And a seeded run was the gate on admission-time memory recall while that
+existed — the recall used to be skipped by looking at the run's reason, which
+for a Sidekick run is its trigger's, so the seed itself decided. A run carrying a seed must reach no
 provider but the seam; the seeder's test proves that by refusing at the
 OpenRouter double.
 

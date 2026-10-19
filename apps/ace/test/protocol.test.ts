@@ -174,8 +174,9 @@ describe('Ace managed model protocol', () => {
       { role: 'work_opportunity_ranking', key: 'agent-model-work-opportunity-ranking' },
       { role: 'session_import', key: 'agent-model-session-import' },
       { role: 'suggestion_draft', key: 'agent-model-suggestion-draft' },
+      { role: 'memory_sweep', key: 'agent-model-memory-sweep' },
     ]);
-    expect(MANAGED_MODELS.map((model) => model.rank)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(MANAGED_MODELS.map((model) => model.rank)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(MANAGED_MODELS.every((model) => model.rankReason.length > 15)).toBe(true);
     expect(new Set(MANAGED_MODELS.map((model) => model.key)).size).toBe(MANAGED_MODELS.length);
     expect(MANAGED_MODELS.every((model) => model.description.length > 60)).toBe(true);

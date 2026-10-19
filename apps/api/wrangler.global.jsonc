@@ -112,9 +112,6 @@
   "flagship": [
     { "binding": "FLAGS", "app_id": "bec01d3a-d6b6-4d8c-b89a-37440ed63b8c", "remote": true }
   ],
-  "vectorize": [
-    { "binding": "MEMORY_INDEX", "index_name": "avalon-global-memory" }
-  ],
   // Both zones are served at once. The Rally hostnames are canonical — every
   // URL this Worker mints uses them — while the Avalon ones stay attached
   // because a hostname is not something we control the callers of: provider

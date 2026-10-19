@@ -77,7 +77,7 @@ drive or screenshot it.
 ## What cannot be verified here
 
 Everything [the sandbox's list](dev-environment.md#what-cannot-be-verified-in-a-sandbox)
-names, for the same reasons — Workers AI, Vectorize, and Flagship bindings, real
+names, for the same reasons — Workers AI and Flagship bindings, real
 OAuth callbacks, a real streaming turn, the macOS-only surfaces, and anything
 needing Cloudflare credentials. A Cloud Agent adds no capability there; provider
 keys, if a session needs them, are added as environment secrets and reach the

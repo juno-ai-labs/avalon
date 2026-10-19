@@ -49,7 +49,6 @@ export interface ImmutableRunScope {
   routingPolicyVersion: string;
   promptVersion: string;
   toolSurfaceHash: string;
-  memoryContextHash?: string | null;
   limits: Record<string, unknown>;
 }
 
@@ -304,7 +303,6 @@ export async function persistImmutableRunScope(
     routingPolicyVersion: scope.routingPolicyVersion,
     promptVersion: scope.promptVersion,
     toolSurfaceHash: scope.toolSurfaceHash,
-    memoryContextHash: scope.memoryContextHash ?? null,
     limits: scope.limits,
   };
   startedAt = Date.now();
@@ -325,7 +323,6 @@ export async function persistImmutableRunScope(
     routingPolicyVersion: canonicalScope.routingPolicyVersion,
     promptVersion: canonicalScope.promptVersion,
     toolSurfaceHash: canonicalScope.toolSurfaceHash,
-    memoryContextHash: canonicalScope.memoryContextHash,
     limitsJson: stableJson(canonicalScope.limits),
   });
   reportTiming("write", startedAt);

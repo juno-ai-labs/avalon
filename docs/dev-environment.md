@@ -263,10 +263,7 @@ The affected Worker exits when that proxy cannot be established.
 `wrangler dev --local` disables remote bindings and avoids the proxy session.
 
 What that costs: `env.AI` is unavailable, so Cloudflare-backed PDF OCR cannot
-run. Memory embeddings use OpenRouter instead, but `env.MEMORY_INDEX`
-(Vectorize) is reported as `not supported` by `wrangler dev` in every local run,
-remote bindings or not, so end-to-end hybrid retrieval is still unavailable.
-`env.FLAGS` (Flagship) is also
+run. `env.FLAGS` (Flagship) is also
 reported `not supported`, because Flagship bindings are always remote — but
 unlike the others the binding object is still present, and it is each *call*
 that rejects with `Binding FLAGS needs to be run remotely`. Every agent then
@@ -409,7 +406,7 @@ workspace with its work streams, automations, and onboarding checklist.
 
 ## What cannot be verified in a sandbox
 
-- **Workers AI PDF OCR** (`env.AI`), **Vectorize** (`env.MEMORY_INDEX`), and **Flagship**
+- **Workers AI PDF OCR** (`env.AI`) and **Flagship**
   (`env.FLAGS`), per above. Served flag values cannot be exercised locally; the
   Worker-variable fallback they resolve to can.
 - **Real OAuth callbacks.** Providers require a public HTTPS redirect; a local
