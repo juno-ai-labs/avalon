@@ -1197,19 +1197,19 @@ function calendarEventWriteInputSchema(includeEventId: boolean): Record<string, 
       type: "array",
       items: { type: "string", format: "email" },
       maxItems: 50,
-      description: "Addresses to add to the event's current guest list. Everyone already invited stays."
+      description: "Addresses to add to the event's current guest list. Everyone already invited stays. An empty array is treated as omitted."
     };
     properties.removeAttendeeEmails = {
       type: "array",
       items: { type: "string", format: "email" },
       maxItems: 50,
-      description: "Addresses to remove from the event's current guest list."
+      description: "Addresses to remove from the event's current guest list. An empty array is treated as omitted."
     };
     properties.replaceAllAttendeeEmails = {
       type: "array",
       items: { type: "string", format: "email" },
       maxItems: 50,
-      description: "The event's complete guest list after the update. Anyone omitted is removed. Cannot be combined with addAttendeeEmails or removeAttendeeEmails."
+      description: "The event's complete guest list after the update. Anyone omitted is removed. Cannot be combined with nonempty addAttendeeEmails or removeAttendeeEmails. An empty array is treated as omitted; to remove every guest, list their addresses in removeAttendeeEmails."
     };
   }
   return {
@@ -1286,6 +1286,10 @@ const CalendarEventCreateArgsSchema = z.strictObject({
   path: ["end"]
 });
 
+const CalendarAttendeeChangeEmailsSchema = z.array(z.string().email()).max(50)
+  .transform((emails) => emails.length === 0 ? undefined : emails)
+  .optional();
+
 /**
  * Updating an event states which attendees change, never the resulting list.
  *
@@ -1305,11 +1309,11 @@ const CalendarEventUpdateArgsSchema = z.strictObject({
   start: z.string().datetime({ offset: true }).optional(),
   end: z.string().datetime({ offset: true }).optional(),
   timeZone: z.string().min(1).max(100).optional(),
-  addAttendeeEmails: z.array(z.string().email()).max(50).optional(),
-  removeAttendeeEmails: z.array(z.string().email()).max(50).optional(),
-  replaceAllAttendeeEmails: z.array(z.string().email()).max(50).optional()
+  addAttendeeEmails: CalendarAttendeeChangeEmailsSchema,
+  removeAttendeeEmails: CalendarAttendeeChangeEmailsSchema,
+  replaceAllAttendeeEmails: CalendarAttendeeChangeEmailsSchema
 }).superRefine((value, context) => {
-  if (Object.keys(value).every((key) => key === "eventId" || key === "calendarId")) {
+  if (Object.entries(value).every(([key, field]) => key === "eventId" || key === "calendarId" || field === undefined)) {
     context.addIssue({ code: "custom", message: "Choose at least one event field to update" });
   }
   if (
@@ -1948,7 +1952,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     if (requireComplete && payload.attendeesOmitted === true) {
       throw new ConnectorError(
         "invalid_payload",
-        "This event's guest list came back incomplete, so adding or removing an attendee would drop the ones that were not returned. Set the full list explicitly with replaceAllAttendeeEmails, or change the event in Google Calendar.",
+        "This event's guest list came back incomplete, so adding or removing an attendee would drop the ones that were not returned. Set a nonempty full list explicitly with replaceAllAttendeeEmails, or change the event in Google Calendar. To clear every guest when the list is incomplete, use Google Calendar; empty attendee arrays are treated as omitted.",
         { reason: "attendee_snapshot_incomplete", field: "addAttendeeEmails" }
       );
     }
@@ -2967,11 +2971,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         // A relative attendee change is resolved against the event's current
         // guest list before it is sent, because Calendar's PATCH replaces the
         // whole array: sending only the additions is what deletes the rest.
-        // Length rather than truthiness: an empty array is truthy, so gating on
-        // the array alone turned `addAttendeeEmails: []` into a read, an
-        // identical write-back, and an update mail to every guest about a
-        // change that did not happen.
-        const changesAttendees = Boolean(args.addAttendeeEmails?.length || args.removeAttendeeEmails?.length);
+        const changesAttendees = Boolean(args.addAttendeeEmails || args.removeAttendeeEmails);
         let attendees: Record<string, unknown>[] | undefined;
         let existingAttendees: Record<string, unknown>[] = [];
         if (changesAttendees || args.replaceAllAttendeeEmails) {
