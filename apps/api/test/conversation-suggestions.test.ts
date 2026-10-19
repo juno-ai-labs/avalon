@@ -253,6 +253,16 @@ describe("observeTurnDisposition", () => {
     expect(storage.judgementForRun(runId)?.code).toBe("already_carried_up");
   });
 
+  it("does not resume a pending row whose draft this object is still writing", async () => {
+    const { storage } = conversation(twoTurns);
+    await observeTurnDisposition(observation(storage));
+    const fetcher = answering("worth_carrying_up", 0.91);
+    const result = await observeTurnDisposition(observation(storage, { fetch: fetcher, draftInFlight: () => true }));
+    expect(result).toEqual({ outcome: "skipped", gate: "draft_in_flight" });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(storage.open().map((row) => row.draft_status)).toEqual(["pending"]);
+  });
+
   it("writes nothing when another caller judged the run while the classifier was answering", async () => {
     const { storage } = conversation(twoTurns);
     const answer = answering("worth_carrying_up", 0.91);
