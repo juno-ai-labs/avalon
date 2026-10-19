@@ -1340,9 +1340,10 @@ export class HostedParent {
    * Archive a Channel whose main conversation was reserved and never opened,
    * so it leaves every listing.
    *
-   * Only for the conversation-import reservation (see
-   * `WorkstreamObjectCreationService.reserveImport`), and only while the main
-   * conversation has never delivered an effect here: once it has, it owns the
+   * Reached for a conversation-import reservation (see
+   * `WorkstreamObjectCreationService.reserveImport`) by discard, abandon and
+   * the run-end reclaim, and only while the main conversation has never
+   * delivered an effect here: once it has, it owns the
    * Channel's directory and archiving is its own operation. The archive is the
    * same `directory_common` projection a reservation writes, with `archivedAt`
    * set, so the directory and every subscriber learn it the ordinary way. The
