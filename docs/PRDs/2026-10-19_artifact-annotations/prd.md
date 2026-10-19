@@ -104,11 +104,16 @@ With pick mode on, the pointer outlines the element under it. The outline
 follows the pointer the way a browser's element inspector does.
 
 - **Hover** outlines the nearest block.
-- **Alt (Option) or scroll while hovering** grows the outline to the parent:
-  list item, then list, then the section. A Markdown section runs from a
-  heading to the next heading of the same or higher level.
-- **Click** pins the outlined block.
-- **Double-click** pins one word.
+- **Alt (Option) while hovering** grows the outline to the parent: list item,
+  then list, then the section. **↑ and ↓** move up and down the same chain. A
+  Markdown section runs from a heading to the next heading of the same or
+  higher level. Scrolling always scrolls; pick mode is for long documents and
+  sites, where a person scrolls to reach the next thing to pin.
+- **Click** pins the outlined block at once.
+- **Double-click** pins one word. The first click of a double-click has already
+  pinned the block, so the double-click replaces that block pin with the word
+  pin. Clicks never wait out the double-click interval, which would slow every
+  block pin.
 - **Click and drag** pins any range of text.
 - **Escape** leaves pick mode. Pins already made stay.
 
@@ -121,7 +126,9 @@ open.
 
 The composer shows a row of chips above the text field, one per pin, each with
 a short excerpt. Clicking a chip scrolls to its pin. Removing a chip removes the
-pin. Sending is allowed with no message text when at least one pin has a comment.
+pin. A pin's comment may be left empty, for pins the message text speaks to
+together ("tighten all of these"). Sending is allowed with no message text when
+at least one pin has a comment.
 
 ### What each kind supports
 
@@ -198,8 +205,6 @@ None yet.
    words the person pointed at.
 6. **Annotations are not citations.** A citation is the model pointing a reader
    at a resource. An annotation is a person pointing the model at part of one.
-   They can share a locator format later, so a model could cite a spot with
-   `resource://<id>#<locator>`, but this PRD does not add that.
 7. **HTML quotes are the rendered element, not source.** `outerHTML` is the
    browser's re-serialization of the parsed DOM. It changes attribute quoting,
    entities and implied tags. The static preview also wraps the file in a new
@@ -208,6 +213,12 @@ None yet.
    Rejected for phase one: mapping each element back to a source span with a
    position-aware parser. It costs more, and labelling the quote is easy to
    reverse later.
+8. **One HTML picker, two transports.** A single Rally picker script does the
+   outline, grow and pin work on every HTML surface: the static HTML preview
+   and live sites, on desktop and in the browser. Only the way it reports a pin
+   differs (see Security and trust model). Rejected: the parent page walking a
+   same-origin static preview's DOM, plus a separate preload and a separate
+   site script. That is three mechanisms to build and three to security-review.
 
 ## Data model
 
@@ -219,8 +230,6 @@ Annotation = {
   target: {
     resourceId: string,
     version: number,
-    kind: AttachmentKind,
-    granularity: "word" | "range" | "block" | "section" | "region" | "file",
     locator: Locator,   // differs by kind; see the table above
   },
   content: {
@@ -231,9 +240,21 @@ Annotation = {
     truncated: boolean,
     image?: AttachmentRef, // image crop or site screenshot
   },
-  comment: string,
+  comment: string,      // may be empty
 }
 ```
+
+- **No client-supplied kind or size.** The server derives the kind from the
+  resource row it already loads for the access check, so a request cannot
+  disagree with it. Nothing reads a pin's size (word, block, section): the
+  location and the quote already tell the model. Either field can be added
+  later; taking one out of a stored message shape cannot.
+- **Messages with only annotations.** `CreateMessageRequestSchema` today
+  refuses a message with neither text nor an attachment. Its refine widens to
+  accept a message whose only content is annotations, as long as at least one
+  has a comment.
+- **Crops and screenshots are uploads.** The client uploads each one as a
+  resource before sending, the same way a composer attachment is uploaded.
 
 One builder and validator for annotations lives in `@rally/contracts`, so the
 client and the server trim and check annotations the same way.
@@ -242,27 +263,55 @@ client and the server trim and check annotations the same way.
 
 - **Content is the person's own view.** An annotation quotes a resource the
   sender can already read. The server checks that the sender can read
-  `resourceId` at `version` before it accepts the message, the same as an
-  attachment.
+  `resourceId` at `version`, and every `content.image` reference, before it
+  accepts the message, the same as an attachment.
 - **Quoted content is untrusted.** It is projected to the model as quoted data
   inside the user turn, never as instructions.
-- **Static HTML preview.** Today the HTML preview iframe is `sandbox=""`, which
-  keeps the parent page out of its DOM. Pick mode needs to read that DOM. The
-  proposal is `sandbox="allow-same-origin"` with no `allow-scripts`, so the
-  page runs no code while the parent walks its DOM. This needs a security
-  review, and [`security.md`](../../security.md) is updated with the result.
-- **Live sites.** Today the app does not listen to artifact origins, and
-  desktop site views have no preload. Picking needs a path from the site to the
-  app:
-  - **Desktop:** a picker preload on the artifact `WebContentsView`, sending
-    one message type over IPC only while pick mode is on.
-  - **Browser:** a Rally-served picker script under the reserved `/__rally/`
-    path, sending one message type over `postMessage`. The app accepts it only
-    from that artifact's own origin.
+- **One picker script, two transports** (Key design decision 8). Every HTML
+  surface runs the same Rally picker script. Each surface differs only in how
+  the script gets into the page and how it reports a pin.
+- **Hard constraint: no preview ever combines `allow-scripts` with
+  `allow-same-origin`.** A `srcdoc` frame with `allow-same-origin` takes the
+  embedding app's own origin. Adding scripts to that runs untrusted HTML as the
+  app, which is the standard sandbox escape.
+- **Static HTML preview.** Today the preview iframe is `sandbox=""` with a CSP
+  of `default-src 'none'`. In pick mode it becomes `sandbox="allow-scripts"`
+  (still an opaque origin) and its CSP gains `script-src 'nonce-<random>'`. The
+  picker is inlined with that nonce, a new one per render. The file's own
+  scripts carry no valid nonce, so they still never run. The picker reports
+  over `postMessage`. The app accepts a message only while pick mode is on and
+  only when `event.source` is that iframe's window. No other script runs in the
+  frame, so no other script can forge a pin. The pop-out window's script-free
+  `data:` page cannot host the picker, so pick mode there needs a real renderer
+  page.
+- **Live sites on desktop.** On entering pick mode, the main process runs the
+  picker in an isolated world of the artifact `WebContentsView`
+  (`executeJavaScriptInIsolatedWorld`). It needs no preload and no reload. Each
+  call resolves with one pin. The site's own scripts cannot reach that world,
+  so they cannot forge a pin.
+- **Live sites in the browser.** The site's iframe is that artifact's origin,
+  and the app has no way to add a script to it from outside. Entering pick mode
+  reloads the iframe with a pick flag. For that load only, the serving Worker
+  injects `<script src="/__rally/picker.js">` into HTML responses with
+  `HTMLRewriter`. That covers static, active and stateful sites. Public
+  visitors and normal loads never get the script. The reload loses the page's
+  in-memory state, and navigating away ends pick mode.
 
-  Both paths are new trust boundaries and need a security review.
-  [`live-web-artifacts.md`](../../live-web-artifacts.md) and `security.md` are
-  updated with the result.
+  The picker shares the origin with the site's own scripts, so the site can
+  post a fake pin. Three defenses apply:
+  - The app drops messages unless pick mode is on for that view and
+    `event.source` is that iframe.
+  - Every field runs through the shared `@rally/contracts` validator as
+    untrusted input.
+  - A forged pin can only carry text the site could already show, and the
+    person sees each pin's chip before sending.
+
+  The security review decides whether that remaining risk is acceptable.
+
+- **Reviews.** The static preview's picker and the live-site paths are new
+  trust boundaries, and each needs a security review. The injection is a change
+  to the serving Worker. [`live-web-artifacts.md`](../../live-web-artifacts.md)
+  and [`security.md`](../../security.md) are updated with the result.
 
 ## Agent behavior
 
@@ -290,6 +339,8 @@ message text:
 - When `truncated` is true, it says the selection was cut, and that the model
   should run `read_resource` before editing.
 - Image crops and site screenshots ride as image parts beside the annotation.
+- An annotation with an empty comment is projected without `<comment>`; the
+  message text speaks to it.
 
 Acceptance includes prompt evaluations on the medium fallback model, covering:
 
@@ -304,8 +355,8 @@ Acceptance includes prompt evaluations on the medium fallback model, covering:
 
 Ships to everybody on merge, with no flag, on desktop and the browser client.
 Turning it off is a revert. Two parts each wait for their security review to
-pass: picking in the static HTML preview (the `allow-same-origin` change) and
-live-site picking (the picker bridge). The other kinds do not wait for either
+pass: picking in the static HTML preview (the nonce-gated picker) and live-site
+picking (the isolated world on desktop, the injected script in the browser). The other kinds do not wait for either
 review.
 
 ## Acceptance
@@ -327,8 +378,8 @@ review.
 ## Open questions
 
 1. **Size guards.** Per [the limits rule](../../adding-security-defensive-and-other-limits.md),
-   two guards are defined, wired at the open value, and left for the team to
-   set. Neither blocks the build. Both live in the shared annotation builder
+   three guards are defined, wired at the open value, and left for the team to
+   set. None blocks the build. All live in the shared annotation builder
    in `@rally/contracts`, so the client and the server apply the same numbers.
    - **Most characters of `content.exact` in one annotation.** This one
      truncates rather than rejects: it cuts the middle, keeps the head and
@@ -339,8 +390,12 @@ review.
      locators, image references and the number of annotations. This one
      rejects. The composer blocks Send and says the pins are too large to send
      together. The server refuses a message over it with the code
-     `annotations_too_large`. Image crops and screenshots count as attachment
-     references, and the existing attachment limit governs their bytes.
+     `annotations_too_large`.
+   - **Image parts per message.** An image pin sends a crop plus the whole
+     image, and a site pin a screenshot, so ten image pins send eleven or more
+     image parts. The guard counts the crops and screenshots in one message,
+     and the existing attachment limit still governs their bytes. Over the
+     guard, the same Send block and the same refusal code apply.
 2. **Context window size.** How many characters go in `before` and `after`.
    This is a product choice, not a guard; about 200 each is the proposal.
 3. **HTML trimming.** What to strip from `outerHTML` before measuring. The
