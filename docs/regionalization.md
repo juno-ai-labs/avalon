@@ -47,6 +47,13 @@ method for relocating an existing object hierarchy. The application validates th
 region/affinity pairing against configuration; SQLite preserves placement immutability
 without embedding a second copy of deployment configuration.
 
+The per-isolate workspace placement cache holds only successfully resolved
+affinity strings. In-flight D1 reads belong to their initiating request and
+must never be shared through module scope: if that request is cancelled, its
+promise can remain unresolved and block unrelated requests that reuse it.
+Concurrent cold lookups perform their own reads; later lookups reuse the
+immutable value. Failed reads and local development fallbacks are not cached.
+
 ## Invariants
 
 - Existing Global resource and object identities remain unchanged so a release
@@ -104,6 +111,17 @@ Use the configured region list for local startup and health checks. Preserve
 resource IDs when editing Wrangler configuration. Retirement stops a workspace's
 activity but retains its rows; removing a deployment requires a separate,
 explicit cleanup of its owned infrastructure and external resources.
+
+### 2026-10-19 — Cache routing values after the request-owned read completes
+
+A thread creation stopped after reserving its D1 create receipt, while resolving
+its Organization's placement. The cache held pending D1 promises, letting a
+later request inherit the initiating request's cancelled I/O and wait forever.
+The cache now stores only resolved immutable affinities. Sharing cold reads
+was rejected because saving one lookup cannot justify coupling independent
+request lifetimes; keep both in-flight promises and failure fallbacks out of
+this cache. Creation retries must retain the original thread and client-message
+IDs so a reserved request can finish without duplicating the thread.
 
 ### 2026-09-14 — Keep deployment isolation without a geographical product choice
 
