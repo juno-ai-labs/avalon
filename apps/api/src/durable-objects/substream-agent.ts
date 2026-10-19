@@ -5723,7 +5723,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   /**
    * The backfill's one call (docs/thread-backfill.md, `suggestion_backfill`):
-   * the newest settled Rally turn among the newest three messages is judged
+   * the newest settled Rally output or incoming merged result among the newest three messages is judged
    * exactly as its settlement would have judged it, gates, record, row and
    * drafter included. A run already judged is skipped by the observer's own
    * idempotency gate, so running twice costs nothing. The answer is the
@@ -5744,6 +5744,22 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       backgroundAgent: background,
       parentReadFailure: "throw",
     });
+  }
+
+  /** Judge a newly visible no-run result without delaying its admission or delivery. */
+  private observeMergedResult(turnId: string): void {
+    const identity = this.objectStore.identity();
+    if (!identity || identity.parentKind !== "workstream") return;
+    this.state.waitUntil(this.judgeSettledTurn(this.env, {
+      workspaceId: identity.workspaceId,
+      parentId: identity.parentId,
+      substreamId: this.externalSubstreamId(),
+      harnessRunId: `merge:${turnId}`,
+      finalTurnId: turnId,
+      completed: true,
+      backgroundAgent: this.state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM background_agent").one().n > 0,
+      parentReadFailure: "null",
+    }));
   }
 
   /**
@@ -6383,6 +6399,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         if (!this.objectStore.acknowledgeSemanticRealtime(reference.messageId, reference.sequence)) {
           throw new Error("semantic_realtime_acknowledgement_lost");
         }
+        // Both immediate admissions and queued no-run deliveries publish a
+        // canonical turn here. Use that same durable boundary for suggestions
+        // so a result cannot miss judgement merely because it waited in line.
+        if (event.type === "transcript_turn_upserted" && event.turn.blocks.some((block) =>
+          block.type === "text" && block.structuredContent?.["type"] === "conversation_merge",
+        )) this.observeMergedResult(event.turn.turnId);
       } catch (error) {
         this.objectStore.deferSemanticRealtime(
           reference.messageId,

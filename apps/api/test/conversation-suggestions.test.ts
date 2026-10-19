@@ -90,7 +90,41 @@ const twoTurns = [
   { actor: "assistant" as const, text: "Keep it. Annual customers churn at a third of the monthly rate. ![Retention table](resource://019fc000-0000-7000-8000-000000000001)" },
 ];
 
+const mergedResult = {
+  actor: "human" as const,
+  text: "The formal demo schedule is ready. [Schedule](resource://019fc000-0000-7000-8000-000000000001)",
+  structured: JSON.stringify({
+    type: "conversation_merge", schemaVersion: 1,
+    mergedFrom: { breakoutId: "00000000-0000-7000-8000-000000000024", title: "Demo schedule" },
+    mergedByUserId: userId, actingAgent: false,
+  }),
+};
+
 describe("observeTurnDisposition", () => {
+  it("judges an incoming Breakout merge for carrying onward to the Channel without a run", async () => {
+    const { storage } = conversation([twoTurns[0]!, mergedResult]);
+    const candidate = storage.newestSettledTurn();
+    expect(candidate).toEqual({ runId: "merge:turn-2", turnId: "turn-2" });
+    const input = observation(storage, {
+      substreamId: "0", runId: candidate!.runId, finalTurnId: candidate!.turnId,
+      readParent: async () => ({ kind: "channel", id: "general", title: "General", purpose: undefined }),
+    });
+    const result = await observeTurnDisposition(input);
+    expect(result).toMatchObject({ outcome: "judged", suggestion: {
+      kind: "merge_up", judged_turn_id: "turn-2", target_kind: "channel", target_title: "General",
+    } });
+    expect(await observeTurnDisposition(input)).toMatchObject({ outcome: "resumed" });
+    expect(storage.open()).toHaveLength(1);
+  });
+
+  it("does not suggest a new Breakout for an incoming merge result", async () => {
+    const { storage } = conversation([twoTurns[0]!, mergedResult]);
+    const result = await observeTurnDisposition(observation(storage, {
+      substreamId: "0", runId: "merge:turn-2", fetch: answering("side_question_worth_a_breakout", 0.95),
+    }));
+    expect(storage.open()).toEqual([]);
+    expect(result).toMatchObject({ outcome: "judged", suggestion: null });
+  });
   it("writes one open merge_up row and the judgement for a confident positive in a Breakout", async () => {
     const { storage } = conversation(twoTurns);
     const fetcher = answering("worth_carrying_up", 0.91);
