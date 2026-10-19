@@ -4017,30 +4017,28 @@ pre {
 .markdown-body th { background: var(--markdown-wash); color: var(--markdown-ink); font-weight: var(--av-cmp-markdown-strong-weight); }
 .markdown-body del { color: var(--markdown-ink-muted); text-decoration-color: var(--markdown-ink-faint); }
 .markdown-body img { border-radius: var(--av-sys-size-radius-md); display: block; height: auto; margin: var(--space-4) 0; max-width: 100%; }
-.agent-message-actions { align-items: center; display: flex; gap: var(--space-2); opacity: 0; transition: opacity 120ms; }
-.agent-message:hover .agent-message-actions,
-.agent-message:focus-within .agent-message-actions,
-.agent-message-actions.is-speaking { opacity: 1; }
-/* One set of metrics for both action rows — the agent's four-or-five buttons and
-   the single one under a person's own bubble — because the substream control
-   appears in both and has to read as the same control. Stating them per row
-   instead would put `10px`/`2px`/`4px` in two places, and tuning one row would
-   move that control on the agent's turn and leave it behind on the person's. */
-:is(.agent-message-actions, .human-message-actions) button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 10px; gap: var(--space-1); padding: 2px; }
-:is(.agent-message-actions, .human-message-actions) button:hover { color: var(--av-sys-color-text-default); }
+/* The one hover row under a message (`MessageActions`), wherever a message is
+   drawn: a turn in a Thread or Breakout, a merged result, a Channel's own
+   message. It is revealed by hovering or focusing the message that holds it, and
+   stays up while it is speaking or a save is in flight, so Stop speaking and the
+   export's state are not a hover away. Clicks follow the fade: during the 120ms
+   it takes to appear, a click would land on a control the reader cannot yet
+   read, and New breakout creates a conversation rather than copying a line. */
+.message-actions { align-items: center; display: flex; gap: var(--space-2); margin-top: var(--space-2); opacity: 0; pointer-events: none; transition: opacity 120ms; }
+:is(.message-block, .channel-feed-item):is(:hover, :focus-within) .message-actions,
+.message-actions.is-speaking,
+.message-actions:has(button:disabled) { opacity: 1; pointer-events: auto; }
+/* One set of metrics for every row, because the same controls appear under
+   Rally's turn, under a person's bubble and in a Channel, and have to read as
+   the same controls. */
+.message-actions button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 10px; gap: var(--space-1); padding: 2px; }
+.message-actions button:hover { color: var(--av-sys-color-text-default); }
 /* The only thing the substream control needs beyond the row's metrics: it is the
    one two-word label here, and in a tight row it breaks mid-control while its
    neighbours stay whole. The fade belongs to whichever row holds it, never to
    the button — carrying its own hover opacity inside the agent's row multiplied
    the two and left this one button visibly paler than the four beside it. */
 .message-start-substream { white-space: nowrap; }
-/* Hit-testing follows the fade. The strip is inside the article that reveals it,
-   so a pointer that can reach it has already revealed it — except during the
-   120ms it takes to arrive, where a click would land on a control the reader
-   cannot yet read, and this one creates a conversation rather than copying a
-   line. The agent's row deliberately does not do this: it is also visible while
-   speech is playing and while a save is in flight, so tying its hit-testing to
-   hover would take away the Stop speaking it puts there. */
 /* The slot holds its height with nothing in it. Every person's turn lays it
    out, control or not, because the one-unit turn gap relies on it to keep the
    next turn off the bubble; an empty flex row is 0px tall, and a turn without
@@ -4049,14 +4047,12 @@ pre {
    clearance on the bubble itself. The height is stated on the scale rather than
    inherited from the control's line box, so the empty slot and the full one
    are the same height. */
-.human-message-actions { display: flex; margin-top: var(--space-1); min-height: var(--space-5); opacity: 0; pointer-events: none; transition: opacity 120ms; }
-.human-message:hover .human-message-actions, .human-message:focus-within .human-message-actions { opacity: 1; pointer-events: auto; }
-@media (prefers-reduced-motion: reduce) { :is(.agent-message-actions, .human-message-actions) { transition: none; } }
+.human-message .message-actions { align-items: stretch; margin-top: var(--space-1); min-height: var(--space-5); }
+@media (prefers-reduced-motion: reduce) { .message-actions { transition: none; } }
 /* A save in flight keeps the row visible and stops a second one starting; the
    two export buttons are the only actions here that take longer than a click. */
-.agent-message-actions button:disabled { color: var(--av-sys-color-text-disabled); cursor: default; }
-.agent-message-actions button:disabled:hover { color: var(--av-sys-color-text-disabled); }
-.agent-message:has(.agent-message-actions button:disabled) .agent-message-actions { opacity: 1; }
+.message-actions button:disabled { color: var(--av-sys-color-text-disabled); cursor: default; }
+.message-actions button:disabled:hover { color: var(--av-sys-color-text-disabled); }
 .streaming-caret { animation: active-pulse 0.9s infinite; background: var(--av-sys-color-brand-ink); display: inline-block; height: 13px; margin-left: 2px; vertical-align: text-bottom; width: 2px; }
 .transcript-event { margin: 0; }
 .system-message { --system-message-lines: 5; align-items: flex-start; color: var(--av-ref-color-neutral-9); display: flex; font-size: 10.5px; gap: var(--space-2); line-height: 1.55; margin: 0; }
@@ -5725,11 +5721,11 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    column's `align-items: flex-end` above, which sizes it to its content, so
    there is no free main-axis space and a `justify-content` here would do
    nothing but look like it was doing the work. */
-.human-message .human-message-actions {
+.human-message .message-actions {
   padding-inline-end: var(--turn-bubble-radius);
 }
 
-.human-message .human-message-actions .message-start-substream {
+.human-message .message-actions .message-start-substream {
   padding-inline-end: 0;
 }
 
@@ -6415,10 +6411,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   gap: var(--space-2);
   margin: var(--space-1) 0 0 var(--space-2);
   padding: var(--space-1) 0 var(--space-1) var(--space-4);
-}
-
-.agent-message-actions {
-  margin-top: var(--space-2);
 }
 
 .workstream-screen .composer-dock {
@@ -8892,6 +8884,8 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .conversation-card-summary .markdown-body :is(ul, ol, li, blockquote) { border: 0; display: block; list-style: none; padding: 0; text-align: inherit; }
 .conversation-card-meta,
 .channel-feed-meta { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: 12px; gap: 6px; margin-top: 2px; }
+.channel-feed-byline { align-items: center; display: flex; gap: var(--space-3); min-width: 0; }
+.channel-feed-byline .message-actions { margin-top: 2px; }
 .conversation-card-meta .avatar,
 .channel-feed-meta .avatar { height: 18px; margin-right: 2px; width: 18px; }
 .conversation-card-meta .avatar-fallback,
@@ -8951,7 +8945,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
    wider than its message runs under the title menu's pop-out rather than
    breaking onto a second line, and New breakout and Merge, first in the row,
    stay whole. */
-:is(.agent-message-actions, .human-message-actions) { flex-wrap: nowrap; white-space: nowrap; }
+.message-actions { flex-wrap: nowrap; white-space: nowrap; }
 .message-merge { white-space: nowrap; }
 /* A Breakout card whose result is in its Thread. */
 .breakout-merged-chip {

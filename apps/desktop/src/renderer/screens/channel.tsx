@@ -21,7 +21,7 @@ import { AttachmentPanel } from '../components/attachment-panel';
 import type { AttachmentPreview } from '../components/attachments';
 import { InspectorRail } from '../components/inspector-rail';
 import { openMemorySource, useMemoryFacts } from '../components/memory-review';
-import { MarkdownBody } from '../components/workstream-blocks';
+import { MarkdownBody, MessageActions } from '../components/workstream-blocks';
 import type { CitationContext } from '../components/markdown-citations';
 import { openLink } from '../lib/browser-rail-links';
 import { Avatar, Button, EmptyState, InlineError, LoadingState, Modal, RallyAvatar } from '../components/primitives';
@@ -777,7 +777,9 @@ function ThreadCard({ attentionSequenceNumber, author, members, onOpen, open, pl
 
 /**
  * A message in the Channel itself, outside any thread, by whoever said it:
- * Rally, or a member. Not a button, because there is nothing to open.
+ * Rally, or a member. Not a button, because there is nothing to open. Its hover
+ * row is the one every message gets; a Channel has nothing to branch from or
+ * merge into, so it carries the text actions alone.
  */
 function MessageCard({ attentionSequenceNumber, author, focused, members, message, placedAt }: {
   attentionSequenceNumber: number | undefined;
@@ -798,11 +800,19 @@ function MessageCard({ attentionSequenceNumber, author, focused, members, messag
         <div className="channel-feed-message-text">
           <MarkdownBody mentions={body.mentions} preserveLineBreaks rallyMentions verbatim>{body.text}</MarkdownBody>
         </div>
-        <span className="channel-feed-meta">
-          <span>{rally ? 'Rally' : author?.name ?? 'Someone'}</span>
-          <span aria-hidden="true">·</span>
-          <RelativeTime value={placedAt} />
-        </span>
+        {/* The row rides the byline rather than a line of its own: it is
+            laid out even while hidden, and under every message it would make
+            the feed a line taller at rest. */}
+        <div className="channel-feed-byline">
+          <span className="channel-feed-meta">
+            <span>{rally ? 'Rally' : author?.name ?? 'Someone'}</span>
+            <span aria-hidden="true">·</span>
+            <RelativeTime value={placedAt} />
+          </span>
+          {/* Copy and speech take the stored words; the exports draw what the
+              card drew, chips included. */}
+          <MessageActions rendered={body} subject={rally ? 'response' : 'message'} telemetry={{ messageId: message.id }} text={message.body} verbatim />
+        </div>
       </div>
     </div>
   </li>;
@@ -864,6 +874,7 @@ function MergeCard({ attentionSequenceNumber, author, focused, members, merge, m
   // quote line, nothing to open.
   return <li className={clsx('channel-feed-item is-message is-merge', focused && 'is-focused')} data-attention-sequence={attentionSequenceNumber} data-feed-row-id={message.id} data-message-id={message.id}>
     <MergeMessage
+      actions={<MessageActions citations={citations} rendered={body} telemetry={{ messageId: message.id }} text={message.body} />}
       label={`${merge.private ? 'A private thread' : merge.title || 'A thread'}, merged by ${merger}`}
       mergedBy={<>{author && <Avatar member={author} size="small" title={null} />}{merger}</>}
       onQuote={showThread}
