@@ -249,6 +249,25 @@ export class ConversationSuggestionStorage {
     ).toArray()[0] ?? null;
   }
 
+  /**
+   * The turn a backfill judges: the newest Rally turn among the newest
+   * {@link SUGGESTION_VISIBLE_WITHIN_NEWEST_TURNS} readable messages that is
+   * the final turn of a completed run, with that run. Older than that, a chip
+   * could not be shown, and the judgement would only record `late`.
+   */
+  newestSettledTurn(): { runId: string; turnId: string } | null {
+    const row = this.sql.exec<{ run_id: string; turn_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT run.run_id, turn.id AS turn_id
+         FROM (SELECT id, sequence_number, author_type FROM canonical_conversation_turn_details
+                WHERE ${READABLE_TURN} ORDER BY sequence_number DESC LIMIT ?) turn
+         JOIN runs run ON run.final_turn_id = turn.id AND run.status = 'completed'
+        WHERE turn.author_type = 'agent'
+        ORDER BY turn.sequence_number DESC LIMIT 1`,
+      SUGGESTION_VISIBLE_WITHIN_NEWEST_TURNS,
+    ).toArray()[0];
+    return row ? { runId: row.run_id, turnId: row.turn_id } : null;
+  }
+
   /** Readable messages before a sequence, newest first, bounded. */
   readableBefore(sequence: number, limit: number): TurnRow[] {
     return this.sql.exec<TurnRow>(
@@ -350,6 +369,13 @@ export interface TurnDispositionObservationInput {
   newId: () => string;
   /** Runs the row and judgement writes as one transaction; the agent passes `transactionSync`. */
   commit: <T>(mutate: () => T) => T;
+  /**
+   * Whether this object is drafting the row right now. A `pending` row is
+   * resumed only when nobody is: a settlement and the backfill judging one run
+   * at once would otherwise both draft it, and the first to fail would
+   * withdraw the other's words.
+   */
+  draftInFlight?: (suggestionId: string) => boolean;
   threshold?: number;
   cooldownMs?: number;
   maximumPerDay?: number;
@@ -379,11 +405,16 @@ export async function observeTurnDisposition(input: TurnDispositionObservationIn
   if (input.backgroundAgent) return { outcome: "skipped", gate: "background_agent" };
   if (!input.identity || input.identity.archived_at !== null) return { outcome: "skipped", gate: "archived" };
   if (input.identity.system_kind !== null) return { outcome: "skipped", gate: "system_conversation" };
-  // Gate 3: judged once per run.
+  // Gate 3: judged once per run. A judgement that records a classifier
+  // failure is not an answer, so a later attempt (a replayed settlement, the
+  // backfill's retry) asks again and overwrites it.
   const earlier = input.storage.judgementForRun(input.runId);
-  if (earlier) {
+  if (earlier && earlier.failure_kind === null) {
     const row = earlier.suggestion_id ? input.storage.byId(earlier.suggestion_id) : null;
-    if (row && row.status === "open" && row.draft_status === "pending") return { outcome: "resumed", suggestion: row };
+    if (row && row.status === "open" && row.draft_status === "pending") {
+      if (input.draftInFlight?.(row.suggestion_id)) return { outcome: "skipped", gate: "draft_in_flight" };
+      return { outcome: "resumed", suggestion: row };
+    }
     return { outcome: "skipped", gate: "already_judged" };
   }
   const now = input.now();
@@ -433,6 +464,11 @@ export async function observeTurnDisposition(input: TurnDispositionObservationIn
     code = !(decision.confidence > threshold) ? "confidence_below_threshold" : "not_offerable";
   }
   const written = input.commit(() => {
+  // Gate 3 again, inside the write: the classifier call yielded, and another
+  // caller judging the same run meanwhile (its settlement and the backfill)
+  // must not have its decision overwritten, nor its row collided with.
+  const meanwhile = input.storage.judgementForRun(input.runId);
+  if (meanwhile && meanwhile.failure_kind === null) return null;
   let suggestion: SuggestionRow | null = null;
   if (kind !== null) {
     // Gate 5 again, inside the write: the classifier call yielded, and a merge
@@ -478,6 +514,7 @@ export async function observeTurnDisposition(input: TurnDispositionObservationIn
   });
   return { code, suggestion };
   });
+  if (written === null) return { outcome: "skipped", gate: "already_judged" };
   return { outcome: "judged", code: written.code, confidence: decision.confidence, model: decision.model, failureKind: decision.failureKind ?? null, suggestion: written.suggestion };
 }
 
