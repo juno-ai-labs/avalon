@@ -56,6 +56,16 @@ export type LogFields = Record<string, unknown> & { message?: string };
 const STABLE_CODE = /^[a-z][a-z0-9_]{0,119}$/u;
 
 /**
+ * A reason reduced to what `diagnosticErrorCode` passes through unchanged, for
+ * an error thrown so that its message becomes the log's code. Narrower than
+ * `codeShaped` from `@rally/contracts`, whose class keeps `:` `.` and `-`,
+ * which this logger would read as not a code and replace with the fallback.
+ */
+export function stableCode(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9_]+/gu, "_").slice(0, 120);
+}
+
+/**
  * Extract a stable error code without copying an arbitrary provider/runtime
  * message into an indexed log field.
  *

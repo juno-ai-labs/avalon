@@ -27,11 +27,12 @@ and the settlement lane), [`jev-best-practices.md`](jev-best-practices.md).
 | `packages/contracts/src/conversation-suggestions.ts` | `ConversationSuggestionSchema`, the kinds and statuses, `SUGGESTION_VISIBLE_WITHIN_NEWEST_TURNS` (3), `suggestionTurnIsVisible`, the dismiss result. |
 | `packages/contracts/src/index.ts` | The snapshot's optional `suggestions` and the `conversation_suggestion_changed` socket event; the `suggestion_draft` model role and its flag key. |
 | `packages/contracts/src/usage.ts` | The metered activities `turn_disposition_classifier` and `suggestion_draft`. |
-| `apps/api/src/durable-objects/conversation-suggestions.ts` | `ConversationSuggestionStorage` over the two tables, `observeTurnDisposition` (the gates, the state, the decision, the row), `buildTurnDispositionState`, `resourceEmbeds`. |
-| `apps/api/src/durable-objects/substream-agent.ts` | `observeTurnDispositionStep`, the last step of `settleAgentRun`; `draftSuggestionWords`; `readSuggestionParent`; `expireSuggestionsBestEffort`; the `dismiss_suggestion` product operation; the resolutions in `messageOperationOutcome` and `resolveBreakoutSuggestion` (called by the creation service once the Breakout is ready); the snapshot's `suggestions`. |
+| `apps/api/src/durable-objects/conversation-suggestions.ts` | `ConversationSuggestionStorage` over the two tables (`newestSettledTurn`, the backfill's pick), `observeTurnDisposition` (the gates, the state, the decision, the row), `buildTurnDispositionState`, `resourceEmbeds`. |
+| `apps/api/src/durable-objects/substream-agent.ts` | `judgeSettledTurn`, one settled turn through the observer and the drafter, called by `observeTurnDispositionStep`, the last step of `settleAgentRun`, and by the `backfillTurnDisposition` RPC; `draftSuggestionWords`; `readSuggestionParent`; `expireSuggestionsBestEffort`; the `dismiss_suggestion` product operation; the resolutions in `messageOperationOutcome` and `resolveBreakoutSuggestion` (called by the creation service once the Breakout is ready); the snapshot's `suggestions`. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Migration v75: `conversation_suggestions`, `turn_disposition_judgements`. |
 | `apps/api/src/durable-objects/workspace-space-storage.ts`, `workspace-do.ts` | `threadMergePlacement`, the viewer-less read of the Organization-wide Channel a Thread's merge would land in; a private Channel is never named, since the answer reaches every reader of the Thread. |
 | `apps/api/src/services/suggestion-draft-service.ts` | `draftSuggestion`: the `suggestion_draft` structured-inference role. |
+| `apps/api/src/services/suggestion-backfill-service.ts`, `apps/api/src/durable-objects/thread-backfill.ts` | `backfillSuggestion`, the `suggestion_backfill` thread-backfill job, and WorkspaceDO migration 115 that lists every open thread for it. |
 | `apps/api/src/services/classifier-diagnostics.ts` | The sink the observer records every provider call through, under the `turn_disposition_classifier` role. |
 | `apps/api/src/routes/conversations.ts`, `apps/api/src/services/workstream-object-client.ts` | `POST /conversations/:parentId/substreams/:substreamId/suggestions/:suggestionId/dismiss`. |
 | `packages/ui/src/components/conversation-suggestion.tsx` | `SuggestionChip`, `suggestionExcerpt`, `SUGGESTION_EXCERPT_CHARACTERS`. |
@@ -58,7 +59,7 @@ cheapest first, each the reason not to pay for the next:
 | --- | --- | --- |
 | 1 | The run completed and its final turn is Rally's text | `run_not_completed`, `final_turn_not_text` |
 | 2 | A conversation people read: not a background agent, not archived, not a system conversation such as a digest | `background_agent`, `archived`, `system_conversation` |
-| 3 | This run was not judged before (`turn_disposition_judgements` by `run_id`); a row left `pending` by an interrupted settlement resumes at the draft instead | `already_judged`, or `resumed` |
+| 3 | This run was not judged before (`turn_disposition_judgements` by `run_id`), checked again inside the write; a judgement recording a classifier failure does not count, and a row left `pending` by an interrupted settlement resumes at the draft instead, unless this object is drafting it right now | `already_judged`, `draft_in_flight`, or `resumed` |
 | 4 | At least one kind is offerable: a Breakout offers only `merge_up` and needs its Thread; a Thread always offers `start_breakout`, and `merge_up` too when it is Organization-wide and placed in a Channel | `nothing_offerable` |
 | 5 | The turn was not already carried up: no `conversation_merged_into` marker after it | `already_carried_up` |
 
@@ -118,6 +119,25 @@ object closes the row as `expired`/`ignored` when it next sees the transcript
 move, which is the record. The number is the product owner's, from the PRD,
 held once in `packages/contracts`.
 
+### The backfill
+
+Suggestions shipped for turns settled from 2026-10-18 on. Existing
+conversations get theirs through the [thread backfill](thread-backfill.md)
+lane: migration 115 lists every open thread under `suggestion_backfill`, and
+the handler, `backfillSuggestion`, asks each conversation's object (Main and
+each open Breakout) for `backfillTurnDisposition`. The object picks
+`newestSettledTurn`, the newest Rally turn among the newest three readable
+messages that is the final turn of a completed run, and runs it through
+`judgeSettledTurn` exactly as its settlement would have: gates, judgement,
+row, event and drafter. A conversation whose newest three messages hold no
+such turn answers `nothing_to_judge`, since a chip under an older turn would
+never be seen. The observer's run gate makes a second run free, and a
+transient classifier failure, or a step that threw before judging, is thrown
+back to the lane so the row retries rather than settling with nothing judged;
+a classifier failure no retry would fix settles with the kind recorded. After the release, force `WorkspaceDO`
+from the migration tracker so every Organization fills its list
+([thread-backfill.md](thread-backfill.md#reaching-every-organization)).
+
 ### What the client shows
 
 The chip is drawn by the conversation surface in the feed's `afterTurn` slot
@@ -176,11 +196,12 @@ event and decides visibility and who may act; it never infers a resolution.
 | Situation | What happens |
 | --- | --- |
 | JEV answers `continue_here`, or below the threshold | Nothing shown; the judgement is recorded with the code |
-| TypeSafe unreachable, no key, schema failure | `classifier_unavailable` with the provider's failure kind; settlement unchanged |
+| TypeSafe unreachable, no key, schema failure | `classifier_unavailable` with the provider's failure kind; settlement unchanged; a later attempt asks again |
 | The drafter fails or over-runs | Draft `failed`, row `withdrawn`, chip removed; the decision stands |
 | Settlement retries after a crash | Gate 3: no second call, no second row; a `pending` row resumes at the draft |
+| The backfill and a settlement judge the same run at once | Gate 3 again inside the write: the second to finish records nothing and skips as `already_judged`; a row the object is already drafting is not resumed (`draft_in_flight`), so one drafter writes it |
 | Settlement lands behind three newer messages | Recorded as `late`; nothing shown |
-| The parent cannot be read (RPC failure) | A Breakout skips as `nothing_offerable`; a Thread judges with only `start_breakout` offerable |
+| The parent cannot be read (RPC failure) | At settlement, a Breakout skips as `nothing_offerable` and a Thread judges with only `start_breakout` offerable; the next run judges again. In the backfill the read failure is thrown, so the row retries rather than settling a conversation that was never offered `merge_up` |
 | A merge lands with no suggestion standing | The marker is written as today; the corpus records a miss |
 | Two people act at once | The first resolution wins; the dismiss route answers the second as replayed |
 | An older desktop build | Its socket parser strips the snapshot's `suggestions` and ignores the event; it shows nothing |
@@ -214,7 +235,8 @@ What this version deliberately leaves out, and why:
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test/conversation-suggestions.test.ts` (Node, real object schema, TypeSafe fetch double) | Every gate in order; one row and one judgement per confident positive; the recorded codes; a replayed settlement asking nothing and a pending row resumed; `late`; pacing at a finite and at the open value; the expiry at the third newer readable message and not the second; the three resolutions; a draft filled and a draft withdrawn. Proved by breaking: the expiry count and the idempotency gate each made their test fail. |
+| `apps/api/test/conversation-suggestions.test.ts` (Node, real object schema, TypeSafe fetch double) | Every gate in order; one row and one judgement per confident positive; the recorded codes; a replayed settlement asking nothing and a pending row resumed; `late`; pacing at a finite and at the open value; the expiry at the third newer readable message and not the second; the three resolutions; a draft filled and a draft withdrawn; a recorded classifier failure asked again; a run judged by another caller during the call written nothing; a draft in flight not resumed; `newestSettledTurn` picking the newest completed final turn within three and nothing behind them or for a run still running. Proved by breaking: the expiry count, the idempotency gate, the failure re-ask and the completed-run join each made their test fail. |
+| `apps/api/test/suggestion-backfill-service.test.ts`, `apps/api/test/workspace-suggestion-backfill-migration.test.ts` | The backfill's answer to the lane (thrown on a classifier failure, settled on a missing key); migration 115 listing open threads and not archived ones. |
 | `apps/api/test/conversation-suggestions-route.test.ts` (Node, typed double) | The dismiss route's addressing (the Breakout's object, Main for `0`), read admission, and refusals. |
 | `apps/api/test/workstream-object-schema.test.ts` | Migration v75 and the table list. |
 | `packages/contracts/src/conversation-suggestions.test.ts` | The visibility rule; the event and snapshot shapes; an older parser stripping the key. |
@@ -251,6 +273,32 @@ the Organization only to TypeSafe for the judgement and to the drafting route
 for the words, on the access-controlled inference path.
 
 ## Changelog
+
+### 2026-10-19 — Existing conversations judged once, through the thread backfill
+
+**What changed:** `suggestion_backfill`, a thread-backfill job, judges the
+newest settled Rally turn of every open conversation through the same
+`judgeSettledTurn` a settlement runs. Gate 3 no longer treats a judgement that
+recorded a classifier failure as final.
+
+**Why:** The product owner asked for the conversations that existed before the
+chip shipped to get theirs. Only a turn among the newest three can show a
+chip, so one judgement per conversation, of that turn, is the whole visible
+result. The gate change is what lets the backfill retry a conversation the
+classifier failed on; before it, a fleet-wide run during an outage would have
+recorded `classifier_unavailable` everywhere with no way back.
+
+**Considered and rejected:** Judging every settled turn in a conversation's
+history, which would record `late` for all but the newest and show nothing
+for the cost; and leaving gate 3 as it was and having the backfill delete the
+failed judgement, which would have two places deciding what a judgement means.
+
+**Consequences:** A replayed settlement after a classifier failure asks again
+and overwrites the judgement. Anything that reads `turn_disposition_judgements`
+must treat a row with a `failure_kind` as a failure record, not a decision.
+Two callers can now judge one run at once, so gate 3 is checked again inside
+the write and the second to finish records nothing, and a `pending` row is
+resumed only when the object is not already drafting it.
 
 ### 2026-10-18 — Suggestions ship: a judged turn, one quiet line, a response card for every merge
 
