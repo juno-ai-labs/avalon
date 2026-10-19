@@ -107,6 +107,7 @@ describe("observeTurnDisposition", () => {
     expect(candidate).toEqual({ runId: "merge:turn-2", turnId: "turn-2" });
     const input = observation(storage, {
       substreamId: "0", runId: candidate!.runId, finalTurnId: candidate!.turnId,
+      fetch: answering("worth_carrying_up", 0.91),
       readParent: async () => ({ kind: "channel", id: "general", title: "General", purpose: undefined }),
     });
     const result = await observeTurnDisposition(input);
@@ -115,6 +116,18 @@ describe("observeTurnDisposition", () => {
     } });
     expect(await observeTurnDisposition(input)).toMatchObject({ outcome: "resumed" });
     expect(storage.open()).toHaveLength(1);
+    const request = JSON.parse(String(vi.mocked(input.fetch!).mock.calls[0]![1]!.body));
+    expect(request.state.judged_message.author).toBe("person");
+  });
+
+  it("skips an incoming merge with no eligible Channel without calling the provider", async () => {
+    const { storage } = conversation([twoTurns[0]!, mergedResult]);
+    const fetcher = answering("worth_carrying_up", 0.91);
+    expect(await observeTurnDisposition(observation(storage, {
+      substreamId: "0", runId: "merge:turn-2", readParent: async () => null, fetch: fetcher,
+    }))).toEqual({ outcome: "skipped", gate: "nothing_offerable" });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(storage.open()).toEqual([]);
   });
 
   it("does not suggest a new Breakout for an incoming merge result", async () => {

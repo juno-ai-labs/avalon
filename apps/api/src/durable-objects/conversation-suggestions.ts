@@ -23,8 +23,8 @@ import {
  * (`start_breakout`). It is conversation state keyed to the judged turn, one
  * row per turn, resolved in place; never a transcript row, never in the
  * model's history, never an Activity row. The observer runs after
- * `settleAgentRun`'s description loop and when a merged result is published, runs the deterministic
- * gates cheapest first, asks JEV once, records every decision, and writes a
+ * `settleAgentRun`'s description loop and from a merged result's durable alarm.
+ * It runs the deterministic gates cheapest first, asks JEV once, records every decision, and writes a
  * row only for a confident positive. `docs/conversation-suggestions.md` owns
  * the lifecycle; `docs/PRDs/2026-10-17_merge-and-breakout-suggestions/design.md`
  * holds the contract and the evidence behind each gate.
@@ -399,7 +399,7 @@ export type TurnDispositionObservation =
  */
 export async function observeTurnDisposition(input: TurnDispositionObservationInput): Promise<TurnDispositionObservation> {
   const threshold = input.threshold ?? TURN_DISPOSITION_CONFIDENCE_THRESHOLD;
-  // A completed run's final output, or an admitted merged result. Merges
+  // Gate 1: a completed run's final output, or an admitted merged result. Merges
   // start no run; their stable merge:<turnId> key uses the same judgement slot.
   if (!input.completed || !input.finalTurnId) return { outcome: "skipped", gate: "run_not_completed" };
   const judged = input.storage.turn(input.finalTurnId);
@@ -431,7 +431,7 @@ export async function observeTurnDisposition(input: TurnDispositionObservationIn
   // decides only whether merge_up is also on the table.
   const parent = await input.readParent();
   const mergeOfferable = parent !== null;
-  if (conversationKind === "breakout" && !mergeOfferable) return { outcome: "skipped", gate: "nothing_offerable" };
+  if ((conversationKind === "breakout" || mergedResult) && !mergeOfferable) return { outcome: "skipped", gate: "nothing_offerable" };
   // Gate 5: not already carried up.
   const markers = input.storage.mergeMarkers(judged.sequence_number);
   if (markers.after > 0) return { outcome: "skipped", gate: "already_carried_up" };
@@ -575,7 +575,7 @@ export function buildTurnDispositionState(input: {
       text: row.content ?? "",
     })),
     judged_message: {
-      author: "rally",
+      author: input.judged.author_type === "agent" ? "rally" : "person",
       text: judgedText,
       outputs: judgedEmbeds.map((embed) => ({ title: embed.title, first_time_here: !seen.has(embed.id) })),
     },
