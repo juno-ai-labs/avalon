@@ -151,7 +151,12 @@ export function MarkBridge({ className, items, labelLast = false }: {
     const element = label.current;
     if (!labelled || !box || !element) { setSize({ name: 0, given: 0 }); return undefined; }
     const measure = (): void => setSize((current) => {
-      const next = { name: element.scrollWidth, given: box.offsetWidth };
+      // scrollWidth rounds to the nearest pixel, which can undersize even a
+      // short name and trigger an ellipsis. A range measures the full text
+      // at subpixel precision even when the label is clipped.
+      const text = document.createRange();
+      text.selectNodeContents(element);
+      const next = { name: Math.ceil(text.getBoundingClientRect().width), given: box.getBoundingClientRect().width };
       return next.name === current.name && next.given === current.given ? current : next;
     });
     measure();
