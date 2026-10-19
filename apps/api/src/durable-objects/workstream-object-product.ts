@@ -1,3 +1,6 @@
+import { annotationCommentText } from "@rally/contracts";
+import { AnnotationsSchema, validateAnnotationAttachments } from "@rally/contracts";
+import { ResourceService } from "../services/resource-service";
 import { mergeEmbedsOf, resolveShareableResources } from "../services/resource-share-rules";
 import { stableUuid } from "../lib/stable-uuid";
 import { AGENT_MESSAGE_CONTENT_KIND, ConversationInitializationSchema, ImportedMessageProvenanceSchema, PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
@@ -161,6 +164,7 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
   mentions: z.array(MentionSchema).default([]),
   confirmedParticipantUserIds: z.array(z.string().uuid()).default([]),
   attachmentIds: z.array(z.string().uuid()).max(10).default([]),
+  annotations: AnnotationsSchema.optional(),
   runMode: z.enum(["steer", "queue"]).optional(),
   telemetryOperationId: z.string().min(1).max(180).optional(),
   telemetryRequestReceivedAt: z.number().int().nonnegative().optional(),
@@ -185,7 +189,7 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
    * internal RPC: the message route's request schema has no such field.
    */
   merge: ConversationMergeV1Schema.optional(),
-}).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0, {
+}).superRefine(validateAnnotationAttachments).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0 || value.annotations?.some((a) => a.comment.trim()), {
   message: "A message must include text or an attachment",
 });
 
@@ -4765,6 +4769,8 @@ export class WorkstreamObjectProductService {
     const participantAddedCount = new Set(confirmedParticipantUserIds.filter((userId) => !this.isParticipant(userId))).size;
     const missingParticipantUserIds = [...new Set([auth.userId, ...confirmedParticipantUserIds])]
       .filter((userId) => !this.isParticipant(userId));
+    const structuredContent = input.merge ?? (input.annotations?.length
+      ? await new ResourceService(this.env,auth).annotationContent(input.annotations) : null);
     if (missingParticipantUserIds.length > 0) {
       await this.prepareMessageParticipants(auth, input.clientMessageId, missingParticipantUserIds);
     }
@@ -4793,7 +4799,7 @@ export class WorkstreamObjectProductService {
     const connectorMentions = prepared.mentions
       .flatMap((mention) => mention.type === "connector" && mention.connectorType
         ? [mention.connectorType] : []);
-    let shouldInvoke = Boolean(input.forcedHarnessOrigin) || participantCount <= 1 || attachmentRows.length > 0;
+    let shouldInvoke = Boolean(input.forcedHarnessOrigin) || participantCount <= 1 || attachmentRows.length > 0 || Boolean(input.annotations?.some((a)=>a.comment.trim()));
     if (input.merge) {
       // A merge is a result posted for the thread's readers, never a request
       // to Rally: it starts no run, whatever the room's size.
@@ -4813,7 +4819,7 @@ export class WorkstreamObjectProductService {
         workspaceId: auth.workspaceId,
         workstreamId: root.workstream_key,
         userId: auth.userId,
-        message: input.text,
+        message: annotationCommentText(input.text,input.annotations),
         activeTask,
         connectorMentions,
         humanMentions: mentionedPersonNames(prepared.mentions),
@@ -4852,7 +4858,7 @@ export class WorkstreamObjectProductService {
       clientMessageId: input.clientMessageId,
       messageType: "text",
       text: prepared.text,
-      structuredContentJson: input.merge ? JSON.stringify(input.merge) : null,
+      structuredContentJson: structuredContent ? JSON.stringify(structuredContent) : null,
       externalActorJson: null,
       producedByRunId: null,
       messageSequenceNumber: root.next_sequence_number,
@@ -4894,7 +4900,7 @@ export class WorkstreamObjectProductService {
         },
         messageType: "text",
         text: prepared.text,
-        structuredContent: input.merge ?? null,
+        structuredContent,
         mentions: prepared.mentions.map((mention) => ({
           type: mention.type,
           userId: mention.userId,

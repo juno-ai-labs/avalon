@@ -1,4 +1,7 @@
-import { IconAlertCircle, IconCheck, IconCopy, IconDatabase, IconExternalLink, IconWindowMaximize } from '@tabler/icons-react';
+import { isComposingKeyEvent } from '@rally/ui/lib/ime';
+import { buildAnnotation, type ArtifactPickerPin } from '@rally/contracts';
+import { annotationQuote, useAnnotationDraft } from './artifact-annotations';
+import { IconAlertCircle, IconCheck, IconCopy, IconDatabase, IconExternalLink, IconPointerCollaboration, IconWindowMaximize } from '@tabler/icons-react';
 import React from 'react';
 import { flushSync } from 'react-dom';
 import type { DesktopSiteArtifactWindowRequest } from '../../common/desktop';
@@ -65,6 +68,8 @@ export interface SiteResourceDetailProps {
     setBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
     /** A still of the live view as an image data URL. */
     snapshot: () => Promise<string | null>;
+    pick?: (() => Promise<ArtifactPickerPin | null>) | undefined;
+    stopPicking?: (() => Promise<void>) | undefined;
     close: () => Promise<void>;
     popOut: (request: DesktopSiteArtifactWindowRequest) => Promise<boolean>;
     copyText: (text: string) => Promise<void>;
@@ -138,6 +143,13 @@ export function SiteResourceDetail({
   loadTable,
   surface,
 }: SiteResourceDetailProps): React.JSX.Element {
+  const annotationDraft = useAnnotationDraft();
+  const [picking, setPicking] = React.useState(false);
+  const pickingRef = React.useRef(false);
+  const [editingPin, setEditingPin] = React.useState<string | null>(null);
+  const [commentAnchor,setCommentAnchor]=React.useState({x:12,y:60});
+  const [pickError, setPickError] = React.useState<string | null>(null);
+  const lastPin = React.useRef<string | undefined>(undefined);
   const paneRef = React.useRef<HTMLDivElement | null>(null);
   const initialAccessRef = React.useRef<{
     resourceId: string;
@@ -396,6 +408,45 @@ export function SiteResourceDetail({
     };
   }, [access, measure, occluded, previewShown, showingData, surface]);
 
+  const acceptPin = React.useCallback(async (pin: ArtifactPickerPin): Promise<void> => {
+    if (!annotationDraft || !pickingRef.current) return;
+    let imageAttachmentId: string | undefined;
+    if (!surface.framed && pin.screenshot?.startsWith('data:image/png;base64,') && annotationDraft.upload) {
+      const binary = atob(pin.screenshot.slice('data:image/png;base64,'.length));
+      const bytes = Uint8Array.from(binary,(character)=>character.charCodeAt(0));
+      imageAttachmentId = await annotationDraft.upload(new File([bytes], `Site annotation — ${title}.png`, { type: 'image/png' }));
+    }
+    if (!pickingRef.current) return;
+    const id = annotationDraft.add(buildAnnotation({ target: { resourceId, version, locator: { type: 'element', pagePath: pin.pagePath, css: pin.css, box: pin.box, visibleText: pin.visibleText } },
+      content: { exact: pin.html, source: 'rendered', before: '', after: '', truncated: false, ...(imageAttachmentId ? { imageAttachmentId } : {}) }, comment: '' }), title, () => {if(!paneRef.current?.isConnected)return false;paneRef.current.scrollIntoView({block:'center'});setEditingPin(id);return true;}, pin.replace ? lastPin.current : undefined);
+    const pane=paneRef.current?.getBoundingClientRect();
+    if(pane)setCommentAnchor({x:Math.max(12,Math.min(pane.x+(pin.point?.x??12),window.innerWidth-320)),y:Math.max(12,Math.min(pane.y+(pin.point?.y??12)+12,window.innerHeight-190))});
+    lastPin.current = id; setEditingPin(id);
+  }, [annotationDraft, resourceId, title, version, surface.framed]);
+  React.useEffect(()=>{
+    if(!picking)return;
+    const cancel=(event:KeyboardEvent):void=>{if(isComposingKeyEvent(event))return;if(event.key==='Escape'){event.preventDefault();event.stopPropagation();setEditingPin(null);setPicking(false);}};
+    window.addEventListener('keydown',cancel,true);return()=>window.removeEventListener('keydown',cancel,true);
+  },[picking]);
+  const acceptPinRef = React.useRef(acceptPin);
+  acceptPinRef.current = acceptPin;
+  React.useEffect(() => {
+    pickingRef.current = picking;
+    if (!picking) { void surface.stopPicking?.(); return; }
+    let active = true;
+    if (!surface.framed && surface.pick) {
+      void (async () => {
+        while (active) {
+          const pin = await surface.pick!();
+          if (!active) return;
+          if (!pin) { setPicking(false); return; }
+          await acceptPinRef.current(pin);
+        }
+      })().catch(() => { if (active) { setPicking(false); setPickError('The page could not be picked. Try again.'); } });
+    }
+    return () => { active = false; pickingRef.current = false; void surface.stopPicking?.(); };
+  }, [picking, resourceId, version, surface]);
+
   // The canonical public link carries no access code or viewer identity.
   // Copying it shares the current site with anyone.
   const { copy, state: copyState } = useCopy({ copyText: surface.copyText, value: access?.canonicalUrl ?? '' });
@@ -407,6 +458,7 @@ export function SiteResourceDetail({
    * sits against the composited page below.
    */
   const headerActions = React.useMemo((): IconGroupAction[] => [
+    ...(annotationDraft ? [{ key: 'comment-mode', label: 'Comment mode', disabledReason: surface.framed ? 'Website comments require the Rally Mac app.' : undefined, icon: <IconPointerCollaboration aria-hidden="true" size={16} stroke={1.9} />, pressed: picking, disabled: Boolean(surface.framed) || previewShown !== true || showingData, onSelect: () => { if (!surface.framed) setPicking((value) => !value); } }] : []),
     ...(access?.stateful ? [{
       key: 'stored-data',
       // The name stays the same in both states: `pressed` is what says which
@@ -457,12 +509,16 @@ export function SiteResourceDetail({
         async (navigation) => await surface.openExternal(navigation.openUrl),
       ),
     },
-  ], [access, copy, copyState, mintAccess, resourceId, showingData, surface, title, version]);
-  useDetailHeaderActions(headerActions);
+  ], [access, copy, copyState, mintAccess, resourceId, showingData, surface, title, version, annotationDraft, picking, previewShown]);
+  const orderedHeaderActions = React.useMemo(() => [...headerActions.filter((action) => action.key !== 'comment-mode'), ...headerActions.filter((action) => action.key === 'comment-mode')], [headerActions]);
+  useDetailHeaderActions(orderedHeaderActions);
 
+  const editingAnnotation = annotationDraft?.pins.find((p) => p.id === editingPin)?.annotation;
   return (
     <div className="site-detail">
       <CopyStatus state={copyState} />
+      {picking && <p className="annotation-site-hint">Click to pin · ⌥ grow · drag range · Esc</p>}
+      {pickError && <p role="alert">{pickError}</p>}
 
       {showingData && access
         ? <SiteDataPanel describeData={describeData} loadTable={loadTable} resourceId={resourceId} surface={surface} />
@@ -497,6 +553,11 @@ export function SiteResourceDetail({
             )}
           </div>
         )}
+      {editingPin && annotationDraft?.pins.some((p) => p.id === editingPin) && <div className="annotation-site-comment" role="dialog" aria-label="Comment on site selection" data-state="open" style={{left:commentAnchor.x,top:commentAnchor.y}}>
+        <q>{editingAnnotation ? annotationQuote(editingAnnotation,title).slice(0,120) : ''}</q>
+        <textarea autoFocus aria-label="Comment on site selection" placeholder="Ask Rally to change this…" value={annotationDraft.pins.find((p) => p.id === editingPin)?.annotation.comment ?? ''} onChange={(e) => annotationDraft.comment(editingPin,e.target.value)} onKeyDown={(e) => { if(isComposingKeyEvent(e.nativeEvent))return; if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); setEditingPin(null); } }} />
+        <button type="button" onClick={() => { annotationDraft.remove(editingPin); setEditingPin(null); }}>Remove pin</button>
+      </div>}
     </div>
   );
 }

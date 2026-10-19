@@ -47,6 +47,7 @@ export interface AttachmentModelContentOptions {
 }
 
 export interface ModelAttachmentSource {
+  resourceVersion?: number;
   id: string;
   workspaceId?: string;
   fileName: string;
@@ -69,6 +70,10 @@ interface ManifestOverride {
   errorCode?: string | null;
 }
 
+function attachmentSourceKey(attachment:ModelAttachmentSource):string {
+  return attachment.resourceVersion===undefined?attachment.id:`${attachment.id}:${attachment.resourceVersion}`;
+}
+
 export function buildAttachmentManifestPart(
   attachments: ModelAttachmentSource[],
   overrides: ReadonlyMap<string, ManifestOverride> = new Map(),
@@ -78,7 +83,7 @@ export function buildAttachmentManifestPart(
       mimeType: attachment.mimeType,
       fileName: attachment.fileName,
     });
-    const override = overrides.get(attachment.id);
+    const override = overrides.get(attachmentSourceKey(attachment));
     return {
       resourceId: attachment.id,
       fileName: attachment.fileName,
@@ -130,7 +135,7 @@ export async function buildAttachmentModelParts(
     });
     if (attachmentKind !== "image") continue;
     if (!attachment.contentRef) {
-      manifestOverrides.set(attachment.id, {
+      manifestOverrides.set(attachmentSourceKey(attachment), {
         derivativeStatus: "failed",
         errorCode: "source_unavailable",
       });
@@ -138,7 +143,7 @@ export async function buildAttachmentModelParts(
     }
     try {
       if (inlinedImages >= MAX_INLINE_IMAGES) {
-        manifestOverrides.set(attachment.id, { errorCode: "image_inline_limit" });
+        manifestOverrides.set(attachmentSourceKey(attachment), { errorCode: "image_inline_limit" });
         continue;
       }
 
@@ -149,19 +154,19 @@ export async function buildAttachmentModelParts(
         maxBytes: remainingBytes,
       });
       if (!normalized) {
-        manifestOverrides.set(attachment.id, {
+        manifestOverrides.set(attachmentSourceKey(attachment), {
           derivativeStatus: "failed",
           errorCode: "image_conversion_failed",
         });
         continue;
       }
       if (normalized.bytes.byteLength > remainingBytes) {
-        manifestOverrides.set(attachment.id, { errorCode: "image_aggregate_limit" });
+        manifestOverrides.set(attachmentSourceKey(attachment), { errorCode: "image_aggregate_limit" });
         continue;
       }
       inlinedImages += 1;
       inlinedImageBytes += normalized.bytes.byteLength;
-      manifestOverrides.set(attachment.id, {
+      manifestOverrides.set(attachmentSourceKey(attachment), {
         inlined: true,
         derivativeStatus: "ready",
         errorCode: null,
@@ -169,12 +174,13 @@ export async function buildAttachmentModelParts(
       if (normalized.metadata) {
         parts.push({ type: "text", text: describeGifModelMetadata(attachment.fileName, normalized.metadata) });
       }
+      if(attachment.resourceVersion!==undefined) parts.push({type:'text',text:`Annotated image original: ${attachment.id}, version ${attachment.resourceVersion}.`});
       parts.push({
         type: "image_url",
         image_url: { url: dataUri(normalized.bytes, normalized.mimeType), detail: "auto" },
       });
     } catch {
-      manifestOverrides.set(attachment.id, {
+      manifestOverrides.set(attachmentSourceKey(attachment), {
         derivativeStatus: "failed",
         errorCode: "attachment_conversion_failed",
       });

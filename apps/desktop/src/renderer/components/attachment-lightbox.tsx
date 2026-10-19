@@ -1,27 +1,27 @@
-import { classifyAttachmentKind } from '@rally/contracts';
+import { useAnnotationDraft } from './artifact-annotations';
+import { AnnotationSurface } from './annotation-surface';
+import { classifyAttachmentKind, isHtmlResource } from '@rally/contracts';
 import * as Dialog from '@radix-ui/react-dialog';
 import { ChevronLeft, ChevronRight, Download, History, Info, LoaderCircle, Maximize2, Minimize2, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AttachmentPreview } from './attachments';
 import { MarkdownBody } from './workstream-blocks';
-import { attachmentMime, hasGenericAttachmentMime, isVideoAttachment } from '../lib/attachment-media';
+import { attachmentMime, isVideoAttachment } from '../lib/attachment-media';
 import { Tip } from './primitives';
 
 type PreviewMode = 'audio' | 'html' | 'image' | 'markdown' | 'text' | 'video';
 
 interface LoadedPreview {
   preview: AttachmentPreview;
+  version?: number;
   src?: string;
   text?: string;
   error?: string;
 }
 
-const HTML_FILE_PATTERN = /\.html?$/iu;
-
 /** Whether a file is an HTML page, which renders only inside {@link isolatedHtml}. */
 export function isHtmlFile(file: { name: string; mimeType?: string | null | undefined }): boolean {
-  const mimeType = attachmentMime(file.mimeType ?? undefined);
-  return mimeType === 'text/html' || (hasGenericAttachmentMime(mimeType) && HTML_FILE_PATTERN.test(file.name));
+  return isHtmlResource({fileName:file.name,mimeType:file.mimeType});
 }
 
 function previewMode(preview: AttachmentPreview): PreviewMode {
@@ -80,6 +80,7 @@ function GalleryThumbnail({ preview, active, activeSrc, index, onSelect }: {
  * render them. Each host keeps only its own chrome.
  */
 export function useAttachmentView(preview: AttachmentPreview | null) {
+  const draft = useAnnotationDraft();
   const gallery = useMemo(() => preview?.gallery?.length ? preview.gallery : preview ? [preview] : [], [preview]);
   const [selection, setSelection] = useState({ preview, index: preview?.galleryIndex ?? 0 });
   if (selection.preview !== preview) {
@@ -93,6 +94,9 @@ export function useAttachmentView(preview: AttachmentPreview | null) {
     setActiveIndex((index) => (index + delta + gallery.length) % gallery.length);
   }, [gallery.length, setActiveIndex]);
   const active = gallery[activeIndex] ?? preview;
+  const preparedSource=useRef<string|undefined>(undefined);
+  const preparedLoad=useRef<AbortController|null>(null);
+  useEffect(()=>()=>{preparedLoad.current?.abort();if(preparedSource.current)URL.revokeObjectURL(preparedSource.current);preparedSource.current=undefined;},[active]);
   const [loaded, setLoaded] = useState<LoadedPreview | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const mode = active ? previewMode(active) : null;
@@ -106,19 +110,21 @@ export function useAttachmentView(preview: AttachmentPreview | null) {
     if (!active || active.src || !active.loadContent || !mode) return;
     const controller = new AbortController();
     let objectUrl: string | undefined;
+    const version = active.version;
     void active.loadContent(controller.signal).then(async (blob) => {
       if (mode === 'image' || mode === 'audio' || mode === 'video') {
         if (controller.signal.aborted) return;
         objectUrl = URL.createObjectURL(blob);
-        setLoaded({ preview: active, src: objectUrl });
+        setLoaded({ preview: active, version, src: objectUrl });
         return;
       }
       const text = await blob.text();
-      if (!controller.signal.aborted) setLoaded({ preview: active, text });
+      if (!controller.signal.aborted) setLoaded({ preview: active, version, text });
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
       setLoaded({
         preview: active,
+        version,
         error: error instanceof Error ? error.message : 'Rally could not load this attachment.',
       });
     });
@@ -128,8 +134,28 @@ export function useAttachmentView(preview: AttachmentPreview | null) {
     };
   }, [active, mode]);
 
+  const prepareAnnotations = useCallback(async (): Promise<void> => {
+    if (!active?.resourceId || active.version) return;
+    if (!draft?.readResource || !draft.readResourceVersion) throw new Error('This preview cannot be commented on yet.');
+    preparedLoad.current?.abort();
+    const controller=new AbortController();preparedLoad.current=controller;
+    const version = (await draft.readResource(active.resourceId)).currentVersion;
+    controller.signal.throwIfAborted();
+    // Whole-file pins only need the immutable version, even when no preview exists.
+    if (classifyAttachmentKind({fileName:active.name,mimeType:active.mimeType}) === 'other') {
+      setLoaded(previous => previous?.preview === active ? {...previous,version} : {preview:active,version,error:'This resource has no preview available.'});
+      return;
+    }
+    const blob = await draft.readResourceVersion(active.resourceId,version,controller.signal);
+    controller.signal.throwIfAborted();
+    if (mode==='image') {
+      if(preparedSource.current)URL.revokeObjectURL(preparedSource.current);
+      const source = URL.createObjectURL(blob);preparedSource.current=source;
+      setLoaded({preview:active,version,src:source});
+    } else setLoaded({preview:active,version,text:await blob.text()});
+  },[active,mode,draft?.readResource,draft?.readResourceVersion]);
   const current = active && loaded?.preview === active ? loaded : null;
-  const src = active?.src ?? current?.src;
+  const src = current?.src ?? active?.src;
   const error = current?.error ?? (active && !src && !active.loadContent ? 'This resource has no preview available.' : undefined);
   const download = useCallback((): void => {
     if (!active) return;
@@ -137,6 +163,8 @@ export function useAttachmentView(preview: AttachmentPreview | null) {
     void downloadPreview(active, src).catch(() => setDownloadError('Download failed. Please try again.'));
   }, [active, src]);
   return {
+    version: active?.version ?? current?.version,
+    prepareAnnotations,
     gallery,
     activeIndex,
     setActiveIndex,
@@ -159,6 +187,9 @@ export type AttachmentView = ReturnType<typeof useAttachmentView>;
 export function AttachmentViewBody({ view }: { view: AttachmentView }): React.JSX.Element | null {
   const { active, mode, src, text, error, downloadError, loading } = view;
   if (!active || !mode) return null;
+  if (active.resourceId && !loading && (!error || classifyAttachmentKind({fileName:active.name,mimeType:active.mimeType}) === 'other' || active.annotation) && mode !== 'audio' && mode !== 'video') {
+    return <>{downloadError && <div role="alert">{downloadError}</div>}<AnnotationSurface className={mode==='markdown'?'attachment-lightbox-document':mode==='text'?'attachment-lightbox-text':undefined} resourceId={active.resourceId} version={active.annotation?.target.version ?? view.version ?? 0} name={active.name} mimeType={active.mimeType} sizeBytes={active.sizeBytes} text={text} src={src} saved={active.annotation} loadSavedImage={active.loadAnnotationImage} preparePicking={view.prepareAnnotations} /></>;
+  }
   return <>
     {loading && <div className="attachment-lightbox-status" role="status"><LoaderCircle aria-hidden="true" className="spin" size={20} /> Preparing preview…</div>}
     {(error || downloadError) && <div className="attachment-lightbox-status is-error" role="alert">{error ?? downloadError}</div>}

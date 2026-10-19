@@ -1,3 +1,4 @@
+import { useAnnotationDraft } from '../components/artifact-annotations';
 import { useMemo } from 'react';
 
 import type { RallyApi } from './api';
@@ -15,6 +16,7 @@ import { useClientFeatureFlags } from './use-client-feature-flags';
  * holds whether or not this is passed.
  */
 export function useSiteArtifacts(api: RallyApi | null) {
+  const annotationDraft = useAnnotationDraft();
   const { host } = useShellCapabilities();
   const featureFlags = useClientFeatureFlags(api);
   const browserHost = host === 'browser';
@@ -30,8 +32,10 @@ export function useSiteArtifacts(api: RallyApi | null) {
         present: bridge.presentArtifactPreview,
         setBounds: bridge.setArtifactPreviewBounds,
         snapshot: bridge.snapshotArtifactPreview,
+        pick: bridge.pickArtifactPreview,
+        stopPicking: bridge.stopPickingArtifactPreview,
         close: bridge.closeArtifactPreview,
-        popOut: bridge.popOutArtifact,
+        popOut: (request: Parameters<typeof bridge.popOutArtifact>[0]) => bridge.popOutArtifact({ ...request, ...(annotationDraft?.scopeKey ? { annotationScope: annotationDraft.scopeKey } : {}) }),
         copyText: bridge.copyText,
         openExternal: bridge.openExternal,
         // A browser has no main process to composite a view: it frames the
@@ -41,5 +45,5 @@ export function useSiteArtifacts(api: RallyApi | null) {
         ...(browserHost ? { framed: true as const } : {}),
       },
     };
-  }, [browserHost, api, featureFlags.data?.liveArtifactsEnabled]);
+  }, [browserHost, api, featureFlags.data?.liveArtifactsEnabled, annotationDraft?.scopeKey]);
 }

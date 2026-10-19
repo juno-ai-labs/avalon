@@ -1,3 +1,4 @@
+import type { Annotation } from '@rally/contracts';
 import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
 import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationResultSchema, type ScopeGrantTarget, type CreateScopeInvitations } from "@rally/contracts/scope-grants";
 import { SharedDirectorySchema, SharedNavigationDirectorySchema, WorkspaceRelationshipSchema, PromoteWorkspaceGuestSchema } from "@rally/contracts/scope-grants";
@@ -1882,6 +1883,7 @@ export class RallyApi {
     spaceIds?: string[];
     mentions?: MentionIdentity[];
     attachmentIds?: string[];
+    annotations?: Annotation[];
     modelOverride?: AgentModelOverride;
     /** The caller's open `workstream_create` trace id, when it has one. */
     requestId?: string;
@@ -1910,6 +1912,7 @@ export class RallyApi {
         participantUserIds,
         clientMessageId,
         attachmentIds: input.attachmentIds ?? [],
+        ...(input.annotations?.length ? {annotations:input.annotations} : {}),
         ...(mentions.length > 0 ? { mentions } : {}),
         // Omitted rather than sent as null when nothing was pinned, so the work
         // stream stays on whatever `agent-model-workstream` serves it.
@@ -2434,11 +2437,23 @@ export class RallyApi {
    * per-version preview, which is why the rail only offers to open a version
    * whose own type the preview surface can render from source bytes.
    */
-  async getResourceVersionContent(resourceId: string, version: number, signal?: AbortSignal): Promise<Blob> {
+  async getResourceVersionPreview(resourceId:string,version:number,signal?:AbortSignal):Promise<Blob> {
+    const response=await this.execute(`/resources/${encodeURIComponent(resourceId)}/versions/${version}/preview`,{method:'GET',...(signal?{signal}: {})});
+    if(!response.ok)return this.throwResponseError(response);
+    return response.blob();
+  }
+
+  async getResourceVersionContent(resourceId: string, version: number, signal?: AbortSignal, representation: "model" | "original" = "original"): Promise<Blob> {
     const response = await this.execute(
-      `/resources/${encodeURIComponent(resourceId)}/versions/${encodeURIComponent(version)}/content`,
+      `/resources/${encodeURIComponent(resourceId)}/versions/${encodeURIComponent(version)}/${representation === "model" ? "model-content" : "content"}`,
       { method: 'GET', ...(signal ? { signal } : {}) },
     );
+    if (!response.ok) return this.throwResponseError(response);
+    return response.blob();
+  }
+
+  async getAnnotationSitePreview(resourceId:string,version:number,pagePath:string,signal?:AbortSignal):Promise<Blob> {
+    const response = await this.execute(`/resources/${encodeURIComponent(resourceId)}/versions/${version}/site-preview?path=${encodeURIComponent(pagePath)}`,{method:'GET',...(signal?{signal}:{})});
     if (!response.ok) return this.throwResponseError(response);
     return response.blob();
   }

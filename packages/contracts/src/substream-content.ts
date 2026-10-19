@@ -1,3 +1,4 @@
+import { messageAnnotations } from "./artifact-annotations";
 import { HttpsUrlSchema } from "./url-schemas";
 import { SpaceIdSchema } from "./spaces";
 import { z } from "zod";
@@ -34,7 +35,7 @@ export const PreparedConversationSchema = z.strictObject({
     text: z.string(),
     attachmentIds: z.array(z.string().uuid()).optional(),
     structuredContent: z.unknown().optional(),
-  }).refine((message) => !!message.text.trim() || !!message.attachmentIds?.length, "Message has no content")).min(1),
+  }).refine((message) => !!message.text.trim() || !!message.attachmentIds?.length || (message.role === "user" && messageAnnotations(message.structuredContent).some((annotation) => annotation.comment.trim())), "Message has no content")).min(1),
 });
 export type PreparedConversation = z.infer<typeof PreparedConversationSchema>;
 export const ConversationInitializationSchema = z.discriminatedUnion("kind", [

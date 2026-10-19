@@ -1091,7 +1091,39 @@ XHR/blob readers retain their existing behavior. Chrome cookie writers use a
 regional Web Lock so an older renewal cannot replace a later login cookie.
 [Browser client](browser-client.md) owns these host-specific boundaries.
 
+### Artifact annotation pickers
+
+Website selection is native-only. Static HTML runs the bundled picker in an
+opaque `allow-scripts` iframe with a fresh nonce; `allow-same-origin` is never
+added. The external app-origin picker satisfies both the inherited app CSP and
+the frame's nonce policy without admitting file scripts. The parent validates
+pin messages and their frame source only while Comment mode is on. Native live
+sites install the shared inspector in isolated world 1001 and obtain crops from
+main-process `capturePage`, rather than accepting image bytes from page scripts.
+
+Local implementation checks exercised a hostile static file in real Electron:
+its own script remained blocked and its frame origin was `null`, while the
+trusted picker outlined and pinned its button. A native site defining the same
+picker-global name could not access the isolated callback; main captured the
+actual selected button. Pop-outs have a narrow sender-checked preview/transfer
+bridge, require an active originating composer scope and wait for its ACK.
+Canonical target read/version checks precede message admission. See
+[artifact annotations](artifact-annotations.md) for the protocol and failure modes.
+
 ## Changelog
+
+### 2026-10-19 — Isolate annotation picking from resource scripts
+
+**What changed:** Opaque static frames and isolated live-site worlds run trusted picker code; main owns screenshots and popouts receive narrow sender-checked IPC.
+
+**Why:** Pointing at model-authored HTML must not give its scripts app authority or let synthetic input impersonate user selection.
+
+**Considered and rejected:** Published-response injection was removed after native-only website scope was accepted; bundled external code satisfies inherited CSP where an inline nonce does not.
+
+**Consequences:** Preserve opaque frames, trusted-input checks, native screenshot ownership, narrow IPC and an active original composer scope for transfer. See [artifact annotations](artifact-annotations.md).
+
+PR #1322; design: `docs/PRDs/2026-10-19_artifact-annotations/prd.md`.
+
 
 ### 2026-10-02 — Isolate persistent browser orchestration from the app
 

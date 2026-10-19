@@ -22,6 +22,7 @@ export function optimisticOpeningTranscript(
     clientMessageId: string | null;
     createdAt: string;
     text: string;
+    annotationContent?: Record<string,unknown> | undefined;
     mentions: readonly MentionIdentity[];
     attachments: readonly MessageAttachment[];
   },
@@ -59,6 +60,7 @@ export function optimisticOpeningTranscript(
       text: prepared.text,
       streaming: false,
       messageType: 'text' as const,
+      ...(turn.annotationContent ? {structuredContent:turn.annotationContent} : {}),
       mentions: prepared.mentions.map((mention) => ({
         type: mention.type,
         userId: mention.userId,

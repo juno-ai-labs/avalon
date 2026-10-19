@@ -111,6 +111,29 @@ function creationEnv(): Env {
 }
 
 describe("creating a work stream", () => {
+  it("creates an annotation-only opening turn and refuses a missing target before reserving",async()=>{
+    const resourceId='00000000-0000-7000-8000-00000000a914';
+    await runInDurableObject(workspace(),(_instance,state)=>{
+      state.storage.sql.exec(`INSERT INTO resources(id,workspace_id,resource_type,provider,title,mime_type,content_ref,metadata_json,attachment_status,uploaded_by_user_id,created_at,updated_at)
+        VALUES (?,?,'uploaded_file','avalon_upload','Plan.md','text/markdown','annotations/opening','{}','attached',?,'2026-10-19T00:00:00.000Z','2026-10-19T00:00:00.000Z')`,resourceId,WORKSPACE_ID,USER_ID);
+    });
+    const annotation={target:{resourceId,version:1,locator:{type:'markdown' as const,start:0,end:7,headingPath:['Plans']}},content:{exact:'# Plans',source:'exact' as const,before:'',after:'',truncated:false},comment:'Make this monthly'};
+    const service=new WorkstreamObjectCreationService(creationEnv(),AUTH);
+    await expect(service.create({title:'Bad pin',openingMessage:'',clientMessageId:'missing-pin',participantUserIds:[],attachmentIds:[],annotations:[{...annotation,target:{...annotation.target,version:99}}]})).rejects.toMatchObject({code:'resource_version_not_found'});
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM workstream_create_receipts WHERE client_message_id='missing-pin'").first('n')).toBe(0);
+    const created=await service.create({title:'Annotated opening',openingMessage:'',clientMessageId:'opening-pin',participantUserIds:[],attachmentIds:[],annotations:[annotation]});
+    const client=new WorkstreamObjectClient(creationEnv(),AUTH,created.workstream.id);
+    const boot=await client.boot();
+    expect(boot.transcript.ranges.flatMap((r)=>r.turns).flatMap((t)=>t.blocks)).toContainEqual(expect.objectContaining({type:'text',text:'',structuredContent:{kind:'artifact_annotations',annotations:[annotation],names:{[resourceId]:'Plan.md'}}}));
+    await expect(client.createMessage({text:'',clientMessageId:'wrong-locator',mentions:[],confirmedParticipantUserIds:[],attachmentIds:[],annotations:[{...annotation,target:{...annotation.target,locator:{type:'file'}}}]})).rejects.toMatchObject({code:'annotation_locator_type_mismatch'});
+    await client.createMessage({text:'',clientMessageId:'followup-pin',mentions:[],confirmedParticipantUserIds:[],attachmentIds:[],annotations:[{...annotation,comment:'Rally, shorten this'}]});
+    const followup=await client.boot();
+    expect(followup.transcript.ranges.flatMap((r)=>r.turns).flatMap((t)=>t.blocks)).toContainEqual(expect.objectContaining({type:'text',text:'',structuredContent:expect.objectContaining({annotations:[{...annotation,comment:'Rally, shorten this'}]})}));
+    await runInDurableObject(workspace(),(_instance,state)=>{state.storage.sql.exec('DELETE FROM resources WHERE id = ?',resourceId);});
+    expect((await service.create({title:'Annotated opening',openingMessage:'',clientMessageId:'opening-pin',participantUserIds:[],attachmentIds:[],annotations:[annotation]})).workstream.id).toBe(created.workstream.id);
+
+  });
+
   it.each([
     { accessClass: "member", creatorAssignment: false },
     { accessClass: "guest", creatorAssignment: false },

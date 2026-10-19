@@ -1,3 +1,4 @@
+import { AnnotatedMessageContentSchema } from "./artifact-annotations";
 import { z } from "zod";
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { SubstreamIdSchema, UserIdSchema, WorkspaceIdSchema, WorkstreamIdSchema } from "./identifiers";
@@ -38,6 +39,7 @@ export const SubstreamContextMessageSchema = z.strictObject({
   createdAt: z.string().datetime({ offset: true }),
   blocks: z.array(z.strictObject({
     text: z.string(),
+    structuredContent:AnnotatedMessageContentSchema.optional(),
     mentions: z.array(TranscriptMentionSchema),
     attachments: z.array(TranscriptAttachmentSchema),
   })).min(1),

@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
+import { AnnotationDraftProvider } from './artifact-annotations';
 import { DetailHeaderActionsHost } from './detail-header-actions';
 import { IconGroup, type IconGroupAction } from '@rally/ui/components/icon-group';
 import {
@@ -71,7 +72,7 @@ function setup(overrides: Partial<SiteResourceDetailProps> = {}, options: { stri
     surface: surface(),
     ...overrides,
   };
-  const detail = <Harness props={props} />;
+  const detail = <AnnotationDraftProvider><Harness props={props} /></AnnotationDraftProvider>;
   return {
     props,
     ...render(options.strict ? <React.StrictMode>{detail}</React.StrictMode> : detail),
@@ -100,6 +101,13 @@ function Harness({ props }: { props: SiteResourceDetailProps }): React.JSX.Eleme
 }
 
 describe('showing a live artifact in the rail', () => {
+  it('shows an unavailable comment control for browser websites', async () => {
+    setup({surface:surface({framed:true})});
+    const button=await screen.findByRole('button',{name:'Comment mode'});
+    expect(button).toHaveAttribute('aria-disabled','true');
+    fireEvent.click(button);
+    expect(button).toHaveAttribute('aria-pressed','false');
+  });
   it('keeps the native preview below nested dialogs and restores it when they close', async () => {
     const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
       DOMRect.fromRect({ x: 20, y: 40, width: 500, height: 320 }),

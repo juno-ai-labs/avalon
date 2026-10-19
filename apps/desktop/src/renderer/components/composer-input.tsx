@@ -123,6 +123,7 @@ interface ComposerInputProps {
   footerHint?: ReactNode;
   /** A line inside the composer, over its toolbar: what sending will do, for a host that sends somewhere unusual. */
   notice?: ReactNode;
+  beforeInput?: ReactNode;
   /** A host's own control at the end of the toolbar's tools, such as where a merge goes. */
   toolsAccessory?: ReactNode;
   /** What the send button shows in place of its arrow, for a host whose send is not a plain send. */
@@ -281,6 +282,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   fileInputRef,
   footerHint,
   notice,
+  beforeInput,
   toolsAccessory,
   submitContent,
   layout = 'toolbar',
@@ -664,6 +666,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
            inside the composer, including the toolbar and the attachment tiles. */
         onPaste={paste}
       >
+        {beforeInput}
         {attachments.length > 0 && (
           <div className="composer-attachments" aria-label="Attachments">
             {attachments.map((attachment) => (

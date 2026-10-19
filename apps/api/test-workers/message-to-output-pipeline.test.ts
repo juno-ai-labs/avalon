@@ -4177,7 +4177,7 @@ describe("a member's message travels the whole pipeline", () => {
       type: "client_command_failed",
       command: "create_message",
       clientMessageId: "pipeline-room-socket-invalid-1",
-      error: { code: "invalid_event" },
+      error: { code: expect.stringContaining("payload.text:invalid_type") },
     });
     socket.close(1000, "done");
   });
@@ -4200,7 +4200,7 @@ describe("a member's message travels the whole pipeline", () => {
       type: "client_command_failed",
       command: "answer_elicitation",
       operationId: "00000000-0000-7000-8000-0000000005d4",
-      error: { code: "invalid_event" },
+      error: { code: expect.stringContaining("elicitationId:invalid_type") },
     });
     socket.close(1000, "done");
   });
@@ -4483,9 +4483,8 @@ describe("a member's message travels the whole pipeline", () => {
   });
 
   it("names the field when a stored execution context fails its own contract", async () => {
-    // The other half of the retry outage: whatever a command throws that is not
-    // an `ApiError` reaches the person as one flat `substream_command_failed`,
-    // so this log entry is the only account of what happened. A `ZodError`'s
+    // A stored-contract defect remains a server error, with the declared field
+    // preserved in both the command receipt and the log. A `ZodError`'s
     // `message` is multi-line JSON, and logging it as `reason` produced a blob
     // that grouped with nothing and hid the failing field inside itself — the
     // real retry failure read for its whole life as an unexplained 500. A
@@ -4533,7 +4532,7 @@ describe("a member's message travels the whole pipeline", () => {
       expect(await receipt).toMatchObject({
         type: "client_command_failed",
         command: "retry_harness",
-        error: { status: 500, code: "substream_command_failed" },
+        error: { status: 500, code: "substream_command_invalid:reason:invalid_type" },
       });
       const entry = (await runInDurableObject(stub, () => structuredClone(
         (globalThis as WarnCaptureScope).__rallyWarnLog ?? [],
@@ -4543,8 +4542,8 @@ describe("a member's message travels the whole pipeline", () => {
         command: "retry_harness",
         operation_id: operationId,
         // A code that groups, rather than one run's JSON blob.
-        reason: "schema_validation_failed",
-        validation_issues: [{ path: "reason", code: "invalid_type" }],
+        reason: "substream_command_invalid:reason:invalid_type",
+        validation_issues: "reason:invalid_type",
       });
       // Which `parse` threw. The message names the field; only the frames name
       // the call site, and a command path runs several. Under `stack`, the key

@@ -1,3 +1,4 @@
+import type { Annotation } from '@rally/contracts';
 import { useConversationAdmission } from './conversation-admission';
 import { mainReachable, useConversationDirectory } from './conversation-directory';
 import { useCachedWorkstreamSummary } from './use-workstreams-query';
@@ -116,6 +117,7 @@ export type WorkstreamSocketApi = Pick<
 > & Partial<Pick<RallyApi, 'confirmSocketTicket'>>;
 
 export interface CreateWorkstreamMessageInput {
+  annotations?: Annotation[];
   text: string;
   clientId: string;
   mentions?: MentionIdentity[];
@@ -1166,6 +1168,7 @@ export function useWorkstreamSocket(
           type: 'create_message',
           operationId,
           payload: {
+            ...(input.annotations?.length ? { annotations: input.annotations } : {}),
             text: input.text,
             clientMessageId: input.clientId,
             mentions,

@@ -1,0 +1,179 @@
+# Artifact annotations
+
+Annotations let a person point at part of a resource and send that selection,
+its surrounding context and a comment as an ordinary user message. The saved
+version and quote travel with the message. Unsent pins live only in the open
+composer; there is no annotation table or artifact comment thread.
+
+## Where the code lives
+
+| Path | Responsibility |
+| --- | --- |
+| `packages/contracts/src/artifact-annotations.ts` | Shared locators, builder, admission rules and model projection. |
+| `packages/contracts/src/artifact-picker.ts` | HTML inspector, restoration and the Tabler pointer-collaboration cursor, shared by all HTML transports. |
+| `apps/desktop/src/renderer/components/annotation-surface.tsx` | Text, converted document, image and opaque HTML selection. |
+| `apps/desktop/src/renderer/lib/annotation-source.ts` | Parser source positions and reversible rendered/source range mapping. |
+| `apps/desktop/src/renderer/components/annotation-sheet.tsx` | Cell, range, row, column and sheet selection. |
+| `apps/desktop/src/renderer/components/artifact-annotations.tsx` | Transient composer pins, chips and feed excerpts. |
+| `apps/desktop/src/renderer/components/site-resource-detail.tsx` | Live-site selection and desktop screenshot uploads. |
+| `apps/desktop/src/renderer/screens/artifact-window.tsx` | Renderer-based pop-outs and acknowledged pin transfer to the originating composer. |
+| `apps/api/src/services/annotation-model-sources.ts` | Server-built immutable original-image descriptors for replay. |
+| `apps/api/src/services/resource-service.ts` | Canonical target read/version checks and frozen historical site HTML. |
+| `apps/api/src/durable-objects/workstream-object-product.ts` | Message admission and canonical structured content. |
+
+## How it works
+
+Comment mode appears in the panel header immediately before Expand. These two
+controls stay visible when other header actions fold. Hover outlines the block
+that clicking will pin. Option or Up grows to a containing list or section;
+Down shrinks. Click is immediate, double-click replaces its block pin with a
+word, and dragging selects a range. Escape exits the mode while preserving pins.
+The button and cursor use Tabler's `pointer-collaboration` icon.
+
+A pin opens a floating comment field. Website cards, chips and saved excerpts
+show the selected visible text (or “Selected area” for a selection without text);
+the trimmed HTML remains model context and is never used as their display quote. Enter keeps it and returns focus to the
+preview. Composer chips reveal, edit or remove pins. Sending accepts an empty
+message when a pin has a comment. Draft images use the ordinary upload path,
+and their IDs accompany both the annotation and `attachmentIds`. The send
+captures the current pins and clears those IDs only after acceptance.
+
+Markdown uses parser offsets so emphasis, list markers and entities are quoted
+from original bytes. Plain text uses paragraph spans. PDF and Office use their
+existing converted text. Sheets serialize the selected range as a Markdown
+table with headers. Image regions upload PNG crops; the original image remains
+a separate model source. The shared model projection escapes resource data,
+labels exact/converted/rendered content, and requires a fresh read for truncated
+selections and reconciliation before editing an older version.
+
+Target checks reuse ordinary resource-sharing rules, including personal-connection
+ownership, and run once per distinct resource/version before participant changes.
+Targets load concurrently. Stored turns use a read schema without admission-time
+truncation or size policy. Authored comments count toward activation and naming;
+quoted resource data never becomes addressing input. The existing message length
+bound applies to each newly composed comment.
+
+Preview bytes open immediately. Entering Comment mode resolves and reloads a
+version-bound preview through the canonical MIME policy (including native image
+normalization and original CSV bytes), so cached thumbnails cannot be relabeled with a
+new revision. Sheets keep sparse coordinates and render the visible viewport;
+committed highlights derive from all remaining pins on the active sheet.
+Composer chips provide a comment editor even after their original preview closes.
+Annotation-bearing sends exclude another submission until the receipt returns;
+an open elicitation must be answered before artifact comments are sent.
+
+The canonical turn's existing `structuredContent` contains
+`{kind: 'artifact_annotations', annotations, names}`. Image annotations also
+retain server-built immutable image descriptors, version identity and model-image metadata for replay; clients cannot
+supply those R2 references through message admission. Feed rendering, replay and
+overheard turns use that same content. Opening a feed excerpt loads its saved
+version. Source ranges and cell tables must match the saved quote before they
+are highlighted. HTML restoration verifies the trimmed element and visible
+text. An unresolved spot shows the saved quote and available screenshot.
+
+### HTML trust boundaries
+
+Static HTML stays in an opaque iframe. Comment mode adds only `allow-scripts`,
+never `allow-same-origin`. A fresh nonce authorizes a bundled app-origin picker script. Using an external
+script satisfies the app CSP inherited by `srcdoc`; an inline nonce alone does
+not. The file's own scripts remain blocked. Parent messages are accepted only from that
+frame while picking, through the shared pin schema.
+
+Desktop live views install the same picker in an isolated JavaScript world.
+The main process captures the selected viewport rectangle; page scripts cannot
+supply screenshot bytes. The controller fences results against the current
+view. The site cannot access the picker world's callback or queue even if it creates
+identically named globals in its own world. Browser website previews keep the Comment icon visible and disabled, with the
+explanation “Website comments require the Rally Mac app.” on hover or keyboard focus. Other annotation kinds share the desktop/web renderer.
+
+A pop-out has a real isolated app renderer, with narrow IPC for its own preview,
+picker and transfer. It does not receive the main app's general IPC authority.
+Transfers require the registered original composer scope and an acknowledgment
+from it; closing the destination preserves pins in the pop-out on failure.
+Historical sites read frozen manifest assets without running the old worker.
+
+## Invariants
+
+- Target readability and version existence are checked separately from draft
+  attachment admission. Reusing attachment admission would reject every sent
+  resource, or accidentally reserve it. Guard: real workerd target tests.
+- Crop IDs must also be message attachment IDs; otherwise an arbitrary upload
+  could become a model image. Guard: shared schema tests and ordinary upload
+  reservations.
+- Source offsets must produce the exact saved source slice. Highlighting another
+  occurrence would misrepresent what the person asked. Guard: component tests,
+  plus real Electron range and hover checks.
+- Preview HTML never receives both scripts and app origin. Violating this grants
+  an untrusted file app privileges. Guard: opaque-frame construction and real
+  Electron hostile-script checks.
+- Pins clear only after admission or an acknowledged pop-out transfer. Clearing
+  on submit loses comments on a refusal. Guard: send/transfer lifecycle; verified
+  visually, no automated guard.
+
+## Boundary
+
+This module owns pointing and user-message content. Resource access remains
+owned by [authorization](authorization.md), uploaded bytes and model image
+hydration by [agent attachments](agent-attachments.md), ordinary draft
+persistence by [composer drafts](composer-drafts.md), and site publication by
+[live web artifacts](live-web-artifacts.md). It adds no editing tool, approvals,
+artifact comment records or iOS surface.
+
+## Failure modes and limits
+
+Loading, failed previews and audio cannot enter Comment mode. A resource that
+changes during preview loading must be reopened before picking. Failed crop
+uploads leave an error beside the preview; sending waits for uploads. Offline
+send follows the normal composer lifecycle. Missing historical content falls
+back to the saved quote rather than highlighting guessed content.
+
+Client schema rejections name the rejected field. A broken stored execution
+context remains a server error and preserves that field in its receipt and log.
+
+The existing ten-attachment cap includes crops and screenshots. The shared
+per-selection and serialized-payload character guards are intentionally
+`Infinity` (`LIMIT UNSET`) pending team-set numbers. The former truncates the
+middle and labels the quote; the latter returns `annotations_too_large` with
+422. Context uses the PRD's proposed 200 characters on each side.
+
+## Testing
+
+Contracts cover admission, source policy, locators and escaped model guidance.
+Renderer tests cover exact Markdown selection, growth, comments, removal and
+sheet serialization. API Node tests cover live and overheard projections;
+`test-workers/artifact-annotations.test.ts` covers canonical resource/version
+reads and durable turn storage. The workerd target/version and canonical-storage tests have production mutation
+proofs. No serving-Worker injection is shipped.
+
+Run scoped files with the package's Vitest command, and run repository lint and
+typecheck. Visual checks use the real Electron app with local Workers and
+ordinary uploaded fixtures. Prompt evaluations live under
+`packages/agent-harness/evals/artifact-annotations/`; they test editing decisions
+on the configured medium fallback model, separately from end-to-end tool edits.
+
+## Changelog
+
+### 2026-10-19 — Send pointed resource content as user-message annotations
+
+**What changed:** Selections and comments travel as versioned content on ordinary
+user turns, with transient composer pins, source-aware previews and native HTML
+inspection. Shared resource-sharing rules authorize new selections before
+participant changes. Image originals retain their version and saved model metadata.
+
+**Why:** People needed to ask for changes to a precise spot without describing
+its position or making the model fetch it to understand the request. Review also
+caught stale image identity, blocked preview opens and draft lifecycle gaps that
+would have lost or duplicated those requests.
+
+**Considered and rejected:** A separate artifact-comment table duplicates message
+ownership. Serving-Worker injection adds a navigation and same-origin forgery
+boundary; the requester accepted native website selection instead. An inline
+nonce did not satisfy inherited app CSP, so static HTML loads a bundled asset.
+
+**Consequences:** New selections must preserve sharing authorization, exact saved
+versions and source fidelity. Historical reads do not reapply admission budgets.
+Native page input must be trusted, HTML stays opaque, popouts retain narrow IPC,
+and draft pins clear only on acceptance or acknowledged transfer. Preview opening
+must remain independent of annotation metadata availability.
+
+PR #1322; design: `docs/PRDs/2026-10-19_artifact-annotations/prd.md`.
