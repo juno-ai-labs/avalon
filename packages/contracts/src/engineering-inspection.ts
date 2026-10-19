@@ -384,6 +384,27 @@ export const EngineeringSqlLookupSchema = deferredZodSchema(() => lookupResultSc
 })));
 export type EngineeringSqlLookup = z.infer<typeof EngineeringSqlLookupSchema>;
 
+/**
+ * The regional API Worker's D1 bindings, named as its `Env` names them. Each
+ * region binds all five; `PLATFORM_DB` is one database shared by every region.
+ */
+export const ENGINEERING_D1_DATABASES = ["DB", "TELEMETRY_DB", "AUDIT_DB", "USAGE_DB", "PLATFORM_DB"] as const;
+export const EngineeringD1DatabaseSchema = z.enum(ENGINEERING_D1_DATABASES);
+export type EngineeringD1Database = z.infer<typeof EngineeringD1DatabaseSchema>;
+
+export const D1SqlInspectionInputSchema = deferredZodSchema(() => z.strictObject({
+  database: EngineeringD1DatabaseSchema,
+  query: InspectionSqlRequestSchema,
+}));
+export type D1SqlInspectionInput = z.infer<typeof D1SqlInspectionInputSchema>;
+
+export const EngineeringD1SqlResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  database: EngineeringD1DatabaseSchema,
+  result: InspectionSqlResultSchema,
+}));
+export type EngineeringD1SqlResult = z.infer<typeof EngineeringD1SqlResultSchema>;
+
 /** The named regional WorkerEntrypoint surface bound only to the engineering MCP Worker. */
 export interface EngineeringInspectionRpcBinding {
   listWorkspaces(input: ListEngineeringWorkspacesInput): Promise<ListEngineeringWorkspacesResult>;
@@ -400,4 +421,5 @@ export interface EngineeringInspectionRpcBinding {
   runWorkspaceSql(input: WorkspaceSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runSubstreamSql(input: SubstreamSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runArtifactSql(input: ArtifactSqlInspectionInput): Promise<EngineeringSqlLookup>;
+  runD1Sql(input: D1SqlInspectionInput): Promise<EngineeringD1SqlResult>;
 }
