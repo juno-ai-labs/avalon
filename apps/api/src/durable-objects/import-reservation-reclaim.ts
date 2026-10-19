@@ -87,8 +87,9 @@ export function nextImportReservationReclaimAt(sql: SqlStorage): number | null {
 
 /**
  * Reclaim every reservation due by `now`. A thread whose main conversation has
- * opened is dropped without a reclaim; one whose reclaim throws keeps its row
- * and retries at its own gate.
+ * opened is dropped without a reclaim. Each row is claimed, its gate advanced,
+ * before the reclaim leaves the object, so a reclaim that throws or a pass cut
+ * off part way keeps its row and retries at that gate rather than at once.
  */
 export async function reclaimDueImportReservations(input: {
   sql: SqlStorage;
@@ -107,14 +108,14 @@ export async function reclaimDueImportReservations(input: {
       "SELECT 1 FROM parent_child_receipts WHERE parent_id = ? AND substream_id = '0' LIMIT 1",
       row.parent_id,
     ).toArray().length > 0;
+    input.sql.exec(
+      "UPDATE import_reservation_reclaim SET attempts = ?, due_at = ? WHERE parent_id = ?",
+      row.attempts + 1, input.retryAt(row.attempts + 1), row.parent_id,
+    );
     try {
       if (!opened) await input.reclaim({ parentId: row.parent_id, userId: row.user_id });
       input.sql.exec("DELETE FROM import_reservation_reclaim WHERE parent_id = ?", row.parent_id);
     } catch (error) {
-      input.sql.exec(
-        "UPDATE import_reservation_reclaim SET attempts = ?, due_at = ? WHERE parent_id = ?",
-        row.attempts + 1, input.retryAt(row.attempts + 1), row.parent_id,
-      );
       input.onFailure({ parentId: row.parent_id }, error);
     }
   }
