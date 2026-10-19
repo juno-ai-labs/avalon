@@ -242,6 +242,7 @@ import {
   AnswerElicitationExternallyInputSchema,
   OpenElicitationInputSchema,
   type SchedulingOperationRequest,
+  armsDerivedAlarm,
   mutatesWakeups,
   SchedulingOperationRequestSchema,
 } from "./workstream-scheduling-protocol";
@@ -2810,6 +2811,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * An operation that can change which wake-ups are pending runs through
    * `commitRuntimeMutation`, re-derives the timer index, and arms the next
    * alarm before answering — so a caller never has to remember to do any of it.
+   * A memory sweep write (`armsDerivedAlarm`) arms the next alarm as well,
+   * because `retry_at` is a due time the alarm is derived from.
    *
    * All three used to be consequences of the routing. A wake-up write arrived
    * as SQL, and the object matched `workstream_wakeups` in the statement text
@@ -2870,8 +2873,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (parsedElicitationInput && isPersistedElicitationOutcome(value)) {
       await this.flushSemanticRealtimeOutboxBestEffort();
     }
-    if (mutates) {
-      this.syncAgentTimerAlarms();
+    // A sweep write moves only the column the alarm is derived from, so it
+    // re-arms without the wake-up index reconcile.
+    if (mutates || armsDerivedAlarm(parsed.data.operation)) {
+      if (mutates) this.syncAgentTimerAlarms();
       // Arming is best-effort, as it is for every typed mutation endpoint and
       // `runTerminalOperation`, and for the reason those two give: the
       // operation is already durable, so raising here would tell a caller its
@@ -6259,7 +6264,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   /**
    * This conversation's memory digest copy for one principal, read
    * synchronously and never refreshed here: the settlement step, the sweep, a
-   * forget, and the copy-sync lane refresh it. An unreadable copy renders no
+   * forget, a Sidekick run's provisioning, and the copy-sync lane refresh it. An unreadable copy renders no
    * digest rather than failing the run, and names the field it rejected.
    * See docs/agent-memory.md#the-digest.
    */

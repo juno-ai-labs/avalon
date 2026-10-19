@@ -43,6 +43,7 @@ const DISPATCHED_OPERATIONS = [
   "messagesBefore",
   "readableMessagesBefore",
   "messagesAfter",
+  "hasMessageAfter",
   "messageAtSequence",
   "saidMessages",
   "saidMessageCount",

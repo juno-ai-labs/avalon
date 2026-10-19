@@ -232,6 +232,19 @@ export class WorkstreamMessageStorage {
     ).toArray();
   }
 
+  /**
+   * Whether anything other than a tool row follows a sequence number: the
+   * memory sweep's "is there more to read", asked without reading it.
+   */
+  hasMessageAfter(input: { afterSequence: number }): boolean {
+    return first(this.sql.exec<{ present: number } & Record<string, SqlStorageValue>>(
+      `SELECT 1 AS present FROM canonical_conversation_turn_details
+        WHERE substream_id = '0' AND sequence_number > ? AND message_type <> 'tool'
+        LIMIT 1`,
+      input.afterSequence,
+    )) !== undefined;
+  }
+
   /** One message at a transcript position, or nothing. */
   messageAtSequence(input: { sequenceNumber: number }): MessageRow | undefined {
     return first(this.sql.exec<MessageRow>(

@@ -114,6 +114,16 @@ function first<T>(cursor: SqlStorageCursor<T extends Record<string, SqlStorageVa
   return cursor.toArray()[0];
 }
 
+/**
+ * The rest a conversation has earned after a sweep: the floor, doubling once
+ * per consecutive quiet sweep, up to the ceiling. The numbers are the lane's
+ * (`memory-sweep-service.ts`); the arithmetic is here so the settle that
+ * applies it needs nothing but numbers.
+ */
+export function memorySweepRestUntil(now: number, quiet: number, floorMs: number, ceilingMs: number): number {
+  return now + Math.min(ceilingMs, floorMs * 2 ** Math.max(0, quiet));
+}
+
 export class WorkstreamSchedulingStorage {
   /**
    * The transcript authority, over this same object storage.
@@ -773,17 +783,26 @@ export class WorkstreamSchedulingStorage {
   /**
    * Move the cursor to what the store applied, and set the rest that outcome
    * earned: a sweep that wrote returns to the floor, a quiet one doubles it.
+   * The rest is computed here from numbers, because this is called over the
+   * scheduling port from the Queue consumer and a closure does not cross it.
    *
    * Compare-and-swap on the claimed `fromSeq`: a settle whose `fromSeq` is not
    * the cursor is refused, and settling to a `toSeq` the cursor already holds
    * is a no-op, so a redelivery after a committed apply finishes cleanly.
+   *
+   * `retry_at` goes to the new rest when the transcript already holds more
+   * than the settled range: a run that settled while this sweep was in flight
+   * found the conversation resting and asked the alarm back, and clearing that
+   * here would leave its messages unswept until something else happened.
    */
   settleMemorySweep(input: {
     fromSeq: number;
     toSeq: number;
+    /** The delivery's claim, for the record; the fence is `fromSeq`, and a range skipped without a claim passes 0. */
     attempt: number;
     wrote: boolean;
-    restUntil: (quiet: number) => number;
+    restFloorMs: number;
+    restCeilingMs: number;
     now: number;
   }): "settled" | "already_settled" | "refused" {
     return this.storage.transactionSync(() => {
@@ -792,12 +811,14 @@ export class WorkstreamSchedulingStorage {
       if (existing.swept_through_seq === input.toSeq && existing.claim_at === null) return "already_settled";
       if (existing.swept_through_seq !== input.fromSeq) return "refused";
       const quiet = input.wrote ? 0 : existing.consecutive_quiet + 1;
+      const restUntil = memorySweepRestUntil(input.now, quiet, input.restFloorMs, input.restCeilingMs);
+      const retryAt = this.messages.hasMessageAfter({ afterSequence: input.toSeq }) ? restUntil : null;
       this.sql.exec(
         `UPDATE memory_sweep_state
             SET swept_through_seq = ?, consecutive_quiet = ?, rest_until = ?, claim_from_seq = NULL,
-                claim_to_seq = NULL, claim_at = NULL, retry_at = NULL, version = version + 1, updated_at = ?
+                claim_to_seq = NULL, claim_at = NULL, retry_at = ?, version = version + 1, updated_at = ?
           WHERE id = 1`,
-        input.toSeq, quiet, input.restUntil(quiet), input.now,
+        input.toSeq, quiet, restUntil, retryAt, input.now,
       );
       return "settled";
     });
@@ -809,21 +830,19 @@ export class WorkstreamSchedulingStorage {
    * decides when the alarm tries again.
    */
   releaseMemorySweep(input: { attempt: number; now: number }): boolean {
-    return this.storage.transactionSync(() => {
-      this.sql.exec(
-        `UPDATE memory_sweep_state
-            SET claim_from_seq = NULL, claim_to_seq = NULL, claim_at = NULL, retry_at = rest_until,
-                version = version + 1, updated_at = ?
-          WHERE id = 1 AND claim_attempt = ? AND claim_at IS NOT NULL`,
-        input.now, input.attempt,
-      );
-      return this.#changed() > 0;
-    });
+    return this.storage.transactionSync(() => first(this.sql.exec<{ id: number } & Record<string, SqlStorageValue>>(
+      `UPDATE memory_sweep_state
+          SET claim_from_seq = NULL, claim_to_seq = NULL, claim_at = NULL, retry_at = rest_until,
+              version = version + 1, updated_at = ?
+        WHERE id = 1 AND claim_attempt = ? AND claim_at IS NOT NULL
+        RETURNING id`,
+      input.now, input.attempt,
+    )) !== undefined);
   }
 
   /**
-   * Ask the alarm to try again at `retryAt` (a rested conversation with person
-   * messages behind the cursor), or at nothing. The alarm lane reads this and
+   * Ask the alarm to try again at `retryAt` (a resting conversation with
+   * messages after the cursor), or at nothing. The alarm lane reads this and
    * nothing else, so every attempt has to move it.
    */
   deferMemorySweep(input: { retryAt: number | null; now: number }): void {
@@ -841,13 +860,11 @@ export class WorkstreamSchedulingStorage {
 
   /**
    * One principal's digest copy (`user:<id>`, `sidekick:<automationId>` or
-   * `conversation`), or `null` when none was written yet. `null` too below
-   * migration 77, which has no table: a run on an object that has not migrated
-   * renders no digest rather than failing. Validated here because the run
-   * renders from it with nothing else in between. `docs/agent-memory.md#the-digest`.
+   * `conversation`), or `null` when none was written yet. Validated here
+   * because the run renders from it with nothing else in between.
+   * `docs/agent-memory.md#the-digest`.
    */
   memoryDigestCopy(principal: string): MemoryDigestFact[] | null {
-    if (!this.#hasMemoryDigestCopies()) return null;
     const row = first(this.sql.exec<{ facts_json: string } & Record<string, SqlStorageValue>>(
       `SELECT facts_json FROM memory_digest_copies WHERE principal = ?`, principal,
     ));
@@ -855,26 +872,27 @@ export class WorkstreamSchedulingStorage {
   }
 
   /**
-   * Replace one principal's copy with a newer read. Two refreshes can overlap
-   * and resume in either order; `readAt` is the WorkspaceDO's clock at the
-   * read, so an older answer arriving late never replaces a newer copy. An
-   * equal `readAt` writes, so a repeated refresh of the same read converges.
-   * `true` when the row was written.
+   * Replace one principal's copy with a read at least as new. Two refreshes
+   * can overlap and resume in either order; `sourceRevision` is the
+   * WorkspaceDO's `memory_revision` at the read, so an older answer arriving
+   * late never replaces a newer copy. An equal revision writes: two reads
+   * with nothing written or marked between them answer alike, and a change
+   * no trigger marks still reaches the copy at its next refresh. `true` when
+   * the row was written.
    */
-  storeMemoryDigestCopy(input: { principal: string; facts: MemoryDigestFact[]; readAt: number; now: number }): boolean {
+  storeMemoryDigestCopy(input: { principal: string; facts: MemoryDigestFact[]; sourceRevision: number; now: number }): boolean {
     return this.sql.exec<{ principal: string } & Record<string, SqlStorageValue>>(
-      `INSERT INTO memory_digest_copies (principal, facts_json, read_at, refreshed_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT (principal) DO UPDATE SET facts_json = excluded.facts_json, read_at = excluded.read_at,
-         refreshed_at = excluded.refreshed_at
-       WHERE excluded.read_at >= memory_digest_copies.read_at
+      `INSERT INTO memory_digest_copies (principal, facts_json, source_revision, refreshed_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT (principal) DO UPDATE SET facts_json = excluded.facts_json,
+         source_revision = excluded.source_revision, refreshed_at = excluded.refreshed_at
+       WHERE excluded.source_revision >= memory_digest_copies.source_revision
        RETURNING principal`,
-      input.principal, JSON.stringify(input.facts), input.readAt, input.now,
+      input.principal, JSON.stringify(input.facts), input.sourceRevision, input.now,
     ).toArray().length > 0;
   }
 
   /** Every principal holding a copy here, so a refresh after a sweep can reach each one. */
   memoryDigestPrincipals(): string[] {
-    if (!this.#hasMemoryDigestCopies()) return [];
     return this.sql.exec<{ principal: string } & Record<string, SqlStorageValue>>(
       `SELECT principal FROM memory_digest_copies ORDER BY principal`,
     ).toArray().map((row) => row.principal);
@@ -883,12 +901,12 @@ export class WorkstreamSchedulingStorage {
   /**
    * Drop one forgotten fact from every copy here, in the same call as the
    * forget that retracted it, so the next run in this conversation does not
-   * render it again before the copy-sync lane catches up. Answers the number
-   * of copies that held it. `read_at` is left alone: the copy is still the
-   * same read, less one fact, and a newer read already excludes it.
+   * render it again before the copy-sync lane catches up. `revision` is the
+   * retraction's: every copy's `source_revision` is raised to at least it, so
+   * a refresh that read before the forget and lands after it is refused in
+   * every copy here. Answers the number of copies that held the fact.
    */
-  removeFactFromMemoryDigestCopies(input: { factId: string; now: number }): number {
-    if (!this.#hasMemoryDigestCopies()) return 0;
+  removeFactFromMemoryDigestCopies(input: { factId: string; revision: number; now: number }): number {
     return this.storage.transactionSync(() => {
       const rows = this.sql.exec<{ principal: string; facts_json: string } & Record<string, SqlStorageValue>>(
         `SELECT principal, facts_json FROM memory_digest_copies`,
@@ -904,14 +922,12 @@ export class WorkstreamSchedulingStorage {
         );
         removed += 1;
       }
+      this.sql.exec(
+        `UPDATE memory_digest_copies SET source_revision = ? WHERE source_revision < ?`,
+        input.revision, input.revision,
+      );
       return removed;
     });
-  }
-
-  #hasMemoryDigestCopies(): boolean {
-    return this.sql.exec(
-      "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'memory_digest_copies'",
-    ).toArray().length > 0;
   }
 
   /** Rows written by the statement that just ran, in this transaction. */
