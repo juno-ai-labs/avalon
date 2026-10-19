@@ -12,7 +12,7 @@ import { useLocation, useNavigate, useParams, useSearchParams } from 'react-rout
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import { asSubstreamId, asWorkspaceId, asWorkstreamId, conversationNeedsViewer, type ConversationMergeResult, type HarnessStatus } from '@rally/contracts';
 import { logError } from '../../common/logger';
-import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
+import { useCollaborationSession, useOptionalCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { mainOmitted, mainReachable, useConversationDirectory } from '../lib/conversation-directory';
 
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
@@ -162,7 +162,8 @@ const workstreamSidebarFailureCopy: Record<WorkstreamSidebarFailure, FailureCopy
 export function WorkstreamScreen(): React.JSX.Element {
   const { id = '' } = useParams();
   const row = useCachedWorkstreamSummary(id);
-  const { api } = useCollaborationSession();
+  // Optional: the pending screen needs the API only to preview attachments.
+  const api = useOptionalCollaborationSession()?.api;
   if (row?.pending) {
     const opening = row.pendingOrigin === 'import'
       ? undefined
