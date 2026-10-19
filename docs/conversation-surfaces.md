@@ -788,7 +788,10 @@ one. A person's turn in a Thread still passes `textActions={false}`, as before.
 A Channel's message copies its stored body, so a typed @name copies as typed
 and exports without a chip. It also passes `verbatim`, so its image and PDF keep
 the line breaks the feed drew and skip model-text repairs; a host that draws
-text verbatim must pass it, or the saved card differs from the screen.
+text verbatim must pass it, or the saved card differs from the screen. In a
+Channel the row sits on the message's name · time line (`.channel-feed-byline`)
+rather than a line of its own: the row is laid out while hidden, and on its own
+line it made every Channel message about 31px taller at rest.
 
 ### 2026-10-18 — A long paste attaches as a typed, named file
 

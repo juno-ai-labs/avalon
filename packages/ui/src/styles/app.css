@@ -4021,7 +4021,9 @@ pre {
    drawn: a turn in a Thread or Breakout, a merged result, a Channel's own
    message. It is revealed by hovering or focusing the message that holds it, and
    stays up while it is speaking or a save is in flight, so Stop speaking and the
-   export's state are not a hover away. */
+   export's state are not a hover away. Clicks follow the fade: during the 120ms
+   it takes to appear, a click would land on a control the reader cannot yet
+   read, and New breakout creates a conversation rather than copying a line. */
 .message-actions { align-items: center; display: flex; gap: var(--space-2); margin-top: var(--space-2); opacity: 0; pointer-events: none; transition: opacity 120ms; }
 :is(.message-block, .channel-feed-item):is(:hover, :focus-within) .message-actions,
 .message-actions.is-speaking,
@@ -4037,13 +4039,6 @@ pre {
    the button — carrying its own hover opacity inside the agent's row multiplied
    the two and left this one button visibly paler than the four beside it. */
 .message-start-substream { white-space: nowrap; }
-/* Hit-testing follows the fade. The strip is inside the article that reveals it,
-   so a pointer that can reach it has already revealed it — except during the
-   120ms it takes to arrive, where a click would land on a control the reader
-   cannot yet read, and New breakout creates a conversation rather than copying
-   a line. The two states that hold the row up without hover (speech playing, a
-   save in flight) restore hit-testing with the opacity, so Stop speaking stays
-   reachable. */
 /* The slot holds its height with nothing in it. Every person's turn lays it
    out, control or not, because the one-unit turn gap relies on it to keep the
    next turn off the bubble; an empty flex row is 0px tall, and a turn without
@@ -8886,6 +8881,8 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .conversation-card-summary .markdown-body :is(ul, ol, li, blockquote) { border: 0; display: block; list-style: none; padding: 0; text-align: inherit; }
 .conversation-card-meta,
 .channel-feed-meta { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: 12px; gap: 6px; margin-top: 2px; }
+.channel-feed-byline { align-items: center; display: flex; gap: var(--space-3); min-width: 0; }
+.channel-feed-byline .message-actions { margin-top: 2px; }
 .conversation-card-meta .avatar,
 .channel-feed-meta .avatar { height: 18px; margin-right: 2px; width: 18px; }
 .conversation-card-meta .avatar-fallback,
