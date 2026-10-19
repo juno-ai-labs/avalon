@@ -10,6 +10,7 @@ import type { MentionIdentity } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
 import { optimisticOpeningTranscript } from '../lib/launched-conversation';
+import { optimisticMentionRendering } from '../lib/transcript';
 import { OPEN_EXPANDED, threadRoute } from '../lib/navigation-routes';
 import { holdCreationTraceUntilSendReady, startPerfTrace, type PerfTrace } from '../lib/perf-trace';
 import { uuidV7 } from '../lib/telemetry';
@@ -252,6 +253,7 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
       createdAt,
       createdByUserId: workspace.currentUser.id,
       objective: openingMessage,
+      opening: { ...optimisticMentionRendering(openingMessage, mentions, members.data ?? []), attachments },
       color: channelColor,
     });
     void navigate(threadRoute(threadId, channelId), { state: OPEN_EXPANDED });
@@ -267,7 +269,7 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
       threadId,
       startedAt: createdAt,
     });
-  }, [attachmentDraft.ready, channelColor, channelId, channelScope, create, modelOverride, navigate, queryClient, workspace.currentUser.id]);
+  }, [attachmentDraft.ready, channelColor, channelId, channelScope, create, members.data, modelOverride, navigate, queryClient, workspace.currentUser.id]);
 
   // The same import the Channel header offers, beside the other ways to bring
   // something into a new thread. Only the Mac app has the embedded browser it
