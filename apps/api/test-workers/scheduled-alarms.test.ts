@@ -1223,4 +1223,57 @@ describe("an agent's own wake-ups", () => {
     // for a row that no longer exists.
     expect(await runDurableObjectAlarm(agent)).toBe(false);
   });
+
+  it("fires a Breakout's wake-up from the Breakout's own object, not Main's", async () => {
+    await seedOpenAuthority();
+    const breakoutId = asSubstreamId("00000000-0000-7000-8000-0000000000b1");
+    // Main exists and holds no wake-ups, as in production: a read that reached
+    // it got a clean "no such row" rather than an error.
+    const main = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const breakout = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID, breakoutId),
+    ));
+    for (const [stub, substreamId] of [[main, undefined], [breakout, breakoutId]] as const) {
+      await stub.bootstrapRuntime({
+        workspaceId: WORKSPACE_ID,
+        parentKind: "workstream" as const, parentId: WORKSTREAM_ID,
+        generation: 1,
+        ...(substreamId ? { substreamId } : {}),
+      });
+    }
+    await runInDurableObject(breakout, (_instance, state) => {
+      state.storage.sql.exec("DELETE FROM authorization_projection_outbox");
+      // A principal of another workspace: the fire claims the row and then
+      // declines to run it, so the test stops short of a model.
+      state.storage.sql.exec(
+        `INSERT INTO workstream_wakeups
+           (wakeup_id, created_by_run_id, execution_principal_json, prompt, due_at, status,
+            idempotency_key, fired_at, cancelled_at, version, created_at, updated_at)
+         VALUES ('breakout-wake', NULL, ?, 'Check the build', ?, 'pending',
+                 'idempotency-breakout', NULL, NULL, 1, ?, ?)`,
+        JSON.stringify({ type: "workspace", workspaceId: "00000000-0000-7000-8000-0000000000ff" }),
+        Date.now() - 60_000,
+        Date.now() - 120_000,
+        Date.now() - 120_000,
+      );
+    });
+    await breakout.refreshTimerAlarm({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      substreamId: breakoutId,
+    });
+
+    await runDurableObjectAlarm(breakout);
+
+    await runInDurableObject(breakout, (_instance, state) => {
+      // Claimed and settled. A timer that read Main's empty table left this
+      // `pending`, and the stall gate held it behind an ever-growing attempt.
+      expect(state.storage.sql.exec(
+        `SELECT status FROM workstream_wakeups WHERE wakeup_id = 'breakout-wake'`,
+      ).toArray()).toEqual([{ status: "fired" }]);
+      expect(new ScheduledAlarmStore(state.storage.sql).list("agent_timer")).toEqual([]);
+    });
+  });
 });
