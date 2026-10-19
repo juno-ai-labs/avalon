@@ -347,11 +347,11 @@ cover scaling, matching message attachment tiles. It shows
 a shimmering media skeleton while those bytes load. Other resource kinds do
 not fetch original bytes for feed decoration: audio and video use square tiles,
 while sites, documents, and other files use 54px-high icon, filename, and kind
-cards that fit two grid tracks. Clicking
-either presentation opens the host's attachment preview when bytes are
-available. A true `generated_site` keeps its live-artifact inspector because its
-runtime is not an attachment blob. This avoids both binary-as-text failures and
-a second document reader nested inside the feed.
+cards that fit two grid tracks. Clicking a `generated_file` or `generated_site`
+opens the host's standard artifact inspector, with its artifact management
+controls. Source files open the host's attachment preview; generated resources
+are excluded from its galleries so stepping through source attachments cannot
+bypass the artifact inspector. Feed excerpts still use the shared preview reader.
 
 On a work stream, rendering or receiving an embed never opens the right-side
 inspector automatically. The transcript stays where the person left it until
@@ -958,6 +958,15 @@ restoration are owned by [artifact annotations](artifact-annotations.md).
 
 PR #1322; design: `docs/PRDs/2026-10-19_artifact-annotations/prd.md`.
 
+### 2026-10-19 — Generated files open with artifact controls
+
+Citation clicks route `generated_file` resources to the standard artifact
+inspector, alongside `generated_site`, and exclude them from source attachment
+galleries. Generated Markdown previously opened a generic Attachment menu with
+only Download and Details, hiding the artifact's management controls behind a
+second click. Reusing the inspector keeps those controls in one place rather
+than duplicating them in the attachment preview. Source attachment previews and
+feed excerpts keep their existing readers.
 
 ### 2026-10-13 — A glance draws mentions as chips
 

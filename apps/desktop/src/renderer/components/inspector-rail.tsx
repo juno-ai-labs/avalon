@@ -578,7 +578,7 @@ function ResourcePanelMenu({ onArchive, onCopyLink, onOpenSource, onPopOut, onRe
   if (nav.view?.key === VERSIONS_VIEW.key) return <ResourceVersionItems {...versions} />;
   return <>
     <TitleMenuHeader
-      eyebrow={resource.direction === 'artifact' ? 'Artifact' : 'Resource'}
+      eyebrow={resource.direction === 'artifact' ? null : 'Resource'}
       icon={<ResourceIcon resource={resource} />}
       title={resource.title}
     />
