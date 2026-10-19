@@ -224,7 +224,9 @@ is allowed.
 ### 2026-10-19 — Apollo tracks landing-page visits
 
 **What changed:** Added the supplied Apollo tracker to production landing pages
-and concept variants, with landing-only CSP permissions for Apollo and LiveIntent.
+and concept variants, with landing-only CSP permissions for Apollo and LiveIntent, including their
+image pixels. Updated the cookie notice and Privacy Policy with the data recipients
+and purposes.
 
 **Why:** The landing pages need the requested Apollo visitor tracking alongside
 the existing acquisition reporting.
