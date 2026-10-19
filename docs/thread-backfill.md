@@ -6,6 +6,9 @@ activity Queue one batch at a time, and a consumer that runs the job over each
 conversation through its own object. Its first job summarizes the description
 of every thread and Breakout created before the first naming pass asked for a
 summary ([`workstream-descriptions.md`](workstream-descriptions.md#the-first-summary)).
+Its second judges the newest settled Rally turn of every conversation for a
+merge or Breakout suggestion
+([`conversation-suggestions.md`](conversation-suggestions.md#the-backfill)).
 
 It is [Channel colour sync](workstream-appearance.md)'s lane with the triggers
 and revisions taken out. Colour sync is a standing job whose rows keep being
@@ -17,15 +20,17 @@ consumer says so.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/thread-backfill.ts` | The `thread_backfill` table and its migration, the job list, the alarm lane (`nextThreadBackfillAt`, `publishThreadBackfill`), and the settle, release and work halves. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Migration 100, the `thread_backfill` alarm lane, and the `threadBackfillWork`, `completeThreadBackfill` and `releaseThreadBackfill` RPCs. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Migrations 100 and 115, the `thread_backfill` alarm lane, and the `threadBackfillWork`, `completeThreadBackfill` and `releaseThreadBackfill` RPCs. |
 | `apps/api/src/queues/activity-consumer.ts` | `THREAD_BACKFILL_HANDLERS`, the one place a job's per-conversation work is named, and the branch that runs it over Main and each open Breakout. |
 | `apps/api/src/services/workstream-naming-service.ts` | `summarizeExistingDescription`, the `description_summary` job. |
+| `apps/api/src/services/suggestion-backfill-service.ts` | `backfillSuggestion`, the `suggestion_backfill` job: one RPC to the conversation object, and `settledBackfillOutcome`, which throws on a classifier failure. |
 
 ## How it works
 
 1. **A migration fills the list.** Migration 100 creates `thread_backfill`
    (`job`, `workstream_id`, `attempts`, `not_before`, `in_flight`) and inserts
    one `description_summary` row for every thread that is not archived.
+   Migration 115 lists every open thread again, for `suggestion_backfill`.
 2. **The alarm sends one batch.** The `thread_backfill` lane sends up to 100
    due rows to `ACTIVITY_QUEUE`, marking each `in_flight` with a retry gate
    first. While any in-flight row's gate is ahead it sends nothing, so the next
@@ -70,7 +75,10 @@ arms its own alarm.
   that is no longer empty or the opening message's first line, so a second
   run can repeat a model call but never a write.
   Guard: `workstream-naming.test.ts`, "backfilling an existing thread's
-  summary".
+  summary". `suggestion_backfill` is gated by the observer's one judgement
+  per run: a second run over a judged conversation skips as `already_judged`
+  and calls nothing. Guard: `conversation-suggestions.test.ts`, "judges a run
+  once".
 - **Only the latest claim releases a row.** Each message carries the
   `attempt` it was claimed under, and a release from an older delivery is
   refused. A delivery can outlive its gate, and the alarm then claims the row
@@ -83,7 +91,17 @@ arms its own alarm.
 - **A model failure is a failure, not an outcome.** `summarizeExistingDescription`
   throws `description_summary_model_failed` so the row is retried; reporting
   it as `unchanged` would settle the row with the model down. Guard:
-  `workstream-naming.test.ts`.
+  `workstream-naming.test.ts`. `backfillSuggestion` throws the same way on a
+  transient classifier failure (`suggestion_backfill_classifier_unavailable_<kind>`
+  for a 5xx, 408 or 429, a deadline or an unreachable provider; the observer
+  keeps no answer for a failed judgement, so the retry asks again) and on a
+  step that threw before judging (`suggestion_backfill_<reason>`), which the
+  settlement lane only logs; a failed parent read is one such step here,
+  where settlement reads the parent best-effort. A classifier failure no retry would fix (a
+  missing or refused key, a rejected request, an answer that failed the
+  schema) settles, with the kind in the judgement as the record: the lane caps
+  nothing, so retrying it would pay for a call every gate for good. Guard:
+  `suggestion-backfill-service.test.ts`.
 
 ## Boundary
 
@@ -102,7 +120,9 @@ revisions.
   model is down.
 - **No model key** (`OPENROUTER_API_KEY` unset, as locally). Naming returns
   nothing without failing, so rows settle as `unchanged`. A backfill run where
-  the key is missing does nothing and finishes.
+  the key is missing does nothing and finishes. Without `TYPESAFE_API_KEY`,
+  `suggestion_backfill` records each conversation as `classifier_unavailable`
+  with `typesafe_key_missing` and settles it the same way.
 - **A retired Organization** refuses the write; the consumer acks without
   releasing the row or logging a failure.
 - **Batch size** is 100, Cloudflare Queues' `sendBatch` ceiling.
@@ -121,14 +141,17 @@ revisions.
   RPC's answer and settling, pacing, and a Queue delivery against a real Main
   conversation. Run with `pnpm --filter @rally/api test:workers`.
 - `apps/api/test/workspace-thread-backfill-migration.test.ts`: migration 100
-  lists open threads and skips archived ones.
+  lists open threads and skips archived ones;
+  `workspace-suggestion-backfill-migration.test.ts`: the same for 115.
+- `apps/api/test/suggestion-backfill-service.test.ts`: the `suggestion_backfill`
+  answer, thrown on a classifier failure and settled on a missing key.
 - `apps/api/test/workstream-naming.test.ts`: the `description_summary` step.
 
 ## Operations
 
 | Event | Means |
 | --- | --- |
-| `thread_backfill_conversation` | One conversation ran. `outcome` is the handler's; for `description_summary`, a `DescriptionSummaryOutcome`. |
+| `thread_backfill_conversation` | One conversation ran. `outcome` is the handler's; for `description_summary`, a `DescriptionSummaryOutcome`; for `suggestion_backfill`, `nothing_to_judge` or the observer's `skipped:<gate>`, `judged:<code>`, `resumed` or `failed:<reason>`. |
 | `thread_backfill_failed` | A thread's job threw; its row retries at its gate. |
 | `thread_backfill_publication_failed` | The alarm could not send a batch; its rows retry at their gates. |
 
@@ -136,6 +159,29 @@ The list drains to empty when the job is done. A row that keeps coming back
 shows as repeated `thread_backfill_failed` for one `workstream_id`.
 
 ## Changelog
+
+### 2026-10-19 — A second job: the suggestion backfill
+
+**What changed:** WorkspaceDO migration 115 lists every open thread for
+`suggestion_backfill`, whose handler asks each conversation's object to judge
+its newest settled Rally turn for a merge or Breakout suggestion, through the
+same observer a settlement runs.
+
+**Why:** Suggestions shipped on 2026-10-18 for turns settled from then on, and
+the product owner asked for existing conversations to get theirs. The lane
+existed for exactly this, so the backfill is a migration, a handler and one
+RPC.
+
+**Considered and rejected:** Judging every turn of every conversation. The
+chip shows only under one of the newest three messages, so an older judgement
+would be recorded as `late` and shown to nobody: one call per conversation,
+for its newest settled turn, is the whole visible result at a fraction of the
+cost.
+
+**Consequences:** The observer's gate 3 no longer counts a recorded classifier
+failure as a judgement, so this job can throw on one and have the retry ask
+again; a replayed settlement after such a failure asks again too. Running the
+job twice is one skipped RPC per conversation.
 
 ### 2026-10-13 — A work list for one-off jobs over every thread
 

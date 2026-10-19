@@ -13,6 +13,7 @@ import { SearchConversationProjectionMessageSchema, SearchProjectionMessageSchem
 import { AuthorizationProjectionJobSchema } from '../durable-objects/authorization-projection';
 import { ChannelColorSyncMessageSchema } from "../durable-objects/channel-color-sync";
 import { ThreadBackfillMessageSchema, type ThreadBackfillJob } from "../durable-objects/thread-backfill";
+import { backfillSuggestion } from "../services/suggestion-backfill-service";
 import { summarizeExistingDescription } from "../services/workstream-naming-service";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { projectAuthorization } from '../services/authorization-projection-service';
@@ -89,6 +90,7 @@ const THREAD_BACKFILL_HANDLERS: Record<ThreadBackfillJob, (env: Env, target: {
   workspaceId: string; workstreamId: string; substreamId: string;
 }) => Promise<string>> = {
   description_summary: (env, target) => summarizeExistingDescription(env, target),
+  suggestion_backfill: (env, target) => backfillSuggestion(env, target),
 };
 
 /**
