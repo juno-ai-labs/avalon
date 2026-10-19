@@ -474,17 +474,6 @@ import {
   type WorkspaceReserveDraftAttachmentsResult,
 } from "./workspace-draft-attachment-protocol";
 import {
-  WorkspaceMemoryAccessRecordRequestSchema,
-  WorkspaceMemoryAddRequestSchema,
-  WorkspaceMemoryCanonicalItemsRequestSchema,
-  WorkspaceMemoryFtsSearchRequestSchema,
-  WorkspaceMemoryInvalidateRequestSchema,
-  WorkspaceMemoryItemForWriteRequestSchema,
-  WorkspaceMemoryOutboxClaimRequestSchema,
-  WorkspaceMemoryOutboxCompleteRequestSchema,
-  WorkspaceMemoryOutboxDueRequestSchema,
-  WorkspaceMemoryOutboxRetryRequestSchema,
-  WorkspaceMemoryProjectionSourceRequestSchema,
   WorkspaceMemoryReceiptRequestSchema,
   WorkspaceMemoryScopeEnsureRequestSchema,
   WorkspaceMemoryTableCreateRequestSchema,
@@ -496,25 +485,6 @@ import {
   WorkspaceMemoryTableRowsByIdRequestSchema,
   WorkspaceMemoryTableSearchRequestSchema,
   WorkspaceMemoryTableUpdateRowsRequestSchema,
-  WorkspaceMemoryUpdateRequestSchema,
-  type WorkspaceMemoryAddRequest,
-  type WorkspaceMemoryAddResult,
-  type WorkspaceMemoryAccessRecordRequest,
-  type WorkspaceMemoryCandidateList,
-  type WorkspaceMemoryCanonicalItemsRequest,
-  type WorkspaceMemoryFtsSearchRequest,
-  type WorkspaceMemoryInvalidateRequest,
-  type WorkspaceMemoryItemForWriteRequest,
-  type WorkspaceMemoryItemForWriteResult,
-  type WorkspaceMemoryItemList,
-  type WorkspaceMemoryOutboxClaimRequest,
-  type WorkspaceMemoryOutboxClaimResult,
-  type WorkspaceMemoryOutboxCompleteRequest,
-  type WorkspaceMemoryOutboxDueList,
-  type WorkspaceMemoryOutboxDueRequest,
-  type WorkspaceMemoryOutboxRetryRequest,
-  type WorkspaceMemoryProjectionSourceRequest,
-  type WorkspaceMemoryProjectionSourceResult,
   type WorkspaceMemoryReceiptRequest,
   type WorkspaceMemoryReceiptResult,
   type WorkspaceMemoryScope,
@@ -535,35 +505,41 @@ import {
   type WorkspaceMemoryTableSearchResult,
   type WorkspaceMemoryTableUpdateRowsRequest,
   type WorkspaceMemoryTableWriteResult,
-  type WorkspaceMemoryUpdateRequest,
-  type WorkspaceMemoryWriteResult,
 } from "./workspace-memory-protocol";
 import {
-  addWorkspaceMemoryItem,
-  canonicalWorkspaceMemoryItems,
-  claimWorkspaceMemoryIndexOutboxRow,
-  completeWorkspaceMemoryIndexOutboxRow,
   createWorkspaceMemoryTable,
-  dueWorkspaceMemoryIndexOutbox,
   ensureWorkspaceMemoryScope,
   insertWorkspaceMemoryTableRows,
-  invalidateWorkspaceMemoryItem,
   invalidateWorkspaceMemoryTableRows,
   queryWorkspaceMemoryTableRows,
-  recordWorkspaceMemoryItemAccess,
   recordWorkspaceMemoryTableOpenReceipt,
-  retryWorkspaceMemoryIndexOutboxRow,
-  searchWorkspaceMemoryItemsFts,
   searchWorkspaceMemoryTables,
-  updateWorkspaceMemoryItem,
   updateWorkspaceMemoryTableRows,
-  workspaceMemoryIndexProjectionSource,
-  workspaceMemoryItemForWrite,
-  workspaceMemoryMutationReceipt,
   workspaceMemoryTableMutationReceipt,
   workspaceMemoryTableRowsById,
   workspaceMemoryTableWithColumns,
 } from "./workspace-memory-storage";
+import {
+  WorkspaceMemoryApplySweepRequestSchema,
+  WorkspaceMemoryForgetRequestSchema,
+  WorkspaceMemoryRecallRequestSchema,
+  WorkspaceMemoryRememberRequestSchema,
+  WorkspaceMemorySweepCandidatesRequestSchema,
+  type MemoryReader,
+  type WorkspaceMemoryApplySweepResult,
+  type WorkspaceMemoryForgetResult,
+  type WorkspaceMemoryRecallResult,
+  type WorkspaceMemoryRememberResult,
+  type WorkspaceMemorySweepCandidatesResult,
+} from "./workspace-memory-facts-protocol";
+import {
+  MEMORY_FACTS_MIGRATION,
+  applyMemorySweep,
+  forgetMemoryFact,
+  memorySweepCandidates,
+  recallMemoryFacts,
+  rememberMemoryFact,
+} from "./workspace-memory-facts-storage";
 import {
   WorkspaceNotificationIntentClaimResultSchema,
   WorkspaceNotificationIntentMaintenanceRequestSchema,
@@ -1242,14 +1218,13 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   // `persistConnectionMutation` still arrives generically, and refusing the
   // table here would break that atomic pair.
   "webhook_receipts",
-  // The memory domain is typed methods now. `memory_index_outbox` is the one
-  // deliberate omission: the schedule's alarm-target derivation in
-  // `workspace-schedule-execution.ts` still reads its due time generically
-  // through the object's local executor, alongside the other alarm sources.
+  // The memory domain is typed methods now: the scopes and tables of
+  // `rally_tables`, and the facts, receipts and sweep receipts of agent memory.
   "memory_scopes",
-  "memory_items",
-  "memory_items_fts",
-  "memory_mutations",
+  "memory_facts",
+  "memory_facts_fts",
+  "memory_fact_receipts",
+  "memory_sweep_receipts",
   "memory_tables",
   "memory_table_columns",
   "memory_table_rows",
@@ -4555,6 +4530,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "every open thread listed for the suggestion backfill",
   // See SUGGESTION_BACKFILL_MIGRATION and docs/conversation-suggestions.md.
   statements: SUGGESTION_BACKFILL_MIGRATION,
+}, {
+  version: 116,
+  description: "agent memory facts and sweep receipts, every live prose memory imported as a fact, and the item store dropped",
+  // See MEMORY_FACTS_MIGRATION and docs/agent-memory.md.
+  statements: MEMORY_FACTS_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -15216,179 +15196,56 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return ensureWorkspaceMemoryScope(this.state.storage, request);
   }
 
-  /** The FTS leg of hybrid memory retrieval, over the caller's authorized scopes. */
-  async searchMemoryItemsFts(
-    input: WorkspaceMemoryFtsSearchRequest,
-  ): Promise<WorkspaceMemoryCandidateList> {
-    await this.initialized;
-    const request = WorkspaceMemoryFtsSearchRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return searchWorkspaceMemoryItemsFts(this.state.storage, request);
-  }
-
   /**
-   * Live items among the requested ids, restricted to the given scopes.
-   *
-   * The scope list is the service's re-resolved authorization union: what this
-   * method enforces is that no candidate outside it is answered, so a scope
-   * revoked mid-search cannot leak rows through the ranking.
+   * The facts this reader may use from inside this conversation, best match
+   * first. Visibility is decided here from the facts' sources and subjects;
+   * see `workspace-memory-facts-storage.ts`.
    */
-  async canonicalMemoryItems(
-    input: WorkspaceMemoryCanonicalItemsRequest,
-  ): Promise<WorkspaceMemoryItemList> {
+  async recallMemoryFacts(input: unknown): Promise<WorkspaceMemoryRecallResult> {
     await this.initialized;
-    const request = WorkspaceMemoryCanonicalItemsRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryRecallRequestSchema, input, "recall_memory_facts");
     this.assertWorkspace(request.workspaceId);
-    return canonicalWorkspaceMemoryItems(this.state.storage, request);
+    return recallMemoryFacts(this.state.storage, request, await this.memoryReaderRelationship(request));
   }
 
-  /** Bump non-authoritative access counters; a lost update costs nothing. */
-  async recordMemoryItemAccess(input: WorkspaceMemoryAccessRecordRequest): Promise<void> {
+  /** Record one fact a person asked Rally to remember; a replay answers from its receipt. */
+  async rememberMemoryFact(input: unknown): Promise<WorkspaceMemoryRememberResult> {
     await this.initialized;
-    const request = WorkspaceMemoryAccessRecordRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryRememberRequestSchema, input, "remember_memory_fact");
     this.assertWorkspace(request.workspaceId);
-    recordWorkspaceMemoryItemAccess(this.state.storage, request);
+    return rememberMemoryFact(this.state.storage, request, await this.memoryReaderRelationship(request));
   }
 
-  /** One item with its scope kind, live or not — the write path's read. */
-  async memoryItemForWrite(
-    input: WorkspaceMemoryItemForWriteRequest,
-  ): Promise<WorkspaceMemoryItemForWriteResult> {
+  /** Retract one fact, when this reader may; seeing it is not the same question. */
+  async forgetMemoryFact(input: unknown): Promise<WorkspaceMemoryForgetResult> {
     await this.initialized;
-    const request = WorkspaceMemoryItemForWriteRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryForgetRequestSchema, input, "forget_memory_fact");
     this.assertWorkspace(request.workspaceId);
-    return workspaceMemoryItemForWrite(this.state.storage, request);
+    return forgetMemoryFact(this.state.storage, request, await this.memoryReaderRelationship(request));
   }
 
-  /**
-   * A prose-memory mutation receipt by idempotency key, so the service can
-   * answer a replay before it authorizes anything — the order the tool path
-   * has always had.
-   */
-  async memoryMutationReceipt(
-    input: WorkspaceMemoryReceiptRequest,
-  ): Promise<WorkspaceMemoryReceiptResult> {
+  /** The facts a sweep of this conversation may read and revise, and where the conversation sits. */
+  async memorySweepCandidates(input: unknown): Promise<WorkspaceMemorySweepCandidatesResult> {
     await this.initialized;
-    const request = WorkspaceMemoryReceiptRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemorySweepCandidatesRequestSchema, input, "memory_sweep_candidates");
     this.assertWorkspace(request.workspaceId);
-    return workspaceMemoryMutationReceipt(this.state.storage, request);
+    return memorySweepCandidates(this.state.storage, request);
   }
 
-  /**
-   * Add one durable memory: the item, its audit record, and its
-   * embedding-outbox intent in one transaction, with the receipt decided
-   * inside it. The facade path ran these as a D1 batch and re-read the
-   * receipt out-of-band when the batch lost a race.
-   */
-  async addMemoryItem(input: WorkspaceMemoryAddRequest): Promise<WorkspaceMemoryAddResult> {
+  /** Apply one sweep's operations behind the conversation's cursor fence, in one transaction. */
+  async applyMemorySweep(input: unknown): Promise<WorkspaceMemoryApplySweepResult> {
     await this.initialized;
-    const request = WorkspaceMemoryAddRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryApplySweepRequestSchema, input, "apply_memory_sweep");
     this.assertWorkspace(request.workspaceId);
-    const result = addWorkspaceMemoryItem(this.state.storage, request, uuidV7());
-    if (result.outcome === "added") this.refreshScheduleAfterMemoryOutboxWrite(request.workspaceId);
-    return result;
+    return applyMemorySweep(this.state.storage, request);
   }
 
-  /**
-   * Replace a durable memory at an expected revision. A refusal is an
-   * outcome, not a throw: `revision_conflict` reaches the service with its
-   * HTTP-mapped error intact rather than as a bare RPC message.
-   */
-  async updateMemoryItem(input: WorkspaceMemoryUpdateRequest): Promise<WorkspaceMemoryWriteResult> {
-    await this.initialized;
-    const request = WorkspaceMemoryUpdateRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = updateWorkspaceMemoryItem(this.state.storage, request, uuidV7());
-    if (result.outcome === "written") this.refreshScheduleAfterMemoryOutboxWrite(request.workspaceId);
-    return result;
-  }
-
-  /** Reversibly invalidate a durable memory at an expected revision. */
-  async invalidateMemoryItem(
-    input: WorkspaceMemoryInvalidateRequest,
-  ): Promise<WorkspaceMemoryWriteResult> {
-    await this.initialized;
-    const request = WorkspaceMemoryInvalidateRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = invalidateWorkspaceMemoryItem(this.state.storage, request, uuidV7());
-    if (result.outcome === "written") this.refreshScheduleAfterMemoryOutboxWrite(request.workspaceId);
-    return result;
-  }
-
-  /**
-   * Re-derive the workspace alarm after a memory write left an embedding
-   * intent in `memory_index_outbox`.
-   *
-   * `memory_index_outbox` is on `WORKSPACE_ALARM_SOURCE_KINDS`, so while
-   * these writes were generic statements `executeRuntimeSql` armed the
-   * `memory_index` maintenance target for them. A typed method gets no such
-   * thing for free, and without this a memory written into a quiet workspace
-   * would sit unprojected until some unrelated mutation happened to reconcile
-   * the schedule. Same `waitUntil`-and-log shape as there: the alarm's own
-   * end-of-drain refresh is the backstop, and this line is how anyone finds
-   * out the backstop was needed.
-   *
-   * The outbox claim, completion, and retry methods deliberately do not call
-   * this. Their only caller is `processMemoryIndexOutbox`, reached only as the
-   * `memory_index` maintenance target — inside this object's own alarm drain,
-   * whose statements go through the local executor and never carried the
-   * auto-refresh either. A reconcile started there would race the drain's own
-   * `schedule_reconcile` with a target list read before the rest of the drain
-   * advanced its rows.
-   */
-  private refreshScheduleAfterMemoryOutboxWrite(workspaceId: string): void {
-    this.state.waitUntil(this.refreshScheduleKinds(workspaceId, ["maintenance"]).catch((error: unknown) => {
-      logWarn(this.env, "workspace_schedule_auto_refresh_failed", {
-        workspace_id: workspaceId,
-        code: error instanceof Error ? error.message : "unknown_error",
-      });
-    }));
-  }
-
-  /** Embedding-outbox rows due for projection, oldest first. */
-  async dueMemoryIndexOutbox(
-    input: WorkspaceMemoryOutboxDueRequest,
-  ): Promise<WorkspaceMemoryOutboxDueList> {
-    await this.initialized;
-    const request = WorkspaceMemoryOutboxDueRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return dueWorkspaceMemoryIndexOutbox(this.state.storage, request);
-  }
-
-  /** Claim one due outbox row for a lease; the witness is the returned token. */
-  async claimMemoryIndexOutboxRow(
-    input: WorkspaceMemoryOutboxClaimRequest,
-  ): Promise<WorkspaceMemoryOutboxClaimResult> {
-    await this.initialized;
-    const request = WorkspaceMemoryOutboxClaimRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return claimWorkspaceMemoryIndexOutboxRow(this.state.storage, request);
-  }
-
-  /** Settle a claimed outbox row as projected. */
-  async completeMemoryIndexOutboxRow(input: WorkspaceMemoryOutboxCompleteRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceMemoryOutboxCompleteRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    completeWorkspaceMemoryIndexOutboxRow(this.state.storage, request);
-  }
-
-  /** Return a claimed outbox row to pending with its backoff and last error. */
-  async retryMemoryIndexOutboxRow(input: WorkspaceMemoryOutboxRetryRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceMemoryOutboxRetryRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    retryWorkspaceMemoryIndexOutboxRow(this.state.storage, request);
-  }
-
-  /** What the vector index should hold for one item, read at projection time. */
-  async memoryIndexProjectionSource(
-    input: WorkspaceMemoryProjectionSourceRequest,
-  ): Promise<WorkspaceMemoryProjectionSourceResult> {
-    await this.initialized;
-    const request = WorkspaceMemoryProjectionSourceRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceMemoryIndexProjectionSource(this.state.storage, request);
+  /** A person reader's Organization relationship, or nothing for a Sidekick reader. */
+  private async memoryReaderRelationship(
+    request: { workspaceId: string; reader: MemoryReader },
+  ): Promise<WorkspaceRelationship | null> {
+    if (request.reader.kind !== "person") return null;
+    return this.readRelationship(request.workspaceId, request.reader.userId);
   }
 
   /** One durable table and its ordered columns, invalidated or not. */

@@ -708,7 +708,11 @@ so what a run learns is what the next run knows and what the person said while
 drafting is part of that. The person's own scope stays out, because a run acts
 for the automation rather than as the person, and a workspace automation's runs
 would otherwise write into whichever member happened to be its principal.
-Automation memory is ordinary WorkspaceDO memory; there is no separate engine.
+That scope holds the Sidekick's typed tables. Its prose memory is the fact store
+of [`agent-memory.md`](agent-memory.md): a Sidekick's conversation and runs are
+swept like a Thread's, their facts are filed under the `sidekick` subject with
+source `sidekick:<automationId>`, and a Sidekick reads its own facts, its home
+conversation's, and the Organization's when its scope is `workspace`.
 
 ### Choosing what a Sidekick looks like
 

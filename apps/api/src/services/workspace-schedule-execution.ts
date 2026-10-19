@@ -46,7 +46,6 @@ import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger
 import { createHarnessRunPortFactory } from "../runtime/harness-run-port";
 import { emitProductUsageTelemetry } from "../telemetry/product-usage";
 import { fireDigestSchedule } from "./digest-run-service";
-import { processMemoryIndexOutbox } from "./memory-service";
 import {
   reapDeletedResourceObjects,
   reapExpiredDraftResources,
@@ -111,7 +110,6 @@ export const WORKSPACE_ALARM_SOURCE_KINDS: ReadonlyMap<string, readonly Workspac
   ["resources", ["maintenance", "watch"]],
   ["resource_versions", ["maintenance"]],
   ["resource_object_deletion_outbox", ["maintenance"]],
-  ["memory_index_outbox", ["maintenance"]],
   ["slack_ingress_jobs", ["maintenance"]],
   ["slack_agent_thread_claims", ["maintenance"]],
   ["slack_agent_pending_prompts", ["maintenance"]],
@@ -231,7 +229,6 @@ const MAINTENANCE_TASKS: Record<string, (ctx: WorkspaceScheduleContext) => Promi
   resource_objects: async (ctx) => progressedIf(await reapDeletedResourceObjects(ctx.workspaceEnv, ctx.workspaceId)),
   expired_drafts: async (ctx) => progressedIf(await reapExpiredDraftResources(ctx.workspaceEnv, ctx.workspaceId)),
   resource_slugs: async (ctx) => progressedIf(await backfillResourceSlugs(ctx.workspaceEnv, ctx.workspaceId)),
-  memory_index: async (ctx) => progressedIf(await processMemoryIndexOutbox(ctx.workspaceEnv, 50, ctx.workspaceId)),
   notification_intents: async (ctx) => progressedIf((
     await ctx.notificationIntents.reapSettledWorkstreamNotificationIntents({
       workspaceId: asWorkspaceId(ctx.workspaceId),
@@ -332,15 +329,6 @@ export const SCHEDULE_TARGET_QUERIES: readonly { kind: WorkspaceScheduleTargetKi
     // waits here. Counts exactly the rows the pass names.
     sql: `SELECT 'resource_slugs' AS id, MIN(created_at) AS due_at
             FROM resources WHERE workspace_id = ?1 AND slug IS NULL HAVING COUNT(*) > 0`,
-  },
-  {
-    kind: "maintenance",
-    scoped: true,
-    sql: `SELECT 'memory_index' AS id,
-                 MIN(CASE WHEN status = 'processing' THEN lease_expires_at ELSE available_at END)
-                   AS due_at
-            FROM memory_index_outbox
-           WHERE workspace_id = ?1 AND status != 'completed' HAVING COUNT(*) > 0`,
   },
   {
     kind: "maintenance",

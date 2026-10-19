@@ -51,7 +51,7 @@ test("reads tables spread into the list from their own module", () => {
 
 test("reads interpolated templates, concatenations, exec, and wrapped bindings", () => {
   assert.deepEqual(misroutedTables("this.env.DB.prepare(`SELECT * FROM resources WHERE id IN (${ids})`)"), ["resources"]);
-  assert.deepEqual(misroutedTables(`this.env.DB.prepare("SELECT * FROM " + "memory_items" + " WHERE id = ?")`), ["memory_items"]);
+  assert.deepEqual(misroutedTables(`this.env.DB.prepare("SELECT * FROM " + "memory_facts" + " WHERE id = ?")`), ["memory_facts"]);
   assert.deepEqual(misroutedTables("this.env.DB.exec(`DELETE FROM schedules`)"), ["schedules"]);
   assert.deepEqual(misroutedTables("this.env!.DB?.prepare(`SELECT 1 FROM Slack_User_Links`)"), ["slack_user_links"]);
   assert.deepEqual(misroutedTables("this.env.DB.batch([this.env.DB.prepare(`DELETE FROM digest_schedules`)])"),
