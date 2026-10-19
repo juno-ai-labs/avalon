@@ -32,7 +32,7 @@
     "POSTHOG_HOST": "https://us.i.posthog.com",
     "DAYTONA_API_URL": "https://app.daytona.io/api",
     "DAYTONA_TARGET": "us",
-    "DAYTONA_TERMINAL_SNAPSHOT": "rally-terminal-20261016-1502",
+    "DAYTONA_TERMINAL_SNAPSHOT": "rally-terminal-20261019-0610",
     "TERMINAL_REGION_CAPABILITY": "supported",
     "TERMINAL_EMERGENCY_DISABLED": "false",
     "LINEAR_NATIVE_AGENT_ENABLED": "false",
