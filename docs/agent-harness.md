@@ -993,7 +993,7 @@ An automation's definition may describe the tables it keeps (`memoryTables`), an
 
 `rally:workstream` carries `schedule_wakeup`, `list_wakeups`, and `cancel_wakeup`, so a run can defer work to a stated instant instead of promising it in text. `schedule_wakeup` takes the prompt plus exactly one of `delay` — a duration in common units, `"5 minutes"`, `"90 sec"`, `"1h30m"`, or an ISO-8601 `"PT2H30M"` — or `at`, an exact ISO-8601 timestamp. An `at` without an offset is read in the run's local zone, or in an explicit `timezone`; an `at` that carries an offset is absolute and rejects `timezone` rather than silently choosing between the two. The resolved instant must be at least one minute and at most one year out, whichever form produced it. Pending wake-ups are capped per work stream, and every rejection returns a stable code with its remediation and accepted vocabulary in the model-visible failed result.
 
-The tool is `provider_key`-idempotent against `(workstream_id, idempotency_key)`, so a replayed receipt returns the persisted wake-up instead of scheduling a second. The workspace scheduler fires it: it claims the row before launching, so a lost claim means a missed wake-up rather than a duplicated run, and releases the claim when the harness cannot start so a later alarm retries. The principal that scheduled the wake-up is re-validated against current membership at fire time — a wake-up cannot outlive the authority that created it. The resulting run reads the prompt as an explicit trigger message labelled as coming from an earlier run of the same work stream; the transcript row is separate host-written system state. Sub-agents get none of these tools: they cannot schedule, and a parent's wake-ups are not theirs to act on.
+The tool is `provider_key`-idempotent against `(workstream_id, idempotency_key)`, so a replayed receipt returns the persisted wake-up instead of scheduling a second. A wake-up belongs to the conversation whose run scheduled it — Main, a Breakout, or a Sidekick run child — and lives in that conversation's object, whose own alarm fires it into that conversation's loop. A Breakout's wake-up never runs in Main, which would write a private Breakout's prompt into Main's transcript; a Sidekick run child's continues its run only as `continueSidekickRun` allows, the question a member's message there asks, and a refusal consumes it. A delegated worker's wake-up runs as that worker, with its owner's sandbox and reporting, and a stopped worker's is consumed without running. Firing claims the row before launching, so a lost claim means a missed wake-up rather than a duplicated run, and releases the claim when the harness cannot start so a later alarm retries. The principal that scheduled the wake-up is re-validated against current membership at fire time — a wake-up cannot outlive the authority that created it. The resulting run reads the prompt as an explicit trigger message labelled as coming from an earlier run of the same work stream; the transcript row is separate host-written system state. Sub-agents get none of these tools: they cannot schedule, and a parent's wake-ups are not theirs to act on.
 
 Every work-stream response carries `nextPendingWakeup`, the earliest pending row
 by due time, derived with an indexed lookup. The navigation sidebar renders that
@@ -1356,7 +1356,7 @@ proof.
 | `apps/api/test/message-run-context.test.ts` | The personal system prompt travels only on a turn the member started. |
 | `apps/api/test/model-protocol-transcript.test.ts` | Historical tool-pair reconstruction, including sanitized structured failure recovery after resume. |
 | `apps/api/test/workstream-transcript-storage.test.ts` | Atomic activation-input admission under the exact execution/Bind fence, full-provenance replay checks, pending-input suppression, ordered multi-input commits, idempotency across compaction, repair of a host reservation missing its Bind edge, and stop winning a steer-preparation race without consuming input. |
-| `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, typed refusal codes and remediation, the pending sidebar marker, and claim-before-launch. |
+| `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, typed refusal codes and remediation, the pending sidebar marker, claim-before-launch, and that a Breakout's or a Sidekick run child's wake-up starts in its own loop, the latter only as the Sidekick allows. |
 | `apps/api/test/bind-host-durability.test.ts` | Host-only boundaries around activation persistence, ambiguous halts, and attachment grounding, including the validation-versus-content-failure distinction and post-start validation receipt reuse. |
 | `apps/api/test/attachment-tool-receipts.test.ts` | Exact derivative and completed-output-reference dependency fencing, replay reauthorization, all-or-nothing multi-image registration, and successor-safe mismatch cleanup. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The pending-wake-up clock appears only on marked work streams, with the next due time and bounded prompt in its tooltip. |
@@ -1443,6 +1443,33 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-19 — A wake-up fires in the conversation that scheduled it
+
+**What changed:** `schedule_wakeup` had already written a Breakout's or a
+Sidekick run child's wake-up into that child's own object, but nothing after
+the write followed it there. The child's alarm loaded the row through a port
+that named no substream, which from the object's bare `this.env` dispatches to
+the parent's Main; Main had no such row, the timer returned, and the stall gate
+held it forever. `refreshAgentTimerAlarm` re-armed Main, and
+`launchWorkstreamHarness` hard-coded Main's loop and `parentKind: "workstream"`.
+The alarm now names its own substream, `fireWorkstreamWakeup` takes the
+conversation and launches into its loop, and a Sidekick run child's wake-up
+carries the `automationRun` and continuation `continueSidekickRun` answers.
+
+**Why:** Production held 95 such timers across four conversations, 91 in one
+Sidekick whose ten-minute runs each scheduled a daily wake-up, the oldest on
+attempt 1,150 after two and a half weeks. Moving every wake-up back to Main was
+rejected for the reasons the section above gives.
+
+**Consequences:** A wake-up run's `parentKind` is now the object's own, as a
+message-started run's already was, and a delegated worker's wake-up carries
+`backgroundAgent` as its message-started runs do; a stopped worker's wake-up is
+consumed without running. Every port the fire uses names the conversation. The continuation note a Sidekick run child's
+wake-up reads names Rally as the sender and the run as the source. A timer
+whose row is still pending after its handler returns now throws a named code —
+`agent_timer_wakeup_unreachable` or `agent_timer_claim_lost` — instead of
+stalling silently, and both alarm reports carry `substream_id`.
 
 ### 2026-10-19 — Prose memory leaves the harness; the tables stay
 
