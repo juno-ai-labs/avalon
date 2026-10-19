@@ -1064,7 +1064,7 @@ describe("a workspace's schedule", () => {
     await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
       const now = Date.now();
       new ScheduledAlarmStore(state.storage.sql)
-        .schedule({ kind: "maintenance", key: "memory_index", dueAt: now - 60_000 }, now);
+        .schedule({ kind: "maintenance", key: "resource_slugs", dueAt: now - 60_000 }, now);
       let ran = 0;
       scheduling(instance).runScheduledAlarm = () => {
         ran += 1;
@@ -1078,7 +1078,7 @@ describe("a workspace's schedule", () => {
       // past re-fires immediately and spins for as long as the region is closed.
       const armed = await state.storage.getAlarm();
       expect(armed!).toBeGreaterThan(now + 60_000);
-      expect(new ScheduledAlarmStore(state.storage.sql).get("maintenance", "memory_index")?.dueAt)
+      expect(new ScheduledAlarmStore(state.storage.sql).get("maintenance", "resource_slugs")?.dueAt)
         .toBe(now - 60_000);
     });
   });

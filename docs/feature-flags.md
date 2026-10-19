@@ -71,6 +71,7 @@ inherit the source conversation's model override:
 | Work-stream description | `agent-model-workstream-description` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Conversation import | `agent-model-session-import` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggestion draft | `agent-model-suggestion-draft` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
+| Memory sweep | `agent-model-memory-sweep` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 
 The checked-in primary model is `openai/gpt-6.1-sol`, with low reasoning
 from the harness model-default registry. Flagship variations still override
@@ -90,11 +91,11 @@ the work-stream agent's flag. The rest
 are the standalone structured-output agents: message addressing uses the
 agent-harness JEV/fallback cascade; work-stream naming, the two halves of suggested work, and the
 work-stream description loop use the bounded structured-inference gateway.
-Durable-memory query and document embeddings use the same gateway's native
-OpenRouter embeddings path but deliberately have no Flagship role. Their fixed
-`qwen/qwen3-embedding-8b` model, empty fallback plan, and 1,024-dimensional
-space form one Vectorize projection contract; changing that contract requires a
-code change and active-memory rebuild.
+The memory sweep ([`agent-memory.md`](agent-memory.md)) is a role on the
+primary model. Text search's document embeddings use the same gateway's native
+OpenRouter embeddings path but deliberately have no Flagship role: their fixed
+`qwen/qwen3-embedding-8b` model is hashed into the Turbopuffer namespace, so
+changing it is a code change and a reindex, not a flag.
 Substream context summaries are another deliberate non-flagged route. Their
 model is platform policy recorded in the durable context recipe before
 inference starts. The structured-inference gateway accepts that explicit route
@@ -812,7 +813,7 @@ would mean maintaining two copies of every flag that are meant to stay
 identical. Staging a rollout per region does not need a second app either:
 `region` is in the evaluation context, so a targeting rule reaches one region.
 
-Ace automatically ensures all seven `agent-model-*` JSON flags plus
+Ace automatically ensures all eight `agent-model-*` JSON flags plus
 `meeting-recording-enabled`, `suggested-work-enabled`,
 `multiple-workspaces-enabled`,
 `live-artifacts-enabled`, and `push-notifications-enabled` exist on every

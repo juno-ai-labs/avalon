@@ -142,7 +142,6 @@ describe("agent inference logging", () => {
         sidekickRecommendationsMs: 9,
         leaseHeartbeatMs: 7,
         runContextMs: 38,
-        memoryContextMs: 31,
         transcriptBootstrapMs: 22,
         toolInventoryMs: 14,
         toolConstructionMs: 30,
@@ -150,7 +149,6 @@ describe("agent inference logging", () => {
         transcriptBootstrapRequired: true,
         sidekickSnapshotReused: false,
         sidekickRecommendationsRead: true,
-        memoryRecallRequired: true,
       },
     });
     logAgentInferencePrepared(env, { ...context, inferenceStartEligible: false }, {
@@ -166,7 +164,6 @@ describe("agent inference logging", () => {
         sidekickRecommendationsMs: 0,
         leaseHeartbeatMs: 1,
         runContextMs: 1,
-        memoryContextMs: 1,
         transcriptBootstrapMs: 1,
         toolInventoryMs: 1,
         toolConstructionMs: 1,
@@ -174,7 +171,6 @@ describe("agent inference logging", () => {
         transcriptBootstrapRequired: false,
         sidekickSnapshotReused: true,
         sidekickRecommendationsRead: false,
-        memoryRecallRequired: false,
       },
     });
     logAgentInferencePrepared(env, { ...context, requestId: "run-skewed", requestReceivedAt: 1_200 }, {
@@ -190,7 +186,6 @@ describe("agent inference logging", () => {
         sidekickRecommendationsMs: 9,
         leaseHeartbeatMs: 7,
         runContextMs: 38,
-        memoryContextMs: 31,
         transcriptBootstrapMs: 22,
         toolInventoryMs: 14,
         toolConstructionMs: 30,
@@ -198,7 +193,6 @@ describe("agent inference logging", () => {
         transcriptBootstrapRequired: true,
         sidekickSnapshotReused: false,
         sidekickRecommendationsRead: true,
-        memoryRecallRequired: true,
       },
     });
 
@@ -222,7 +216,6 @@ describe("agent inference logging", () => {
       sidekick_recommendations_ms: 9,
       lease_heartbeat_ms: 7,
       run_context_ms: 38,
-      memory_context_ms: 31,
       transcript_bootstrap_ms: 22,
       tool_inventory_ms: 14,
       tool_construction_ms: 30,
@@ -230,7 +223,6 @@ describe("agent inference logging", () => {
       transcript_bootstrap_required: true,
       sidekick_snapshot_reused: false,
       sidekick_recommendations_read: true,
-      memory_recall_required: true,
     });
     expect(rows[1]).toMatchObject({
       request_id: "run-skewed",

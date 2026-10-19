@@ -160,8 +160,8 @@ Bind projection is the exact provider-boundary value. Bind's internal
 Host context messages carry non-provider `provenance` metadata until Bind heals
 the initial array. The initialization transition records an origin beside each
 surviving exact message: participant and trigger wrappers point to their durable
-turn/event, tool wrappers point to receipts, memory wrappers point to the frozen
-memory hash, and compaction continuations point to their checkpoint. The adapter
+turn/event, tool wrappers point to receipts, and compaction continuations point
+to their checkpoint. The adapter
 strips that metadata while constructing OpenAI-compatible messages, so it never
 changes provider bytes. Runtime-created continuation nudges are protocol-only;
 accepted assistant messages are canonical, and a host policy transformation is
@@ -179,9 +179,8 @@ used to stay out of the model's context for good. The conversation object now
 records how far into the transcript the projection has looked, and every
 admission first appends the conversation turns between that mark and its own
 admission point, in transcript order, before appending itself. Model-only
-activation inputs — connector activity, scheduled wake-ups,
-Slack origin wrappers, and frozen recalled memory — cross a separate host
-boundary on every activation. Each carries full
+activation inputs — connector activity, scheduled wake-ups, and
+Slack origin wrappers — cross a separate host boundary on every activation. Each carries full
 derived provenance plus a stable logical `activationInputId` that is independent
 of the execution attempt. The host atomically deduplicates and appends the
 missing inputs under the exact active-execution and Bind-head fence, then returns
@@ -413,7 +412,7 @@ returns `plugin_tools_unavailable` and leaves the plugin inactive. The protocol,
 validation, and provider declaration are owned by
 [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
 
-Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. The always-active plugins whose canonical names are already globally unambiguous declare an empty short name and are advertised unprefixed: `rally_discovery` keeps the global controls `list_plugins`, `search_plugins`, and `load_plugin`, `rally_skills` keeps `load_skill` and `read_skill_resource`, and `rally_core` keeps `current_time`, `request_elicitation`, `get_connector_connection_state`, and `show_connector_connection`. `rally_memory` and `rally_tables` are always active too but keep `memory_` and `table_`, because their canonical names are plugin-local verbs and both own a `search`; Bind refuses duplicate always-active wire names outright. The always-active `rally_core` plugin owns exact time and structured elicitation; elicitation uses `provider_key` idempotency because the receipt-derived key is also the durable question identity. `rally_sidekicks` (canonical id `rally:sidekicks`, wire prefix `sidekick_`, deferred in a room, preloaded in a Sidekick's own conversation) owns Sidekick research, the `sidekicks_list` an edit starts from, and draft submission; `rally_conversations` (canonical id `rally:conversations`, wire prefix `conversation_`) is preloaded wherever a loop has a conversation scope and holds `list`, `read`, `post` and `attach` as that scope allows ([`conversation-tools.md`](conversation-tools.md)). The canonical ids are the identity of a persisted activation and stay; the model reads only the model id, the wire prefix, and the prose. Workstream agents load `rally_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `rally_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
+Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. The always-active plugins whose canonical names are already globally unambiguous declare an empty short name and are advertised unprefixed: `rally_discovery` keeps the global controls `list_plugins`, `search_plugins`, and `load_plugin`, `rally_skills` keeps `load_skill` and `read_skill_resource`, and `rally_core` keeps `current_time`, `request_elicitation`, `get_connector_connection_state`, and `show_connector_connection`. `rally_memory` and `rally_tables` are always active too but keep `memory_` and `table_`: `rally_tables` owns a `search` that collides with `rally_web`'s, and Bind refuses duplicate always-active wire names outright; `rally_memory`'s `recall`, `remember` and `forget` would reach the model as bare verbs with no object. The always-active `rally_core` plugin owns exact time and structured elicitation; elicitation uses `provider_key` idempotency because the receipt-derived key is also the durable question identity. `rally_sidekicks` (canonical id `rally:sidekicks`, wire prefix `sidekick_`, deferred in a room, preloaded in a Sidekick's own conversation) owns Sidekick research, the `sidekicks_list` an edit starts from, and draft submission; `rally_conversations` (canonical id `rally:conversations`, wire prefix `conversation_`) is preloaded wherever a loop has a conversation scope and holds `list`, `read`, `post` and `attach` as that scope allows ([`conversation-tools.md`](conversation-tools.md)). The canonical ids are the identity of a persisted activation and stay; the model reads only the model id, the wire prefix, and the prose. Workstream agents load `rally_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `rally_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
 
 In a provider-verified region, ordinary work-stream runs also register the
 deferred built-in `rally:terminal` plugin. It has no connection row. An explicit
@@ -548,9 +547,7 @@ first, and a seeded run left on it would be answered by a live model, never by t
 The id is only what the run records about itself, since the seam answers
 whatever name the request carries. A seed has one turn because a
 seeded run makes no tool calls, and without tool calls the loop asks once. The
-seam covers the client it is handed to, so a seeded origin is also exempt from
-admission-time memory recall, as a human message is — otherwise the recall
-query would be embedded through the real endpoint, outside the seam. Prose ends the loop as
+seam covers the client it is handed to. Prose ends the loop as
 `completed`; a question is a call to the real `request_elicitation` tool
 with validated arguments, and the run parks on `needs_input` like any other.
 Tools, plugins, receipts, activity rows and settlement are the ordinary path,
@@ -939,14 +936,21 @@ crashed import window cannot send.
 
 ### Scoped durable memory
 
-Query-based memory search resolves the run's scopes with `resolveMemoryAccess`,
-the canonical run check, on every search, and stores no decision; a run that no
-longer matches its principal or Organization searches nothing. Scope ids come
-from `ensureScope`, which keeps each immutable `memory_scopes` row per isolate
-(`memory-scope-cache.ts`) and applies the caller's `writable` per call (see
-[text search](text-search.md#changelog), 2026-09-28). Canonical item revision
-and expiry checks still determine which content is current. Exact memory reads
-and writes retain their existing canonical access path.
+What this section once covered as prose memory — items the model added by scope
+kind, searched by hybrid FTS and Vectorize retrieval, and recalled at admission —
+is gone. Rally's memory is now a store of facts a background sweep writes, with
+visibility decided by each fact's source conversations; [`agent-memory.md`](agent-memory.md)
+owns it, including the `rally_memory` plugin's three tools (`memory_recall`,
+`memory_remember`, `memory_forget`). No run recalls memory at admission in this
+release; the per-activation digest is that PRD's next step.
+
+What stays here is the scope resolution the typed tables use. `resolveMemoryAccess`,
+the canonical run check, derives a run's scope union from the frozen principal
+and the parent kind on the run's input, and stores no decision; it also gates
+every memory tool call, so an inline child (an empty union) reaches no memory.
+Scope ids come from `ensureScope`, which keeps each immutable `memory_scopes`
+row per isolate (`memory-scope-cache.ts`) and applies the caller's `writable`
+per call.
 
 **Never delete, re-create or re-id a `memory_scopes` row without clearing that
 cache first**, or a warm isolate keeps handing out the old id. The cache is
@@ -957,57 +961,33 @@ gives each test a fresh object under the same workspace id — so
 unbounded: its size is the distinct scopes one isolate has served, and whether
 it needs a cap is the team's call.
 
-Root work-stream runs receive the stable `rally_memory` plugin. `memory_search`
-accepts exactly one of a content query or `memoryItemId`; the exact-ID form is the
-conflict-recovery read for a mutation and still reauthorizes the item against the
-host-derived scope union. The host returns scope provenance without allowing the
-model to select scope IDs. A message-origin run does not search long-term memory
-automatically before its first inference: opening and follow-up composer messages,
-elicitation answers, inbound email, and Slack opening, follow-up, and elicitation
-messages go directly from durable transcript/trigger context to the model. The
-plugin remains available, so the agent can explicitly call `memory_search` when
-the task needs older context. Non-message ad-hoc runs search workspace, user, and
-work-stream memory at admission. A conversation whose parent is an automation, its
-drafting chat and every run alike, searches the workspace scope and the
-Sidekick's own scope of kind `sidekick`, keyed by the Sidekick id and
-writable: what a run learns is what the next run should know, and what the
-person said while drafting is part of that. The person's own scope stays out,
-because a run acts for the automation rather than as the person, and a
-workspace automation's runs would otherwise write into whichever member
-happened to be its principal. The parent kind on the run's input is the fact
-that decides it; there is no subscription id and no origin type left to read.
-
-**A work stream's runs never reach an automation's scope**, whoever started
-them and whatever posted into the room: a room's automation posts a result as
-an `automation_activation` message, and the reply to it is an ordinary
-work-stream run with the room's union. That covers a member's reply, an
-elicitation answer, a manual retry, and a scheduled wake-up alike. Their search
-authority is workspace memory, plus that member's own when a person is behind
-it, plus the work stream's; message runs exercise that authority only through
-an explicit memory tool call.
+A conversation whose parent is an automation, its drafting chat and every run
+alike, resolves the workspace scope and the Sidekick's own scope of kind
+`sidekick`, keyed by the Sidekick id and writable: what a run learns is what the
+next run should know, and what the person said while drafting is part of that.
+The person's own scope stays out, because a run acts for the automation rather
+than as the person. The parent kind on the run's input is the fact that decides
+it. **A work stream's runs never reach an automation's scope**, whoever started
+them and whatever posted into the room.
 
 **The union is not the whole story, and in one direction it currently overstates
 what is withheld.** The protocol projector reauthorizes replayed *attachment*
-results and nothing else, so a completed `memory_search` or `memory_table_query`
-receipt from an earlier run in the same transcript window is replayed to the next
-run verbatim, out of R2, whatever that run's own union is. That gap predates
-this rule and is not created by it; two people in one ad-hoc work stream reach
-it the same way. Until the projector filters a replayed memory result against
-the current union, the scope union is the authority for what a run may
-*search*, not a guarantee about everything in its context.
+results and nothing else, so a completed `memory_table_query` receipt from an
+earlier run in the same transcript window is replayed to the next run verbatim,
+out of R2, whatever that run's own union is. Until the projector filters a
+replayed result against the current union, the scope union is the authority for
+what a run may *search*, not a guarantee about everything in its context.
 
-Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; OpenRouter `qwen/qwen3-embedding-8b` embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Requests explicitly ask for 1,024 dimensions—supported by Qwen3 Embedding 8B's Matryoshka representation—to match the immutable Vectorize index shape and distinguish query from document input. The model is a fixed inference-gateway constant with no Flagship role, Worker override, or model fallback. A fixed-model-and-dimension-derived namespace prevents embeddings from different semantic spaces from ever being compared; Provider model capitalization is normalized through the shared `isMemoryEmbeddingModel` comparison used by text search; OpenRouter reporting a genuinely different resolved model fails the request closed, and retrieval falls back to FTS. Changing the constant requires a code change paired with requeueing active memories, and retrieval safely falls back to FTS until that rebuild completes. Hybrid hits are reloaded from WorkspaceDO within the scopes that search's run check admitted, so a membership change applies on the next search. A non-message root run that performs automatic admission recall stores an immutable snapshot and hash; a message-origin run stores no memory-context hash.
+Root runs receive the stable `rally_tables` plugin for large structured collections that should not enter prompt context as prose. Tables inherit the work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments or an exact `memoryTableRowIds` selector for conflict recovery; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous WorkspaceDO FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records.
 
-Root runs also receive the separate stable `rally_tables` plugin for large structured collections that should not enter prompt context as prose memories. Tables inherit the same work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments or an exact `memoryTableRowIds` selector for conflict recovery; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous WorkspaceDO FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records.
-
-Memory and table mutations return identifiers and current revisions. On a revision
+Table mutations return identifiers and current revisions. On a revision
 conflict, the failed result directs the model to re-read those exact identifiers,
 reconcile its intended change, and retry with the newly observed revision. Table
 insert contention is a separate typed failure because inserts do not have an
 `expectedRevision`; after bounded host retries it directs the model to query by
 the declared natural key and retry only the rows that remain absent.
 
-An automation's definition may describe the tables it keeps (`memoryTables`), and a run receives that description from `readRunDefinition`. Nothing materializes them at apply time: a run creates the table it needs with the `rally_tables` plugin's `create` tool under the automation's scope the first time it needs one, and every later run of that automation finds it there. Table rows are never added to admission recall; the agent must query only the rows and columns needed for the current run.
+An automation's definition may describe the tables it keeps (`memoryTables`), and a run receives that description from `readRunDefinition`. Nothing materializes them at apply time: a run creates the table it needs with the `rally_tables` plugin's `create` tool under the automation's scope the first time it needs one, and every later run of that automation finds it there. Table rows never enter a prompt unasked; the agent must query only the rows and columns needed for the current run.
 
 ### Scheduled wake-ups
 
@@ -1199,11 +1179,10 @@ participants remain deferred product work.
   silently reinterpret a write as successful.
 - **A child can never widen the parent's frozen scope**, is read-only by a tool-loop
   hook rather than by what it was given, and cannot recurse.
-- **The model never selects a memory scope.** `memory_search` accepts exactly one
-  content query or exact item ID; the host derives the authorized scope union
-  from the frozen principal and the parent kind on the run's input, and every
-  hit is reauthorized and reloaded from WorkspaceDO before exposure and
-  rechecked against current D1 membership.
+- **The model never selects a memory scope.** The memory tools take a query, a
+  fact, or a fact id, and the table tools a table id; the host derives the
+  authorized scope union from the frozen principal and the parent kind on the
+  run's input, and a fact's visibility from its sources ([`agent-memory.md`](agent-memory.md)).
 - **An automation's conversations own no work-stream memory scope**, and
   `resolveMemoryAccess` is the only thing that says so: WorkspaceDO validates
   no scope owner at all. A run under an automation writes into the automation's
@@ -1373,8 +1352,8 @@ proof.
 | `apps/api/test/tool-usage-telemetry.test.ts`, `run-outcome-telemetry.test.ts` | Started/terminal tool and root-run outcomes, person/workspace attribution, replay/idempotency, bounded performance dimensions, and prohibited content. |
 | `apps/api/test/bind-tool-failure-classification.test.ts` | The structured-failure allowlist and its size bound. |
 | `apps/api/test/connector-tool-prose.test.ts`, `avalon-tool-prose.test.ts` | Every registry tool reaching a non-generic row, and no `write` described in passive words. |
-| `apps/api/test/scoped-memory.test.ts` | The host-derived scope union, exact-ID conflict recovery, post-read revision races, and invalidation races, against a real `WorkspaceDO` standing in for the memory authority. `apps/api/test-workers/workspace-memory.test.ts` proves the object's transactional receipts, witnesses, and FTS triggers on real workerd. |
-| `apps/api/test/message-run-context.test.ts` | Message-origin runs skip automatic long-term-memory recall while non-message runs retain their frozen admission context. |
+| `apps/api/test/scoped-memory.test.ts` | The host-derived scope union and the typed tables' post-read revision races, against a real `WorkspaceDO` standing in for the memory authority. `apps/api/test-workers/workspace-memory.test.ts` proves the tables' transactional receipts and witnesses on real workerd. The fact store's suites are in [`agent-memory.md`](agent-memory.md#testing). |
+| `apps/api/test/message-run-context.test.ts` | The personal system prompt travels only on a turn the member started. |
 | `apps/api/test/model-protocol-transcript.test.ts` | Historical tool-pair reconstruction, including sanitized structured failure recovery after resume. |
 | `apps/api/test/workstream-transcript-storage.test.ts` | Atomic activation-input admission under the exact execution/Bind fence, full-provenance replay checks, pending-input suppression, ordered multi-input commits, idempotency across compaction, repair of a host reservation missing its Bind edge, and stop winning a steer-preparation race without consuming input. |
 | `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, typed refusal codes and remediation, the pending sidebar marker, and claim-before-launch. |
@@ -1464,6 +1443,26 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-19 — Prose memory leaves the harness; the tables stay
+
+**What changed:** The scoped-memory items, their hybrid search, the Vectorize
+projection and admission-time recall for every run kind are gone from this
+module. `rally_memory` now carries `memory_recall`, `memory_remember` and
+`memory_forget` over a fact store with source-based visibility, owned by
+[`agent-memory.md`](agent-memory.md). `resolveMemoryAccess`, `ensureScope` and
+the `rally_tables` plugin stay here.
+
+**Why:** See the owner's entry: nine memories across every Organization after
+two months said the model-chosen scope design was not producing memory. This
+module's boundary moved; the reasoning is there.
+
+**Consequences:** `loadRunPromptContext` no longer takes a lease or returns a
+memory context hash, and the preparation breakdown has no `memory_context_ms`
+or `memory_recall_required`. A run's scope hash no longer includes a memory
+hash; `run_scopes.memory_context_hash` is always NULL.
+
+Design: `docs/PRDs/2026-10-18_agent-memory/prd.md`.
 
 ### 2026-10-18 — The settlement lane asks JEV what a settled turn calls for
 

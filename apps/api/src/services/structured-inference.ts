@@ -21,14 +21,17 @@ import { emitInferenceUsage } from "./usage-metering";
 import type { MeteredActivity } from "@rally/contracts/usage";
 
 const STRUCTURED_INFERENCE_TIMEOUT_MS = 2 * 60_000;
+/**
+ * Text search's embedding model. The name is the history: it was chosen for
+ * durable memory, whose vectors are gone, and it stays byte-identical because
+ * the Turbopuffer namespace is hashed from it (`text-search.ts`).
+ */
 export const MEMORY_EMBEDDING_MODEL = "qwen/qwen3-embedding-8b" as const;
 /** Provider capitalization is not a change of embedding space. */
 export function isMemoryEmbeddingModel(model: string): boolean {
   // OpenRouter returns Qwen/Qwen3-Embedding-8B for the canonical routing slug.
   return model.toLowerCase() === MEMORY_EMBEDDING_MODEL;
 }
-
-const MEMORY_EMBEDDING_FEATURE = "memory_embedding";
 
 type StructuredInferenceRole = Extract<
   AgentModelRole,
@@ -38,6 +41,7 @@ type StructuredInferenceRole = Extract<
   | "workstream_description"
   | "workstream_naming"
   | "suggestion_draft"
+  | "memory_sweep"
 >;
 
 type StructuredInferenceSource = StructuredInferenceRole | "substream_context_summary";
@@ -58,7 +62,7 @@ export async function runEmbeddingInference(
       userId?: string;
     };
     text: string | string[];
-    feature?: "memory_embedding" | "search_embedding";
+    feature: "search_embedding";
     inputType: "search_query" | "search_document";
     dimensions: number;
     generationName: string;
@@ -69,7 +73,7 @@ export async function runEmbeddingInference(
     signal?: AbortSignal;
   },
 ): Promise<EmbeddingResult> {
-  const feature = input.feature ?? MEMORY_EMBEDDING_FEATURE;
+  const feature = input.feature;
   const substreamId = input.context.workstreamId
     ? input.context.substreamId ?? "0"
     : undefined;

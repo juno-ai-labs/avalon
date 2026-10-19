@@ -12,7 +12,7 @@ builders whose unavoidable completeness assertion lives in one place.
 | --- | --- |
 | `scripts/eslint-rules/type-assertion-boundaries.mjs` | Enforces the production, application-mock, and Cloudflare-test boundaries. |
 | `scripts/type-assertion-boundaries.test.mjs` | Regression tests for those ESLint rules. |
-| `apps/api/test/helpers/cloudflare-test.ts` | Typed builders for partial `Env`, D1, Durable Object, R2, Queue, AI, Flagship, Images, and Vectorize doubles. |
+| `apps/api/test/helpers/cloudflare-test.ts` | Typed builders for partial `Env`, D1, Durable Object, R2, Queue, AI, Flagship, and Images doubles. |
 | `apps/release-retention/test/helpers/cloudflare-test.ts` | The retention Worker's corresponding R2 builder. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | An example of a typed state boundary: every write to the work-stream query cache. |
 

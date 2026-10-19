@@ -6,6 +6,7 @@ import {
   AVALON_MEMORY_PLUGIN_ID,
   AVALON_SKILL_TOOL_DEFINITIONS,
   AVALON_TABLES_PLUGIN_ID,
+  AVALON_WEB_PLUGIN_ID,
   type HarnessPlugin,
   type HarnessTool,
 } from "@rally/agent-harness";
@@ -222,18 +223,21 @@ describe("plugin wire names", () => {
     }
   });
 
-  it("keeps the prefix where the canonical names are local verbs that collide", () => {
+  it("keeps the prefix where the canonical names are local verbs that collide or read bare", () => {
     const memory = plugin(AVALON_MEMORY_PLUGIN_ID);
     const tables = plugin(AVALON_TABLES_PLUGIN_ID);
+    const web = plugin(AVALON_WEB_PLUGIN_ID);
     expect(memory.shortWireName).toBe("memory");
     expect(tables.shortWireName).toBe("table");
 
-    // Why they keep it: unprefixed, both plugins advertise `search`, and Bind
-    // rejects a duplicate always-active wire name outright. The rest reach the
-    // model as bare verbs — `add`, `create`, `update` — which is the naming
-    // `docs/agent-tools.md` exists to prevent.
-    const canonical = [memory, tables].flatMap((target) =>
+    // Why tables keep it: unprefixed, tables and the web plugin both advertise
+    // `search`, and Bind rejects a duplicate always-active wire name outright.
+    // Memory keeps it because `recall`, `remember` and `forget` reach the model
+    // as bare verbs with no object, which is the naming `docs/agent-tools.md`
+    // exists to prevent.
+    const canonical = [tables, web].flatMap((target) =>
       target.tools.map((tool) => tool.definition.name));
     expect(new Set(canonical).size).toBeLessThan(canonical.length);
+    expect(memory.tools.map((tool) => tool.definition.name)).toEqual(["recall", "remember", "forget"]);
   });
 });

@@ -126,6 +126,15 @@ export const MANAGED_MODELS = [
     description: 'Writes the words a conversation suggestion carries after the classifier has judged a settled turn worth carrying up or breaking out: a merge note for the parent readers, or a Breakout opening prompt and subject. Runs only on a confident positive, after the chip is shown.',
     defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.8-flash'] },
   },
+  {
+    rank: 9,
+    rankReason: 'Background · one call per rested conversation window',
+    role: 'memory_sweep',
+    key: 'agent-model-memory-sweep',
+    label: 'Memory sweep',
+    description: 'Reads a window of a Thread, Breakout or Sidekick conversation after it settles and decides which facts Rally should remember, revise or retract; the judgment is what a colleague would need later, so it runs on a strong model.',
+    defaultRouting: { model: 'openai/gpt-6.1-sol', fallbackModels: ['google/gemini-3.8-flash'] },
+  },
 ] as const satisfies readonly ManagedModelDefinition[];
 
 export const ManagedModelRoleSchema = z.enum(AGENT_MODEL_ROLES);

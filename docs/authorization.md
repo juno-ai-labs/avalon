@@ -616,8 +616,8 @@ to run inline (registration, owner walk, publication) runs through `waitUntil`.
 Measured production searches spent seconds in exactly that inline walk across cold
 WorkstreamDO and SubstreamAgent objects. The team chose performance, accepted that
 a first search for an unprojected pair shows less, and kept KV as the security
-layer with a ten-minute propagation bound. Other resolver callers, memory search
-among them, keep the inline fill because nothing hands them a deferral. Content
+layer with a ten-minute propagation bound. Other resolver callers keep the inline fill because nothing hands them a
+deferral. Content
 and display now come from the index, so the content RPC contract above is inert;
 see the text-search changelog for the read path. A future change must not put an
 owner read back into a member search request to close the first-search gap.
@@ -685,10 +685,8 @@ insert trigger records new pending snapshots and retry intent atomically, with n
 mutation timing for initialization work. Membership directory sync queues registered
 projection targets, including memory grants, on the existing write-side outbox.
 Paginated search no longer requires a directory read before retrieval: candidate
-admission already uses projected decisions. Memory search shares that resolver,
-with host-run scope selection and canonical resolution only on initial population
-or pushed updates; memory writes retain their canonical path. Memory keys register
-scope and parent dependencies for targeted retries. The separate visibility probe
+admission already uses projected decisions. Memory search no longer shares that resolver: agent memory decides visibility
+inside WorkspaceDO from each fact's sources ([`agent-memory.md`](agent-memory.md)). The separate visibility probe
 measures KV read visibility without adding probes or freshness checks to searches.
 
 ### 2026-09-08 — Trust eventually consistent search decisions and measure mutation-to-publication latency
