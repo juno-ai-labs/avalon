@@ -24,10 +24,9 @@ import {
  * row per turn, resolved in place; never a transcript row, never in the
  * model's history, never an Activity row. The observer runs after
  * `settleAgentRun`'s description loop and from a merged result's durable alarm.
- * It runs the deterministic gates cheapest first, asks JEV once, records every
- * decision, and writes a row only for a confident positive.
- * `docs/conversation-suggestions.md` owns the lifecycle;
- * `docs/PRDs/2026-10-17_merge-and-breakout-suggestions/design.md`
+ * It runs the deterministic gates cheapest first, asks JEV once, records every decision, and writes a
+ * row only for a confident positive. `docs/conversation-suggestions.md` owns
+ * the lifecycle; `docs/PRDs/2026-10-17_merge-and-breakout-suggestions/design.md`
  * holds the contract and the evidence behind each gate.
  */
 
@@ -51,9 +50,7 @@ export const SUGGESTION_MAXIMUM_PER_CONVERSATION_DAY = Number.POSITIVE_INFINITY;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Shared by live merge alarms and the backfill's candidate query. */
-export function mergeJudgementKey(turnId: string): string {
-  return `merge:${turnId}`;
-}
+export const MERGE_JUDGEMENT_KEY_PREFIX = "merge:";
 
 /** What counts as a message for the newest-three rule: what people and Rally said, not tool cards or system rows. */
 const READABLE_TURN = `substream_id = '0'
@@ -260,8 +257,8 @@ export class ConversationSuggestionStorage {
    * The backfill's candidate: the newest completed final output or incoming
    * merge among the newest {@link SUGGESTION_VISIBLE_WITHIN_NEWEST_TURNS}
    * readable messages. A merge's stable key is merge:<turnId>, since it starts
-   * no run. Older than that, a chip could not be shown, and the judgement
-   * would only record `late`.
+   * no run. Older than that, a chip
+   * could not be shown, and the judgement would only record `late`.
    */
   newestSettledTurn(): { runId: string; turnId: string } | null {
     const row = this.sql.exec<{ run_id: string; turn_id: string } & Record<string, SqlStorageValue>>(
@@ -273,7 +270,7 @@ export class ConversationSuggestionStorage {
         WHERE (turn.author_type = 'agent' AND run.run_id IS NOT NULL)
            OR json_extract(turn.structured_content_json, '$.type') = 'conversation_merge'
         ORDER BY turn.sequence_number DESC LIMIT 1`,
-      mergeJudgementKey(""), SUGGESTION_VISIBLE_WITHIN_NEWEST_TURNS,
+      MERGE_JUDGEMENT_KEY_PREFIX, SUGGESTION_VISIBLE_WITHIN_NEWEST_TURNS,
     ).toArray()[0];
     return row ? { runId: row.run_id, turnId: row.turn_id } : null;
   }
