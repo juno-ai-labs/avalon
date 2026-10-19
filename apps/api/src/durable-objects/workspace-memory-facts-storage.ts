@@ -19,6 +19,7 @@ import {
 import { workspaceIdentityFencesFor } from "./workspace-domain-schema";
 import {
   digestPrincipalKey,
+  memoryConversationKeyOf,
   memorySourceOf,
   type MemoryConversation,
   type MemoryDigestFact,
@@ -106,8 +107,10 @@ export const MEMORY_FACTS_MIGRATION: readonly string[] = [
   `CREATE TRIGGER memory_facts_fts_update AFTER UPDATE OF text ON memory_facts BEGIN
     INSERT INTO memory_facts_fts(memory_facts_fts, rowid, text) VALUES ('delete', OLD.rowid, OLD.text);
     INSERT INTO memory_facts_fts(rowid, text) VALUES (NEW.rowid, NEW.text); END`,
-  // One row per conversation: the range the last sweep applied. `applySweep`
-  // compares a delivery's `fromSeq` with `to_seq` to tell a replay from a gap.
+  // One row per conversation (keyed by `memoryConversationKeyOf`, so a Sidekick's
+  // runs do not share its own conversation's row): the range the last sweep
+  // applied. `applySweep` compares a delivery's `fromSeq` with `to_seq` to
+  // tell a replay from a gap.
   `CREATE TABLE memory_sweep_receipts (
     conversation TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
@@ -1252,13 +1255,14 @@ export function applyMemorySweep(
   return storage.transactionSync(() => {
     const sql = storage.sql;
     const here = memorySourceOf(request.conversation);
-    const stored = receiptRow(sql, here);
+    const receiptKey = memoryConversationKeyOf(request.conversation);
+    const stored = receiptRow(sql, receiptKey);
     const storedToSeq = stored?.to_seq ?? 0;
     if (stored && request.fromSeq < stored.to_seq) {
       return {
         outcome: "already_applied",
         receipt: {
-          conversation: here, fromSeq: stored.from_seq, toSeq: stored.to_seq, appliedAt: stored.applied_at,
+          conversation: receiptKey, fromSeq: stored.from_seq, toSeq: stored.to_seq, appliedAt: stored.applied_at,
           operationCount: (JSON.parse(stored.operations_json) as unknown[]).length,
         },
       };
@@ -1373,16 +1377,23 @@ export function applyMemorySweep(
       }
       // An update is a new fact that supersedes and links its predecessor, and
       // carries every source that contributed: the second fence of §6.
+      // `evidence` indexes the first source, so an update that cites this
+      // window puts this conversation first; one that cites nothing keeps
+      // the predecessor's evidence and order. Two trust classes make `mixed`.
       const factId = request.factIds[index];
       if (!factId) { refused.push({ index, code: "fact_id_missing" }); return; }
-      const sources = [...new Set([...fact.sourceConversations, here])];
+      const cites = operation.evidence.length > 0;
+      const sources = cites
+        ? [here, ...fact.sourceConversations.filter((source) => source !== here)]
+        : [...new Set([...fact.sourceConversations, here])];
       insertFact(sql, request.workspaceId, {
         ...fact,
         factId,
         text: operation.text,
         validUntil: operation.validUntil ?? (fact.kind === "situational" ? fact.validUntil : null),
         validUntilBasis: operation.validUntil === null ? (fact.kind === "situational" ? fact.validUntilBasis : null) : "stated",
-        evidence: operation.evidence,
+        derivedFrom: operation.derivedFrom === fact.derivedFrom ? fact.derivedFrom : "mixed",
+        evidence: cites ? operation.evidence : fact.evidence,
         sourceConversations: sources,
         supersedesFactId: fact.factId,
         supersededByFactId: null,
@@ -1404,12 +1415,12 @@ export function applyMemorySweep(
          from_seq = excluded.from_seq, to_seq = excluded.to_seq, operations_json = excluded.operations_json,
          model = excluded.model, input_tokens = excluded.input_tokens, output_tokens = excluded.output_tokens,
          applied_at = excluded.applied_at`,
-      here, request.workspaceId, request.fromSeq, request.toSeq, JSON.stringify(request.operations), request.model,
+      receiptKey, request.workspaceId, request.fromSeq, request.toSeq, JSON.stringify(request.operations), request.model,
       request.inputTokens, request.outputTokens, request.now,
     );
     return {
       outcome: "applied",
-      receipt: { conversation: here, fromSeq: request.fromSeq, toSeq: request.toSeq, appliedAt: request.now, operationCount: request.operations.length },
+      receipt: { conversation: receiptKey, fromSeq: request.fromSeq, toSeq: request.toSeq, appliedAt: request.now, operationCount: request.operations.length },
       refused,
       revision,
       markedHolders,

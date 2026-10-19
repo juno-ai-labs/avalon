@@ -54,6 +54,8 @@ const SIDEKICK = "00000000-0000-7000-8000-000000000ad5";
 const PERSONAL_SPACE = "00000000-0000-7000-8000-000000000ad6";
 const GENERAL_SPACE = "00000000-0000-7000-8000-000000000ad7";
 const AT = "2026-09-01T00:00:00.000Z";
+const THREAD_PRICING = "00000000-0000-7000-8000-000000000ad8";
+const SIDEKICK_RUN = "00000000-0000-7000-8000-000000000ad9";
 
 function workspace() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
@@ -182,6 +184,10 @@ describe("the fact store on workerd", () => {
       seedMember(sql, MEMBER, "member");
       seedThread(sql, THREAD_OPEN, "workspace", "Launch", [OWNER, MEMBER]);
       seedThread(sql, THREAD_PRIVATE, "personal", "Owner's side room", [OWNER]);
+      seedThread(sql, THREAD_PRICING, "workspace", "Pricing", [OWNER, MEMBER]);
+      sql.exec(`INSERT INTO automation_directory
+          (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope, owning_workstream_id, title, description, next_run_at, projected_at)
+        VALUES (?, ?, ?, 1, 'hash', 'active', 'workspace', NULL, 'Digest', '', NULL, 1)`, SIDEKICK, WORKSPACE_ID, OWNER);
       // Seeding fires the participant triggers, which advance both counters; each
       // has one row, the migration's seed, so it is reset rather than deleted.
       sql.exec("DELETE FROM memory_digest_sync");
@@ -282,6 +288,70 @@ describe("the fact store on workerd", () => {
       ).toArray()).toEqual([
         { fact_id: "fact-codename", subject_kind: "thread", subject_id: THREAD_OPEN, retracted_at: now + 2 },
         { fact_id: "fact-standups", subject_kind: "person", subject_id: MEMBER, retracted_at: null },
+      ]);
+    });
+  });
+
+  it("keeps a cursor fence per Sidekick conversation, though they share one source", async () => {
+    await fresh();
+    const now = Date.parse("2026-10-19T09:00:00.000Z");
+    const sweep = (substreamId: string, fromSeq: number, toSeq: number, text: string, factId: string) => workspace().applyMemorySweep({
+      workspaceId: WORKSPACE_ID, conversation: { parentKind: "automation", parentId: SIDEKICK, substreamId }, fromSeq, toSeq,
+      operations: [{ ...add("thread", text), subjectKind: "sidekick" as const }],
+      model: "test/model", inputTokens: null, outputTokens: null, factIds: [factId], speakerIds: [], candidateFactIds: [], now,
+    }).then((value) => WorkspaceMemoryApplySweepResultSchema.parse(value));
+    // The Sidekick's own conversation and one of its runs, each from its own
+    // transcript's start: neither range is the other's replay or gap.
+    expect(await sweep("0", 0, 10, "The digest goes out at nine", "fact-main")).toMatchObject({ outcome: "applied", refused: [] });
+    expect(await sweep(SIDEKICK_RUN, 0, 4, "The digest skips weekends", "fact-run")).toMatchObject({ outcome: "applied", refused: [] });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      expect(state.storage.sql.exec<{ conversation: string; to_seq: number }>(
+        `SELECT conversation, to_seq FROM memory_sweep_receipts ORDER BY to_seq`,
+      ).toArray()).toEqual([
+        { conversation: `sidekick:${SIDEKICK}/${SIDEKICK_RUN}`, to_seq: 4 },
+        { conversation: `sidekick:${SIDEKICK}/0`, to_seq: 10 },
+      ]);
+      // What both learned is the Sidekick's, under the one source.
+      expect(state.storage.sql.exec<{ fact_id: string; source: string }>(
+        `SELECT fact_id, json_extract(source_conversations_json, '$[0]') AS source FROM memory_facts ORDER BY fact_id`,
+      ).toArray()).toEqual([
+        { fact_id: "fact-main", source: `sidekick:${SIDEKICK}` },
+        { fact_id: "fact-run", source: `sidekick:${SIDEKICK}` },
+      ]);
+    });
+  });
+
+  it("files an update under the conversation its evidence came from, and marks two trust classes mixed", async () => {
+    await fresh();
+    const now = Date.parse("2026-10-19T09:00:00.000Z");
+    await workspace().applyMemorySweep({
+      workspaceId: WORKSPACE_ID, conversation: openThread, fromSeq: 0, toSeq: 3,
+      operations: [add("organization", "Release day is Thursday")],
+      model: "test/model", inputTokens: null, outputTokens: null, factIds: ["fact-release"], speakerIds: [], candidateFactIds: [], now,
+    });
+    const pricing = { parentKind: "workstream" as const, parentId: THREAD_PRICING, substreamId: "0" };
+    const update = (evidence: number[]) => ({
+      op: "update" as const, factId: "", text: "", validUntil: null, derivedFrom: "external" as const, evidence,
+    });
+    // A Slack message in another thread moves the date: new evidence, from there.
+    expect(WorkspaceMemoryApplySweepResultSchema.parse(await workspace().applyMemorySweep({
+      workspaceId: WORKSPACE_ID, conversation: pricing, fromSeq: 0, toSeq: 9,
+      operations: [{ ...update([7]), factId: "fact-release", text: "Release day is Friday" }],
+      model: "test/model", inputTokens: null, outputTokens: null, factIds: ["fact-friday"], speakerIds: [], candidateFactIds: ["fact-release"], now: now + 1,
+    }))).toMatchObject({ outcome: "applied", refused: [] });
+    // Restated without citing anything new: the evidence and its conversation stay first.
+    expect(WorkspaceMemoryApplySweepResultSchema.parse(await workspace().applyMemorySweep({
+      workspaceId: WORKSPACE_ID, conversation: openThread, fromSeq: 3, toSeq: 6,
+      operations: [{ ...update([]), factId: "fact-friday", text: "Release day is Friday afternoon" }],
+      model: "test/model", inputTokens: null, outputTokens: null, factIds: ["fact-afternoon"], speakerIds: [], candidateFactIds: ["fact-friday"], now: now + 2,
+    }))).toMatchObject({ outcome: "applied", refused: [] });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      expect(state.storage.sql.exec<{ fact_id: string; derived_from: string; evidence_json: string; source_conversations_json: string }>(
+        `SELECT fact_id, derived_from, evidence_json, source_conversations_json FROM memory_facts ORDER BY created_at`,
+      ).toArray()).toEqual([
+        { fact_id: "fact-release", derived_from: "person", evidence_json: "[1]", source_conversations_json: JSON.stringify([THREAD_OPEN]) },
+        { fact_id: "fact-friday", derived_from: "mixed", evidence_json: "[7]", source_conversations_json: JSON.stringify([THREAD_PRICING, THREAD_OPEN]) },
+        { fact_id: "fact-afternoon", derived_from: "mixed", evidence_json: "[7]", source_conversations_json: JSON.stringify([THREAD_PRICING, THREAD_OPEN]) },
       ]);
     });
   });
@@ -509,7 +579,7 @@ describe("the fact store on workerd", () => {
     expect(await apply(3, { op: "confirm", factId: "fact-codename", evidence: [4] }, "fact-codename"))
       .toMatchObject({ outcome: "applied", refused: [], markedHolders: false });
     // A supersede withdraws nobody's access: the copy is stale until its next refresh.
-    expect(await apply(6, { op: "update", factId: "fact-launch-day", text: "The launch is on Wednesday", validUntil: null, evidence: [7] }, "fact-launch-day"))
+    expect(await apply(6, { op: "update", factId: "fact-launch-day", text: "The launch is on Wednesday", validUntil: null, derivedFrom: "person", evidence: [7] }, "fact-launch-day"))
       .toMatchObject({ outcome: "applied", refused: [], markedHolders: false });
     await runInDurableObject(workspace(), (_instance, state) => expect(syncRow(state.storage.sql)).toEqual([]));
     expect(await apply(9, { op: "retract", factId: "fact-codename", reason: "The codename was dropped", evidence: [10] }, "fact-codename"))
@@ -522,11 +592,7 @@ describe("the fact store on workerd", () => {
   it("records every conversation of one Sidekick as its own holder, and hands each back to the lane", async () => {
     await fresh();
     const now = Date.parse("2026-10-19T09:00:00.000Z");
-    await runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec(`INSERT INTO automation_directory
-          (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope, owning_workstream_id, title, description, next_run_at, projected_at)
-        VALUES (?, ?, ?, 1, 'hash', 'active', 'workspace', NULL, 'Digest', '', NULL, 1)`, SIDEKICK, WORKSPACE_ID, OWNER);
-    });
+    // `fresh()` seeds the Sidekick in the directory.
     const authoring = { parentKind: "automation" as const, parentId: SIDEKICK, substreamId: "0" };
     const run = { parentKind: "automation" as const, parentId: SIDEKICK, substreamId: "run-1" };
     for (const conversation of [authoring, run]) {
@@ -578,7 +644,7 @@ describe("the fact store on workerd", () => {
   it("marks every copy holding a fact learned in a thread its person leaves, and no copy that never read one", async () => {
     await fresh();
     const now = Date.parse("2026-10-19T09:00:00.000Z");
-    const THREAD_OTHER = "00000000-0000-7000-8000-000000000ad8";
+    const THREAD_OTHER = "00000000-0000-7000-8000-000000000ada";
     await runInDurableObject(workspace(), (_instance, state) => {
       const sql = state.storage.sql;
       // The member joins the side room, and a third open thread has the owner alone.
