@@ -510,7 +510,8 @@ async function forget(
   switch (outcome.outcome) {
     case "retracted":
     case "already_retracted":
-      await removeFromDigestCopies(env, input, outcome.fact.factId);
+      // A fact retracted elsewhere earlier has no fence to carry here: 0 raises nothing.
+      await removeFromDigestCopies(env, input, outcome.fact.factId, outcome.outcome === "retracted" ? outcome.revision : 0);
       return {
         output: { factId: outcome.fact.factId, retractedAt: iso(outcome.fact.retractedAt) },
         summary: outcome.outcome === "retracted" ? "Forgot one fact" : "That fact was already forgotten",
@@ -539,14 +540,15 @@ async function forget(
 /**
  * Drop a forgotten fact from this conversation's own digest copies in the
  * same call, so the next run here does not render it again before the
- * copy-sync lane reaches the conversation. Also on `already_retracted`: a fact
- * retracted elsewhere may still sit in a copy here. Never fails the tool; the
- * lane is the backstop.
+ * copy-sync lane reaches the conversation, and fence every copy here at the
+ * retraction's `revision` so a refresh that read before it cannot put the
+ * fact back. Also on `already_retracted`: a fact retracted elsewhere may still
+ * sit in a copy here. Never fails the tool; the lane is the backstop.
  */
-async function removeFromDigestCopies(env: Env, input: WorkstreamWorkflowInput, factId: string): Promise<void> {
+async function removeFromDigestCopies(env: Env, input: WorkstreamWorkflowInput, factId: string, revision: number): Promise<void> {
   try {
     await createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0")
-      .removeFactFromMemoryDigestCopies({ factId, now: Date.now() });
+      .removeFactFromMemoryDigestCopies({ factId, revision, now: Date.now() });
   } catch (error) {
     logWarn(env, "memory_digest_copy_update_failed", {
       workspace_id: input.workspaceId,

@@ -841,13 +841,11 @@ export class WorkstreamSchedulingStorage {
 
   /**
    * One principal's digest copy (`user:<id>`, `sidekick:<automationId>` or
-   * `conversation`), or `null` when none was written yet. `null` too below
-   * migration 77, which has no table: a run on an object that has not migrated
-   * renders no digest rather than failing. Validated here because the run
-   * renders from it with nothing else in between. `docs/agent-memory.md#the-digest`.
+   * `conversation`), or `null` when none was written yet. Validated here
+   * because the run renders from it with nothing else in between.
+   * `docs/agent-memory.md#the-digest`.
    */
   memoryDigestCopy(principal: string): MemoryDigestFact[] | null {
-    if (!this.#hasMemoryDigestCopies()) return null;
     const row = first(this.sql.exec<{ facts_json: string } & Record<string, SqlStorageValue>>(
       `SELECT facts_json FROM memory_digest_copies WHERE principal = ?`, principal,
     ));
@@ -855,26 +853,27 @@ export class WorkstreamSchedulingStorage {
   }
 
   /**
-   * Replace one principal's copy with a newer read. Two refreshes can overlap
-   * and resume in either order; `readAt` is the WorkspaceDO's clock at the
-   * read, so an older answer arriving late never replaces a newer copy. An
-   * equal `readAt` writes, so a repeated refresh of the same read converges.
-   * `true` when the row was written.
+   * Replace one principal's copy with a read at least as new. Two refreshes
+   * can overlap and resume in either order; `sourceRevision` is the
+   * WorkspaceDO's `memory_revision` at the read, so an older answer arriving
+   * late never replaces a newer copy. An equal revision writes: two reads
+   * with nothing written or marked between them answer alike, and a change
+   * no trigger marks still reaches the copy at its next refresh. `true` when
+   * the row was written.
    */
-  storeMemoryDigestCopy(input: { principal: string; facts: MemoryDigestFact[]; readAt: number; now: number }): boolean {
+  storeMemoryDigestCopy(input: { principal: string; facts: MemoryDigestFact[]; sourceRevision: number; now: number }): boolean {
     return this.sql.exec<{ principal: string } & Record<string, SqlStorageValue>>(
-      `INSERT INTO memory_digest_copies (principal, facts_json, read_at, refreshed_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT (principal) DO UPDATE SET facts_json = excluded.facts_json, read_at = excluded.read_at,
-         refreshed_at = excluded.refreshed_at
-       WHERE excluded.read_at >= memory_digest_copies.read_at
+      `INSERT INTO memory_digest_copies (principal, facts_json, source_revision, refreshed_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT (principal) DO UPDATE SET facts_json = excluded.facts_json,
+         source_revision = excluded.source_revision, refreshed_at = excluded.refreshed_at
+       WHERE excluded.source_revision >= memory_digest_copies.source_revision
        RETURNING principal`,
-      input.principal, JSON.stringify(input.facts), input.readAt, input.now,
+      input.principal, JSON.stringify(input.facts), input.sourceRevision, input.now,
     ).toArray().length > 0;
   }
 
   /** Every principal holding a copy here, so a refresh after a sweep can reach each one. */
   memoryDigestPrincipals(): string[] {
-    if (!this.#hasMemoryDigestCopies()) return [];
     return this.sql.exec<{ principal: string } & Record<string, SqlStorageValue>>(
       `SELECT principal FROM memory_digest_copies ORDER BY principal`,
     ).toArray().map((row) => row.principal);
@@ -883,12 +882,12 @@ export class WorkstreamSchedulingStorage {
   /**
    * Drop one forgotten fact from every copy here, in the same call as the
    * forget that retracted it, so the next run in this conversation does not
-   * render it again before the copy-sync lane catches up. Answers the number
-   * of copies that held it. `read_at` is left alone: the copy is still the
-   * same read, less one fact, and a newer read already excludes it.
+   * render it again before the copy-sync lane catches up. `revision` is the
+   * retraction's: every copy's `source_revision` is raised to at least it, so
+   * a refresh that read before the forget and lands after it is refused in
+   * every copy here. Answers the number of copies that held the fact.
    */
-  removeFactFromMemoryDigestCopies(input: { factId: string; now: number }): number {
-    if (!this.#hasMemoryDigestCopies()) return 0;
+  removeFactFromMemoryDigestCopies(input: { factId: string; revision: number; now: number }): number {
     return this.storage.transactionSync(() => {
       const rows = this.sql.exec<{ principal: string; facts_json: string } & Record<string, SqlStorageValue>>(
         `SELECT principal, facts_json FROM memory_digest_copies`,
@@ -904,14 +903,12 @@ export class WorkstreamSchedulingStorage {
         );
         removed += 1;
       }
+      this.sql.exec(
+        `UPDATE memory_digest_copies SET source_revision = ? WHERE source_revision < ?`,
+        input.revision, input.revision,
+      );
       return removed;
     });
-  }
-
-  #hasMemoryDigestCopies(): boolean {
-    return this.sql.exec(
-      "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'memory_digest_copies'",
-    ).toArray().length > 0;
   }
 
   /** Rows written by the statement that just ran, in this transaction. */

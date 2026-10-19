@@ -371,6 +371,28 @@ describe("Sidekick run continuation", () => {
     expect(call!.messages.some((message) => message.role === "assistant" && text(message.content).includes("Done."))).toBe(true);
   });
 
+  it("starts a run's first activation with the Sidekick's remembered facts", async () => {
+    await activeSidekick();
+    // Remembered in the Sidekick's own conversation, so filed under the Sidekick.
+    const remembered = await workspaceStub().rememberMemoryFact({
+      workspaceId: WORKSPACE_ID,
+      reader: { kind: "sidekick", automationId: AUTOMATION_ID },
+      conversation: { parentKind: "automation", parentId: AUTOMATION_ID, substreamId: "0" },
+      receiptId: "receipt-sidekick-fact", harnessRunId: "run-sidekick-fact", factId: "fact-sidekick-cadence",
+      text: "Founders send their updates on Mondays.", kind: "standing", validUntil: null,
+      about: "this conversation", derivedFrom: "agent", now: Date.now(),
+    });
+    expect(remembered).toMatchObject({ outcome: "written", fact: { subjectKind: "sidekick" } });
+
+    await startedRun();
+
+    // Each run is a new conversation; the digest was copied into it when it
+    // was provisioned, before the run's first and only activation here.
+    expect(provider.calls).toHaveLength(1);
+    const system = provider.calls[0]!.messages.filter((message) => message.role === "system").map((message) => text(message.content)).join("\n");
+    expect(system).toContain(`Working knowledge of the Sidekick "Update collector":\n- Founders send their updates on Mondays. [fact-sidekick-cadence]`);
+  });
+
   it("refuses input to a paused Sidekick's run with its code, lands both inputs, and continues after resume", async () => {
     await activeSidekick();
     const runId = await completedRun();

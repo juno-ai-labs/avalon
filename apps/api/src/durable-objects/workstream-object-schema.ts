@@ -3537,13 +3537,13 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       // One row per principal that has acted here (`user:<id>`,
       // `sidekick:<automationId>`, or `conversation`): the WorkspaceDO's
       // digest answer for that reader, as structured facts the run renders at
-      // start, so inference reads nothing beyond this object. `read_at` is the
-      // WorkspaceDO's clock at the read and orders overlapping refreshes.
-      // `docs/agent-memory.md#the-digest`.
+      // start, so inference reads nothing beyond this object.
+      // `source_revision` is the WorkspaceDO's `memory_revision` at the read
+      // and orders overlapping refreshes. `docs/agent-memory.md#the-digest`.
       `CREATE TABLE memory_digest_copies (
         principal TEXT PRIMARY KEY,
         facts_json TEXT NOT NULL,
-        read_at INTEGER NOT NULL CHECK (read_at >= 0),
+        source_revision INTEGER NOT NULL CHECK (source_revision >= 0),
         refreshed_at INTEGER NOT NULL
       ) STRICT`,
     ],

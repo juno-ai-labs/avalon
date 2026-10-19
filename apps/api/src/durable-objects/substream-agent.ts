@@ -6259,7 +6259,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   /**
    * This conversation's memory digest copy for one principal, read
    * synchronously and never refreshed here: the settlement step, the sweep, a
-   * forget, and the copy-sync lane refresh it. An unreadable copy renders no
+   * forget, a Sidekick run's provisioning, and the copy-sync lane refresh it. An unreadable copy renders no
    * digest rather than failing the run, and names the field it rejected.
    * See docs/agent-memory.md#the-digest.
    */

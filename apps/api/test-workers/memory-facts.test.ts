@@ -11,10 +11,11 @@
  * swept conversation may open. `docs/agent-memory.md` owns the rules.
  *
  * And the digest's half in this object (`memory-digest-sync.ts`): that a
- * digest read records its conversation as a holder in the same transaction,
- * that a retraction and the triggers on scope and participation mark holders,
- * and that the lane publishes one batch at a time and settles only the
- * revision it was sent.
+ * digest read records its conversation as a holder of the facts it read in
+ * the same transaction, that a retraction marks the holders of its fact and
+ * the triggers on every visibility input mark the holders it can change, and
+ * that the lane publishes one batch at a time and settles only the revision it
+ * was sent.
  */
 
 import { env } from "cloudflare:workers";
@@ -40,6 +41,7 @@ import {
   WorkspaceMemoryForgetResultSchema,
   WorkspaceMemoryRecallResultSchema,
   WorkspaceMemorySweepCandidatesResultSchema,
+  type MemorySweepOperation,
 } from "../src/durable-objects/workspace-memory-facts-protocol";
 
 const FACTS_MIGRATION = 116;
@@ -171,17 +173,20 @@ describe("the fact store on workerd", () => {
     await runInDurableObject(workspace(), (_instance, state) => {
       const sql = state.storage.sql;
       for (const table of [
-        "memory_facts", "memory_sweep_receipts", "memory_fact_receipts", "memory_digest_holders", "memory_digest_sync",
-        "channel_viewers", "channels", "workspace_member_status",
+        "memory_facts", "memory_sweep_receipts", "memory_fact_receipts", "memory_digest_holders", "memory_digest_holder_facts",
+        "channel_viewers", "channels", "workspace_member_status", "automation_directory",
       ]) {
         sql.exec(`DELETE FROM ${table}`);
       }
-      // The counter's one row is the migration's seed, so it is reset rather than deleted.
-      sql.exec(`UPDATE memory_digest_sync_state SET revision = 0`);
       seedMember(sql, OWNER, "owner");
       seedMember(sql, MEMBER, "member");
       seedThread(sql, THREAD_OPEN, "workspace", "Launch", [OWNER, MEMBER]);
       seedThread(sql, THREAD_PRIVATE, "personal", "Owner's side room", [OWNER]);
+      // Seeding fires the participant triggers, which advance both counters; each
+      // has one row, the migration's seed, so it is reset rather than deleted.
+      sql.exec("DELETE FROM memory_digest_sync");
+      sql.exec(`UPDATE memory_digest_sync_state SET revision = 0`);
+      sql.exec(`UPDATE memory_revision SET revision = 0`);
     });
   }
 
@@ -208,6 +213,9 @@ describe("the fact store on workerd", () => {
       outcome: "applied",
       receipt: { conversation: THREAD_OPEN, fromSeq: 0, toSeq: 12, appliedAt: now, operationCount: 2 },
       refused: [],
+      // One applied sweep, one advance of the ordering token, whatever it wrote.
+      revision: 1,
+      markedHolders: false,
     });
     // A redelivery of the same range writes nothing and hands back the receipt.
     const replay = WorkspaceMemoryApplySweepResultSchema.parse(await workspace().applyMemorySweep({
@@ -377,17 +385,23 @@ describe("the fact store on workerd", () => {
       { ...shape, factId: "fact-codename", subjectKind: "thread", subjectLabel: "Launch", text: "The launch codename is zephyr", createdAt: now + 2 },
       { ...shape, factId: "fact-standups", subjectKind: "organization", subjectLabel: null, text: "Standups are at ten", createdAt: now + 1 },
     ]);
-    expect(typeof digest.readAt).toBe("number");
+    // Four applied sweeps and two scope changes (each a mark) came before the read.
+    expect(digest.revision).toBe(6);
     await runInDurableObject(workspace(), (_instance, state) => {
       expect(state.storage.sql.exec(
-        "SELECT conversation, parent_kind, parent_id, substream_id, refreshed_at FROM memory_digest_holders",
-      ).toArray()).toEqual([{
-        conversation: THREAD_OPEN, parent_kind: "workstream", parent_id: THREAD_OPEN, substream_id: "0", refreshed_at: digest.readAt,
-      }]);
+        "SELECT conversation, parent_kind, parent_id, substream_id FROM memory_digest_holders",
+      ).toArray()).toEqual([{ conversation: THREAD_OPEN, parent_kind: "workstream", parent_id: THREAD_OPEN, substream_id: "0" }]);
+      expect(state.storage.sql.exec(
+        "SELECT conversation, principal, fact_id FROM memory_digest_holder_facts ORDER BY fact_id",
+      ).toArray()).toEqual([
+        { conversation: THREAD_OPEN, principal: `user:${MEMBER}`, fact_id: "fact-codename" },
+        { conversation: THREAD_OPEN, principal: `user:${MEMBER}`, fact_id: "fact-standups" },
+        { conversation: THREAD_OPEN, principal: `user:${MEMBER}`, fact_id: "fact-updates" },
+      ]);
     });
   });
 
-  it("marks every holder on a retraction, publishes one batch at a time, and settles only the revision it sent", async () => {
+  it("marks the holder of a retracted fact, publishes one batch at a time, and settles only the revision it sent", async () => {
     await fresh();
     const now = Date.parse("2026-10-19T09:00:00.000Z");
     await workspace().applyMemorySweep({
@@ -471,29 +485,156 @@ describe("the fact store on workerd", () => {
     });
   });
 
-  it("marks every holder when a sweep retracts a fact, and not when it only confirms one", async () => {
+  it("marks only the holders that read a fact a sweep retracts, and none for a confirm or an update", async () => {
     await fresh();
     const now = Date.parse("2026-10-19T09:00:00.000Z");
     const common = { workspaceId: WORKSPACE_ID, conversation: openThread, model: "test/model", inputTokens: null, outputTokens: null, speakerIds: [] };
     await workspace().applyMemorySweep({
-      ...common, fromSeq: 0, toSeq: 3, operations: [add("thread", "The launch codename is zephyr")],
-      factIds: ["fact-codename"], candidateFactIds: [], now,
+      ...common, fromSeq: 0, toSeq: 3,
+      operations: [add("thread", "The launch codename is zephyr"), add("thread", "The launch is on Tuesday")],
+      factIds: ["fact-codename", "fact-launch-day"], candidateFactIds: [], now,
     });
+    // The open thread's copy holds both facts; the side room's holds neither.
     await workspace().memoryDigest({
       workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: MEMBER }, conversation: openThread, now, limit: 10,
     });
-    await workspace().applyMemorySweep({
-      ...common, fromSeq: 3, toSeq: 6, operations: [{ op: "confirm", factId: "fact-codename", evidence: [4] }],
-      factIds: ["fact-unused"], candidateFactIds: ["fact-codename"], now: now + 1,
+    await workspace().memoryDigest({
+      workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: OWNER }, conversation: privateThread, now, limit: 10,
     });
+    const apply = async (fromSeq: number, operation: MemorySweepOperation, factId: string) =>
+      WorkspaceMemoryApplySweepResultSchema.parse(await workspace().applyMemorySweep({
+        ...common, fromSeq, toSeq: fromSeq + 3, operations: [operation], factIds: ["fact-minted"],
+        candidateFactIds: [factId], now: now + fromSeq,
+      }));
+    expect(await apply(3, { op: "confirm", factId: "fact-codename", evidence: [4] }, "fact-codename"))
+      .toMatchObject({ outcome: "applied", refused: [], markedHolders: false });
+    // A supersede withdraws nobody's access: the copy is stale until its next refresh.
+    expect(await apply(6, { op: "update", factId: "fact-launch-day", text: "The launch is on Wednesday", validUntil: null, evidence: [7] }, "fact-launch-day"))
+      .toMatchObject({ outcome: "applied", refused: [], markedHolders: false });
     await runInDurableObject(workspace(), (_instance, state) => expect(syncRow(state.storage.sql)).toEqual([]));
-    expect(WorkspaceMemoryApplySweepResultSchema.parse(await workspace().applyMemorySweep({
-      ...common, fromSeq: 6, toSeq: 9,
-      operations: [{ op: "retract", factId: "fact-codename", reason: "The codename was dropped", evidence: [7] }],
-      factIds: ["fact-unused"], candidateFactIds: ["fact-codename"], now: now + 2,
-    }))).toMatchObject({ outcome: "applied", refused: [] });
+    expect(await apply(9, { op: "retract", factId: "fact-codename", reason: "The codename was dropped", evidence: [10] }, "fact-codename"))
+      .toMatchObject({ outcome: "applied", refused: [], markedHolders: true });
     await runInDurableObject(workspace(), (_instance, state) => {
       expect(syncRow(state.storage.sql)).toMatchObject([{ conversation: THREAD_OPEN, revision: 1 }]);
+    });
+  });
+
+  it("records every conversation of one Sidekick as its own holder, and hands each back to the lane", async () => {
+    await fresh();
+    const now = Date.parse("2026-10-19T09:00:00.000Z");
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO automation_directory
+          (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope, owning_workstream_id, title, description, next_run_at, projected_at)
+        VALUES (?, ?, ?, 1, 'hash', 'active', 'workspace', NULL, 'Digest', '', NULL, 1)`, SIDEKICK, WORKSPACE_ID, OWNER);
+    });
+    const authoring = { parentKind: "automation" as const, parentId: SIDEKICK, substreamId: "0" };
+    const run = { parentKind: "automation" as const, parentId: SIDEKICK, substreamId: "run-1" };
+    for (const conversation of [authoring, run]) {
+      await workspace().memoryDigest({
+        workspaceId: WORKSPACE_ID, reader: { kind: "sidekick", automationId: SIDEKICK }, conversation, now, limit: 10,
+      });
+    }
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const sql = state.storage.sql;
+      expect(sql.exec("SELECT conversation, substream_id FROM memory_digest_holders ORDER BY conversation").toArray()).toEqual([
+        { conversation: `sidekick:${SIDEKICK}/0`, substream_id: "0" },
+        { conversation: `sidekick:${SIDEKICK}/run-1`, substream_id: "run-1" },
+      ]);
+      markMemoryDigestHolders(sql);
+      expect(memoryDigestSyncWork(sql, { conversation: `sidekick:${SIDEKICK}/0`, revision: 1 })).toEqual(authoring);
+      expect(memoryDigestSyncWork(sql, { conversation: `sidekick:${SIDEKICK}/run-1`, revision: 1 })).toEqual(run);
+    });
+  });
+
+  /** The open thread held by the member and the side room by the owner, with nothing marked yet. */
+  async function twoHolders(now: number) {
+    await workspace().memoryDigest({
+      workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: MEMBER }, conversation: openThread, now, limit: 10,
+    });
+    await workspace().memoryDigest({
+      workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: OWNER }, conversation: privateThread, now, limit: 10,
+    });
+  }
+
+  function markedConversations(sql: SqlStorage): string[] {
+    return sql.exec<{ conversation: string }>("SELECT conversation FROM memory_digest_sync ORDER BY conversation")
+      .toArray().map((row) => row.conversation);
+  }
+
+  it("marks the holders of the thread a participant joins, and not another thread's", async () => {
+    await fresh();
+    await twoHolders(Date.parse("2026-10-19T09:00:00.000Z"));
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec(`INSERT INTO channel_viewers (
+          workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash,
+          is_participant, unread_count, you_are_mentioned, listable, seen_attention_ordinal,
+          manual_unread_from_ordinal, manual_unread_generation, latest_mention_attention_ordinal, projected_at
+        ) VALUES (?, ?, 1, 1, 'event-join', 'hash', 1, 0, 0, 1, 0, NULL, 0, 0, 200)`, THREAD_PRIVATE, MEMBER);
+      expect(markedConversations(sql)).toEqual([THREAD_PRIVATE]);
+    });
+  });
+
+  it("marks every copy holding a fact learned in a thread its person leaves, and no copy that never read one", async () => {
+    await fresh();
+    const now = Date.parse("2026-10-19T09:00:00.000Z");
+    const THREAD_OTHER = "00000000-0000-7000-8000-000000000ad8";
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const sql = state.storage.sql;
+      // The member joins the side room, and a third open thread has the owner alone.
+      sql.exec(`INSERT INTO channel_viewers (
+          workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash,
+          is_participant, unread_count, you_are_mentioned, listable, seen_attention_ordinal,
+          manual_unread_from_ordinal, manual_unread_generation, latest_mention_attention_ordinal, projected_at
+        ) VALUES (?, ?, 1, 1, 'event-join', 'hash', 1, 0, 0, 1, 0, NULL, 0, 0, 200)`, THREAD_PRIVATE, MEMBER);
+      seedThread(sql, THREAD_OTHER, "workspace", "Planning", [OWNER]);
+    });
+    // A fact about the member, learned in the side room.
+    expect(WorkspaceMemoryApplySweepResultSchema.parse(await workspace().applyMemorySweep({
+      workspaceId: WORKSPACE_ID, conversation: privateThread, fromSeq: 0, toSeq: 3,
+      operations: [{ ...add("thread", "Member is interviewing elsewhere"), subjectKind: "person" as const, subjectId: MEMBER }],
+      model: "test/model", inputTokens: null, outputTokens: null, factIds: ["fact-interviewing"],
+      speakerIds: [MEMBER], candidateFactIds: [], now,
+    }))).toMatchObject({ outcome: "applied", refused: [] });
+    // The member's copy in the open thread holds it; the owner's copy in the
+    // third thread never read it.
+    const read = async (userId: string, workstreamId: string) => WorkspaceMemoryDigestResultSchema.parse(await workspace().memoryDigest({
+      workspaceId: WORKSPACE_ID, reader: { kind: "person", userId },
+      conversation: { parentKind: "workstream", parentId: workstreamId, substreamId: "0" }, now, limit: 10,
+    })).facts.map((fact) => fact.factId);
+    expect(await read(MEMBER, THREAD_OPEN)).toEqual(["fact-interviewing"]);
+    expect(await read(OWNER, THREAD_OTHER)).toEqual([]);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec("DELETE FROM memory_digest_sync");
+      sql.exec("UPDATE channel_viewers SET is_participant = 0 WHERE workstream_id = ? AND user_id = ?", THREAD_PRIVATE, MEMBER);
+      expect(markedConversations(sql)).toEqual([THREAD_OPEN]);
+    });
+  });
+
+  it("marks every holder when a member becomes a guest, and none for a revision that changed nothing they read", async () => {
+    await fresh();
+    await twoHolders(Date.parse("2026-10-19T09:00:00.000Z"));
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const sql = state.storage.sql;
+      const relationship = (accessClass: "member" | "guest", revision: number) => JSON.stringify({
+        workspaceId: WORKSPACE_ID, userId: MEMBER, accessClass, role: "member", status: "active", incarnation: "i1", revision,
+      });
+      sql.exec("UPDATE workspace_member_status SET relationship_json = ? WHERE user_id = ?", relationship("member", 2), MEMBER);
+      expect(markedConversations(sql)).toEqual([]);
+      sql.exec("UPDATE workspace_member_status SET relationship_json = ? WHERE user_id = ?", relationship("guest", 3), MEMBER);
+      expect(markedConversations(sql)).toEqual([THREAD_OPEN, THREAD_PRIVATE].sort());
+    });
+  });
+
+  it("marks every holder when a source is archived", async () => {
+    await fresh();
+    const now = Date.parse("2026-10-19T09:00:00.000Z");
+    await twoHolders(now);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec("UPDATE channels SET archived_at = ? WHERE workstream_id = ?", now, THREAD_PRIVATE);
+      expect(markedConversations(sql)).toEqual([THREAD_OPEN, THREAD_PRIVATE].sort());
     });
   });
 
@@ -505,8 +646,9 @@ describe("the fact store on workerd", () => {
     });
     await runInDurableObject(workspace(), (_instance, state) => {
       const sql = state.storage.sql;
-      markMemoryDigestHolders(sql);
+      // The archive marks the holder itself.
       sql.exec(`UPDATE channels SET archived_at = ? WHERE workstream_id = ?`, now, THREAD_OPEN);
+      expect(syncRow(sql)).toMatchObject([{ conversation: THREAD_OPEN, revision: 1 }]);
       expect(memoryDigestSyncWork(sql, { conversation: THREAD_OPEN, revision: 1 })).toBeNull();
       expect(syncRow(sql)).toEqual([]);
       expect(sql.exec("SELECT conversation FROM memory_digest_holders").toArray()).toEqual([]);

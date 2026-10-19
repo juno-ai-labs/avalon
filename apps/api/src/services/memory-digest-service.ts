@@ -7,6 +7,7 @@ import { workspaceDOName } from "../durable-objects/names";
 import { PERSONAL_SYSTEM_PROMPT_REASONS } from "../durable-objects/personal-system-prompt";
 import {
   WorkspaceMemoryDigestResultSchema,
+  digestPrincipalKey,
   type MemoryConversation,
   type MemoryDigestFact,
   type MemoryReader,
@@ -22,9 +23,10 @@ import { createSchedulingObjectPort } from "../runtime/scheduling-port";
  *
  * A run never reads `WorkspaceDO` for its digest. It renders from the copy its
  * own object holds (`memory_digest_copies`), which is refreshed after the run
- * settles, after a sweep that wrote, after a forget, and by the copy-sync lane
- * when `WorkspaceDO` marks the conversation. The cost is lag: a principal's
- * first run in a conversation has no digest, and a new fact reaches a run from
+ * settles, after a sweep that wrote, after a forget, when a Sidekick run is
+ * provisioned, and by the copy-sync lane when `WorkspaceDO` marks the
+ * conversation. The cost is lag: a principal's first run in a Thread or
+ * Breakout has no digest, and a new fact reaches a run from
  * the next refresh. See `docs/agent-memory.md#the-digest`.
  */
 
@@ -58,14 +60,8 @@ export function digestReaderFor(input: WorkstreamWorkflowInput): MemoryReader {
   return { kind: "conversation" };
 }
 
-/** The copy's row key for a reader. */
-export function digestPrincipalKey(reader: MemoryReader): string {
-  switch (reader.kind) {
-    case "person": return `user:${reader.userId}`;
-    case "sidekick": return `sidekick:${reader.automationId}`;
-    case "conversation": return "conversation";
-  }
-}
+/** The copy's row key for a reader; defined beside the reader, because `WorkspaceDO` records it too. */
+export { digestPrincipalKey };
 
 /** The reader a stored row key names, or `null` for a key this module never writes. */
 function readerOfPrincipalKey(key: string): MemoryReader | null {
@@ -119,7 +115,7 @@ export async function refreshMemoryDigestCopy(
     await schedulingPortOf(env, target).storeMemoryDigestCopy({
       principal,
       facts: digest.facts,
-      readAt: digest.readAt,
+      sourceRevision: digest.revision,
       now: Date.now(),
     });
     return true;
