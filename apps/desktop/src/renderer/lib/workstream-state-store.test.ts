@@ -548,6 +548,25 @@ describe('patchCachedWorkstreamViewerState', () => {
       .toBe(0);
   });
 
+  it('takes participation from a duplicate version once, and never overwrites it after', () => {
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [summary()]);
+    const at = (isParticipant?: boolean) => applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(2, 1),
+      visible: true,
+      ...workstreamSummaryState(summary(isParticipant === undefined ? {} : { isParticipant })),
+    });
+    const held = () => queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.isParticipant;
+
+    at();
+    expect(held()).toBeUndefined();
+    at(false);
+    expect(held()).toBe(false);
+    at(true);
+    expect(held()).toBe(false);
+  });
+
   it('writes the addressed child entry without changing Main in the list', () => {
     const queryClient = new QueryClient();
     setCachedWorkstreams(queryClient, [summary({ readThroughSequenceNumber: 1 })]);
