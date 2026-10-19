@@ -124,9 +124,13 @@ tombstones), and one more call confirms nothing changed. A Channel message
 into it) is indexed the same way from WorkspaceDO: migration 119's
 `channel_message_search_versions` holds each message's revision and its
 Channel, triggers on every writer bump it, the
-`channel_message_search` alarm lane publishes references on the resource
-lane's shared pace, and `prepareChannelMessageSearch` returns one
-`channel_messages` document or its deletion watermark. Its audience is the
+`channel_message_search` alarm lane publishes references on its own pace (at
+the resource lane's interval), and `prepareChannelMessageSearch` returns one
+`channel_messages` document or its deletion watermark. Each reference goes
+out as a document-phase job (`search_embedding_batch_v1`) rather than a
+message type of its own, so a consumer on an older build retries it instead of
+acknowledging it as unknown. The lane is null for an Organization held below
+migration 119, which has no table. Its audience is the
 Channel's `space:<id>` group, which every reader of the Channel already holds,
 and its title is the Channel's name when it was indexed, never the merged
 thread's; a rename does not rewrite it, since nothing reads it. Only the agent's
@@ -739,8 +743,11 @@ it, and a row's display is the same for every reader.
 rename does not rewrite it, because nothing reads it yet. A surface that shows
 it needs a rename trigger in its own migration. `removeChannelMessage` and a merge arm the alarm so their rows move at once;
 a Channel's opening messages written at creation wait for the object's next
-wake. The lane shares `resourceSearchPace`, so a resource backlog delays
-Channel messages too. A reader holds a Channel's `space:` group by the same
+wake. The lane has its own pace: shared with resources, a resource backlog
+would hold every Channel message back until it drained. A reference is
+published as a document-phase job, never a new top-level message type, because
+an older consumer acknowledges a type it does not know and the row would be
+lost; that envelope it retries. A reader holds a Channel's `space:` group by the same
 listing rule (`spaceListing`) that decides which Channels the agent's tools
 list, so a Channel the tools offer is one whose messages search can find.
 

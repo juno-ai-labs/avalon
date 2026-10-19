@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { searchAudienceGroup } from "../services/search-audience";
 import type { SearchDocument, SearchDocumentBatch } from "../services/search-document";
+import type { SearchDocumentJob } from "../services/search-indexing-jobs";
 import { searchIndexingConfigured } from "../services/search-embedding";
 import { searchDocumentId } from "../services/text-search";
 import type { ResourceSearchPace } from "./resource-search-projection";
@@ -20,7 +21,12 @@ import { RESOURCE_SEARCH_BACKLOG_INTERVAL_MS } from "./resource-search-projectio
  * WorkspaceDO, so a version table records each message's revision and a
  * pending flag, triggers on every writer keep it, the alarm publishes
  * references in batches, and the Queue consumer calls back here for the one
- * document. The revision outlives a deleted message, so a late job for it
+ * document. Each reference goes out as a document-phase job
+ * (`search_embedding_batch_v1`), not a message type of its own: a consumer on
+ * an older build recognizes that envelope, fails to parse the reference it
+ * does not know, and retries it until a newer consumer takes it, where an
+ * unknown type would be acknowledged and lost (docs/text-search.md, "Version
+ * skew between producers and the consumer"). The revision outlives a deleted message, so a late job for it
  * writes a deletion watermark rather than restoring it.
  *
  * A row's audience is the Channel's `space:<id>` group: every reader of the
@@ -92,12 +98,19 @@ export function channelMessageSearchRevision(sql: SqlStorage, messageId: string)
 const CHANNEL_MESSAGE_SEARCH_BATCH = 100;
 
 /**
- * When the next batch is due. The pace is the resource projection's own,
- * shared: both are WorkspaceDO's search backlog, and each job calls this
- * object back once, which is the load that pace was set against.
+ * When the next batch is due, or null for an Organization held below
+ * migration 119 (the meeting-notes retirement holds some at 57), which has no
+ * table. The pace is this lane's own, at the resource lane's interval: each job
+ * calls this object back once, the load that interval was set against, and a
+ * shared pace would let a resource backlog hold every Channel message back
+ * until it drained.
  */
 export function nextChannelMessageSearchDueAt(sql: SqlStorage, env?: Env, pace?: ResourceSearchPace): number | null {
   if (env && !searchIndexingConfigured(env)) return null;
+  const present = sql.exec(
+    "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'channel_message_search_versions'",
+  ).toArray().length > 0;
+  if (!present) return null;
   const due = sql.exec<{ due_at: number | null }>(
     "SELECT MIN(not_before) AS due_at FROM channel_message_search_versions WHERE pending = 1",
   ).one().due_at;
@@ -108,16 +121,22 @@ export async function publishChannelMessageSearch(sql: SqlStorage, env: Env, wor
   pace?: ResourceSearchPace): Promise<void> {
   if (!searchIndexingConfigured(env)) return;
   if (pace && Date.now() < pace.nextBatchAt) return;
-  const rows = sql.exec<{ message_id: string; revision: number }>(
-    `SELECT message_id, revision FROM channel_message_search_versions
+  const rows = sql.exec<{ message_id: string; space_id: string; revision: number }>(
+    `SELECT message_id, space_id, revision FROM channel_message_search_versions
       WHERE pending = 1 AND not_before <= ? ORDER BY not_before, message_id LIMIT ?`,
     Date.now(), CHANNEL_MESSAGE_SEARCH_BATCH,
   ).toArray();
   if (!rows.length) return;
   try {
-    await env.ACTIVITY_QUEUE.sendBatch(rows.map((row) => ({ body: ChannelMessageSearchProjectionSchema.parse({
-      type: "channel_message_search_projection_v1", region: env.AVALON_REGION, workspaceId, messageId: row.message_id,
-    }) })));
+    const jobs = await Promise.all(rows.map(async (row): Promise<SearchDocumentJob> => ({
+      type: "search_embedding_batch_v1",
+      phase: "document",
+      reference: ChannelMessageSearchProjectionSchema.parse({
+        type: "channel_message_search_projection_v1", region: env.AVALON_REGION, workspaceId, messageId: row.message_id,
+      }),
+      documentId: await searchDocumentId(CHANNEL_MESSAGE_SEARCH_SOURCE, row.space_id, row.message_id),
+    })));
+    await env.ACTIVITY_QUEUE.sendBatch(jobs.map((body) => ({ body })));
     for (const row of rows) {
       sql.exec("UPDATE channel_message_search_versions SET pending = 0 WHERE message_id = ? AND revision = ?",
         row.message_id, row.revision);

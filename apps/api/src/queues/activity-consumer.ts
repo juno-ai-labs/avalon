@@ -8,7 +8,6 @@ import { SearchAuthorizationPushJobSchema } from '../services/search-authorizati
 import { SearchDocumentJobSchema, publishSearchIndexingJobs, SearchEmbeddingBatchSchema, type SearchSourceReference } from '../services/search-indexing-jobs';
 import { embedSearchDocuments } from '../services/search-embedding';
 import { workspaceSearchIndex, searchChunkIdentity } from '../services/text-search';
-import { ChannelMessageSearchProjectionSchema } from '../durable-objects/channel-message-search-projection';
 import { ResourceSearchProjectionSchema } from '../durable-objects/resource-search-projection';
 import { SearchConversationProjectionMessageSchema, SearchProjectionMessageSchema } from '../durable-objects/search-projection-outbox';
 import { AuthorizationProjectionJobSchema } from '../durable-objects/authorization-projection';
@@ -188,7 +187,6 @@ export async function consumeActivityQueue(batch: MessageBatch<unknown>, env: En
   const isSearch = (message: Message<unknown>) =>
     SearchChildJobTypeSchema.safeParse(message.body).success
     || ResourceSearchProjectionSchema.safeParse(message.body).success
-    || ChannelMessageSearchProjectionSchema.safeParse(message.body).success
     || SearchProjectionMessageSchema.safeParse(message.body).success
     || SearchConversationProjectionMessageSchema.safeParse(message.body).success;
   // Search shares a tokenizer and processes one document source at a time.
@@ -377,17 +375,6 @@ async function consumeOne(message: Message<unknown>, env: Env,
     const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, resource.workspaceId,
       workspaceDOName(resource.region, resource.workspaceId));
     await indexSearch(resource, () => stub.prepareResourceSearch(resource));
-    message.ack();
-    return;
-  }
-  const channelMessage = ChannelMessageSearchProjectionSchema.safeParse(message.body);
-  if (channelMessage.success) {
-    const job = channelMessage.data;
-    if (job.region !== env.AVALON_REGION) throw new Error('search_projection_region_mismatch');
-    // One document, indexed in this delivery as a resource is.
-    const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, job.workspaceId,
-      workspaceDOName(job.region, job.workspaceId));
-    await indexSearch(job, () => stub.prepareChannelMessageSearch(job));
     message.ack();
     return;
   }
