@@ -31,6 +31,7 @@ import {
   ConversationToolError,
   __conversationToolTesting,
   conversationRefusalError,
+  conversationSearchGroups,
   conversationToolAccess,
   conversationsSystemMessage,
   createConversationsPlugin,
@@ -674,6 +675,14 @@ describe("conversation_search", () => {
         text: "Who is our ICP?", textTruncated: false },
     ] });
     expect(ports.indexSearches).toEqual([{ query: "ICP", limit: 25, conversations: [own, gtm] }]);
+  });
+
+  it("asks the index for the rows of the conversations in scope, a parent admitted through its Breakout included", () => {
+    const main = { kind: "channel" as const, parentId: CHANNEL_ID, substreamId: "0" as never };
+    const breakout = { kind: "breakout" as const, parentId: CHANNEL_ID, substreamId: BREAKOUT_ID as never };
+    expect(conversationSearchGroups([breakout, main, gtm])).toEqual([
+      `conversation:${CHANNEL_ID}/${BREAKOUT_ID}`, `conversation:${CHANNEL_ID}/0`, `space:${SPACE_ID}`,
+    ]);
   });
 
   it("searches only the conversation it names", async () => {
