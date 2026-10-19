@@ -221,6 +221,12 @@ export interface WorkstreamSummary {
    */
   pendingOrigin?: 'import';
   /**
+   * Client only: the opening message as the transcript will draw it, with its
+   * mention chips and attachments, so the pending screen shows the message
+   * the person sent rather than its bare text.
+   */
+  pendingOpening?: PendingOpening;
+  /**
    * Client only: the server has described this pending row, so its fields are
    * the server's and newer than the create's own answer. See
    * `confirmPendingWorkstream`.
@@ -468,6 +474,13 @@ export interface ElicitationData {
   answer?: unknown;
   answeredByName?: string;
   createdAt?: string;
+}
+
+/** A thread's opening message before the room has it; see `pendingOpening`. */
+export interface PendingOpening {
+  text: string;
+  mentions: MessageMention[];
+  attachments: MessageAttachment[];
 }
 
 export interface MessageMention {
