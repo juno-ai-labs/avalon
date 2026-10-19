@@ -1,5 +1,6 @@
 import {
   asHarnessRunId,
+  asSubstreamId,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
@@ -12,6 +13,7 @@ import {
   WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
+import { substreamLoopId } from "../src/durable-objects/names";
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
 import { fireWorkstreamWakeup } from "../src/services/workstream-service";
@@ -24,7 +26,14 @@ import {
   resolveWakeupInstant,
   type WorkstreamWakeupRow,
 } from "../src/services/workstream-wakeup-service";
-import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  createCloudflareTestBinding,
+  createTestD1Database,
+  createTestD1PreparedStatement,
+  createTestD1Result,
+  createTestDurableObjectId,
+  createTestEnv,
+} from "./helpers/cloudflare-test";
 import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
@@ -842,6 +851,127 @@ describe("firing a due wake-up", () => {
     ) as { author_type: string; message_type: string; text_content: string };
     expect(message).toMatchObject({ author_type: "system", message_type: "system" });
     expect(message.text_content).toContain("Check the deploy");
+  });
+
+  it("starts a Breakout's wake-up in the Breakout's own loop, not Main's", async () => {
+    const { objectStore, objectStores, env, dispatches } = fixture();
+    const breakoutId = asSubstreamId("00000000-0000-4000-8000-0000000000b1");
+    const { schedule } = wakeupTools(env);
+    const scheduled = await schedule.execute(
+      { prompt: "Check the deploy", delay: "1 hour" },
+      context(),
+    );
+
+    const outcome = await fireWorkstreamWakeup(
+      executionEnvironment(env),
+      pendingRow(objectStore, (scheduled.output as { wakeupId: string }).wakeupId),
+      schedulingPort(objectStore),
+      { parentKind: "workstream", substreamId: breakoutId },
+    );
+
+    expect(outcome.fired).toBe(true);
+    expect(dispatches).toHaveLength(1);
+    expect(dispatches[0]).toMatchObject({
+      parentKind: "workstream",
+      substreamId: breakoutId,
+      loopId: substreamLoopId(WORKSTREAM_ID, breakoutId),
+    });
+    // The run's receipt is the Breakout's: Main's loop never sees it.
+    const breakoutStore = objectStores.get(`${WORKSTREAM_ID}:${breakoutId}`);
+    expect(breakoutStore && objectGet(
+      breakoutStore,
+      "SELECT origin FROM runs WHERE run_id = ?",
+      outcome.harnessRunId!,
+    )).toEqual({ origin: "scheduled_wakeup" });
+    expect(objectGet(objectStore, "SELECT run_id FROM runs WHERE run_id = ?", outcome.harnessRunId!))
+      .toBeNull();
+  });
+
+  describe("in a Sidekick run child", () => {
+    const runId = asSubstreamId("00000000-0000-4000-8000-0000000000c1");
+    const runAsUserId = asUserId("00000000-0000-4000-8000-0000000000c2");
+    const automationRun = {
+      schemaVersion: 1 as const,
+      automationId: WORKSTREAM_ID,
+      runId,
+      definitionRevision: 3,
+      trigger: { kind: "manual" as const, requestedByUserId: USER_ID },
+    };
+
+    /** The Organization object's half: whether the Sidekick lets this run go on. */
+    function withSidekick(env: Env, answer: unknown): { env: Env; asked: unknown[] } {
+      const asked: unknown[] = [];
+      const workspaces = createCloudflareTestBinding<DurableObjectNamespace>({
+        idFromName: (name: string) => createTestDurableObjectId(name),
+        get: () => ({
+          sidekickContinueRun: async (request: unknown) => {
+            asked.push(request);
+            return answer;
+          },
+        }),
+      });
+      const withWorkspaces = new Proxy(env, {
+        get: (target, property, receiver) => property === "WORKSPACE_DOS"
+          ? workspaces
+          : Reflect.get(target, property, receiver) as unknown,
+      });
+      return { env: withWorkspaces, asked };
+    }
+
+    it("continues the run that scheduled it, as the Sidekick's run-as user", async () => {
+      const { objectStore, env: base, dispatches } = fixture();
+      const { env, asked } = withSidekick(base, {
+        outcome: "continue",
+        automationRun,
+        executionPrincipal: { type: "user", userId: runAsUserId },
+        stopGeneration: 4,
+      });
+      const scheduled = await wakeupTools(env).schedule.execute(
+        { prompt: "Start the monitoring window", delay: "1 hour" },
+        context(),
+      );
+
+      const outcome = await fireWorkstreamWakeup(
+        executionEnvironment(env),
+        pendingRow(objectStore, (scheduled.output as { wakeupId: string }).wakeupId),
+        schedulingPort(objectStore),
+        { parentKind: "automation", substreamId: runId },
+      );
+
+      expect(outcome.fired).toBe(true);
+      expect(asked).toEqual([{ workspaceId: WORKSPACE_ID, automationId: WORKSTREAM_ID, runId }]);
+      expect(dispatches).toHaveLength(1);
+      expect(dispatches[0]).toMatchObject({
+        parentKind: "automation",
+        substreamId: runId,
+        loopId: substreamLoopId(WORKSTREAM_ID, runId),
+        executionPrincipal: { type: "user", userId: runAsUserId },
+        automationRun,
+        automationContinuation: { stopGeneration: 4, senderName: "Rally", source: { kind: "run" } },
+      });
+    });
+
+    it("consumes without running a wake-up the Sidekick refuses", async () => {
+      const { objectStore, env: base, dispatches } = fixture();
+      const { env } = withSidekick(base, { outcome: "refused", code: "sidekick_paused" });
+      const scheduled = await wakeupTools(env).schedule.execute(
+        { prompt: "Start the monitoring window", delay: "1 hour" },
+        context(),
+      );
+      const wakeupId = (scheduled.output as { wakeupId: string }).wakeupId;
+
+      const outcome = await fireWorkstreamWakeup(
+        executionEnvironment(env),
+        pendingRow(objectStore, wakeupId),
+        schedulingPort(objectStore),
+        { parentKind: "automation", substreamId: runId },
+      );
+
+      expect(outcome.fired).toBe(false);
+      expect(dispatches).toHaveLength(0);
+      expect(objectGet(objectStore, "SELECT status FROM workstream_wakeups WHERE wakeup_id = ?", wakeupId))
+        .toEqual({ status: "fired" });
+    });
   });
 
   it("previews a long prompt on a word boundary with a visible marker", async () => {

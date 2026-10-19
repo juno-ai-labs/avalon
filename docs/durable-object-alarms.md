@@ -478,7 +478,9 @@ a failing target a free immediate attempt.
   delaying an earlier future deadline, the agent-timer index, and the stall
   gate — an entry that ran and came back due at the same instant is deferred
   with its attempt carried across the settle-and-reinsert, while one that moved
-  itself, reported progress, or asked to wait is not. For `WorkspaceDO` it also
+  itself, reported progress, or asked to wait is not. A Breakout's due timer
+  is claimed from the Breakout's own object, never read through Main. For
+  `WorkspaceDO` it also
   pins the phase order with every derived lane due, proves a wake runs only the
   lane that is due and arms for the one it skipped, and that
   `registerAuthorizationChildren` re-arms only when it queued a delivery.
@@ -543,6 +545,12 @@ completion or failure names the phase active when the continuation ended. Do
 not join on workspace ids or alarm keys within these phase rows: neither is
 emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
+
+A `SubstreamAgent`'s `substream_scheduled_alarm_failed` and `_stalled` rows
+name the conversation in `substream_id` beside `workstream_id`. Read an
+`agent_timer` entry's row in that conversation: a Breakout or a Sidekick run
+child holds its own `workstream_wakeups`, and Main's table says nothing about
+it.
 
 ### Scoped invitation email delivery
 
