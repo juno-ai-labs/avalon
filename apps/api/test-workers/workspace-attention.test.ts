@@ -167,7 +167,7 @@ describe("WorkspaceDO attention", () => {
       });
   });
 
-  it("reports ordinary unread activity from a visible non-participant row without calling it addressed", async () => {
+  it("reports unread activity from a visible non-participant row without calling it addressed or counting it on the badge", async () => {
     await seed({
       id: "00000000-0000-7000-8000-0000000009b6",
       scope: "workspace",
@@ -188,7 +188,7 @@ describe("WorkspaceDO attention", () => {
         waitingForYou: 0,
         waitingReason: null,
         hasUnreadActivity: true,
-        readerAttentionCount: 1,
+        readerAttentionCount: 0,
       });
   });
 
@@ -212,12 +212,12 @@ describe("WorkspaceDO attention", () => {
       });
   });
 
-  it("leaves Organization-wide conversations out of a guest's count, as a guest's sidebar does", async () => {
+  it("leaves Organization-wide conversations the reader is not in out of a member's and a guest's count alike", async () => {
     await seed({ id: "00000000-0000-7000-8000-0000000009e1", scope: "workspace", participant: false, latest: 2, seen: 0 });
     await seed({ id: "00000000-0000-7000-8000-0000000009e2", latest: 2, seen: 0 });
 
     await expect(workspace().attention({ workspaceId: WORKSPACE_ID, userId: MEMBER }))
-      .resolves.toMatchObject({ readerAttentionCount: 2 });
+      .resolves.toMatchObject({ readerAttentionCount: 1 });
     await expect(workspace().attention({ workspaceId: WORKSPACE_ID, userId: MEMBER, accessClass: "guest" }))
       .resolves.toMatchObject({ readerAttentionCount: 1 });
   });

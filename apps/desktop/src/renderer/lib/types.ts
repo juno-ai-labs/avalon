@@ -155,6 +155,11 @@ export interface WorkstreamSummary {
    * that you have never been in it. Cleared by opening it.
    */
   unseen?: boolean;
+  /**
+   * This viewer takes part in Main, which is what lists it in their Threads
+   * tab. Undefined means the server did not say.
+   */
+  isParticipant?: boolean;
   firstUnreadSequenceNumber: number | null;
   lastActivityAt: string;
   createdAt?: string;

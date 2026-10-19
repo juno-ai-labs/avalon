@@ -602,6 +602,14 @@ export const WorkstreamSchema = z.object({
    * work stream whose readers have all had it for a while.
    */
   unseen: z.boolean().default(false),
+  /**
+   * Whether this viewer takes part in Main, which is what puts it in their
+   * Threads list. A workspace-scoped row is listed to everyone, so its unread
+   * is no sign it waits on this viewer; the attention count reads this to
+   * count only threads the Threads list shows. Absent means not said (an
+   * older server or a child-owned response).
+   */
+  isParticipant: z.boolean().optional(),
   firstUnreadSequenceNumber: z.number().int().nonnegative().nullable(),
   lastActivityAt: TimestampSchema,
   createdAt: TimestampSchema,

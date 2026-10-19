@@ -93,6 +93,15 @@ describe('attentionItems', () => {
     expect(summarize(items)).toEqual(['unread:Shared with me in Withheld']);
   });
 
+  it('leaves out Main of a thread the reader does not take part in, but keeps their Breakouts', () => {
+    const items = attentionItems([
+      channel('a', 'Somebody else’s thread', { hasUnread: true, isParticipant: false }),
+      channel('b', 'Mine', { hasUnread: true, isParticipant: true }),
+    ], { a: [breakout('11', 'Pulled into', { unreadCount: 1 })] });
+
+    expect(summarize(items)).toEqual(['unread:Mine', 'unread:Pulled into in Somebody else’s thread']);
+  });
+
   it('leaves out archived, system and pending rows', () => {
     expect(attentionItems([
       channel('a', 'Archived', { hasUnread: true, archivedAt: '2026-10-01T00:00:00.000Z' }),

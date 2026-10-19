@@ -4862,6 +4862,7 @@ function directoryWorkstream(
     hasUnread,
     youAreMentioned: Number(row.latest_mention_attention_ordinal ?? 0) > seen,
     unseen: row.unseen === 1,
+    isParticipant: row.is_participant === 1,
     firstUnreadSequenceNumber: firstUnread,
     lastActivityAt: iso(row.last_activity_at),
     createdAt: iso(row.source_created_at),
