@@ -455,7 +455,9 @@ audience, are in
 
 **A resource's new version** (`workspace_resource_versions`) goes to every
 socket whose person may open the Main of a thread that links the resource, the
-gate an artifact pin reads under. Only a thread's directory projection writes
+gate an artifact pin reads under, or who reads a Channel a merge shared it
+with, the gate the resource read check applies
+([`authorization.md`](authorization.md)). Only a thread's directory projection writes
 those links, so a resource only a Channel's own conversation holds is not
 announced here; that conversation's socket still sends `resource_updated`. An
 unlisted resource is never named. It covers every resource
@@ -894,6 +896,21 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-10-19 — A new version reaches a Channel's readers
+
+**What changed:** `workspace_resource_versions` also goes to each person who
+reads a Channel a merge shared the resource with (an `authorization_locations`
+row with `parent_kind = 'space'`), decided by the Channel's own `reach`.
+
+**Why:** A merge now shares its embeds with the Channel, and a reader who
+cannot open the thread opens them in the Channel's panel. Gated on threads
+alone, that panel never heard of a new version and kept showing the old one.
+
+**Consequences:** The read is by `resource_id`, which
+`authorization_locations_resource_idx` serves, and `reach` runs once per
+person and Channel. Any further place a resource can be shared needs its
+readers added here too, or its previews go stale.
 
 ### 2026-10-18 — Every new resource version reaches its open previews
 

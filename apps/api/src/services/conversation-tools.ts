@@ -323,7 +323,6 @@ export const ConversationMergeArgumentsSchema = z.strictObject({
 export const MERGE_REFUSAL_SENTENCES: Record<ConversationMergeErrorCode | "invalid_arguments", string> = {
   invalid_arguments: "The merge needs a non-empty `body` and no other fields. Fix the arguments and call once more.",
   merge_channel_not_placed: "This thread is in no Channel, so there is nowhere to merge it. Tell the person; do not retry.",
-  merge_thread_private: "Only an Organization-wide thread can merge into a Channel. Tell the person; do not retry.",
   merge_target_not_writable: "The person you are working for cannot post there, so the merge was not made. Tell them; do not retry.",
   merge_resource_not_shareable: "The artifact at `field` cannot be shared there, so nothing was merged or shared. Remove that embed or ask the person to share it, then merge again.",
   conversation_archived: "That conversation is archived, so the merge was not made. Tell the person; do not retry.",

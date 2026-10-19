@@ -1139,6 +1139,41 @@ describe("the navigation routes", () => {
     expect(await activityRows("6")).toEqual([]);
   });
 
+  it("serves a private thread's merge, without the thread but with its embeds, to a build that reads private merges, and leaves it out for one that does not", async () => {
+    const opened = await workspace().openGeneralSpace({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId("00000000-0000-7000-8000-00000000d2a7"),
+    });
+    if (!opened.ok || "absent" in opened) throw new Error("openGeneralSpace refused");
+    const threadId = "00000000-0000-7000-8000-00000000d2a8";
+    await workspace().reserveChild({
+      workspaceId: WORKSPACE_ID, parentId: threadId, substreamId: asSubstreamId("0"), kind: "main",
+      createdByUserId: OWNER, authorityGeneration: 1,
+      directory: { title: "Comp bands", description: "", scope: "personal", systemKind: null, emailAddress: null,
+        titleStatus: "settled", createdAt: "2026-10-16T00:00:00.000Z" },
+    });
+    await runInDurableObject(workspace(), (instance) => {
+      (instance as unknown as { spaceStorage(): { postMessage(spaceId: string, draft: unknown, postedAt: number): unknown } })
+        .spaceStorage().postMessage(opened.space.id, {
+          author: { kind: "member", userId: OWNER }, body: "Bands are set.", key: `merge:${threadId}`, replace: true,
+          sourceWorkstreamId: threadId, embeds: [{ id: "resource-2", title: "Comp model", kind: "document" }], operationId: "op-p",
+        }, Date.now());
+    });
+    const path = `/spaces/${opened.space.id}/feed`;
+    const merged = (body: unknown) => (body as { items: Array<{ kind: string; message?: Record<string, unknown> }> }).items
+      .flatMap((item) => (item.message?.body === "Bands are set." ? [item] : []));
+    expect(merged((await request(path, MEMBER_AUTH, undefined, "GET", "9")).body)).toEqual([expect.objectContaining({
+      message: expect.objectContaining({ merge: { threadId, title: "", summary: null, embeds: [{ id: "resource-2", title: "Comp model", kind: "document" }], private: true } }),
+    })]);
+    expect(merged((await request(path, MEMBER_AUTH, undefined, "GET", "8")).body)).toEqual([]);
+    // Activity likewise: its row, without the thread, only for a build that reads it.
+    const activityRows = async (contract: string) => ((await request("/navigation/activity", MEMBER_AUTH, undefined, "GET", contract))
+      .body as { items: Array<{ kind: string; threadTitle: string; mergedInto?: unknown }> }).items.filter((item) => item.kind === "merged");
+    expect(await activityRows("9")).toEqual([expect.objectContaining({
+      threadTitle: "", mergedInto: { channelId: opened.space.id, name: opened.space.name, threadPrivate: true },
+    })]);
+    expect(await activityRows("8")).toEqual([]);
+  });
+
   it("answers nobody who is not signed in", async () => {
     const response = await app.request("/navigation/threads", {}, routeEnv(), createExecutionContext());
     expect(response.status).toBe(401);

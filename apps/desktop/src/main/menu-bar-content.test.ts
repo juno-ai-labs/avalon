@@ -87,6 +87,19 @@ describe('menu bar content', () => {
       { key: 'm1', substreamId: null, title: 'Pricing', detail: 'Maya merged Discount call into it' },
       { key: 'm2', substreamId: null, title: 'Pricing', detail: 'Maya merged it into GTM' },
     ]);
+    // A thread's merge opens the Channel it landed in.
+    expect(content.attention[1]?.channelId).toBe('00000000-0000-7000-8000-0000000000c1');
+    expect(content.attention[0]?.channelId).toBeUndefined();
+  });
+
+  it('names a Channel, not the thread, for a merge from a thread its reader cannot open', () => {
+    const content = menuBarContent(quietDirectory, activity([
+      activityItem('m3', { kind: 'merged', actorLabel: 'Maya', threadTitle: '', breakout: null,
+        mergedInto: { channelId: '00000000-0000-7000-8000-0000000000c1', name: 'GTM', threadPrivate: true } }),
+    ]));
+    expect(content.attention.map(({ title, detail, channelId }) => ({ title, detail, channelId }))).toEqual([
+      { title: 'GTM', detail: 'Maya merged a private thread into it', channelId: '00000000-0000-7000-8000-0000000000c1' },
+    ]);
   });
 
   it('leads a pinned artifact\'s update with the artifact, naming its thread, and opens the thread', () => {

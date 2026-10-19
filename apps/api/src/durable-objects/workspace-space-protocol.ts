@@ -853,7 +853,6 @@ const ChannelMergeRefusalSchema = z.strictObject({
     "space_access_denied",
     "workstream_not_found",
     "conversation_archived",
-    "merge_thread_private",
     "merge_channel_not_placed",
     "merge_target_not_writable",
   ]),
@@ -888,7 +887,7 @@ export const WorkspaceThreadMergePlacementResultSchema = z.union([
   z.strictObject({ ok: z.literal(true), spaceId: SpaceIdSchema, title: z.string() }),
   z.strictObject({
     ok: z.literal(false),
-    code: z.enum(["workstream_not_found", "conversation_archived", "merge_thread_private", "merge_channel_not_placed"]),
+    code: z.enum(["workstream_not_found", "conversation_archived", "merge_channel_not_placed"]),
   }),
 ]);
 export type WorkspaceThreadMergePlacementResult = z.infer<typeof WorkspaceThreadMergePlacementResultSchema>;
@@ -896,6 +895,11 @@ export type WorkspaceThreadMergePlacementResult = z.infer<typeof WorkspaceThread
 /** `mergeThreadIntoChannel`: post or replace this thread's merge in one of its Channels. */
 export const WorkspaceChannelMergeRequestSchema = WorkspaceChannelMergeTargetRequestSchema.extend({
   body: z.string().trim().min(1).max(MESSAGE_MAX_CHARACTERS),
+  /**
+   * What the body embeds, resolved and checked by the caller
+   * (`resolveShareableResources`); WorkspaceDO links every one to the Channel
+   * in the merge's own commit.
+   */
   embeds: z.array(MergeEmbedSchema),
   operationId: z.string().min(1).max(200),
 }).strict();
@@ -908,6 +912,8 @@ export const WorkspaceChannelMergeResultSchema = z.union([
     name: z.string(),
     messageId: z.string().uuid(),
     replayed: z.boolean(),
+    /** The resources this merge newly shared with the Channel. */
+    linked: z.array(z.string()),
   }),
   ChannelMergeRefusalSchema,
 ]);

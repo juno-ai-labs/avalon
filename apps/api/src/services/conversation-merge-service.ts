@@ -24,6 +24,7 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { ConversationService } from "./conversation-service";
 import type { WorkstreamObjectClient } from "./workstream-object-client";
+import { mergeEmbedsOf, resolveShareableResources } from "./resource-share-rules";
 
 /**
  * A refused merge: one of {@link ConversationMergeErrorCode}, with only the
@@ -41,7 +42,6 @@ export class ConversationMergeRefusal extends ApiError {
 
 const MERGE_REFUSAL_STATUS = {
   merge_channel_not_placed: 409,
-  merge_thread_private: 409,
   merge_target_not_writable: 403,
   merge_resource_not_shareable: 403,
   conversation_archived: 409,
@@ -50,7 +50,6 @@ const MERGE_REFUSAL_STATUS = {
 
 const MERGE_REFUSAL_MESSAGE: Record<ConversationMergeErrorCode, string> = {
   merge_channel_not_placed: "That channel does not hold this thread",
-  merge_thread_private: "Only an Organization-wide thread can merge into a channel",
   merge_target_not_writable: "You cannot post there",
   merge_resource_not_shareable: "An embedded artifact cannot be shared there",
   conversation_archived: "That conversation is archived",
@@ -211,19 +210,26 @@ export class ConversationMergeService {
 
   private async mergeIntoChannel(threadId: string, request: ConversationMergeRequest): Promise<ConversationMergeResult> {
     const conversations = new ConversationService(this.env, this.auth);
-    const [main, target] = await Promise.all([
+    // Admission: the person can post in the thread's Main, and in the Channel.
+    const [, target] = await Promise.all([
       conversations.writableClient(threadId, "0").catch((error: unknown) => {
         throw refusalFor(error, "conversation_access_denied");
       }),
       this.channelTarget(threadId, request.channelId ?? null),
     ]);
-    const shared = await attachEmbeds(main, request.body);
+    // The embeds are shared with the Channel, not the thread: whoever reads
+    // the Channel opens them, whether or not they can open the thread. They
+    // pass the rules every attach and merge applies.
+    const shareable = await resolveShareableResources(this.env, this.auth, mergeResourceIds(request.body), { readCheck: true });
+    if (!shareable.ok) {
+      throw new ConversationMergeRefusal("merge_resource_not_shareable", { field: `body.resources[${shareable.index}]` });
+    }
     const merged = await (await this.workspace()).mergeThreadIntoChannel({
       auth: this.actor(),
       workstreamId: asWorkstreamId(threadId),
       spaceId: asSpaceId(target.id),
       body: request.body,
-      embeds: shared.resources,
+      embeds: mergeEmbedsOf(shareable.rows),
       operationId: request.clientMessageId,
     });
     if (!merged.ok) throw channelRefusal(merged.code, merged.channels);
@@ -231,7 +237,7 @@ export class ConversationMergeService {
       mergedInto: { kind: "channel", id: merged.spaceId, title: merged.name },
       messageId: merged.messageId,
       replayed: merged.replayed,
-      sharedResourceIds: shared.linked,
+      sharedResourceIds: merged.linked,
     };
   }
 
@@ -280,7 +286,7 @@ function refusalFor(error: unknown, notFound: ConversationMergeErrorCode): unkno
 }
 
 function channelRefusal(
-  code: "space_access_denied" | "workstream_not_found" | "conversation_archived" | "merge_thread_private"
+  code: "space_access_denied" | "workstream_not_found" | "conversation_archived"
     | "merge_channel_not_placed" | "merge_target_not_writable",
   channels: ConversationMergeChannel[],
 ): ConversationMergeRefusal {

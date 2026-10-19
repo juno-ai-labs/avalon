@@ -134,7 +134,8 @@ class AuthorizationBatch {
       revision: membership.active ? (membership.guest ? 'guest:active' : 'member:active') : 'inactive', validatedAt: membership.validatedAt };
     const resourceIds = requested.flatMap((entry) => entry.resource.kind === 'resource' ? [entry.resource.resourceId] : []);
     const facts = membership.active && resourceIds.length
-      ? atBatchReceipt(await workspace.authorizationResourceFacts({ workspaceId: subject.workspaceId, userId: subject.userId, resourceIds })) : [];
+      ? atBatchReceipt(await workspace.authorizationResourceFacts({ workspaceId: subject.workspaceId, userId: subject.userId, resourceIds,
+        accessClass: membership.guest ? 'guest' : 'member' })) : [];
     const factsById = new Map(facts.map((value) => [value.resourceId, value]));
     // Gather the whole batch before reading an owner, including attachment locations.
     const addScope = (parentId: string, substreamId: string) => {
@@ -270,6 +271,11 @@ class AuthorizationBatch {
     ] };
     const baseDecision = evaluateReadPolicy(base, Date.now());
     if (baseDecision.status !== 'allowed' || (!facts.requiresAttachment && (!this.guest || facts.owned))) return baseDecision;
+    if (facts.sharedThrough !== null) {
+      return evaluateReadPolicy({ kind: 'all', policies: [base, fact(true, 'resource_not_shared', {
+        owner: `space:${facts.sharedThrough}/resources`, revision: facts.revision, validatedAt: facts.validatedAt,
+      })] }, Date.now());
+    }
     let incomplete = false;
     for (const location of facts.locations) {
       // Do not await a top-level batch that may itself contain this conversation.

@@ -36,6 +36,11 @@ export interface ActivityPushSubject {
   userId?: string | undefined;
   /** The Activity row, on `merge` and `artifact` only. */
   itemId?: string | undefined;
+  /**
+   * On a thread's merge into a Channel: the Channel. Its readers are told,
+   * whether or not they can open the thread, as its feed shows them the merge.
+   */
+  channelId?: string | undefined;
 }
 
 /** The kinds of row a subject can push. A join pushes the start alone. */
@@ -103,6 +108,17 @@ export class WorkspaceActivityPushes {
       if (subject.kind === "joined" || subject.kind === "artifact") {
         if (subject.userId) userIds.add(subject.userId);
         continue;
+      }
+      if (subject.kind === "merge" && subject.channelId) {
+        const space = this.storage.sql.exec<{ scope: string } & Record<string, SqlStorageValue>>(
+          `SELECT scope FROM spaces WHERE space_id = ?`, subject.channelId,
+        ).toArray()[0];
+        if (space?.scope === "workspace") return { everyone: true, userIds: [] };
+        // A private Channel's participants; anyone else who reads it, through
+        // the thread, is among the thread's viewers below.
+        for (const row of this.storage.sql.exec<{ user_id: string }>(
+          `SELECT user_id FROM space_viewers WHERE space_id = ? AND is_participant = 1`, subject.channelId,
+        ).toArray()) userIds.add(row.user_id);
       }
       if (subject.kind === "start" || subject.kind === "merge") {
         const row = subject.substreamId === null

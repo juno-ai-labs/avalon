@@ -24,7 +24,12 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 
 import type { HonoAppEnv } from "../env";
-import { clientReadsChannelMerges, clientReadsChannelMessages, clientReadsIndividualSpaces } from "../lib/client-contract";
+import {
+  clientReadsChannelMerges,
+  clientReadsChannelMessages,
+  clientReadsIndividualSpaces,
+  clientReadsPrivateChannelMerges,
+} from "../lib/client-contract";
 import { requestDeferral } from "../lib/defer";
 import { getAuth, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
@@ -97,7 +102,8 @@ spaceReadRoutes.get(
  * A Channel's feed: the threads placed in it and Rally's messages, newest
  * first; see `ChannelFeedItemSchema`. A desktop that predates messages is
  * served the feed without them, and one that predates merges is served each
- * merge as a plain message, since it parses the union strictly.
+ * merge as a plain message, since it parses the union strictly. One that
+ * predates private merges is served the feed without them.
  */
 spaceReadRoutes.get(
   "/:id/feed",
@@ -112,11 +118,13 @@ spaceReadRoutes.get(
     const header = (name: string) => c.req.header(name);
     const messages = clientReadsChannelMessages(header);
     const merges = clientReadsChannelMerges(header);
+    const privateMerges = clientReadsPrivateChannelMerges(header);
     return c.json(ChannelFeedPageSchema.parse({
       ...page,
       items: page.items.flatMap((item): ChannelFeedPage["items"] => {
         if (item.kind !== "message") return [item];
         if (!messages) return [];
+        if (item.message.merge?.private && !privateMerges) return [];
         if (merges) return [item];
         // An older build parses both strictly: a merge reaches it as a plain
         // message from the person who merged.

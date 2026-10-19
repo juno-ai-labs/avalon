@@ -1,7 +1,7 @@
-import { createAccessContext, requireAuthorizedRead } from "../services/authorization-service";
+import { mergeEmbedsOf, resolveShareableResources } from "../services/resource-share-rules";
 import { stableUuid } from "../lib/stable-uuid";
 import { AGENT_MESSAGE_CONTENT_KIND, ConversationInitializationSchema, ImportedMessageProvenanceSchema, PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
-import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, type WorkstreamAppearancePatch } from "@rally/contracts";
+import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, type MergeEmbed, type WorkstreamAppearancePatch } from "@rally/contracts";
 import { renderAgentMessage } from "../services/agent-message-content";
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
 import {
@@ -3247,7 +3247,7 @@ export class WorkstreamObjectProductService {
     | {
       ok: true;
       linked: string[];
-      resources: Array<{ id: string; slug?: string; title: string; kind: string }>;
+      resources: MergeEmbed[];
       /** The newly linked resources as the rail reads them, for its live event. */
       attached: WorkstreamResource[];
     }
@@ -3255,41 +3255,12 @@ export class WorkstreamObjectProductService {
   > {
     await this.authorize(auth);
     // A citation names a resource by its UUID or by its alias
-    // (resource-slug.ts); both resolve to the one row.
-    const tokens = [...new Set(resourceTokens)];
-    if (tokens.length === 0) return { ok: true, linked: [], resources: [], attached: [] };
-    const byToken = new Map<string, Record<string, unknown>>();
-    for (const token of tokens) {
-      // One keyed read each: an embed list is a handful of links in one
-      // message, and the reads are the same statement `attachResource` runs.
-      const row = await this.workspaceDatabase(auth.workspaceId).prepare(
-        `SELECT resource.*, connection.scope AS connection_scope,
-                connection.owner_user_id
-           FROM resources resource
-           LEFT JOIN connector_connections connection ON connection.id = resource.connection_id
-          WHERE (resource.id = ? OR resource.slug = ?) AND resource.workspace_id = ?`,
-      ).bind(token, token, auth.workspaceId).first<Record<string, unknown>>();
-      if (row) byToken.set(token, row);
-    }
-    const access = auth.role === null ? createAccessContext(this.env, auth) : null;
-    for (const [index, token] of tokens.entries()) {
-      const resource = byToken.get(token);
-      if (!resource) return { ok: false, index, code: "resource_not_found" };
-      const resourceId = String(resource.id);
-      if (access) {
-        const decision = await access.check({ kind: "resource", workspaceId: auth.workspaceId, resourceId });
-        // Unavailable is not a refusal: it throws, so the merge can be retried.
-        if (decision.status === "unavailable") requireAuthorizedRead(decision);
-        if (decision.status !== "allowed") return { ok: false, index, code: "resource_access_denied" };
-      }
-      if (resource.connection_scope === "personal" && resource.owner_user_id !== auth.userId) {
-        return { ok: false, index, code: "resource_access_denied" };
-      }
-      if (resource.provider === "avalon_upload" && resource.attachment_status !== "attached") {
-        return { ok: false, index, code: "attachment_draft_requires_message" };
-      }
-    }
-    const rows = new Map([...byToken.values()].map((row) => [String(row.id), row]));
+    // (resource-slug.ts); both resolve to the one row. A merge shares only
+    // what its author may read (resource-share-rules.ts).
+    if (resourceTokens.length === 0) return { ok: true, linked: [], resources: [], attached: [] };
+    const resolved = await resolveShareableResources(this.env, auth, resourceTokens, { readCheck: true });
+    if (!resolved.ok) return { ok: false, index: resolved.index, code: resolved.code };
+    const rows = resolved.rows;
     const ids = [...rows.keys()];
     this.locallyAuthorizedRoot(auth);
     const present = new Set(this.storage.sql.exec<{ resource_id: string } & Record<string, SqlStorageValue>>(
@@ -3342,41 +3313,24 @@ export class WorkstreamObjectProductService {
       ok: true,
       linked,
       attached,
-      resources: ids.map((id) => {
-        const row = rows.get(id)!;
-        return {
-          id,
-          ...(row.slug == null ? {} : { slug: String(row.slug) }),
-          title: String(row.title).slice(0, 500),
-          kind: String(row.resource_type).slice(0, 100),
-        };
-      }),
+      resources: mergeEmbedsOf(rows),
     };
   }
 
   async attachResource(auth: AuthContext, resourceId: string): Promise<WorkstreamResource> {
     await this.authorize(auth);
-    const resource = await this.workspaceDatabase(auth.workspaceId).prepare(
-      `SELECT resource.*, connection.scope AS connection_scope,
-              connection.owner_user_id
-         FROM resources resource
-         LEFT JOIN connector_connections connection ON connection.id = resource.connection_id
-        WHERE resource.id = ? AND resource.workspace_id = ?`,
-    ).bind(resourceId, auth.workspaceId).first<Record<string, unknown>>();
-    if (!resource) throw new ApiError(404, "resource_not_found", "Resource not found");
     // Product dispatch has reloaded this relationship. Preserve the existing
     // member attachment path; guests additionally need an existing shared
     // exposure, established by the ordinary resource authorizer.
-    if (auth.role === null) {
-      const access = createAccessContext(this.env, auth);
-      requireAuthorizedRead(await access.check({ kind: "resource", workspaceId: auth.workspaceId, resourceId }));
-    }
-    if (resource.connection_scope === "personal" && resource.owner_user_id !== auth.userId) {
+    const resolved = await resolveShareableResources(this.env, auth, [resourceId], { readCheck: auth.role === null });
+    if (!resolved.ok) {
+      if (resolved.code === "resource_not_found") throw new ApiError(404, "resource_not_found", "Resource not found");
+      if (resolved.code === "attachment_draft_requires_message") {
+        throw new ApiError(409,"attachment_draft_requires_message","Send this upload with a message before attaching it as an existing resource");
+      }
       throw new ApiError(403, "resource_access_denied", "This personal resource is not available to the thread");
     }
-    if (resource.provider === "avalon_upload" && resource.attachment_status !== "attached") {
-      throw new ApiError(409,"attachment_draft_requires_message","Send this upload with a message before attaching it as an existing resource");
-    }
+    const resource = [...resolved.rows.values()][0]!;
     this.locallyAuthorizedRoot(auth);
     const descriptor = {
       id: resourceId,

@@ -10,7 +10,7 @@
  * write hook that drains the ledger runs as it does in production.
  */
 import { env } from "cloudflare:workers";
-import { reset } from "cloudflare:test";
+import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -30,6 +30,7 @@ import {
   type ParentEffect,
 } from "@rally/contracts/conversation-effects";
 
+import { linkSpaceResources } from "../src/durable-objects/authorization-storage";
 import { workspaceDOName } from "../src/durable-objects/names";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000e300");
@@ -304,6 +305,24 @@ describe("workspace_resource_versions", () => {
       expect(member.heads.flat().map((head) => head.version)).toEqual([2, 3]);
       expect(member.pins).toEqual([[[REPORT, 3, true]]]);
     });
+  });
+
+  it("tells a reader of a Channel a merge shared a resource with, though they cannot open its thread", async () => {
+    const reserved = await workspace().reserveSpace({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      space: { name: "Pricing", iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
+    });
+    if (!reserved.ok) throw new Error(`reserveSpace refused: ${reserved.code}`);
+    // What a merge writes for each embed it shares.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      linkSpaceResources(state.storage.sql, reserved.space.id, [COMP_TABLE]);
+    });
+    const member = await connect(MEMBER);
+
+    await republish(COMP_TABLE, "v2", 7, "2026-10-18T01:00:00.000Z");
+
+    await vi.waitFor(() => expect(member.heads.flat().map((head) => head.resourceId)).toEqual([COMP_TABLE]));
   });
 
   it("leaves out an unlisted resource, which no conversation advertises", async () => {

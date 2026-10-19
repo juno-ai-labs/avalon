@@ -51,7 +51,7 @@ import { breakoutResourceActions } from '../lib/breakout-resource-actions';
 import { ApiError, type MentionIdentity } from '../lib/api';
 import { useChannelRail } from '../lib/channel-rails';
 import { readDraftText, writeDraftText } from '../lib/draft-cache';
-import { IconCheck, IconChevronDown, IconCloudDownload, IconCornerDownRight, IconCornerUpLeft } from '@tabler/icons-react';
+import { IconCheck, IconChevronDown, IconCloudDownload, IconCornerDownRight, IconCornerUpLeft, IconLock } from '@tabler/icons-react';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useBrowserRailLinks } from '../lib/browser-rail-links';
@@ -101,7 +101,7 @@ import { useTranscriptHistory } from '../lib/use-transcript-history';
 import { useVirtualScrollAnchor } from '../lib/use-virtual-scroll-anchor';
 import { resolveFeedOpenSource, useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
-import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
+import { useSiteArtifacts } from '../lib/use-site-artifacts';
 import { ActivityPresence, InferenceDelayNotice, JumpToLatestButton } from '../components/conversation-follow';
 import { openRailAtEvenSplit, restoreRail, useRailFillsPane } from '../lib/rail-split';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
@@ -1129,13 +1129,18 @@ const TRANSCRIPT_SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageD
 /** Where this conversation's Merge goes, or null when nothing here can merge. */
 export type MergeTarget =
   | { kind: 'thread'; threadTitle: string }
-  | { kind: 'channel'; channels: Array<{ id: string; name: string; scope: SpaceSummary['scope'] }> };
+  | {
+    kind: 'channel';
+    channels: Array<{ id: string; name: string; scope: SpaceSummary['scope'] }>;
+    /** The thread is private: the Channel sees its merge without the thread's name. */
+    threadPrivate: boolean;
+  };
 
 /**
  * A Breakout merges into its Thread. A Thread's Main merges into one of its
- * Channels, when it is Organization-wide and in a Channel this person can see:
- * the server's rule, asked here only so a Merge that would be refused is not
- * offered. A Sidekick's conversation merges nowhere.
+ * Channels this person can post in, private or not: the server's rule, asked
+ * here only so a Merge that would be refused is not offered. A Sidekick's
+ * conversation merges nowhere.
  */
 export function mergeTargetFor(input: {
   parentKind: ConversationParentKind;
@@ -1150,7 +1155,7 @@ export function mergeTargetFor(input: {
 }): MergeTarget | null {
   if (input.parentKind !== 'workstream' || !input.thread) return null;
   if (input.substreamId !== '0') return { kind: 'thread', threadTitle: input.thread.title };
-  if (input.guest || input.thread.scope !== 'workspace') return null;
+  if (input.guest) return null;
   const byId = new Map(input.spaces.map((space) => [space.id as string, space]));
   // A Channel reached only through a thread in it is read-only to this
   // person, and the server refuses a merge there.
@@ -1165,7 +1170,7 @@ export function mergeTargetFor(input: {
     const rank = (id: string): number => { const at = input.order!.indexOf(id); return at < 0 ? input.order!.length : at; };
     channels.sort((a, b) => rank(a.id) - rank(b.id));
   }
-  return channels.length > 0 ? { kind: 'channel', channels } : null;
+  return channels.length > 0 ? { kind: 'channel', channels, threadPrivate: input.thread.scope !== 'workspace' } : null;
 }
 
 /** What a Merge action reads as: "Merge to thread", or the default Channel's name. */
@@ -1173,12 +1178,11 @@ export function mergeLabel(target: MergeTarget): string {
   return target.kind === 'thread' ? 'Merge to thread' : `Merge to ${target.channels[0]!.name}`;
 }
 
-/** The merge composer's audience line: who will see it, and who can open what it embeds. */
 /**
- * The merge composer's audience line: who will see it, and who can open what
- * it embeds, named when the conversation knows them. A thread's merge into a
- * Channel that is not Organization-wide is the one case where the second
- * audience is wider than the first, so it says so.
+ * The merge composer's audience line: who will see it and open what it embeds,
+ * named when the conversation knows them. A merge shares its embeds with its
+ * parent, so the two audiences are one. A private thread's merge into a
+ * Channel also says the thread's name stays hidden.
  */
 export function mergeAudience(
   target: MergeTarget,
@@ -1195,12 +1199,9 @@ export function mergeAudience(
     return named ? `${who} will see this and can open ${named}.` : `${who} will see this.`;
   }
   if (!channel) return '';
-  if (channel.scope === 'workspace') {
-    return named ? `Everyone in ${channel.name} will see this and can open ${named}.` : `Everyone in ${channel.name} will see this.`;
-  }
-  return named
-    ? `People in ${channel.name} will see this. Everyone in your organization can open ${named}.`
-    : `People in ${channel.name} will see this.`;
+  const who = channel.scope === 'workspace' ? `Everyone in ${channel.name}` : `People in ${channel.name}`;
+  const sees = named ? `${who} will see this and can open ${named}` : `${who} will see this`;
+  return target.threadPrivate ? `${sees}, but not the thread’s name.` : `${sees}.`;
 }
 
 /** The titles of the artifacts a merge draft cites, as this conversation knows them. */
@@ -1257,7 +1258,6 @@ function mergeFailureMessage(error: unknown): string {
   if (error instanceof ApiError) {
     switch (error.code) {
       case 'merge_channel_not_placed': return 'That channel no longer holds this thread.';
-      case 'merge_thread_private': return 'Only an organization-wide thread can merge into a channel.';
       case 'merge_target_not_writable': return 'You can’t post there.';
       case 'merge_resource_not_shareable': return 'An embedded artifact can’t be shared there, so nothing was merged.';
       case 'conversation_archived': return 'That conversation is archived.';
@@ -1396,10 +1396,9 @@ export function ConversationSurface({
   const requestedSearch = useRef<string | null>(null);
 
   const { api, session } = useCollaborationSession();
-  const { host, guest } = useShellCapabilities();
+  const { guest } = useShellCapabilities();
   const workspaceSocket = useOptionalWorkspaceSocket();
   const presenceUserIdsByWorkstream = workspaceSocket?.presenceUserIdsByWorkstream ?? NO_WORKSPACE_PRESENCE;
-  const featureFlags = useClientFeatureFlags(api);
   const queryClient = useQueryClient();
   const closeRail = useUiStore((state) => state.closeRail);
   const inspect = useUiStore((state) => state.inspect);
@@ -1680,9 +1679,9 @@ export function ConversationSurface({
     orderedTranscript.data,
   );
   const routedDetail = payloadBelongsToRoute ? workstream.data : undefined;
-  // Only an Organization-wide thread's Main merges into a Channel; nothing else asks.
+  // Only a thread's Main merges into a Channel; nothing else asks.
   const mergeChannelOrder = useMergeChannelOrder(api, id,
-    parentKind === 'workstream' && substreamId === '0' && !guest && routedDetail?.scope === 'workspace');
+    parentKind === 'workstream' && substreamId === '0' && !guest && routedDetail !== undefined);
   const feedSource = useQuery<WorkstreamFeedSource | null>({
     queryKey: workstreamFeedSourceQueryKey(id, substreamId),
     queryFn: async () => null,
@@ -1738,39 +1737,7 @@ export function ConversationSurface({
     },
     [api],
   );
-  /**
-   * Everything the live-artifact detail needs, or `undefined`.
-   *
-   * `undefined` is how the feature is off — the rail then renders a site as the
-   * ordinary resource card, which still lists, versions, and removes it. The
-   * flag gates presentation only: an artifact's authorization is structural and
-   * holds whether or not this is passed.
-   */
-  const browserHost = host === 'browser';
-  const siteArtifacts = useMemo(() => {
-    if (!api || featureFlags.data?.liveArtifactsEnabled !== true) return undefined;
-    const bridge = window.rally ?? (browserHost ? desktopBridge() : undefined);
-    if (!bridge) return undefined;
-    return {
-      openArtifact: (resourceId: string) => api.openArtifact(resourceId),
-      describeData: (resourceId: string) => api.describeArtifactData(resourceId),
-      loadTable: (resourceId: string, table: string) => api.readArtifactTable(resourceId, table),
-      surface: {
-        present: bridge.presentArtifactPreview,
-        setBounds: bridge.setArtifactPreviewBounds,
-        snapshot: bridge.snapshotArtifactPreview,
-        close: bridge.closeArtifactPreview,
-        popOut: bridge.popOutArtifact,
-        copyText: bridge.copyText,
-        openExternal: bridge.openExternal,
-        // A browser has no main process to composite a view: it frames the
-        // artifact instead. allow-same-origin keeps the artifact in its own
-        // origin (not an opaque one), which its code redemption needs; the
-        // frame still cannot navigate the app or open popups.
-        ...(browserHost ? { framed: true as const } : {}),
-      },
-    };
-  }, [browserHost, api, featureFlags.data?.liveArtifactsEnabled]);
+  const siteArtifacts = useSiteArtifacts(api);
   useEffect(() => {
     if (!resourcePanel) return;
     const resourceOwner = resourcePanel.workstreamScoped
@@ -3330,8 +3297,12 @@ export function ConversationSurface({
     onCancel={() => setMergeCard(null)}
     onChange={changeMergeDraft}
     onSubmit={() => submitMergeFromCard(mergeDraft)}
-    quote={merge.kind === 'channel' ? ((visibleTranscript.find((message) => message.authorType === 'human' && message.text)?.text ?? '').split('\n')[0] ?? null) : null}
-    source={{ mark: <IconCornerDownRight aria-hidden="true" size={10} stroke={2} />, title: displayedDetail.title }}
+    // A private thread's merge is drawn as the Channel's other readers will
+    // see it: from a private thread, with no name and no quote line.
+    quote={merge.kind === 'channel' && !merge.threadPrivate ? ((visibleTranscript.find((message) => message.authorType === 'human' && message.text)?.text ?? '').split('\n')[0] ?? null) : null}
+    source={merge.kind === 'channel' && merge.threadPrivate
+      ? { mark: <IconLock aria-hidden="true" size={10} stroke={2} />, title: 'Private thread' }
+      : { mark: <IconCornerDownRight aria-hidden="true" size={10} stroke={2} />, title: displayedDetail.title }}
     submitting={merging}
     targetName={mergeTargetName ?? ''}
     targetPill={<MergeTargetPill
