@@ -165,6 +165,8 @@ interface ChannelMessageRow extends Record<string, SqlStorageValue> {
   source_title: string | null;
   source_description: string | null;
   embeds_json: string | null;
+  /** Whether this reader may open the thread a merge came from; null for any other message. */
+  source_openable: number | null;
 }
 
 const SPACE_ICON_FALLBACK = "briefcase";
@@ -1303,23 +1305,22 @@ export class WorkspaceSpaceStorage {
    * The thread's current, unarchived placements in placement order, each with
    * whether this viewer may post in it (any reach but `through_channel`).
    * Without `spaceId` the target is the earliest one, the Channel the thread
-   * was started in unless it was taken out. Only an Organization-wide thread
-   * merges into a Channel.
+   * was started in unless it was taken out. A private thread merges too: the
+   * Channel's readers who cannot open it see the result without its name.
    */
   channelMergeTarget(viewer: Viewer, workstreamId: string, spaceId: string | null):
     | { ok: true; spaceId: string; name: string; channels: Array<{ id: string; name: string }> }
     | {
       ok: false;
-      code: "workstream_not_found" | "conversation_archived" | "merge_thread_private" | "merge_channel_not_placed" | "merge_target_not_writable";
+      code: "workstream_not_found" | "conversation_archived" | "merge_channel_not_placed" | "merge_target_not_writable";
       channels: Array<{ id: string; name: string }>;
     } {
-    const thread = this.storage.sql.exec<{ scope: string; archived_at: number | null } & Record<string, SqlStorageValue>>(
-      "SELECT scope, archived_at FROM channels WHERE workstream_id = ?",
+    const thread = this.storage.sql.exec<{ archived_at: number | null } & Record<string, SqlStorageValue>>(
+      "SELECT archived_at FROM channels WHERE workstream_id = ?",
       workstreamId,
     ).toArray()[0];
     if (thread === undefined) return { ok: false, code: "workstream_not_found", channels: [] };
     if (thread.archived_at !== null) return { ok: false, code: "conversation_archived", channels: [] };
-    if (thread.scope !== "workspace") return { ok: false, code: "merge_thread_private", channels: [] };
     const placed = this.storage.sql.exec<{ space_id: string; title: string } & Record<string, SqlStorageValue>>(
       `SELECT space.space_id, space.title
          FROM space_channel_memberships membership
@@ -1346,14 +1347,13 @@ export class WorkspaceSpaceStorage {
    */
   threadMergePlacement(workstreamId: string):
     | { ok: true; spaceId: string; title: string }
-    | { ok: false; code: "workstream_not_found" | "conversation_archived" | "merge_thread_private" | "merge_channel_not_placed" } {
-    const thread = this.storage.sql.exec<{ scope: string; archived_at: number | null } & Record<string, SqlStorageValue>>(
-      "SELECT scope, archived_at FROM channels WHERE workstream_id = ?",
+    | { ok: false; code: "workstream_not_found" | "conversation_archived" | "merge_channel_not_placed" } {
+    const thread = this.storage.sql.exec<{ archived_at: number | null } & Record<string, SqlStorageValue>>(
+      "SELECT archived_at FROM channels WHERE workstream_id = ?",
       workstreamId,
     ).toArray()[0];
     if (thread === undefined) return { ok: false, code: "workstream_not_found" };
     if (thread.archived_at !== null) return { ok: false, code: "conversation_archived" };
-    if (thread.scope !== "workspace") return { ok: false, code: "merge_thread_private" };
     const placed = this.storage.sql.exec<{ space_id: string; title: string } & Record<string, SqlStorageValue>>(
       `SELECT space.space_id, space.title
          FROM space_channel_memberships membership
@@ -2394,12 +2394,15 @@ export class WorkspaceSpaceStorage {
     // placements by time and then id: one order across both, so a cursor from
     // either kind of row resumes the other correctly.
     //
-    // A message about a thread (a merge) shows only to who can open that
-    // thread, the placement seek's own predicate, through a primary-key join.
+    // A message about a thread (a merge) shows to every reader of the
+    // Channel. Whether this reader may open that thread, the placement seek's
+    // own predicate through a primary-key join, decides only whether the
+    // thread's name and the merge's embeds go with it.
     const messages = this.storage.sql.exec<ChannelMessageRow>(
       `SELECT m.message_id, m.author_kind, m.author_user_id, m.body, m.posted_at,
               m.attention_ordinal, m.source_workstream_id, m.embeds_json,
-              directory.title AS source_title, directory.description AS source_description
+              directory.title AS source_title, directory.description AS source_description,
+              ${mainOpenableSql("directory", "viewer", viewer.accessClass)} AS source_openable
          FROM space_messages m
          LEFT JOIN channels directory
            ON directory.workstream_id = m.source_workstream_id
@@ -2408,9 +2411,7 @@ export class WorkspaceSpaceStorage {
           AND viewer.user_id = ?5
           AND viewer.authority_generation = directory.authority_generation
         WHERE m.space_id = ?1
-          AND (m.source_workstream_id IS NULL
-               OR (directory.workstream_id IS NOT NULL
-                   AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}))
+          AND (m.source_workstream_id IS NULL OR directory.workstream_id IS NOT NULL)
           AND (?2 IS NULL OR m.posted_at < ?2 OR (m.posted_at = ?2 AND m.message_id > ?3))
         ORDER BY m.posted_at DESC, m.message_id
         LIMIT ?4`,
@@ -2674,16 +2675,10 @@ export class WorkspaceSpaceStorage {
                ON reads.space_id = m.space_id AND reads.user_id = ?1
              LEFT JOIN channels directory
                ON directory.workstream_id = m.source_workstream_id
-             LEFT JOIN channel_viewers viewer
-               ON viewer.workstream_id = directory.workstream_id
-              AND viewer.user_id = ?1
-              AND viewer.authority_generation = directory.authority_generation
             WHERE m.attention_ordinal IS NOT NULL
               AND m.attention_ordinal
                   > COALESCE(reads.seen_attention_ordinal, space.unread_tracking_start_ordinal)
-              AND (m.source_workstream_id IS NULL
-                   OR (directory.workstream_id IS NOT NULL
-                       AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}))
+              AND (m.source_workstream_id IS NULL OR directory.workstream_id IS NOT NULL)
               AND m.space_id IN (${chunk.map(() => "?").join(", ")})
             GROUP BY m.space_id`,
           viewer.userId,
@@ -5645,7 +5640,15 @@ function channelMessage(row: ChannelMessageRow): ChannelMessage {
     author: row.author_kind === "member" ? { kind: "member", userId: asUserId(row.author_user_id!) } : { kind: "rally" },
     body: row.body,
     ...(row.source_workstream_id === null ? {} : {
-      merge: {
+      // A reader who cannot open the thread is told nothing about it: not its
+      // name, its prompt, or the artifacts the merge attached to it.
+      merge: row.source_openable !== 1 ? {
+        threadId: asWorkstreamId(row.source_workstream_id),
+        title: "",
+        summary: null,
+        embeds: [],
+        private: true,
+      } : {
         threadId: asWorkstreamId(row.source_workstream_id),
         title: row.source_title ?? "",
         summary: row.source_description === null || row.source_description.trim() === "" ? null : row.source_description,
