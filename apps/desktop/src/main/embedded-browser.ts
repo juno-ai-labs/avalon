@@ -7,6 +7,7 @@ import {
   type EmbeddedBrowserBounds,
   type EmbeddedBrowserShortcut,
   type EmbeddedBrowserCommand,
+  type EmbeddedBrowserHostRequest,
   type EmbeddedBrowserNetworkResponse,
   type EmbeddedBrowserResult,
   type EmbeddedBrowserState,
@@ -103,8 +104,8 @@ export class EmbeddedBrowser {
     private readonly window: BrowserWindow,
     userId: string,
     private readonly onState: (state: EmbeddedBrowserState) => void,
-    /** Asks the host's controls to focus the address field, for a shortcut pressed inside a page. */
-    private readonly onFocusAddress: () => void = () => undefined,
+    /** Hands a shortcut pressed inside a page to the host's controls. */
+    private readonly onHostRequest: (request: EmbeddedBrowserHostRequest) => void = () => undefined,
     /**
      * A browser an agent drives (the import window's): its tabs record their
      * network from creation, and a covered active tab keeps rendering at full
@@ -289,9 +290,13 @@ export class EmbeddedBrowser {
     const at = ids.indexOf(fromId);
     if (shortcut.kind === 'new-tab') {
       await this.command({ action: 'open' });
-      this.onFocusAddress();
-    } else if (shortcut.kind === 'close-tab') await this.command({ action: 'close', tabId: fromId });
-    else if (shortcut.kind === 'focus-address') this.onFocusAddress();
+      this.onHostRequest('focus-address');
+    } else if (shortcut.kind === 'close-tab') {
+      // The last close is the host's: it may close the browser rather than
+      // take the blank tab that would replace this one.
+      if (this.tabs.size === 1) this.onHostRequest('close-last-tab');
+      else await this.command({ action: 'close', tabId: fromId });
+    } else if (shortcut.kind === 'focus-address') this.onHostRequest('focus-address');
     else if (shortcut.kind === 'reload') await this.command({ action: 'reload', tabId: fromId });
     else if (shortcut.kind === 'back') await this.command({ action: 'back', tabId: fromId });
     else if (shortcut.kind === 'forward') await this.command({ action: 'forward', tabId: fromId });

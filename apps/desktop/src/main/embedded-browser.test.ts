@@ -221,9 +221,9 @@ describe('the local browser behind the rail and the import window', () => {
   });
 
   it('acts on a browser shortcut pressed inside the page, and lets other keys through', async () => {
-    const focusAddress = vi.fn();
+    const hostRequest = vi.fn();
     const window = hostWindow();
-    const instance = new EmbeddedBrowser(window as never, 'user-1', () => undefined, focusAddress);
+    const instance = new EmbeddedBrowser(window as never, 'user-1', () => undefined, hostRequest);
     await instance.command({ action: 'open', url: 'https://a.example/' });
     const contents = electron.views[0]!.webContents;
     const press = (input: Record<string, unknown>) => {
@@ -236,10 +236,17 @@ describe('the local browser behind the rail and the import window', () => {
     expect(press({ key: 't', code: 'KeyT', ...modifier })).toHaveBeenCalled();
     await new Promise((resolve) => setImmediate(resolve));
     expect(instance.state().tabs).toHaveLength(2);
-    expect(focusAddress).toHaveBeenCalledTimes(1);
+    expect(hostRequest).toHaveBeenCalledExactlyOnceWith('focus-address');
     press({ key: 'w', code: 'KeyW', ...modifier });
     await new Promise((resolve) => setImmediate(resolve));
+    const [last] = instance.state().tabs;
     expect(instance.state().tabs).toHaveLength(1);
+    // The last close goes to the host, which may close the browser instead.
+    electron.views.at(-1)!.webContents.emit('before-input-event', { preventDefault: vi.fn() },
+      { type: 'keyDown', key: 'w', code: 'KeyW', shift: false, alt: false, control: false, meta: false, ...modifier });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(hostRequest).toHaveBeenLastCalledWith('close-last-tab');
+    expect(instance.state().tabs).toEqual([last]);
   });
 
   it('closes a tab once, selecting the next, and closes every tab on dispose', async () => {
