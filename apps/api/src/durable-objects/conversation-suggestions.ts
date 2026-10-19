@@ -369,6 +369,13 @@ export interface TurnDispositionObservationInput {
   newId: () => string;
   /** Runs the row and judgement writes as one transaction; the agent passes `transactionSync`. */
   commit: <T>(mutate: () => T) => T;
+  /**
+   * Whether this object is drafting the row right now. A `pending` row is
+   * resumed only when nobody is: a settlement and the backfill judging one run
+   * at once would otherwise both draft it, and the first to fail would
+   * withdraw the other's words.
+   */
+  draftInFlight?: (suggestionId: string) => boolean;
   threshold?: number;
   cooldownMs?: number;
   maximumPerDay?: number;
@@ -404,7 +411,10 @@ export async function observeTurnDisposition(input: TurnDispositionObservationIn
   const earlier = input.storage.judgementForRun(input.runId);
   if (earlier && earlier.failure_kind === null) {
     const row = earlier.suggestion_id ? input.storage.byId(earlier.suggestion_id) : null;
-    if (row && row.status === "open" && row.draft_status === "pending") return { outcome: "resumed", suggestion: row };
+    if (row && row.status === "open" && row.draft_status === "pending") {
+      if (input.draftInFlight?.(row.suggestion_id)) return { outcome: "skipped", gate: "draft_in_flight" };
+      return { outcome: "resumed", suggestion: row };
+    }
     return { outcome: "skipped", gate: "already_judged" };
   }
   const now = input.now();

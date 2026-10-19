@@ -92,11 +92,14 @@ arms its own alarm.
   throws `description_summary_model_failed` so the row is retried; reporting
   it as `unchanged` would settle the row with the model down. Guard:
   `workstream-naming.test.ts`. `backfillSuggestion` throws the same way on a
-  classifier failure (`suggestion_backfill_classifier_unavailable_<kind>`; the
-  observer keeps no answer for a failed judgement, so the retry asks again)
-  and on a step that threw before judging (`suggestion_backfill_<reason>`),
-  which the settlement lane only logs. A missing key is the exception: no
-  retry would answer, so it settles. Guard:
+  transient classifier failure (`suggestion_backfill_classifier_unavailable_<kind>`
+  for a 5xx, 408 or 429, a deadline or an unreachable provider; the observer
+  keeps no answer for a failed judgement, so the retry asks again) and on a
+  step that threw before judging (`suggestion_backfill_<reason>`), which the
+  settlement lane only logs. A classifier failure no retry would fix (a
+  missing or refused key, a rejected request, an answer that failed the
+  schema) settles, with the kind in the judgement as the record: the lane caps
+  nothing, so retrying it would pay for a call every gate for good. Guard:
   `suggestion-backfill-service.test.ts`.
 
 ## Boundary
