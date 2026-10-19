@@ -20,7 +20,7 @@ website, a region of an image) and write a short comment on it. The comment box
 floats beside the thing it points at. They can drop several before sending. On
 send, the pins become **annotations** on one user message, next to its text.
 
-Each annotation carries the content it points at: the exact source text, a little
+Each annotation carries the content it points at: the selected text, a little
 of what comes before and after, and where it sits. A mid-size model (the
 medium fallback model, not only a frontier one) can act on "make this shorter"
 or "this number is wrong" without fetching anything or guessing what "the
@@ -33,10 +33,15 @@ that carries them. An unsent pin is lost if the app closes.
 
 Today the only way to ask for a change to part of an artifact is to describe
 where it is in words: "in the pricing section, the second bullet, the bit
-about yearly billing". That is slow to write, and the model often picks the
-wrong spot, especially in a long document or a website where the visible text
-does not match the source. People then correct the correction, which costs a
-run each time.
+about yearly billing". That is slow to write, and it leaves the model to work
+out which spot was meant. That is hardest in a long document, or in a website
+where the visible text does not match the source. When it guesses wrong, the
+person has to correct it, which costs another run.
+
+This PRD answers a direct product request made on 2026-10-19. No measurement
+exists of how often the model picks the wrong spot today. Rally has no metrics
+stack to produce one (see "Where we are" in the agent rule sheet), so the case
+rests on the request and on what the product cannot do today, set out below.
 
 Nothing in Rally lets a person point today. A person can rename an artifact but
 not edit, select, quote or comment on it. The agent edits artifacts in its
@@ -53,11 +58,13 @@ a location in words gives it nothing exact to use.
    message.
 4. Every annotation the model receives includes the content it points at, so
    the model never needs a lookup to understand it.
-5. For text-based sources (Markdown, plain text, HTML), the quoted content is the
-   exact source string, so the agent can pass it to `edit_file` as `oldString`
-   unchanged.
+5. For Markdown and plain text, the quoted content is the exact source string,
+   so the agent can pass it to `edit_file` as `oldString` unchanged. HTML is
+   not in this goal: its quote is the rendered element (see Key design
+   decision 7).
 6. An annotation in the feed opens the artifact at the version it was made on
-   and scrolls to the spot it points at.
+   and scrolls to the spot it points at, where that version can still show it.
+   Where it cannot, the feed shows the saved quote instead (see In the feed).
 
 ## Non-goals
 
@@ -141,6 +148,15 @@ with the comment under it and the artifact's name. Clicking the excerpt opens
 the artifact at the annotated version and scrolls to the spot. If that version
 is no longer the latest, the preview shows the existing older-version notice.
 
+The spot cannot always be shown again. An older version of a live site serves
+frozen assets and never runs the old site's code, and a page's script may read
+current data ([live web artifacts](../../live-web-artifacts.md)). So the pinned
+element can be missing or show different content. When the locator does not
+resolve, or resolves to an element whose text no longer matches the saved
+quote, the viewer highlights nothing. It shows the saved quote, and the saved
+screenshot when there is one, with a line saying the original page cannot be
+shown again. It never highlights a different element.
+
 ### States
 
 - **Loading:** pick mode is unavailable until the body has rendered.
@@ -184,6 +200,14 @@ None yet.
    at a resource. An annotation is a person pointing the model at part of one.
    They can share a locator format later, so a model could cite a spot with
    `resource://<id>#<locator>`, but this PRD does not add that.
+7. **HTML quotes are the rendered element, not source.** `outerHTML` is the
+   browser's re-serialization of the parsed DOM. It changes attribute quoting,
+   entities and implied tags. The static preview also wraps the file in a new
+   document, and trimming removes bytes on purpose. So an HTML quote is labelled
+   rendered, and the model finds the element in the source before editing.
+   Rejected for phase one: mapping each element back to a source span with a
+   position-aware parser. It costs more, and labelling the quote is easy to
+   reverse later.
 
 ## Data model
 
@@ -201,6 +225,7 @@ Annotation = {
   },
   content: {
     exact: string,      // source text, cell table, or trimmed HTML
+    source: "exact" | "converted" | "rendered",
     before: string,
     after: string,
     truncated: boolean,
@@ -254,11 +279,14 @@ message text:
 </annotation>
 ```
 
-- For Markdown, text and HTML, the projection says `<selected>` is the exact
-  source text, which the model can use as `edit_file`'s `oldString` after
-  `import_resource`.
-- For PDF, Word, Excel and PowerPoint, it says the text is converted. The model
-  must rebuild the file rather than string-replace it.
+- For Markdown and text (`source="exact"`), the projection says `<selected>` is
+  the exact source text, which the model can use as `edit_file`'s `oldString`
+  after `import_resource`.
+- For HTML files and live sites (`source="rendered"`), it says `<selected>` is
+  the rendered element, not source. The model finds that element in the source
+  before editing, using the CSS path, the visible text and the screenshot.
+- For PDF, Word, Excel and PowerPoint (`source="converted"`), it says the text
+  is converted. The model must rebuild the file rather than string-replace it.
 - When `truncated` is true, it says the selection was cut, and that the model
   should run `read_resource` before editing.
 - Image crops and site screenshots ride as image parts beside the annotation.
@@ -270,12 +298,15 @@ Acceptance includes prompt evaluations on the medium fallback model, covering:
 - a truncated selection
 - an annotation on an older version
 - a converted-text kind
+- a rendered HTML element whose quote is not in the source byte for byte
 
 ## Rollout
 
 Ships to everybody on merge, with no flag, on desktop and the browser client.
-Turning it off is a revert. Live-site picking does not ship until its security
-review passes. The rest of phase one does not wait for it.
+Turning it off is a revert. Two parts each wait for their security review to
+pass: picking in the static HTML preview (the `allow-same-origin` change) and
+live-site picking (the picker bridge). The other kinds do not wait for either
+review.
 
 ## Acceptance
 
@@ -289,18 +320,27 @@ review passes. The rest of phase one does not wait for it.
   receives its HTML and, on desktop, a screenshot.
 - Click an annotation in the feed after the artifact has a newer version. The
   older version opens at the pinned spot.
+- Click an annotation on a live site whose older version no longer shows the
+  pinned element. The saved quote and screenshot show, and nothing is
+  highlighted.
 
 ## Open questions
 
-1. **Truncation caps.** Per [the limits rule](../../adding-security-defensive-and-other-limits.md),
-   two guards are defined and left open for the team to set. Neither blocks the
-   build.
-   - **Most characters of `content.exact` in one annotation.** For scale, a
-     long Markdown section runs about 2,000 to 4,000 characters, and a trimmed
-     HTML card about 1,000 to 5,000. Truncation cuts the middle and keeps the
-     head and tail.
-   - **Most characters across all annotations in one message.** Ten pins at the
-     per-annotation cap multiply the turn's size by ten.
+1. **Size guards.** Per [the limits rule](../../adding-security-defensive-and-other-limits.md),
+   two guards are defined, wired at the open value, and left for the team to
+   set. Neither blocks the build. Both live in the shared annotation builder
+   in `@rally/contracts`, so the client and the server apply the same numbers.
+   - **Most characters of `content.exact` in one annotation.** This one
+     truncates rather than rejects: it cuts the middle, keeps the head and
+     tail, and sets `truncated`. For scale, a long Markdown section runs about
+     2,000 to 4,000 characters, and a trimmed HTML card about 1,000 to 5,000.
+   - **Most characters of the whole `annotations` payload in one message,** as
+     serialized. It covers every field: comments, `before` and `after`,
+     locators, image references and the number of annotations. This one
+     rejects. The composer blocks Send and says the pins are too large to send
+     together. The server refuses a message over it with the code
+     `annotations_too_large`. Image crops and screenshots count as attachment
+     references, and the existing attachment limit governs their bytes.
 2. **Context window size.** How many characters go in `before` and `after`.
    This is a product choice, not a guard; about 200 each is the proposal.
 3. **HTML trimming.** What to strip from `outerHTML` before measuring. The
