@@ -75,7 +75,7 @@ export function assemblePreview(
 
 export type SessionImportApi = Pick<RallyApi,
   'startSessionImport' | 'startSessionImportUpdate' | 'completeSessionImport' | 'discardSessionImport'
-  | 'startBreakoutImport' | 'completeBreakoutImport'
+  | 'abandonSessionImport' | 'startBreakoutImport' | 'completeBreakoutImport'
   | 'updateImportedSession' | 'importedSessionSource' | 'getSocketTicket'>
   & Partial<Pick<RallyApi, 'confirmSocketTicket'>>;
 
@@ -393,6 +393,12 @@ export function startSessionImportRun(input: {
       input.onStarted?.({ workstreamId: run.workstreamId, substreamId: run.substreamId });
       await connect();
     } catch (error) {
+      // A new import's start that failed may still have reserved its Channel,
+      // and the ids `discard` needs never came back. The create key is enough
+      // to take the reservation back; the API answers no-op if none was made.
+      if (!run && input.mode.kind === 'create') {
+        await input.api.abandonSessionImport({ clientMessageId: input.mode.clientMessageId }).catch(() => undefined);
+      }
       finish({ kind: 'error', message: messageOf(error) });
     }
   })();

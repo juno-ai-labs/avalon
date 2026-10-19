@@ -110,12 +110,14 @@ describe('running an import', () => {
   ) {
     const discards: string[] = [];
     const discardBodies: unknown[] = [];
+    const abandons: unknown[] = [];
     const unused = async (): Promise<never> => { throw new Error('not used by this run'); };
     const api = {
       startSessionImport: () => options.reservation ?? Promise.resolve({ workstreamId: 'w1', substreamId: 's1' }),
       confirmSocketTicket: vi.fn(),
       getSocketTicket: async () => ({ url: 'wss://rally.test/feed', ticket: 't', protocols: ['rally', 't'] as [string, string] }),
       discardSessionImport: async (workstreamId: string, body: unknown) => { discards.push(workstreamId); discardBodies.push(body); },
+      abandonSessionImport: async (body: unknown) => { abandons.push(body); },
       startSessionImportUpdate: unused,
       startBreakoutImport: options.breakout?.startBreakoutImport ?? unused,
       completeBreakoutImport: options.breakout?.completeBreakoutImport ?? unused,
@@ -130,7 +132,7 @@ describe('running an import', () => {
       ...(onSteps ? { onSteps } : {}),
       ...(options.onStarted ? { onStarted: options.onStarted } : {}),
     });
-    return { run, discards, discardBodies, api };
+    return { run, discards, discardBodies, abandons, api };
   }
 
   it('imports into a new Breakout of the thread and ends naming it', async () => {
@@ -380,6 +382,25 @@ describe('running an import', () => {
     expect(sockets).toHaveLength(0);
   });
 
+  it('takes back by its create key a new import whose start failed, since no ids came back to discard', async () => {
+    sockets.length = 0;
+    const { run, discards, abandons } = started(undefined, { reservation: Promise.reject(new Error('Network connection lost')) });
+    await expect(run.done).resolves.toEqual({ kind: 'error', message: 'Network connection lost' });
+    expect(abandons).toEqual([{ clientMessageId: 'c1' }]);
+    expect(discards).toEqual([]);
+    expect(sockets).toHaveLength(0);
+  });
+
+  it('abandons nothing when a Breakout import’s start fails, which lists nothing to take back', async () => {
+    sockets.length = 0;
+    const { run, abandons } = started(undefined, {
+      breakout: { startBreakoutImport: async () => { throw new Error('Forbidden'); }, completeBreakoutImport: async () => 'b' },
+      mode: { kind: 'breakout', workstreamId: 'thread', title: 'Watering notes', clientMessageId: 'c4' },
+    });
+    await expect(run.done).resolves.toEqual({ kind: 'error', message: 'Forbidden' });
+    expect(abandons).toEqual([]);
+  });
+
   it('reports the reserved Channel and the agent’s conversation once the API answers', async () => {
     sockets.length = 0;
     const reported: unknown[] = [];
@@ -397,6 +418,7 @@ describe('running an import', () => {
       confirmSocketTicket: vi.fn(),
       getSocketTicket: async () => ({ url: 'wss://rally.test/feed', ticket: 't', protocols: ['rally', 't'] as [string, string] }),
       discardSessionImport: async (workstreamId: string) => { discards.push(workstreamId); },
+      abandonSessionImport: async () => undefined,
       completeSessionImport: async () => 'w1',
       startSessionImportUpdate: unused,
       startBreakoutImport: unused,
@@ -440,6 +462,7 @@ describe('running an import', () => {
       confirmSocketTicket: vi.fn(),
       getSocketTicket: async () => ({ url: 'wss://rally.test/feed', ticket: 't', protocols: ['rally', 't'] as [string, string] }),
       discardSessionImport: async () => undefined,
+      abandonSessionImport: async () => undefined,
       completeSessionImport: async (workstreamId: string) => { completions.push(workstreamId); return workstreamId; },
       startSessionImportUpdate: unused,
       startBreakoutImport: unused,
@@ -494,6 +517,7 @@ describe('running an import', () => {
       confirmSocketTicket: vi.fn(),
       getSocketTicket: async () => ({ url: 'wss://rally.test/feed', ticket: 't', protocols: ['rally', 't'] as [string, string] }),
       discardSessionImport: async () => undefined,
+      abandonSessionImport: async () => undefined,
       completeSessionImport: async () => { throw new Error('This import key belongs to another thread'); },
       startSessionImportUpdate: unused,
       startBreakoutImport: unused,
