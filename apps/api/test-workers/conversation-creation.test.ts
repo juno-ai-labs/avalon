@@ -122,8 +122,16 @@ describe("creating a work stream", () => {
     await expect(service.create({title:'Bad pin',openingMessage:'',clientMessageId:'missing-pin',participantUserIds:[],attachmentIds:[],annotations:[{...annotation,target:{...annotation.target,version:99}}]})).rejects.toMatchObject({code:'resource_version_not_found'});
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM workstream_create_receipts WHERE client_message_id='missing-pin'").first('n')).toBe(0);
     const created=await service.create({title:'Annotated opening',openingMessage:'',clientMessageId:'opening-pin',participantUserIds:[],attachmentIds:[],annotations:[annotation]});
-    const boot=await new WorkstreamObjectClient(creationEnv(),AUTH,created.workstream.id).boot();
+    const client=new WorkstreamObjectClient(creationEnv(),AUTH,created.workstream.id);
+    const boot=await client.boot();
     expect(boot.transcript.ranges.flatMap((r)=>r.turns).flatMap((t)=>t.blocks)).toContainEqual(expect.objectContaining({type:'text',text:'',structuredContent:{kind:'artifact_annotations',annotations:[annotation],names:{[resourceId]:'Plan.md'}}}));
+    await expect(client.createMessage({text:'',clientMessageId:'wrong-locator',mentions:[],confirmedParticipantUserIds:[],attachmentIds:[],annotations:[{...annotation,target:{...annotation.target,locator:{type:'file'}}}]})).rejects.toMatchObject({code:'annotation_locator_type_mismatch'});
+    await client.createMessage({text:'',clientMessageId:'followup-pin',mentions:[],confirmedParticipantUserIds:[],attachmentIds:[],annotations:[{...annotation,comment:'Rally, shorten this'}]});
+    const followup=await client.boot();
+    expect(followup.transcript.ranges.flatMap((r)=>r.turns).flatMap((t)=>t.blocks)).toContainEqual(expect.objectContaining({type:'text',text:'',structuredContent:expect.objectContaining({annotations:[{...annotation,comment:'Rally, shorten this'}]})}));
+    await runInDurableObject(workspace(),(_instance,state)=>{state.storage.sql.exec('DELETE FROM resources WHERE id = ?',resourceId);});
+    expect((await service.create({title:'Annotated opening',openingMessage:'',clientMessageId:'opening-pin',participantUserIds:[],attachmentIds:[],annotations:[annotation]})).workstream.id).toBe(created.workstream.id);
+
   });
 
   it.each([

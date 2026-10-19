@@ -322,7 +322,7 @@ export async function projectParticipantModelMessage(
     return externalAttributedMessage(input.author.actor, content, false, input.externalFraming ?? "request");
   }
   const sources = [...input.attachments];
-  for (const image of annotationModelSources(input.structuredContent)) if (!sources.some((source) => source.id === image.id)) sources.push(image);
+  for (const image of annotationModelSources(input.structuredContent)) if (!sources.some((source) => source.id === image.id && source.contentRef === image.contentRef && source.resourceVersion === image.resourceVersion)) sources.push(image);
   if (sources.length === 0) return projectParticipantTextMessage(input);
   const parts = input.includeAttachmentContents
     ? await buildAttachmentModelParts(env.PAYLOADS, sources, {

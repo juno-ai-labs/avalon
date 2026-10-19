@@ -1,4 +1,5 @@
-import { AnnotationsSchema, validateAnnotationAttachments, annotationAllowedForResource } from "@rally/contracts";
+import { annotationCommentText } from "@rally/contracts";
+import { AnnotationsSchema, validateAnnotationAttachments } from "@rally/contracts";
 import { ResourceService } from "../services/resource-service";
 import { mergeEmbedsOf, resolveShareableResources } from "../services/resource-share-rules";
 import { stableUuid } from "../lib/stable-uuid";
@@ -4768,30 +4769,11 @@ export class WorkstreamObjectProductService {
     const participantAddedCount = new Set(confirmedParticipantUserIds.filter((userId) => !this.isParticipant(userId))).size;
     const missingParticipantUserIds = [...new Set([auth.userId, ...confirmedParticipantUserIds])]
       .filter((userId) => !this.isParticipant(userId));
+    const structuredContent = input.merge ?? (input.annotations?.length
+      ? await new ResourceService(this.env,auth).annotationContent(input.annotations) : null);
     if (missingParticipantUserIds.length > 0) {
       await this.prepareMessageParticipants(auth, input.clientMessageId, missingParticipantUserIds);
     }
-    const annotationNames: Record<string, string> = {};
-    const annotationImages: ModelAttachmentSource[] = [];
-    if (input.annotations?.length) {
-      const resources = new ResourceService(this.env, auth);
-      // Several pins usually share one version. Validate that target once per
-      // message rather than paying the same canonical reads for every pin.
-      const targets = new Map<string,ReturnType<ResourceService['annotationTarget']>>();
-      for (const annotation of input.annotations) {
-        const key = `${annotation.target.resourceId}:${annotation.target.version}`;
-        const target = targets.get(key) ?? resources.annotationTarget(annotation.target.resourceId,annotation.target.version);
-        targets.set(key,target);
-        const resource = await target;
-        if (resource.image && !annotationImages.some((image) => image.id === resource.image?.id)) annotationImages.push(resource.image);
-        if (!annotationAllowedForResource(annotation, { fileName: resource.title, mimeType: resource.mimeType })) {
-          throw new ApiError(422, "annotation_locator_type_mismatch", "The annotation locator does not match this resource");
-        }
-        annotationNames[annotation.target.resourceId] = resource.title;
-      }
-    }
-    const structuredContent = input.merge ?? (input.annotations?.length
-      ? { kind: "artifact_annotations", annotations: input.annotations, names: annotationNames, ...(annotationImages.length ? {images:annotationImages} : {}) } : null);
     const attachmentRows = await this.reserveAttachmentDrafts({
       workspaceId: auth.workspaceId,
       workstreamId: root.workstream_key,
@@ -4817,7 +4799,7 @@ export class WorkstreamObjectProductService {
     const connectorMentions = prepared.mentions
       .flatMap((mention) => mention.type === "connector" && mention.connectorType
         ? [mention.connectorType] : []);
-    let shouldInvoke = Boolean(input.forcedHarnessOrigin) || participantCount <= 1 || attachmentRows.length > 0;
+    let shouldInvoke = Boolean(input.forcedHarnessOrigin) || participantCount <= 1 || attachmentRows.length > 0 || Boolean(input.annotations?.some((a)=>a.comment.trim()));
     if (input.merge) {
       // A merge is a result posted for the thread's readers, never a request
       // to Rally: it starts no run, whatever the room's size.
@@ -4837,7 +4819,7 @@ export class WorkstreamObjectProductService {
         workspaceId: auth.workspaceId,
         workstreamId: root.workstream_key,
         userId: auth.userId,
-        message: input.text,
+        message: annotationCommentText(input.text,input.annotations),
         activeTask,
         connectorMentions,
         humanMentions: mentionedPersonNames(prepared.mentions),

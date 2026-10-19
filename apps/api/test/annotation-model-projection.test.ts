@@ -23,4 +23,11 @@ describe('annotation model projection',()=>{
     expect(message?.content).toEqual(expect.arrayContaining([expect.objectContaining({type:'text',text:expect.stringContaining('Whole image.png')})]));
   });
 
+  it('projects two saved originals for the same resource',async()=>{
+    const images=[2,3].map((version)=>({id:resourceId,resourceVersion:version,workspaceId:'workspace',fileName:`Whole image v${version}.png`,mimeType:'image/png',sizeBytes:1200,contentRef:`immutable/image-v${version}.png`,modelContentRef:null,modelContentStatus:null}));
+    const message=await projectParticipantModelMessage(createTestEnv({}),{...input,structuredContent:{...input.structuredContent,images}});
+    expect(JSON.stringify(message?.content)).toContain('Whole image v2.png');
+    expect(JSON.stringify(message?.content)).toContain('Whole image v3.png');
+  });
+
 });

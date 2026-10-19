@@ -707,11 +707,15 @@ attachment reservation, since a pin usually names an already-sent resource.
 
 ### 2026-10-19 — Project quoted annotations with their source fidelity
 
-A model must understand a pointed selection without fetching it, but a rendered
-HTML element or spreadsheet table is not an exact source replacement. Shared
-projection now labels that distinction and carries comments, context and saved
-versions through live, replayed and overheard turns. Crops reuse draft admission
-instead of adding an image storage or permission mechanism.
+**What changed:** Models receive versioned quotes with explicit exact, converted and rendered source policy; image originals retain version identity and reusable model metadata.
+
+**Why:** A selected HTML element or spreadsheet table is not an exact source replacement, and two revisions of one image must remain distinguishable.
+
+**Considered and rejected:** Crops reuse ordinary draft admission rather than adding storage or permission mechanisms.
+
+**Consequences:** Preserve source fidelity through live, replayed, inherited and overheard turns; resource sharing remains authoritative. See [artifact annotations](artifact-annotations.md).
+
+PR #1322; design: `docs/PRDs/2026-10-19_artifact-annotations/prd.md`.
 
 
 ### 2026-10-10 — Connectors read files through this converter, and XLSX shared strings stay aligned

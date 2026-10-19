@@ -68,7 +68,7 @@ export function ChannelScreen({ workspace }: { workspace: Workspace }): React.JS
   const { api } = useAppSession();
   const threadId = /^threads\/([^/]+)$/.exec(rest)?.[1] ?? null;
   const artifactId = /^artifacts\/([^/]+)$/.exec(rest)?.[1] ?? null;
-  return <AnnotationDraftProvider scopeKey={`channel:${channelId}`} readResource={api ? (id) => api.getResource(id) : undefined} upload={api ? async (file) => (await api.uploadResource(file,crypto.randomUUID())).id : undefined}><ChannelStack artifactId={artifactId} channelId={channelId} threadId={threadId} workspace={workspace} /></AnnotationDraftProvider>;
+  return <AnnotationDraftProvider scopeKey={`channel:${channelId}`} readResource={api ? (id) => api.getResource(id) : undefined} readResourceVersion={api ? (id,version,signal) => api.getResourceVersionPreview(id,version,signal) : undefined} upload={api ? async (file) => (await api.uploadResource(file,crypto.randomUUID())).id : undefined}><ChannelStack artifactId={artifactId} channelId={channelId} threadId={threadId} workspace={workspace} /></AnnotationDraftProvider>;
 }
 
 /**

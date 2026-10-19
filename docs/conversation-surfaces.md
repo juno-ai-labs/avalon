@@ -798,14 +798,15 @@ line it made every Channel message about 31px taller at rest.
 
 ### 2026-10-19 — Share annotation drafts across preview hosts and the composer
 
-Selections belong to the message being written, so the conversation owns their
-transient state instead of each preview inventing a separate draft. Header
-actions keep Comment mode immediately before Expand, including narrow panels.
-The provider resets only pin state when scope changes; it preserves the mounted
-conversation and pending history requests. Deferred panel-arrival focus yields
-to a control already opened by the reader, so a newly opened title menu stays
-open. Only the pins captured by an accepted send are cleared; a failed send or another
-composer's draft must retain its selections.
+**What changed:** The composer owns transient pins across its previews, with editable chips and Comment immediately before Expand.
+
+**Why:** Selections belong to the message being written; per-preview drafts lose comments when the viewer closes.
+
+**Considered and rejected:** Scope changes reset pin state without remounting the conversation, preserving in-flight history.
+
+**Consequences:** Only accepted sends clear their captured pins. Pending annotation sends and open elicitations cannot silently reuse or omit those pins. See [artifact annotations](artifact-annotations.md).
+
+PR #1322; design: `docs/PRDs/2026-10-19_artifact-annotations/prd.md`.
 
 
 

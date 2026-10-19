@@ -181,13 +181,22 @@ same way it acts on any message.
 
 ## Decision log
 
-- 2026-10-19: The requester accepted native-only website and live-site picking
-  for better capabilities. HTML-file and live-site pick controls are exposed in
-  the Mac app; document, sheet and image annotations remain desktop and web.
-  The implementation uses an isolated native live-site picker and screenshot
-  capture, with no serving-Worker injection. Static HTML retains an opaque,
-  nonce-gated frame, using a bundled external picker because `srcdoc` inherits
-  the app's strict CSP and blocks an inline picker despite its frame nonce.
+### 2026-10-19 — Website picking uses native preview capabilities
+
+**Decided:** HTML and live-site element selection run in the Mac app. Browsers
+show the disabled Comment control with an explanation. Other annotation kinds
+remain available on desktop and web.
+
+**Why:** The requester accepted native-only website support for reliable native
+inspection and capture, avoiding published-response injection and page-origin
+picker callbacks. Static HTML retains an opaque nonce-gated frame and a bundled
+external picker because its inherited app CSP refuses inline execution.
+
+**Changes:** This narrows Goal 1, rollout and the live-site acceptance check to
+Mac website picking; browser website previews remain view-only. The remaining
+annotation flows retain their shared desktop/web scope.
+
+Implementation: [PR #1322](https://github.com/juno-ai-labs/avalon/pull/1322).
 
 ## Key design decisions
 
