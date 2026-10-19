@@ -8833,6 +8833,9 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   right: 0;
   top: 100%;
 }
+.channel-feed-pane { display: flex; flex-direction: column; min-height: 0; }
+.channel-feed-pane > .channel-feed { flex: 1; }
+.channel-feed-pane > .inline-error { margin: 8px 32px; }
 .channel-feed { display: flex; flex-direction: column; padding: 20px 0 24px; }
 .channel-feed-list { display: flex; flex-direction: column; gap: 28px; list-style: none; margin: auto auto 0; max-width: 760px; padding: 0 32px; width: 100%; }
 .channel-feed-more { display: flex; justify-content: center; padding: 8px 0; }
