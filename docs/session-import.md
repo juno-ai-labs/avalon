@@ -78,7 +78,9 @@ returns the main window to where it was. The pending-row rule is in
    `session_import` model role, and exactly the browser plugin plus
    `import_finish` / `import_fail` — no other Rally tool. A launch that fails
    retires the reservation it made, so no listed Channel is left that nothing
-   fills. An update (`POST /workstreams/:id/import/runs`) first stops the
+   fills. A retire that fails as well is logged as
+   `session_import_retire_failed` with its reason, and the window takes the
+   key back itself (step 5). An update (`POST /workstreams/:id/import/runs`) first stops the
    caller's earlier import agents on that Channel, so one runs at a time.
 3. **Read.** The import window opens the child's socket and answers every
    [desktop action](desktop-actions.md) the agent asks for on the tab it was
@@ -154,6 +156,13 @@ contract 1.
    `session_import_discarded`) and is archived out of every listing
    (`discardReservedMain`). A Cancel pressed before the reservation comes back
    discards it when it does, without ever reporting it to the main window.
+   A start that fails returns no ids to discard with, yet may have reserved
+   the Channel: its launch failed and so did the retire behind it, or the
+   invocation was cut off mid-launch. So the window then calls `POST
+   /workstreams/import/abandon` with the create key alone (`abandon`), which
+   stops the caller's import agents on the key's Channel and retires it the
+   way discard does. A key that reserved nothing is a no-op, and a key
+   `complete` has claimed is refused before any agent is stopped.
    A terminal harness status releases the progress modal immediately even if a
    browser command remains blocked; queued actions do not execute and late
    answers are not sent after the run closes. The exception is an import commit
@@ -163,10 +172,18 @@ contract 1.
    closes or crashes mid-run sends none. So the `session_import` [agent
    profile](agent-harness.md#agent-profiles)'s `ended` hook runs once the run's
    outcome is durable, however it ended, and archives the Channel if its
-   receipt is still `reserved` (retired with `session_import_unfinished`). The
+   receipt is still `reserved` (retired with `session_import_unfinished`), or
+   `failed` by an abandon that landed before the reservation published and so
+   found nothing to archive. The
    desktop opens the Channel inside the finish tool, before the run's final
    turn, so a reservation still unopened at the end never will be; an update's
    Channel has a completed receipt and is untouched.
+
+   One path is still uncovered: a start that never admits a run, from a
+   window that dies before it can abandon the key. No run means no run-end,
+   so the Channel stays listed until someone retires it by hand. Closing that
+   needs a watchdog that presumes a launch dead after some time, and that
+   time is a limit for the team to set, not one this lane guesses.
 
 ### Importing as a Breakout
 
@@ -317,6 +334,12 @@ This provides an executable eval seam, not a scheduler or scoring database.
   its run ids are both named from the reservation, and a second admission finds
   the run. A start whose launch fails retires the reservation only when no run
   was admitted. Guard: the Workers concurrent-start test.
+- A start that failed leaves nothing the window cannot take back: it abandons
+  the create key, which needs no id from the start's answer. Otherwise a
+  launch and its retire failing together (a deploy resets both) leaves a
+  listed Channel whose conversation never opens, which no run-end reaches
+  because no run was admitted. Guard: the Workers abandon tests, and the
+  desktop test of a failed start.
 - Discard stops only the caller's own hidden import child. Otherwise one member
   could stop another's agent, or a Channel's own run, by naming it. Guard: the
   Workers ownership test.
@@ -325,7 +348,7 @@ This provides an executable eval seam, not a scheduler or scoring database.
 ## Boundary
 
 Public APIs are `POST /workstreams/import/runs`, `POST
-/workstreams/:id/import/runs`, `POST /workstreams/:id/import/complete`, `POST
+/workstreams/import/abandon`, `POST /workstreams/:id/import/runs`, `POST /workstreams/:id/import/complete`, `POST
 /workstreams/:id/import/discard`, `GET /workstreams/:id/import/source`, and
 `POST /workstreams/:id/import/update`. How the agent reaches the desktop is
 [desktop actions](desktop-actions.md); which tools and prompt it runs with is
@@ -404,7 +427,11 @@ available.
 
 A Channel reserved for an import is listed while the agent works, and the main
 window shows it on its "Importing conversation…" screen, which opens no socket
-because the conversation is not initialized yet. A context the main window
+because the conversation is not initialized yet. The row is marked pending only
+once `start` answers, so before then the main window's background sockets can
+dial the new Channel; admission refuses it, and the Channel's main object is
+left as an empty `preparing` placeholder until `complete` initializes it. That
+placeholder is expected on every import, discarded or not. A context the main window
 sends to the import window during a run (another Space, another update) waits
 until the run ends: a run drives the tab, and nothing else may navigate it.
 
@@ -416,7 +443,9 @@ HTML/code artifacts remain stored files; importing does not launch a site.
   objects with the provider double as the model and the test as the desktop —
   reservation, the hidden child's profile and tools, actions answered over its
   socket, completion, an answer kept across a lost waiter, admission, discard
-  and its ownership check, and a Channel archived when its run ends unopened.
+  and its ownership check, a Channel archived when its run ends unopened, and
+  one taken back by its create key after a start whose launch and retire both
+  failed.
 - `test/session-import.test.ts`: which conversation and provider a source URL names.
 - `test/desktop-action-tools.test.ts`: the import tools' finish and fail, and
   the profile lookup.
@@ -425,8 +454,8 @@ HTML/code artifacts remain stored files; importing does not launch a site.
 - `apps/desktop/src/renderer/lib/session-import-run.test.ts`: refusal before writes
   followed by repaired evidence, assembling stored
   messages and files into the import request, the errors that name what to fix,
-  re-sent answers, Cancel before the reservation, and an opened Channel's ending
-  staying final.
+  re-sent answers, Cancel before the reservation, a failed start abandoning its
+  create key, and an opened Channel's ending staying final.
 - `apps/desktop/src/renderer/screens/browser-import.test.tsx`: the sheet, the
   run it starts, and Rally's words for a failure.
 - `test-workers/conversation-creation.test.ts`: real upload/R2 bytes, role-specific
@@ -472,6 +501,38 @@ These deterministic checks do not measure model compliance: live runs across
 these variations are still required to establish it.
 
 ## Changelog
+
+### 2026-10-19 — Take back a failed start by its create key
+
+**What changed:** `POST /workstreams/import/abandon` ends a new import by its
+create key alone, and the import window calls it whenever a new-thread start
+fails. `start` now logs a retire that fails behind a failed launch
+(`session_import_retire_failed`) instead of swallowing it.
+
+**Why:** A production Channel stayed listed for nearly two
+weeks with a main conversation that could never open. Its launch stopped after
+bootstrapping the hidden child, before provisioning it. Nothing was left to
+take it back. The retire in `start` failed silently or never ran, the window's
+discard needs the ids a failed start never returns, and the run-end reclaim
+needs a run that was never admitted.
+
+**Considered and rejected:** Carrying the ids on the start's error. An
+invocation cut off mid-launch returns no body at all, and the window already
+holds the one name the reservation answers to. Also rejected: a watchdog
+alarm that archives a reservation whose launch has not admitted a run after a
+while. It would also cover a window that dies mid-start, but how long a
+launch may take before it is presumed dead is a limit for the team to set,
+and an open value would change nothing. That remaining path is named under
+step 6.
+
+**Consequences:** Abandon reaches any never-opened create key of the caller's,
+which today is only an import's, because no other client calls it. A key
+`complete` has claimed is refused before anything is stopped. A `failed`
+receipt is retired again, so a retire that stopped after writing the receipt
+is finished by the next one. Abandon retires before it stops any agent, so a
+`complete` that claims the key in between keeps its agent, and the run-end
+reclaim also matches a `failed` receipt, for an abandon that beat the
+reservation's publication.
 
 ### 2026-10-17 — Import a conversation as a Breakout of an existing thread
 

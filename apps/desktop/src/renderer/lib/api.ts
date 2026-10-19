@@ -1843,6 +1843,11 @@ export class RallyApi {
     });
   }
 
+  /** Take back a failed start's import by its create key alone. */
+  async abandonSessionImport(input: { clientMessageId: string }): Promise<void> {
+    await this.requestVoid('/workstreams/import/abandon', { method: 'POST', body: input });
+  }
+
   async importedSessionSource(workstreamId: string): Promise<{ provider: 'chatgpt' | 'claude' | 'claude_code'; sessionId: string; url: string | null } | null> {
     const result = await this.request(`/workstreams/${workstreamId}/import/source`, {
       schema: z.strictObject({ source: z.strictObject({ provider: z.enum(['chatgpt', 'claude', 'claude_code']),

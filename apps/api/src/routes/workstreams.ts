@@ -1,5 +1,6 @@
 import { prepareSessionImport } from "../services/session-import-files";
 import {
+  SessionImportAbandonRequestSchema,
   SessionImportBreakoutRequestSchema,
   SessionImportBreakoutStartRequestSchema,
   SessionImportDiscardRequestSchema,
@@ -200,6 +201,11 @@ workstreamRoutes.post("/import/runs", zValidator("json", SessionImportStartReque
   requireSessionImportClientContract((name) => c.req.header(name));
   const result = await new SessionImportRunService(c.env, getAuth(c), requestDeferral(c)).start(c.req.valid("json"));
   return c.json(SessionImportRunSchema.parse(result), 201);
+});
+/** Take back a failed start's import by its create key; see `abandon`. */
+workstreamRoutes.post("/import/abandon", zValidator("json", SessionImportAbandonRequestSchema), async (c) => {
+  await new SessionImportRunService(c.env, getAuth(c), requestDeferral(c)).abandon(c.req.valid("json").clientMessageId);
+  return c.body(null, 204);
 });
 /** Run the import agent again on a Channel imported before. */
 workstreamRoutes.post("/:id/import/runs", zValidator("param", idParam), async (c) => {
