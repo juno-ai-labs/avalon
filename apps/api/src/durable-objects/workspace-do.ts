@@ -170,6 +170,15 @@ import { AuthorizationStorage, AUTHORIZATION_STORAGE_MIGRATION, AUTHORIZATION_ST
 import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-journey';
 import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION, RESOURCE_SEARCH_AUDIENCE_MIGRATION, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
   resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch, type ResourceSearchPace } from './resource-search-projection';
+import {
+  CHANNEL_MESSAGE_SEARCH_MIGRATION,
+  ChannelMessageSearchProjectionSchema,
+  ChannelMessageSearchRevisionRequestSchema,
+  channelMessageSearchRevision,
+  nextChannelMessageSearchDueAt,
+  prepareChannelMessageSearch,
+  publishChannelMessageSearch,
+} from "./channel-message-search-projection";
 import { isDraftUpload, requiresAttachment } from '../services/resource-read-rules';
 import { searchAudienceGroup, searchAudienceGroupIds } from '../services/search-audience';
 import { MEMORY_SEARCH_KEY_PURGE_MIGRATION, SEARCH_AUTHORIZATION_PUSH_MIGRATION } from './search-authorization-projection';
@@ -1182,6 +1191,7 @@ import {
   matchConversationReference,
   parseConversationId,
   scopeConversations,
+  type ScopedConversation,
 } from "./workspace-sidekick-conversation-storage";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
 import {
@@ -1219,6 +1229,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   ...AUTHORIZATION_STORAGE_TABLES,
   'search_authorization_push', 'search_authorization_keys', 'search_authorization_dependencies',
   "resource_search_versions",
+  "channel_message_search_versions", // Its triggers, the alarm lane and the Channel message search RPCs.
   "onboarding_journeys",
   "conversation_access_requests",
   "workstream_notification_intents",
@@ -4583,11 +4594,16 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "a watch on every conversation import's reservation, archiving one whose thread has not opened an hour on",
   // See IMPORT_RESERVATION_RECLAIM_MIGRATION and docs/session-import.md.
   statements: IMPORT_RESERVATION_RECLAIM_MIGRATION,
+}, {
+  version: 120,
+  description: "a Channel's own messages are projected into the search index, every existing one queued once",
+  // See CHANNEL_MESSAGE_SEARCH_MIGRATION and docs/text-search.md.
+  statements: CHANNEL_MESSAGE_SEARCH_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
-  conversationId: string; parentId: string; substreamId: string; kind: "channel" | "breakout";
-  title: string; isHome: boolean; isOwn: boolean;
+  conversationId: string; parentId: string; substreamId: string; kind: ConversationToolEntry["kind"];
+  title: string; isHome: boolean; isOwn: boolean; isParent: boolean;
 }): ConversationToolEntry {
   return {
     conversationId: conversation.conversationId,
@@ -4597,6 +4613,7 @@ function conversationToolEntry(conversation: {
     title: conversation.title,
     isHome: conversation.isHome,
     isOwn: conversation.isOwn,
+    isParent: conversation.isParent,
   };
 }
 
@@ -6853,6 +6870,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.prepareResourceSearchSource(input);
   }
 
+  /** A Channel message's search watermark, without reading the message. */
+  async channelMessageSearchRevision(input: unknown): Promise<number | null> {
+    await this.initialized;
+    const request = ChannelMessageSearchRevisionRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return channelMessageSearchRevision(this.state.storage.sql, request.messageId);
+  }
+
+  /** A Channel message's search document, or its deletion watermark; see channel-message-search-projection.ts. */
+  async prepareChannelMessageSearch(input: unknown) {
+    await this.initialized;
+    const request = ChannelMessageSearchProjectionSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (request.region !== this.env.AVALON_REGION) throw new Error("search_projection_region_mismatch");
+    return prepareChannelMessageSearch(this.state.storage.sql, request.messageId);
+  }
+
   /** Fail/retry on an old instance instead of silently reading every category. */
   async prepareResourceSearchDocument(input: unknown, documentId: unknown) {
     return this.prepareResourceSearchSource(input, z.string().min(1).parse(documentId));
@@ -7524,6 +7558,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       authorization_delivery: () =>
         sql.exec<{ due: number | null }>("SELECT MIN(not_before) AS due FROM authorization_delivery").one().due,
       resource_search: () => nextResourceSearchDueAt(sql, this.env, this.resourceSearchPace),
+      channel_message_search: () => nextChannelMessageSearchDueAt(sql, this.env, this.resourceSearchPace),
       space_default_publish: () => this.spaceStorage().nextDefaultPublicationDueAt(),
       space_bootstrap: () => this.spaceStorage().nextBootstrapDueAt(),
       channel_color_sync: () => nextChannelColorSyncAt(sql),
@@ -7685,6 +7720,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (due("resource_search")) {
         try { await publishResourceSearch(this.state.storage.sql, this.env, workspaceId, this.resourceSearchPace); }
         catch { logWarn(this.env, "resource_search_dispatch_deferred", { workspace_id: workspaceId }); }
+      }
+      if (due("channel_message_search")) {
+        try { await publishChannelMessageSearch(this.state.storage.sql, this.env, workspaceId, this.resourceSearchPace); }
+        catch { logWarn(this.env, "channel_message_search_dispatch_deferred", { workspace_id: workspaceId }); }
       }
       if (due("space_default_publish")) await this.instrumentWorkspaceAlarmPhase("space_default_publish", undefined, async () => {
         try {
@@ -8768,7 +8807,32 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const scoped = scopeConversations(this.state.storage.sql, request.scope, request.userId);
     const conversations = await this.reachableConversations(request.workspaceId, request.scope, scoped, request.userId);
-    return { conversations: conversations.map(conversationToolEntry) };
+    const channels = await this.conversationToolChannels(request.workspaceId, request.scope, request.userId);
+    return { conversations: [...conversations.map(conversationToolEntry), ...channels] };
+  }
+
+  /**
+   * For a Thread or Breakout loop, the Channels its Thread is in that this
+   * person may list today, unarchived, Organization-wide ones first. Each is a
+   * conversation whose messages are the Channel's feed: its threads and the
+   * results merged into it. The id is the Space's own, a UUID no Thread
+   * shares. Listing is not admission: a read goes through `listChannelFeed`,
+   * which asks the person's reach again, so this never widens what they see.
+   */
+  private async conversationToolChannels(
+    workspaceId: string,
+    scope: ConversationToolScope,
+    userId: string,
+  ): Promise<ConversationToolEntry[]> {
+    if (scope.kind !== "conversation") return [];
+    const viewer = await this.spaceReader(workspaceId, userId);
+    if (!viewer) return [];
+    const spaces = this.spaceStorage();
+    return spaces.channelSpaceIds(viewer, scope.parentId).flatMap((spaceId) => {
+      const space = spaces.readable(viewer, spaceId);
+      return space ? [conversationToolEntry({ conversationId: spaceId, parentId: spaceId, substreamId: "0",
+        kind: "space", title: space.name, isHome: false, isOwn: false, isParent: true })] : [];
+    });
   }
 
   /**
@@ -8831,20 +8895,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(ConversationToolResolveRequestSchema, input, "conversation_tool_resolve");
     this.assertWorkspace(request.workspaceId);
     const scoped = scopeConversations(this.state.storage.sql, request.scope, request.userId);
+    const channels = await this.conversationToolChannels(request.workspaceId, request.scope, request.userId);
     // Only a refusal lists what the person can reach, so only a refusal pays for it.
-    const available = async () => (await this.reachableConversations(request.workspaceId, request.scope, scoped, request.userId))
-      .map((conversation) => conversation.conversationId);
-    let target;
+    const available = async () => [
+      ...(await this.reachableConversations(request.workspaceId, request.scope, scoped, request.userId))
+        .map((conversation) => conversation.conversationId),
+      ...channels.map((channel) => channel.conversationId),
+    ];
+    let target: ScopedConversation | undefined;
     if (request.reference === null) {
       target = scoped.find((conversation) => conversation.isHome);
       if (!target) return conversationToolRefusal("conversation_home_missing", await available());
     } else {
-      const match = matchConversationReference(scoped, request.reference);
+      const match = matchConversationReference<ScopedConversation | ConversationToolEntry>(
+        [...scoped, ...channels], request.reference);
       if (match.outcome === "missing") return conversationToolRefusal("conversation_not_in_scope", await available());
       if (match.outcome === "ambiguous") {
         return conversationToolRefusal("conversation_ambiguous", match.matches.map((conversation) => conversation.conversationId));
       }
-      target = match.conversation;
+      // A Channel was listed for this person just now; its feed read admits them again.
+      if (match.conversation.kind === "space") return { ok: true, conversation: match.conversation, sidekickName: null };
+      target = match.conversation as ScopedConversation;
     }
     const resourceId = target.substreamId === "0" ? target.parentId : target.substreamId;
     if (target.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
@@ -8903,7 +8974,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ok: true,
       alreadyAttached: attached.alreadyAttached,
       conversation: conversationToolEntry(scoped ?? {
-        ...address, conversationId: conversationIdOf(address), kind: facts.kind, title: facts.title, isHome: false, isOwn: false,
+        ...address, conversationId: conversationIdOf(address), kind: facts.kind, title: facts.title,
+        isHome: false, isOwn: false, isParent: false,
       }),
     };
   }
@@ -11025,6 +11097,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }, now);
     if (result.ok && !result.replayed) {
       this.publishSpaceConversationsChanged({ spaceIds: [result.spaceId] });
+      // The merge queued its search projection; publish it now rather than at the next wake.
+      await this.armNextAlarm();
       // Best effort, as every Activity push is: the row is in Activity either way.
       await this.pushActivity(request.auth.workspaceId, [{
         threadId: request.workstreamId, substreamId: null, kind: "merge", itemId: `merged:${result.messageId}:${now}`,
@@ -11055,6 +11129,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (removed === "not_found") return { ok: false, code: "channel_message_not_found" };
     if (removed === "forbidden") return { ok: false, code: "space_access_denied" };
     this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
+    // The removal queued its deletion watermark.
+    await this.armNextAlarm();
     return { ok: true };
   }
 

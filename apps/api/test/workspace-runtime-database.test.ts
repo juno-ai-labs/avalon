@@ -254,6 +254,7 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "space_reads", // Each person's Channel read position; only the Space read RPCs.
   "space_messages", // Rally's messages in a Channel; written at Space creation, read by the feed RPC.
   "space_message_operations", // Every operation that wrote a Channel message, for merge retries; WorkspaceDO RPC only.
+  "channel_message_search_versions", // Each Channel message's search revision; its triggers, the alarm lane and its RPCs only.
   "workspace_sidebar_list_state",
   "workspace_socket_ticket_receipts",
   "workspace_socket_unheard", // The first-frame watch's ledger; socket paths and the alarm only.
