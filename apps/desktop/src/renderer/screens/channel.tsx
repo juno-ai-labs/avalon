@@ -1,3 +1,4 @@
+import { AnnotationDraftProvider } from '../components/artifact-annotations';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import clsx from 'clsx';
 import type { ChannelMessage, ChannelStats, ChannelStatsList, SpaceSummary, WorkstreamAppearancePatch } from '@rally/contracts';
@@ -64,9 +65,10 @@ import type { SpaceDirectory } from '@rally/contracts';
  */
 export function ChannelScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const { channelId = '', '*': rest = '' } = useParams();
+  const { api } = useAppSession();
   const threadId = /^threads\/([^/]+)$/.exec(rest)?.[1] ?? null;
   const artifactId = /^artifacts\/([^/]+)$/.exec(rest)?.[1] ?? null;
-  return <ChannelStack artifactId={artifactId} channelId={channelId} threadId={threadId} workspace={workspace} />;
+  return <AnnotationDraftProvider scopeKey={`channel:${channelId}`} readResource={api ? (id) => api.getResource(id) : undefined} upload={api ? async (file) => (await api.uploadResource(file,crypto.randomUUID())).id : undefined}><ChannelStack artifactId={artifactId} channelId={channelId} threadId={threadId} workspace={workspace} /></AnnotationDraftProvider>;
 }
 
 /**
@@ -668,6 +670,7 @@ function ChannelArtifactPanel({ channelId, onClose, resourceId, space }: {
   const [olderVersion, setOlderVersion] = useState<AttachmentPreview | null>(null);
   const openResourceVersion = useCallback((opened: WorkstreamResource, version: ResourceVersion) => {
     setOlderVersion({
+      resourceId:opened.id,version:version.version,
       name: version.title,
       ...(version.mimeType ? { mimeType: version.mimeType } : {}),
       loadContent: (signal?: AbortSignal) => api!.getResourceVersionContent(opened.id, version.version, signal),

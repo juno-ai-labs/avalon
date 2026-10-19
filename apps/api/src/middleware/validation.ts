@@ -76,6 +76,9 @@ export const zValidator: typeof honoZValidator = ((
     schema,
     async (result, c) => {
       if (!result.success) {
+        if (result.error.issues.some((issue) => issue.code === 'custom' && issue.message === 'annotations_too_large')) {
+          throw new ApiError(422, 'annotations_too_large', 'These pins are too large to send together');
+        }
         throw new RequestValidationError(target, result.error.issues, result.data);
       }
       return hook?.(result, c);

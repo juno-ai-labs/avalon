@@ -543,7 +543,26 @@ see
   transition. **A change to the animation or to either state's geometry still has
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
+### Starting with annotated resources
+
+The Channel's transient annotation provider covers its resource previews and
+composer. `POST /workstreams` accepts commented annotations as opening-message
+content, validates target reads and versions before reservation, and initializes
+the existing turn's structured content. Crop IDs remain ordinary draft
+attachments. The annotations participate in the create request hash; optimistic
+and canonical opening turns carry the same payload. See
+[artifact annotations](artifact-annotations.md).
+
 ## Changelog
+
+### 2026-10-19 — Carry annotations through the opening turn
+
+A person viewing an artifact from a Channel needs to start work with its pins,
+just as a person replying in a thread can. The ordinary create now admits and
+validates that payload before creating anything, rather than dropping pins or
+requiring a throwaway first message. The existing request receipt and opening
+structured-content path remain authoritative.
+
 
 ### 2026-10-19 — A starting thread shows its opening's mentions and attachments
 

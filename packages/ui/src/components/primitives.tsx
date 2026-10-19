@@ -234,6 +234,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLBut
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   label: string;
   tooltipSide?: 'top' | 'right' | 'bottom' | 'left';
+  /** Keep unavailable controls focusable so their explanation can be read. */
+  disabledReason?: string;
   /**
    * Set false when the icon's meaning is already obvious from its position (e.g. a
    * dialog's close X) — skips mounting the `Tip` subtree entirely.
@@ -242,16 +244,25 @@ interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
-  { className, label, tooltipSide = 'bottom', showTooltip = true, ...props },
+  { className, label, disabledReason, disabled, onClick, tooltipSide = 'bottom', showTooltip = true, ...props },
   ref,
 ) {
   const button = (
-    <button ref={ref} aria-label={label} className={clsx('icon-button', className)} type="button" {...props} />
+    <button
+      ref={ref}
+      aria-label={label}
+      className={clsx('icon-button', className)}
+      type="button"
+      {...props}
+      aria-disabled={disabledReason ? true : props['aria-disabled']}
+      disabled={disabled && !disabledReason}
+      onClick={disabledReason ? (event) => event.preventDefault() : onClick}
+    />
   );
 
   if (!showTooltip) return button;
 
-  return <Tip describesTrigger={false} label={label} side={tooltipSide}>{button}</Tip>;
+  return <Tip describesTrigger={Boolean(disabledReason)} label={disabledReason ?? label} side={tooltipSide}>{button}</Tip>;
 });
 
 interface DragHintProps {

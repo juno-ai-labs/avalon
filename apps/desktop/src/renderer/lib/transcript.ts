@@ -519,6 +519,7 @@ export function orderedTranscriptMessages(
             ...(opening ? { authorType: 'agent' as const, contextLabel: OPENING_AGENT_MESSAGE_LABEL } : {}),
             id: messageId,
             messageType,
+            annotationContent: block.structuredContent ?? undefined,
             text: block.text,
             streaming: block.streaming,
             ...(statusKind ? { statusEvent: { kind: statusKind, code: statusCode } } : {}),
@@ -979,7 +980,8 @@ export function pendingTranscriptInputOverlay(
           : {
               messageType: 'text' as const,
               contextLabel: OPENING_AGENT_MESSAGE_LABEL,
-              text: input.block.text,
+              annotationContent: input.block.structuredContent ?? undefined,
+      text: input.block.text,
               attachments: input.block.attachments?.map((attachment) => ({ ...attachment })),
             }),
         createdAt: input.admittedAtUtc,
@@ -1016,6 +1018,7 @@ export function pendingTranscriptInputOverlay(
         ? 'elicitation'
         : input.block.messageType === 'system' ? 'system' : 'text',
       ...(elicitation ? { elicitation } : {}),
+      annotationContent: input.block.structuredContent ?? undefined,
       text: input.block.text,
       mentions: input.block.mentions?.map((mention) => ({
         type: mention.type,

@@ -1,3 +1,5 @@
+import { useAnnotationDraft } from './artifact-annotations';
+import { AnnotationSurface } from './annotation-surface';
 import { classifyAttachmentKind } from '@rally/contracts';
 import * as Dialog from '@radix-ui/react-dialog';
 import { ChevronLeft, ChevronRight, Download, History, Info, LoaderCircle, Maximize2, Minimize2, X } from 'lucide-react';
@@ -11,6 +13,7 @@ type PreviewMode = 'audio' | 'html' | 'image' | 'markdown' | 'text' | 'video';
 
 interface LoadedPreview {
   preview: AttachmentPreview;
+  version?: number;
   src?: string;
   text?: string;
   error?: string;
@@ -80,6 +83,7 @@ function GalleryThumbnail({ preview, active, activeSrc, index, onSelect }: {
  * render them. Each host keeps only its own chrome.
  */
 export function useAttachmentView(preview: AttachmentPreview | null) {
+  const draft = useAnnotationDraft();
   const gallery = useMemo(() => preview?.gallery?.length ? preview.gallery : preview ? [preview] : [], [preview]);
   const [selection, setSelection] = useState({ preview, index: preview?.galleryIndex ?? 0 });
   if (selection.preview !== preview) {
@@ -106,19 +110,27 @@ export function useAttachmentView(preview: AttachmentPreview | null) {
     if (!active || active.src || !active.loadContent || !mode) return;
     const controller = new AbortController();
     let objectUrl: string | undefined;
-    void active.loadContent(controller.signal).then(async (blob) => {
+    let version = active.version;
+    const load = async (): Promise<Blob> => {
+      if (!version && active.resourceId && draft?.readResource) version = (await draft.readResource(active.resourceId)).currentVersion;
+      const blob = await active.loadContent!(controller.signal);
+      if (version && !active.version && active.resourceId && draft?.readResource && (await draft.readResource(active.resourceId)).currentVersion !== version) throw new Error('The file changed. Reopen its preview before picking.');
+      return blob;
+    };
+    void load().then(async (blob) => {
       if (mode === 'image' || mode === 'audio' || mode === 'video') {
         if (controller.signal.aborted) return;
         objectUrl = URL.createObjectURL(blob);
-        setLoaded({ preview: active, src: objectUrl });
+        setLoaded({ preview: active, version, src: objectUrl });
         return;
       }
       const text = await blob.text();
-      if (!controller.signal.aborted) setLoaded({ preview: active, text });
+      if (!controller.signal.aborted) setLoaded({ preview: active, version, text });
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
       setLoaded({
         preview: active,
+        version,
         error: error instanceof Error ? error.message : 'Rally could not load this attachment.',
       });
     });
@@ -127,6 +139,13 @@ export function useAttachmentView(preview: AttachmentPreview | null) {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [active, mode]);
+
+  useEffect(() => {
+    if (!active?.src || !active.resourceId || active.version || !draft?.readResource) return;
+    let current = true;
+    void draft.readResource(active.resourceId).then((resource) => { if (current) setLoaded({preview:active,version:resource.currentVersion}); }).catch(() => {});
+    return () => {current=false;};
+  },[active,draft?.readResource]);
 
   const current = active && loaded?.preview === active ? loaded : null;
   const src = active?.src ?? current?.src;
@@ -137,6 +156,7 @@ export function useAttachmentView(preview: AttachmentPreview | null) {
     void downloadPreview(active, src).catch(() => setDownloadError('Download failed. Please try again.'));
   }, [active, src]);
   return {
+    version: active?.version ?? current?.version,
     gallery,
     activeIndex,
     setActiveIndex,
@@ -159,6 +179,9 @@ export type AttachmentView = ReturnType<typeof useAttachmentView>;
 export function AttachmentViewBody({ view }: { view: AttachmentView }): React.JSX.Element | null {
   const { active, mode, src, text, error, downloadError, loading } = view;
   if (!active || !mode) return null;
+  if (active.resourceId && !loading && (!error || classifyAttachmentKind({fileName:active.name,mimeType:active.mimeType}) === 'other' || active.annotation) && mode !== 'audio' && mode !== 'video') {
+    return <AnnotationSurface resourceId={active.resourceId} version={active.annotation?.target.version ?? view.version ?? 0} name={active.name} mimeType={active.mimeType} sizeBytes={active.sizeBytes} text={text} src={src} saved={active.annotation} loadSavedImage={active.loadAnnotationImage} />;
+  }
   return <>
     {loading && <div className="attachment-lightbox-status" role="status"><LoaderCircle aria-hidden="true" className="spin" size={20} /> Preparing preview…</div>}
     {(error || downloadError) && <div className="attachment-lightbox-status is-error" role="alert">{error ?? downloadError}</div>}

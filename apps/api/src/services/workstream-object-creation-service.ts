@@ -1,4 +1,6 @@
-import { WorkstreamCreationFieldsSchema } from "@rally/contracts";
+import type { ModelAttachmentSource } from "./attachment-model-content";
+import { ResourceService } from "./resource-service";
+import { WorkstreamCreationFieldsSchema, annotationAllowedForResource } from "@rally/contracts";
 import type { ConversationInitialization, PreparedConversation } from "@rally/contracts";
 import { CreateWorkstreamRequestSchema, asUserId, asWorkstreamId } from "@rally/contracts";
 import type {
@@ -265,6 +267,25 @@ export class WorkstreamObjectCreationService {
   } | { reserved: WorkstreamId }> {
     const span = options.span ?? noFlowSpan;
     const body = ((options.initialization?.kind === "history") ? WorkstreamCreationFieldsSchema : CreateWorkstreamRequestSchema).parse(input);
+    if (body.annotations?.length) {
+      if (options.initialization?.kind === "history" || options.openingStructuredContent) throw new ApiError(422, "annotation_opening_conflict", "Annotations require an ordinary opening message");
+      const names: Record<string,string> = {};
+      const images: ModelAttachmentSource[] = [];
+      const resources = new ResourceService(this.env,this.auth);
+      // Several pins usually share one version. Validate that target once per
+      // message rather than paying the same canonical reads for every pin.
+      const targets = new Map<string,ReturnType<ResourceService['annotationTarget']>>();
+      for (const annotation of body.annotations) {
+        const key = `${annotation.target.resourceId}:${annotation.target.version}`;
+        const target = targets.get(key) ?? resources.annotationTarget(annotation.target.resourceId,annotation.target.version);
+        targets.set(key,target);
+        const resource = await target;
+        if (!annotationAllowedForResource(annotation,{fileName:resource.title,mimeType:resource.mimeType})) throw new ApiError(422,"annotation_locator_type_mismatch","The annotation locator does not match this resource");
+        names[annotation.target.resourceId] = resource.title;
+        if (resource.image && !images.some((image) => image.id === resource.image?.id)) images.push(resource.image);
+      }
+      options = {...options, openingStructuredContent:{kind:"artifact_annotations",annotations:body.annotations,names,...(images.length ? {images} : {})}};
+    }
     // Named for the second read it is: `POST /workstreams` already resolved the
     // authority control row before choosing this service, and a span of its own
     // is where that duplicated round trip becomes visible instead of hiding

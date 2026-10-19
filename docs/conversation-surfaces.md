@@ -756,6 +756,16 @@ relevant delay clears. The workspace-scoped resume registry retains the delay se
 alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
+### Artifact annotation drafts
+
+Each conversation surface owns an in-memory annotation provider keyed by parent
+and breakout. Preview hosts hand Comment mode to the panel header, immediately
+before the always-visible Expand control. Composer chips and feed excerpts share
+that provider and canonical structured content. Only accepted sends clear the
+captured pin IDs. A breakout launcher opts out of its parent's draft so it cannot
+consume unrelated pins. [Artifact annotations](artifact-annotations.md) owns the
+selection and message protocol.
+
 ## Changelog
 
 ### 2026-10-19 — One hover row for every message, Channels included
@@ -785,6 +795,19 @@ text verbatim must pass it, or the saved card differs from the screen. In a
 Channel the row sits on the message's name · time line (`.channel-feed-byline`)
 rather than a line of its own: the row is laid out while hidden, and on its own
 line it made every Channel message about 31px taller at rest.
+
+### 2026-10-19 — Share annotation drafts across preview hosts and the composer
+
+Selections belong to the message being written, so the conversation owns their
+transient state instead of each preview inventing a separate draft. Header
+actions keep Comment mode immediately before Expand, including narrow panels.
+The provider resets only pin state when scope changes; it preserves the mounted
+conversation and pending history requests. Deferred panel-arrival focus yields
+to a control already opened by the reader, so a newly opened title menu stays
+open. Only the pins captured by an accepted send are cleared; a failed send or another
+composer's draft must retain its selections.
+
+
 
 ### 2026-10-18 — A long paste attaches as a typed, named file
 

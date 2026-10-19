@@ -181,7 +181,13 @@ same way it acts on any message.
 
 ## Decision log
 
-None yet.
+- 2026-10-19: The requester accepted native-only website and live-site picking
+  for better capabilities. HTML-file and live-site pick controls are exposed in
+  the Mac app; document, sheet and image annotations remain desktop and web.
+  The implementation uses an isolated native live-site picker and screenshot
+  capture, with no serving-Worker injection. Static HTML retains an opaque,
+  nonce-gated frame, using a bundled external picker because `srcdoc` inherits
+  the app's strict CSP and blocks an inline picker despite its frame nonce.
 
 ## Key design decisions
 

@@ -1,3 +1,5 @@
+import { MessageAnnotations } from './artifact-annotations';
+import { rehypeAnnotationSource } from '../lib/annotation-source';
 import clsx from 'clsx';
 import { personalColor, personalColorInk } from './personal-avatar';
 import { MemberPresentationContext } from '../lib/member-presentation';
@@ -242,8 +244,9 @@ interface MessageCopyTelemetry {
   workstreamId: string;
 }
 
-function MarkdownCodeBlock({ code, glance, language, renderDiagrams, telemetry }: {
+function MarkdownCodeBlock({ code, glance, language, renderDiagrams, telemetry, annotationRange }: {
   code: string;
+  annotationRange?: [number,number] | undefined;
   glance?: boolean;
   language: string;
   renderDiagrams?: boolean;
@@ -278,7 +281,7 @@ function MarkdownCodeBlock({ code, glance, language, renderDiagrams, telemetry }
     <Highlight code={code} language={highlightedLanguage} theme={markdownCodeTheme}>
       {({ className, getLineProps, getTokenProps, style, tokens }) => (
         <pre className={className} style={style}>
-          <code>
+          <code data-annotation-text={annotationRange ? true : undefined} data-annotation-start={annotationRange?.[0]} data-annotation-end={annotationRange?.[1]}>
             {tokens.map((line, lineIndex) => (
               <span {...getLineProps({ line })} key={lineIndex}>
                 {line.map((token, tokenIndex) => (
@@ -319,20 +322,22 @@ function MarkdownCodeBlock({ code, glance, language, renderDiagrams, telemetry }
   );
 }
 
-function MarkdownCode({ children, className, glance, renderDiagrams, telemetry }: React.ComponentProps<'code'> & {
+function MarkdownCode({ children, className, glance, renderDiagrams, telemetry, annotationRange }: React.ComponentProps<'code'> & {
   glance?: boolean;
   renderDiagrams?: boolean;
   telemetry?: MessageCopyTelemetry;
+  annotationRange?: [number,number] | undefined;
 }): React.JSX.Element {
   const source = String(children ?? '');
   const languageMatch = /(?:^|\s)language-([\w#+.-]+)/u.exec(className ?? '');
   const isBlock = Boolean(languageMatch) || source.endsWith('\n');
 
-  if (!isBlock) return <code className="markdown-inline-code">{children}</code>;
+  if (!isBlock) return <code className="markdown-inline-code" data-annotation-text={annotationRange ? true : undefined} data-annotation-start={annotationRange?.[0]} data-annotation-end={annotationRange?.[1]}>{children}</code>;
 
   return (
     <MarkdownCodeBlock
       code={source.replace(/\n$/u, '')}
+      annotationRange={annotationRange}
       glance={glance}
       language={languageMatch?.[1]?.toLowerCase() ?? ''}
       renderDiagrams={renderDiagrams}
@@ -1211,8 +1216,10 @@ export function MarkdownBody({
   streaming = false,
   telemetry,
   verbatim = false,
+  sourcePositions = false,
 }: {
   children: string;
+  sourcePositions?: boolean;
   /**
    * How this surface resolves a cited resource and where it opens one. Absent
    * on a surface with no work stream behind it, which is exactly the condition
@@ -1319,9 +1326,19 @@ export function MarkdownBody({
   // inputs is refreshed: ReactMarkdown treats a new inline function as a new
   // component type, which used to unmount a finished Mermaid diagram, show its
   // much shorter source fallback, and then render the diagram again.
-  const renderCode = useCallback((properties: React.ComponentProps<'code'> & ExtraProps): React.JSX.Element => (
+  const annotationSource = sourcePositions ? markdown : '';
+  const renderCode = useCallback((properties: React.ComponentProps<'code'> & ExtraProps): React.JSX.Element => {
+    const start = properties.node?.position?.start.offset;
+    const end = properties.node?.position?.end.offset;
+    const raw = String(properties.children ?? '').replace(/\n$/u,'');
+    const fragment = start !== undefined && end !== undefined ? annotationSource.slice(start,end) : '';
+    const bodyStart = /^[ \t]*(?:`{3,}|~{3,})/u.test(fragment) ? fragment.indexOf('\n') + 1 : 0;
+    const relative = fragment.indexOf(raw,bodyStart);
+    const annotationRange: [number,number] | undefined = sourcePositions && start !== undefined && relative >= 0 ? [start+relative,start+relative+raw.length] : undefined;
+    return (
     <MarkdownCode
       {...properties}
+      annotationRange={annotationRange}
       glance={glance}
       // An open fence changes on every streaming commit, and Mermaid's
       // asynchronous parse cannot be cancelled. Render once the turn is
@@ -1329,7 +1346,7 @@ export function MarkdownBody({
       renderDiagrams={!glance && !still && !streaming}
       telemetry={messageId !== undefined && workstreamId !== undefined ? { messageId, workstreamId } : undefined}
     />
-  ), [glance, messageId, still, streaming, workstreamId]);
+  ); }, [glance, messageId, still, streaming, workstreamId,sourcePositions,annotationSource]);
   // Stable across commits that change nothing they depend on, for two reasons:
   // the settled segments' memo compares them by identity, and the memoised
   // element below reuses the whole rendered body while they hold still.
@@ -1393,7 +1410,7 @@ export function MarkdownBody({
         return <CitationFootnoteSection section={props}>{sectionChildren}</CitationFootnoteSection>;
       },
       code: renderCode,
-      pre: ({ children: preChildren }) => <>{preChildren}</>,
+      pre: ({ children: preChildren, node }) => sourcePositions ? <div data-annotation-start={node?.position?.start.offset} data-annotation-end={node?.position?.end.offset} data-annotation-container>{preChildren}</div> : <>{preChildren}</>,
       table: MarkdownTable,
     } satisfies MarkdownComponents,
     urlTransform: ((url, key, node) => (
@@ -1409,7 +1426,7 @@ export function MarkdownBody({
         ? url
         : defaultUrlTransform(url)
     )) satisfies MarkdownUrlTransform,
-  }), [glance, renderCode, stableMentions, still, token]);
+  }), [glance, renderCode, stableMentions, still, token, sourcePositions]);
   // Heading overrides are a second map so a nested h3 in a section body does
   // not grow a chevron: only the section's own heading markdown uses these.
   const headingComponents = useMemo<MarkdownComponents>(() => ({
@@ -1503,7 +1520,7 @@ export function MarkdownBody({
       return (
         <ReactMarkdown
           components={used}
-          rehypePlugins={rehypePlugins}
+          rehypePlugins={sourcePositions ? [...rehypePlugins, rehypeAnnotationSource] : rehypePlugins}
           remarkPlugins={plugins}
           remarkRehypeOptions={rehypeOptions}
           urlTransform={urlTransform}
@@ -1604,6 +1621,7 @@ export function MarkdownBody({
     streaming,
     tailRemarkPlugins,
     urlTransform,
+    sourcePositions,
   ]);
   // The provider sits outside the memoised body deliberately: a definition that
   // arrives mid-stream has to reach the pills, and a context update crosses a
@@ -3105,6 +3123,7 @@ export function MessageBlock({
             telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
             text={message.text}
           />
+          <MessageAnnotations content={message.annotationContent} onOpen={onOpenAttachment} />
           {pendingLabel && <span className="message-delivery-pill">{pendingLabel}</span>}
           {/* The slot, whether or not there is a control to put in it. It is
               laid out always and painted on hover, and the turn after this one

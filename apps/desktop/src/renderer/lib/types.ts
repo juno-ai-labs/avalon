@@ -553,6 +553,7 @@ export interface WorkSpan {
 }
 
 export interface Message {
+  annotationContent?: Record<string, unknown> | undefined;
   id: string;
   /** Ordered-transcript sequence. Present only on canonical transcript rows. */
   transcriptSequence?: number;

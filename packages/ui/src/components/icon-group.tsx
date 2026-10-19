@@ -11,6 +11,9 @@ export interface IconGroupAction {
   icon: ReactNode;
   onSelect: () => void;
   disabled?: boolean;
+  disabledReason?: string;
+  /** Keep this control visible even when the rest of the group folds. */
+  alwaysVisible?: boolean;
   /** Set for a toggle: the button carries `aria-pressed`, its menu row a check. */
   pressed?: boolean;
 }
@@ -43,14 +46,17 @@ export function IconGroup({ actions = [], buttonClassName, children, className, 
   moreLabel?: string;
   tooltipSide?: TooltipSide | undefined;
 }): React.JSX.Element {
+  const foldedActions = actions.filter((action) => !action.alwaysVisible);
+  const visibleActions = actions.filter((action) => action.alwaysVisible);
   const moreRef = useRef<HTMLButtonElement>(null);
   return <div className={clsx('icon-group', folded && 'is-folded', className)}>
-    {actions.length > 0 && <>
+    {foldedActions.length > 0 && <>
       <span className="icon-group-actions">
-        {actions.map((action) => <IconButton
+        {foldedActions.map((action) => <IconButton
           aria-pressed={action.pressed}
           className={clsx(buttonClassName, action.pressed !== undefined && 'icon-button-toggle')}
           disabled={action.disabled}
+          disabledReason={action.disabledReason}
           key={action.key}
           label={action.label}
           onClick={action.onSelect}
@@ -67,10 +73,10 @@ export function IconGroup({ actions = [], buttonClassName, children, className, 
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
           <DropdownMenu.Content align="end" className="menu-content icon-group-menu" collisionPadding={12} sideOffset={8}>
-            {actions.map((action) => {
+            {foldedActions.map((action) => {
               const common = {
                 className: 'menu-item',
-                disabled: action.disabled,
+                disabled: action.disabled || Boolean(action.disabledReason),
                 onSelect: () => {
                   // The item is about to unmount with its menu. An action that
                   // remembers where focus was (Expand, to return to it) should
@@ -93,6 +99,16 @@ export function IconGroup({ actions = [], buttonClassName, children, className, 
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
     </>}
+    {visibleActions.map((action) => <IconButton
+      aria-pressed={action.pressed}
+      className={clsx(buttonClassName, action.pressed !== undefined && 'icon-button-toggle')}
+      disabled={action.disabled}
+      disabledReason={action.disabledReason}
+      key={action.key}
+      label={action.label}
+      onClick={action.onSelect}
+      tooltipSide={tooltipSide}
+    >{action.icon}</IconButton>)}
     {children}
   </div>;
 }

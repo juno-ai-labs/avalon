@@ -421,12 +421,11 @@ describe('attachment presentation', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Preview debug.log' }));
     const text = await screen.findByText(/\*\*literal\*\*/u);
-    expect(text.tagName).toBe('PRE');
-    expect(text).toHaveClass('attachment-lightbox-text');
+    expect(text.closest('pre')).toHaveClass('attachment-lightbox-text');
     expect(screen.queryByText('literal', { selector: 'strong' })).not.toBeInTheDocument();
   });
 
-  it('shows CSV source content as literal text', async () => {
+  it('shows CSV source content as a selectable grid', async () => {
     const attachment: MessageAttachment = {
       id: 'resource-csv',
       fileName: 'metrics.csv',
@@ -443,8 +442,9 @@ describe('attachment presentation', () => {
     render(<Example />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Preview metrics.csv' }));
-    const text = await screen.findByText(/month,total/u);
-    expect(text.tagName).toBe('PRE');
+    expect(await screen.findByRole('cell',{name:'July'})).toBeVisible();
+    expect(screen.getByRole('cell',{name:'42'})).toBeVisible();
+    expect(screen.getByRole('cell',{name:'month'})).toBeVisible();
   });
 
   it('fades a name past 200 characters instead of growing the chip without bound', () => {
