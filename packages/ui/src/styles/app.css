@@ -8911,7 +8911,9 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .channel-feed-message-text .markdown-body { color: inherit; font-size: inherit; line-height: inherit; }
 .channel-feed-message-text .markdown-body > :first-child { margin-top: 0; }
 .channel-feed-message-text .markdown-body > :last-child { margin-bottom: 0; }
-.channel-feed-empty { color: var(--av-sys-color-text-muted); margin: auto; max-width: 420px; padding: 24px; text-align: center; }
+.channel-feed-empty { color: var(--av-sys-color-text-muted); line-height: 1.55; margin: auto; max-width: 560px; padding: 24px; }
+.channel-feed-empty > p { margin: 0; }
+.channel-feed-empty > p + p { margin-top: 16px; }
 /* What Rally remembers (docs/agent-memory.md): one scope's facts, drawn by
    `MemoryFactRows` in a settings card (`.memory-review`) and in a title menu's
    Memory level (`.title-menu-memory`). */
