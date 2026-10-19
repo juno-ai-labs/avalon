@@ -10405,7 +10405,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * Tell each socket which of these resources have a new head, so a preview
    * open on one moves to it. A socket hears only the resources linked to a
    * thread whose Main its person may open, the gate an artifact pin reads
-   * under; only a thread's directory projection writes those links. Not on
+   * under (only a thread's directory projection writes those links), or
+   * shared with a Channel its person reads, the gate the resource read check
+   * applies to a merge's embeds (docs/authorization.md). Not on
    * the waterline and never replayed: a client that was away reads each head
    * when it next opens the conversation.
    *
@@ -10424,7 +10426,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     )) {
       linkedTo.set(row.resource_id, [...linkedTo.get(row.resource_id) ?? [], row.workstream_id]);
     }
-    if (linkedTo.size === 0) return;
+    const sharedWith = new Map<string, string[]>();
+    for (const row of this.state.storage.sql.exec<{ resource_id: string; parent_id: string }>(
+      `SELECT resource_id, parent_id FROM authorization_locations
+        WHERE parent_kind = 'space' AND resource_id IN (SELECT value FROM json_each(?))`,
+      JSON.stringify(heads.map((head) => head.resourceId)),
+    )) {
+      sharedWith.set(row.resource_id, [...sharedWith.get(row.resource_id) ?? [], row.parent_id]);
+    }
+    if (linkedTo.size === 0 && sharedWith.size === 0) return;
     const occurredAt = new Date().toISOString();
     const payloads = new Map<string, string | null>();
     for (const socket of this.state.getWebSockets()) {
@@ -10443,7 +10453,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           }
           return open;
         };
-        const visible = heads.filter((head) => (linkedTo.get(head.resourceId) ?? []).some(opens));
+        const reached = new Map<string, boolean>();
+        const reads = (spaceId: string): boolean => {
+          let read = reached.get(spaceId);
+          if (read === undefined) {
+            read = this.spaceStorage().reach(viewer, spaceId) !== null;
+            reached.set(spaceId, read);
+          }
+          return read;
+        };
+        const visible = heads.filter((head) => (linkedTo.get(head.resourceId) ?? []).some(opens)
+          || (sharedWith.get(head.resourceId) ?? []).some(reads));
         const event: WorkspaceResourceVersionsEvent = {
           type: "workspace_resource_versions",
           occurredAt,
@@ -16640,12 +16660,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         groups.push(searchAudienceGroup.connection(connection.id));
       }
     }
-    // Each unarchived Channel this person reads that has resources shared with
-    // it, as the canonical resource check admits them.
-    const viewer = { userId: request.userId, accessClass: relationship.accessClass };
-    for (const { parent_id: spaceId } of sql.exec<{ parent_id: string }>(
-      "SELECT DISTINCT parent_id FROM authorization_locations WHERE parent_kind = 'space'").toArray()) {
-      if (this.spaceStorage().reach(viewer, spaceId, true) !== null) groups.push(searchAudienceGroup.space(spaceId));
+    // Each unarchived Channel this person reads, in one listing query, for
+    // the resources merges shared with it. A Channel with none costs only a
+    // group that matches no row.
+    for (const spaceId of this.spaceStorage().visibleSpaceIds({ userId: request.userId, accessClass: relationship.accessClass })) {
+      groups.push(searchAudienceGroup.space(spaceId));
     }
     return searchAudienceGroupIds(groups);
   }
@@ -16668,15 +16687,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   async authorizationResourceFacts(input: {
     workspaceId: string; userId: string; resourceIds: string[];
-    /** The reader's access class, which decides the Channels they read; absent reads as a guest's, the narrowest. */
-    accessClass?: "member" | "guest";
+    /** The reader's access class, which decides the Channels they read. */
+    accessClass: "member" | "guest";
   }) {
     await this.initialized;
     const request = z.strictObject({
       workspaceId: WorkspaceIdSchema, userId: UserIdSchema, resourceIds: z.array(IdSchema),
-      accessClass: z.enum(["member", "guest"]).optional(),
+      accessClass: z.enum(["member", "guest"]),
     }).parse(input);
-    const reader = { userId: request.userId, accessClass: request.accessClass ?? "guest" as const };
+    const reader = { userId: request.userId, accessClass: request.accessClass };
     this.assertWorkspace(request.workspaceId);
     const locations = new AuthorizationStorage(this.state.storage);
     const coverage = this.authorizationCoverage();

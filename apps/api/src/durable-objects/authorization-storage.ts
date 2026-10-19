@@ -41,7 +41,6 @@ export function authorizationSnapshotKey(subject: AuthorizationSubject, resource
   return JSON.stringify([subject.workspaceId, subject.userId, subject.delegation, authorizationResourceKey(resource)]);
 }
 
-/** SQLite owns inventory revision ordering; delayed delivery cannot resurrect removed links. */
 /**
  * Link resources to a Channel: everyone who can read the Channel, now or
  * later, can read them. The caller holds the transaction. Each new row
@@ -63,7 +62,10 @@ export function linkSpaceResources(sql: SqlStorage, spaceId: string, resourceIds
  * `linkSpaceResources` embeds to its Channel, so an older merge's artifacts
  * follow the Channel's readers like a new one's (docs/conversation-merge.md).
  * Each was an Organization-wide thread's, attached to that thread, so no
- * reader loses access; an embed whose resource is gone is skipped.
+ * reader loses access. It widens deliberately: the Channel's readers who
+ * could not open that thread (its guests, people who reach it through a
+ * thread) can now open those embeds too, as the "everyone in the parent"
+ * rule asks. An embed whose resource is gone is skipped.
  */
 export const SPACE_MERGE_EMBED_LINKS_MIGRATION: readonly string[] = [
   `INSERT OR IGNORE INTO authorization_locations(parent_id, substream_id, parent_kind, resource_id)
@@ -73,6 +75,7 @@ export const SPACE_MERGE_EMBED_LINKS_MIGRATION: readonly string[] = [
     WHERE message.source_workstream_id IS NOT NULL AND message.embeds_json IS NOT NULL`,
 ];
 
+/** SQLite owns inventory revision ordering; delayed delivery cannot resurrect removed links. */
 export class AuthorizationStorage {
   constructor(private readonly storage: DurableObjectStorage) {}
 

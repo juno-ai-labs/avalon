@@ -216,7 +216,12 @@ added to a private Channel can open what was merged into it, and one removed
 cannot, from the next read. Search follows the same way: the resource's rows
 carry the `space:<id>` group (migration 76's triggers reindex on the new
 location row), and `readSearchAudience` gives each person the group of every
-unarchived Space with shared resources that they reach.
+unarchived Space they see (`visibleSpaceIds`, one read), whether or not it
+shares anything: a group no row carries costs nothing.
+
+A link outlives the merge that wrote it, as an attachment outlives the message
+that cited it: deleting the merge, or merging again without the embed, leaves
+the resource shared with the Space. Nothing removes Space rows today.
 
 ### Invitation admission
 
