@@ -185,8 +185,11 @@ its threads and messages, and a composer at the foot.
   the newest row when caught up. The opening waterline is captured once per
   visit; later acknowledgements and other windows' reads do not reposition it.
   If the waterline is on an older page, the existing cursor loads earlier pages
-  until it is present. Paging starts after the query observer has switched to
-  the entered Channel; viewport placement still runs before paint.
+  until it and preceding context are present. Tall context yields enough room
+  to keep the first unread row visible. Stale or missing read state is refreshed
+  before entry positioning. An opening read-state or history failure exposes a
+  retry and shows the oldest loaded content without automatically advancing the
+  saved waterline; a deliberate scroll resumes reading.
   At the end the feed follows new arrivals; elsewhere it
   holds the reader's position, including when loading an earlier page.
   Positioning waits until the pane is visible: returning from an expanded
@@ -502,13 +505,7 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   `components/breakout-marks.test.tsx`, `lib/browser-rail-links.test.ts`. Run
   with `pnpm --filter @rally/desktop exec vitest run <path>`.
 - **A guest in the shell:** `lib/browser-collaboration.test.tsx`.
-- **Channel positioning:** `screens/channel.test.tsx` covers first showing a
-  Channel behind an expanded thread, preserving an older reading position,
-  returning through an empty Channel, opening at the server waterline, paging
-  to it on a fresh mount and a cached Channel switch, late read-state delivery,
-  and acknowledging only visible rows.
-  Real Electron verification covers the hidden pane's zero geometry and the
-  visible reading position on entry and return.
+- **Channel positioning and read acknowledgements:** `screens/channel.test.tsx`.
 - **API side of the origin fields:**
   `apps/api/test-workers/substream-creation-runtime.test.ts`.
 - **Window behaviour:** whether panes, pills and ticks are visible and placed
@@ -522,7 +519,13 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 The feed captures the server's first-unread position for each visit and opens
 there with preceding context, loading earlier pages only when needed. Visible
 rows advance the server read waterline; only reaching the end acknowledges its
-latest number. Always opening at the newest row and acknowledging the whole
+latest number. Opening refreshes invalidated or missing read state, waits for
+a missing unread row during entry refetch, and keeps unread visible even after
+a tall context row. A failed opening request leaves a retryable, usable feed
+without silently acknowledging the missing history. Settled merge reveals finish
+even when another arrival has overtaken their target.
+
+Always opening at the newest row and acknowledging the whole
 feed would skip unread work and erase the saved position on every visit.
 
 Positioning runs only while the pane has visible layout, retaining the
@@ -532,6 +535,11 @@ leave the feed at the top. An empty Channel also resets the scroll visit, so a
 return cannot reuse another visit's history-prepend baseline. Repositioning on
 every return to the newest row was rejected because it would discard a reader's
 deliberate scroll into older history.
+
+The existing feed cursor can require sequential requests through a long unread
+Channel. No page cap was added: stopping early would skip the server-saved
+waterline requested by the reader. An indexed read-position feed endpoint would
+remove that latency without changing the opening contract.
 
 ### 2026-10-19 — Thread, Breakout and Channel menus gain a Memory level
 
