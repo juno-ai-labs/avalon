@@ -350,9 +350,9 @@ This provides an executable eval seam, not a scheduler or scoring database.
   desktop test of a failed start.
 - Every new-thread import reservation is watched from the transaction that
   makes it. Otherwise a start cut off before its run, from a window that is
-  gone, leaves a thread that nothing archives: a production thread from 2026-10-06
-  stayed listed for two weeks this way. Guard: the Workers reservation-watch
-  tests and `test/workspace-import-reservation-reclaim-migration.test.ts`.
+  gone, leaves a thread that nothing archives. Guard: the Workers
+  reservation-watch tests and
+  `test/workspace-import-reservation-reclaim-migration.test.ts`.
 - Discard stops only the caller's own hidden import child. Otherwise one member
   could stop another's agent, or a Channel's own run, by naming it. Guard: the
   Workers ownership test.
@@ -448,10 +448,8 @@ placeholder is expected on every import, discarded or not. A context the main wi
 sends to the import window during a run (another Space, another update) waits
 until the run ends: a run drives the tab, and nothing else may navigate it.
 
-An import whose thread has not opened an hour after its reservation
-(`IMPORT_RESERVATION_RECLAIM_AFTER_MS`, the team's number) is presumed dead
-and archived, and its `complete` is refused. A real import opens its thread in
-20 to 60 seconds; one still running at an hour loses its result.
+An import whose thread has not opened `IMPORT_RESERVATION_RECLAIM_AFTER_MS`
+(one hour, the team's number) after its reservation is archived; see step 6.
 
 HTML/code artifacts remain stored files; importing does not launch a site.
 
