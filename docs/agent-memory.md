@@ -33,6 +33,9 @@ conversation.
 | `packages/agent-harness/src/prompts/memory-sweep.ts` | The sweep prompt and its strict JSON schema. Golden-hashed in `prompts.test.ts`. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The two sweep triggers (the settlement step after the description loop, and the alarm lane `nextMemorySweepAt`), the digest copy refresh at settlement, and the synchronous copy read the run renders from (`memoryDigest` on the persistent-loop runtime). |
 | `apps/api/src/services/integrations.ts` | `principalSystemSectionFor`: the digest and the personal system prompt composed into the harness's per-principal system section. |
+| `apps/api/src/routes/workspace.ts`, `apps/api/src/services/workspace-service.ts` | The review surface's two routes, `GET /workspace/me/memory` and `DELETE /workspace/me/memory/:factId`, mapped from the `reviewMemoryFacts` and `forgetReviewedMemoryFact` RPCs to the `MemoryReview` contract. |
+| `packages/contracts/src/memory.ts` | `MemoryReviewSchema`, `MemoryReviewFactSchema`, `MemoryReviewSourceSchema`, `MemoryForgetResponseSchema`: what the review surface reads. |
+| `apps/desktop/src/renderer/components/memory-review.tsx` | `MemoryReviewPanel`, "What Rally remembers", rendered in the Personal Channel by `screens/channel.tsx`. |
 | `apps/api/src/queues/activity-consumer.ts` | The `memory_sweep` and `memory_digest_sync` Queue branches. |
 | `apps/api/src/services/memory-scope-cache.ts`, `workspace-memory-storage.ts` | The scopes and typed tables of `rally_tables`, unchanged by this module and documented in [`agent-harness.md`](agent-harness.md#scoped-durable-memory). |
 
@@ -266,6 +269,34 @@ Failure codes: `memory_horizon_required`, `memory_horizon_forbidden`,
 as `memory_tool_unavailable`. Argument shape is the harness's `validateInput`
 hook, which names the field.
 
+### The review surface
+
+In their Personal Channel (`space.scope === "individual"`) a person sees **What
+Rally remembers**, between the header and the feed: their own facts first
+("About you"), then the Organization's, then one group per Channel they may
+open. Each fact shows its text, a `Disagreement` badge for a conflict, its
+horizon ("Until", "Expired" muted, or "From" for an upcoming one), a link to
+the conversation it came from (a Thread, a Breakout inside its Thread, a
+Channel, or a Sidekick), and **Remove** where the person may remove it.
+
+`GET /workspace/me/memory` answers `MemoryReview`: `own` is the person's active
+`person` facts, expired included and retracted excluded, newest first, **whether
+or not they can still open the source**: these are facts about them, and the
+review surface is where they remove them (design decision 14). `shared` is the
+Organization's and the Channels' active facts under the ordinary visibility rule
+for a person reader with no conversation (every source openable today,
+`admitsOrganizationWide`, the Channel listed), Organization first. `removable`
+is true for own facts, and for shared facts only when the person administers
+the Organization (owner or admin). `DELETE /workspace/me/memory/:factId`
+retracts through `forgetReviewedMemoryFact`: own facts by their person, shared
+facts by an administrator, `404 memory_fact_not_found` and
+`403 memory_fact_not_removable` otherwise; a repeat answers `already_retracted`
+as 200. A retraction marks every digest holder and wakes the alarm, so the lane
+above reaches every conversation's copy; `memory_recall` reads the store and
+never shows it again. The mount is members-only, so a guest has no review
+surface. The desktop drops the row from its query cache on success and shows
+the refusal inline on failure; a 404 is treated as already removed.
+
 ### The import
 
 Migration 116 turned every live row of the retired `memory_items` store into a
@@ -419,6 +450,8 @@ defensive numbers.
 | `packages/agent-harness/src/prompts.test.ts` | The sweep prompt's golden hash, injection isolation, bounding, and load-bearing lines; the digest's golden hash, group order, horizons, the `external` exclusion, the budget cut and its trailer. |
 | `apps/api/test/memory-digest-service.test.ts` | The digest over a real `WorkspaceDO` and real conversation objects: who reads as whom (`digestReaderFor`), a copy holds what its reader may see and nobody else's facts, an older read never replaces a newer copy, a forget drops the fact from every copy, and the section composes digest then personal prompt. |
 | `apps/api/test/message-run-context.test.ts` | Which runs carry the personal prompt; the section is empty with no copy and no prompt. |
+| `apps/api/test/memory-review.test.ts` | The review over a real `WorkspaceDO`: a member's own and shared facts with `removable`, an expired fact flagged, own-fact removal and its repeat, a member refused and an administrator allowed on an Organization fact, the digest holder marked afterwards. |
+| `apps/desktop/src/renderer/components/memory-review.test.tsx`, `screens/channel.test.tsx` | The panel's group order, horizons, Remove visibility and behavior, the empty state; the panel appears for a Personal Channel and not for an Organization Channel. |
 | `apps/api/test/scoped-memory.test.ts`, `test-workers/workspace-memory.test.ts` | The scopes and typed tables this module leaves in place. |
 
 Traps: the Node fixtures seed `channels` and `channel_viewers` by hand (the
@@ -452,6 +485,38 @@ anything injected automatically (PRD design decision 11). The model's
 authority. `retracted_by` records who forgot a fact.
 
 ## Changelog
+
+### 2026-10-19 — A person reviews and removes what Rally remembers in their Personal Channel
+
+**What changed:** PRD rollout step 3, the last. `GET` and `DELETE
+/workspace/me/memory` and the `MemoryReview` contract; `reviewMemoryFacts` and
+`forgetReviewedMemoryFact` on `WorkspaceDO`, the latter a forget with no
+conversation; the **What Rally remembers** panel in the Personal Channel. The
+PRD's `state.md` moves to completed.
+
+**Why:** Memory the person cannot see is memory they cannot trust or correct;
+the PRD put the review surface in the Personal Channel because that is the one
+place that is theirs alone, and listed it after the digest because the digest is
+what makes a wrong fact cost something. Own facts are listed whether or not the
+source is still openable, because a fact about a person they can no longer
+reach is exactly the one they most need to be able to remove.
+
+**Considered and rejected:** A review surface in Settings: the facts are about
+the person's work, not their account, and the Personal Channel already carries
+what Rally does for them alone. Letting any member remove a shared fact they can
+see: design decision 14 keeps forgetting apart from seeing, so a Channel's or
+the Organization's facts take an administrator here as in the tool. Showing
+retracted facts with a restore action: nothing is deleted, so a restore is
+possible, but nobody has asked for it and the chain is kept for that day.
+
+**Consequences:** The panel takes a fourth grid row in the Channel screen,
+capped at 40% of the pane and scrolling past that (a layout number, not a
+limit). A removal reaches digest copies through the copy-sync lane, so a run
+that starts in the moments before can see the fact once more. A guest has no
+review surface because the `/workspace` mount is members-only; if guests ever
+hold `person` facts, the route needs its own mount.
+
+Shipped in the step-3 pull request on top of the step-2 one.
 
 ### 2026-10-19 — Every activation starts with a digest rendered from its conversation's own copy
 
