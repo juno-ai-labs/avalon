@@ -4,7 +4,7 @@
 >
 > A person points at part of an artifact or attachment, writes a comment on
 > it, and sends it to Rally as part of an ordinary message. Companion:
-> [state](state.md). Related:
+> [state](state.md), [mockups](design.html). Related:
 > [agent attachments](../../agent-attachments.md),
 > [markdown rendering](../../markdown-rendering.md),
 > [live web artifacts](../../live-web-artifacts.md),
