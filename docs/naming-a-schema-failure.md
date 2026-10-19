@@ -143,7 +143,7 @@ its own is a boundary that drifts.
 | `apps/ace/src/regional-api.ts`, `index.ts`, `private-access.ts` | a regional answer the contract refuses names the field in the message beside `regional_api_contract_mismatch`; the fallback handler logs `error_code`; a refused download grant says which field |
 | `apps/api/src/services/integrations.ts` | `dynamic_connector_tools_unavailable` carries `error_code` beside the class name, so a tool catalog that drifted out of `ToolDefinitionSchema` names its path on both the creator-catalog and initial-activation surfaces; `connector_plugin_reauthorization_failed` carries a schema rejection's paths as `code`, the way it already carried a connector's own |
 | `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `scheduledAlarmErrorCode` names the field a handler's own `ZodError` rejected, as `handler_error:ZodError:<paths>`, and passes any code-shaped message through |
-| `apps/api/src/observability/logger.ts` | `diagnosticErrorCode` names a `ZodError` behind the caller's own code (`external_event_delivery_failed:event.eventSequence:invalid_type`), and carries a `parseRpcInput` message across the hop through `isDiagnosticCode`; every other thrown message is admitted only in the bare constant class it always was, so an identifier interpolated after a colon still reduces to the fallback; a Workers runtime failure, which arrives as a sentence, is named behind the caller's code by matching the sentence or the runtime's `overloaded` flag (`parent_export_failed:durable_object_code_updated`), never by copying it |
+| `apps/api/src/observability/logger.ts` | `diagnosticErrorCode` names a `ZodError` behind the caller's own code (`external_event_delivery_failed:event.eventSequence:invalid_type`), and carries a `parseRpcInput` message across the hop through `isDiagnosticCode`; every other thrown message is admitted only in the bare constant class it always was, so an identifier interpolated after a colon still reduces to the fallback; a Workers runtime failure, which arrives as a sentence, is named behind the caller's code by matching the sentence or the runtime's `overloaded` flag (`parent_export_failed:durable_object_code_updated`), never by copying it; an `ObjectPortError` is named by the conversation object's refusal code (`workstream_runtime_authority_fenced`) when that code is a bare constant |
 | `apps/api/src/middleware/errors.ts` | `request_failed` carries what `diagnosticErrorCode` admits of a plain `Error`'s message, as `error_code` and in the row's summary, where the row said `internal_error` and `Error` |
 | `apps/api/src/services/workspace-schedule-execution.ts` | the `schedule.failed`, `resource_watch.failed` and `workspace_schedule_target_failed` records name a stored row's rejection behind each record's own constant; the schedule and watch rows are the two whose targets parse a stored row |
 | `apps/api/src/durable-objects/sidekick-do.ts` | every RPC entry point, through `parseRpcInput`, labelled by method (`admit_external_event_invalid:…`) |
@@ -207,6 +207,28 @@ published, so the product asserts health while the tail never landed. Naming the
 error made that diagnosable in minutes; it did not make it visible.
 
 ## Changelog
+
+### 2026-10-19 — A conversation object's refusal is named by its code
+
+**What changed:** `diagnosticErrorCode` answers an `ObjectPortError` with its
+`code`, the refusal the conversation object returned, when that code is a
+bare constant. `ObjectPortError` moved to `runtime/object-port-error.ts` so
+the logger can read it without importing the port.
+
+**Why:** A thread backfill row retried over 380 times against an object that
+refused every read as `workstream_runtime_authority_fenced`. The error's
+message is a sentence written for members, so every failure was logged as the
+bare `thread_backfill_failed`, and the cause had to be found by reading the
+object's rows. Every caller that logs a port failure through this helper had
+the same blind spot.
+
+**Considered and rejected:** Putting the code in the message: members see
+that sentence where a port failure reaches a response. Importing the port
+module into the logger: the port's stub resolution imports the logger.
+
+**Consequences:** Logs that reported a caller's fallback for a port refusal
+now report the object's code. A code outside the bare constant class still
+reduces to the fallback, as a thrown message does.
 
 ### 2026-09-29 — Platform failures and provider statuses are named where a code hid them
 
