@@ -3295,7 +3295,9 @@ pre {
 /* Work-stream sidebar, header, and transcript */
 
 .conversation-layout { display: flex; height: 100%; min-width: 0; }
-.conversation-layout > .workstream-screen { flex: 1; }
+.conversation-layout > .workstream-screen,
+/* A Channel beside the artifact panel it opened. */
+.conversation-layout > .channel-screen { flex: 1; }
 .workstream-context-section h2 { color: var(--av-sys-color-text-muted); font-size: 12px; font-weight: 400; height: 18px; line-height: 18px; overflow: hidden; transition: height var(--sidebar-layout-motion), margin-bottom var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
 .workstream-add-sidekick { color: var(--av-sys-color-text-muted); }
 .workstream-context-section { margin-top: 20px; transition: margin-top var(--sidebar-layout-motion); }

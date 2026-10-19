@@ -209,27 +209,34 @@ export class ConversationMergeService {
 
   private async mergeIntoChannel(threadId: string, request: ConversationMergeRequest): Promise<ConversationMergeResult> {
     const conversations = new ConversationService(this.env, this.auth);
-    const [main, target] = await Promise.all([
+    // Admission: the person can post in the thread's Main, and in the Channel.
+    const [, target] = await Promise.all([
       conversations.writableClient(threadId, "0").catch((error: unknown) => {
         throw refusalFor(error, "conversation_access_denied");
       }),
       this.channelTarget(threadId, request.channelId ?? null),
     ]);
-    const shared = await attachEmbeds(main, request.body);
+    // The embeds are shared with the Channel, not the thread: whoever reads
+    // the Channel opens them, whether or not they can open the thread.
     const merged = await (await this.workspace()).mergeThreadIntoChannel({
       auth: this.actor(),
       workstreamId: asWorkstreamId(threadId),
       spaceId: asSpaceId(target.id),
       body: request.body,
-      embeds: shared.resources,
+      resources: mergeResourceIds(request.body),
       operationId: request.clientMessageId,
     });
-    if (!merged.ok) throw channelRefusal(merged.code, merged.channels);
+    if (!merged.ok) {
+      if (merged.code === "merge_resource_not_shareable") {
+        throw new ConversationMergeRefusal("merge_resource_not_shareable", { field: `body.resources[${merged.index}]` });
+      }
+      throw channelRefusal(merged.code, merged.channels);
+    }
     return {
       mergedInto: { kind: "channel", id: merged.spaceId, title: merged.name },
       messageId: merged.messageId,
       replayed: merged.replayed,
-      sharedResourceIds: shared.linked,
+      sharedResourceIds: merged.linked,
     };
   }
 

@@ -42,6 +42,19 @@ export function authorizationSnapshotKey(subject: AuthorizationSubject, resource
 }
 
 /** SQLite owns inventory revision ordering; delayed delivery cannot resurrect removed links. */
+/**
+ * Link resources to a Channel: everyone who can read the Channel, now or
+ * later, can read them. The caller holds the transaction. Each new row
+ * reindexes the resource's search rows (migration 76's triggers). Answers the
+ * ids it newly linked.
+ */
+export function linkSpaceResources(sql: SqlStorage, spaceId: string, resourceIds: readonly string[]): string[] {
+  return resourceIds.filter((resourceId) => sql.exec(
+    `INSERT INTO authorization_locations(parent_id, substream_id, parent_kind, resource_id) VALUES (?, '0', 'space', ?)
+     ON CONFLICT(parent_id, substream_id, resource_id) DO NOTHING`,
+    spaceId, resourceId).rowsWritten > 0);
+}
+
 export class AuthorizationStorage {
   constructor(private readonly storage: DurableObjectStorage) {}
 
@@ -79,9 +92,15 @@ export class AuthorizationStorage {
   }
 }
 
-/** Every conversation the canonical inventories place a resource in. */
+/**
+ * Every place a resource is linked: the conversations the canonical
+ * inventories place it in, and the Channels (`parent_kind = 'space'`) a merge
+ * shared it with. A conversation's row is discovery, proved against that
+ * conversation's own inventory; a Channel's row is written by WorkspaceDO,
+ * which owns the Channel, in the same commit as the merge, so it is the record.
+ */
 export function authorizationLocations(sql: SqlStorage, resourceId: string) {
-  return sql.exec<{ parent_id: string; substream_id: string; parent_kind: 'workstream' | 'automation' }>(
+  return sql.exec<{ parent_id: string; substream_id: string; parent_kind: 'workstream' | 'automation' | 'space' }>(
     'SELECT parent_id, substream_id, parent_kind FROM authorization_locations WHERE resource_id = ? ORDER BY parent_id, substream_id',
     resourceId,
   ).toArray().map((row) => ({ parentId: row.parent_id, substreamId: row.substream_id, parentKind: row.parent_kind }));

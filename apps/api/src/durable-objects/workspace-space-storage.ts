@@ -31,6 +31,7 @@ import {
   type SpaceSummary,
 } from "@rally/contracts";
 
+import { linkSpaceResources } from "./authorization-storage";
 import { boundParameterChunks } from "./bound-parameters";
 import { stableUuidSync } from "../lib/stable-uuid";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -1370,9 +1371,11 @@ export class WorkspaceSpaceStorage {
 
   /**
    * Merge a thread into one of its Channels: the Channel message keyed by the
-   * thread, replaced at the bottom when it is already there. The target is
-   * resolved again inside the transaction, so a placement that moved since
-   * the caller asked is refused rather than written.
+   * thread, replaced at the bottom when it is already there, and its embeds
+   * linked to the Channel in the same commit, so whoever reads the Channel,
+   * now or later, can open them. The target is resolved again inside the
+   * transaction, so a placement that moved since the caller asked is refused
+   * rather than written.
    */
   mergeThreadIntoChannel(
     viewer: Viewer,
@@ -1385,11 +1388,12 @@ export class WorkspaceSpaceStorage {
     },
     now: number,
   ):
-    | { ok: true; spaceId: string; name: string; messageId: string; replayed: boolean }
+    | { ok: true; spaceId: string; name: string; messageId: string; replayed: boolean; linked: string[] }
     | Extract<ReturnType<WorkspaceSpaceStorage["channelMergeTarget"]>, { ok: false }> {
     return this.storage.transactionSync(() => {
       const target = this.channelMergeTarget(viewer, request.workstreamId, request.spaceId);
       if (!target.ok) return target;
+      const linked = linkSpaceResources(this.storage.sql, target.spaceId, request.embeds.map((embed) => embed.id));
       const posted = this.postMessage(target.spaceId, {
         author: { kind: "member", userId: asUserId(viewer.userId) },
         body: request.body,
@@ -1399,7 +1403,7 @@ export class WorkspaceSpaceStorage {
         embeds: request.embeds,
         operationId: request.operationId,
       }, now);
-      return { ok: true, spaceId: target.spaceId, name: target.name, ...posted };
+      return { ok: true, spaceId: target.spaceId, name: target.name, ...posted, linked };
     });
   }
 
@@ -2397,7 +2401,7 @@ export class WorkspaceSpaceStorage {
     // A message about a thread (a merge) shows to every reader of the
     // Channel. Whether this reader may open that thread, the placement seek's
     // own predicate through a primary-key join, decides only whether the
-    // thread's name and the merge's embeds go with it.
+    // thread's name goes with it.
     const messages = this.storage.sql.exec<ChannelMessageRow>(
       `SELECT m.message_id, m.author_kind, m.author_user_id, m.body, m.posted_at,
               m.attention_ordinal, m.source_workstream_id, m.embeds_json,
@@ -5640,19 +5644,16 @@ function channelMessage(row: ChannelMessageRow): ChannelMessage {
     author: row.author_kind === "member" ? { kind: "member", userId: asUserId(row.author_user_id!) } : { kind: "rally" },
     body: row.body,
     ...(row.source_workstream_id === null ? {} : {
-      // A reader who cannot open the thread is told nothing about it: not its
-      // name, its prompt, or the artifacts the merge attached to it.
-      merge: row.source_openable !== 1 ? {
+      // A reader who cannot open the thread is told nothing about it, not its
+      // name or its prompt. The embeds go to every reader: the merge shared
+      // them with the Channel.
+      merge: {
         threadId: asWorkstreamId(row.source_workstream_id),
-        title: "",
-        summary: null,
-        embeds: [],
-        private: true,
-      } : {
-        threadId: asWorkstreamId(row.source_workstream_id),
-        title: row.source_title ?? "",
-        summary: row.source_description === null || row.source_description.trim() === "" ? null : row.source_description,
+        title: row.source_openable === 1 ? row.source_title ?? "" : "",
+        summary: row.source_openable !== 1 || row.source_description === null || row.source_description.trim() === ""
+          ? null : row.source_description,
         embeds: row.embeds_json === null ? [] : JSON.parse(row.embeds_json) as MergeEmbed[],
+        ...(row.source_openable === 1 ? {} : { private: true as const }),
       },
     }),
   };
