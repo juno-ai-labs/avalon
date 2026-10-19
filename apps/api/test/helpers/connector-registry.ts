@@ -41,6 +41,7 @@ export const testRegistryConfig: Required<
   Omit<NonNullable<Parameters<typeof createConnectorRegistry>[0]>, "observer" | "documents">
 > = {
   customMcp: { redirectUri: "https://api.example.com/callback" },
+  apollo: { redirectUri: "https://api.example.com/connections/apollo/callback" },
   ashby: { redirectUri: "https://api.example.com/callback" },
   canva: { redirectUri: "https://api.example.com/connections/canva/callback" },
   fireflies: { redirectUri: "https://api.example.com/callback" },

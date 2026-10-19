@@ -1,3 +1,4 @@
+import type { ConnectorOAuthProvider } from "@rally/contracts";
 import {
   WorkspaceConnectorOAuthAttemptFinishResultSchema,
   WorkspaceConnectorOAuthAttemptReadResultSchema,
@@ -17,7 +18,7 @@ import {
 
 interface AttemptRow extends Record<string, SqlStorageValue> {
   id: string;
-  provider: "ashby" | "custom_mcp" | "google" | "github" | "granola" | "linear" | "notion" | "slack";
+  provider: ConnectorOAuthProvider;
   status: "pending" | "succeeded" | "denied" | "failed";
   connection_id: string | null;
   error_code: string | null;

@@ -77,8 +77,10 @@ download row wears it. The table holds company marks, whatever links to them.
 
 A custom MCP server has no connector type of its own, so it wears the mark of a
 company its display name spells out in whole words: "Cloudflare API" draws
-`cloudflare`, which is in the table for exactly that. `x` and `apple` never
-match a name. A server whose name names no company in the table wears
+`cloudflare`, which is in the table for exactly that. `x`, `apple`, and `apollo`
+never match a name: Apollo may also identify Apollo GraphQL. The shipped
+Apollo.io connector uses its explicit provider type. A server whose name names
+no company in the table wears
 `model-context-protocol`, the protocol's own mark, which is in the table as that
 fallback and never matched against a name. Settings and mention chips take this
 route; the transcript does not, and always draws the protocol mark for a custom
@@ -105,7 +107,7 @@ two render their colour art, and `.connector-mark` recolours any painted shape
 inside: a CSS `fill` beats an SVG presentation attribute, and `[fill="none"]` is
 deliberately left alone, because those shapes are hollow and filling them turns
 a mark into a blob. Ashby and Fireflies are not in the package; their local
-components only ship the monochrome art. Canva uses the upstream C path without its gradient disc: recolouring both the disc and white letter would make the mark a solid circle.
+components only ship the monochrome art. Apollo.io uses the catalog's A path without its background tile, and Canva uses the upstream C path without its gradient disc: recolouring both the disc and white letter would make the mark a solid circle.
 
 Two smaller consequences of rendering real SVG, both handled:
 

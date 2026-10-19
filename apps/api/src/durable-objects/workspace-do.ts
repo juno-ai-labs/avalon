@@ -1778,6 +1778,11 @@ const MEMORY_SCOPE_DEPENDENTS = [
   "memory_table_mutations",
 ] as const;
 
+// Frozen v121 inventory: migrations 63–120 add no connector foreign keys.
+const CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V121 = [
+  ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55,
+] as const;
+
 // Frozen v62 inventory: migrations 56–61 add no connector foreign keys.
 const CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V62 = [
   ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55,
@@ -4599,6 +4604,114 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "a Channel's own messages are projected into the search index, every existing one queued once",
   // See CHANNEL_MESSAGE_SEARCH_MIGRATION and docs/text-search.md.
   statements: CHANNEL_MESSAGE_SEARCH_MIGRATION,
+}, {
+  version: 121,
+  description: "admit personal Apollo connections without losing connector dependents",
+  statements: [
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V121.map((table) => (
+      `CREATE TABLE ${table}_v121_hold AS SELECT * FROM ${table}`
+    )),
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V121.map((table) => `DELETE FROM ${table}`),
+    `CREATE TABLE connector_connections_v121 (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      connector_type TEXT NOT NULL CHECK (connector_type IN ('apollo', 'ashby', 'canva', 'custom_mcp', 'fireflies', 'google', 'generic_webhook', 'github', 'granola', 'linear', 'notion', 'slack', 'x')),
+      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
+      owner_user_id TEXT,
+      provider_account_id TEXT,
+      display_name TEXT NOT NULL,
+      encrypted_credentials TEXT,
+      credential_iv TEXT,
+      credential_key_version INTEGER,
+      credential_refresh_lease_id TEXT,
+      credential_refresh_lease_expires_at TEXT,
+      granted_scopes_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(granted_scopes_json)),
+      status TEXT NOT NULL DEFAULT 'healthy' CHECK (status IN ('healthy', 'needs_reconnect', 'error', 'disabled')),
+      cursor_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(cursor_json)),
+      config_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(config_json)),
+      last_sync_at TEXT,
+      next_poll_at TEXT,
+      error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json)),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      model_plugin_id TEXT NOT NULL,
+      discovered_tool_count INTEGER CHECK (discovered_tool_count IS NULL OR discovered_tool_count >= 0),
+      tool_count_backfill_attempted_at TEXT,
+      CHECK ((scope = 'personal' AND owner_user_id IS NOT NULL) OR (scope = 'workspace' AND owner_user_id IS NULL))
+    ) STRICT`,
+    `INSERT INTO connector_connections_v121
+       (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
+        encrypted_credentials, credential_iv, credential_key_version,
+        credential_refresh_lease_id, credential_refresh_lease_expires_at,
+        granted_scopes_json, status, cursor_json, config_json, last_sync_at, next_poll_at,
+        error_json, created_at, updated_at, model_plugin_id, discovered_tool_count, tool_count_backfill_attempted_at)
+     SELECT id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
+            encrypted_credentials, credential_iv, credential_key_version,
+            credential_refresh_lease_id, credential_refresh_lease_expires_at,
+            granted_scopes_json, status, cursor_json, config_json, last_sync_at, next_poll_at,
+            error_json, created_at, updated_at, model_plugin_id, discovered_tool_count, tool_count_backfill_attempted_at
+       FROM connector_connections`,
+    `DROP TABLE connector_connections`,
+    `ALTER TABLE connector_connections_v121 RENAME TO connector_connections`,
+    `CREATE INDEX connector_connections_poll_idx
+      ON connector_connections(status, next_poll_at, id)`,
+    `CREATE INDEX connector_connections_provider_account_idx
+      ON connector_connections(connector_type, provider_account_id, status)`,
+    `CREATE UNIQUE INDEX connector_connections_active_model_plugin_id_uq
+      ON connector_connections(model_plugin_id) WHERE status != 'disabled'`,
+    `CREATE UNIQUE INDEX ashby_personal_connection_unique ON connector_connections(workspace_id, owner_user_id)
+      WHERE connector_type = 'ashby' AND scope = 'personal' AND status <> 'disabled'`,
+    `CREATE UNIQUE INDEX ashby_workspace_connection_unique ON connector_connections(workspace_id)
+      WHERE connector_type = 'ashby' AND scope = 'workspace' AND status <> 'disabled'`,
+    `CREATE UNIQUE INDEX fireflies_workspace_connection_unique ON connector_connections(workspace_id)
+      WHERE connector_type = 'fireflies' AND scope = 'workspace' AND status <> 'disabled'`,
+    `CREATE UNIQUE INDEX fireflies_personal_connection_unique ON connector_connections(workspace_id, owner_user_id)
+      WHERE connector_type = 'fireflies' AND scope = 'personal' AND status <> 'disabled'`,
+    `CREATE UNIQUE INDEX canva_personal_connection_unique ON connector_connections(workspace_id, owner_user_id)
+      WHERE connector_type = 'canva' AND scope = 'personal' AND status <> 'disabled'`,
+    `CREATE UNIQUE INDEX apollo_personal_connection_unique ON connector_connections(workspace_id, owner_user_id)
+      WHERE connector_type = 'apollo' AND scope = 'personal' AND status <> 'disabled'`,
+    ...workspaceIdentityFencesFor("connector_connections"),
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V121.flatMap((table) => [
+      `INSERT INTO ${table} SELECT * FROM ${table}_v121_hold`,
+      `DROP TABLE ${table}_v121_hold`,
+    ]),
+    `CREATE TABLE connector_oauth_attempts_v121 (
+      id TEXT PRIMARY KEY,
+      region TEXT NOT NULL,
+      provider TEXT NOT NULL CHECK (provider IN ('apollo', 'ashby', 'canva', 'custom_mcp', 'fireflies', 'google', 'github', 'granola', 'linear', 'notion', 'slack')),
+      user_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'succeeded', 'denied', 'failed')),
+      connection_id TEXT REFERENCES connector_connections(id) ON DELETE SET NULL,
+      error_code TEXT,
+      expires_at TEXT NOT NULL,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      telemetry_operation_id TEXT,
+      telemetry_event_version INTEGER NOT NULL DEFAULT 1,
+      telemetry_scope TEXT,
+      telemetry_capability_count INTEGER,
+      telemetry_reconnect INTEGER NOT NULL DEFAULT 0
+    ) STRICT`,
+    `INSERT INTO connector_oauth_attempts_v121
+       (id, region, provider, user_id, workspace_id, status, connection_id, error_code,
+        expires_at, completed_at, created_at, updated_at, telemetry_operation_id,
+        telemetry_event_version, telemetry_scope, telemetry_capability_count, telemetry_reconnect)
+     SELECT id, region, provider, user_id, workspace_id, status, connection_id, error_code,
+            expires_at, completed_at, created_at, updated_at, telemetry_operation_id,
+            telemetry_event_version, telemetry_scope, telemetry_capability_count, telemetry_reconnect
+       FROM connector_oauth_attempts`,
+    `DROP TABLE connector_oauth_attempts`,
+    `ALTER TABLE connector_oauth_attempts_v121 RENAME TO connector_oauth_attempts`,
+    `CREATE INDEX connector_oauth_attempts_expiry_idx
+      ON connector_oauth_attempts(status, expires_at, id)`,
+    `CREATE UNIQUE INDEX connector_oauth_attempts_telemetry_operation_idx
+      ON connector_oauth_attempts(telemetry_operation_id)
+      WHERE telemetry_operation_id IS NOT NULL`,
+    ...workspaceIdentityFencesFor("connector_oauth_attempts"),
+  ],
 }];
 
 function conversationToolEntry(conversation: {

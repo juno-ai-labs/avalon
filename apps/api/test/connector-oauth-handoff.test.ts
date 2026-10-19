@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app";
 import type { AuthContext, Env } from "../src/env";
-import { encryptString, sealString } from "../src/lib/crypto";
+import { decryptString, encryptString, sealString } from "../src/lib/crypto";
 import { desktopHandoffUrl } from "../src/lib/desktop-handoff";
 import { __connectionServiceTesting, ConnectionService } from "../src/services/connection-service";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
@@ -372,6 +372,40 @@ describe("connector OAuth handoff", () => {
     expect(regional.prepare("SELECT consumed_at FROM oauth_states").get())
       .toMatchObject({ consumed_at: expect.any(String) });
     expect((await new ConnectionService(env, auth).getOAuthAttempt(started.attemptId)).status).toBe("succeeded");
+  });
+
+  it("persists Apollo personal OAuth and reconnects the same owner's connection", async () => {
+    const { auth, env, object, regional } = fixture();
+    regional.exec("CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL)");
+    regional.prepare("INSERT INTO users (id, name) VALUES (?, ?)").run(USER_ID, "Apollo owner");
+    vi.stubGlobal("fetch", async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("oauth-protected-resource")) return Response.json({ resource: "https://mcp.apollo.io/mcp", authorization_servers: ["https://mcp.apollo.io"], scopes_supported: ["read_user_profile", "mixed_people_api_search"] });
+      if (url.includes("oauth-authorization-server")) return Response.json({ authorization_endpoint: "https://mcp.apollo.io/authorize", token_endpoint: "https://mcp.apollo.io/token", registration_endpoint: "https://mcp.apollo.io/register", code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none"] });
+      if (url.endsWith("/register")) return Response.json({ client_id: "apollo-fixture-client", token_endpoint_auth_method: "none" });
+      if (url.endsWith("/token")) return Response.json({ access_token: "apollo-fixture-access", refresh_token: "apollo-fixture-refresh", token_type: "Bearer", expires_in: 3600 });
+      throw new Error(`Unexpected provider request: ${url}`);
+    });
+    const service = new ConnectionService(env, auth);
+    await expect(service.beginProvider("apollo", { scope: "workspace", capabilities: ["apollo.personal.mcp"], desktopHandoffVersion: 2 }))
+      .rejects.toMatchObject({ code: "invalid_connector_scope" });
+    const started = await service.beginProvider("apollo", { scope: "personal", capabilities: ["apollo.personal.mcp"], desktopHandoffVersion: 2 });
+    const target = await new ConnectionService(env).completeProvider("apollo", "fixture-code", new URL(started.url).searchParams.get("state")!);
+    expect(new URL(target).searchParams.get("provider")).toBe("apollo");
+    const row = object.prepare("SELECT id, scope, owner_user_id, encrypted_credentials, credential_iv, config_json FROM connector_connections WHERE connector_type = 'apollo'").get()!;
+    expect(row).toMatchObject({ scope: "personal", owner_user_id: USER_ID });
+    expect(String(row.encrypted_credentials)).not.toContain("apollo-fixture-access");
+    const storedCredentials = JSON.parse(await decryptString(String(row.encrypted_credentials), String(row.credential_iv), env.CONNECTOR_CREDENTIALS_KEY, String(row.id)));
+    expect(storedCredentials).toMatchObject({ accessToken: "apollo-fixture-access", refreshToken: "apollo-fixture-refresh", clientId: "apollo-fixture-client" });
+    expect(JSON.parse(String(row.config_json))).toMatchObject({ providerTenantId: "https://mcp.apollo.io/mcp", providerUserId: null });
+    expect(await service.getOAuthAttempt(started.attemptId)).toMatchObject({ status: "succeeded", connectionId: row.id });
+    object.prepare("UPDATE connector_connections SET discovered_tool_count = 1 WHERE id = ?").run(String(row.id));
+    expect(await service.list()).toEqual([expect.objectContaining({
+      id: row.id, connectorType: "apollo", scope: "personal", ownerUserId: USER_ID, ownerName: "Apollo owner",
+    })]);
+    const reconnect = await service.reconnect(String(row.id), 2);
+    await new ConnectionService(env).completeProvider("apollo", "next-code", new URL(reconnect.url).searchParams.get("state")!);
+    expect(object.prepare("SELECT id FROM connector_connections WHERE connector_type = 'apollo'").all()).toEqual([{ id: row.id }]);
   });
 
   it("starts Canva desktop authorization without feature flags", async () => {
