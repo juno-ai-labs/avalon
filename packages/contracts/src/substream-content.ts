@@ -115,10 +115,7 @@ export const SessionImportDiscardRequestSchema = z.strictObject({
   /** The create key names a Breakout reservation in this thread rather than a new thread. */
   breakout: z.boolean().optional(),
 });
-/**
- * Take back a new import by its create key alone, for a start whose answer
- * (the ids `discard` needs) never came back.
- */
+/** Take back a failed start's import by its create key alone. */
 export const SessionImportAbandonRequestSchema = z.strictObject({
   clientMessageId: z.string().uuid(),
 });
