@@ -1,0 +1,2119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Artifact Annotations Mockups</title>
+    <style>
+      :root {
+        --page: #f5f5f3;
+        --t: #1a1a1a;
+        --t3: #6f6f6f;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--page);
+        color: var(--t);
+        font:
+          400 14px/20px -apple-system,
+          BlinkMacSystemFont,
+          "SF Pro Text",
+          "Helvetica Neue",
+          Helvetica,
+          system-ui,
+          sans-serif;
+        padding: 40px 16px 80px;
+      }
+      header,
+      .board {
+        max-width: 1440px;
+        margin: 0 auto;
+      }
+      header h1 {
+        font: 700 28px/1.2 inherit;
+        letter-spacing: -0.02em;
+        margin: 0 0 8px;
+      }
+      header p {
+        margin: 0;
+        color: var(--t3);
+        max-width: 76ch;
+        font-size: 15px;
+        line-height: 22px;
+      }
+      header a {
+        color: #2b58a2;
+      }
+      .board {
+        margin-top: 40px;
+      }
+      .board h2 {
+        font: 600 17px/1.3 inherit;
+        margin: 0 0 12px;
+      }
+      .frame {
+        overflow-x: auto;
+        border-radius: 16px;
+      }
+      .b-main .win {
+        width: 1440px;
+        height: 900px;
+        box-sizing: border-box;
+        background: #e9e9e7;
+        padding: 28px;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+          Helvetica, system-ui, sans-serif;
+        color: #1a1a1a;
+        -webkit-font-smoothing: antialiased;
+      }
+      .b-main .app {
+        height: 100%;
+        display: flex;
+        border-radius: 14px;
+        overflow: hidden;
+        background: #fbfbfa;
+        box-shadow:
+          0 0 0 1px rgba(0, 0, 0, 0.08),
+          0 20px 50px rgba(0, 0, 0, 0.12);
+      }
+      .b-main .side {
+        width: 220px;
+        flex: none;
+        background: #f2f2f0;
+        border-right: 1px solid #e6e6e4;
+        padding: 16px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 13px;
+        color: #444;
+      }
+      .b-main .side .sec {
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #6f6f6f;
+        font-weight: 600;
+        padding: 12px 8px 4px;
+      }
+      .b-main .side .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: 8px;
+      }
+      .b-main .side .row.on {
+        background: #fff;
+        box-shadow: inset 0 0 0 1px #e6e6e4;
+        color: #1a1a1a;
+        font-weight: 600;
+      }
+      .b-main .sq {
+        width: 18px;
+        height: 18px;
+        border-radius: 32%;
+        display: grid;
+        place-items: center;
+        background: #fde8d2;
+        color: #b45309;
+        flex: none;
+      }
+      .b-main .ci {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: #dce9fe;
+        color: #2b58a2;
+        flex: none;
+      }
+      .b-main .thread {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid #e6e6e4;
+      }
+      .b-main .head {
+        display: flex;
+        justify-content: center;
+        padding: 14px 0 8px;
+      }
+      .b-main .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 12px 5px 6px;
+        border-radius: 999px;
+        background: #fff;
+        box-shadow: inset 0 0 0 1px #e6e6e4;
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .b-main .feed {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        gap: 16px;
+        padding: 16px 28px;
+      }
+      .b-main .by {
+        font-size: 12px;
+        color: #6f6f6f;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .b-main .by b {
+        color: #444;
+        font-weight: 500;
+      }
+      .b-main .av {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        display: inline-grid;
+        place-items: center;
+        font:
+          700 8px/1 -apple-system,
+          system-ui,
+          sans-serif;
+        flex: none;
+      }
+      .b-main .hum {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 4px;
+      }
+      .b-main .bub {
+        max-width: 80%;
+        border-radius: 18px;
+        padding: 8px 12px;
+        color: #fff;
+        font-size: 14px;
+        line-height: 20px;
+        background: #3b82f6;
+      }
+      .b-main .ag {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: 14px;
+        line-height: 21px;
+      }
+      .b-main .doc {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px 8px 8px;
+        max-width: 320px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow:
+          inset 0 0 0 1px #3b82f6,
+          0 0 0 3px #dce9fe;
+      }
+      .b-main .doc .ic {
+        width: 28px;
+        height: 34px;
+        border-radius: 6px;
+        background: #f2f2f0;
+        display: grid;
+        place-items: center;
+        color: #555;
+        flex: none;
+      }
+      .b-main .doc b {
+        font-size: 13px;
+        display: block;
+      }
+      .b-main .doc span {
+        font-size: 12px;
+        color: #6f6f6f;
+      }
+      .b-main .dock {
+        padding: 0 20px 18px;
+      }
+      .b-main .comp {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 12px 14px 10px;
+        background: #fff;
+        border-radius: 16px;
+        box-shadow: inset 0 0 0 1px #e6e6e4;
+      }
+      .b-main .comp .ph {
+        font-size: 14px;
+        color: #6f6f6f;
+      }
+      .b-main .ctl {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 12px;
+        color: #6f6f6f;
+      }
+      .b-main .sendb {
+        margin-left: auto;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: #7a7a7a;
+        color: #fff;
+        border: 0;
+      }
+      .b-main .panel {
+        width: 640px;
+        flex: none;
+        display: flex;
+        flex-direction: column;
+        background: #fff;
+        position: relative;
+      }
+      .b-main .ptop {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 16px;
+        border-bottom: 1px solid #ececea;
+      }
+      .b-main .ptop .t {
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .b-main .ptop .v {
+        font-size: 12px;
+        color: #6f6f6f;
+      }
+      .b-main .tool {
+        margin-left: auto;
+        display: flex;
+        gap: 4px;
+        padding: 3px;
+        border-radius: 10px;
+        background: #f2f2f0;
+      }
+      .b-main .tool button {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border: 0;
+        background: transparent;
+        font:
+          500 12.5px/1 -apple-system,
+          system-ui,
+          sans-serif;
+        color: #444;
+        padding: 6px 10px;
+        border-radius: 8px;
+      }
+      .b-main .tool button.on {
+        background: #fff;
+        color: #1a1a1a;
+        box-shadow:
+          0 0 0 1px #e6e6e4,
+          0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      .b-main .hint {
+        position: absolute;
+        top: 62px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 3;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 8px 7px 14px;
+        border-radius: 999px;
+        background: #2563eb;
+        color: #fff;
+        font:
+          600 12.5px/1 -apple-system,
+          system-ui,
+          sans-serif;
+        box-shadow: 0 6px 18px rgba(37, 99, 235, 0.35);
+        white-space: nowrap;
+      }
+      .b-main .hint kbd {
+        font:
+          600 11px/1 -apple-system,
+          system-ui,
+          sans-serif;
+        background: rgba(255, 255, 255, 0.2);
+        padding: 3px 5px;
+        border-radius: 4px;
+      }
+      .b-main .hint .x {
+        background: rgba(255, 255, 255, 0.18);
+        border-radius: 999px;
+        padding: 5px 10px;
+      }
+      .b-main .md {
+        padding: 64px 56px 40px;
+        font-size: 15px;
+        line-height: 24px;
+        color: #1a1a1a;
+        position: relative;
+      }
+      .b-main .md h1 {
+        font-size: 26px;
+        line-height: 32px;
+        margin: 0 0 12px;
+        letter-spacing: -0.01em;
+      }
+      .b-main .md h2 {
+        font-size: 18px;
+        line-height: 24px;
+        margin: 22px 0 8px;
+      }
+      .b-main .md p {
+        margin: 0 0 10px;
+        color: #2a2a2a;
+      }
+      .b-main .md ul {
+        margin: 0;
+        padding-left: 22px;
+      }
+      .b-main .md li {
+        margin: 0 0 6px;
+      }
+      .b-main .hov {
+        position: relative;
+        border-radius: 6px;
+        box-shadow: 0 0 0 2px #3b82f6;
+        background: rgba(59, 130, 246, 0.06);
+      }
+      .b-main .tag {
+        position: absolute;
+        left: -2px;
+        top: -24px;
+        font:
+          600 11px/1 -apple-system,
+          system-ui,
+          sans-serif;
+        color: #fff;
+        background: #3b82f6;
+        padding: 4px 7px;
+        border-radius: 5px 5px 5px 0;
+        white-space: nowrap;
+      }
+      .b-main .tag i {
+        font-style: normal;
+        opacity: 0.8;
+        font-weight: 500;
+        margin-left: 6px;
+      }
+      .b-main .mark {
+        background: #fde68a;
+        border-radius: 3px;
+        padding: 0 1px;
+        box-shadow: 0 0 0 1px #f59e0b;
+      }
+      .b-main .pin {
+        display: inline-grid;
+        place-items: center;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #2563eb;
+        color: #fff;
+        font:
+          700 10px/1 -apple-system,
+          system-ui,
+          sans-serif;
+        vertical-align: 2px;
+        margin-left: 3px;
+        box-shadow: 0 0 0 2px #fff;
+      }
+      .b-main .cbox {
+        position: absolute;
+        z-index: 4;
+        width: 300px;
+        background: #fff;
+        border-radius: 14px;
+        box-shadow:
+          0 0 0 1px #e6e6e4,
+          0 18px 40px rgba(0, 0, 0, 0.16);
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .b-main .cbox .q {
+        font-size: 12px;
+        color: #6f6f6f;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .b-main .cbox .q span {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .b-main .cbox textarea {
+        font:
+          400 13.5px/19px -apple-system,
+          system-ui,
+          sans-serif;
+        border: 0;
+        outline: 0;
+        resize: none;
+        padding: 8px 10px;
+        border-radius: 10px;
+        background: #f2f2f0;
+        color: #1a1a1a;
+        height: 56px;
+      }
+      .b-main .cbox .acts {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 11.5px;
+        color: #6f6f6f;
+      }
+      .b-main .cbox .acts button {
+        border: 0;
+        font:
+          600 12px/1 -apple-system,
+          system-ui,
+          sans-serif;
+        padding: 7px 12px;
+        border-radius: 999px;
+      }
+      .b-main .cbox .acts .rm {
+        background: transparent;
+        color: #6f6f6f;
+        padding: 7px 4px;
+      }
+      .b-main .cbox .acts .ok {
+        margin-left: auto;
+        background: #1a1a1a;
+        color: #fff;
+      }
+      .b-composer .win {
+        width: 1440px;
+        height: 900px;
+        box-sizing: border-box;
+        background: #e9e9e7;
+        padding: 28px;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+          Helvetica, system-ui, sans-serif;
+        color: #1a1a1a;
+        -webkit-font-smoothing: antialiased;
+      }
+      .b-composer .app {
+        height: 100%;
+        display: flex;
+        border-radius: 14px;
+        overflow: hidden;
+        background: #fbfbfa;
+        box-shadow:
+          0 0 0 1px rgba(0, 0, 0, 0.08),
+          0 20px 50px rgba(0, 0, 0, 0.12);
+      }
+      .b-composer .side {
+        width: 220px;
+        flex: none;
+        background: #f2f2f0;
+        border-right: 1px solid #e6e6e4;
+        padding: 16px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 13px;
+        color: #444;
+      }
+      .b-composer .side .sec {
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #6f6f6f;
+        font-weight: 600;
+        padding: 12px 8px 4px;
+      }
+      .b-composer .side .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: 8px;
+      }
+      .b-composer .side .row.on {
+        background: #fff;
+        box-shadow: inset 0 0 0 1px #e6e6e4;
+        color: #1a1a1a;
+        font-weight: 600;
+      }
+      .b-composer .sq {
+        width: 18px;
+        height: 18px;
+        border-radius: 32%;
+        display: grid;
+        place-items: center;
+        background: #fde8d2;
+        color: #b45309;
+        flex: none;
+      }
+      .b-composer .ci {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: #dce9fe;
+        color: #2b58a2;
+        flex: none;
+      }
+      .b-composer .thread {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid #e6e6e4;
+      }
+      .b-composer .head {
+        display: flex;
+        justify-content: center;
+        padding: 14px 0 8px;
+      }
+      .b-composer .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 12px 5px 6px;
+        border-radius: 999px;
+        background: #fff;
+        box-shadow: inset 0 0 0 1px #e6e6e4;
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .b-composer .feed {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        gap: 16px;
+        padding: 16px 28px;
+      }
+      .b-composer .by {
+        font-size: 12px;
+        color: #6f6f6f;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .b-composer .by b {
+        color: #444;
+        font-weight: 500;
+      }
+      .b-composer .av {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        display: inline-grid;
+        place-items: center;
+        font:
+          700 8px/1 -apple-system,
+          system-ui,
+          sans-serif;
+        flex: none;
+      }
+      .b-composer .hum {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 4px;
+      }
+      .b-composer .bub {
+        max-width: 80%;
+        border-radius: 18px;
+        padding: 8px 12px;
+        color: #fff;
+        font-size: 14px;
+        line-height: 20px;
+        background: #3b82f6;
+      }
+      .b-composer .ag {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: 14px;
+        line-height: 21px;
+      }
+      .b-composer .doc {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px 8px 8px;
+        max-width: 320px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow:
+          inset 0 0 0 1px #3b82f6,
+          0 0 0 3px #dce9fe;
+      }
+      .b-composer .doc .ic {
+        width: 28px;
+        height: 34px;
+        border-radius: 6px;
+        background: #f2f2f0;
+        display: grid;
+        place-items: center;
+        color: #555;
+        flex: none;
+      }
+      .b-composer .doc b {
+        font-size: 13px;
+        display: block;
+      }
+      .b-composer .doc span {
+        font-size: 12px;
+        color: #6f6f6f;
+      }
+      .b-composer .dock {
+        padding: 0 20px 18px;
+      }
+      .b-composer .comp {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 10px 12px 10px;
+        background: #fff;
+        border-radius: 16px;
+        box-shadow: inset 0 0 0 1px #e6e6e4;
+      }
+      .b-composer .chips {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .b-composer .chip {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 7px 8px 7px 7px;
+        border-radius: 10px;
+        background: #f2f2f0;
+        font-size: 12.5px;
+        line-height: 17px;
+      }
+      .b-composer .chip .tx {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+        flex: 1;
+      }
+      .b-composer .chip .ex {
+        color: #6f6f6f;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .b-composer .chip .cm {
+        color: #1a1a1a;
+      }
+      .b-composer .chip .k {
+        font-size: 11px;
+        color: #6f6f6f;
+        white-space: nowrap;
+      }
+      .b-composer .chip .del {
+        border: 0;
+        background: transparent;
+        color: #6f6f6f;
+        padding: 0 2px;
+        font-size: 14px;
+        line-height: 1;
+      }
+      .b-composer .val {
+        font-size: 14px;
+        line-height: 20px;
+        color: #1a1a1a;
+        padding: 2px 4px;
+      }
+      .b-composer .ctl {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 12px;
+        color: #6f6f6f;
+      }
+      .b-composer .go {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border: 0;
+        background: #1a1a1a;
+        color: #fff;
+        font:
+          600 12.5px/1 -apple-system,
+          system-ui,
+          sans-serif;
+        padding: 8px 12px;
+        border-radius: 999px;
+      }
+      .b-composer .panel {
+        width: 640px;
+        flex: none;
+        display: flex;
+        flex-direction: column;
+        background: #fff;
+        position: relative;
+      }
+      .b-composer .ptop {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 16px;
+        border-bottom: 1px solid #ececea;
+      }
+      .b-composer .ptop .t {
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .b-composer .ptop .v {
+        font-size: 12px;
+        color: #6f6f6f;
+      }
+      .b-composer .tool {
+        margin-left: auto;
+        display: flex;
+        gap: 4px;
+        padding: 3px;
+        border-radius: 10px;
+        background: #f2f2f0;
+      }
+      .b-composer .tool button {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border: 0;
+        background: transparent;
+        font:
+          500 12.5px/1 -apple-system,
+          system-ui,
+          sans-serif;
+        color: #444;
+        padding: 6px 10px;
+        border-radius: 8px;
+      }
+      .b-composer .tool button.on {
+        background: #fff;
+        color: #1a1a1a;
+        box-shadow:
+          0 0 0 1px #e6e6e4,
+          0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      .b-composer .md {
+        padding: 40px 56px 40px 64px;
+        font-size: 15px;
+        line-height: 24px;
+        color: #1a1a1a;
+        position: relative;
+      }
+      .b-composer .md h1 {
+        font-size: 26px;
+        line-height: 32px;
+        margin: 0 0 12px;
+        letter-spacing: -0.01em;
+      }
+      .b-composer .md h2 {
+        font-size: 18px;
+        line-height: 24px;
+        margin: 22px 0 8px;
+      }
+      .b-composer .md p {
+        margin: 0 0 10px;
+        color: #2a2a2a;
+      }
+      .b-composer .md ul {
+        margin: 0;
+        padding-left: 22px;
+      }
+      .b-composer .md li {
+        margin: 0 0 6px;
+      }
+      .b-composer .mark {
+        background: #fde68a;
+        border-radius: 3px;
+        padding: 0 1px;
+        box-shadow: 0 0 0 1px #f59e0b;
+      }
+      .b-composer .blk {
+        border-radius: 6px;
+        box-shadow: 0 0 0 2px #93c5fd;
+        background: rgba(59, 130, 246, 0.05);
+      }
+      .b-composer .secn {
+        position: relative;
+        padding: 2px 0 2px 0;
+      }
+      .b-composer .secn:before {
+        content: "";
+        position: absolute;
+        left: -18px;
+        top: 6px;
+        bottom: 6px;
+        width: 3px;
+        border-radius: 2px;
+        background: #3b82f6;
+      }
+      .b-composer .pin {
+        display: inline-grid;
+        place-items: center;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #2563eb;
+        color: #fff;
+        font:
+          700 10px/1 -apple-system,
+          system-ui,
+          sans-serif;
+        vertical-align: 2px;
+        margin-left: 3px;
+        box-shadow: 0 0 0 2px #fff;
+        flex: none;
+      }
+      .b-composer .pin.abs {
+        position: absolute;
+        left: -46px;
+        top: 2px;
+        margin: 0;
+      }
+      .b-sent .win {
+        width: 1440px;
+        height: 900px;
+        box-sizing: border-box;
+        background: #e9e9e7;
+        padding: 28px;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+          Helvetica, system-ui, sans-serif;
+        color: #1a1a1a;
+        -webkit-font-smoothing: antialiased;
+      }
+      .b-sent .app {
+        height: 100%;
+        display: flex;
+        border-radius: 14px;
+        overflow: hidden;
+        background: #fbfbfa;
+        box-shadow:
+          0 0 0 1px rgba(0, 0, 0, 0.08),
+          0 20px 50px rgba(0, 0, 0, 0.12);
+      }
+      .b-sent .side {
+        width: 220px;
+        flex: none;
+        background: #f2f2f0;
+        border-right: 1px solid #e6e6e4;
+        padding: 16px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 13px;
+        color: #444;
+      }
+      .b-sent .side .sec {
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #6f6f6f;
+        font-weight: 600;
+        padding: 12px 8px 4px;
+      }
+      .b-sent .side .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: 8px;
+      }
+      .b-sent .side .row.on {
+        background: #fff;
+        box-shadow: inset 0 0 0 1px #e6e6e4;
+        color: #1a1a1a;
+        font-weight: 600;
+      }
+      .b-sent .sq {
+        width: 18px;
+        height: 18px;
+        border-radius: 32%;
+        display: grid;
+        place-items: center;
+        background: #fde8d2;
+        color: #b45309;
+        flex: none;
+      }
+      .b-sent .ci {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: #dce9fe;
+        color: #2b58a2;
+        flex: none;
+      }
+      .b-sent .thread {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid #e6e6e4;
+      }
+      .b-sent .head {
+        display: flex;
+        justify-content: center;
+        padding: 14px 0 8px;
+      }
+      .b-sent .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 12px 5px 6px;
+        border-radius: 999px;
+        background: #fff;
+        box-shadow: inset 0 0 0 1px #e6e6e4;
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .b-sent .feed {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        gap: 18px;
+        padding: 16px 28px;
+      }
+      .b-sent .by {
+        font-size: 12px;
+        color: #6f6f6f;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .b-sent .by b {
+        color: #444;
+        font-weight: 500;
+      }
+      .b-sent .av {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        display: inline-grid;
+        place-items: center;
+        font:
+          700 8px/1 -apple-system,
+          system-ui,
+          sans-serif;
+        flex: none;
+      }
+      .b-sent .hum {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 6px;
+      }
+      .b-sent .bub {
+        max-width: 80%;
+        border-radius: 18px;
+        padding: 8px 12px;
+        color: #fff;
+        font-size: 14px;
+        line-height: 20px;
+        background: #3b82f6;
+      }
+      .b-sent .anns {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        width: 400px;
+      }
+      .b-sent .ann {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        padding: 8px 10px 9px 10px;
+        border-radius: 12px;
+        background: #fff;
+        box-shadow: inset 0 0 0 1px #e6e6e4;
+        text-decoration: none;
+        color: inherit;
+      }
+      .b-sent .ann.on {
+        box-shadow:
+          inset 0 0 0 1.5px #3b82f6,
+          0 0 0 3px #dce9fe;
+      }
+      .b-sent .ann .src {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11.5px;
+        color: #6f6f6f;
+      }
+      .b-sent .ann .src .sp {
+        margin-left: auto;
+      }
+      .b-sent .ann .ex {
+        font-size: 12.5px;
+        line-height: 17px;
+        color: #444;
+        padding-left: 8px;
+        border-left: 2px solid #d4d4d1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .b-sent .ann .cm {
+        font-size: 13.5px;
+        line-height: 19px;
+        color: #1a1a1a;
+      }
+      .b-sent .ag {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: 14px;
+        line-height: 21px;
+      }
+      .b-sent .doc {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px 8px 8px;
+        max-width: 320px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: inset 0 0 0 1px #e6e6e4;
+      }
+      .b-sent .doc .ic {
+        width: 28px;
+        height: 34px;
+        border-radius: 6px;
+        background: #f2f2f0;
+        display: grid;
+        place-items: center;
+        color: #555;
+        flex: none;
+      }
+      .b-sent .doc b {
+        font-size: 13px;
+        display: block;
+      }
+      .b-sent .doc span {
+        font-size: 12px;
+        color: #6f6f6f;
+      }
+      .b-sent .dock {
+        padding: 0 20px 18px;
+      }
+      .b-sent .comp {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 12px 14px 10px;
+        background: #fff;
+        border-radius: 16px;
+        box-shadow: inset 0 0 0 1px #e6e6e4;
+      }
+      .b-sent .comp .ph {
+        font-size: 14px;
+        color: #6f6f6f;
+      }
+      .b-sent .ctl {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 12px;
+        color: #6f6f6f;
+      }
+      .b-sent .sendb {
+        margin-left: auto;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: #7a7a7a;
+        color: #fff;
+        border: 0;
+      }
+      .b-sent .pin {
+        display: inline-grid;
+        place-items: center;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #2563eb;
+        color: #fff;
+        font:
+          700 9.5px/1 -apple-system,
+          system-ui,
+          sans-serif;
+        flex: none;
+      }
+      .b-sent .panel {
+        width: 600px;
+        flex: none;
+        display: flex;
+        flex-direction: column;
+        background: #fff;
+        position: relative;
+      }
+      .b-sent .ptop {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 16px;
+        border-bottom: 1px solid #ececea;
+      }
+      .b-sent .ptop .t {
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .b-sent .ptop .v {
+        font-size: 12px;
+        color: #6f6f6f;
+      }
+      .b-sent .old {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 12px 16px 0;
+        padding: 8px 12px;
+        border-radius: 10px;
+        background: #fbf1dc;
+        color: #7a4f00;
+        font-size: 12.5px;
+      }
+      .b-sent .old a {
+        margin-left: auto;
+        font-weight: 600;
+        color: #7a4f00;
+      }
+      .b-sent .md {
+        padding: 28px 48px 40px 56px;
+        font-size: 15px;
+        line-height: 24px;
+        color: #1a1a1a;
+        position: relative;
+      }
+      .b-sent .md h1 {
+        font-size: 26px;
+        line-height: 32px;
+        margin: 0 0 12px;
+        letter-spacing: -0.01em;
+      }
+      .b-sent .md h2 {
+        font-size: 18px;
+        line-height: 24px;
+        margin: 22px 0 8px;
+      }
+      .b-sent .md p {
+        margin: 0 0 10px;
+        color: #2a2a2a;
+      }
+      .b-sent .md ul {
+        margin: 0;
+        padding-left: 22px;
+      }
+      .b-sent .md li {
+        margin: 0 0 6px;
+      }
+      .b-sent .flash {
+        border-radius: 6px;
+        box-shadow: 0 0 0 2px #3b82f6;
+        background: rgba(59, 130, 246, 0.08);
+        position: relative;
+      }
+      .b-sent .flash .pin {
+        position: absolute;
+        left: -44px;
+        top: 4px;
+      }
+      .b-kinds .win {
+        width: 1440px;
+        height: 900px;
+        box-sizing: border-box;
+        background: #e9e9e7;
+        padding: 28px;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+          Helvetica, system-ui, sans-serif;
+        color: #1a1a1a;
+        -webkit-font-smoothing: antialiased;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-rows: repeat(2, minmax(0, 1fr));
+        gap: 24px;
+      }
+      .b-kinds .card {
+        background: #fff;
+        border-radius: 14px;
+        box-shadow:
+          0 0 0 1px rgba(0, 0, 0, 0.08),
+          0 14px 34px rgba(0, 0, 0, 0.1);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        position: relative;
+      }
+      .b-kinds .ptop {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 11px 14px;
+        border-bottom: 1px solid #ececea;
+        font-size: 13px;
+      }
+      .b-kinds .ptop .t {
+        font-weight: 600;
+      }
+      .b-kinds .ptop .k {
+        font-size: 11.5px;
+        color: #6f6f6f;
+        background: #f2f2f0;
+        padding: 3px 8px;
+        border-radius: 999px;
+      }
+      .b-kinds .ptop .m {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: #1a1a1a;
+        background: #f2f2f0;
+        padding: 5px 9px;
+        border-radius: 8px;
+        font-weight: 500;
+      }
+      .b-kinds .body {
+        flex: 1;
+        position: relative;
+        padding: 18px 20px;
+      }
+      .b-kinds .tag {
+        position: absolute;
+        font:
+          600 11px/1 -apple-system,
+          system-ui,
+          sans-serif;
+        color: #fff;
+        background: #3b82f6;
+        padding: 4px 7px;
+        border-radius: 5px 5px 5px 0;
+        white-space: nowrap;
+        z-index: 2;
+      }
+      .b-kinds .tag i {
+        font-style: normal;
+        opacity: 0.8;
+        font-weight: 500;
+        margin-left: 6px;
+      }
+      .b-kinds .cbox {
+        position: absolute;
+        z-index: 4;
+        width: 270px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow:
+          0 0 0 1px #e6e6e4,
+          0 14px 32px rgba(0, 0, 0, 0.16);
+        padding: 9px;
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+      }
+      .b-kinds .cbox .q {
+        font-size: 11.5px;
+        color: #6f6f6f;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .b-kinds .cbox .q span {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .b-kinds .cbox .f {
+        font:
+          400 13px/18px -apple-system,
+          system-ui,
+          sans-serif;
+        padding: 7px 9px;
+        border-radius: 9px;
+        background: #f2f2f0;
+        color: #1a1a1a;
+      }
+      .b-kinds .pin {
+        display: inline-grid;
+        place-items: center;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #2563eb;
+        color: #fff;
+        font:
+          700 9.5px/1 -apple-system,
+          system-ui,
+          sans-serif;
+        flex: none;
+      }
+      .b-kinds .sent {
+        font-size: 11.5px;
+        color: #6f6f6f;
+        padding: 0 2px;
+      }
+      .b-kinds .sent b {
+        color: #1a1a1a;
+        font-weight: 600;
+      }
+      .b-kinds table.sh {
+        border-collapse: collapse;
+        font-size: 12.5px;
+        width: 100%;
+        table-layout: fixed;
+      }
+      .b-kinds .sh th,
+      .b-kinds .sh td {
+        border: 1px solid #e6e6e4;
+        padding: 6px 8px;
+        text-align: left;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .b-kinds .sh th {
+        background: #f7f7f5;
+        color: #6f6f6f;
+        font-weight: 600;
+        font-size: 11.5px;
+      }
+      .b-kinds .sh td.n {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .b-kinds .sh td.sel {
+        background: rgba(59, 130, 246, 0.1);
+      }
+      .b-kinds .sh td.rn {
+        background: #f7f7f5;
+        color: #6f6f6f;
+        width: 28px;
+        text-align: center;
+        font-size: 11px;
+      }
+      .b-kinds .selbox {
+        position: absolute;
+        border: 2px solid #3b82f6;
+        border-radius: 2px;
+        pointer-events: none;
+      }
+      .b-kinds .img {
+        position: relative;
+        border-radius: 10px;
+        overflow: hidden;
+        background: #f2f2f0;
+        height: 100%;
+        box-shadow: inset 0 0 0 1px #e6e6e4;
+      }
+      .b-kinds .dragbox {
+        position: absolute;
+        border: 2px dashed #2563eb;
+        background: rgba(59, 130, 246, 0.08);
+        border-radius: 4px;
+      }
+      .b-kinds .site {
+        border-radius: 10px;
+        box-shadow: inset 0 0 0 1px #e6e6e4;
+        height: 100%;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+      .b-kinds .url {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        background: #f7f7f5;
+        border-bottom: 1px solid #ececea;
+        font-size: 11.5px;
+        color: #6f6f6f;
+      }
+      .b-kinds .hero {
+        flex: 1;
+        padding: 26px 30px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        background: #111827;
+        color: #f9fafb;
+        position: relative;
+      }
+      .b-kinds .hero h3 {
+        margin: 0;
+        font-size: 26px;
+        line-height: 30px;
+        letter-spacing: -0.02em;
+        max-width: 360px;
+      }
+      .b-kinds .hero p {
+        margin: 0;
+        font-size: 13px;
+        line-height: 19px;
+        color: #d1d5db;
+        max-width: 380px;
+      }
+      .b-kinds .cta {
+        align-self: flex-start;
+        background: #f97316;
+        color: #111827;
+        font-weight: 700;
+        font-size: 13px;
+        padding: 10px 16px;
+        border-radius: 8px;
+        position: relative;
+        box-shadow:
+          0 0 0 3px #111827,
+          0 0 0 5px #3b82f6;
+      }
+      .b-kinds .pdf {
+        font-size: 13.5px;
+        line-height: 21px;
+        color: #2a2a2a;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .b-kinds .pg {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 11px;
+        color: #6f6f6f;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        font-weight: 600;
+      }
+      .b-kinds .pg:after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: #ececea;
+      }
+      .b-kinds .pdf p {
+        margin: 0;
+      }
+      .b-kinds .mark {
+        background: #fde68a;
+        border-radius: 3px;
+        box-shadow: 0 0 0 1px #f59e0b;
+        padding: 0 1px;
+      }
+      .b-kinds .note {
+        font-size: 11.5px;
+        color: #6f6f6f;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 20px 12px;
+      }
+      .b-sizes .win {
+        width: 1440px;
+        height: 640px;
+        box-sizing: border-box;
+        background: #e9e9e7;
+        padding: 28px;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+          Helvetica, system-ui, sans-serif;
+        color: #1a1a1a;
+        -webkit-font-smoothing: antialiased;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 20px;
+      }
+      .b-sizes .col {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .b-sizes .card {
+        flex: 1;
+        background: #fff;
+        border-radius: 14px;
+        box-shadow:
+          0 0 0 1px rgba(0, 0, 0, 0.08),
+          0 14px 34px rgba(0, 0, 0, 0.1);
+        padding: 26px 22px 22px 34px;
+        position: relative;
+        font-size: 14px;
+        line-height: 22px;
+      }
+      .b-sizes .card h2 {
+        font-size: 16px;
+        line-height: 22px;
+        margin: 0 0 6px;
+      }
+      .b-sizes .card h3 {
+        font-size: 14px;
+        line-height: 20px;
+        margin: 14px 0 4px;
+      }
+      .b-sizes .card p {
+        margin: 0 0 8px;
+        color: #2a2a2a;
+      }
+      .b-sizes .card ul {
+        margin: 0;
+        padding-left: 18px;
+      }
+      .b-sizes .card li {
+        margin: 0 0 4px;
+      }
+      .b-sizes .word {
+        background: #fde68a;
+        border-radius: 3px;
+        box-shadow: 0 0 0 1px #f59e0b;
+        padding: 0 1px;
+      }
+      .b-sizes .range {
+        background: rgba(59, 130, 246, 0.18);
+        border-radius: 2px;
+      }
+      .b-sizes .blk {
+        border-radius: 6px;
+        box-shadow: 0 0 0 2px #3b82f6;
+        background: rgba(59, 130, 246, 0.06);
+        position: relative;
+      }
+      .b-sizes .secn {
+        position: relative;
+        border-radius: 8px;
+        box-shadow: 0 0 0 2px #3b82f6;
+        background: rgba(59, 130, 246, 0.05);
+        padding: 2px 8px 6px;
+        margin: 0 -8px;
+      }
+      .b-sizes .tag {
+        position: absolute;
+        font:
+          600 11px/1 -apple-system,
+          system-ui,
+          sans-serif;
+        color: #fff;
+        background: #3b82f6;
+        padding: 4px 7px;
+        border-radius: 5px 5px 5px 0;
+        white-space: nowrap;
+        z-index: 2;
+      }
+      .b-sizes .cap {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        padding: 0 4px;
+      }
+      .b-sizes .cap b {
+        font-size: 14px;
+      }
+      .b-sizes .cap span {
+        font-size: 12.5px;
+        line-height: 18px;
+        color: #6f6f6f;
+      }
+      .b-sizes .cap kbd {
+        font:
+          600 11px/1 -apple-system,
+          system-ui,
+          sans-serif;
+        background: #fff;
+        box-shadow: inset 0 0 0 1px #d4d4d1;
+        padding: 3px 6px;
+        border-radius: 5px;
+        color: #1a1a1a;
+        align-self: flex-start;
+        margin-bottom: 2px;
+      }
+      .b-sizes .caret {
+        display: inline-block;
+        width: 1.5px;
+        height: 16px;
+        background: #2563eb;
+        vertical-align: -3px;
+      }
+      .b-model .win {
+        width: 1440px;
+        height: 640px;
+        box-sizing: border-box;
+        background: #e9e9e7;
+        padding: 28px;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+          Helvetica, system-ui, sans-serif;
+        color: #1a1a1a;
+        -webkit-font-smoothing: antialiased;
+        display: flex;
+        gap: 24px;
+      }
+      .b-model .code {
+        flex: 1;
+        min-width: 0;
+        background: #151514;
+        color: #e8e8e6;
+        border-radius: 14px;
+        box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+        padding: 20px 24px;
+        font:
+          400 13px/20px ui-monospace,
+          "SF Mono",
+          Menlo,
+          Consolas,
+          monospace;
+        white-space: pre;
+        overflow: hidden;
+      }
+      .b-model .code .hd {
+        font:
+          600 11px/1 -apple-system,
+          system-ui,
+          sans-serif;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #a5a5a1;
+        margin-bottom: 14px;
+        white-space: normal;
+      }
+      .b-model .t {
+        color: #9dc0da;
+      }
+      .b-model .a {
+        color: #dcb45f;
+      }
+      .b-model .s {
+        color: #c0e1a3;
+      }
+      .b-model .d {
+        color: #8c8c88;
+      }
+      .b-model .side {
+        width: 380px;
+        flex: none;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .b-model .pt {
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06);
+        padding: 14px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .b-model .pt b {
+        font-size: 14px;
+      }
+      .b-model .pt span {
+        font-size: 13px;
+        line-height: 19px;
+        color: #444;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Annotating artifacts and attachments</h1>
+      <p>
+        Mockups for <a href="prd.md">the PRD</a>. Static, light theme, at
+        desktop size; scroll each board sideways on a narrow screen. Rally's own
+        words and look, not final copy.
+      </p>
+    </header>
+    <!-- prettier-ignore -->
+    <section class="board"><h2>1. Pick mode on a Markdown artifact</h2><div class="frame"><div class="b-main" style="width:1440px">
+<div class="win">
+<div class="app">
+  <nav class="side" aria-label="Sidebar">
+    <div class="sec">Channels</div>
+    <div class="row"><span class="sq"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 19c3-6 8-11 14-14-3 6-8 11-14 14z"/></svg></span>GTM</div>
+    <div class="row"><span class="sq" style="background: #e8e4ff; color: #5f499c;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="7"/></svg></span>Product</div>
+    <div class="sec">Threads</div>
+    <div class="row on"><span class="ci"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M4 12h16M12 4v16"/></svg></span>Pricing page refresh</div>
+    <div class="row"><span class="ci" style="background: #fde8d2; color: #b45309;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8z"/></svg></span>Cold Outreach</div>
+    <div class="row"><span class="ci" style="background: #ecf7dc; color: #4d7c0f;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2"/></svg></span>Slack email switching</div>
+  </nav>
+
+  <section class="thread">
+    <div class="head"><span class="pill"><span class="ci"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M4 12h16M12 4v16"/></svg></span>Pricing page refresh</span></div>
+    <div class="feed">
+      <div class="hum">
+        <div class="by"><span class="av" style="background: #84cc16; color: #1a2e05;">AJ</span><b>Morgan Ellis</b> 12 min ago</div>
+        <div class="bub">Draft the copy for the new pricing page. Three plans, short FAQ.</div>
+      </div>
+      <div class="ag">
+        <div class="by"><span class="av" style="background: #ccff00; color: #141414;">R</span><b>Rally</b></div>
+        <div>Here is a first draft with Starter, Team and Enterprise, and four FAQ entries.</div>
+        <div class="doc"><span class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/></svg></span><div><b>pricing-page.md</b><span>Markdown · v4 · open</span></div></div>
+      </div>
+    </div>
+    <div class="dock">
+      <div class="comp">
+        <div class="ph">Reply to Rally…</div>
+        <div class="ctl"><span>Attach</span><button class="sendb" aria-label="Send"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" aria-label="Artifact">
+    <div class="ptop">
+      <span class="t">pricing-page.md</span><span class="v">v4</span>
+      <div class="tool">
+        <button aria-label="Read"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>Read</button>
+        <button class="on"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 4l7 16 2-7 7-2z"/></svg>Annotate</button>
+      </div>
+    </div>
+    <div class="hint">Click to pin <kbd>⌥</kbd> grow <kbd>double-click</kbd> word <kbd>drag</kbd> range <span class="x">Esc</span></div>
+
+    <div class="md">
+      <h1>Pricing</h1>
+      <p>Simple plans that grow with your team. Every plan includes unlimited Channels and Threads.</p>
+      <h2>Plans</h2>
+      <ul>
+        <li><b>Starter</b>: <span class="mark">$12 per seat, billed yearly</span><span class="pin">1</span>. For teams finding their footing.</li>
+        <li class="hov"><span class="tag" style="top: auto; bottom: -24px; border-radius: 0 5px 5px 5px;">List item<i>⌥ for the whole list</i></span><b>Team</b>: $24 per seat, billed yearly. Sidekicks, Breakouts and shared memory.</li>
+        <li><b>Enterprise</b>: talk to us. SSO, audit logs and a regional deployment.</li>
+      </ul>
+      <h2>FAQ</h2>
+      <p><b>Can I change plans later?</b> Yes. Upgrades take effect at once; downgrades at the next renewal.</p>
+      <p><b>Do you offer a free trial?</b> Every plan starts with 14 days free.</p>
+
+      <div class="cbox" style="left: 300px; top: 222px;">
+        <div class="q"><span class="pin" style="margin: 0;">1</span><span>“$12 per seat, billed yearly”</span></div>
+        <textarea aria-label="Comment">Make this monthly and mention the yearly discount</textarea>
+        <div class="acts"><button class="rm">Remove</button><span>↵ to add</span><button class="ok">Add</button></div>
+      </div>
+    </div>
+  </section>
+</div>
+</div>
+</div></div></section>
+    <!-- prettier-ignore -->
+    <section class="board"><h2>2. Pins collect in the composer</h2><div class="frame"><div class="b-composer" style="width:1440px">
+<div class="win">
+<div class="app">
+  <nav class="side" aria-label="Sidebar">
+    <div class="sec">Channels</div>
+    <div class="row"><span class="sq"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 19c3-6 8-11 14-14-3 6-8 11-14 14z"/></svg></span>GTM</div>
+    <div class="row"><span class="sq" style="background: #e8e4ff; color: #5f499c;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="7"/></svg></span>Product</div>
+    <div class="sec">Threads</div>
+    <div class="row on"><span class="ci"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M4 12h16M12 4v16"/></svg></span>Pricing page refresh</div>
+    <div class="row"><span class="ci" style="background: #fde8d2; color: #b45309;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8z"/></svg></span>Cold Outreach</div>
+    <div class="row"><span class="ci" style="background: #ecf7dc; color: #4d7c0f;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2"/></svg></span>Slack email switching</div>
+  </nav>
+
+  <section class="thread">
+    <div class="head"><span class="pill"><span class="ci"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M4 12h16M12 4v16"/></svg></span>Pricing page refresh</span></div>
+    <div class="feed">
+      <div class="hum">
+        <div class="by"><span class="av" style="background: #84cc16; color: #1a2e05;">AJ</span><b>Morgan Ellis</b> 12 min ago</div>
+        <div class="bub">Draft the copy for the new pricing page. Three plans, short FAQ.</div>
+      </div>
+      <div class="ag">
+        <div class="by"><span class="av" style="background: #ccff00; color: #141414;">R</span><b>Rally</b></div>
+        <div>Here is a first draft with Starter, Team and Enterprise, and four FAQ entries.</div>
+        <div class="doc"><span class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/></svg></span><div><b>pricing-page.md</b><span>Markdown · v4 · open</span></div></div>
+      </div>
+    </div>
+    <div class="dock">
+      <div class="comp">
+        <div class="chips">
+          <div class="chip"><span class="pin" style="margin: 0;">1</span><div class="tx"><span class="ex">“$12 per seat, billed yearly”</span><span class="cm">Make this monthly and mention the yearly discount</span></div><span class="k">Range</span><button class="del" aria-label="Remove pin 1">×</button></div>
+          <div class="chip"><span class="pin" style="margin: 0;">2</span><div class="tx"><span class="ex">Team: $24 per seat, billed yearly. Sidekicks, Breakouts…</span><span class="cm">Lead with Sidekicks, they are the reason to upgrade</span></div><span class="k">List item</span><button class="del" aria-label="Remove pin 2">×</button></div>
+          <div class="chip"><span class="pin" style="margin: 0;">3</span><div class="tx"><span class="ex">## FAQ (2 entries)</span><span class="cm">Add a question about data residency</span></div><span class="k">Section</span><button class="del" aria-label="Remove pin 3">×</button></div>
+        </div>
+        <div class="val">Keep the tone casual throughout.</div>
+        <div class="ctl"><span>Attach</span><span>3 pins on pricing-page.md v4</span><button class="go">Send<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" aria-label="Artifact">
+    <div class="ptop">
+      <span class="t">pricing-page.md</span><span class="v">v4</span>
+      <div class="tool">
+        <button aria-label="Read"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>Read</button>
+        <button class="on"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 4l7 16 2-7 7-2z"/></svg>Annotate · 3</button>
+      </div>
+    </div>
+    <div class="md">
+      <h1>Pricing</h1>
+      <p>Simple plans that grow with your team. Every plan includes unlimited Channels and Threads.</p>
+      <h2>Plans</h2>
+      <ul>
+        <li><b>Starter</b>: <span class="mark">$12 per seat, billed yearly</span><span class="pin">1</span>. For teams finding their footing.</li>
+        <li class="blk" style="position: relative;"><span class="pin abs">2</span><b>Team</b>: $24 per seat, billed yearly. Sidekicks, Breakouts and shared memory.</li>
+        <li><b>Enterprise</b>: talk to us. SSO, audit logs and a regional deployment.</li>
+      </ul>
+      <div class="secn">
+        <span class="pin abs" style="left: -46px;">3</span>
+        <h2 style="margin-top: 8px;">FAQ</h2>
+        <p><b>Can I change plans later?</b> Yes. Upgrades take effect at once; downgrades at the next renewal.</p>
+        <p style="margin: 0;"><b>Do you offer a free trial?</b> Every plan starts with 14 days free.</p>
+      </div>
+    </div>
+  </section>
+</div>
+</div>
+</div></div></section>
+    <!-- prettier-ignore -->
+    <section class="board"><h2>3. The sent message in the Thread</h2><div class="frame"><div class="b-sent" style="width:1440px">
+<div class="win">
+<div class="app">
+  <nav class="side" aria-label="Sidebar">
+    <div class="sec">Channels</div>
+    <div class="row"><span class="sq"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 19c3-6 8-11 14-14-3 6-8 11-14 14z"/></svg></span>GTM</div>
+    <div class="row"><span class="sq" style="background: #e8e4ff; color: #5f499c;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="7"/></svg></span>Product</div>
+    <div class="sec">Threads</div>
+    <div class="row on"><span class="ci"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M4 12h16M12 4v16"/></svg></span>Pricing page refresh</div>
+    <div class="row"><span class="ci" style="background: #fde8d2; color: #b45309;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8z"/></svg></span>Cold Outreach</div>
+    <div class="row"><span class="ci" style="background: #ecf7dc; color: #4d7c0f;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2"/></svg></span>Slack email switching</div>
+  </nav>
+
+  <section class="thread">
+    <div class="head"><span class="pill"><span class="ci"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M4 12h16M12 4v16"/></svg></span>Pricing page refresh</span></div>
+    <div class="feed">
+      <div class="hum">
+        <div class="by"><span class="av" style="background: #84cc16; color: #1a2e05;">AJ</span><b>Morgan Ellis</b> 2 min ago</div>
+        <div class="bub">Keep the tone casual throughout.</div>
+        <div class="anns">
+          <a class="ann" href="#"><span class="src"><span class="pin">1</span>pricing-page.md · v4<span class="sp">Range</span></span><span class="ex">$12 per seat, billed yearly</span><span class="cm">Make this monthly and mention the yearly discount</span></a>
+          <a class="ann on" href="#"><span class="src"><span class="pin">2</span>pricing-page.md · v4<span class="sp">List item</span></span><span class="ex">Team: $24 per seat, billed yearly. Sidekicks, Breakouts and shared memory.</span><span class="cm">Lead with Sidekicks, they are the reason to upgrade</span></a>
+          <a class="ann" href="#"><span class="src"><span class="pin">3</span>pricing-page.md · v4<span class="sp">Section</span></span><span class="ex">## FAQ</span><span class="cm">Add a question about data residency</span></a>
+        </div>
+      </div>
+      <div class="ag">
+        <div class="by"><span class="av" style="background: #ccff00; color: #141414;">R</span><b>Rally</b></div>
+        <div>Done. Starter now reads $15 a month, or $12 billed yearly. Team leads with Sidekicks, and the FAQ has a data residency answer.</div>
+        <div class="doc"><span class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/></svg></span><div><b>pricing-page.md</b><span>Markdown · v5</span></div></div>
+      </div>
+    </div>
+    <div class="dock">
+      <div class="comp">
+        <div class="ph">Reply to Rally…</div>
+        <div class="ctl"><span>Attach</span><button class="sendb" aria-label="Send"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" aria-label="Artifact">
+    <div class="ptop"><span class="t">pricing-page.md</span><span class="v">v4 of 5</span></div>
+    <div class="old">You are viewing the version this note was made on.<a href="#">Open v5</a></div>
+    <div class="md">
+      <h1>Pricing</h1>
+      <p>Simple plans that grow with your team. Every plan includes unlimited Channels and Threads.</p>
+      <h2>Plans</h2>
+      <ul>
+        <li><b>Starter</b>: $12 per seat, billed yearly. For teams finding their footing.</li>
+        <li class="flash"><span class="pin">2</span><b>Team</b>: $24 per seat, billed yearly. Sidekicks, Breakouts and shared memory.</li>
+        <li><b>Enterprise</b>: talk to us. SSO, audit logs and a regional deployment.</li>
+      </ul>
+      <h2>FAQ</h2>
+      <p><b>Can I change plans later?</b> Yes. Upgrades take effect at once; downgrades at the next renewal.</p>
+      <p><b>Do you offer a free trial?</b> Every plan starts with 14 days free.</p>
+    </div>
+  </section>
+</div>
+</div>
+</div></div></section>
+    <!-- prettier-ignore -->
+    <section class="board"><h2>4. Other kinds: sheet, image, site, PDF</h2><div class="frame"><div class="b-kinds" style="width:1440px">
+<div class="win">
+
+  <section class="card" aria-label="Spreadsheet">
+    <div class="ptop"><span class="t">q4-pipeline.xlsx</span><span class="k">Excel · attachment</span><span class="m">Annotate</span></div>
+    <div class="body">
+      <div style="position: relative;">
+        <span class="tag" style="left: 58px; top: 26px;">Sheet1!B3:D5<i>3 × 3 · shift-drag to extend</i></span>
+        <table class="sh">
+          <tr><th style="width: 28px;"></th><th>A · Account</th><th>B · Stage</th><th>C · ARR</th><th>D · Close</th></tr>
+          <tr><td class="rn">2</td><td>Northwind</td><td>Proposal</td><td class="n">$48,000</td><td>Nov 14</td></tr>
+          <tr><td class="rn">3</td><td>Globex</td><td class="sel">Negotiation</td><td class="n sel">$120,000</td><td class="sel">Nov 30</td></tr>
+          <tr><td class="rn">4</td><td>Initech</td><td class="sel">Proposal</td><td class="n sel">$36,500</td><td class="sel">Dec 06</td></tr>
+          <tr><td class="rn">5</td><td>Umbrella</td><td class="sel">Discovery</td><td class="n sel">$210,000</td><td class="sel">Dec 19</td></tr>
+          <tr><td class="rn">6</td><td>Hooli</td><td>Closed won</td><td class="n">$64,000</td><td>Oct 28</td></tr>
+        </table>
+        <div class="selbox" style="left: 137px; top: 61px; width: 434px; height: 96px;"></div>
+      </div>
+      <div class="cbox" style="right: 20px; bottom: 16px;">
+        <div class="q"><span class="pin">1</span><span>B3:D5, sent as a table with headers</span></div>
+        <div class="f">Are these close dates realistic? Flag any that slipped twice.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" aria-label="Image">
+    <div class="ptop"><span class="t">onboarding-v2.png</span><span class="k">Image · attachment</span><span class="m">Annotate</span></div>
+    <div class="body">
+      <div class="img">
+        <div style="position: absolute; left: 24px; top: 20px; right: 24px; height: 26px; border-radius: 6px; background: #fff; box-shadow: inset 0 0 0 1px #e6e6e4;"></div>
+        <div style="position: absolute; left: 24px; top: 62px; width: 150px; bottom: 20px; border-radius: 8px; background: #e6e6e4;"></div>
+        <div style="position: absolute; left: 190px; top: 62px; right: 24px; height: 18px; border-radius: 4px; background: #d4d4d1; width: 220px;"></div>
+        <div style="position: absolute; left: 190px; top: 92px; right: 24px; height: 10px; border-radius: 4px; background: #e6e6e4;"></div>
+        <div style="position: absolute; left: 190px; top: 110px; width: 260px; height: 10px; border-radius: 4px; background: #e6e6e4;"></div>
+        <div style="position: absolute; left: 190px; top: 140px; width: 120px; height: 34px; border-radius: 8px; background: #2b58a2;"></div>
+        <div style="position: absolute; left: 324px; top: 140px; width: 100px; height: 34px; border-radius: 8px; background: #fff; box-shadow: inset 0 0 0 1px #d4d4d1;"></div>
+        <div class="dragbox" style="left: 180px; top: 130px; width: 256px; height: 54px;"></div>
+        <span class="tag" style="left: 178px; top: 106px;">Region<i>36%–79% × 42%–58%</i></span>
+      </div>
+      <div class="cbox" style="right: 32px; bottom: 30px;">
+        <div class="q"><span class="pin">1</span><span>Crop sent as an image, with the full image</span></div>
+        <div class="f">Swap the order: primary on the right, like macOS.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" aria-label="Live site">
+    <div class="ptop"><span class="t">launch-site</span><span class="k">Live site · artifact</span><span class="m">Annotate</span></div>
+    <div class="body">
+      <div class="site">
+        <div class="url"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>a1b2c3-us.rallyusercontent.com/</div>
+        <div class="hero">
+          <h3>Ship your launch page in an afternoon</h3>
+          <p>Write the brief, pick a look, and publish to your own domain. No designer on call.</p>
+          <span class="cta">Start free trial<span class="tag" style="left: -5px; top: -30px;">a.cta<i>⌥ for section.hero</i></span></span>
+        </div>
+      </div>
+      <div class="cbox" style="right: 32px; bottom: 30px;">
+        <div class="q"><span class="pin">1</span><span>HTML, visible text and a screenshot</span></div>
+        <div class="f">Say “Start building” and make it our volt green.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" aria-label="PDF">
+    <div class="ptop"><span class="t">msa-draft.pdf</span><span class="k">PDF · converted text</span><span class="m">Annotate</span></div>
+    <div class="body">
+      <div class="pdf">
+        <div class="pg">Page 3</div>
+        <p><b>4.2 Term.</b> This Agreement begins on the Effective Date and continues for twelve (12) months.</p>
+        <p><b>4.3 Renewal.</b> <span class="mark">The Agreement renews automatically for successive twelve-month terms unless either party gives ninety (90) days’ written notice.</span> <span class="pin" style="vertical-align: 1px;">1</span></p>
+        <p><b>4.4 Termination for cause.</b> Either party may terminate on thirty (30) days’ notice of a material breach that remains uncured.</p>
+        <div class="pg">Page 4</div>
+        <p><b>5.1 Fees.</b> Customer pays the fees in the Order Form within thirty (30) days of invoice.</p>
+      </div>
+      <div class="cbox" style="right: 20px; bottom: 16px;">
+        <div class="q"><span class="pin">1</span><span>Page 3 · Rally rebuilds the file to edit it</span></div>
+        <div class="f">Push back to 30 days’ notice.</div>
+      </div>
+    </div>
+  </section>
+
+</div>
+</div></div></section>
+    <!-- prettier-ignore -->
+    <section class="board"><h2>5. Pick sizes: word, range, block, section</h2><div class="frame"><div class="b-sizes" style="width:1440px">
+<div class="win">
+
+  <div class="col">
+    <div class="card">
+      <h2>Plans</h2>
+      <p>Simple plans that grow with your team. Every plan includes <span class="word" style="position: relative;">unlimited<span class="tag" style="left: -2px; top: -24px;">Word</span></span> Channels and Threads.</p>
+      <ul><li><b>Starter</b>: $12 per seat, billed yearly.</li><li><b>Team</b>: $24 per seat, billed yearly.</li></ul>
+    </div>
+    <div class="cap"><kbd>double-click</kbd><b>Word</b><span>One word. Sent with about 200 characters of source on each side.</span></div>
+  </div>
+
+  <div class="col">
+    <div class="card">
+      <h2>Plans</h2>
+      <p>Simple plans that grow with your team. <span class="range" style="position: relative;"><span class="tag" style="left: 0; top: -24px;">Range · 41 chars</span>Every plan includes unlimited Channels</span><span class="caret"></span> and Threads.</p>
+      <ul><li><b>Starter</b>: $12 per seat, billed yearly.</li><li><b>Team</b>: $24 per seat, billed yearly.</li></ul>
+    </div>
+    <div class="cap"><kbd>drag</kbd><b>Range</b><span>Any span of text, across elements. Mapped back to exact source offsets.</span></div>
+  </div>
+
+  <div class="col">
+    <div class="card">
+      <h2>Plans</h2>
+      <p>Simple plans that grow with your team. Every plan includes unlimited Channels and Threads.</p>
+      <ul><li><b>Starter</b>: $12 per seat, billed yearly.</li><li class="blk"><span class="tag" style="left: -2px; top: -24px;">List item</span><b>Team</b>: $24 per seat, billed yearly.</li></ul>
+    </div>
+    <div class="cap"><kbd>click</kbd><b>Block</b><span>Paragraph, list item, table cell, code block or heading: the outline under the pointer.</span></div>
+  </div>
+
+  <div class="col">
+    <div class="card">
+      <div class="secn">
+        <span class="tag" style="left: -2px; top: -24px;">Section · ## Plans</span>
+        <h2 style="margin-top: 6px;">Plans</h2>
+        <p>Simple plans that grow with your team. Every plan includes unlimited Channels and Threads.</p>
+        <ul><li><b>Starter</b>: $12 per seat, billed yearly.</li><li><b>Team</b>: $24 per seat, billed yearly.</li></ul>
+      </div>
+      <h3 style="color: #6f6f6f;">FAQ</h3>
+    </div>
+    <div class="cap"><kbd>⌥ while hovering</kbd><b>Section</b><span>Grow from a block to its list, then to its section: the heading through the next heading of the same level.</span></div>
+  </div>
+
+</div>
+</div></div></section>
+    <!-- prettier-ignore -->
+    <section class="board"><h2>6. What Rally receives</h2><div class="frame"><div class="b-model" style="width:1440px">
+<div class="win">
+  <div class="code" role="img" aria-label="The user turn as the model receives it"><div class="hd">User turn, as projected to the model</div>Keep the tone casual throughout.
+
+<span class="t">&lt;annotation</span> <span class="a">n</span>=<span class="s">"1"</span> <span class="a">artifact</span>=<span class="s">"pricing-page.md"</span> <span class="a">resource</span>=<span class="s">"r_7Kq2"</span> <span class="a">version</span>=<span class="s">"4"</span>
+            <span class="a">kind</span>=<span class="s">"markdown"</span> <span class="a">location</span>=<span class="s">"## Plans › item 1"</span> <span class="a">source</span>=<span class="s">"exact"</span><span class="t">&gt;</span>
+<span class="t">&lt;before&gt;</span>- **Starter**: <span class="t">&lt;/before&gt;</span>
+<span class="t">&lt;selected&gt;</span>$12 per seat, billed yearly<span class="t">&lt;/selected&gt;</span>
+<span class="t">&lt;after&gt;</span>. For teams finding their footing.\n- **Team**: $24 per…<span class="t">&lt;/after&gt;</span>
+<span class="t">&lt;comment&gt;</span>Make this monthly and mention the yearly discount<span class="t">&lt;/comment&gt;</span>
+<span class="t">&lt;/annotation&gt;</span>
+
+<span class="t">&lt;annotation</span> <span class="a">n</span>=<span class="s">"2"</span> … <span class="a">location</span>=<span class="s">"## Plans › item 2"</span><span class="t">&gt;</span> <span class="d">… same shape …</span> <span class="t">&lt;/annotation&gt;</span>
+
+<span class="t">&lt;annotation</span> <span class="a">n</span>=<span class="s">"1"</span> <span class="a">artifact</span>=<span class="s">"q4-pipeline.xlsx"</span> <span class="a">version</span>=<span class="s">"1"</span> <span class="a">kind</span>=<span class="s">"spreadsheet"</span>
+            <span class="a">location</span>=<span class="s">"Sheet1!B3:D5"</span> <span class="a">source</span>=<span class="s">"converted"</span><span class="t">&gt;</span>
+<span class="t">&lt;selected&gt;</span>
+| Account  | Stage       | ARR      | Close  |
+| Globex   | Negotiation | $120,000 | Nov 30 |
+| Initech  | Proposal    | $36,500  | Dec 06 |
+| Umbrella | Discovery   | $210,000 | Dec 19 |
+<span class="t">&lt;/selected&gt;</span>
+<span class="t">&lt;comment&gt;</span>Are these close dates realistic? Flag any that slipped twice.<span class="t">&lt;/comment&gt;</span>
+<span class="t">&lt;/annotation&gt;</span></div>
+
+  <div class="side">
+    <div class="pt"><b>Content travels with the note</b><span>Rally never calls a tool just to learn what was pointed at.</span></div>
+    <div class="pt"><b>source="exact"</b><span>Markdown and text send the source string itself. It goes straight into edit_file as oldString.</span></div>
+    <div class="pt"><b>source="rendered"</b><span>HTML files and live sites send the rendered element. Rally finds it in the source before editing.</span></div>
+    <div class="pt"><b>source="converted"</b><span>PDF, Office and spreadsheet ranges (CSV too) send converted text. Rally rebuilds the file to change it.</span></div>
+    <div class="pt"><b>truncated="true"</b><span>A long selection keeps its head and tail. Rally reads the full range before editing.</span></div>
+  </div>
+</div>
+</div></div></section>
+  </body>
+</html>
