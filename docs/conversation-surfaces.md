@@ -760,18 +760,10 @@ activation event without losing the warning; later clears replace that retained 
 
 ### 2026-10-19 — One hover row for every message, Channels included
 
-**What changed:** The agent row (`AssistantMessageActions`), the person's row
-(an inline footer) and the merge row (a third inline footer) are now one
-exported `MessageActions`, with one `.message-actions` class in place of
-`.agent-message-actions` and `.human-message-actions`. A Channel's own message
-and a merge into a Channel now carry it too: Copy, Speak, Image and PDF, since a
-Channel has nothing to branch from or merge into. A merged result in a Thread
-gains the same text actions beside its New breakout and Merge. A person's
-message in a Channel says
-"Copy message" rather than "Copy response", through the row's `subject` prop.
-The row is revealed by hovering or focusing any `.message-block` or
-`.channel-feed-item`, and its hit-testing now follows the fade on every
-surface, with speech and a save in flight holding both up.
+**What changed:** The three hover rows (Rally's turn, a person's turn, a
+merged result) are one exported `MessageActions` with one `.message-actions`
+class, and a Channel's own messages and merges now carry it with Copy, Speak,
+Image and PDF.
 
 **Why:** Channels had no row at all, and each surface that wanted one would
 have rebuilt it a fourth time. The three copies had already drifted: the merge
@@ -785,8 +777,9 @@ that.
 and gets the row; if its container is neither `.message-block` nor
 `.channel-feed-item`, add it to the reveal rule rather than writing a second
 one. A person's turn in a Thread still passes `textActions={false}`, as before.
-A Channel's message copies its stored body, so a typed @name copies as typed
-and exports without a chip. It also passes `verbatim`, so its image and PDF keep
+A Channel's message copies its stored body, so a typed @name copies as typed,
+and passes the text it drew as `rendered`, so the exports keep its mention
+chips. It also passes `verbatim`, so its image and PDF keep
 the line breaks the feed drew and skip model-text repairs; a host that draws
 text verbatim must pass it, or the saved card differs from the screen. In a
 Channel the row sits on the message's name · time line (`.channel-feed-byline`)

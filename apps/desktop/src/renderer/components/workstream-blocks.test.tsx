@@ -1661,6 +1661,23 @@ describe('MessageBlock export actions', () => {
     expect(exportMessage.mock.calls[0]?.[0].contentHtml).toMatch(/First line<br\/?>\s*Second line/u);
   });
 
+  it('saves the text a host drew, chips included, while Copy keeps the stored words', async () => {
+    const personId = '00000000-0000-7000-8000-000000000044';
+    const link = `[@Ada Lovelace](person:${personId})`;
+    render(<MessageActions
+      rendered={{ text: `Ask ${link}.`, mentions: [{ type: 'person', personId, displayName: 'Ada Lovelace', startOffset: 4, endOffset: 4 + link.length }] }}
+      subject="message"
+      text="Ask @Ada Lovelace."
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save message as an image' }));
+    await waitFor(() => expect(exportMessage).toHaveBeenCalledTimes(1));
+    expect(exportMessage.mock.calls[0]?.[0].contentHtml).toContain(`data-person-id="${personId}"`);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy message' }));
+    await waitFor(() => expect(copyText).toHaveBeenLastCalledWith('Ask @Ada Lovelace.'));
+  });
+
   it('asks for a PDF from the button beside it', async () => {
     render(<MessageBlock {...actions} message={agentMessage} />);
 

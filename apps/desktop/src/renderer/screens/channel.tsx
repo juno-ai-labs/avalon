@@ -658,9 +658,9 @@ function MessageCard({ author, focused, members, message, placedAt }: {
             <span aria-hidden="true">·</span>
             <RelativeTime value={placedAt} />
           </span>
-          {/* The stored words, not the rendering: copy and speech take what was
-              said, and a typed @name reads the same either way. */}
-          <MessageActions subject={rally ? 'response' : 'message'} telemetry={{ messageId: message.id }} text={message.body} verbatim />
+          {/* Copy and speech take the stored words; the exports draw what the
+              card drew, chips included. */}
+          <MessageActions rendered={body} subject={rally ? 'response' : 'message'} telemetry={{ messageId: message.id }} text={message.body} verbatim />
         </div>
       </div>
     </div>
@@ -722,7 +722,7 @@ function MergeCard({ author, focused, members, merge, message, onOpenArtifact, o
   // quote line, nothing to open.
   return <li className={clsx('channel-feed-item is-message is-merge', focused && 'is-focused')} data-message-id={message.id}>
     <MergeMessage
-      actions={<MessageActions citations={citations} telemetry={{ messageId: message.id }} text={message.body} />}
+      actions={<MessageActions citations={citations} rendered={body} telemetry={{ messageId: message.id }} text={message.body} />}
       label={`${merge.private ? 'A private thread' : merge.title || 'A thread'}, merged by ${merger}`}
       mergedBy={<>{author && <Avatar member={author} size="small" title={null} />}{merger}</>}
       onQuote={showThread}
