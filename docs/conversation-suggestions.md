@@ -201,7 +201,7 @@ event and decides visibility and who may act; it never infers a resolution.
 | Settlement retries after a crash | Gate 3: no second call, no second row; a `pending` row resumes at the draft |
 | The backfill and a settlement judge the same run at once | Gate 3 again inside the write: the second to finish records nothing and skips as `already_judged`; a row the object is already drafting is not resumed (`draft_in_flight`), so one drafter writes it |
 | Settlement lands behind three newer messages | Recorded as `late`; nothing shown |
-| The parent cannot be read (RPC failure) | A Breakout skips as `nothing_offerable`; a Thread judges with only `start_breakout` offerable |
+| The parent cannot be read (RPC failure) | At settlement, a Breakout skips as `nothing_offerable` and a Thread judges with only `start_breakout` offerable; the next run judges again. In the backfill the read failure is thrown, so the row retries rather than settling a conversation that was never offered `merge_up` |
 | A merge lands with no suggestion standing | The marker is written as today; the corpus records a miss |
 | Two people act at once | The first resolution wins; the dismiss route answers the second as replayed |
 | An older desktop build | Its socket parser strips the snapshot's `suggestions` and ignores the event; it shows nothing |
