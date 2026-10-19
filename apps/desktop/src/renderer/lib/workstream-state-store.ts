@@ -153,6 +153,23 @@ function carriesNewBreakoutAttentionCount(
 }
 
 /**
+ * Whether this payload says, for the first time, whether the reader takes
+ * part in Main. A window that held the row before the server sent the field
+ * gets the same waterlines back after it does, and would otherwise keep
+ * counting a thread the reader is not in until the viewer half next moves.
+ */
+function carriesFirstParticipation(
+  queryClient: QueryClient,
+  input: VersionedWorkstreamState,
+  staleGeneration: boolean,
+): boolean {
+  if (!input.visible || staleGeneration || input.viewer.isParticipant === undefined) return false;
+  const held = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
+    ?.find((item) => item.id === input.workstreamId);
+  return held !== undefined && held.isParticipant === undefined;
+}
+
+/**
  * The one receiver for both WorkspaceDO and WorkstreamDO state sockets.
  *
  * Common and viewer rows advance independently. This is what makes a delayed
@@ -195,7 +212,8 @@ export function applyVersionedWorkstreamState(
     && incomingIds.length > 0;
   if (!commonApplied && !viewerApplied && !canFillEmptyPile
     && !carriesNewPlacements(queryClient, input, staleGeneration === true)
-    && !carriesNewBreakoutAttentionCount(queryClient, input, staleGeneration === true)) {
+    && !carriesNewBreakoutAttentionCount(queryClient, input, staleGeneration === true)
+    && !carriesFirstParticipation(queryClient, input, staleGeneration === true)) {
     return { commonApplied, viewerApplied, visible: current?.visible ?? input.visible };
   }
 
@@ -299,6 +317,11 @@ export function applyVersionedWorkstreamState(
     }
     if (!commonApplied && input.common.breakoutAttentionCount !== undefined) {
       patched.breakoutAttentionCount = input.common.breakoutAttentionCount;
+    }
+    // The other half of `carriesFirstParticipation`: fill the field once, and
+    // never let an equal-version row overwrite one already said.
+    if (!viewerApplied && patched.isParticipant === undefined && input.viewer.isParticipant !== undefined) {
+      patched.isParticipant = input.viewer.isParticipant;
     }
     // The other half of `carriesNewPlacements`: the row is here, so take the
     // placements off it even though the rest of the common half is not this
