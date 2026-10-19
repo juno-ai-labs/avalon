@@ -1,3 +1,4 @@
+import { renderAnnotations } from "@rally/contracts";
 import type { ModelMessage, ModelMessageProvenance } from "@rally/agent-harness";
 import type {
   SubstreamContextMessage,
@@ -22,7 +23,7 @@ function renderHistoryMessage(message: SubstreamContextMessage): ModelMessage {
     `Source turn: ${message.turnId}`,
   ].join("\n");
   const content = message.blocks.flatMap((block, index) => [
-    { type: "text" as const, text: index === 0 ? `${attribution}\n\n${block.text}` : block.text },
+    { type: "text" as const, text: index === 0 ? `${attribution}\n\n${[block.text,renderAnnotations(block.structuredContent)].filter(Boolean).join("\n\n")}` : [block.text,renderAnnotations(block.structuredContent)].filter(Boolean).join("\n\n") },
     ...(block.attachments.length > 0
       ? [{
           type: "text" as const,

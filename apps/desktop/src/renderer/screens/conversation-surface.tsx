@@ -1,3 +1,5 @@
+import { loadAnnotationPreview } from '../lib/annotation-preview';
+import { AnnotationDraftProvider, useAnnotationDraft } from '../components/artifact-annotations';
 import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
 import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, NO_INVITEES, useWorkspaceInvitees } from "../lib/workspace-invitees";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
@@ -1372,7 +1374,12 @@ export interface ConversationSurfaceProps {
  * strip above it, which the caller renders, and the WorkstreamDO control
  * socket, which only a work stream has and the socket hook mounts only for it.
  */
-export function ConversationSurface({
+export function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element {
+  const { api } = useCollaborationSession();
+  return <AnnotationDraftProvider scopeKey={`${props.parentId}:${props.substreamId}`} readResource={api ? (id) => api.getResource(id) : undefined} readResourceVersion={api ? (id,version,signal) => api.getResourceVersionPreview(id,version,signal) : undefined} upload={api ? async (file) => (await api.uploadResource(file, crypto.randomUUID())).id : undefined}><ConversationSurfaceContent {...props} /></AnnotationDraftProvider>;
+}
+
+function ConversationSurfaceContent({
   parentKind,
   parentId: id,
   substreamId,
@@ -1396,6 +1403,7 @@ export function ConversationSurface({
   breakoutOrigin,
   parentCrumbs,
 }: ConversationSurfaceProps): React.JSX.Element {
+  const annotationDraft = useAnnotationDraft();
   const detailQueryKey = useMemo(() => workstreamDetailQueryKey(id, substreamId), [id, substreamId]);
   const parentDetailQueryKey = useMemo(() => workstreamDetailQueryKey(id, '0'), [id]);
   const transcriptQueryKey = useMemo(() => orderedTranscriptQueryKey(id, substreamId), [id, substreamId]);
@@ -1531,8 +1539,14 @@ export function ConversationSurface({
   }, [openOwnRail, railScopeKey]);
   const resourcePanel = panel?.kind === 'resource' ? panel : null;
   const openAttachment = useCallback((preview: AttachmentPreview): void => {
+    if (preview.annotation && api && preview.resourceId) {
+      void loadAnnotationPreview(api,preview,(resourceId)=>openPanel({kind:'resource',resourceId})).then((loaded)=>openPanel({kind:'attachment',preview:loaded}));
+      return;
+    }
     openPanel({ kind: 'attachment', preview });
-  }, [openPanel]);
+  }, [openPanel, api]);
+  const setAnnotationPreviewOpener = annotationDraft?.setPreviewOpener;
+  useEffect(()=>{setAnnotationPreviewOpener?.(openAttachment);return()=>setAnnotationPreviewOpener?.(null);},[openAttachment,setAnnotationPreviewOpener]);
   const openResourceDetails = useCallback((resourceId: string): void => {
     openPanel({ kind: 'resource', resourceId });
   }, [openPanel]);
@@ -2722,6 +2736,7 @@ export function ConversationSurface({
     // same panel, scoped as it was.
     const current = resourcePanel?.resourceId === resource.id ? resourcePanel : { kind: 'resource' as const, resourceId: resource.id };
     openAttachment({
+      resourceId:resource.id,version:version.version,
       // The version's own title and type. A rename is itself what captured the
       // version being opened, so the current name over old bytes would name
       // the wrong thing in the one surface built to keep them apart.
@@ -2802,6 +2817,7 @@ export function ConversationSurface({
     invitedEmails: string[] = [],
   ): Promise<void> => {
     if (!api || !routedDetail) throw new Error('This thread is not ready to receive messages.');
+    if (annotationDraft?.pins.length && (sending || activeElicitation)) throw new Error(activeElicitation ? 'Answer the open question before sending artifact comments.' : 'Your artifact comments are still sending.');
     // Ahead of the optimistic turn and of `sending`. A message the server will
     // refuse must not appear in the transcript first and be pulled back out of
     // it, and the person is the only one who can resolve this.
@@ -2841,6 +2857,8 @@ export function ConversationSurface({
       }
       return;
     }
+    const sentPins = annotationDraft?.pins ?? [];
+    const annotationContent = sentPins.length ? { kind: 'artifact_annotations', annotations: sentPins.map((p) => p.annotation), names: Object.fromEntries(sentPins.map((p) => [p.annotation.target.resourceId, p.name])) } : undefined;
     const attachmentLease = await attachmentDraft.leaseReady();
     // Shared before the message is sent, as a member mentioned from outside is
     // added with it, and after the send holds its attachments, so nothing typed
@@ -2894,6 +2912,7 @@ export function ConversationSurface({
           createdAt,
         }] : []),
         createdAt,
+        annotationContent,
         deliveryState: 'sending',
       });
       return upsertTranscriptOverlay(current, {
@@ -2915,13 +2934,15 @@ export function ConversationSurface({
         }
       }
       const created = await socketConnection.createMessage({
+        ...(sentPins.length ? { annotations: sentPins.map((p) => p.annotation) } : {}),
         text,
         clientId,
         mentions,
         confirmedParticipantUserIds: parentKind === 'workstream' && substreamId !== '0' ? [] : confirmedParticipantUserIds,
-        attachmentIds: readyAttachments.flatMap((attachment) => attachment.resource ? [attachment.resource.id] : []),
+        attachmentIds: [...readyAttachments.flatMap((attachment) => attachment.resource ? [attachment.resource.id] : []), ...sentPins.flatMap((p) => p.annotation.content.imageAttachmentId ? [p.annotation.content.imageAttachmentId] : [])],
         ...(deliveryMode ? { runMode: deliveryMode } : {}),
       });
+      annotationDraft?.clear(sentPins.map((p) => p.id));
       queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId), (current) => {
         const optimistic = (current ?? []).find((overlay) =>
           overlay.identity.type === 'client_message'
@@ -3547,7 +3568,7 @@ export function ConversationSurface({
         onCreate={substreamLaunch.onCreate}
         onOpenAttachment={openAttachment}
         parent={displayedDetail}
-        sendBlocked={feedFromLocalCache}
+        sendBlocked={feedFromLocalCache || Boolean(activeElicitation && annotationDraft?.pins.length)}
         titlePill={parentKind !== 'automation'}
         {...(launchOrigin ? { origin: { channelTitle: displayedDetail.title, ...launchOrigin } } : {})}
         workspaceId={workspaceId}

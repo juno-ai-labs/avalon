@@ -266,7 +266,7 @@ export function listWorkspaceResourceVersions(
     `SELECT resource_id, version, author_kind, author_run_id, author_user_id,
             author_connection_id, cause, storage_kind, title, resource_type, provider,
             provider_resource_id, mime_type, canonical_url, last_hydrated_at, captured_at,
-            content_ref, model_content_ref, metadata_json
+            content_ref, model_content_ref, model_mime_type, model_content_sha256, content_sha256, model_metadata_json, metadata_json
        FROM resource_versions
       WHERE resource_id = ? AND workspace_id = ?${versionFilter}
       ORDER BY version DESC`,

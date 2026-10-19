@@ -1,3 +1,4 @@
+import { ArtifactWindow } from './screens/artifact-window';
 import { AppErrorBoundary } from "@rally/ui/components/app-error-boundary";
 import { createQueryClient } from "./lib/query-client";
 import * as Tooltip from '@radix-ui/react-tooltip';
@@ -570,14 +571,13 @@ export function SessionGate(): React.JSX.Element {
 
 export default function App(): React.JSX.Element {
   useEffect(() => installRendererErrorTelemetry(), []);
-  // Above the deep-link branch below, so every window this renderer draws —
-  // including the ones that return before the providers — can tell an app
-  // switch from a person. See `lib/window-activation.ts`.
   useWindowActivationTracking();
-  // Only a `system` choice follows the Mac; the watcher decides that for itself
-  // so that a later change of choice does not need to re-subscribe.
   useEffect(() => watchSystemAppearance(), []);
   useEffect(() => watchThemeBroadcast(), []);
+  return new URLSearchParams(window.location.search).get('surface') === 'artifact-preview'
+    ? <ErrorBoundary><ArtifactWindow /></ErrorBoundary> : <Application />;
+}
+function Application(): React.JSX.Element {
   // Above the session gate rather than beside the other surfaces, and that
   // placement is the point: a refused deep link is most worth showing when
   // there is no session to gate on — an expired one, or a link that arrived

@@ -756,6 +756,16 @@ relevant delay clears. The workspace-scoped resume registry retains the delay se
 alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
+### Artifact annotation drafts
+
+Each conversation surface owns an in-memory annotation provider keyed by parent
+and breakout. Preview hosts hand Comment mode to the panel header, immediately
+before the always-visible Expand control. Composer chips and feed excerpts share
+that provider and canonical structured content. Only accepted sends clear the
+captured pin IDs. A breakout launcher opts out of its parent's draft so it cannot
+consume unrelated pins. [Artifact annotations](artifact-annotations.md) owns the
+selection and message protocol.
+
 ## Changelog
 
 ### 2026-10-19 — One hover row for every message, Channels included
@@ -785,6 +795,20 @@ text verbatim must pass it, or the saved card differs from the screen. In a
 Channel the row sits on the message's name · time line (`.channel-feed-byline`)
 rather than a line of its own: the row is laid out while hidden, and on its own
 line it made every Channel message about 31px taller at rest.
+
+### 2026-10-19 — Share annotation drafts across preview hosts and the composer
+
+**What changed:** The composer owns transient pins across its previews, with editable chips and Comment immediately before Expand.
+
+**Why:** Selections belong to the message being written; per-preview drafts lose comments when the viewer closes.
+
+**Considered and rejected:** Scope changes reset pin state without remounting the conversation, preserving in-flight history.
+
+**Consequences:** Only accepted sends clear their captured pins. Pending annotation sends and open elicitations cannot silently reuse or omit those pins. See [artifact annotations](artifact-annotations.md).
+
+PR #1322; design: `docs/PRDs/2026-10-19_artifact-annotations/prd.md`.
+
+
 
 ### 2026-10-18 — A long paste attaches as a typed, named file
 

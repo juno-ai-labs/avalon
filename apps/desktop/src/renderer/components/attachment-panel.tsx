@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { DetailHeaderActionsHost } from './detail-header-actions';
+import { useEffect, useState } from 'react';
 import { ResourceIcon } from '@rally/ui/components/resource-icon';
 import type { IconGroupAction } from '@rally/ui/components/icon-group';
 import { ActionTile, ActionTiles, TitleMenuHeader, TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
@@ -31,6 +32,7 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
   onResize: (width: number) => void;
   width: number;
 }): React.JSX.Element | null {
+  const [detailActions,setDetailActions] = useState<readonly IconGroupAction[]>([]);
   const view = useAttachmentView(preview);
   const { gallery, active, mode, src, error, step } = view;
   const shownId = active?.resourceId ?? null;
@@ -41,7 +43,7 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
   const many = gallery.length > 1;
   const icon = <ResourceIcon resource={{ resourceType: 'uploaded_file', mimeType: active.mimeType ?? null, title: active.name }} />;
   return (
-    <RailSurface
+    <DetailHeaderActionsHost onActions={setDetailActions}><RailSurface
       className="attachment-panel"
       label={`Attachment: ${active.name}`}
       leaving={leaving}
@@ -74,7 +76,7 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
             </ActionTiles>
           </>,
         }}
-        {...(expandAction ? { actions: [...expandAction] } : {})}
+        actions={[...detailActions,...(expandAction ?? [])].map((action) => ({...action, alwaysVisible:true}))}
         ancestors={ancestors ? [...ancestors] : []}
         trailing={<TitlePillClose label="Close panel" onClose={onClose} />}
       />
@@ -102,6 +104,6 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
           </footer>
         )}
       </div>
-    </RailSurface>
+    </RailSurface></DetailHeaderActionsHost>
   );
 }

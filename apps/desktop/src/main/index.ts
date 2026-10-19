@@ -1,3 +1,4 @@
+import { ARTIFACT_PICKER_SOURCE, ArtifactPickerPinSchema, AnnotationSchema } from "@rally/contracts";
 import { startCanvaConnection } from './canva-loopback';
 import { clampWindowBounds, readMainWindowState, writeMainWindowState } from './main-window-state';
 import { macosMajorVersion } from './macos-version';
@@ -8,7 +9,7 @@ import { describeZodIssues, zodDiagnosticCode } from '@rally/contracts/zod-diagn
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { watchWorkspaceSocket, type ReachWatchDiagnostic } from '@rally/contracts/workspace-reach-watch';
 import { spaceDeepLink } from '@rally/contracts/workstream-links';
-import type { ZodType } from 'zod';
+import { z, type ZodType } from 'zod';
 import {
   ActivateWorkspaceRequestSchema,
   ClientFeatureFlagsSchema,
@@ -99,7 +100,6 @@ import type {
   RuntimeConfig,
   DesktopDeepLinkErrorNotice,
 } from '../common/desktop';
-import { generatedArtifactWindowDocument } from '../common/generated-artifact-window';
 import { readArtifactWindows, writeArtifactWindows, type ArtifactWindowState } from './artifact-window-state';
 import { logError, logWarn } from '../common/logger';
 import { AccountSessionFailure } from './account-session-failure';
@@ -3335,7 +3335,11 @@ const poppedOutArtifacts = new Map<BrowserWindow, {
   resourceId: string;
   version: number;
   stateId: string;
+  request: DesktopArtifactWindowRequest;
+  owner?: WebContents | undefined;
 }>();
+const annotationTransfers = new Map<string, {owner:WebContents; scope:string; window:BrowserWindow; resolve:(accepted:boolean)=>void}>();
+const annotationComposerScopes = new WeakMap<WebContents, Set<string>>();
 let savedArtifactWindows: ArtifactWindowState[] | null = null;
 const preservedArtifactWindows = new WeakSet<BrowserWindow>();
 function artifactWindowStates(): ArtifactWindowState[] {
@@ -3508,6 +3512,30 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
         setBorderRadius: (radius) => view.setBorderRadius(radius),
         setVisible: (visible) => view.setVisible(visible),
         load: async (url) => await loadArtifactDocument(contents, url),
+        pick: async () => {
+          const raw: unknown = await contents.executeJavaScriptInIsolatedWorld(1001, [{ code: `new Promise(resolve => {
+            if (!globalThis.__rallyPickerState) {
+              const state = { queue: [], waiter: null, cleanup: null };
+              globalThis.__rallyPickerState = state;
+              state.cleanup = ${ARTIFACT_PICKER_SOURCE}(pin => { if (state.waiter) { const answer=state.waiter; state.waiter=null; answer(pin); } else state.queue.push(pin); });
+              globalThis.__rallyCancelPicker = () => { state.cleanup?.(); state.waiter?.(null); globalThis.__rallyPickerState=null; };
+            }
+            const state=globalThis.__rallyPickerState;
+            if (state.queue.length) resolve(state.queue.shift()); else state.waiter=resolve;
+          })` }]);
+          if (raw === null) return null;
+          const pin = ArtifactPickerPinSchema.parse(raw);
+          const captured = await contents.capturePage();
+          const size = captured.getSize();
+          const rect = z.object({x:z.number().finite(),y:z.number().finite(),width:z.number().nonnegative(),height:z.number().nonnegative(),viewportWidth:z.number().positive(),viewportHeight:z.number().positive()}).nullable().parse(await contents.executeJavaScriptInIsolatedWorld(1001,[{code:`(() => { const n=document.querySelector(${JSON.stringify(pin.css)}); if(!n)return null; const r=n.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,viewportWidth:innerWidth,viewportHeight:innerHeight}; })()`} ]));
+          const scaleX=size.width/(rect?.viewportWidth || size.width || 1);
+          const scaleY=size.height/(rect?.viewportHeight || size.height || 1);
+          const x=Math.max(0,Math.min(size.width-1,Math.floor((rect?.x ?? 0)*scaleX)));
+          const y=Math.max(0,Math.min(size.height-1,Math.floor((rect?.y ?? 0)*scaleY)));
+          const screenshot = captured.isEmpty() ? undefined : 'data:image/png;base64,'+captured.crop({x,y,width:Math.max(1,Math.min(size.width-x,Math.ceil((rect?.width ?? size.width)*scaleX))),height:Math.max(1,Math.min(size.height-y,Math.ceil((rect?.height ?? size.height)*scaleY)))}).toPNG().toString('base64');
+          return { ...pin, ...(screenshot ? { screenshot } : {}) };
+        },
+        stopPicking: async () => { if (!contents.isDestroyed()) await contents.executeJavaScriptInIsolatedWorld(1001, [{ code: 'globalThis.__rallyCancelPicker?.()' }]); },
         capture: async () => {
           const captured = await contents.capturePage();
           if (captured.isEmpty()) return null;
@@ -3542,10 +3570,9 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
  * A live site keeps its own session partition deliberately — a person who
  * authorized the artifact in the rail should not authorize it again to see it
  * bigger. A generated file instead carries the already-authorized preview
- * bytes; main turns those into a script-free document, never a second read.
+ * bytes; a renderer page draws the shared preview and returns pins to its owning composer.
  */
-function openArtifactWindow(request: DesktopArtifactWindowRequest): boolean {
-  const artifactId = request.kind === 'site' ? request.artifactId : request.resourceId;
+function openArtifactWindow(request: DesktopArtifactWindowRequest, owner?: WebContents): boolean {
   const workspaceId = inMemorySession?.workspace?.id;
   const userId = inMemorySession?.user.id;
   if (!workspaceId || !userId) return false;
@@ -3578,9 +3605,8 @@ function openArtifactWindow(request: DesktopArtifactWindowRequest): boolean {
     // macOS traffic lights never sit on top of model-authored navigation.
     titleBarStyle: 'default',
     ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
-    webPreferences: artifactWebPreferences(artifactId, app.isPackaged),
+    webPreferences: { preload: preloadPath(), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true },
   });
-  artifactWebContents.add(window.webContents);
   const stateId = previous?.id ?? crypto.randomUUID();
   let loadFailed = false;
   const record = (): void => {
@@ -3593,30 +3619,31 @@ function openArtifactWindow(request: DesktopArtifactWindowRequest): boolean {
       id: stateId, workspaceId, userId, kind: latest?.kind ?? request.kind,
       resourceId: request.resourceId, version: poppedOutArtifacts.get(window)?.version ?? request.version,
       title: window.getTitle(),
+      ...(request.annotationScope?{annotationScope:request.annotationScope}:{}),
       ...((latest?.kind ?? request.kind) === 'generated'
-        ? { mimeType: latest?.mimeType ?? (request.kind === 'generated' ? request.mimeType : undefined) }
+        ? { mimeType: latest?.mimeType ?? (request.kind === 'generated' ? request.sourceMimeType ?? request.mimeType : undefined) }
         : {}),
       bounds, displayId: electronScreen.getDisplayMatching(bounds).id,
     };
     if (index < 0) states.push(state); else states[index] = state;
   };
-  poppedOutArtifacts.set(window, { workspaceId, userId, resourceId: request.resourceId, version: request.version, stateId });
+  poppedOutArtifacts.set(window, { workspaceId, userId, resourceId: request.resourceId, version: request.version, stateId, request, owner });
   record();
   saveArtifactWindowStates();
   window.on('move', record);
   window.on('resize', record);
   window.on('close', () => { record(); saveArtifactWindowStates(); });
   window.once('closed', () => {
+    for (const [id, transfer] of annotationTransfers) { if (transfer.window === window) { transfer.resolve(false); annotationTransfers.delete(id); } }
     poppedOutArtifacts.delete(window);
     if (!applicationIsQuitting && !preservedArtifactWindows.has(window) && (!loadFailed || !previous)) {
       savedArtifactWindows = artifactWindowStates().filter((item) => item.id !== stateId);
       saveArtifactWindowStates();
     }
   });
-  const url = request.kind === 'site'
-    ? request.url
-    : `data:text/html;charset=utf-8,${encodeURIComponent(generatedArtifactWindowDocument(request))}`;
-  confineToArtifactOrigin(window.webContents, new URL(url).origin, artifactLinkHandoff(window.webContents));
+  const url = rendererUrl('artifact-preview');
+  window.webContents.on('will-navigate', (event, next) => { if (!rendererNavigationAllowed(next)) event.preventDefault(); });
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   // The artifact controls document.title, but this strip belongs to Rally's
   // window. Keep the bounded resource title instead of letting remote markup
   // rename the native chrome after it loads.
@@ -3658,25 +3685,16 @@ async function updatePoppedOutArtifact(request: DesktopArtifactWindowRequest): P
     return false;
   }
   const [target, previous] = windows[0]!;
-  const url = request.kind === 'site'
-    ? request.url
-    : `data:text/html;charset=utf-8,${encodeURIComponent(generatedArtifactWindowDocument(request))}`;
-  // One navigation per call: a site URL is single-use, so the renderer must
-  // mint again before advancing a second window for the same resource.
-  poppedOutArtifacts.set(target, { ...previous, version: request.version });
+  // The owning renderer supplies a fresh site code for each updated window.
+  poppedOutArtifacts.set(target, { ...previous, version: request.version, request: { ...request, ...(previous.request.annotationScope ? { annotationScope: previous.request.annotationScope } : {}), ...(request.kind==='generated' && !request.sourceMimeType && previous.request.kind==='generated' ? {sourceMimeType:previous.request.sourceMimeType}: {}) } });
   target.setTitle(request.title);
-  const loaded = await loadArtifactInitialUrl(() => target.loadURL(url));
-  if (!loaded && !target.isDestroyed()
-    && poppedOutArtifacts.get(target)?.version === request.version) {
-    poppedOutArtifacts.set(target, previous);
-    return false;
-  }
+  target.webContents.send('artifact:window-updated');
   const saved = artifactWindowStates().find((item) => item.id === previous.stateId);
   if (saved) {
     saved.kind = request.kind;
     saved.version = request.version;
     saved.title = request.title;
-    if (request.kind === 'generated') saved.mimeType = request.mimeType;
+    if (request.kind === 'generated') saved.mimeType = request.sourceMimeType ?? request.mimeType;
     else delete saved.mimeType;
     saveArtifactWindowStates();
   }
@@ -3716,6 +3734,7 @@ function parseArtifactWindowRequest(raw: unknown): DesktopArtifactWindowRequest 
   if (value.kind === 'site' && typeof value.resourceId === 'string' && version !== null
     && typeof value.artifactId === 'string' && typeof value.url === 'string') return {
     kind: 'site',
+    ...(typeof value.annotationScope === 'string' ? { annotationScope: value.annotationScope } : {}),
     ...(typeof value.restoreId === 'string' ? { restoreId: value.restoreId } : {}),
     resourceId: value.resourceId,
     version,
@@ -3729,6 +3748,8 @@ function parseArtifactWindowRequest(raw: unknown): DesktopArtifactWindowRequest 
     || typeof value.mimeType !== 'string' || !(value.content instanceof Uint8Array)) return null;
   return {
     kind: 'generated',
+    ...(typeof value.annotationScope === 'string' ? { annotationScope: value.annotationScope } : {}),
+    ...(typeof value.sourceMimeType === 'string' ? { sourceMimeType: value.sourceMimeType } : {}),
     ...(typeof value.restoreId === 'string' ? { restoreId: value.restoreId } : {}),
     resourceId: value.resourceId,
     version,
@@ -3736,6 +3757,15 @@ function parseArtifactWindowRequest(raw: unknown): DesktopArtifactWindowRequest 
     mimeType: value.mimeType,
     title,
   };
+}
+
+function assertArtifactRenderer(event: IpcMainInvokeEvent): void {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window || !poppedOutArtifacts.has(window) || !event.senderFrame || !rendererNavigationAllowed(event.senderFrame.url)) throw new Error('Blocked artifact renderer request');
+}
+function assertArtifactSurfaceSender(event: IpcMainInvokeEvent): void {
+  if ([...poppedOutArtifacts.keys()].some((window) => window.webContents === event.sender)) assertArtifactRenderer(event);
+  else assertTrustedIpcSender(event);
 }
 
 function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
@@ -3987,7 +4017,7 @@ function registerIpc(): void {
   // previous theme's canvas before the first paint. An unrecognised value is
   // dropped rather than thrown on: nothing the caller does depends on it.
   ipcMain.handle('theme:set-window', async (event, choice: unknown) => {
-    assertTrustedIpcSender(event);
+    assertArtifactSurfaceSender(event);
     const parsed = parseThemeChoice(choice);
     if (!parsed || sameThemeChoice(parsed, windowThemeChoice)) return;
     windowThemeChoice = parsed;
@@ -4005,7 +4035,7 @@ function registerIpc(): void {
     // the Mac was already dark resolved to the same appearance, returned here,
     // and left every other window still believing it was following the Mac —
     // no visible difference in that moment, and the wrong one at sunrise.
-    for (const window of rallyWindows()) {
+    for (const window of [...rallyWindows(),...poppedOutArtifacts.keys()]) {
       if (window.webContents !== event.sender) window.webContents.send('theme:changed', parsed);
     }
     await updateStoredApplicationSettings(userDataDirectory(), { themeChoice: parsed });
@@ -4153,7 +4183,7 @@ function registerIpc(): void {
     return logout();
   });
   ipcMain.handle('system:copy-text', (event, text: unknown) => {
-    assertTrustedIpcSender(event);
+    assertArtifactSurfaceSender(event);
     if (typeof text !== 'string' || text.length === 0 || text.length > 4_000) {
       throw new Error('Invalid clipboard text');
     }
@@ -4227,7 +4257,7 @@ function registerIpc(): void {
     });
   });
   ipcMain.handle('system:open-external', async (event, rawUrl: unknown) => {
-    assertTrustedIpcSender(event);
+    assertArtifactSurfaceSender(event);
     if (typeof rawUrl !== 'string' || !isAllowedExternalUrl(rawUrl)) {
       throw new Error('Blocked external URL');
     }
@@ -4238,33 +4268,43 @@ function registerIpc(): void {
   // is allowed to have — the URL decides what model-authored code gets loaded,
   // and the rectangle decides what it paints over.
   ipcMain.handle('artifact:present-preview', async (event, raw: unknown) => {
-    assertTrustedIpcSender(event);
+    assertArtifactSurfaceSender(event);
     const request = parseArtifactPreviewRequest(raw);
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!request || !window) return false;
     return artifactPreviewFor(window).present(request);
   });
   ipcMain.handle('artifact:set-preview-bounds', async (event, raw: unknown) => {
-    assertTrustedIpcSender(event);
+    assertArtifactSurfaceSender(event);
     const bounds = parseArtifactPreviewBounds(raw);
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!bounds || !window) return;
     artifactPreviews.get(window)?.setBounds(bounds);
   });
+  ipcMain.handle('artifact:pick-preview', async (event) => {
+    assertArtifactSurfaceSender(event);
+    const window = BrowserWindow.fromWebContents(event.sender);
+    return window ? await artifactPreviews.get(window)?.pick() ?? null : null;
+  });
+  ipcMain.handle('artifact:stop-picking-preview', async (event) => {
+    assertArtifactSurfaceSender(event);
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window) await artifactPreviews.get(window)?.stopPicking();
+  });
   ipcMain.handle('artifact:snapshot-preview', async (event) => {
-    assertTrustedIpcSender(event);
+    assertArtifactSurfaceSender(event);
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window) return null;
     return await artifactPreviews.get(window)?.snapshot() ?? null;
   });
   ipcMain.handle('artifact:set-preview-hidden', async (event, raw: unknown) => {
-    assertTrustedIpcSender(event);
+    assertArtifactSurfaceSender(event);
     const window = BrowserWindow.fromWebContents(event.sender);
     if (typeof raw !== 'boolean' || !window) return;
     artifactPreviews.get(window)?.setOverlayOpen(raw);
   });
   ipcMain.handle('artifact:close-preview', async (event) => {
-    assertTrustedIpcSender(event);
+    assertArtifactSurfaceSender(event);
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window) return;
     // The controller stays registered. It is reusable once destroyed, and
@@ -4273,11 +4313,53 @@ function registerIpc(): void {
     // starts warning about the leak.
     artifactPreviews.get(window)?.destroy();
   });
+  ipcMain.handle('artifact:read-window', (event) => {
+    assertArtifactRenderer(event);
+    const window = BrowserWindow.fromWebContents(event.sender)!;
+    return poppedOutArtifacts.get(window)?.request ?? null;
+  });
+  ipcMain.handle('artifact:register-composer', (event, scope: unknown, active: unknown) => {
+    assertTrustedIpcSender(event);
+    if (typeof scope !== 'string' || typeof active !== 'boolean') return;
+    const scopes = annotationComposerScopes.get(event.sender) ?? new Set<string>();
+    if (active) scopes.add(scope); else { scopes.delete(scope); for(const [id,transfer] of annotationTransfers) {if(transfer.owner===event.sender&&transfer.scope===scope){transfer.resolve(false);annotationTransfers.delete(id);}} }
+    annotationComposerScopes.set(event.sender, scopes);
+  });
+  ipcMain.handle('artifact:complete-transfer', (event, transferId:unknown, accepted:unknown) => {
+    assertTrustedIpcSender(event);
+    if(typeof transferId!=='string'||typeof accepted!=='boolean')return;
+    const transfer=annotationTransfers.get(transferId);
+    if(!transfer||transfer.owner!==event.sender)return;
+    annotationTransfers.delete(transferId);transfer.resolve(accepted);
+  });
+  ipcMain.handle('artifact:return-annotations', (event, raw: unknown) => {
+    assertArtifactRenderer(event);
+    const window = BrowserWindow.fromWebContents(event.sender)!;
+    const source = poppedOutArtifacts.get(window);
+    if (!source?.owner || source.owner.isDestroyed() || !source.request.annotationScope || !annotationComposerScopes.get(source.owner)?.has(source.request.annotationScope)) return false;
+    const pins = z.array(z.strictObject({ annotation: AnnotationSchema, image: z.instanceof(Uint8Array).optional() })).parse(raw);
+    // A newer preview can arrive while older pins are still in this draft.
+    // Keep resource confinement; admission validates each pin's saved version.
+    if (pins.some((pin) => pin.annotation.target.resourceId !== source.resourceId)) return false;
+    const transferId=crypto.randomUUID();
+    const owner=source.owner;
+    const scope=source.request.annotationScope;
+    return new Promise<boolean>((resolve)=>{
+      const gone=():void=>{annotationTransfers.delete(transferId);settle(false);};
+      const settle=(accepted:boolean):void=>{
+        owner.removeListener('destroyed',gone);owner.removeListener('render-process-gone',gone);
+        resolve(accepted);
+      };
+      owner.once('destroyed',gone);owner.once('render-process-gone',gone);
+      annotationTransfers.set(transferId,{owner,scope,window,resolve:settle});
+      owner.send('artifact:annotations', {transferId, scope, name: source.request.title, pins });
+    });
+  });
   ipcMain.handle('artifact:pop-out', async (event, raw: unknown) => {
     assertTrustedIpcSender(event);
     const request = parseArtifactWindowRequest(raw);
     if (!request || (request.kind === 'site' && !isArtifactUrl(request.url, artifactServingDomain()))) return false;
-    return openArtifactWindow(request);
+    return openArtifactWindow(request, event.sender);
   });
   ipcMain.handle('artifact:restorable-windows', async (event) => {
     assertTrustedIpcSender(event);
@@ -4286,8 +4368,8 @@ function registerIpc(): void {
     if (!workspaceId || !userId) return [];
     const open = new Set([...poppedOutArtifacts.values()].map((item) => item.stateId));
     return artifactWindowStates().filter((item) => item.workspaceId === workspaceId
-      && item.userId === userId && !open.has(item.id)).map(({ id, kind, resourceId, version, title, mimeType }) =>
-      ({ id, kind, resourceId, version, title, ...(mimeType ? { mimeType } : {}) }));
+      && item.userId === userId && !open.has(item.id)).map(({ id, kind, resourceId, version, title, mimeType, annotationScope }) =>
+      ({ id, kind, resourceId, version, title, ...(mimeType ? { mimeType } : {}), ...(annotationScope?{annotationScope}: {}) }));
   });
   ipcMain.handle('artifact:forget-window', async (event, raw: unknown) => {
     assertTrustedIpcSender(event);
@@ -4818,7 +4900,7 @@ async function loadRenderer(
 }
 
 function rendererUrl(
-  surface?: 'settings' | 'sidekicks' | 'deep-link-error' | 'browser-import',
+  surface?: 'settings' | 'sidekicks' | 'deep-link-error' | 'browser-import' | 'artifact-preview',
   settingsSection?: DesktopSettingsSection,
 ): string {
   const target = rendererDevelopmentUrl

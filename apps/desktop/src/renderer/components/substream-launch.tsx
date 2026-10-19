@@ -389,7 +389,7 @@ export function SubstreamLaunchSurface({
         </div>
       </div>
       <div className="composer-stack">
-        {draftSeeded && <WorkstreamComposer
+        {draftSeeded && <WorkstreamComposer annotationsEnabled={false}
           api={api ?? undefined}
           attachments={attachmentDraft.attachments}
           autoFocus

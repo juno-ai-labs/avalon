@@ -694,7 +694,29 @@ need the injected provider OCR path. Index storage grows with bounded chunks and
 terms rather than duplicating attachment text. Future changes must preserve those
 cheap discovery and continuation paths.
 
+### Pointed resource content
+
+[Artifact annotations](artifact-annotations.md) add a versioned quote to an
+ordinary user turn. Exact source, converted text and rendered HTML receive
+different editing guidance; truncated content requires `read_resource` first.
+Crops and screenshots use ordinary owned draft admission and count toward the
+existing ten-file cap. Target read/version authorization is independent from
+attachment reservation, since a pin usually names an already-sent resource.
+
 ## Changelog
+
+### 2026-10-19 — Project quoted annotations with their source fidelity
+
+**What changed:** Models receive versioned quotes with explicit exact, converted and rendered source policy; image originals retain version identity and reusable model metadata.
+
+**Why:** A selected HTML element or spreadsheet table is not an exact source replacement, and two revisions of one image must remain distinguishable.
+
+**Considered and rejected:** Crops reuse ordinary draft admission rather than adding storage or permission mechanisms.
+
+**Consequences:** Preserve source fidelity through live, replayed, inherited and overheard turns; resource sharing remains authoritative. See [artifact annotations](artifact-annotations.md).
+
+PR #1322; design: `docs/PRDs/2026-10-19_artifact-annotations/prd.md`.
+
 
 ### 2026-10-10 — Connectors read files through this converter, and XLSX shared strings stay aligned
 

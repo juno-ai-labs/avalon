@@ -935,7 +935,29 @@ The traps, both of which have bitten:
   a fixture that exercises the nesting — a three-level bulleted list alone
   exercises none of the `ol` selectors.
 
+### Annotation source positions
+
+`MarkdownBody` accepts `sourcePositions` for artifact selection. A rehype pass
+retains parser offsets on blocks and rendered text; code tokens preserve their
+source span through the existing code renderer. This mode pairs with `verbatim`
+so the selected bytes come from the displayed resource source. The normal feed
+renderer keeps its existing parsing and code behavior. Source/range mapping and
+restoration are owned by [artifact annotations](artifact-annotations.md).
+
 ## Changelog
+
+### 2026-10-19 — Preserve source spans for artifact selection
+
+**What changed:** Parser positions let active annotation previews quote original Markdown slices.
+
+**Why:** Rendered list and emphasis nodes omit the exact syntax needed for source edits.
+
+**Considered and rejected:** Visible-text searching is ambiguous for repeated words and markup, so the source mapper retains parser offsets.
+
+**Consequences:** Transforms used while picking or restoring selections must preserve offsets; ordinary previews avoid the extra span rendering. See [artifact annotations](artifact-annotations.md).
+
+PR #1322; design: `docs/PRDs/2026-10-19_artifact-annotations/prd.md`.
+
 
 ### 2026-10-13 — A glance draws mentions as chips
 

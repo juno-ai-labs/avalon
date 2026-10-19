@@ -1,3 +1,5 @@
+import { annotationCommentText } from "@rally/contracts";
+import { ResourceService } from "./resource-service";
 import { WorkstreamCreationFieldsSchema } from "@rally/contracts";
 import type { ConversationInitialization, PreparedConversation } from "@rally/contracts";
 import { CreateWorkstreamRequestSchema, asUserId, asWorkstreamId } from "@rally/contracts";
@@ -321,6 +323,10 @@ export class WorkstreamObjectCreationService {
     // covers the ones that did not (connector, import and Sidekick parents).
     // One statement, so nothing can anchor the id between the check and the
     // claim.
+    if (body.annotations?.length && (await this.receipt(body.clientMessageId))?.state !== 'completed') {
+      if (options.initialization?.kind === 'history' || options.openingStructuredContent) throw new ApiError(422,'annotation_opening_conflict','Annotations require an ordinary opening message');
+      options = {...options,openingStructuredContent:await new ResourceService(this.env,this.auth).annotationContent(body.annotations)};
+    }
     const proposedId = body.workstreamId ?? newId();
     await span.step("workstream.create.receipt.reserve", () => this.env.DB.prepare(
       `INSERT OR IGNORE INTO workstream_create_receipts
@@ -398,9 +404,10 @@ export class WorkstreamObjectCreationService {
     }
     span.setAttributes({ "rally.create.path": "fresh" });
 
+    const authoredOpening = annotationCommentText(body.openingMessage,body.annotations);
     const workstreamId = asWorkstreamId(receipt.workstream_id);
     const objective = body.objective
-      ?? provisionalWorkstreamDescription(body.openingMessage, "Review the attached files");
+      ?? provisionalWorkstreamDescription(authoredOpening, "Review the attached files");
     const title = body.title ?? provisionalWorkstreamTitle(objective, "New thread");
     const routeInput = {
       region: this.env.AVALON_REGION,
@@ -624,7 +631,7 @@ export class WorkstreamObjectCreationService {
           workstreamId: receipt.workstream_id,
           userId: this.auth.userId,
           objective,
-          openingMessage: body.openingMessage,
+          openingMessage: annotationCommentText(body.openingMessage,body.annotations),
           provisionalTitle: title,
           useConversationContext: options.initialization?.kind === "history",
           ...((input.descriptionSource ?? "derived") === "derived" ? { provisionalDescription: objective } : {}),

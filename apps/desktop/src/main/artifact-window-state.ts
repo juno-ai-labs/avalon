@@ -11,6 +11,7 @@ export interface ArtifactWindowState {
   version: number;
   title: string;
   mimeType?: string;
+  annotationScope?: string;
   bounds: WindowBounds;
   displayId: number;
 }

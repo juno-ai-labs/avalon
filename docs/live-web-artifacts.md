@@ -584,7 +584,18 @@ there reconstructs a live session, but an operator who can write the table can
 mint one; that is inside that console's stated authority rather than a boundary
 this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 
+### Native annotation picking
+
+Comment mode in Rally's Mac preview installs the shared inspector into an
+isolated JavaScript world and captures the selected element as a PNG crop. No
+picker script is added to published site responses. Browser live-site previews
+remain view-only. The authorized `GET /resources/:id/versions/:version/site-preview` route reopens frozen HTML assets without running
+old site code; a missing or mismatched element shows its saved quote and image.
+The selector and trust boundaries are owned by
+[artifact annotations](artifact-annotations.md).
+
 ## Changelog
+
 
 ### 2026-10-18 — An overlay covers the page instead of blanking it
 
