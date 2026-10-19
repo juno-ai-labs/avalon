@@ -192,6 +192,20 @@ describe("WorkspaceDO attention", () => {
       });
   });
 
+  it("counts an Organization-wide thread that mentions the reader, though the mention did not seat them", async () => {
+    await seed({
+      id: "00000000-0000-7000-8000-0000000009bc",
+      scope: "workspace",
+      participant: false,
+      latest: 3,
+      seen: 1,
+      mentionedAt: 3,
+    });
+
+    await expect(workspace().attention({ workspaceId: WORKSPACE_ID, userId: MEMBER }))
+      .resolves.toMatchObject({ readerAttentionCount: 1 });
+  });
+
   it("counts unread streams but not a needs-input run the reader has already read", async () => {
     await seed({ id: "00000000-0000-7000-8000-0000000009b8", latest: 3, seen: 1 });
     await seed({ id: "00000000-0000-7000-8000-0000000009b9", state: "needs_input", latest: 2, seen: 2 });
