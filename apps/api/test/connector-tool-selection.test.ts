@@ -35,9 +35,9 @@ it.each([
   ["notion", notionTools, "9df5f6fbfe14255d35486d5efb4f90545bdf2919cab5a4321a5b3c43014f3ef6"],
   ["granola", granolaTools, "68ee12b5c978b26d85e9d8893c0f9f5d3bdd5d6f42a1c4ef0f36654a6550c807"],
 ] as const)("reconstructs the historical %s receipt surface", async (pluginId, definitions, expected) => {
-  const tools = definitions.map((definition) => __integrationTesting.prePaginationTool({
+  const tools = __integrationTesting.prePaginationTools(definitions.map((definition) => ({
     definition, execute: async () => ({ output: null, summary: "Unused hash fixture" }),
-  }));
+  })));
   expect(await __integrationTesting.connectorToolSurfaceHash(pluginId, tools)).toBe(Buffer.from(expected, "hex").toString("base64url"));
 });
 
@@ -1357,12 +1357,22 @@ describe("connector tools selected for harness runs", () => {
       "gmail.send",
       "calendar.list_calendars",
       "calendar.list_calendars_next",
+      "calendar.query_availability",
       "calendar.list_events",
       "calendar.list_events_next",
       "calendar.read_event",
       "calendar.create_event",
       "calendar.update_event",
     ]);
+    const availability = mail?.tools.find((tool) => tool.definition.name === "calendar.query_availability");
+    const window = { calendarIds: ["alex@example.com"], timeMin: "2026-10-20T17:00:00Z" };
+    for (const timeMax of ["2026-10-20T16:00:00Z", "2026-10-20T17:00:00Z"]) {
+      expect(availability?.validateInput?.({ ...window, timeMax })).toMatchObject({
+        issues: [{ path: ["timeMax"], message: "timeMax must follow timeMin" }],
+      });
+    }
+    expect(availability?.validateInput?.({ ...window, timeMax: "2026-10-20T18:00:00Z" })).toBeNull();
+
     const updateEvent = mail?.tools.find((tool) => tool.definition.name === "calendar.update_event");
     expect(updateEvent?.validateInput?.({ eventId: "event-1" })).toBeInstanceOf(Error);
     expect(updateEvent?.validateInput?.({ eventId: "event-1", summary: "Updated" })).toBeNull();

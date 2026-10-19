@@ -499,6 +499,7 @@ function withArticle(noun: string): string {
 const GOOGLE_TOOL_ARGUMENT_BY_PARAMETER = {
   "gmail.search": { q: "query", maxResults: "maxResults", pageToken: "pageToken" },
   "calendar.list_calendars": { maxResults: "maxResults", pageToken: "pageToken" },
+  "calendar.query_availability": { timeMin: "timeMin", timeMax: "timeMax", timeZone: "timeZone", items: "calendarIds" },
   "calendar.list_events": {
     q: "query",
     timeMin: "timeMin",
@@ -2724,13 +2725,15 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     validateToolInput(name, rawArgs) {
       const schema = name === "gmail.create_draft" || name === "gmail.send"
         ? EmailArgsSchema
-        : name === "calendar.create_event"
-          ? CalendarEventCreateArgsSchema
-          : name === "calendar.update_event"
-            ? CalendarEventUpdateArgsSchema
-            : name === "sheets.update_values" || name === "sheets.append_values"
-              ? SheetValuesWriteArgsSchema
-              : undefined;
+        : name === "calendar.query_availability"
+          ? CalendarAvailabilityArgsSchema
+          : name === "calendar.create_event"
+            ? CalendarEventCreateArgsSchema
+            : name === "calendar.update_event"
+              ? CalendarEventUpdateArgsSchema
+              : name === "sheets.update_values" || name === "sheets.append_values"
+                ? SheetValuesWriteArgsSchema
+                : undefined;
       return zodToolInputValidationError(schema, rawArgs);
     },
 
@@ -2969,9 +2972,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
               ...(args.timeZone ? { timeZone: args.timeZone } : {}),
               items: calendarIds.map((id) => ({ id })),
             }),
-          }, [], {
-            timeMin: "timeMin", timeMax: "timeMax", timeZone: "timeZone", items: "calendarIds",
-          }
+          }, [], GOOGLE_TOOL_ARGUMENT_BY_PARAMETER["calendar.query_availability"]
         ).then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES));
         const calendars = readRecord(payload, "calendars");
         const items = calendarIds.map((calendarId) => {
