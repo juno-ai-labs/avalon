@@ -17,6 +17,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { ChannelComposer } from '../components/channel-composer';
+import { AttachmentPanel } from '../components/attachment-panel';
+import type { AttachmentPreview } from '../components/attachments';
 import { InspectorRail } from '../components/inspector-rail';
 import { openMemorySource, useMemoryFacts } from '../components/memory-review';
 import { MarkdownBody } from '../components/workstream-blocks';
@@ -39,15 +41,16 @@ import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { WORKSTREAM_LANDING_ROUTE } from '../lib/workstream-landing';
 import { typedMentionRendering } from '../lib/transcript';
 import { EmailMentionContext, emailMentionDirectory, NO_INVITEES, useWorkspaceInvitees } from '../lib/workspace-invitees';
-import type { AutomationSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
+import type { AutomationSummary, ResourceVersion, Workspace, WorkspaceMember, WorkstreamResource, WorkstreamSummary } from '../lib/types';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useUiStore } from '../lib/ui-store';
+import { useResourceHeads, withResourceHead } from '../lib/resource-heads';
 import { useRailFillsPane } from '../lib/rail-split';
 import { useSiteArtifacts } from '../lib/use-site-artifacts';
 import { expandToggle } from '../components/pane-expand-toggle';
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { useCachedWorkstreamAppearance, useWorkstreamsQuery } from '../lib/use-workstreams-query';
-import { RemoveParticipantDialog } from './conversation-surface';
+import { RemoveParticipantDialog, resourceVersionsQueryKey } from './conversation-surface';
 import { WorkstreamScreen } from './workstream';
 import type { SpaceDirectory } from '@rally/contracts';
 
@@ -245,13 +248,18 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
     enabled: false,
   });
   const stats = channelStats.data?.find((row) => row.channelId === channelId);
+  // An artifact panel expanded over the feed, or filling a narrow window,
+  // covers it: what arrives behind it has not been seen.
+  const railExpanded = useUiStore((state) => state.railExpanded);
+  const fillsPane = useRailFillsPane(useUiStore((state) => state.sidebarWidth));
+  const feedCovered = openArtifactId !== null && (railExpanded || fillsPane);
   const ackInFlight = useRef<string | null>(null);
   const activityReportedRef = useRef<{ channelId: string; through: number } | null>(null);
   // The pane stays mounted from one Channel to the next; coming back to one
   // whose acknowledgement failed is opening it again, and may send again.
   useEffect(() => { ackInFlight.current = null; }, [channelId]);
   const acknowledgeRead = useCallback((): void => {
-    if (!api || !stats || document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    if (!api || !stats || feedCovered || document.visibilityState !== 'visible' || !document.hasFocus()) return;
     // Activity is told what is on screen whether or not the Channel's own read
     // position needs moving, once per Channel and again when it rises.
     const reported = activityReportedRef.current;
@@ -281,7 +289,7 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
         queryClient.setQueryData<ChannelStatsList>(CHANNEL_STATS_QUERY_KEY, (list) =>
           writeChannelStats(list, channelId, (row) => ({ ...row, hasUnread: previous.hasUnread })));
       });
-  }, [api, channelId, newestLoadedSequence, queryClient, stats]);
+  }, [api, channelId, feedCovered, newestLoadedSequence, queryClient, stats]);
   useVisibleReadAcknowledgement(acknowledgeRead);
   const members = useQuery({
     queryKey: ['workspace-members'],
@@ -484,24 +492,70 @@ function ChannelArtifactPanel({ channelId, onClose, resourceId, space }: {
       if (useUiStore.getState().railScope === scope) useUiStore.getState().closeRail();
     };
   }, [channelId]);
-  const resource = useQuery({
+  const fetched = useQuery({
     queryKey: ['resource', resourceId],
     queryFn: () => api!.getResource(resourceId),
     enabled: Boolean(api),
     retry: false,
   });
+  // The resource read carries no link, so no direction: what a merge shares
+  // with a Channel is an artifact here, as its card draws it. A version
+  // published while the panel is open moves it through the recorded heads,
+  // as it moves a thread's copy (`lib/resource-heads.ts`).
+  const head = useResourceHeads()[resourceId];
+  const resource = useMemo(() => {
+    if (!fetched.data) return fetched.isError ? null : undefined;
+    const artifact: WorkstreamResource = { ...fetched.data, direction: 'artifact' };
+    return head ? withResourceHead(artifact, head) : artifact;
+  }, [fetched.data, fetched.isError, head]);
+  const currentVersion = resource?.currentVersion ?? null;
+  const versions = useQuery({
+    queryKey: resourceVersionsQueryKey(resourceId, currentVersion),
+    queryFn: ({ signal }) => api!.getResourceVersions(resourceId, signal),
+    enabled: Boolean(api && currentVersion !== null),
+  });
+  // A prior version opens in this panel's place, and comes back to the
+  // current one, as the thread's panel does.
+  const [olderVersion, setOlderVersion] = useState<AttachmentPreview | null>(null);
+  const openResourceVersion = useCallback((opened: WorkstreamResource, version: ResourceVersion) => {
+    setOlderVersion({
+      name: version.title,
+      ...(version.mimeType ? { mimeType: version.mimeType } : {}),
+      loadContent: (signal?: AbortSignal) => api!.getResourceVersionContent(opened.id, version.version, signal),
+      superseded: {
+        label: `Version ${version.version} · not current`,
+        onReturnToCurrent: () => setOlderVersion(null),
+      },
+    });
+  }, [api]);
+  const railWidth = useUiStore((state) => state.railWidth);
+  const setRailWidth = useUiStore((state) => state.setRailWidth);
   const loadResourceContent = useCallback((id: string, signal?: AbortSignal) => api
     ? api.getResourcePreviewContent(id, signal)
     : Promise.reject(new Error('No API session')), [api]);
+  const expandAction = fillsPane ? undefined : expandToggle(expanded, true, setExpanded);
+  if (olderVersion) {
+    return <AttachmentPanel
+      ancestors={ancestors}
+      expandAction={expandAction}
+      onClose={onClose}
+      onResize={setRailWidth}
+      preview={olderVersion}
+      width={railWidth}
+    />;
+  }
   return <InspectorRail
     {...(api ? { loadResourceContent } : {})}
+    onOpenResourceVersion={openResourceVersion}
     panel={{
       resourceId,
       onClose,
-      expandAction: fillsPane ? undefined : expandToggle(expanded, true, setExpanded),
+      expandAction,
       ancestors,
     }}
-    resource={resource.data ?? (resource.isError ? null : undefined)}
+    resource={resource}
+    resourceVersions={versions.data}
+    resourceVersionsFailed={Boolean(versions.error)}
     {...(siteArtifacts ? { siteArtifacts } : {})}
   />;
 }
@@ -608,8 +662,9 @@ function MessageCard({ author, focused, members, message, placedAt }: {
  * merged, so the Channel reads in time order (docs/conversation-merge.md). It
  * names its thread, and that name opens it; it quotes the thread's summary;
  * its body renders as markdown with the artifacts it embeds as cards, drawn
- * from the titles stored with the merge. An artifact opens in its thread,
- * where it is attached and so readable by everyone who sees this.
+ * from the titles stored with the merge. An artifact opens in the Channel's
+ * own panel: the merge shared it with the Channel, so everyone who reads the
+ * Channel may read it, whether or not they can open the thread.
  */
 function MergeCard({ author, focused, members, merge, message, onOpenArtifact, onOpenThread, placedAt }: {
   author: WorkspaceMember | undefined;

@@ -82,22 +82,22 @@ The route, without `breakoutId`:
    must be one of the thread's current, unarchived placements; otherwise the
    earliest one. The person must reach that Channel with any reach but
    `through_channel`. The thread may be private.
-2. **Embeds.** Shared with the **Channel**, not the thread. The route sends the
-   body's `resource://` tokens; WorkspaceDO's `mergeEmbeds` resolves each by id
-   or alias and checks it as the attach path checks a member's link (it exists,
-   a personal connection's resource is the merger's own, an upload has been
-   sent). A refusal names the position and nothing is written.
+2. **Embeds.** Shared with the **Channel**, not the thread.
+   `resolveShareableResources` (`resource-share-rules.ts`) resolves each of the
+   body's `resource://` tokens by id or alias and applies the share rules,
+   including the canonical read check; a refusal names the position and
+   nothing is written.
 3. **Post.** `mergeThreadIntoChannel` resolves the target again inside its
-   transaction, links every embed to the Channel (`linkSpaceResources`, a
-   `parent_kind = 'space'` location; see
-   [`authorization.md`](authorization.md#resources-shared-with-a-space)), and
-   calls `postMessage` with key `merge:<threadId>`,
+   transaction, calls `postMessage` with key `merge:<threadId>`,
    `replace: true`, `sourceWorkstreamId`, `embeds` and the request's
    `clientMessageId` as `operationId`. Any operation that already wrote this
    message (`space_message_operations`) answers `replayed: true` and writes
-   nothing, however late it arrives. Otherwise the row is written or
-   rewritten with a fresh `posted_at`, so it moves to the bottom of the feed,
-   and takes the Channel's next attention ordinal. The WorkspaceDO then
+   nothing, however late it arrives, and shares nothing. Otherwise the row is
+   written or rewritten with a fresh `posted_at`, so it moves to the bottom of
+   the feed, and takes the Channel's next attention ordinal, and every embed
+   is linked to the Channel in the same commit (`linkSpaceResources`, a
+   `parent_kind = 'space'` location; see
+   [`authorization.md`](authorization.md#resources-shared-with-a-space)). The WorkspaceDO then
    publishes `spaceIds: [channel]`, which refetches the feed and the stats.
 
 The feed shows a merge to every reader of the Channel, and the stats arm counts
@@ -240,8 +240,7 @@ picker therefore lead with the Channel the server would choose, as the PRD
 sets the default. Until that read lands, the directory's order stands in. The
 card has no attach control: a merge embeds artifacts by link. A title-menu
 request opens the card once; returning to the pane does not reopen it. A
-Channel merge card's artifact opens in its thread with the artifact's panel
-open.
+Channel merge card's artifact opens in the Channel's own panel.
 
 A merge that lands takes the reader to it, through `onMerged` on
 `ConversationSurface`: a Breakout's merge closes the Breakout and scrolls its
@@ -370,46 +369,36 @@ more than keeping a private Channel's name hidden.
 
 ### 2026-10-19 — A private thread merges into its Channel, and a merge shares its artifacts with its parent
 
-**What changed:** A private thread's Main offers Merge into its Channels, and
-the server no longer refuses it (`merge_thread_private` is gone). The feed
-shows every merge to every reader of the Channel; one who cannot open the
-thread gets it without the thread's title or summary and flagged `private`,
-drawn as from a "Private thread", with no Request access. A Channel merge now
-links its embeds to the Channel itself rather than attaching them to the
-thread, inside the merge's own WorkspaceDO commit, so every reader of the
-Channel, now or later, can open them; they open in the Channel's own panel.
-The turn-disposition recommender offers `merge_up` on a private thread too.
-Client contract 9 carries the flag.
+**What changed:** A private thread's Main merges into its Channels
+(`merge_thread_private` is gone), and the recommender offers it. Every reader
+of the Channel sees the merge, its Activity row and its notification; one who
+cannot open the thread gets them without the thread's name, flagged `private`
+(client contract 9), with no Request access. A Channel merge links its embeds
+to the Channel instead of attaching them to the thread, only when the merge is
+written, and they open in the Channel's own panel. Migration 118 does the same
+for earlier merges.
 
-**Why:** The product owner's calls. A private thread's result had no way into
-its Channel but making the whole thread public, which shares far more than the
-result. And the rule for what a merge shares: everything merged is readable by
-everyone in the parent, the Organization for an Organization-wide parent and
-its participants for a private one, following those participants as they
-change. Attaching to the thread got that wrong both ways: a private thread's
-artifacts reached only its people, and an Organization-wide thread's merge
-into a private Channel reached the whole Organization. The merge-back PRD cut
-private merges as "not now"; its first-round mockups (5c·6, 5c·12) had already
-drawn them.
+**Why:** The product owner's calls: a private thread's result had no way into
+its Channel short of making the whole thread public; and everything merged is
+readable by everyone in the parent, as its membership changes. The sharing
+model itself is [`authorization.md`](authorization.md#resources-shared-with-a-space)'s.
+The merge-back PRD cut private merges as "not now"; its mockups 5c·6 and 5c·12
+had drawn them.
 
-**Considered and rejected:** A share checkbox for the embeds, as 5c·12 drew
-it: under the rule above sharing with the parent is what a merge is, not an
-option. Opening a Channel's artifact in its thread, as before: a reader who
-cannot open the thread has nowhere to go. A separate artifact window: it shows
-only generated artifacts with a preview. Hiding the merge from readers who
-cannot open the thread: that is the refusal again with extra steps. A
-"Request access" link on the source, which the product removed elsewhere.
+**Considered and rejected:** A share checkbox for the embeds (5c·12): sharing
+with the parent is what a merge is. Hiding the merge from readers who cannot
+open the thread: the refusal again with extra steps. "Request access" on the
+source, which the product removed elsewhere.
 
-**Consequences:** A merge whose Organization-wide thread is made private later
-now stays in the Channel without the thread's name, where it used to vanish.
-WorkspaceDO migration 118 links every earlier Channel merge's embeds to its
-Channel, so the rule holds for merges made before it too. Every reader of the
-Channel gets the merge's Activity row and notification; one who cannot open
-the thread gets the Channel's row, naming no thread. A merge now refuses an
-embed its author cannot read, through the same `resolveShareableResources` the
-attach path uses, which used to ask that of guests alone. A desktop before
-contract 9 is served neither a private thread's merges nor their Activity
-rows, but its dot counts them.
+**Consequences:** A merge whose thread is made private later stays in the
+Channel without the thread's name. Migration 118 widens earlier merges on
+purpose: their embeds become readable by the Channel's readers who could not
+open the thread, guests included. A merge refuses an embed its author cannot
+read. A personal connection's document stays readable only by its owner even
+once merged, as before. A desktop before contract 9 is served neither a
+private thread's merges nor their Activity rows, but its dot counts them; one
+before this change opens an embed in the thread, where one linked only to the
+Channel does not open.
 
 ### 2026-10-18 — Every merge is made in the response card, and a merge resolves a suggestion
 
