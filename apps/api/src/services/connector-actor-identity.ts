@@ -141,6 +141,7 @@ export async function resolveConnectorActorIdentities(
        FROM requested
        JOIN connector_connections connection
          ON connection.connector_type = requested.provider
+        AND json_type(connection.config_json, '$.providerUserId') IS NOT 'null'
         AND COALESCE(json_extract(connection.config_json, '$.providerUserId'), connection.provider_account_id)
             = requested.provider_user_id
         AND COALESCE(json_extract(connection.config_json, '$.providerTenantId'), connection.provider_account_id)

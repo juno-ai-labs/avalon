@@ -41,42 +41,22 @@ implementation literally stores zero copies.
 
 ### Apollo.io personal OAuth and Sidekick events
 
-Apollo.io is personal only on web and macOS. The official
-[Apollo MCP guide](https://docs.apollo.io/docs/apollo-mcp) publishes
-`https://mcp.apollo.io/mcp` with Streamable HTTP and OAuth. Public metadata checked
-on 2026-10-19 advertises resource `https://mcp.apollo.io/mcp`, authorization server
-`https://mcp.apollo.io`, PKCE S256, authorization-code/refresh grants, dynamic
-registration, and revocation. Rally trusts only that authorization origin and
-uses each region's `/connections/apollo/callback`. The client identity is Rally;
-scopes come from Apollo's discovery metadata, and account/plan permissions still
-constrain tool availability. Apollo prohibits training models on MCP data.
+The official [Apollo MCP guide](https://docs.apollo.io/docs/apollo-mcp) publishes
+`https://mcp.apollo.io/mcp` with Streamable HTTP and OAuth. Rally uses each
+region's `/connections/apollo/callback`; no API key or server secret is needed.
+Metadata checked on 2026-10-19 advertises PKCE S256, dynamic registration,
+refresh and revocation. A live probe received HTTP 201 from registration and
+built the authorization URL; account consent and authenticated execution remain
+unverified. The grant uses Apollo's advertised scopes, including credit-consuming
+operations, and Apollo prohibits model training on MCP data.
 
 The separate [partner API OAuth flow](https://docs.apollo.io/docs/use-oauth-20-authorization-flow-to-access-apollo-user-information-partners)
-requires app registration/approval and client credentials. It is not needed by
-this MCP adapter. Partner integrations may have additional Apollo registration
-requirements; provider approval and a successful account consent are separate
-from local protocol validation. No Apollo API key or server secret is added. A live unauthenticated probe on
-2026-10-19 received HTTP 201 from dynamic registration and built the provider
-authorization URL with PKCE S256. Account consent and authenticated tool execution
-still require an Apollo account; this probe did not authorize one.
-
-**Sidekick events:** Apollo has useful business events in
-[Workflows](https://knowledge.apollo.io/hc/en-us/articles/4413804036109-Create-a-Workflow):
-email replied, contact saved/updated, meeting booked/cancelled/rescheduled,
-account created/updated and deal created/updated. A human must configure a
-trigger and Send webhook action inside Apollo, including its URL and headers.
-The public API index documents no workflow or general webhook-subscription
-management endpoints. Its [Poll Webhook Result](https://docs.apollo.io/reference/poll-webhook-result)
-endpoint retrieves async enrichment results for a known request ID, not a
-business-event feed. Contact-search sorting is not a durable change log.
-
-This connector consequently exposes no event triggers and does not configure
-Apollo Workflows. Scheduled Sidekicks can use the live tools on demand. A future
-manual workflow bridge needs the actual Apollo payload/retry identity, header
-authentication, and a personal-only audience before exposing events. Apollo's
-static custom header support does not directly satisfy Rally's generic inbound
-webhook timestamped HMAC protocol; do not tell a customer to paste that endpoint
-into Apollo and expect it to work.
+requires app registration and credentials; partner integrations may also require
+Apollo approval. That approval is distinct from successful dynamic registration.
+Apollo business events require human-configured
+[Workflows](https://knowledge.apollo.io/hc/en-us/articles/4413804036109-Create-a-Workflow),
+with no documented subscription-management API, so this connector advertises no
+triggers. Scheduled Sidekicks can use its live tools.
 
 ### Canva personal OAuth
 

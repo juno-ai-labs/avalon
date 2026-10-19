@@ -375,7 +375,9 @@ describe("connector OAuth handoff", () => {
   });
 
   it("persists Apollo personal OAuth and reconnects the same owner's connection", async () => {
-    const { auth, env, object } = fixture();
+    const { auth, env, object, regional } = fixture();
+    regional.exec("CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL)");
+    regional.prepare("INSERT INTO users (id, name) VALUES (?, ?)").run(USER_ID, "Apollo owner");
     vi.stubGlobal("fetch", async (input: string | URL | Request) => {
       const url = String(input);
       if (url.includes("oauth-protected-resource")) return Response.json({ resource: "https://mcp.apollo.io/mcp", authorization_servers: ["https://mcp.apollo.io"], scopes_supported: ["read_user_profile", "mixed_people_api_search"] });
@@ -397,6 +399,10 @@ describe("connector OAuth handoff", () => {
     expect(storedCredentials).toMatchObject({ accessToken: "apollo-fixture-access", refreshToken: "apollo-fixture-refresh", clientId: "apollo-fixture-client" });
     expect(JSON.parse(String(row.config_json))).toMatchObject({ providerTenantId: "https://mcp.apollo.io/mcp", providerUserId: null });
     expect(await service.getOAuthAttempt(started.attemptId)).toMatchObject({ status: "succeeded", connectionId: row.id });
+    object.prepare("UPDATE connector_connections SET discovered_tool_count = 1 WHERE id = ?").run(String(row.id));
+    expect(await service.list()).toEqual([expect.objectContaining({
+      id: row.id, connectorType: "apollo", scope: "personal", ownerUserId: USER_ID, ownerName: "Apollo owner",
+    })]);
     const reconnect = await service.reconnect(String(row.id), 2);
     await new ConnectionService(env).completeProvider("apollo", "next-code", new URL(reconnect.url).searchParams.get("state")!);
     expect(object.prepare("SELECT id FROM connector_connections WHERE connector_type = 'apollo'").all()).toEqual([{ id: row.id }]);
