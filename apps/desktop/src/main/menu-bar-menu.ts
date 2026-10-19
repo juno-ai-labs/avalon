@@ -18,6 +18,8 @@ export interface MenuBarAttentionRow {
   readonly title: string;
   /** What happened, and the thread for a Breakout: "Rally finished", "Ana mentioned you in Pricing". */
   readonly detail: string;
+  /** A thread's merge opens the Channel it landed in, not the thread. */
+  readonly channelId?: string;
 }
 
 /** A request to join a Channel or Breakout, waiting on this person. */
@@ -56,6 +58,8 @@ export interface MenuBarActions {
   readonly selected: (action: MenuBarAction) => void;
   /** `substreamId` names a Breakout; null opens Main. */
   readonly openConversation: (workstreamId: string, substreamId: string | null) => void;
+  /** Opens a Channel. */
+  readonly openChannel: (channelId: string) => void;
   /** Opens the main window on this request's approve-or-decline dialog. */
   readonly openAccessRequest: (requestId: string) => void;
   readonly openRally: () => void;
@@ -211,7 +215,9 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
     const conversations = content.attention.slice(0, Math.max(0, MENU_BAR_SECTION_LIMIT - requests.length)).map((row): MenuItemConstructorOptions => ({
       label: menuBarLabel(row.title),
       sublabel: menuBarLabel(row.detail),
-      click: tracked('attention_conversation', () => actions.openConversation(row.workstreamId, row.substreamId)),
+      click: tracked('attention_conversation', () => (row.channelId
+        ? actions.openChannel(row.channelId)
+        : actions.openConversation(row.workstreamId, row.substreamId))),
     }));
     // "Nothing" only once Activity has been read, and "still loading" before.
     const attention = [...requests, ...conversations];

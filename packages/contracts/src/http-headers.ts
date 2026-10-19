@@ -57,8 +57,9 @@ export const LEGACY_RALLY_HEADER_PREFIXES: readonly string[] = Object.freeze([
  * `6` reads a Channel feed item of kind `message`.
  * `7` reads a Channel message's `merge` and a message item's `attentionSequenceNumber`.
  * `8` reads an Activity row of kind `artifact_updated` and its `artifact`.
+ * `9` reads a Channel merge's `private`, from a thread the reader cannot open.
  */
-export const CLIENT_CONTRACT_VERSION = 8;
+export const CLIENT_CONTRACT_VERSION = 9;
 /** Import verification includes explicit check outcomes and parallel file downloads. */
 export const SESSION_IMPORT_CLIENT_CONTRACT = 3;
 /**
@@ -91,6 +92,12 @@ export const CHANNEL_MERGES_CLIENT_CONTRACT = 7;
  * the page without those rows.
  */
 export const ARTIFACT_UPDATES_CLIENT_CONTRACT = 8;
+/**
+ * First client contract that reads a Channel merge from a thread the reader
+ * cannot open (`merge.private`). The merge schema is strict, so an older
+ * desktop is served the feed without those merges, as before they existed.
+ */
+export const CHANNEL_PRIVATE_MERGES_CLIENT_CONTRACT = 9;
 
 /**
  * The oldest client contract a Worker still answers.

@@ -191,6 +191,38 @@ on the Space is refused `space_access_denied`.
 [`spaces.md`](spaces.md#who-may-see-a-space-and-why) owns the predicate and
 what it withholds.
 
+### Resources shared with a Space
+
+A resource is readable through every place it is linked, decided from that
+place's audience as it is now, never from a copy of who could read it then. A
+conversation's links are its inventory, read through its own authority. A
+**Space** (the product's Channel) is the other place: a thread's merge into a
+Channel links each artifact it embeds to that Space
+([`conversation-merge.md`](conversation-merge.md#thread-into-a-channel)).
+
+The link is a row in `authorization_locations` with `parent_kind = 'space'`
+and `substream_id = '0'`, written by `linkSpaceResources` in the merge's own
+WorkspaceDO commit. WorkspaceDO owns the Space, so unlike a conversation's row
+the Space row is the record, not discovery. `authorizationResourceFacts` takes
+the reader's access class and answers `sharedThrough`: the first linked Space
+the reader reaches today, by `WorkspaceSpaceStorage.reach`, the rule the
+Channel feed itself is read under (an archived Space still reads). The
+authorization service admits on it after the resource's own checks
+(connection, note, draft) and before it walks conversation locations, which
+no longer include Space rows.
+
+So access follows the Space's membership with nothing to rewrite: a person
+added to a private Channel can open what was merged into it, and one removed
+cannot, from the next read. Search follows the same way: the resource's rows
+carry the `space:<id>` group (migration 76's triggers reindex on the new
+location row), and `readSearchAudience` gives each person the group of every
+unarchived Space they see (`visibleSpaceIds`, one read), whether or not it
+shares anything: a group no row carries costs nothing.
+
+A link outlives the merge that wrote it, as an attachment outlives the message
+that cited it: deleting the merge, or merging again without the embed, leaves
+the resource shared with the Space. Nothing removes Space rows today.
+
 ### Invitation admission
 
 [Scoped invitations](scope-invitations.md) use the same current grant policy for
@@ -317,7 +349,14 @@ not a switch controlling which authorization implementation serves the request.
   Space's mark and name, which confers no read on the Space's other Channels and
   no write on the Space.
 - [A Space grants no reader](spaces.md#a-space-starts-organization-wide-and-grants-no-reader). A
-  Channel's audience is its own scope and participants.
+  Channel's audience is its own scope and participants. The one thing a Space
+  admits its readers to is a resource linked to it, and only through the
+  Space's own audience as it is when the read happens. Guard:
+  `channels-threads-navigation.test.ts` "given a merge into a private Channel,
+  when a member is added to the Channel later".
+- A link records a place, never the people. Copying who could read a resource
+  at link time would leave a person added later locked out and a person
+  removed still in.
 - The scope-grant directory is complete for direct grants and deliberately
   incomplete for Space-derived ones. Anything that treats an absent directory
   row as absent access is wrong; the candidate index narrows a search, and the
@@ -470,6 +509,40 @@ Worker timestamps; they are not exact replication timestamps. Remove probe deplo
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
 ## Changelog
+
+### 2026-10-19 — A Channel is a place a resource can be shared with
+
+**What changed:** `authorization_locations` holds a new kind of row,
+`parent_kind = 'space'`, which a thread's merge into a Channel writes for each
+artifact it embeds. The canonical resource check admits whoever reads that
+Space today (`sharedThrough`), and search carries a `space:<id>` group for it.
+
+**Why:** The product owner's rule: a merged artifact is readable by everyone in
+the parent, the whole Organization for an Organization-wide one and its
+participants for a private one, and access must follow those participants as
+they change. A Channel had no place to link to, so a Channel merge attached to
+the thread instead: the artifact reached the thread's readers, which for a
+private thread left most of the Channel out, and for an Organization-wide
+thread merged into a private Channel reached far more than the Channel.
+
+**Considered and rejected:** Attaching to the Space's hidden conversation. It
+would reuse the conversation path, but that conversation is deliberately kept
+out of the authorization universe and has no roster of its own to read. A
+separate table of Space links: the location table already has the reverse
+index, the search triggers and the backfill's reconcile scoped by parent, and
+WorkspaceDO writes both the link and the merge, so a second table would only
+be a copy to keep in step. Granting the Channel's current members: that is a
+copy of a roster, wrong on the next membership change.
+
+**Consequences:** A location row is no longer always discovery to prove
+elsewhere; a Space row is proved where it is read. `registerAuthorizationChildrenInPlace`
+reconciles by parent and so never touches a Space's rows, and
+`beginAuthorizationBackfill` lists only threads and Sidekicks; a change that
+widens either must leave `parent_kind = 'space'` alone. Nothing unlinks a
+resource from a Space yet, as nothing removes a Channel merge's attachments.
+WorkspaceDO migration 118 links the embeds of every Channel merge made before
+this, so no merge is left on the old rule. A new link is counted by its
+`RETURNING` row, not `rowsWritten`, which the search trigger inflates.
 
 ### 2026-09-25 — A hosted Channel's parent discovery runs in WorkspaceDO
 

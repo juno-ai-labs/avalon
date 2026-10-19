@@ -35,6 +35,10 @@ describe('search audience groups', () => {
     // A draft upload is its uploader's, whatever locations exist.
     expect(resourceSearchAudience(workspaceId, { ...row, attachment_status: 'draft' }, [channel])).toEqual(['user:uploader']);
     expect(resourceSearchAudience(workspaceId, { ...row, connection_id: 'c1' }, [channel])).toEqual(['connection:c1']);
+    // A Channel a merge shared it with admits that Channel's readers.
+    expect(resourceSearchAudience(workspaceId, { ...row, provider: 'avalon_generated' },
+      [{ parentId: 'space-1', substreamId: '0', parentKind: 'space' }]))
+      .toEqual(['user:uploader', 'space:space-1']);
     // Nobody placed: nobody admitted, never everyone.
     expect(resourceSearchAudience(workspaceId, { ...row, uploaded_by_user_id: null }, [])).toEqual([]);
   });

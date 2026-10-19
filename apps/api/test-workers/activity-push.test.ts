@@ -16,6 +16,7 @@ import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  asSpaceId,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
@@ -41,6 +42,7 @@ import type { ApnsOutcome } from "../src/services/push/apns-transport";
 import type { PushPayloads } from "../src/services/push/push-payload";
 import { createTestEnv } from "../test/helpers/cloudflare-test";
 import { hostedParentStub } from "./helpers/hosted-parent";
+import { placeMembership } from "./helpers/space-membership";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000a0001");
 const thread = asWorkstreamId("00000000-0000-4000-8000-0000000a00a0");
@@ -354,6 +356,37 @@ describe("a breakout merged into its thread", () => {
     expect(apns.rally.kind).toBe("merged");
     expect(apns.rally.url).toContain(`/workstreams/${thread}`);
     expect(apns.rally.url).not.toContain(breakout);
+  });
+});
+
+describe("a private thread merged into its Channel", () => {
+  it("given a merge from a thread a member cannot open, then they are pushed it, worded and linked as the Channel's, never naming the thread", async () => {
+    // Only Maya is in the thread.
+    await publish(asSubstreamId("0"), [common("Comp bands", { scope: "personal" }), viewer(owner)]);
+    const reserved = await organization().reserveSpace({ workspaceId, userId: owner,
+      space: { name: "GTM", iconKey: "briefcase", colorKey: "blue", scope: "workspace" } });
+    if (!reserved.ok) throw new Error(`reserveSpace refused: ${reserved.code}`);
+    const channelId = asSpaceId(reserved.space.id);
+    await placeMembership(organization(), { workspaceId, userId: owner, spaceId: channelId, workstreamId: thread });
+    const before = await pushed();
+
+    const merged = await organization().mergeThreadIntoChannel({
+      auth: { sessionId: `session-${owner}`, userId: owner, workspaceId, region: "global", role: "member" },
+      workstreamId: thread, spaceId: null, body: "Bands are set.", embeds: [], operationId: "op-private",
+    });
+    expect(merged).toMatchObject({ ok: true, spaceId: channelId });
+
+    const merges = (await pushed()).filter((row) => !before.some((earlier) => earlier.item_id === row.item_id && earlier.user_id === row.user_id));
+    expect(merges.map((row) => row.user_id)).toEqual([member]);
+
+    const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+    expect(await deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: member, activityItemId: merges[0]!.item_id }, send)).toBe(true);
+    const calls = (send as { mock: { calls: unknown[][] } }).mock.calls;
+    const apns = JSON.parse((calls[0]![2] as PushPayloads).apns) as { aps: { alert: { title: string } }; rally: { url: string } };
+    expect(apns.aps.alert.title).toBe("Maya merged a private thread into GTM");
+    expect(apns.rally.url).not.toContain("Comp bands");
+    expect(apns.rally.url).toContain("/s/");
+    expect(apns.rally.url).not.toContain("/c/");
   });
 });
 

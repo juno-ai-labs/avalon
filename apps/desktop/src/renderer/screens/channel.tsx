@@ -11,12 +11,15 @@ import type { SidekickRow } from '@rally/ui/components/sidekick-section';
 import { ChannelGlyph, spaceMark } from '@rally/ui/components/space-icon';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { TitleMenuItem, TitlePillAction, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { IconCloudDownload, IconPalette, IconPlus } from '@tabler/icons-react';
+import { IconCloudDownload, IconLock, IconPalette, IconPlus } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { ChannelComposer } from '../components/channel-composer';
+import { AttachmentPanel } from '../components/attachment-panel';
+import type { AttachmentPreview } from '../components/attachments';
+import { InspectorRail } from '../components/inspector-rail';
 import { openMemorySource, useMemoryFacts } from '../components/memory-review';
 import { MarkdownBody } from '../components/workstream-blocks';
 import type { CitationContext } from '../components/markdown-citations';
@@ -27,7 +30,7 @@ import { reportActivityEvent } from '../lib/activity-events';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { copySpaceLink } from '../lib/copy-workstream-link';
-import { ChannelPaneContextValue, OPEN_EXPANDED, channelRoute, openThreadResourceState, revealChannelMessageRequest, threadRoute, usePaneExpansion, type ChannelPaneContext } from '../lib/navigation-routes';
+import { ChannelPaneContextValue, OPEN_EXPANDED, channelArtifactRoute, channelRoute, revealChannelMessageRequest, threadRoute, usePaneExpansion, type ChannelPaneContext } from '../lib/navigation-routes';
 import { PaneVisibility } from '../lib/pane-visibility';
 import { useNow } from '../lib/clock';
 import { formatDayLabel } from '../lib/format';
@@ -38,11 +41,16 @@ import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { WORKSTREAM_LANDING_ROUTE } from '../lib/workstream-landing';
 import { typedMentionRendering } from '../lib/transcript';
 import { EmailMentionContext, emailMentionDirectory, NO_INVITEES, useWorkspaceInvitees } from '../lib/workspace-invitees';
-import type { AutomationSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
+import type { AutomationSummary, ResourceVersion, Workspace, WorkspaceMember, WorkstreamResource, WorkstreamSummary } from '../lib/types';
 import { useSpaceDirectories } from '../lib/use-space-directories';
+import { useUiStore } from '../lib/ui-store';
+import { useResourceHeads, withResourceHead } from '../lib/resource-heads';
+import { useRailFillsPane } from '../lib/rail-split';
+import { useSiteArtifacts } from '../lib/use-site-artifacts';
+import { expandToggle } from '../components/pane-expand-toggle';
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { useCachedWorkstreamAppearance, useWorkstreamsQuery } from '../lib/use-workstreams-query';
-import { RemoveParticipantDialog } from './conversation-surface';
+import { RemoveParticipantDialog, resourceVersionsQueryKey } from './conversation-surface';
 import { WorkstreamScreen } from './workstream';
 import type { SpaceDirectory } from '@rally/contracts';
 
@@ -56,7 +64,8 @@ import type { SpaceDirectory } from '@rally/contracts';
 export function ChannelScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const { channelId = '', '*': rest = '' } = useParams();
   const threadId = /^threads\/([^/]+)$/.exec(rest)?.[1] ?? null;
-  return <ChannelStack channelId={channelId} threadId={threadId} workspace={workspace} />;
+  const artifactId = /^artifacts\/([^/]+)$/.exec(rest)?.[1] ?? null;
+  return <ChannelStack artifactId={artifactId} channelId={channelId} threadId={threadId} workspace={workspace} />;
 }
 
 /**
@@ -67,7 +76,9 @@ export function ChannelScreen({ workspace }: { workspace: Workspace }): React.JS
  * a thread uses for its breakout, one level up, so both panes stay mounted —
  * the Channel's composer and scroll survive a thread opening and closing.
  */
-function ChannelStack({ channelId, threadId, workspace }: {
+function ChannelStack({ artifactId, channelId, threadId, workspace }: {
+  /** An artifact open in the Channel's own panel, beside its feed. */
+  artifactId: string | null;
   channelId: string;
   threadId: string | null;
   workspace: Workspace;
@@ -117,7 +128,7 @@ function ChannelStack({ channelId, threadId, workspace }: {
       breakout={threadId === null ? null : <WorkstreamRoute key={threadId} />}
       breakoutWidth={threadWidth}
       main={<PaneVisibility visible={shown !== 'breakout'}>
-        <ChannelPane channelId={channelId} openThreadId={threadId} workspace={workspace} />
+        <ChannelPane channelId={channelId} openArtifactId={threadId === null ? artifactId : null} openThreadId={threadId} workspace={workspace} />
       </PaneVisibility>}
       mode={threadId === null ? 'main' : threadUsesTwoPanes || expanded ? 'breakout' : 'split'}
       onBreakoutWidthChange={changeThreadWidth}
@@ -172,8 +183,9 @@ function writeChannelStats(list: ChannelStatsList | undefined, channelId: string
   return list?.map((row) => row.channelId === channelId ? write(row) : row);
 }
 
-function ChannelPane({ channelId, openThreadId, workspace }: {
+function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
   channelId: string;
+  openArtifactId: string | null;
   openThreadId: string | null;
   workspace: Workspace;
 }): React.JSX.Element {
@@ -236,13 +248,18 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
     enabled: false,
   });
   const stats = channelStats.data?.find((row) => row.channelId === channelId);
+  // An artifact panel expanded over the feed, or filling a narrow window,
+  // covers it: what arrives behind it has not been seen.
+  const railExpanded = useUiStore((state) => state.railExpanded);
+  const fillsPane = useRailFillsPane(useUiStore((state) => state.sidebarWidth));
+  const feedCovered = openArtifactId !== null && (railExpanded || fillsPane);
   const ackInFlight = useRef<string | null>(null);
   const activityReportedRef = useRef<{ channelId: string; through: number } | null>(null);
   // The pane stays mounted from one Channel to the next; coming back to one
   // whose acknowledgement failed is opening it again, and may send again.
   useEffect(() => { ackInFlight.current = null; }, [channelId]);
   const acknowledgeRead = useCallback((): void => {
-    if (!api || !stats || document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    if (!api || !stats || feedCovered || document.visibilityState !== 'visible' || !document.hasFocus()) return;
     // Activity is told what is on screen whether or not the Channel's own read
     // position needs moving, once per Channel and again when it rises.
     const reported = activityReportedRef.current;
@@ -272,7 +289,7 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
         queryClient.setQueryData<ChannelStatsList>(CHANNEL_STATS_QUERY_KEY, (list) =>
           writeChannelStats(list, channelId, (row) => ({ ...row, hasUnread: previous.hasUnread })));
       });
-  }, [api, channelId, newestLoadedSequence, queryClient, stats]);
+  }, [api, channelId, feedCovered, newestLoadedSequence, queryClient, stats]);
   useVisibleReadAcknowledgement(acknowledgeRead);
   const members = useQuery({
     queryKey: ['workspace-members'],
@@ -355,72 +372,192 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
 
   if (active.data === undefined) return <LoadingState label="Opening channel…" />;
   if (!space) return <EmptyState description="It may have been archived, made private, or you may no longer have access." title="Channel not found" />;
-  const openThread = (threadId: string, resourceId?: string): void => void navigate(threadRoute(threadId, channelId), {
-    state: resourceId ? openThreadResourceState(threadId, resourceId) : OPEN_EXPANDED,
-  });
+  const openThread = (threadId: string): void => void navigate(threadRoute(threadId, channelId), { state: OPEN_EXPANDED });
+  // What a merge shared with the Channel opens here, beside the feed, for
+  // every reader of the Channel: it is the Channel's, not only the thread's.
+  const openArtifact = (resourceId: string): void => void navigate(channelArtifactRoute(channelId, resourceId));
   // Only a member may start a thread in a private Channel; a thread placed
   // there is the Channel's to accept (`canEdit` on the server).
   const canStart = workspace.currentUser.accessClass !== 'guest' && space.reach !== 'through_channel';
-  return <div className="channel-screen has-message-capsule">
-    {/* Keyed so a confirmation still open when the route changes (a leave,
-        a removal, an archive) cannot be continued against the next Channel. */}
-    <ChannelHeader key={space.id} members={members.data ?? []} space={space} workspace={workspace} />
-    <div
-      className="channel-feed transcript-scroll"
-      onScroll={(event) => {
-        const element = event.currentTarget;
-        atNewest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
-      }}
-      ref={feedScroll}
-    >
-      {/* Newest nearest the composer: the list reads down to now. */}
-      <EmailMentionContext.Provider value={emailMentions}><ol aria-label={`${space.name} feed`} className="channel-feed-list">
-        {feed.hasNextPage && <li className="channel-feed-more">
-          <Button disabled={feed.isFetchingNextPage} onClick={() => void feed.fetchNextPage()}>Show earlier</Button>
-        </li>}
-        {[...rows].reverse().flatMap((row, index, ordered) => {
-          // Grouped by the local calendar date, year and all; the label is
-          // only for display, and two years' "Oct 2" are different days.
-          const day = new Date(row.placedAt).toDateString();
-          const card = row.kind === 'thread'
-            ? <ThreadCard
-              author={row.thread.createdByUserId ? memberById.get(row.thread.createdByUserId) : undefined}
-              key={row.thread.id}
-              members={members.data ?? NO_MEMBERS}
-              onOpen={openThread}
-              open={row.thread.id === openThreadId}
-              placedAt={row.placedAt}
-              thread={row.thread}
-            />
-            : row.message.merge
-              ? <MergeCard
-                author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
-                focused={row.message.id === highlightedId}
-                key={row.message.id}
+  return <div className="conversation-layout">
+    <div className="channel-screen has-message-capsule">
+      {/* Keyed so a confirmation still open when the route changes (a leave,
+          a removal, an archive) cannot be continued against the next Channel. */}
+      <ChannelHeader key={space.id} members={members.data ?? []} space={space} workspace={workspace} />
+      <div
+        className="channel-feed transcript-scroll"
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          atNewest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+        }}
+        ref={feedScroll}
+      >
+        {/* Newest nearest the composer: the list reads down to now. */}
+        <EmailMentionContext.Provider value={emailMentions}><ol aria-label={`${space.name} feed`} className="channel-feed-list">
+          {feed.hasNextPage && <li className="channel-feed-more">
+            <Button disabled={feed.isFetchingNextPage} onClick={() => void feed.fetchNextPage()}>Show earlier</Button>
+          </li>}
+          {[...rows].reverse().flatMap((row, index, ordered) => {
+            // Grouped by the local calendar date, year and all; the label is
+            // only for display, and two years' "Oct 2" are different days.
+            const day = new Date(row.placedAt).toDateString();
+            const card = row.kind === 'thread'
+              ? <ThreadCard
+                author={row.thread.createdByUserId ? memberById.get(row.thread.createdByUserId) : undefined}
+                key={row.thread.id}
                 members={members.data ?? NO_MEMBERS}
-                merge={row.message.merge}
-                message={row.message}
-                onOpenThread={openThread}
+                onOpen={openThread}
+                open={row.thread.id === openThreadId}
                 placedAt={row.placedAt}
+                thread={row.thread}
               />
-              : <MessageCard
-                author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
-                focused={row.message.id === highlightedId}
-                key={row.message.id}
-                members={members.data ?? NO_MEMBERS}
-                message={row.message}
-                placedAt={row.placedAt}
-              />;
-          const previous = ordered[index - 1];
-          if (previous && new Date(previous.placedAt).toDateString() === day) return [card];
-          return [<DaySeparator key={`day:${feedRowId(row)}`} placedAt={row.placedAt} />, card];
-        })}
-      </ol></EmailMentionContext.Provider>
-      {feed.isSuccess && rows.length === 0 && <p className="channel-feed-empty">No threads yet. Describe the work below and Rally starts a thread for it.</p>}
-      {feed.isError && <InlineError>The threads in this channel couldn’t be loaded.</InlineError>}
+              : row.message.merge
+                ? <MergeCard
+                  author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
+                  focused={row.message.id === highlightedId}
+                  key={row.message.id}
+                  members={members.data ?? NO_MEMBERS}
+                  merge={row.message.merge}
+                  message={row.message}
+                  onOpenArtifact={openArtifact}
+                  onOpenThread={openThread}
+                  placedAt={row.placedAt}
+                />
+                : <MessageCard
+                  author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
+                  focused={row.message.id === highlightedId}
+                  key={row.message.id}
+                  members={members.data ?? NO_MEMBERS}
+                  message={row.message}
+                  placedAt={row.placedAt}
+                />;
+            const previous = ordered[index - 1];
+            if (previous && new Date(previous.placedAt).toDateString() === day) return [card];
+            return [<DaySeparator key={`day:${feedRowId(row)}`} placedAt={row.placedAt} />, card];
+          })}
+        </ol></EmailMentionContext.Provider>
+        {feed.isSuccess && rows.length === 0 && <p className="channel-feed-empty">No threads yet. Describe the work below and Rally starts a thread for it.</p>}
+        {feed.isError && <InlineError>The threads in this channel couldn’t be loaded.</InlineError>}
+      </div>
+      {canStart && <ChannelComposer channelColor={space.colorKey} channelId={channelId} channelName={space.name} channelScope={space.scope === 'workspace' ? 'workspace' : 'personal'} threadOpen={openThreadId !== null} workspace={workspace} />}
     </div>
-    {canStart && <ChannelComposer channelColor={space.colorKey} channelId={channelId} channelName={space.name} channelScope={space.scope === 'workspace' ? 'workspace' : 'personal'} threadOpen={openThreadId !== null} workspace={workspace} />}
+    {openArtifactId && <ChannelArtifactPanel
+      channelId={channelId}
+      space={space}
+      key={openArtifactId}
+      onClose={() => void navigate(channelRoute(channelId))}
+      resourceId={openArtifactId}
+    />}
   </div>;
+}
+
+/**
+ * An artifact shared with the Channel, in the same panel a thread opens one
+ * in. It is read by its id alone: the Channel holds no conversation, and its
+ * reader may not be able to open the thread it came from.
+ */
+function ChannelArtifactPanel({ channelId, onClose, resourceId, space }: {
+  channelId: string;
+  onClose: () => void;
+  resourceId: string;
+  space: SpaceSummary;
+}): React.JSX.Element {
+  const { api } = useAppSession();
+  const siteArtifacts = useSiteArtifacts(api);
+  // Expanded over the Channel or beside it, with the same controls and
+  // crumbs a thread's panel has (`docs/pane-stack.md`).
+  const { expanded, setExpanded } = usePaneExpansion(`resource:${resourceId}`);
+  const setRailExpanded = useUiStore((state) => state.setRailExpanded);
+  useEffect(() => {
+    setRailExpanded(expanded);
+    return () => setRailExpanded(false);
+  }, [expanded, setRailExpanded]);
+  const fillsPane = useRailFillsPane(useUiStore((state) => state.sidebarWidth));
+  const ancestors: TitlePillLevel[] | undefined = !expanded && !fillsPane ? undefined : [{
+    key: `panel-channel:${channelId}`,
+    icon: <ChannelGlyph space={space} />,
+    bridge: { mark: spaceMark(space), name: space.name, action: 'Open channel' },
+    title: space.name,
+    label: `Show ${space.name}`,
+    onSelect: () => (fillsPane ? onClose() : setExpanded(false)),
+  }];
+  // The shell makes room for the right slot while it is open, so the panel
+  // claims it as a thread's does, scoped to this Channel, and gives it back.
+  useEffect(() => {
+    const scope = `channel:${channelId}`;
+    const ui = useUiStore.getState();
+    if (ui.railScope !== scope) ui.setRailScope(scope);
+    ui.openRail('context');
+    return () => {
+      if (useUiStore.getState().railScope === scope) useUiStore.getState().closeRail();
+    };
+  }, [channelId]);
+  const fetched = useQuery({
+    queryKey: ['resource', resourceId],
+    queryFn: () => api!.getResource(resourceId),
+    enabled: Boolean(api),
+    retry: false,
+  });
+  // The resource read carries no link, so no direction: what a merge shares
+  // with a Channel is an artifact here, as its card draws it. A version
+  // published while the panel is open moves it through the recorded heads,
+  // as it moves a thread's copy (`lib/resource-heads.ts`).
+  const head = useResourceHeads()[resourceId];
+  const resource = useMemo(() => {
+    if (!fetched.data) return fetched.isError ? null : undefined;
+    const artifact: WorkstreamResource = { ...fetched.data, direction: 'artifact' };
+    return head ? withResourceHead(artifact, head) : artifact;
+  }, [fetched.data, fetched.isError, head]);
+  const currentVersion = resource?.currentVersion ?? null;
+  const versions = useQuery({
+    queryKey: resourceVersionsQueryKey(resourceId, currentVersion),
+    queryFn: ({ signal }) => api!.getResourceVersions(resourceId, signal),
+    enabled: Boolean(api && currentVersion !== null),
+  });
+  // A prior version opens in this panel's place, and comes back to the
+  // current one, as the thread's panel does.
+  const [olderVersion, setOlderVersion] = useState<AttachmentPreview | null>(null);
+  const openResourceVersion = useCallback((opened: WorkstreamResource, version: ResourceVersion) => {
+    setOlderVersion({
+      name: version.title,
+      ...(version.mimeType ? { mimeType: version.mimeType } : {}),
+      loadContent: (signal?: AbortSignal) => api!.getResourceVersionContent(opened.id, version.version, signal),
+      superseded: {
+        label: `Version ${version.version} · not current`,
+        onReturnToCurrent: () => setOlderVersion(null),
+      },
+    });
+  }, [api]);
+  const railWidth = useUiStore((state) => state.railWidth);
+  const setRailWidth = useUiStore((state) => state.setRailWidth);
+  const loadResourceContent = useCallback((id: string, signal?: AbortSignal) => api
+    ? api.getResourcePreviewContent(id, signal)
+    : Promise.reject(new Error('No API session')), [api]);
+  const expandAction = fillsPane ? undefined : expandToggle(expanded, true, setExpanded);
+  if (olderVersion) {
+    return <AttachmentPanel
+      ancestors={ancestors}
+      expandAction={expandAction}
+      onClose={onClose}
+      onResize={setRailWidth}
+      preview={olderVersion}
+      width={railWidth}
+    />;
+  }
+  return <InspectorRail
+    {...(api ? { loadResourceContent } : {})}
+    onOpenResourceVersion={openResourceVersion}
+    panel={{
+      resourceId,
+      onClose,
+      expandAction,
+      ancestors,
+    }}
+    resource={resource}
+    resourceVersions={versions.data}
+    resourceVersionsFailed={Boolean(versions.error)}
+    {...(siteArtifacts ? { siteArtifacts } : {})}
+  />;
 }
 
 /**
@@ -525,17 +662,19 @@ function MessageCard({ author, focused, members, message, placedAt }: {
  * merged, so the Channel reads in time order (docs/conversation-merge.md). It
  * names its thread, and that name opens it; it quotes the thread's summary;
  * its body renders as markdown with the artifacts it embeds as cards, drawn
- * from the titles stored with the merge. An artifact opens in its thread,
- * where it is attached and so readable by everyone who sees this.
+ * from the titles stored with the merge. An artifact opens in the Channel's
+ * own panel: the merge shared it with the Channel, so everyone who reads the
+ * Channel may read it, whether or not they can open the thread.
  */
-function MergeCard({ author, focused, members, merge, message, onOpenThread, placedAt }: {
+function MergeCard({ author, focused, members, merge, message, onOpenArtifact, onOpenThread, placedAt }: {
   author: WorkspaceMember | undefined;
   /** A navigation asked for this merge: a source's divider, or the merge just made. */
   focused: boolean;
   members: readonly WorkspaceMember[];
   merge: NonNullable<ChannelMessage['merge']>;
   message: ChannelMessage;
-  onOpenThread: (threadId: string, resourceId?: string) => void;
+  onOpenArtifact: (resourceId: string) => void;
+  onOpenThread: (threadId: string) => void;
   placedAt: string;
 }): React.JSX.Element {
   const body = useMemo(() => typedMentionRendering(message.body, members), [members, message.body]);
@@ -549,12 +688,13 @@ function MergeCard({ author, focused, members, merge, message, onOpenThread, pla
       open: (target) => {
         if (target.scheme === 'external') void openLink(target.url);
         if (target.scheme !== 'resource') return;
-        // The artifact is attached to the thread, so it opens there, by its id
-        // whichever spelling the body cited it by.
-        onOpenThread(merge.threadId, embeds.get(target.resourceId)?.id);
+        // The merge shared the artifact with the Channel, so it opens here,
+        // by its id whichever spelling the body cited it by.
+        const embed = embeds.get(target.resourceId);
+        if (embed) onOpenArtifact(embed.id);
       },
     };
-  }, [merge.embeds, merge.threadId, onOpenThread]);
+  }, [merge.embeds, onOpenArtifact]);
   const quote = merge.summary?.split('\n').find((line) => line.trim() !== '')?.trim();
   const appearance = useCachedWorkstreamAppearance(merge.threadId);
   const { Icon, tint, ink } = resolveWorkstreamAppearance(merge.threadId, appearance);
@@ -568,13 +708,18 @@ function MergeCard({ author, focused, members, merge, message, onOpenThread, pla
     card.scrollIntoView({ block: 'center' });
     card.querySelector('button')?.focus({ preventScroll: true });
   };
+  // A thread this reader cannot open is named only as private: no title, no
+  // quote line, nothing to open.
   return <li className={clsx('channel-feed-item is-message is-merge', focused && 'is-focused')} data-message-id={message.id}>
     <MergeMessage
-      label={`${merge.title || 'A thread'}, merged by ${merger}`}
+      label={`${merge.private ? 'A private thread' : merge.title || 'A thread'}, merged by ${merger}`}
       mergedBy={<>{author && <Avatar member={author} size="small" title={null} />}{merger}</>}
       onQuote={showThread}
-      quote={quote}
-      source={{
+      quote={merge.private ? null : quote}
+      source={merge.private ? {
+        mark: <IconLock aria-hidden="true" size={10} stroke={2} />,
+        title: 'Private thread',
+      } : {
         mark: <Icon size={10} strokeWidth={2} />,
         tint: { background: tint, ink },
         title: merge.title || 'A thread',

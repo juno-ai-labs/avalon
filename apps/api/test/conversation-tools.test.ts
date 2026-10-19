@@ -252,8 +252,6 @@ describe("conversation_merge", () => {
 
   it("turns each merge refusal into its sentence, with only allowlisted details", async () => {
     const cases: Array<[ApiError, Record<string, unknown> | undefined, string]> = [
-      [new ApiError(409, "merge_thread_private", "x"), undefined,
-        "Only an Organization-wide thread can merge into a Channel. Tell the person; do not retry."],
       [new ApiError(403, "merge_target_not_writable", "x"), undefined,
         "The person you are working for cannot post there, so the merge was not made. Tell them; do not retry."],
       [new ApiError(403, "merge_resource_not_shareable", "x", { field: "body.resources[2]" }), { field: "body.resources[2]" },

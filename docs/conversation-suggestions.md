@@ -60,7 +60,7 @@ cheapest first, each the reason not to pay for the next:
 | 1 | The run completed and its final turn is Rally's text | `run_not_completed`, `final_turn_not_text` |
 | 2 | A conversation people read: not a background agent, not archived, not a system conversation such as a digest | `background_agent`, `archived`, `system_conversation` |
 | 3 | This run was not judged before (`turn_disposition_judgements` by `run_id`), checked again inside the write; a judgement recording a classifier failure does not count, and a row left `pending` by an interrupted settlement resumes at the draft instead, unless this object is drafting it right now | `already_judged`, `draft_in_flight`, or `resumed` |
-| 4 | At least one kind is offerable: a Breakout offers only `merge_up` and needs its Thread; a Thread always offers `start_breakout`, and `merge_up` too when it is Organization-wide and placed in a Channel | `nothing_offerable` |
+| 4 | At least one kind is offerable: a Breakout offers only `merge_up` and needs its Thread; a Thread always offers `start_breakout`, and `merge_up` too when it is placed in an Organization-wide Channel, private thread or not | `nothing_offerable` |
 | 5 | The turn was not already carried up: no `conversation_merged_into` marker after it | `already_carried_up` |
 
 Past the gates it builds the state the design specifies, reading only this
