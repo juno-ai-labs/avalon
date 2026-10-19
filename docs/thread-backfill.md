@@ -96,7 +96,8 @@ arms its own alarm.
   for a 5xx, 408 or 429, a deadline or an unreachable provider; the observer
   keeps no answer for a failed judgement, so the retry asks again) and on a
   step that threw before judging (`suggestion_backfill_<reason>`), which the
-  settlement lane only logs. A classifier failure no retry would fix (a
+  settlement lane only logs; a failed parent read is one such step here,
+  where settlement reads the parent best-effort. A classifier failure no retry would fix (a
   missing or refused key, a rejected request, an answer that failed the
   schema) settles, with the kind in the judgement as the record: the lane caps
   nothing, so retrying it would pay for a call every gate for good. Guard:

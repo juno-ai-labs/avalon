@@ -5687,6 +5687,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       finalTurnId: outcome.finalTurnId ?? null,
       completed: outcome.status === "completed",
       backgroundAgent: input.backgroundAgent === true,
+      parentReadFailure: "null",
     });
   }
 
@@ -5711,6 +5712,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       finalTurnId: settled.turnId,
       completed: true,
       backgroundAgent: background,
+      parentReadFailure: "throw",
     });
   }
 
@@ -5729,6 +5731,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     finalTurnId: string | null;
     completed: boolean;
     backgroundAgent: boolean;
+    /**
+     * What a failed parent read means. Settlement reads it best-effort: a
+     * Breakout then skips and a Thread judges with only `start_breakout`,
+     * and the next run judges again. The backfill has no next run, so there
+     * the failure is thrown and the lane retries the row.
+     */
+    parentReadFailure: "null" | "throw";
   }): Promise<SettledTurnJudgement> {
     const substreamId = input.substreamId;
     try {
@@ -5756,7 +5765,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           ? { title: identityRow.title, description: identityRow.description, scope: identityRow.scope,
               archived_at: identityRow.archived_at, system_kind: identityRow.system_kind }
           : null,
-        readParent: () => this.readSuggestionParent(executionEnv, input.workspaceId, input.parentId, substreamId),
+        readParent: () => this.readSuggestionParent(executionEnv, input.workspaceId, input.parentId, substreamId, input.parentReadFailure),
         onDiagnostic: sink.record,
         traceId,
         now: () => Date.now(),
@@ -5848,6 +5857,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     workspaceId: string,
     workstreamId: string,
     substreamId: string,
+    onFailure: "null" | "throw",
   ): Promise<SuggestionParent | null> {
     try {
       if (substreamId !== "0") {
@@ -5864,6 +5874,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         workspace_id: workspaceId, workstream_id: workstreamId, substream_id: substreamId,
         reason: diagnosticErrorCode(error, "turn_disposition_parent_read_failed"),
       });
+      if (onFailure === "throw") throw error;
       return null;
     }
   }
