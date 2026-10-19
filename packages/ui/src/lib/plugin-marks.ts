@@ -132,12 +132,12 @@ export function connectorBrandMark(
  * A custom server has no connector type of its own to key on, and the list
  * Settings draws from carries only the name its creator gave it — "Cloudflare
  * API", "Linear (staging)". Whole words, longest first, so "Google Drive" is
- * Drive and "Ex" or "Next" never reads as X. `x` and `apple` are left out: one
- * letter is no evidence, and nobody connects an Apple MCP server. The protocol's
- * own mark is the fallback, not a name to match.
+ * Drive and "Ex" or "Next" never reads as X. `x`, `apple` and `apollo` are left out:
+ * those words alone cannot identify a company (Apollo may mean Apollo GraphQL).
+ * The protocol's own mark is the fallback, not a name to match.
  */
 const namedMarks = (Object.keys(PLUGIN_BRAND_MARKS) as PluginBrandMark[])
-  .filter((mark) => mark !== 'x' && mark !== 'apple' && mark !== 'model-context-protocol')
+  .filter((mark) => mark !== 'x' && mark !== 'apple' && mark !== 'apollo' && mark !== 'model-context-protocol')
   .sort((a, b) => b.length - a.length);
 function markNamedIn(displayName: string): PluginBrandMark | null {
   const words = ` ${displayName.toLowerCase().split(/[^a-z0-9]+/u).join(' ')} `;
