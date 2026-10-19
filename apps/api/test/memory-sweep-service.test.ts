@@ -196,6 +196,86 @@ describe("the sweep attempt at settlement", () => {
     expect(state(objectStore)).toMatchObject({ claim_attempt: 2, claim_at: NOW + MEMORY_SWEEP_REST_FLOOR_MS });
   });
 
+  it("asks the alarm back while resting when anything follows the cursor, without reading the window", async () => {
+    const { objectStore, env } = fixture({ decision: { operations: [] } });
+    vi.useFakeTimers({ now: NOW });
+    for (let sequence = 1; sequence <= 4; sequence += 1) {
+      say(objectStore, sequence, `Decision ${sequence}: the pricing page ships on 2026-10-30 with the enterprise tier unchanged.`);
+    }
+    const claimed = await attemptMemorySweep(env, target);
+    if (claimed.status !== "published") throw new Error("expected a claim");
+    await runMemorySweep(env, { type: "memory_sweep", region: "global", ...target, workspaceId: WORKSPACE_ID, parentKind: "workstream", fromSeq: 0, toSeq: claimed.toSeq, attempt: claimed.attempt });
+    const rested = state(objectStore)!;
+    expect(rested).toMatchObject({ swept_through_seq: 4, retry_at: null });
+    // Resting with nothing after the cursor: nothing to come back for.
+    expect(await attemptMemorySweep(env, target)).toEqual({ status: "skipped", reason: "resting" });
+    expect(state(objectStore)?.retry_at).toBeNull();
+    // One new message is below the floors, but the alarm comes back at the
+    // rest to look: the floors are checked then, not while resting.
+    say(objectStore, 5, "One more thing on pricing.");
+    expect(await attemptMemorySweep(env, target)).toEqual({ status: "skipped", reason: "resting" });
+    expect(state(objectStore)?.retry_at).toBe(rested.rest_until);
+  });
+
+  it("clears a due retry when there is no model access, so the alarm does not wake into the same answer", async () => {
+    const { objectStore, env } = fixture();
+    vi.useFakeTimers({ now: NOW });
+    for (let sequence = 1; sequence <= MEMORY_SWEEP_MINIMUM_PERSON_MESSAGES; sequence += 1) {
+      say(objectStore, sequence, `We decided point ${sequence}: the pricing page ships on 2026-10-30 with the enterprise tier unchanged.`);
+    }
+    expect(await attemptMemorySweep(env, target)).toMatchObject({ status: "published" });
+    expect(state(objectStore)?.retry_at).toBe(memorySweepRestUntil(NOW, 0));
+    const keyless: Env = { ...env, OPENROUTER_API_KEY: "" };
+    expect(await attemptMemorySweep(keyless, target)).toEqual({ status: "skipped", reason: "no_model_access" });
+    expect(state(objectStore)?.retry_at).toBeNull();
+  });
+
+  it("ends a window that outgrows its character budget at the last message that fit, oldest first", async () => {
+    const { objectStore, env, sent } = fixture();
+    vi.useFakeTimers({ now: NOW });
+    // Five 50,000-character messages against a 160,000-character budget: three fit.
+    for (let sequence = 1; sequence <= 5; sequence += 1) say(objectStore, sequence, `${sequence}`.repeat(50_000));
+    expect(await attemptMemorySweep(env, target)).toEqual({ status: "published", fromSeq: 0, toSeq: 3, attempt: 1 });
+    expect(sent).toEqual([expect.objectContaining({ fromSeq: 0, toSeq: 3 })]);
+  });
+
+  it("moves past a full page with too little person conversation, with a receipt and no model call", async () => {
+    const { objectStore, env, sent, applied, prompts } = fixture();
+    vi.useFakeTimers({ now: NOW });
+    // A page is the window plus its overlap plus one: 321 rows, of which two are a person's.
+    for (let sequence = 1; sequence <= 330; sequence += 1) {
+      say(objectStore, sequence, sequence % 100 === 0 ? `Person note ${sequence} on the pricing rollout.` : `Tool-driven step ${sequence}.`,
+        sequence % 100 === 0 ? "person" : "agent");
+    }
+    expect(await attemptMemorySweep(env, target)).toEqual({ status: "skipped", reason: "page_without_conversation" });
+    expect(sent).toEqual([]);
+    expect(prompts).toEqual([]);
+    // The store's fence moves with the cursor, so the next sweep is not rewound over the page.
+    expect(applied).toHaveBeenCalledWith(expect.objectContaining({ fromSeq: 0, toSeq: 321, operations: [], model: "none" }));
+    const after = state(objectStore)!;
+    expect(after).toMatchObject({ swept_through_seq: 321, consecutive_quiet: 1, claim_at: null });
+    // Rows after the page remain, so the alarm comes back for them at the rest.
+    expect(after.retry_at).toBe(after.rest_until);
+  });
+
+  it("moves past an over-budget run of agent text to the person conversation behind it", async () => {
+    const { objectStore, env, sent, applied } = fixture();
+    vi.useFakeTimers({ now: NOW });
+    // Four 50,000-character agent messages spend the budget before the people speak.
+    for (let sequence = 1; sequence <= 4; sequence += 1) say(objectStore, sequence, `${sequence}`.repeat(50_000), "agent");
+    for (let sequence = 5; sequence <= 7; sequence += 1) {
+      say(objectStore, sequence, `We decided point ${sequence}: the pricing page ships on 2026-10-30 with the enterprise tier unchanged.`);
+    }
+    expect(await attemptMemorySweep(env, target)).toEqual({ status: "skipped", reason: "page_without_conversation" });
+    // Only what was read is passed: the three messages that fit.
+    expect(applied).toHaveBeenCalledWith(expect.objectContaining({ fromSeq: 0, toSeq: 3, operations: [] }));
+    expect(state(objectStore)).toMatchObject({ swept_through_seq: 3 });
+    // At the rest, the window from there holds the people, and is claimed.
+    vi.setSystemTime(Number(state(objectStore)!.rest_until));
+    expect(await attemptMemorySweep(env, target)).toEqual({ status: "published", fromSeq: 3, toSeq: 7, attempt: 1 });
+    expect(sent).toEqual([expect.objectContaining({ fromSeq: 3, toSeq: 7 })]);
+  });
+
   it("never sweeps a Channel's own feed in this release", async () => {
     const { env, sent } = fixture();
     expect(await attemptMemorySweep(env, { ...target, parentKind: "space" })).toEqual({ status: "skipped", reason: "space_parent" });
@@ -249,7 +329,9 @@ describe("the sweep run in the consumer", () => {
     // The model saw the placement, the people, and every message, oldest first.
     expect(prompts).toHaveLength(1);
     expect(prompts[0]!.user).toContain('"organizationWide":true');
-    expect(prompts[0]!.user).toContain(`"people":[{"id":"${USER_ID}","name":null}]`);
+    // Members are named from the directory, in the placement and on their messages.
+    expect(prompts[0]!.user).toContain(`"people":[{"id":"${USER_ID}","name":"Morgan"}]`);
+    expect(prompts[0]!.user).toContain(`"authorId":"${USER_ID}","authorName":"Morgan"`);
     expect(prompts[0]!.user).toContain("Decision 4");
     // Only the coherent operation reached the store, with its horizon as an instant.
     expect(applied).toHaveBeenCalledWith(expect.objectContaining({
@@ -293,6 +375,81 @@ describe("the sweep run in the consumer", () => {
     vi.useRealTimers();
     expect(await runMemorySweep(behind.env, second)).toEqual({ status: "rewound", toSeq: 2 });
     expect(state(behind.objectStore)).toMatchObject({ swept_through_seq: 2 });
+  });
+
+  it("keeps a follow-up a run asked for while the sweep was in flight", async () => {
+    const { objectStore, env } = fixture({ decision: { operations: [] } });
+    vi.useFakeTimers({ now: NOW });
+    const message = await claimed(objectStore, env);
+    // A run settles mid-sweep with a new message, finds the conversation
+    // resting, and asks the alarm back at the claim's rest.
+    say(objectStore, 6, "Also, the enterprise tier gets annual billing only.");
+    expect(await attemptMemorySweep(env, target)).toEqual({ status: "skipped", reason: "resting" });
+    expect(state(objectStore)?.retry_at).toBe(memorySweepRestUntil(NOW, 0));
+    vi.useRealTimers();
+    // The sweep's settle moves the rest and keeps the follow-up at it.
+    expect(await runMemorySweep(env, message)).toMatchObject({ status: "applied", toSeq: 5 });
+    const after = state(objectStore)!;
+    expect(after).toMatchObject({ swept_through_seq: 5, consecutive_quiet: 1, claim_at: null });
+    expect(after.retry_at).not.toBeNull();
+    expect(after.retry_at).toBe(after.rest_until);
+  });
+
+  it("records a range with nothing to sweep in the store before moving the cursor", async () => {
+    const { objectStore, env, applied, prompts } = fixture({ candidatesOutcome: { outcome: "conversation_missing" } });
+    vi.useFakeTimers({ now: NOW });
+    const message = await claimed(objectStore, env);
+    vi.useRealTimers();
+    expect(await runMemorySweep(env, message)).toEqual({ status: "nothing_to_sweep" });
+    expect(prompts).toEqual([]);
+    expect(applied).toHaveBeenCalledWith(expect.objectContaining({ fromSeq: 0, toSeq: 5, operations: [], model: "none" }));
+    expect(state(objectStore)).toMatchObject({ swept_through_seq: 5, claim_at: null });
+  });
+
+  it("drops a malformed operation and applies the rest of the paid answer", async () => {
+    const good = decision.operations[0]!;
+    const { objectStore, env, applied } = fixture({
+      decision: { operations: [{ ...good, text: "Out of range.", confidence: 2 }, good] },
+    });
+    vi.useFakeTimers({ now: NOW });
+    const message = await claimed(objectStore, env);
+    vi.useRealTimers();
+    expect(await runMemorySweep(env, message)).toEqual({ status: "applied", operations: 1, refused: 0, toSeq: 5 });
+    expect(applied).toHaveBeenCalledWith(expect.objectContaining({
+      operations: [expect.objectContaining({ text: "The pricing page ships on 2026-10-30." })],
+    }));
+  });
+
+  it("derives a fact's trust class from who wrote the messages it cites, not from the model", async () => {
+    const add = (evidence: number[], derivedFrom: string | null, text: string) => ({
+      op: "add", subjectKind: "thread", subjectId: null, kind: "standing", text, validFrom: null, validUntil: null,
+      validUntilBasis: null, derivedFrom, conflict: false, confidence: 0.9, evidence, factId: null, reason: null,
+    });
+    const { objectStore, env, applied } = fixture({
+      decision: {
+        operations: [
+          add([1, 2], "agent", "People said it."),
+          add([6], "person", "Only the agent said it."),
+          add([1, 6], "person", "Both said it."),
+          add([], null, "Nobody is cited."),
+          add([], "external", "Nobody is cited, the model says external."),
+        ],
+      },
+    });
+    vi.useFakeTimers({ now: NOW });
+    for (let sequence = 1; sequence <= 4; sequence += 1) {
+      say(objectStore, sequence, `Decision ${sequence}: the pricing page ships on 2026-10-30 with the enterprise tier unchanged.`);
+    }
+    say(objectStore, 6, "I will draft the pricing announcement for the thirtieth.", "agent");
+    const outcome = await attemptMemorySweep(env, target);
+    if (outcome.status !== "published") throw new Error("expected a claim");
+    vi.useRealTimers();
+    await runMemorySweep(env, {
+      type: "memory_sweep", region: "global", workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID,
+      substreamId: "0", fromSeq: outcome.fromSeq, toSeq: outcome.toSeq, attempt: outcome.attempt,
+    });
+    const operations = (applied.mock.calls[0]![0] as { operations: Array<{ derivedFrom: string }> }).operations;
+    expect(operations.map((operation) => operation.derivedFrom)).toEqual(["person", "agent", "mixed", "agent", "external"]);
   });
 
   it("counts a quiet sweep toward a longer rest", async () => {
