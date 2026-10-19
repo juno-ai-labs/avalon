@@ -862,7 +862,9 @@ describe('a Channel', () => {
     const width = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1_800);
     onTestFinished(() => width.mockRestore());
     renderChannel('/channels/outbound/artifacts/res-1');
-    await screen.findByRole('complementary', { name: 'Resource: Price model' });
+    // RailSurface claims focus on its arrival frame. Opening the menu before
+    // that frame lets the panel's delayed focus dismiss the menu under the test.
+    await waitFor(() => expect(screen.getByRole('complementary', { name: 'Resource: Price model' })).toHaveFocus(), { timeout: 5_000 });
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Artifact menu: Price model' }), { button: 0, ctrlKey: false });
     expect(await screen.findByRole('menuitem', { name: 'New window' })).toBeVisible();
     fireEvent.click(screen.getByRole('menuitem', { name: /Versions/u }));
