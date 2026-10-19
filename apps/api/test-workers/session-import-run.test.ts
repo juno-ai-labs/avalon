@@ -197,7 +197,6 @@ function resettingEnv(methods: readonly string[]): Env {
   });
 }
 
-
 describe("a conversation import run", () => {
   it("keeps a committing import alive past the ordinary tool deadline and settles its durable receipt", async () => {
     (env as { TOOL_DEFAULT_TIMEOUT_MS?: string }).TOOL_DEFAULT_TIMEOUT_MS = "1000";
