@@ -31,8 +31,10 @@ import {
   ConversationToolError,
   __conversationToolTesting,
   conversationRefusalError,
+  conversationIndexHit,
   conversationSearchGroups,
   conversationToolAccess,
+  newestSearchHits,
   conversationsSystemMessage,
   createConversationsPlugin,
   type ConversationIndexHit,
@@ -699,6 +701,37 @@ describe("conversation_search", () => {
     expect(conversationSearchGroups([breakout, main, gtm])).toEqual([
       `conversation:${CHANNEL_ID}/${BREAKOUT_ID}`, `conversation:${CHANNEL_ID}/0`, `space:${SPACE_ID}`,
     ]);
+  });
+
+  it("keeps the newest matches across every candidate page, whatever page they are on", async () => {
+    const hit = (messageId: string, day: number) => ({ parentId: SPACE_ID, substreamId: "0", messageId,
+      sentAt: `2026-10-${String(day).padStart(2, "0")}T00:00:00.000Z`, text: "ICP" });
+    // The index's own order is a hash: the newest match is on the last page.
+    const pages = [[hit("a", 3), hit("b", 1)], [hit("c", 2), hit("d", 4)], [hit("e", 19)]];
+    const read: Array<string | undefined> = [];
+    const kept = await newestSearchHits(async (cursor) => {
+      read.push(cursor);
+      const index = cursor === undefined ? 0 : Number(cursor);
+      return { results: pages[index]!, nextCursor: index + 1 < pages.length ? String(index + 1) : null };
+    }, 2);
+    expect(kept.map((match) => match.messageId)).toEqual(["e", "d"]);
+    expect(read).toEqual([undefined, "1", "2"]);
+  });
+
+  it("turns a thread's row and a Channel's row into hits, and renders nothing for an archived or display-less row", () => {
+    const row = { id: "r", revision: 1, archived: false, text: "ICP", occurred_at: Date.parse("2026-10-19T11:00:00.000Z") };
+    expect(conversationIndexHit({ ...row, source: "messages", scope_id: CHANNEL_ID, substream_id: BREAKOUT_ID,
+      source_id: `${BREAKOUT_ID}/turn-1` })).toEqual({ parentId: CHANNEL_ID, substreamId: BREAKOUT_ID, messageId: "turn-1",
+      sentAt: "2026-10-19T11:00:00.000Z", text: "ICP" });
+    // A row from before `substream_id` existed names the substream in `source_id`.
+    expect(conversationIndexHit({ ...row, source: "messages", scope_id: CHANNEL_ID, source_id: "0/turn-2" }))
+      .toMatchObject({ substreamId: "0", messageId: "turn-2" });
+    expect(conversationIndexHit({ ...row, source: "channel_messages", scope_id: SPACE_ID, source_id: "m-1" }))
+      .toEqual({ parentId: SPACE_ID, substreamId: "0", messageId: "m-1", sentAt: "2026-10-19T11:00:00.000Z", text: "ICP" });
+    expect(conversationIndexHit({ ...row, archived: true, source: "channel_messages", scope_id: SPACE_ID, source_id: "m-1" }))
+      .toBeNull();
+    expect(conversationIndexHit({ id: "r", revision: 1, source: "channel_messages", scope_id: SPACE_ID, source_id: "m-1" }))
+      .toBeNull();
   });
 
   it("searches only the conversation it names", async () => {
