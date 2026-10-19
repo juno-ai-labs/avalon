@@ -76,6 +76,7 @@ import { ConversationSuggestionSchema } from "./conversation-suggestions";
 export { MentionSchema } from "./mention-schema";
 import { MentionSchema } from "./mention-schema";
 export * from "./navigation";
+export * from "./memory";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 export { parseDesktopDeepLinkIntent,type DesktopDeepLinkIntent } from "./desktop-deep-link-intent";

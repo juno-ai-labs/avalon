@@ -1,7 +1,7 @@
 import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
 import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationResultSchema, type ScopeGrantTarget, type CreateScopeInvitations } from "@rally/contracts/scope-grants";
 import { SharedDirectorySchema, SharedNavigationDirectorySchema, WorkspaceRelationshipSchema, PromoteWorkspaceGuestSchema } from "@rally/contracts/scope-grants";
-import { MemberPreferencesSchema, PersonalSystemPromptSchema, SessionImportRunSchema, type MemberPreferences, type MemberPreferencesUpdate, type SessionImportPreview } from "@rally/contracts";
+import { MemberPreferencesSchema, MemoryForgetResponseSchema, MemoryReviewSchema, PersonalSystemPromptSchema, type MemoryForgetResponse, type MemoryReview, SessionImportRunSchema, type MemberPreferences, type MemberPreferencesUpdate, type SessionImportPreview } from "@rally/contracts";
 import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepartureOutcome } from "@rally/contracts";
 import {
   ActivityPageSchema,
@@ -935,6 +935,15 @@ export class RallyApi {
       schema: PersonalSystemPromptSchema,
     });
     return result.personalSystemPrompt;
+  }
+
+  /** What Rally remembers that this person may see: their own facts, then the Organization's and their Channels'. */
+  getMyMemoryReview(signal?: AbortSignal): Promise<MemoryReview> {
+    return this.request('/workspace/me/memory', { schema: MemoryReviewSchema, signal });
+  }
+
+  forgetMyMemory(factId: string): Promise<MemoryForgetResponse> {
+    return this.request(`/workspace/me/memory/${encodeURIComponent(factId)}`, { method: 'DELETE', schema: MemoryForgetResponseSchema });
   }
 
   getMyTimezone(signal?: AbortSignal): Promise<UserTimezone> {
