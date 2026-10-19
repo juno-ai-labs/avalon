@@ -454,7 +454,7 @@ describe("the fact store on workerd", () => {
       workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: MEMBER }, conversation: openThread, now, limit: 10,
     });
     const forget = async (userId: string) => WorkspaceMemoryReviewForgetResultSchema.parse(await workspace().forgetReviewedMemoryFact({
-      workspaceId: WORKSPACE_ID, userId, factId: "fact-release", now: now + 1,
+      workspaceId: WORKSPACE_ID, userId, scope: { kind: "organization" }, factId: "fact-release", now: now + 1,
     })).outcome;
 
     expect(await forget(MEMBER)).toBe("not_removable");

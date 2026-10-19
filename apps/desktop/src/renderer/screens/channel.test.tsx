@@ -1,10 +1,10 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Link, MemoryRouter, parsePath, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
-import type { ChannelStats } from '@rally/contracts';
+import type { ChannelStats, MemoryReview, MemoryReviewFact } from '@rally/contracts';
 import { OPEN_EXPANDED, openResourceRequest, revealChannelMessageState } from '../lib/navigation-routes';
 import { CHANNEL_STATS_QUERY_KEY } from '../lib/sidebar-list-store';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
@@ -19,8 +19,8 @@ const api = vi.hoisted(() => ({
   updateSpacePresentation: vi.fn(),
   updateSpaceAudience: vi.fn(),
   acknowledgeChannelRead: vi.fn(),
-  getMyMemoryReview: vi.fn(async () => ({ own: [], shared: [] })),
-  forgetMyMemory: vi.fn(),
+  getChannelMemory: vi.fn<(spaceId: string, signal?: AbortSignal) => Promise<MemoryReview>>(async () => ({ facts: [] })),
+  forgetChannelMemory: vi.fn(async (_spaceId: string, factId: string) => ({ factId, retractedAt: '2026-10-19T12:00:00.000Z' })),
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session: null }) }));
 const spaces = vi.hoisted(() => ({ data: undefined as unknown }));
@@ -118,16 +118,33 @@ describe('a Channel', () => {
     expect(screen.getByText('composer')).toBeInTheDocument();
   });
 
-  it('shows what Rally remembers in a Personal Channel and not in an Organization one', async () => {
+  it('lists the Channel’s own facts in its pill’s Memory level, read only once the level opens', async () => {
+    const remembered = (factId: string, text: string, removable: boolean): MemoryReviewFact => ({
+      factId, subjectKind: 'channel', subjectTitle: 'Outbound', kind: 'standing', text,
+      validFrom: null, validUntil: null, recordedAt: '2026-10-01T12:00:00.000Z', conflict: false, derivedFrom: 'person',
+      source: { kind: 'thread', workstreamId: 'plan', title: 'Q4 plan' }, removable,
+    });
+    api.getChannelMemory.mockResolvedValue({ facts: [
+      remembered('f1', 'Outbound targets mid-market accounts.', true),
+      remembered('f2', 'Demos run on Thursdays.', true),
+    ] });
     renderChannel();
-    await screen.findByRole('list', { name: 'Outbound feed' });
-    expect(screen.queryByRole('heading', { name: 'What Rally remembers' })).toBeNull();
-    cleanup();
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Outbound' }), { button: 0, ctrlKey: false });
 
-    spaces.data = outbound('participant', 'individual');
-    renderChannel();
-    expect(await screen.findByRole('heading', { name: 'What Rally remembers' })).toBeInTheDocument();
-    expect(await screen.findByText('Rally has not remembered anything for you yet.')).toBeInTheDocument();
+    const level = await screen.findByRole('menuitem', { name: /^Memory/u });
+    expect(api.getChannelMemory).not.toHaveBeenCalled();
+    fireEvent.click(level);
+
+    expect(await screen.findByText('Outbound targets mid-market accounts.')).toBeInTheDocument();
+    expect(api.getChannelMemory).toHaveBeenCalledWith('outbound', expect.anything());
+    fireEvent.click(screen.getByRole('button', { name: 'Remove “Demos run on Thursdays.”' }));
+    await waitFor(() => expect(screen.queryByText('Demos run on Thursdays.')).toBeNull());
+    expect(api.forgetChannelMemory).toHaveBeenCalledWith('outbound', 'f2');
+
+    // A fact's source opens its thread, and the menu closes.
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Q4 plan' }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/workstreams/plan'));
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 
   it('opens a thread expanded over the Channel from its chip, and Collapse puts it beside the Channel', async () => {

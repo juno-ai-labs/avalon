@@ -66,3 +66,28 @@ export const statusDescription: Record<WorkstreamMarkerStatus, string> = {
 export function harnessMarkerStatus(status: HarnessStatus): Exclude<WorkstreamMarkerStatus, 'scheduled'> {
   return status === 'scheduled' ? 'running' : status;
 }
+
+const dayWeekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
+const dayMonthDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+
+/**
+ * The day something happened, as a heading names it: "Today", "Yesterday", a
+ * weekday within the week, then a short date. The Channel feed's day
+ * separators use it, the sidebar's activity time is it with today's entries
+ * given as a time, and a remembered fact's horizon reads it mid-sentence.
+ */
+export function formatDayLabel(value: string, now = new Date()): string {
+  const date = new Date(value);
+  const timestamp = date.getTime();
+  if (!Number.isFinite(timestamp)) return 'Unknown time';
+
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+  const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
+  const startOfWeekWindow = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime();
+
+  if (timestamp >= startOfToday && timestamp < startOfTomorrow) return 'Today';
+  if (timestamp >= startOfYesterday && timestamp < startOfToday) return 'Yesterday';
+  if (timestamp >= startOfWeekWindow && timestamp < startOfYesterday) return dayWeekday.format(date);
+  return dayMonthDay.format(date);
+}

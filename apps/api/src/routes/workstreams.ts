@@ -12,7 +12,7 @@ import {
 } from "@rally/contracts";
 import { SubstreamCreationResultSchema } from "@rally/contracts/substream-creation";
 import { SessionImportRunService, assertImportIdentity } from "../services/session-import-run-service";
-import { SidekickAttachmentsSchema } from "@rally/contracts";
+import { MemoryForgetResponseSchema, MemoryReviewSchema, SidekickAttachmentsSchema } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono, type Context } from "hono";
 import { requireSendableMessageLength, zValidator } from "../middleware/validation";
@@ -58,6 +58,8 @@ import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry, telemetryOperation
 const ChannelLinkSpacesSchema = z.strictObject({ spaceIds: z.array(SpaceIdSchema) });
 const idParam = z.object({ id: IdSchema });
 const participantParam = z.object({ id: IdSchema, userId: IdSchema });
+/** A Thread's Main (`"0"`, the default) or one of its Breakouts. */
+const conversationQuery = z.object({ substreamId: z.union([z.literal("0"), IdSchema]).default("0") });
 const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(250).default(100),
   // Timestamps are still accepted for clients holding pre-cutover cursors;
@@ -122,6 +124,19 @@ workstreamRoutes.get("/:id/sidekicks", zValidator("param", idParam), async (c) =
   c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).sidekickAttachments(c.req.valid("param").id))));
 workstreamRoutes.delete("/:id/sidekicks/:sidekickId", zValidator("param", z.object({ id: IdSchema, sidekickId: IdSchema })), async (c) =>
   c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).sidekickAttachments(c.req.valid("param").id, c.req.valid("param").sidekickId))));
+/**
+ * What Rally remembers about this Thread, or one of its Breakouts by
+ * `substreamId`: the facts whose subject is that conversation, as the person
+ * may see them from inside it. `docs/agent-memory.md` owns which and who may
+ * remove them.
+ */
+workstreamRoutes.get("/:id/memory", zValidator("param", idParam), zValidator("query", conversationQuery), async (c) =>
+  c.json(MemoryReviewSchema.parse(await new WorkstreamService(c.env, getAuth(c))
+    .getConversationMemory(c.req.valid("param").id, c.req.valid("query").substreamId))));
+workstreamRoutes.delete("/:id/memory/:factId", zValidator("param", z.object({ id: IdSchema, factId: z.string().min(1) })),
+  zValidator("query", conversationQuery), async (c) =>
+    c.json(MemoryForgetResponseSchema.parse(await new WorkstreamService(c.env, getAuth(c))
+      .forgetConversationMemory(c.req.valid("param").id, c.req.valid("param").factId, c.req.valid("query").substreamId))));
 
 
 

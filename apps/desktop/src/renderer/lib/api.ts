@@ -937,13 +937,43 @@ export class RallyApi {
     return result.personalSystemPrompt;
   }
 
-  /** What Rally remembers that this person may see: their own facts, then the Organization's and their Channels'. */
-  getMyMemoryReview(signal?: AbortSignal): Promise<MemoryReview> {
+  /** What Rally remembers about this person, newest first (`docs/agent-memory.md`). */
+  getMyMemory(signal?: AbortSignal): Promise<MemoryReview> {
     return this.request('/workspace/me/memory', { schema: MemoryReviewSchema, signal });
   }
 
   forgetMyMemory(factId: string): Promise<MemoryForgetResponse> {
     return this.request(`/workspace/me/memory/${encodeURIComponent(factId)}`, { method: 'DELETE', schema: MemoryForgetResponseSchema });
+  }
+
+  /** What Rally remembers about the Organization. */
+  getOrganizationMemory(signal?: AbortSignal): Promise<MemoryReview> {
+    return this.request('/workspace/memory', { schema: MemoryReviewSchema, signal });
+  }
+
+  forgetOrganizationMemory(factId: string): Promise<MemoryForgetResponse> {
+    return this.request(`/workspace/memory/${encodeURIComponent(factId)}`, { method: 'DELETE', schema: MemoryForgetResponseSchema });
+  }
+
+  /** What Rally remembers about a Thread (its Main, `"0"`) or one of its Breakouts. */
+  getConversationMemory(workstreamId: string, substreamId: string, signal?: AbortSignal): Promise<MemoryReview> {
+    return this.request(`/workstreams/${encodeURIComponent(workstreamId)}/memory?substreamId=${encodeURIComponent(substreamId)}`, { schema: MemoryReviewSchema, signal });
+  }
+
+  forgetConversationMemory(workstreamId: string, substreamId: string, factId: string): Promise<MemoryForgetResponse> {
+    return this.request(
+      `/workstreams/${encodeURIComponent(workstreamId)}/memory/${encodeURIComponent(factId)}?substreamId=${encodeURIComponent(substreamId)}`,
+      { method: 'DELETE', schema: MemoryForgetResponseSchema },
+    );
+  }
+
+  /** What Rally remembers about a Channel. */
+  getChannelMemory(spaceId: string, signal?: AbortSignal): Promise<MemoryReview> {
+    return this.request(`/spaces/${encodeURIComponent(spaceId)}/memory`, { schema: MemoryReviewSchema, signal });
+  }
+
+  forgetChannelMemory(spaceId: string, factId: string): Promise<MemoryForgetResponse> {
+    return this.request(`/spaces/${encodeURIComponent(spaceId)}/memory/${encodeURIComponent(factId)}`, { method: 'DELETE', schema: MemoryForgetResponseSchema });
   }
 
   getMyTimezone(signal?: AbortSignal): Promise<UserTimezone> {

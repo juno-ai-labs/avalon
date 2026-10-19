@@ -1,5 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { MemoryReviewFact } from '@rally/contracts';
 import { describe, expect, it, vi } from 'vitest';
 import { ChannelMenu } from '@rally/ui/components/conversation-menus';
 import { TitlePill } from '@rally/ui/components/title-pill';
@@ -91,6 +92,45 @@ describe('a title pill menu with levels', () => {
 
     openMenu();
     expect(await screen.findByRole('menuitem', { name: /^People/u })).toBeInTheDocument();
+  });
+
+  it('lists the conversation’s remembered facts in its Memory level, removing one and opening a source', async () => {
+    const remembered = (factId: string, text: string, removable: boolean): MemoryReviewFact => ({
+      factId, subjectKind: 'thread', subjectTitle: 'Launch', kind: 'standing', text,
+      validFrom: null, validUntil: null, recordedAt: '2026-10-01T12:00:00.000Z', conflict: false, derivedFrom: 'person',
+      source: { kind: 'breakout', workstreamId: 'c1', substreamId: 'b1', title: 'Pricing' }, removable,
+    });
+    const onOpen = vi.fn();
+    const onRemove = vi.fn();
+    const onOpenSource = vi.fn();
+    renderChannelPill({ memory: {
+      facts: [remembered('f1', 'Launch is on Nov 4.', true), remembered('f2', 'Legal signs off first.', false)],
+      onOpen, onRemove, onOpenSource,
+      removals: { f1: { pending: false, refusal: 'You can’t remove this.' } },
+    } });
+    openMenu();
+
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Memory\s*2/u }));
+    expect(await screen.findByRole('button', { name: 'Thread menu: Launch, Memory' })).toBeInTheDocument();
+    expect(onOpen).toHaveBeenCalledOnce();
+    expect(screen.getByText('Launch is on Nov 4.')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('You can’t remove this.');
+    // Remove only where the server allows it.
+    expect(screen.queryByRole('button', { name: 'Remove “Legal signs off first.”' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove “Launch is on Nov 4.”' }));
+    expect(onRemove).toHaveBeenCalledWith('f1');
+
+    fireEvent.click(screen.getAllByRole('menuitem', { name: 'Pricing' })[0]!);
+    expect(onOpenSource).toHaveBeenCalledWith({ kind: 'breakout', workstreamId: 'c1', substreamId: 'b1', title: 'Pricing' });
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+  });
+
+  it('counts None yet in the Memory row of a conversation with nothing remembered, and says so in its level', async () => {
+    renderChannelPill({ memory: { facts: [], onRemove: vi.fn() } });
+    openMenu();
+    expect(await screen.findByRole('menuitem', { name: /^Memory\s*None yet/u })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Memory/u }));
+    expect(await screen.findByText('Rally has not remembered anything about this thread yet.')).toBeInTheDocument();
   });
 
   it('pins and unpins from a switch in More', async () => {
