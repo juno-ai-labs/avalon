@@ -784,8 +784,11 @@ column catalog; what follows is only what WorkspaceDO still holds.
   `memory_table_columns`, `memory_table_rows`, and `memory_table_cells` store typed
   collections with natural-key deduplication and targeted queries. Prose
   memory is `memory_facts`, keyed by subject and carrying its source
-  conversations, with `memory_sweep_receipts` and `memory_fact_receipts`
-  beside it ([`agent-memory.md`](agent-memory.md#data-model)); the retired
+  conversations, with `memory_sweep_receipts`, `memory_fact_receipts`, and the
+  digest copy-sync lane's `memory_digest_holders`, `memory_digest_holder_facts`,
+  `memory_digest_sync`, `memory_digest_sync_state` and `memory_revision` beside it (WorkspaceDO migration 117; each
+  conversation object holds its `memory_digest_copies`, migration 77)
+  ([`agent-memory.md`](agent-memory.md#data-model)); the retired
   `memory_items`, `memory_mutations` and `memory_index_outbox` were imported
   and dropped by WorkspaceDO migration 116. A
   Sidekick's chat and its runs resolve one scope of kind `sidekick` (stored as

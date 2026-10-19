@@ -106,6 +106,8 @@ function fixture(options: {
     outcome: "applied",
     receipt: { conversation: WORKSTREAM_ID, fromSeq: request.fromSeq, toSeq: request.toSeq, appliedAt: NOW, operationCount: request.operations.length },
     refused: [],
+    revision: 1,
+    markedHolders: false,
   });
   const workspaceStub = { memorySweepCandidates: candidates, applyMemorySweep: applied };
   const workspaces: Env["WORKSPACE_DOS"] = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
