@@ -13,7 +13,7 @@ import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/c
 import { TitleMenuItem, TitlePillAction, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { IconCloudDownload, IconLock, IconPalette, IconPlus } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { ChannelComposer } from '../components/channel-composer';
@@ -32,6 +32,7 @@ import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { copySpaceLink } from '../lib/copy-workstream-link';
 import { ChannelPaneContextValue, OPEN_EXPANDED, channelArtifactRoute, channelRoute, revealChannelMessageRequest, threadRoute, usePaneExpansion, type ChannelPaneContext } from '../lib/navigation-routes';
 import { PaneVisibility } from '../lib/pane-visibility';
+import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import { useNow } from '../lib/clock';
 import { formatDayLabel } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
@@ -151,8 +152,8 @@ function useChannel(channelId: string): SpaceSummary | undefined {
 }
 
 type FeedRow =
-  | { kind: 'thread'; placedAt: string; thread: WorkstreamSummary }
-  | { kind: 'message'; placedAt: string; message: ChannelMessage };
+  | { kind: 'thread'; placedAt: string; attentionSequenceNumber?: number; thread: WorkstreamSummary }
+  | { kind: 'message'; placedAt: string; attentionSequenceNumber?: number; message: ChannelMessage };
 
 /** A thread card's element id in the feed, so a merge can bring its thread into view. */
 function feedThreadElementId(threadId: string): string {
@@ -163,19 +164,23 @@ function feedRowId(row: FeedRow): string {
   return row.kind === 'thread' ? row.thread.id : row.message.id;
 }
 
+function containsReadBoundary(rows: readonly FeedRow[], firstUnread: number | null): boolean {
+  return firstUnread === null || rows.some((row) => row.attentionSequenceNumber !== undefined
+    && row.attentionSequenceNumber > 0 && row.attentionSequenceNumber <= firstUnread);
+}
+
 /**
  * What to acknowledge for a Channel the reader has open, or null when there is
- * nothing to send: the newest loaded placement, when it is past the cached
- * read position. The feed is read top to bottom down to now, so the newest
- * placement is on screen when the Channel opens; there is no per-row
- * visibility tracking, deliberately.
+ * nothing to send: the newest visible placement, when it is past the cached
+ * read position. Only reaching the end acknowledges the whole server waterline,
+ * including placements no longer listed in the feed.
  */
 export function channelReadAcknowledgement(
-  newestLoadedSequence: number,
+  visibleSequence: number,
   stats: Pick<ChannelStats, 'readThroughSequenceNumber'>,
 ): { readThroughSequenceNumber: number } | null {
-  if (newestLoadedSequence === 0 || newestLoadedSequence <= stats.readThroughSequenceNumber) return null;
-  return { readThroughSequenceNumber: newestLoadedSequence };
+  if (visibleSequence === 0 || visibleSequence <= stats.readThroughSequenceNumber) return null;
+  return { readThroughSequenceNumber: visibleSequence };
 }
 
 /** Replace one Channel's row in the channel-stats cache. */
@@ -191,6 +196,9 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
 }): React.JSX.Element {
   const { api } = useAppSession();
   const navigate = useNavigate();
+  const location = useLocation();
+  const reveal = revealChannelMessageRequest(location.state);
+  const [finishedRevealKey, setFinishedRevealKey] = useState<string | null>(null);
   const { active } = useSpaceDirectories();
   const space = useChannel(channelId);
   const live = useWorkstreamsQuery();
@@ -231,9 +239,8 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
   // same gate a conversation's read acknowledgement uses. One request per
   // position in flight; a failure leaves the sidebar dot standing and is not
   // retried, so an unread Channel that will not clear is what gets noticed.
-  // The first page carries the Channel's latest number as it was read, which
-  // covers a newest placement since removed or archived: nothing listed shows
-  // it, and acknowledging only what is listed would leave the dot standing.
+  // At the end, the first page's latest number also covers placements since
+  // removed or archived. Elsewhere only visible rows advance the waterline.
   const newestLoadedSequence = useMemo(() => Math.max(0, ...(feed.data?.pages ?? [])
     .flatMap((page) => [
       ...page.items.map((item) => item.attentionSequenceNumber ?? 0),
@@ -260,37 +267,41 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
   useEffect(() => { ackInFlight.current = null; }, [channelId]);
   const acknowledgeRead = useCallback((): void => {
     if (!api || !stats || feedCovered || document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    const element = feedScroll.current;
+    if (!element || element.clientHeight === 0 || anchoredChannel.current !== channelId) return;
+    const viewport = element.getBoundingClientRect();
+    const atEnd = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+    const visibleSequence = atEnd ? newestLoadedSequence : Math.max(0, ...Array.from(
+      element.querySelectorAll<HTMLElement>('[data-attention-sequence]'),
+    ).filter((row) => {
+      const bounds = row.getBoundingClientRect();
+      return bounds.bottom > viewport.top && bounds.top < viewport.bottom;
+    }).map((row) => Number(row.dataset.attentionSequence)));
     // Activity is told what is on screen whether or not the Channel's own read
     // position needs moving, once per Channel and again when it rises.
     const reported = activityReportedRef.current;
-    if (newestLoadedSequence > 0 && (reported?.channelId !== channelId || newestLoadedSequence > reported.through)) {
-      activityReportedRef.current = { channelId, through: newestLoadedSequence };
+    if (visibleSequence > 0 && (reported?.channelId !== channelId || visibleSequence > reported.through)) {
+      activityReportedRef.current = { channelId, through: visibleSequence };
       reportActivityEvent(api, queryClient, {
         kind: 'read',
         subject: { kind: 'channel', channelId },
-        through: newestLoadedSequence,
+        through: visibleSequence,
       });
     }
-    const pending = channelReadAcknowledgement(newestLoadedSequence, stats);
+    const pending = channelReadAcknowledgement(visibleSequence, stats);
     if (!pending) return;
     const key = `${channelId}:${pending.readThroughSequenceNumber}`;
     if (ackInFlight.current === key) return;
     ackInFlight.current = key;
-    const previous = stats;
-    queryClient.setQueryData<ChannelStatsList>(CHANNEL_STATS_QUERY_KEY, (list) =>
-      writeChannelStats(list, channelId, (row) => ({ ...row, hasUnread: false })));
     void api.acknowledgeChannelRead(channelId, pending.readThroughSequenceNumber)
       .then((updated) => {
         queryClient.setQueryData<ChannelStatsList>(CHANNEL_STATS_QUERY_KEY, (list) =>
-          writeChannelStats(list, channelId, () => updated));
+          writeChannelStats(list, channelId, (row) => updated.readThroughSequenceNumber >= row.readThroughSequenceNumber ? updated : row));
       })
-      .catch(() => {
-        // Put the dot back: the server did not record the read.
-        queryClient.setQueryData<ChannelStatsList>(CHANNEL_STATS_QUERY_KEY, (list) =>
-          writeChannelStats(list, channelId, (row) => ({ ...row, hasUnread: previous.hasUnread })));
-      });
-  }, [api, channelId, feedCovered, newestLoadedSequence, queryClient, stats]);
-  useVisibleReadAcknowledgement(acknowledgeRead);
+      // Leave the authoritative dot standing when the read was not recorded.
+      .catch(() => undefined);
+  }, [api, channelId, feedCovered, newestLoadedSequence, queryClient, rows, stats]);
+  const scheduleRead = useVisibleReadAcknowledgement(acknowledgeRead);
   const members = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
@@ -306,34 +317,93 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
     () => emailMentionDirectory(members.data ?? NO_MEMBERS, invitees.data ?? NO_INVITEES),
     [invitees.data, members.data],
   );
-  // The feed reads down to now, so it opens at its newest row, beside the
-  // composer, and stays there as threads arrive, unless the reader has
-  // scrolled up to read something older. Loading an earlier page keeps the
-  // rows they were looking at where they were.
+  // Freeze the server's first-unread position for this visit before any visible
+  // row is acknowledged. Later stats pushes must not move the reader again.
   const feedScroll = useRef<HTMLDivElement>(null);
+  const feedVisible = useContext(ConversationVisibilityContext);
   const atNewest = useRef(true);
+  const scrollChannel = useRef(channelId);
   const anchoredChannel = useRef<string | null>(null);
+  const heldScrollTop = useRef(0);
+  const restoreScroll = useRef(false);
   const previousHeight = useRef(0);
   const earlierPages = feed.data?.pages.length ?? 0;
   const previousPages = useRef(earlierPages);
+  const openingRead = useRef<{ channelId: string; firstUnread: number | null } | null>(null);
+  const [positionedChannel, setPositionedChannel] = useState<string | null>(null);
+  const { fetchNextPage, hasNextPage, isFetching, isSuccess: feedLoaded, isFetchNextPageError } = feed;
   useLayoutEffect(() => {
+    // Even an empty or still-loading Channel starts a new visit. Otherwise
+    // A -> empty B -> A can mistake A's first page for a history prepend.
+    if (scrollChannel.current !== channelId) {
+      scrollChannel.current = channelId;
+      anchoredChannel.current = null;
+      atNewest.current = true;
+      heldScrollTop.current = 0;
+      previousHeight.current = 0;
+      previousPages.current = earlierPages;
+      openingRead.current = null;
+    }
     const element = feedScroll.current;
     if (!element) return;
+    // A pane hidden behind an expanded thread has no layout. Neither its
+    // zero dimensions nor its scroll events describe the reader's position.
+    if (!feedVisible || element.clientHeight === 0) {
+      restoreScroll.current = true;
+      return;
+    }
+    if (openingRead.current === null && channelStats.data !== undefined) {
+      openingRead.current = { channelId, firstUnread: stats?.firstUnreadSequenceNumber ?? null };
+    }
     const loadedEarlier = earlierPages > previousPages.current;
     previousPages.current = earlierPages;
     if (anchoredChannel.current !== channelId) {
-      if (rows.length === 0) return;
+      if (reveal && finishedRevealKey !== location.key) return;
+      if (!openingRead.current || !feedLoaded) return;
+      const firstUnread = openingRead.current.firstUnread;
+      if (hasNextPage && !containsReadBoundary(rows, firstUnread)) return;
       anchoredChannel.current = channelId;
-      element.scrollTop = element.scrollHeight;
+      const ordered = [...rows].reverse();
+      const unreadIndex = firstUnread === null ? -1 : ordered.findIndex((row) =>
+        row.attentionSequenceNumber !== undefined && row.attentionSequenceNumber >= firstUnread);
+      const target = unreadIndex < 0 ? null : element.querySelector<HTMLElement>(
+        `[data-feed-row-id="${CSS.escape(feedRowId(ordered[Math.max(0, unreadIndex - 1)]!))}"]`,
+      );
+      element.scrollTop = target === null ? element.scrollHeight
+        : element.scrollTop + target.getBoundingClientRect().top - element.getBoundingClientRect().top;
+      atNewest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+      setPositionedChannel(channelId);
+      scheduleRead();
     } else if (loadedEarlier) {
-      element.scrollTop += element.scrollHeight - previousHeight.current;
+      element.scrollTop = heldScrollTop.current + element.scrollHeight - previousHeight.current;
     } else if (atNewest.current) {
       element.scrollTop = element.scrollHeight;
+    } else if (restoreScroll.current) {
+      element.scrollTop = heldScrollTop.current;
     }
+    restoreScroll.current = false;
+    heldScrollTop.current = element.scrollTop;
     previousHeight.current = element.scrollHeight;
     // `space` too: the feed element first mounts when the Channel list arrives,
     // which may be after the rows were already in hand.
-  }, [channelId, earlierPages, rows, space]);
+  }, [channelId, channelStats.data, earlierPages, feedLoaded, feedVisible, hasNextPage,
+    finishedRevealKey, location.key, reveal?.messageId, rows, scheduleRead, space, stats]);
+  // useInfiniteQuery updates its observer's address in a passive effect. A
+  // layout-effect fetch during a route switch can still page the previous
+  // Channel, so network work follows that update; positioning stays before paint.
+  useEffect(() => {
+    if (!feedVisible || !feedLoaded || isFetching || isFetchNextPageError || !hasNextPage
+      || !feedScroll.current || feedScroll.current.clientHeight === 0) return;
+    if (reveal && finishedRevealKey !== location.key) {
+      if (reveal.searchHistory && !feedScroll.current.querySelector(`[data-message-id="${CSS.escape(reveal.messageId)}"]`)) {
+        void fetchNextPage();
+      }
+      return;
+    }
+    if (anchoredChannel.current === channelId || openingRead.current?.channelId !== channelId) return;
+    if (!containsReadBoundary(rows, openingRead.current.firstUnread)) void fetchNextPage();
+  }, [channelId, feedLoaded, feedVisible, fetchNextPage, finishedRevealKey, hasNextPage, isFetching,
+    isFetchNextPageError, location.key, reveal?.messageId, reveal?.searchHistory, rows, stats]);
   // A navigation onto one message brings it into view once per navigation,
   // and lights it briefly so the eye lands on it. One just posted (a merge) is
   // revealed once the feed lists it as its newest row. Newest, not merely
@@ -342,28 +412,34 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
   // merge divider) is revealed wherever it is, paging back until it is
   // loaded; until the feed is settled a missing row proves nothing, since a
   // Channel opened from its cache is still refetching.
-  const location = useLocation();
-  const reveal = revealChannelMessageRequest(location.state);
   const revealedFor = useRef<string | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
-  const { fetchNextPage, hasNextPage, isFetching, isSuccess: feedLoaded } = feed;
   useLayoutEffect(() => {
     if (!reveal || revealedFor.current === location.key) return;
+    if (!feedVisible || !feedScroll.current || feedScroll.current.clientHeight === 0) return;
     const target = feedScroll.current?.querySelector(`[data-message-id="${CSS.escape(reveal.messageId)}"]`);
     if (!reveal.searchHistory) {
       if (rows[0] === undefined || feedRowId(rows[0]) !== reveal.messageId || !target) return;
     } else if (!target) {
       if (!feedLoaded || isFetching || !feedScroll.current) return;
-      if (!hasNextPage) revealedFor.current = location.key;
-      else void fetchNextPage();
+      if (!hasNextPage) {
+        revealedFor.current = location.key;
+        setFinishedRevealKey(location.key);
+      }
       return;
     } else {
       atNewest.current = false;
     }
     revealedFor.current = location.key;
+    setFinishedRevealKey(location.key);
     target.scrollIntoView({ block: 'center' });
+    anchoredChannel.current = channelId;
+    heldScrollTop.current = feedScroll.current.scrollTop;
+    setPositionedChannel(channelId);
+    scheduleRead();
     setHighlightedId(reveal.messageId);
-  }, [feedLoaded, fetchNextPage, hasNextPage, isFetching, location.key, reveal?.messageId, reveal?.searchHistory, rows, space]);
+  }, [channelId, feedLoaded, feedVisible, fetchNextPage, hasNextPage, isFetching, location.key,
+    reveal?.messageId, reveal?.searchHistory, rows, scheduleRead, space]);
   useEffect(() => {
     if (highlightedId === null) return;
     const timer = window.setTimeout(() => setHighlightedId(null), 2_400);
@@ -388,12 +464,15 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
         className="channel-feed transcript-scroll"
         onScroll={(event) => {
           const element = event.currentTarget;
+          if (!feedVisible || element.clientHeight === 0) return;
+          heldScrollTop.current = element.scrollTop;
           atNewest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+          scheduleRead();
         }}
         ref={feedScroll}
       >
         {/* Newest nearest the composer: the list reads down to now. */}
-        <EmailMentionContext.Provider value={emailMentions}><ol aria-label={`${space.name} feed`} className="channel-feed-list">
+        <EmailMentionContext.Provider value={emailMentions}><ol aria-busy={positionedChannel !== channelId} aria-label={`${space.name} feed`} className="channel-feed-list">
           {feed.hasNextPage && <li className="channel-feed-more">
             <Button disabled={feed.isFetchingNextPage} onClick={() => void feed.fetchNextPage()}>Show earlier</Button>
           </li>}
@@ -403,6 +482,7 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
             const day = new Date(row.placedAt).toDateString();
             const card = row.kind === 'thread'
               ? <ThreadCard
+                attentionSequenceNumber={row.attentionSequenceNumber}
                 author={row.thread.createdByUserId ? memberById.get(row.thread.createdByUserId) : undefined}
                 key={row.thread.id}
                 members={members.data ?? NO_MEMBERS}
@@ -413,6 +493,7 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
               />
               : row.message.merge
                 ? <MergeCard
+                  attentionSequenceNumber={row.attentionSequenceNumber}
                   author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
                   focused={row.message.id === highlightedId}
                   key={row.message.id}
@@ -424,6 +505,7 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
                   placedAt={row.placedAt}
                 />
                 : <MessageCard
+                  attentionSequenceNumber={row.attentionSequenceNumber}
                   author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
                   focused={row.message.id === highlightedId}
                   key={row.message.id}
@@ -581,7 +663,8 @@ const NO_MEMBERS: WorkspaceMember[] = [];
  * Threads sit to the trailing side, as what people started; nothing else is
  * said in a Channel.
  */
-function ThreadCard({ author, members, onOpen, open, placedAt, thread }: {
+function ThreadCard({ attentionSequenceNumber, author, members, onOpen, open, placedAt, thread }: {
+  attentionSequenceNumber: number | undefined;
   author: WorkspaceMember | undefined;
   members: readonly WorkspaceMember[];
   onOpen: (threadId: string) => void;
@@ -609,7 +692,7 @@ function ThreadCard({ author, members, onOpen, open, placedAt, thread }: {
   // names in it are found again the way the send path found them, and drawn
   // by the renderer the message itself uses.
   const summary = useMemo(() => typedMentionRendering(thread.objective ?? '', members), [members, thread.objective]);
-  return <li className="channel-feed-item" id={feedThreadElementId(thread.id)}>
+  return <li className="channel-feed-item" data-attention-sequence={attentionSequenceNumber} data-feed-row-id={thread.id} id={feedThreadElementId(thread.id)}>
     <ConversationCard
       conversation={mark}
       meta={<>
@@ -629,7 +712,8 @@ function ThreadCard({ author, members, onOpen, open, placedAt, thread }: {
  * A message in the Channel itself, outside any thread, by whoever said it:
  * Rally, or a member. Not a button, because there is nothing to open.
  */
-function MessageCard({ author, focused, members, message, placedAt }: {
+function MessageCard({ attentionSequenceNumber, author, focused, members, message, placedAt }: {
+  attentionSequenceNumber: number | undefined;
   /** The member who said it, once the directory has them; unused for Rally. */
   author: WorkspaceMember | undefined;
   /** A navigation asked for this message; see `revealChannelMessageState`. */
@@ -640,7 +724,7 @@ function MessageCard({ author, focused, members, message, placedAt }: {
 }): React.JSX.Element {
   const rally = message.author.kind === 'rally';
   const body = useMemo(() => typedMentionRendering(message.body, members), [members, message.body]);
-  return <li className={clsx('channel-feed-item is-message', focused && 'is-focused')} data-message-id={message.id}>
+  return <li className={clsx('channel-feed-item is-message', focused && 'is-focused')} data-attention-sequence={attentionSequenceNumber} data-feed-row-id={message.id} data-message-id={message.id}>
     <div className="channel-feed-message">
       {rally ? <RallyAvatar /> : author && <Avatar member={author} title={null} />}
       <div className="channel-feed-message-body">
@@ -666,7 +750,8 @@ function MessageCard({ author, focused, members, message, placedAt }: {
  * own panel: the merge shared it with the Channel, so everyone who reads the
  * Channel may read it, whether or not they can open the thread.
  */
-function MergeCard({ author, focused, members, merge, message, onOpenArtifact, onOpenThread, placedAt }: {
+function MergeCard({ attentionSequenceNumber, author, focused, members, merge, message, onOpenArtifact, onOpenThread, placedAt }: {
+  attentionSequenceNumber: number | undefined;
   author: WorkspaceMember | undefined;
   /** A navigation asked for this merge: a source's divider, or the merge just made. */
   focused: boolean;
@@ -710,7 +795,7 @@ function MergeCard({ author, focused, members, merge, message, onOpenArtifact, o
   };
   // A thread this reader cannot open is named only as private: no title, no
   // quote line, nothing to open.
-  return <li className={clsx('channel-feed-item is-message is-merge', focused && 'is-focused')} data-message-id={message.id}>
+  return <li className={clsx('channel-feed-item is-message is-merge', focused && 'is-focused')} data-attention-sequence={attentionSequenceNumber} data-feed-row-id={message.id} data-message-id={message.id}>
     <MergeMessage
       label={`${merge.private ? 'A private thread' : merge.title || 'A thread'}, merged by ${merger}`}
       mergedBy={<>{author && <Avatar member={author} size="small" title={null} />}{merger}</>}

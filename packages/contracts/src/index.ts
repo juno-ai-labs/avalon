@@ -1278,10 +1278,10 @@ export const ChannelFeedPageSchema = z.strictObject({
   nextCursor: z.string().min(1).nullable(),
   /**
    * The Channel's latest attention sequence number as the first page was read
-   * (`ChannelStats.latestAttentionSequenceNumber`); null on a later page. Every
-   * placement at or below it is on that page, no longer listed, or not the
-   * viewer's to see, so a reader of the first page has read the Channel
-   * through it.
+   * (`ChannelStats.latestAttentionSequenceNumber`); null on a later page.
+   * A reader reaching the newest end may acknowledge through it, including
+   * placements no longer listed. Loading this page alone does not mean its
+   * rows have been seen: a visit can open at an older read waterline.
    */
   latestAttentionSequenceNumber: z.number().int().nonnegative().nullable(),
 });
