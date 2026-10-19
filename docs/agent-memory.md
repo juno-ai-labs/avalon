@@ -486,37 +486,44 @@ authority. `retracted_by` records who forgot a fact.
 
 ## Changelog
 
-### 2026-10-19 — A person reviews and removes what Rally remembers in their Personal Channel
+### 2026-10-19 — A person reviews and removes what Rally remembers where it lives
 
-**What changed:** PRD rollout step 3, the last. `GET` and `DELETE
-/workspace/me/memory` and the `MemoryReview` contract; `reviewMemoryFacts` and
-`forgetReviewedMemoryFact` on `WorkspaceDO`, the latter a forget with no
-conversation; the **What Rally remembers** panel in the Personal Channel. The
-PRD's `state.md` moves to completed.
+**What changed:** PRD rollout step 3, the last. Four reads and four removals
+over one `MemoryReview` contract: `/workspace/me/memory` (the person's own
+facts), `/workspace/memory` (the Organization's), `/workstreams/:id/memory`
+(a Thread's or Breakout's) and `/spaces/:id/memory` (a Channel's);
+`reviewMemoryFacts` on `WorkspaceDO` takes a scope and computes `removable`
+through `mayForget`, and `forgetReviewedMemoryFact` is a forget with or
+without a conversation. The desktop adds a **Memory** level to the title-pill
+pop-out of a Channel, a Thread and a Breakout, and sections under Settings →
+Account and Settings → Organization. The PRD's `state.md` moves to completed.
 
-**Why:** Memory the person cannot see is memory they cannot trust or correct;
-the PRD put the review surface in the Personal Channel because that is the one
-place that is theirs alone, and listed it after the digest because the digest is
-what makes a wrong fact cost something. Own facts are listed whether or not the
-source is still openable, because a fact about a person they can no longer
-reach is exactly the one they most need to be able to remove.
+**Why:** Memory the person cannot see is memory they cannot trust or correct,
+and the digest is what makes a wrong fact cost something. The product owner
+placed the surface where each kind of fact lives: a conversation's facts beside
+the conversation, a person's with their account, the Organization's with the
+Organization, so nobody has to know where a fact was filed to find it. Own
+facts are listed whether or not the source is still openable, because a fact
+about a person they can no longer reach is exactly the one they most need to be
+able to remove.
 
-**Considered and rejected:** A review surface in Settings: the facts are about
-the person's work, not their account, and the Personal Channel already carries
-what Rally does for them alone. Letting any member remove a shared fact they can
-see: design decision 14 keeps forgetting apart from seeing, so a Channel's or
-the Organization's facts take an administrator here as in the tool. Showing
-retracted facts with a restore action: nothing is deleted, so a restore is
-possible, but nobody has asked for it and the chain is kept for that day.
+**Considered and rejected:** One panel in the Personal Channel listing
+everything the person may see, built first and removed in the same pull
+request: it put a Thread's facts a screen away from the Thread and the
+Organization's in a place that is one person's alone. Letting any member remove
+a shared fact they can see: design decision 14 keeps forgetting apart from
+seeing, so a Channel's or the Organization's facts take an administrator here
+as in the tool, while a Thread's take a participant, as `memory_forget` already
+allows. Showing retracted facts with a restore action: nothing is deleted, so a
+restore is possible, but nobody has asked for it and the chain is kept for that
+day.
 
-**Consequences:** The panel takes a fourth grid row in the Channel screen,
-capped at 40% of the pane and scrolling past that (a layout number, not a
-limit). A removal reaches digest copies through the copy-sync lane, so a run
-that starts in the moments before can see the fact once more. A guest has no
-review surface because the `/workspace` mount is members-only; if guests ever
-hold `person` facts, the route needs its own mount.
-
-Shipped in the step-3 pull request on top of the step-2 one.
+**Consequences:** A route never decides who sees or removes a fact; it passes a
+scope and the store answers through its one visibility rule and one removal
+rule. A removal reaches digest copies through the copy-sync lane, so a run that
+starts in the moments before can see the fact once more. A guest has no review
+surface because the `/workspace` mount is members-only; if guests ever hold
+`person` facts the route needs its own mount.
 
 ### 2026-10-19 — Every activation starts with a digest rendered from its conversation's own copy
 
