@@ -88,10 +88,10 @@ it names, actions and handlers. `TitlePillHeader` draws its ancestor crumbs as o
 at every width, whenever every level carries a `bridge` entry; pills are the
 fallback only while a level has none.
 `labelLast` writes the last object's name beside its mark and stretches that
-mark into a pill fitted to the measured name. The header sets it on every
-bridge so the nearest crumb is named on desktop; at phone width (640px and
-below) the stylesheet hides the name, the measured width drops to nothing, and
-the mark closes back to a circle.
+mark into a pill fitted to the full name, rounded up and constrained to the
+available space. The header sets it on every bridge so the nearest crumb is
+named on desktop; at phone width (640px and below) the stylesheet hides the
+name, the measured width drops to nothing, and the mark closes back to a circle.
 A mark may carry a `menu` of the objects it stands for and open it in place of
 `onSelect`. The header uses that at phone width: past two crumbs, all but the
 nearest fold into one "…" mark (`Show path`) that lists them, so the bridge
