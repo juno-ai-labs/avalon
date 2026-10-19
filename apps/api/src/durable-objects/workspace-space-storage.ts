@@ -711,7 +711,13 @@ function waitingForReaderSql(directory: "directory" | "breakout", viewer: "viewe
   return `(${viewer}.manual_unread_from_ordinal IS NOT NULL
        OR ${directory}.latest_attention_ordinal > ${seen}
        OR ${viewer}.unseen = 1
-       OR COALESCE(${viewer}.latest_mention_attention_ordinal, 0) > ${seen})`;
+       OR ${mentionedSql(directory, viewer)})`;
+}
+
+/** A mention of this person above their read point: the client's `youAreMentioned`. */
+function mentionedSql(directory: "directory" | "breakout", viewer: "viewer" | "breakout_viewer"): string {
+  const seen = `COALESCE(${viewer}.seen_attention_ordinal, ${directory}.unread_tracking_start_ordinal)`;
+  return `COALESCE(${viewer}.latest_mention_attention_ordinal, 0) > ${seen}`;
 }
 
 // Who may be told a Space, a Channel or a Breakout exists is decided by the
@@ -2863,9 +2869,10 @@ export class WorkspaceSpaceStorage {
   /**
    * How many conversations wait for this reader across the Organization: each
    * Main and each Breakout they take part in that is unread, unseen or
-   * mentions them, in unarchived, non-system Channels. Taking part is what puts
-   * a conversation in the Threads list, so a workspace-wide thread somebody
-   * else is working in does not count. The sidebar's Threads badge shows the
+   * mentions them, in unarchived, non-system Channels, plus each Main that
+   * mentions them without their taking part: a mention in an
+   * Organization-wide thread does not seat the person mentioned. Otherwise a
+   * workspace-wide thread somebody else is working in does not count. The sidebar's Threads badge shows the
    * same number from the rows it holds; this is that count for a reader whose
    * sidebar is not open, which is what an APNs `badge` needs.
    */
@@ -2880,7 +2887,7 @@ export class WorkspaceSpaceStorage {
         WHERE directory.archived_at IS NULL
           AND directory.system_kind IS NULL
           AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
-          AND viewer.is_participant = 1
+          AND (viewer.is_participant = 1 OR ${mentionedSql("directory", "viewer")})
           AND ${waitingForReaderSql("directory", "viewer")}`,
       viewer.userId,
     ).one().count;
