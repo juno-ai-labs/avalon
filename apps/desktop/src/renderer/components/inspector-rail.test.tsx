@@ -844,6 +844,54 @@ describe('resource detail content preview', () => {
     expect(onOpenResourceVersion).toHaveBeenCalledWith(note, version);
   });
 
+  it.each([
+    ['archive.zip', 'application/zip'],
+    ['report.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+  ])('downloads original bytes for %s rather than its readable preview', async (title, mimeType) => {
+    const resource = { ...note, title, mimeType };
+    const originals = vi.fn(async () => new Blob(['original file bytes'], { type: mimeType }));
+    const previews = vi.fn(async () => new Blob(['# Extracted prose'], { type: 'text/markdown' }));
+    const urls = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:download');
+    const clicked: { name: string; href: string }[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      clicked.push({ name: this.download, href: this.href });
+    });
+    render(<Tooltip.Provider><InspectorRail resource={resource} panel={{ resourceId: note.id, onClose: vi.fn() }} loadResourceContent={previews} loadOriginalResourceContent={originals} /></Tooltip.Provider>);
+    await screen.findByRole('heading', { name: 'Extracted prose' });
+    fireEvent.pointerDown(screen.getByRole('button', { name: `Artifact menu: ${title}` }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Download' }));
+
+    await waitFor(() => expect(clicked).toEqual([{ name: title, href: 'blob:download' }]));
+    expect(originals).toHaveBeenCalledExactlyOnceWith(note.id);
+    const saved = urls.mock.calls[0]![0] as Blob;
+    const bytes = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.readAsText(saved);
+    });
+    expect(bytes).toBe('original file bytes');
+    expect(saved.type).toBe(mimeType);
+  });
+
+  it('reports a failed original-file download', async () => {
+    render(<Tooltip.Provider><InspectorRail resource={note} panel={{ resourceId: note.id, onClose: vi.fn() }} loadOriginalResourceContent={async () => { throw new Error('offline'); }} /></Tooltip.Provider>);
+    fireEvent.pointerDown(screen.getByRole('button', { name: `Artifact menu: ${note.title}` }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Download' }));
+    expect(await screen.findByText('Download failed. Please try again.')).toBeVisible();
+  });
+
+  it.each([
+    ['source.txt', 'text/plain'],
+    ['source.py', 'text/x-python'],
+    ['source.json', 'application/json'],
+  ])('preserves literal text in %s', async (title, mimeType) => {
+    render(<Tooltip.Provider><InspectorRail resource={{ ...note, title, mimeType }} panel={{ resourceId: note.id, onClose: vi.fn() }} loadResourceContent={async () => new Blob(['# literal\n  **unchanged**\n    third line'], { type: mimeType })} /></Tooltip.Provider>);
+    const text = await screen.findByText(/# literal/);
+    expect(text.closest('pre')).not.toBeNull();
+    expect(text.closest('pre')?.textContent).toBe('# literal\n  **unchanged**\n    third line');
+    expect(screen.queryByRole('heading', { name: 'literal' })).toBeNull();
+  });
+
   it('pins, copies a link to, and renames an artifact from its title pill menu', async () => {
     const onPin = vi.fn();
     const copy = vi.fn(async () => undefined);

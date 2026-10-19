@@ -175,6 +175,63 @@ describe('useCitations', () => {
     expect(onOpenPreview).not.toHaveBeenCalled();
   });
 
+  it('opens a generated artifact in the inspector from its id or alias', () => {
+    const onOpenResourceDetails = vi.fn();
+    const onOpenPreview = vi.fn();
+    const file = { ...DECK, id: 'generated-report', resourceType: 'generated_file', slug: 'report-alias', direction: 'artifact' as const, relationshipType: 'generated' as const };
+    const { result } = renderHook(() => useProductionCitations({ resources: [file], onOpenPreview, onOpenResourceDetails }));
+
+    act(() => result.current.openPreview('generated-report', document.body));
+    act(() => result.current.open({ scheme: 'resource', resourceId: 'report-alias' }));
+
+    expect(onOpenResourceDetails.mock.calls).toEqual([
+      ['generated-report', document.body],
+      ['generated-report', document.body],
+    ]);
+    expect(onOpenPreview).not.toHaveBeenCalled();
+  });
+
+  it('keeps generated files out of source attachment galleries', () => {
+    const source = { ...DECK, id: 'source-image', mimeType: 'image/png' };
+    const artifact = { ...source, id: 'generated-image', resourceType: 'generated_file', direction: 'artifact' as const };
+    const onOpenPreview = vi.fn<(preview: AttachmentPreview) => void>();
+    const { result } = renderHook(() => useCitations({ resources: [source, artifact], onOpenPreview }));
+
+    act(() => result.current.openPreview(source.id, document.body, [artifact.id, source.id], 1));
+
+    expect(onOpenPreview.mock.calls[0]![0].gallery?.map((member) => member.resourceId)).toEqual(['source-image']);
+    expect(onOpenPreview.mock.calls[0]![0].galleryIndex).toBe(0);
+  });
+
+  it('preserves the selected occurrence after filtering generated gallery entries', () => {
+    const resources = ['A', 'B', 'C'].map((id) => ({ ...DECK, id, mimeType: 'image/png' }));
+    const artifact = { ...DECK, id: 'generated', resourceType: 'generated_file', direction: 'artifact' as const };
+    const onOpenPreview = vi.fn<(preview: AttachmentPreview) => void>();
+    const { result } = renderHook(() => useCitations({ resources: [artifact, ...resources], onOpenPreview }));
+
+    act(() => result.current.openPreview('A', document.body, ['generated', 'A', 'B', 'A', 'C'], 3));
+
+    const preview = onOpenPreview.mock.calls[0]![0];
+    expect(preview.gallery?.map((member) => member.resourceId)).toEqual(['A', 'B', 'A', 'C']);
+    expect(preview.galleryIndex).toBe(2);
+  });
+
+  it('keeps a generated file attached as a source in attachment previews and updates when its direction changes', () => {
+    const source = { ...DECK, id: 'attached-image', resourceType: 'generated_file', mimeType: 'image/png' };
+    const onOpenPreview = vi.fn<(preview: AttachmentPreview) => void>();
+    const onOpenResourceDetails = vi.fn();
+    const { result, rerender } = renderHook(({ resources }) => useProductionCitations({ resources, onOpenPreview, onOpenResourceDetails }), { initialProps: { resources: [source] } });
+
+    act(() => result.current.openPreview(source.id, document.body, [source.id], 0));
+    expect(onOpenPreview.mock.calls[0]![0].gallery?.map((member) => member.resourceId)).toEqual(['attached-image']);
+    expect(onOpenResourceDetails).not.toHaveBeenCalled();
+
+    rerender({ resources: [{ ...source, direction: 'artifact' }] });
+    act(() => result.current.openPreview(source.id, document.body));
+    expect(onOpenResourceDetails).toHaveBeenCalledWith('attached-image', document.body);
+    expect(onOpenPreview).toHaveBeenCalledOnce();
+  });
+
   it('sends an external source to the system browser and never to the rail', () => {
     const { result } = renderHook(() => useCitations({ resources: [DECK] }));
 
