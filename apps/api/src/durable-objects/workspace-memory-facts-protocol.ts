@@ -255,6 +255,10 @@ export const WorkspaceMemoryApplySweepRequestSchema = deferredZodSchema(() => z.
   outputTokens: z.number().int().nonnegative().nullable(),
   /** One minted id per operation, by position; `add` and `update` consume theirs. */
   factIds: z.array(z.string().min(1)),
+  /** The window's speakers, the same list the candidates were asked with, so a `person` add is filed only for one of them. */
+  speakerIds: z.array(z.string().min(1)),
+  /** The candidates this sweep was handed; an `update`, `confirm` or `retract` on any other fact is refused. */
+  candidateFactIds: z.array(z.string().min(1)),
   now: InstantSchema,
 }));
 

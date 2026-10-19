@@ -728,6 +728,47 @@ function subjectAdmits(
 }
 
 /**
+ * The subject half for a sweep: the placement that bounds what a conversation
+ * may file also bounds what its sweep may be shown or touch. `organization`
+ * needs an Organization-wide conversation, `channel` a Channel every
+ * participant may list, `person` one of the placement's own speakers.
+ */
+function sweepAdmits(placement: MemorySweepPlacement, fact: MemoryFact, channelsOpen: ReadonlySet<string>): boolean {
+  switch (fact.subjectKind) {
+    case "organization":
+      return placement.organizationWide;
+    case "channel":
+      return channelsOpen.has(`space:${fact.subjectId}`);
+    case "person":
+      return placement.people.some((person) => person.id === fact.subjectId);
+    case "thread":
+    case "breakout":
+    case "sidekick":
+      return true;
+  }
+}
+
+/**
+ * The facts among `facts` a sweep of the conversation at `here` may be handed
+ * or may touch: every source open to every current participant, and the
+ * subject admitted by the placement. The first fence of §6.
+ */
+function sweepVisibleFacts(
+  sql: SqlStorage,
+  placed: { placement: MemorySweepPlacement; audience: Audience },
+  here: string,
+  facts: readonly MemoryFact[],
+): MemoryFact[] {
+  if (facts.length === 0) return [];
+  const sources = sourcesOf(facts);
+  for (const fact of facts) if (fact.subjectKind === "channel") sources.add(`space:${fact.subjectId}`);
+  sources.delete(here);
+  const open = sourcesOpenToAudience(sql, placed.audience, sources);
+  open.add(here);
+  return facts.filter((fact) => everySourceIn(fact, open) && sweepAdmits(placed.placement, fact, open));
+}
+
+/**
  * The facts among `facts` this reader may see from inside `conversation`:
  * every source openable, the subject admitting them, and, for every fact but
  * their own, every current participant able to open it too.
@@ -918,9 +959,17 @@ export function rememberMemoryFact(
     } else {
       subject = conversationSubject(request.conversation);
     }
+    // The same sentence is the same fact, when the reader could see the first
+    // one from here; a match they cannot open is written again rather than
+    // reported as remembered and then never recalled.
     const wanted = normalizedText(request.text);
-    const existing = activeFactsOn(sql, [subjectKey(subject.kind, subject.id)], request.now, 200, null)
-      .find((fact) => normalizedText(fact.text) === wanted);
+    const matches = sql.exec<FactRow>(
+      `SELECT ${FACT_COLUMNS} FROM memory_facts fact
+        WHERE fact.subject_kind = ? AND fact.subject_id = ? AND ${ACTIVE("fact")}
+        ORDER BY fact.created_at DESC`,
+      subject.kind, subject.id, request.now,
+    ).toArray().map(factFromRow).filter((fact) => normalizedText(fact.text) === wanted);
+    const existing = reader ? visibleFacts(sql, reader, request.conversation, matches)[0] : undefined;
     if (existing) {
       writeReceipt(sql, request, "remember", { fact: existing, deduplicated: true });
       return { outcome: "deduplicated", fact: existing };
@@ -1089,16 +1138,10 @@ export function memorySweepCandidates(
   const byId = new Map<string, MemoryFact>();
   for (const fact of [...matched, ...situational]) byId.set(fact.factId, fact);
   const facts = [...byId.values()];
-  // Restricted to what every participant may see: the first fence of §6.
-  const here = memorySourceOf(request.conversation);
-  const foreign = sourcesOf(facts);
-  foreign.delete(here);
-  const open = sourcesOpenToAudience(sql, placed.audience, foreign);
-  open.add(here);
   return {
     outcome: "ready",
     placement: placed.placement,
-    candidates: facts.filter((fact) => everySourceIn(fact, open)).slice(0, request.limit),
+    candidates: sweepVisibleFacts(sql, placed, memorySourceOf(request.conversation), facts).slice(0, request.limit),
   };
 }
 
@@ -1127,22 +1170,19 @@ export function applyMemorySweep(
       };
     }
     if (request.fromSeq > storedToSeq) return { outcome: "cursor_ahead", storedToSeq };
-    const placed = sweepPlacement(sql, request.workspaceId, request.conversation, []);
+    const placed = sweepPlacement(sql, request.workspaceId, request.conversation, request.speakerIds);
     const refused: Array<{ index: number; code: MemorySweepRefusal }> = [];
-    const audienceOpen = placed
-      ? (() => {
-        const touched = new Set<string>();
-        for (const operation of request.operations) {
-          if (operation.op === "add") continue;
-          const fact = factById(sql, operation.factId);
-          if (fact) for (const source of fact.sourceConversations) touched.add(source);
-        }
-        touched.delete(here);
-        const open = sourcesOpenToAudience(sql, placed.audience, touched);
-        open.add(here);
-        return open;
-      })()
-      : new Set<string>([here]);
+    // An update, confirm or retract may touch only a fact this sweep was
+    // handed as a candidate, and only while every participant may still open
+    // it: the model reads a fact id off an untrusted transcript as readily as
+    // off the candidate list.
+    const candidateIds = new Set(request.candidateFactIds);
+    const touched = request.operations.flatMap((operation) => {
+      if (operation.op === "add" || !candidateIds.has(operation.factId)) return [];
+      const fact = factById(sql, operation.factId);
+      return fact ? [fact] : [];
+    });
+    const touchable = new Set(placed ? sweepVisibleFacts(sql, placed, here, touched).map((fact) => fact.factId) : []);
     request.operations.forEach((operation, index) => {
       if (operation.op === "add") {
         if (!placed) { refused.push({ index, code: "subject_above_placement" }); return; }
@@ -1209,10 +1249,11 @@ export function applyMemorySweep(
         });
         return;
       }
+      if (!candidateIds.has(operation.factId)) { refused.push({ index, code: "fact_not_candidate" }); return; }
       const fact = factById(sql, operation.factId);
       if (!fact) { refused.push({ index, code: "fact_not_found" }); return; }
       if (fact.retractedAt !== null || fact.supersededByFactId !== null) { refused.push({ index, code: "fact_not_active" }); return; }
-      if (!everySourceIn(fact, audienceOpen)) { refused.push({ index, code: "fact_not_candidate" }); return; }
+      if (!touchable.has(fact.factId)) { refused.push({ index, code: "fact_not_candidate" }); return; }
       if (operation.op === "confirm") {
         sql.exec(`UPDATE memory_facts SET confirmed_at = ?, updated_at = ? WHERE fact_id = ?`, request.now, request.now, fact.factId);
         return;

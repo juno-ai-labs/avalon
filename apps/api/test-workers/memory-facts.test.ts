@@ -181,7 +181,7 @@ describe("the fact store on workerd", () => {
     const first = WorkspaceMemoryApplySweepResultSchema.parse(await workspace().applyMemorySweep({
       workspaceId: WORKSPACE_ID, conversation: openThread, fromSeq: 0, toSeq: 12,
       operations: [add("organization", "Release day is Thursday"), add("thread", "The launch codename is zephyr")],
-      model: "test/model", inputTokens: 10, outputTokens: 5, factIds: ["fact-release", "fact-codename"], now,
+      model: "test/model", inputTokens: 10, outputTokens: 5, factIds: ["fact-release", "fact-codename"], speakerIds: [], candidateFactIds: [], now,
     }));
     expect(first).toEqual({
       outcome: "applied",
@@ -192,7 +192,7 @@ describe("the fact store on workerd", () => {
     const replay = WorkspaceMemoryApplySweepResultSchema.parse(await workspace().applyMemorySweep({
       workspaceId: WORKSPACE_ID, conversation: openThread, fromSeq: 0, toSeq: 12,
       operations: [add("thread", "A duplicate the replay must not write")],
-      model: "test/model", inputTokens: 10, outputTokens: 5, factIds: ["fact-dup"], now: now + 1,
+      model: "test/model", inputTokens: 10, outputTokens: 5, factIds: ["fact-dup"], speakerIds: [], candidateFactIds: [], now: now + 1,
     }));
     expect(replay).toEqual({
       outcome: "already_applied",
@@ -201,7 +201,7 @@ describe("the fact store on workerd", () => {
     // A range starting past the store's cursor is a skipped sweep, not progress.
     expect(WorkspaceMemoryApplySweepResultSchema.parse(await workspace().applyMemorySweep({
       workspaceId: WORKSPACE_ID, conversation: openThread, fromSeq: 40, toSeq: 50, operations: [],
-      model: "test/model", inputTokens: null, outputTokens: null, factIds: [], now: now + 2,
+      model: "test/model", inputTokens: null, outputTokens: null, factIds: [], speakerIds: [], candidateFactIds: [], now: now + 2,
     }))).toEqual({ outcome: "cursor_ahead", storedToSeq: 12 });
     await runInDurableObject(workspace(), (_instance, state) => {
       expect(state.storage.sql.exec<{ fact_id: string }>(`SELECT fact_id FROM memory_facts ORDER BY fact_id`).toArray())
@@ -215,11 +215,45 @@ describe("the fact store on workerd", () => {
     const applied = WorkspaceMemoryApplySweepResultSchema.parse(await workspace().applyMemorySweep({
       workspaceId: WORKSPACE_ID, conversation: privateThread, fromSeq: 0, toSeq: 3,
       operations: [add("organization", "Everyone works Fridays"), add("thread", "Owner wants the side room quiet")],
-      model: "test/model", inputTokens: null, outputTokens: null, factIds: ["fact-wide", "fact-room"], now,
+      model: "test/model", inputTokens: null, outputTokens: null, factIds: ["fact-wide", "fact-room"], speakerIds: [], candidateFactIds: [], now,
     }));
     expect(applied).toMatchObject({ outcome: "applied", refused: [{ index: 0, code: "subject_above_placement" }] });
     await runInDurableObject(workspace(), (_instance, state) => {
       expect(state.storage.sql.exec<{ fact_id: string }>(`SELECT fact_id FROM memory_facts`).toArray()).toEqual([{ fact_id: "fact-room" }]);
+    });
+  });
+
+  it("touches only the candidates it was handed, and files a person fact only for a speaker", async () => {
+    await fresh();
+    const now = Date.parse("2026-10-19T09:00:00.000Z");
+    const common = { workspaceId: WORKSPACE_ID, conversation: openThread, model: "test/model", inputTokens: null, outputTokens: null };
+    await workspace().applyMemorySweep({
+      ...common, fromSeq: 0, toSeq: 3, operations: [add("thread", "The launch codename is zephyr")],
+      factIds: ["fact-codename"], speakerIds: [], candidateFactIds: [], now,
+    });
+    const retract = { op: "retract" as const, factId: "fact-codename", reason: "The codename was dropped", evidence: [4] };
+    const person = { ...add("thread", "Member prefers short standups"), subjectKind: "person" as const, subjectId: MEMBER };
+    // A fact id the model read off the transcript rather than the candidate
+    // list is refused, and so is a person who did not speak in the window.
+    expect(WorkspaceMemoryApplySweepResultSchema.parse(await workspace().applyMemorySweep({
+      ...common, fromSeq: 3, toSeq: 6, operations: [retract, person],
+      factIds: ["fact-unused", "fact-standups"], speakerIds: [], candidateFactIds: [], now: now + 1,
+    }))).toMatchObject({
+      outcome: "applied",
+      refused: [{ index: 0, code: "fact_not_candidate" }, { index: 1, code: "subject_id_not_in_placement" }],
+    });
+    // The same operations pass once the sweep was handed the fact and heard the member.
+    expect(WorkspaceMemoryApplySweepResultSchema.parse(await workspace().applyMemorySweep({
+      ...common, fromSeq: 6, toSeq: 9, operations: [retract, person],
+      factIds: ["fact-unused", "fact-standups"], speakerIds: [MEMBER], candidateFactIds: ["fact-codename"], now: now + 2,
+    }))).toMatchObject({ outcome: "applied", refused: [] });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      expect(state.storage.sql.exec<{ fact_id: string; subject_kind: string; subject_id: string; retracted_at: number | null }>(
+        `SELECT fact_id, subject_kind, subject_id, retracted_at FROM memory_facts ORDER BY fact_id`,
+      ).toArray()).toEqual([
+        { fact_id: "fact-codename", subject_kind: "thread", subject_id: THREAD_OPEN, retracted_at: now + 2 },
+        { fact_id: "fact-standups", subject_kind: "person", subject_id: MEMBER, retracted_at: null },
+      ]);
     });
   });
 
@@ -234,7 +268,7 @@ describe("the fact store on workerd", () => {
     await workspace().applyMemorySweep({
       workspaceId: WORKSPACE_ID, conversation: privateThread, fromSeq: 0, toSeq: 3,
       operations: [add("organization", "Release day is Thursday")],
-      model: "test/model", inputTokens: null, outputTokens: null, factIds: ["fact-release"], now,
+      model: "test/model", inputTokens: null, outputTokens: null, factIds: ["fact-release"], speakerIds: [], candidateFactIds: [], now,
     });
     await runInDurableObject(workspace(), (_instance, state) => {
       state.storage.sql.exec(`UPDATE channels SET scope = 'personal' WHERE workstream_id = ?`, THREAD_PRIVATE);
@@ -245,6 +279,12 @@ describe("the fact store on workerd", () => {
     // The open thread is read by every member, and a member who cannot open
     // the private room must not be handed its words through a candidate.
     expect(await candidates()).toMatchObject({ outcome: "ready", candidates: [] });
+    // The owner may open the room, but the room is not Organization-wide, so
+    // its own sweep is not handed Organization facts either: the subject is
+    // fenced as well as the source.
+    expect(WorkspaceMemorySweepCandidatesResultSchema.parse(await workspace().memorySweepCandidates({
+      workspaceId: WORKSPACE_ID, conversation: privateThread, terms: ["release", "thursday"], speakerIds: [OWNER], now, limit: 20,
+    }))).toMatchObject({ outcome: "ready", placement: { organizationWide: false }, candidates: [] });
     // The recall a member makes from the open thread says the same thing.
     expect(WorkspaceMemoryRecallResultSchema.parse(await workspace().recallMemoryFacts({
       workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: MEMBER }, conversation: openThread,
