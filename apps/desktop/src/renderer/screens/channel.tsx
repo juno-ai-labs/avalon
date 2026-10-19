@@ -649,14 +649,19 @@ function MessageCard({ author, focused, members, message, placedAt }: {
         <div className="channel-feed-message-text">
           <MarkdownBody mentions={body.mentions} preserveLineBreaks rallyMentions verbatim>{body.text}</MarkdownBody>
         </div>
-        <span className="channel-feed-meta">
-          <span>{rally ? 'Rally' : author?.name ?? 'Someone'}</span>
-          <span aria-hidden="true">·</span>
-          <RelativeTime value={placedAt} />
-        </span>
-        {/* The stored words, not the rendering: copy and speech take what was
-            said, and a typed @name reads the same either way. */}
-        <MessageActions subject={rally ? 'response' : 'message'} telemetry={{ messageId: message.id }} text={message.body} verbatim />
+        {/* The row rides the byline rather than a line of its own: it is
+            laid out even while hidden, and under every message it would make
+            the feed a line taller at rest. */}
+        <div className="channel-feed-byline">
+          <span className="channel-feed-meta">
+            <span>{rally ? 'Rally' : author?.name ?? 'Someone'}</span>
+            <span aria-hidden="true">·</span>
+            <RelativeTime value={placedAt} />
+          </span>
+          {/* The stored words, not the rendering: copy and speech take what was
+              said, and a typed @name reads the same either way. */}
+          <MessageActions subject={rally ? 'response' : 'message'} telemetry={{ messageId: message.id }} text={message.body} verbatim />
+        </div>
       </div>
     </div>
   </li>;
