@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { ObjectPortError } from "../runtime/object-port-error";
 
 const REDACTED = "[REDACTED]";
 const sensitiveKey = /token|secret|authorization|cookie|credential|code_verifier|prompt|email_?body|connector_?content|file_?content|model_?context/i;
@@ -78,6 +79,11 @@ export function stableCode(text: string): string {
  * Durable Object's rejection arrives across the hop, so `isDiagnosticCode`
  * admits that family beside the bare constant this always admitted.
  *
+ * An `ObjectPortError` carries the conversation object's own refusal code
+ * beside a sentence written for members. The code is the reason, so it is
+ * kept when it has that same bare constant shape; read as a message, every
+ * refusal reduced to the caller's fallback.
+ *
  * Nothing wider. A message is not trusted because it is code-shaped: the
  * tree throws `memory_table_value_type:${column.name}:string`, an R2 key
  * after a colon, a target id, and `${component}_schema_hash_mismatch:${version}`,
@@ -87,6 +93,7 @@ export function stableCode(text: string): string {
  */
 export function diagnosticErrorCode(error: unknown, fallback: string): string {
   if (error instanceof ApiError) return error.diagnosticCode ?? error.code;
+  if (error instanceof ObjectPortError && STABLE_CODE.test(error.code)) return error.code;
   if (error instanceof z.ZodError) return codeShaped(`${fallback}:${describeZodIssues(error)}`);
   if (!(error instanceof Error)) return fallback;
   const direct = error.message.trim();

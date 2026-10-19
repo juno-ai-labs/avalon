@@ -46,6 +46,7 @@ import {
   type TerminalOperationExecutor,
   type TerminalPortFactory,
 } from "../../src/services/terminal/object-port";
+import { AUTHORITY_FENCED_CODE } from "../../src/runtime/object-port-error";
 import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./cloudflare-test";
 import { sqliteD1 } from "./sqlite-d1";
 import { createTestSqlStorage } from "./sql-storage";
@@ -839,12 +840,19 @@ function isWorkstreamObjectStore(database: DatabaseSync): boolean {
  * `WorkstreamIdentityStorage` for these operations rather than a second model
  * of the root row. The provision's write in particular is the whole point of
  * the operation, and a double that reproduced it by hand is the one that
- * drifts.
+ * drifts. It refuses an object that is not authoritative, as the agent's
+ * `objectPortRefusal` does before any operation runs.
  */
 export function testIdentityOperationStub(
   database: DatabaseSync,
 ): (input: { operation: string; args: unknown[] }) => { status: number; bodyJson: string } {
   return (input) => {
+    const authority = database.prepare(
+      "SELECT authority_mode, authority_generation FROM workstream WHERE id = 1",
+    ).get() as { authority_mode: string; authority_generation: number } | undefined;
+    if (authority && (authority.authority_mode !== "authoritative" || authority.authority_generation <= 0)) {
+      return { status: 409, bodyJson: JSON.stringify({ ok: false, error: AUTHORITY_FENCED_CODE }) };
+    }
     const storage = new WorkstreamIdentityStorage(
       createCloudflareTestBinding<DurableObjectStorage>({
         getAlarm: async () => null,
