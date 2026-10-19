@@ -409,6 +409,7 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
     hasUnread: workstream.hasUnread,
     youAreMentioned: workstream.youAreMentioned,
     unseen: workstream.unseen,
+    ...(workstream.isParticipant !== undefined ? { isParticipant: workstream.isParticipant } : {}),
     firstUnreadSequenceNumber: workstream.firstUnreadSequenceNumber,
     lastActivityAt: workstream.lastActivityAt,
     createdAt: workstream.createdAt,

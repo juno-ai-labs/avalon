@@ -155,6 +155,8 @@ export interface WorkstreamSummary {
    * that you have never been in it. Cleared by opening it.
    */
   unseen?: boolean;
+  /** See `WorkstreamSchema.isParticipant`. */
+  isParticipant?: boolean;
   firstUnreadSequenceNumber: number | null;
   lastActivityAt: string;
   createdAt?: string;
