@@ -2,7 +2,7 @@
 
 The engineering MCP is Rally's authenticated operator path to the authoritative
 SQLite database inside a workspace, work stream, substream, Sidekick, or live
-web artifact Durable Object.
+web artifact Durable Object, and to each region's D1 databases.
 It recreates the useful part of Cloudflare's dashboard database console through
 standard MCP tools at `https://mcp.internal.rallywith.ai/mcp`, including deliberate
 repair writes. It also reads and changes the feature flags and agent model
@@ -66,6 +66,7 @@ The regional bridge uses D1 only for identity and routing:
 | `run_workspace_sql` | Resolve, select one region, then revalidate the open workspace authority generation | WorkspaceDO SQLite |
 | `run_substream_sql` | Resolve the active work-stream route and child membership (the Organization's hosted parent, or a Sidekick's own registry), select one region, then revalidate | SubstreamAgent SQLite |
 | `run_artifact_sql` | Resolve the regional workspace identity and `artifact_registry` membership, select one region, then revalidate | ArtifactHostDO SQLite, the supervisor's own |
+| `run_d1_sql` | None: the caller names the region and the binding | The named D1 database in that region |
 
 `list_orgs` and `search_orgs` share one bridge method, `searchOrganizations`.
 Each region applies the filters in D1 (a name, slug or ID substring, plan,
@@ -118,6 +119,21 @@ only through the product's own read-only admitted query path
 (`queryData`/`pageData`, behind work-stream authorization), and giving the
 console arbitrary SQL there would mean changing the facet host module every
 stateful artifact runs. See [`live-web-artifacts.md`](live-web-artifacts.md).
+
+### D1
+
+`run_d1_sql` runs SQL against one of the five D1 databases the regional API
+Worker binds: `DB`, `TELEMETRY_DB`, `AUDIT_DB`, `USAGE_DB` and `PLATFORM_DB`.
+The caller names the region and the binding, and the bridge's `runD1Sql` runs
+the statement through that binding. There is nothing to resolve: a D1 database
+has no authority generation, and naming it cannot create one. `PLATFORM_DB` is
+one database every region binds, so any region reaches the same rows.
+
+The result has the Durable Object tools' shape. D1 returns rows as objects, so
+`columns` comes from the first row and is empty when no row returns; it returns
+a BLOB as an array of bytes, which the bridge turns into `{ type: "blob",
+base64 }`. Given several statements D1 runs them all and answers with the last
+one's rows and counters. D1 refuses `BEGIN` and `SAVEPOINT`.
 
 ### Feature and model flags
 
@@ -191,6 +207,7 @@ names the view only; filter values and the needle can quote product data.
 ## Invariants and contracts
 
 - D1 locates authority; it never substitutes for Durable Object product state.
+  `run_d1_sql` reads and repairs D1's own rows, not a copy of an object's.
 - The bridge accepts workspace identity only in the current
   `durable_object_open` generation with a compatible serving contract.
   The regional `workspaces` row is the deterministic WorkspaceDO route;
@@ -327,6 +344,10 @@ generation fences admit only the current active authority. Existing Access tests
 signature, issuer, audience, cookie, and header verification because this
 Worker imports that one verifier rather than forking it.
 
+`apps/api/test-workers/engineering-d1-inspection.test.ts` writes and reads a
+D1 database through `runD1Sql`, BLOBs included, and proves the call reached
+the named binding and not another.
+
 `apps/ace/test/flag-administration.test.ts` drives the entrypoint against
 Flagship and OpenRouter doubles, the two APIs that cannot run here.
 
@@ -407,6 +428,28 @@ each selected model's configured default; an explicit value applies to the
 primary and fallbacks. Ace owns validation and the atomic write.
 
 ## Changelog
+
+### 2026-10-19 — Read and write D1
+
+**What changed:** `run_d1_sql` runs SQL against a named region's `DB`,
+`TELEMETRY_DB`, `AUDIT_DB`, `USAGE_DB` or `PLATFORM_DB` through a new bridge
+method, `runD1Sql`, and returns the Durable Object tools' result shape.
+
+**Why:** The console reached every Durable Object database but not D1, so
+reading or repairing a user, membership or route row meant `wrangler d1
+execute` with a deployment token, or the Cloudflare dashboard.
+
+**Considered and rejected:** Cloudflare's D1 HTTP API from this Worker, which
+needs an account token able to write every D1 database in the account; the
+regional Worker already holds exactly these five bindings. One tool per
+database, which repeats one call for what is one argument. Resolving the
+region from an ID, as the object tools do: a D1 row has no single owning ID,
+so the caller names the region.
+
+**Consequences:** Access membership now includes writing every regional D1
+database, the usage ledger and the shared platform routing table included. A
+new D1 binding on the API Worker is reachable once it is added to
+`ENGINEERING_D1_DATABASES`.
 
 ### 2026-10-19 — Query Workers Logs and Traces
 
