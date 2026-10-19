@@ -122,9 +122,9 @@ const SidekickDirectoryRowSchema = z.strictObject({
 
 /** D1 returns a BLOB as an array of byte values; the result shape names it a blob. */
 function d1InspectionValue(value: unknown): InspectionSqlValue {
-  if (Array.isArray(value)) return { type: "blob", base64: base64(Uint8Array.from(value as number[]).buffer) };
-  if (value instanceof ArrayBuffer) return { type: "blob", base64: base64(value) };
-  return value as InspectionSqlValue;
+  return Array.isArray(value)
+    ? { type: "blob", base64: base64(Uint8Array.from(value as number[]).buffer) }
+    : value as InspectionSqlValue;
 }
 
 async function workspaceStub(env: Env, workspaceId: string) {
@@ -635,7 +635,6 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
       region: this.env.AVALON_REGION,
       database: request.database,
       result: {
-        // D1 returns rows as objects, so a statement that returns none names no columns.
         columns: Object.keys(rows[0] ?? {}),
         rows,
         rowsRead: result.meta.rows_read,
