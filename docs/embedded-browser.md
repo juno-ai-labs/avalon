@@ -79,8 +79,10 @@ in search filters and sidebar rows, not a Chrome tab. A new-tab button follows
 the tabs, tabs shrink to share the strip, and the strip scrolls to keep the
 active tab visible. A middle click or the close button closes a tab, closing
 selects the neighbour to its right (else left), and closing the last tab leaves
-a blank one. In the rail, closing the only tab when it is already blank (by the
-close button, a middle click, Delete or ⌘W) closes the rail instead. Tabs drag to reorder (`move`). The strip is one tab stop: arrows,
+a blank one. In the rail, closing the only tab (by the close button, a middle
+click, Delete or ⌘W) also closes the rail; a blank tab is left in place rather
+than closed. ⌘W pressed inside the page goes through main and still leaves a
+blank tab with the rail open. Tabs drag to reorder (`move`). The strip is one tab stop: arrows,
 Home and End move between tabs and Delete closes one. `embeddedBrowserShortcut`
 defines the browser shortcuts once — ⌘T, ⌘W, ⌘1–⌘9, ⌃Tab and ⌘⇧[ / ], ⌘L, ⌘R,
 ⌘[ / ] — for a key pressed in Rally's controls (the renderer's listener) and
@@ -268,6 +270,24 @@ visible one does. A tab under an open DevTools window records nothing, because
 only one debugger can attach.
 
 Shipped in #1058.
+
+### 2026-10-19 — Closing the only tab closes the rail, whatever it holds
+
+**What changed:** `closeTab` hands any close of the only tab to `onCloseLast`,
+not just a blank one. A tab that holds a page is closed first, so the rail
+opens next time on a fresh blank tab.
+
+**Why:** Closing a lone page tab left the rail showing an empty new tab, which
+people read as a broken close. The 2026-09-25 change covered only the blank
+case.
+
+**Considered and rejected:** Hiding the rail and keeping the page tab. Closing a
+tab should close it; reopening the rail on a page the person closed would
+surprise them.
+
+**Consequences:** ⌘W inside the page is handled in main, which has no way to
+close the rail, so that path still leaves a blank tab. Fixing it needs main to
+forward the close of the last tab to the renderer.
 
 ### 2026-09-25 — Closing the only blank tab closes the rail
 
