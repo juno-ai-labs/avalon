@@ -81,8 +81,9 @@ active tab visible. A middle click or the close button closes a tab, closing
 selects the neighbour to its right (else left), and closing the last tab leaves
 a blank one. In the rail, closing the only tab (by the close button, a middle
 click, Delete or ⌘W) also closes the rail; a blank tab is left in place rather
-than closed. ⌘W pressed inside the page goes through main and still leaves a
-blank tab with the rail open. Tabs drag to reorder (`move`). The strip is one tab stop: arrows,
+than closed. ⌘W pressed inside the page reaches main first, which hands the
+close of the only tab to the window's controls as a `close-last-tab` host
+request, so it takes the same path. Tabs drag to reorder (`move`). The strip is one tab stop: arrows,
 Home and End move between tabs and Delete closes one. `embeddedBrowserShortcut`
 defines the browser shortcuts once — ⌘T, ⌘W, ⌘1–⌘9, ⌃Tab and ⌘⇧[ / ], ⌘L, ⌘R,
 ⌘[ / ] — for a key pressed in Rally's controls (the renderer's listener) and
@@ -275,7 +276,10 @@ Shipped in #1058.
 
 **What changed:** `closeTab` hands any close of the only tab to `onCloseLast`,
 not just a blank one. A tab that holds a page is closed first, so the rail
-opens next time on a fresh blank tab.
+opens next time on a fresh blank tab. Main's in-page ⌘W no longer closes the
+only tab itself: the focus-address callback became a general host request
+(`focus-address` or `close-last-tab`, on `embedded-browser:host-request`), and
+the renderer runs the last close through `closeTab`.
 
 **Why:** Closing a lone page tab left the rail showing an empty new tab, which
 people read as a broken close. The 2026-09-25 change covered only the blank
@@ -285,9 +289,9 @@ case.
 tab should close it; reopening the rail on a page the person closed would
 surprise them.
 
-**Consequences:** ⌘W inside the page is handled in main, which has no way to
-close the rail, so that path still leaves a blank tab. Fixing it needs main to
-forward the close of the last tab to the renderer.
+**Consequences:** The last close now needs a listening host. The import window
+disables its shortcuts while a run is going, so an in-page ⌘W on its only tab
+does nothing then, as ⌘L already did.
 
 ### 2026-09-25 — Closing the only blank tab closes the rail
 

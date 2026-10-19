@@ -15,7 +15,7 @@ vi.mock('../lib/platform', () => ({
     commandEmbeddedBrowser,
     getEmbeddedBrowserState: async () => blank,
     onEmbeddedBrowserState: () => () => undefined,
-    onEmbeddedBrowserFocusAddress: () => () => undefined,
+    onEmbeddedBrowserHostRequest: () => () => undefined,
     setEmbeddedBrowserVisible: async () => undefined,
     setEmbeddedBrowserBounds: async () => undefined,
   }),

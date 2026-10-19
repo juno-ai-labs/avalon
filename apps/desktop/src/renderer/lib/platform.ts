@@ -523,7 +523,7 @@ const browserBridge: RallyDesktopBridge = {
   onEmbeddedBrowserState() {
     return () => undefined;
   },
-  onEmbeddedBrowserFocusAddress() {
+  onEmbeddedBrowserHostRequest() {
     return () => undefined;
   },
   async openBrowserImport() {
