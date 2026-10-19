@@ -1995,6 +1995,7 @@ describe("connectors", () => {
       }
     )).rejects.toMatchObject({
       code: "invalid_payload",
+      message: expect.stringContaining("To clear every guest when the list is incomplete, use Google Calendar"),
       details: { reason: "attendee_snapshot_incomplete" }
     });
     expect(requests).not.toContain("PATCH");

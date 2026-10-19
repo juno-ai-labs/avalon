@@ -1950,7 +1950,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     if (requireComplete && payload.attendeesOmitted === true) {
       throw new ConnectorError(
         "invalid_payload",
-        "This event's guest list came back incomplete, so adding or removing an attendee would drop the ones that were not returned. Set the full list explicitly with replaceAllAttendeeEmails, or change the event in Google Calendar.",
+        "This event's guest list came back incomplete, so adding or removing an attendee would drop the ones that were not returned. Set a nonempty full list explicitly with replaceAllAttendeeEmails, or change the event in Google Calendar. To clear every guest when the list is incomplete, use Google Calendar; empty attendee arrays are treated as omitted.",
         { reason: "attendee_snapshot_incomplete", field: "addAttendeeEmails" }
       );
     }
@@ -2969,11 +2969,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         // A relative attendee change is resolved against the event's current
         // guest list before it is sent, because Calendar's PATCH replaces the
         // whole array: sending only the additions is what deletes the rest.
-        // Length rather than truthiness: an empty array is truthy, so gating on
-        // the array alone turned `addAttendeeEmails: []` into a read, an
-        // identical write-back, and an update mail to every guest about a
-        // change that did not happen.
-        const changesAttendees = Boolean(args.addAttendeeEmails?.length || args.removeAttendeeEmails?.length);
+        const changesAttendees = Boolean(args.addAttendeeEmails || args.removeAttendeeEmails);
         let attendees: Record<string, unknown>[] | undefined;
         let existingAttendees: Record<string, unknown>[] = [];
         if (changesAttendees || args.replaceAllAttendeeEmails) {
