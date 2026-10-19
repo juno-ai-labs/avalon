@@ -191,6 +191,29 @@ or when the owning renderer reloads or loses its process.
 
 ## Changelog
 
+### 2026-10-19 — Closing the only tab closes the rail, whatever it holds
+
+**What changed:** `closeTab` hands any close of the only tab to `onCloseLast`,
+not just a blank one. A tab that holds a page is closed first, so the rail
+opens next time on a fresh blank tab. Main's in-page ⌘W no longer closes the
+only tab itself: the focus-address callback became a general host request
+(`focus-address` or `close-last-tab`, on `embedded-browser:host-request`), and
+the renderer runs the last close through `closeTab`.
+
+**Why:** Closing a lone page tab left the rail showing an empty new tab, which
+people read as a broken close. The 2026-09-25 change covered only the blank
+case.
+
+**Considered and rejected:** Hiding the rail and keeping the page tab. Closing a
+tab should close it; reopening the rail on a page the person closed would
+surprise them.
+
+**Consequences:** The last close now needs a listening host. The import window
+disables its shortcuts while a run is going, so an in-page ⌘W on its only tab
+does nothing then, as ⌘L already did.
+
+Shipped in #1307.
+
 ### 2026-10-02 — Own disposable browser script realms beside pinned tabs
 
 **What changed:** The native browser maps executor-owned runtime IDs to one pinned
@@ -271,27 +294,6 @@ visible one does. A tab under an open DevTools window records nothing, because
 only one debugger can attach.
 
 Shipped in #1058.
-
-### 2026-10-19 — Closing the only tab closes the rail, whatever it holds
-
-**What changed:** `closeTab` hands any close of the only tab to `onCloseLast`,
-not just a blank one. A tab that holds a page is closed first, so the rail
-opens next time on a fresh blank tab. Main's in-page ⌘W no longer closes the
-only tab itself: the focus-address callback became a general host request
-(`focus-address` or `close-last-tab`, on `embedded-browser:host-request`), and
-the renderer runs the last close through `closeTab`.
-
-**Why:** Closing a lone page tab left the rail showing an empty new tab, which
-people read as a broken close. The 2026-09-25 change covered only the blank
-case.
-
-**Considered and rejected:** Hiding the rail and keeping the page tab. Closing a
-tab should close it; reopening the rail on a page the person closed would
-surprise them.
-
-**Consequences:** The last close now needs a listening host. The import window
-disables its shortcuts while a run is going, so an in-page ⌘W on its only tab
-does nothing then, as ⌘L already did.
 
 ### 2026-09-25 — Closing the only blank tab closes the rail
 
