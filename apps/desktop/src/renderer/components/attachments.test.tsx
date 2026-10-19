@@ -30,6 +30,17 @@ describe('attachment presentation', () => {
     expect(readResourceVersion).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000001',2,expect.any(AbortSignal));
   });
 
+  it('pins a whole file without requiring unsupported preview bytes', async () => {
+    const readResource = vi.fn(async () => ({currentVersion: 2}));
+    const readResourceVersion = vi.fn(async () => {throw new Error('Preview unsupported');});
+    render(<AnnotationDraftProvider readResource={readResource} readResourceVersion={readResourceVersion}><AttachmentLightbox preview={{name:'archive.bin',mimeType:'application/octet-stream',resourceId:'00000000-0000-7000-8000-000000000001'}} onClose={()=>{}}/></AnnotationDraftProvider>);
+    fireEvent.click(screen.getByRole('button', {name:'Comment mode'}));
+    await waitFor(() => expect(screen.getByRole('button', {name:'Comment mode'})).toHaveAttribute('aria-pressed','true'));
+    fireEvent.click(screen.getByText('archive.bin', {selector:'.annotation-body p'}));
+    expect(await screen.findByRole('textbox', {name:'Comment on selection'})).toBeVisible();
+    expect(readResourceVersion).not.toHaveBeenCalled();
+  });
+
   it('shows unavailable content without a spinner or a dead download action', () => {
     render(<AttachmentLightbox preview={{ name: 'Unavailable.pdf' }} onClose={vi.fn()} />);
     expect(screen.getByRole('alert')).toHaveTextContent('no preview available');
