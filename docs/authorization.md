@@ -535,6 +535,9 @@ reconciles by parent and so never touches a Space's rows, and
 `beginAuthorizationBackfill` lists only threads and Sidekicks; a change that
 widens either must leave `parent_kind = 'space'` alone. Nothing unlinks a
 resource from a Space yet, as nothing removes a Channel merge's attachments.
+WorkspaceDO migration 118 links the embeds of every Channel merge made before
+this, so no merge is left on the old rule. A new link is counted by its
+`RETURNING` row, not `rowsWritten`, which the search trigger inflates.
 
 ### 2026-09-25 — A hosted Channel's parent discovery runs in WorkspaceDO
 

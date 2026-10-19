@@ -31,7 +31,6 @@ import {
   safeParseSocketEvent,
   type ActivityItem,
   type AutomationDetail,
-  type MergeEmbed,
   type SidekickAttachment,
   type SidekickSkillSource,
 } from "@rally/contracts";
@@ -167,7 +166,7 @@ import {
 } from '../services/authorization-policy';
 import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, searchAuthorizationKey, searchDecisionFingerprint } from '../services/search-authorization';
 import { flushAuthorizationDeliveries, type AuthorizationProjectionJob } from './authorization-projection';
-import { AuthorizationStorage, AUTHORIZATION_STORAGE_MIGRATION, AUTHORIZATION_STORAGE_TABLES, AuthorizationLocationSchema } from './authorization-storage';
+import { AuthorizationStorage, AUTHORIZATION_STORAGE_MIGRATION, AUTHORIZATION_STORAGE_TABLES, AuthorizationLocationSchema, SPACE_MERGE_EMBED_LINKS_MIGRATION } from './authorization-storage';
 import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-journey';
 import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION, RESOURCE_SEARCH_AUDIENCE_MIGRATION, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
   resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch, type ResourceSearchPace } from './resource-search-projection';
@@ -4566,6 +4565,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "conversations holding a memory digest copy and the facts each copy holds, marked for a refresh when a visibility input changes or a held fact is retracted, and the revision digest reads are ordered by",
   // The lane is channel colour sync's; see memory-digest-sync.ts.
   statements: MEMORY_DIGEST_SYNC_MIGRATION,
+}, {
+  version: 118,
+  description: "every earlier Channel merge's embeds are linked to its Channel",
+  // See SPACE_MERGE_EMBED_LINKS_MIGRATION and docs/authorization.md.
+  statements: SPACE_MERGE_EMBED_LINKS_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -10953,14 +10957,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!await this.activeSpaceMember(request.auth.workspaceId, request.auth.userId)) {
       return { ok: false, code: "space_access_denied", channels: [] };
     }
-    const embeds = this.mergeEmbeds(request.auth.workspaceId, request.auth.userId, request.resources);
-    if (!embeds.ok) return { ok: false, code: "merge_resource_not_shareable", index: embeds.index };
     const now = Date.now();
     const result = this.spaceStorage().mergeThreadIntoChannel(member(request.auth.userId), {
       workstreamId: request.workstreamId,
       spaceId: request.spaceId,
       body: request.body,
-      embeds: embeds.embeds,
+      embeds: request.embeds,
       operationId: request.operationId,
     }, now);
     if (result.ok && !result.replayed) {
@@ -10968,42 +10970,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // Best effort, as every Activity push is: the row is in Activity either way.
       await this.pushActivity(request.auth.workspaceId, [{
         threadId: request.workstreamId, substreamId: null, kind: "merge", itemId: `merged:${result.messageId}:${now}`,
+        channelId: result.spaceId,
       }]).catch((error: unknown) => logWarn(this.env, "activity_push_failed", {
         workspace_id: request.auth.workspaceId, code: diagnosticErrorCode(error, "activity_push_failed"),
       }));
     }
     return WorkspaceChannelMergeResultSchema.parse(result);
-  }
-
-  /**
-   * A Channel merge's embeds, resolved by id or alias and checked the way the
-   * attach path checks a member's link (`WorkstreamObjectProduct
-   * .attachResources`): it exists, a personal connection's resource is its
-   * owner's to share, and an upload has been sent. Synchronous, so nothing
-   * moves between these reads and the merge's commit.
-   */
-  private mergeEmbeds(workspaceId: string, userId: string, tokens: readonly string[]):
-    | { ok: true; embeds: MergeEmbed[] }
-    | { ok: false; index: number } {
-    const embeds = new Map<string, MergeEmbed>();
-    for (const [index, token] of tokens.entries()) {
-      const row = this.state.storage.sql.exec<{
-        id: string; slug: string | null; title: string; resource_type: string; provider: string;
-        attachment_status: string | null; connection_scope: string | null; owner_user_id: string | null;
-      }>(`SELECT resource.id, resource.slug, resource.title, resource.resource_type, resource.provider,
-                 resource.attachment_status, connection.scope AS connection_scope, connection.owner_user_id
-            FROM resources resource
-            LEFT JOIN connector_connections connection ON connection.id = resource.connection_id
-           WHERE (resource.id = ? OR resource.slug = ?) AND resource.workspace_id = ?`,
-      token, token, workspaceId).toArray()[0];
-      if (!row
-        || (row.connection_scope === "personal" && row.owner_user_id !== userId)
-        || (row.provider === "avalon_upload" && row.attachment_status !== "attached")) return { ok: false, index };
-      embeds.set(row.id, {
-        id: row.id, ...(row.slug ? { slug: row.slug } : {}), title: row.title.slice(0, 500), kind: row.resource_type.slice(0, 100),
-      });
-    }
-    return { ok: true, embeds: [...embeds.values()] };
   }
 
   /**

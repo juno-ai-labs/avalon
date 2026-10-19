@@ -101,7 +101,7 @@ import { useTranscriptHistory } from '../lib/use-transcript-history';
 import { useVirtualScrollAnchor } from '../lib/use-virtual-scroll-anchor';
 import { resolveFeedOpenSource, useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
-import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
+import { useSiteArtifacts } from '../lib/use-site-artifacts';
 import { ActivityPresence, InferenceDelayNotice, JumpToLatestButton } from '../components/conversation-follow';
 import { openRailAtEvenSplit, restoreRail, useRailFillsPane } from '../lib/rail-split';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
@@ -1396,10 +1396,9 @@ export function ConversationSurface({
   const requestedSearch = useRef<string | null>(null);
 
   const { api, session } = useCollaborationSession();
-  const { host, guest } = useShellCapabilities();
+  const { guest } = useShellCapabilities();
   const workspaceSocket = useOptionalWorkspaceSocket();
   const presenceUserIdsByWorkstream = workspaceSocket?.presenceUserIdsByWorkstream ?? NO_WORKSPACE_PRESENCE;
-  const featureFlags = useClientFeatureFlags(api);
   const queryClient = useQueryClient();
   const closeRail = useUiStore((state) => state.closeRail);
   const inspect = useUiStore((state) => state.inspect);
@@ -1738,39 +1737,7 @@ export function ConversationSurface({
     },
     [api],
   );
-  /**
-   * Everything the live-artifact detail needs, or `undefined`.
-   *
-   * `undefined` is how the feature is off — the rail then renders a site as the
-   * ordinary resource card, which still lists, versions, and removes it. The
-   * flag gates presentation only: an artifact's authorization is structural and
-   * holds whether or not this is passed.
-   */
-  const browserHost = host === 'browser';
-  const siteArtifacts = useMemo(() => {
-    if (!api || featureFlags.data?.liveArtifactsEnabled !== true) return undefined;
-    const bridge = window.rally ?? (browserHost ? desktopBridge() : undefined);
-    if (!bridge) return undefined;
-    return {
-      openArtifact: (resourceId: string) => api.openArtifact(resourceId),
-      describeData: (resourceId: string) => api.describeArtifactData(resourceId),
-      loadTable: (resourceId: string, table: string) => api.readArtifactTable(resourceId, table),
-      surface: {
-        present: bridge.presentArtifactPreview,
-        setBounds: bridge.setArtifactPreviewBounds,
-        snapshot: bridge.snapshotArtifactPreview,
-        close: bridge.closeArtifactPreview,
-        popOut: bridge.popOutArtifact,
-        copyText: bridge.copyText,
-        openExternal: bridge.openExternal,
-        // A browser has no main process to composite a view: it frames the
-        // artifact instead. allow-same-origin keeps the artifact in its own
-        // origin (not an opaque one), which its code redemption needs; the
-        // frame still cannot navigate the app or open popups.
-        ...(browserHost ? { framed: true as const } : {}),
-      },
-    };
-  }, [browserHost, api, featureFlags.data?.liveArtifactsEnabled]);
+  const siteArtifacts = useSiteArtifacts(api);
   useEffect(() => {
     if (!resourcePanel) return;
     const resourceOwner = resourcePanel.workstreamScoped

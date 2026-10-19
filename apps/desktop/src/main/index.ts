@@ -7,6 +7,7 @@ import { BrowserImportContextSchema, BrowserImportedBreakoutIdSchema, BrowserImp
 import { describeZodIssues, zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { watchWorkspaceSocket, type ReachWatchDiagnostic } from '@rally/contracts/workspace-reach-watch';
+import { spaceDeepLink } from '@rally/contracts/workstream-links';
 import type { ZodType } from 'zod';
 import {
   ActivateWorkspaceRequestSchema,
@@ -1473,6 +1474,15 @@ const menuBarController = new MenuBarController({
         `${customProtocol}://workstreams/${workstreamId}${substreamId === null ? '' : `/substreams/${substreamId}`}`,
         'menu_bar',
       );
+    },
+    openChannel: (channelId) => {
+      activateFromMenuBar();
+      // A Channel link names its Organization: the one the menu is showing.
+      void loadStoredAuthSet().then((authSet) => {
+        const active = authSet ? activeStoredCredential(authSet) : null;
+        if (!active?.binding.workspaceId) return;
+        emitDeepLink(spaceDeepLink({ region: active.binding.region, workspaceId: active.binding.workspaceId, spaceId: channelId }), 'menu_bar');
+      });
     },
     openAccessRequest: (requestId) => {
       activateFromMenuBar();
