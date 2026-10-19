@@ -17,6 +17,12 @@ import {
 } from "./connector-connection-card";
 
 describe("connector connection card contract", () => {
+  it("accepts Apollo personal cards and refuses workspace cards", () => {
+    expect(ConnectorConnectionCardInputSchema.parse({ connectorId: "apollo", scope: "personal" }))
+      .toEqual({ connectorId: "apollo", scope: "personal" });
+    expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId: "apollo", scope: "workspace" }).success).toBe(false);
+  });
+
   it("accepts a trusted Slack personal card request", () => {
     expect(ConnectorConnectionCardInputSchema.parse({
       connectorId: "slack",

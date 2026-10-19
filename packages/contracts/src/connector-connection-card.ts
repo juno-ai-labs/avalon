@@ -25,6 +25,7 @@ export const ConnectorConnectionCardCatalog = {
     scopes: ["personal", "workspace"],
   },
   github: { capabilityPrefixes: [], iconName: "github", providerType: "github", scopes: ["personal", "workspace"] },
+  apollo: { capabilityPrefixes: [], iconName: "apollo", providerType: "apollo", scopes: ["personal"] },
   ashby: { capabilityPrefixes: [], iconName: "ashby", providerType: "ashby", scopes: ["personal"] },
   canva: { capabilityPrefixes: [], iconName: "canva", providerType: "canva", scopes: ["personal"] },
   // Personal only, like Ashby and Granola: the workspace scope is an
