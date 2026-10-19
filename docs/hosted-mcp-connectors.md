@@ -76,20 +76,12 @@ API keys and webhook management are a separate authorization path and do not
 enter the MCP transport. See [provider prerequisites](provider-apps.md#ashby-personal-oauth-and-workspace-api-keys)
 for metadata observations and outstanding live acceptance.
 
-Apollo.io uses `https://mcp.apollo.io/mcp` with `apollo.personal.mcp`, personal
-connections only, and `https://mcp.apollo.io` as its sole trusted authorization
-origin. Both web and desktop use the owning region's
-`/connections/apollo/callback`; reconnect, refresh-token rotation, revocation,
-connection cards, and live discovery use the shared paths. WorkspaceDO migration
-121 extends provider constraints, retains existing credentials, discovery counts,
-OAuth attempt pointers and dependent rows, and enforces one active Apollo
-connection per owner. No API key or
-Rally-side OAuth secret is configured. The grant requests the scopes Apollo
-advertises, so the live surface can include enrichment, outreach and purchases;
-credit-consuming actions spend the connected Apollo account's credits.
-The stored account identifier is the MCP resource URL, not a verified Apollo
-user or tenant identity; personal ownership remains a Rally authorization rule.
-See [Apollo prerequisites and event support](provider-apps.md#apolloio-personal-oauth-and-sidekick-events).
+Apollo.io uses `https://mcp.apollo.io/mcp`, personal capability
+`apollo.personal.mcp`, and trusted authorization origin `https://mcp.apollo.io`.
+The shared lifecycle handles its regional callback, refresh, reconnect and
+revocation; its live catalog is never checked in. Its account identifier is a
+resource URL, with no verified provider user. See
+[Apollo prerequisites](provider-apps.md#apolloio-personal-oauth-and-sidekick-events).
 
 ### Discovery and activation
 
@@ -309,7 +301,6 @@ while useful business events require a human-configured Apollo Workflow. The
 connector therefore advertises no polling, watches or webhook triggers; a future
 Sidekick event integration must establish an authenticated payload and personal
 audience contract rather than infer events by repeatedly scanning contacts.
-
 
 ### 2026-09-19 — Preserve Workers fetch invocation and provider OAuth metadata
 

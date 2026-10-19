@@ -660,6 +660,7 @@ async function syncVerifiedIdentityDirectory(env: Env, workspaceId: WorkspaceId)
     const provider = String(connection.connector_type);
     const account = String(connection.provider_account_id);
     const config = parseRecord(connection.config_json);
+    if (config.providerUserId === null) continue;
     const githubUserId = typeof config.githubUserId === "string" ? config.githubUserId : null;
     const githubLogin = typeof config.githubLogin === "string" ? config.githubLogin : null;
     const configuredSubject = typeof config.providerUserId === "string" ? config.providerUserId : null;
@@ -1719,6 +1720,7 @@ export class WorkOpportunityService {
 }
 
 export const __workOpportunityTesting = {
+  syncVerifiedIdentityDirectory,
   admissionJsonSchema,
   parseAdmissionResult: (value: unknown) => AdmissionResultSchema.parse(value),
   markSuggestedWorkDue,

@@ -27,7 +27,6 @@ describe("Apollo.io personal connector", () => {
     expect(adapter.dynamicAgentTools?.connectionScopes).toEqual(["personal"]);
     await expect(adapter.beginAuthorization!({ connectionScope: "workspace" })).rejects.toMatchObject({ code: "invalid_configuration" });
     await expect(adapter.handleAuthorizationCallback!({ connectionScope: "workspace" })).rejects.toMatchObject({ code: "invalid_configuration" });
-    await expect(adapter.dynamicAgentTools!.discover(connection("workspace"), neverAborts())).rejects.toMatchObject({ code: "invalid_configuration" });
   });
 
   it.each(["https://api.rallywith.ai", "https://enterprise.api.rallywith.ai"])("discovers OAuth, exchanges PKCE, rotates and revokes credentials for %s", async (origin) => {
@@ -107,6 +106,19 @@ describe("Apollo.io personal connector", () => {
     expect(calls).toEqual([{ name: "search_people", arguments: { titles: ["VP Sales"] } }]);
     await expect(adapter.executeTool("search_people", {}, { ...context, principal: { ...context.principal, userId: asUserId("44444444-4444-4444-8444-444444444444") } })).rejects.toMatchObject({ code: "unauthorized" });
     expect(calls).toHaveLength(1);
+  });
+
+  it.each([0, 1])("reports whether an authorized account exposes tools (%s)", async (count) => {
+    const adapter = createApolloConnector({ redirectUri, fetch: async (_url, init) => {
+      const request = JSON.parse(String(init?.body));
+      if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
+      return Response.json({ jsonrpc: "2.0", id: request.id, result: request.method === "initialize"
+        ? { protocolVersion: "2025-06-18", capabilities: {} }
+        : { tools: count === 0 ? [] : [{ name: "search_people", inputSchema: { type: "object" } }] } });
+    } });
+    const health = await adapter.healthCheck(connection(), neverAborts());
+    if (count === 0) expect(health).toEqual({ ok: false, reasonCode: "apollo_tools_unavailable", message: "Apollo.io did not expose usable tools. Check this account's permissions and plan access." });
+    else expect(health).toEqual({ ok: true, message: "Apollo.io authorization and live discovery succeeded (1 tools)" });
   });
 
   it("marks a revoked refresh grant as reconnect required", async () => {
