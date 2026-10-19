@@ -1214,7 +1214,8 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "thread_backfill", // The alarm lane and the thread-backfill RPCs.
   // Recorded by `memoryDigest`, marked by triggers and retractions, and read by
   // the alarm lane and the memory-digest-sync RPCs.
-  "memory_digest_holders", "memory_digest_sync", "memory_digest_sync_state",
+  "memory_digest_holders", "memory_digest_holder_facts", "memory_digest_sync", "memory_digest_sync_state",
+  "memory_revision",
   // Converted to typed methods, so a generic statement naming one is a
   // mistake rather than a legacy caller. Refusing it here is what makes the
   // routing entries in `WORKSPACE_LOCAL_TABLES` more than a courtesy: the
@@ -4555,7 +4556,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: MEMORY_FACTS_MIGRATION,
 }, {
   version: 117,
-  description: "conversations holding a memory digest copy, marked for a refresh when a scope narrows, a participant leaves, or a fact is retracted",
+  description: "conversations holding a memory digest copy and the facts each copy holds, marked for a refresh when a visibility input changes or a held fact is retracted, and the revision digest reads are ordered by",
   // The lane is channel colour sync's; see memory-digest-sync.ts.
   statements: MEMORY_DIGEST_SYNC_MIGRATION,
 }];
@@ -15301,8 +15302,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceMemoryForgetRequestSchema, input, "forget_memory_fact");
     this.assertWorkspace(request.workspaceId);
     const result = forgetMemoryFact(this.state.storage, request, await this.memoryReaderRelationship(request));
-    // A retraction marked every digest holder; the lane sends them without
-    // waiting on an unrelated wake.
+    // A retraction marked the digest holders that held the fact; the lane
+    // sends them without waiting on an unrelated wake.
     if (result.outcome === "retracted") await this.armNextAlarm();
     return result;
   }
@@ -15333,12 +15334,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceMemoryApplySweepRequestSchema, input, "apply_memory_sweep");
     this.assertWorkspace(request.workspaceId);
     const result = applyMemorySweep(this.state.storage, request);
-    // A retract or an update marked every digest holder; the lane sends them
-    // without waiting on an unrelated wake.
-    if (result.outcome === "applied" && request.operations.some((operation, index) =>
-      (operation.op === "retract" || operation.op === "update") && !result.refused.some((refusal) => refusal.index === index))) {
-      await this.armNextAlarm();
-    }
+    // A retraction marked the digest holders that held its fact; the lane
+    // sends them without waiting on an unrelated wake.
+    if (result.outcome === "applied" && result.markedHolders) await this.armNextAlarm();
     return result;
   }
 
