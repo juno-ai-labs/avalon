@@ -179,6 +179,9 @@ Each tab runs the list motion on the shared scroll box;
 
 `screens/channel.tsx` draws a Channel: its pill and menu at the top, a feed of
 its threads and messages, and a composer at the foot.
+An empty feed shows four paragraphs explaining Channels, starting Threads,
+inviting collaborators, private Breakouts, and merging work back. The guidance
+uses a left-aligned reading column above the composer.
 
 - **Feed.** `GET /spaces/:id/feed`, newest nearest the composer; a visit opens
   at the server's first unread row with one preceding row for context, or at

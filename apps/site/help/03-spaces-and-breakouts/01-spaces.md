@@ -61,8 +61,9 @@ A private Thread you are not in is not in the feed. If someone sends you a link
 to one, you can ask to join it; see
 [Asking to join from a link](04-who-can-see-what.md#asking-to-join-from-a-link).
 
-A Channel with no Threads yet says **No threads yet. Describe the work below and
-Rally starts a thread for it.**
+A Channel with no Threads yet explains how Channels gather related work, how
+the input box starts a Thread, how to collaborate with Rally and other people,
+and how private Breakouts and merging work fit together.
 
 ### Start a Thread
 
