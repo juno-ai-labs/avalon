@@ -81,7 +81,7 @@ import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import { httpHostname, useHostFavicon } from '../lib/host-favicon';
 import { isThinkingEvent, thoughtVerb } from '../lib/transcript';
-import type { ElicitationData, Message, MessageMention, MessageMergedInto, WorkTotal } from '../lib/types';
+import type { ElicitationData, Message, MessageAttachment, MessageMention, MessageMergedInto, WorkTotal } from '../lib/types';
 import { useTextClamped } from '../lib/use-text-clamped';
 import { AgentWorkTiming } from './agent-work-timing';
 import { MessageByline } from './message-byline';
@@ -2013,6 +2013,51 @@ function HumanMessageBubble({
 }
 
 /**
+ * A person's words and files, as their turn draws them. Shared with the screen
+ * a thread shows while it is being started, so the opening looks the same
+ * before and after the room has it.
+ */
+export function HumanMessageBody({
+  attachments,
+  disclosure,
+  loadAttachmentContent,
+  mentions,
+  messageId,
+  onOpenAttachment,
+  telemetry,
+  text,
+}: {
+  attachments?: MessageAttachment[] | undefined;
+  disclosure?: RowDisclosure | undefined;
+  loadAttachmentContent?: ((id: string, signal?: AbortSignal) => Promise<Blob>) | undefined;
+  mentions?: MessageMention[] | undefined;
+  messageId: string;
+  onOpenAttachment?: ((preview: AttachmentPreview) => void) | undefined;
+  telemetry?: MessageCopyTelemetry | undefined;
+  text?: string | undefined;
+}): React.JSX.Element {
+  return (
+    <>
+      {text ? (
+        <HumanMessageBubble disclosure={disclosure} messageId={messageId} text={text}>
+          <MarkdownBody
+            mentions={mentions}
+            preserveLineBreaks
+            rallyMentions
+            speechKind="message"
+            telemetry={telemetry}
+            verbatim
+          >{text}</MarkdownBody>
+        </HumanMessageBubble>
+      ) : null}
+      {attachments?.length && loadAttachmentContent && onOpenAttachment ? (
+        <MessageAttachments attachments={attachments} loadContent={loadAttachmentContent} onOpen={onOpenAttachment} />
+      ) : null}
+    </>
+  );
+}
+
+/**
  * A system row: the note Rally leaves in the transcript when something happened
  * to the work stream rather than in it.
  *
@@ -3002,25 +3047,16 @@ export function MessageBlock({
       </MessageByline>
       {human ? (
         <div className="human-message-content">
-          {message.text ? (
-            <HumanMessageBubble disclosure={rowDisclosure} messageId={message.id} text={message.text}>
-              <MarkdownBody
-                mentions={message.mentions}
-                preserveLineBreaks
-                rallyMentions
-                speechKind="message"
-                telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
-                verbatim
-              >{message.text}</MarkdownBody>
-            </HumanMessageBubble>
-          ) : null}
-          {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
-            <MessageAttachments
-              attachments={message.attachments}
-              loadContent={loadAttachmentContent}
-              onOpen={onOpenAttachment}
-            />
-          ) : null}
+          <HumanMessageBody
+            attachments={message.attachments}
+            disclosure={rowDisclosure}
+            loadAttachmentContent={loadAttachmentContent}
+            mentions={message.mentions}
+            messageId={message.id}
+            onOpenAttachment={onOpenAttachment}
+            telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
+            text={message.text}
+          />
           {pendingLabel && <span className="message-delivery-pill">{pendingLabel}</span>}
           {/* The slot, whether or not there is a control to put in it. It is
               laid out always and painted on hover, and the turn after this one

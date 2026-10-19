@@ -93,6 +93,7 @@ export function keepPendingWorkstreams(
       pending: true as const,
       pendingListed: true as const,
       ...(held.pendingOrigin ? { pendingOrigin: held.pendingOrigin } : {}),
+      ...(held.pendingOpening ? { pendingOpening: held.pendingOpening } : {}),
     };
   });
   return kept.length === 0 ? described : [...kept, ...described];
@@ -134,6 +135,8 @@ export function addPendingWorkstream(queryClient: QueryClient, input: {
   /** Who started it and what they asked, so every surface shows it before the server answers. */
   createdByUserId?: string;
   objective?: string;
+  /** The opening as the transcript draws it; see `pendingOpening`. */
+  opening?: WorkstreamSummary['pendingOpening'];
   /**
    * The colour of the Channel it is started in. The server gives the thread
    * that colour at birth, so the row shows it now rather than the id-derived
@@ -164,6 +167,7 @@ export function addPendingWorkstream(queryClient: QueryClient, input: {
     ...(input.origin ? { pendingOrigin: input.origin } : {}),
     ...(input.createdByUserId ? { createdByUserId: input.createdByUserId } : {}),
     ...(input.objective ? { objective: input.objective } : {}),
+    ...(input.opening ? { pendingOpening: input.opening } : {}),
     ...(input.color ? { appearance: { icon: null, color: input.color } } : {}),
   };
   setCachedWorkstreams(queryClient, (current) => [
@@ -225,6 +229,7 @@ function settledRow(row: WorkstreamSummary): WorkstreamSummary {
   const settled = { ...row };
   delete settled.pending;
   delete settled.pendingOrigin;
+  delete settled.pendingOpening;
   delete settled.pendingListed;
   return settled;
 }

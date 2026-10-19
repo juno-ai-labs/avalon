@@ -545,6 +545,23 @@ see
 
 ## Changelog
 
+### 2026-10-19 — A starting thread shows its opening's mentions and attachments
+
+**What changed:** The pending row carries a client-only `pendingOpening`, the
+opening as the transcript will draw it, and the "Starting…" screen draws it
+with `HumanMessageBody`, the part a person's turn uses.
+
+**Why:** The screen showed `@Name` as plain text and no attachments, then the
+transcript swapped in chips and thumbnails a moment later.
+
+**Considered and rejected:** Seeding the ordered transcript before the create
+answers. Its turn id comes from that answer, and a seed under another id
+would leave the socket upsert a second row to reconcile.
+
+**Consequences:** Previews on that screen read through
+`getResourcePreviewContent` before the thread exists, which relies on an
+uploader being able to read their own draft upload.
+
 ### 2026-10-10 — A thread starts from its Channel's composer, and starts private in a private Channel
 
 **What changed:** The full-pane launcher (`new-workstream.tsx`) is deleted. A
