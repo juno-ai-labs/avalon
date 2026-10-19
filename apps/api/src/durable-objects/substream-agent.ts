@@ -7,6 +7,7 @@ import { ParticipantAuthorityTransferStorage, ParticipantProjectionSchema, Parti
 import { workstreamImportHash } from "./workstream-import-hash";
 import { PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
 import { MergeResourceTokenSchema } from "@rally/contracts";
+import { settledBackfillOutcome } from "../services/suggestion-backfill-service";
 import { AGENT_HANDOFF_TOOL_NAMES, AgentCommunicationService } from "../services/agent-communication-service";
 import { RegionSchema } from "@rally/contracts/regions";
 import { agentIdForAddress, AgentExchangeSchema } from "@rally/contracts";
@@ -703,6 +704,7 @@ const KEEP_ALIVE_INTERVAL_MS = 30_000;
 const SEMANTIC_REALTIME_RETRY_MS = 5_000;
 /** `_internal_durable_alarms.kind` for a wake-up an agent run scheduled for itself. */
 const AGENT_TIMER_ALARM_KIND = "agent_timer";
+const MERGE_SUGGESTION_ALARM_KIND = "merge_suggestion";
 /**
  * Bound on the entries one sync writes.
  *
@@ -5746,11 +5748,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     });
   }
 
-  /** Judge a newly visible no-run result without delaying its admission or delivery. */
-  private observeMergedResult(turnId: string): void {
+  /** The stored alarm retains this result until classification and drafting finish. */
+  private async observeMergedResult(turnId: string): Promise<void> {
     const identity = this.objectStore.identity();
     if (!identity || identity.parentKind !== "workstream") return;
-    this.state.waitUntil(this.judgeSettledTurn(this.env, {
+    const judgement = await this.judgeSettledTurn(this.env, {
       workspaceId: identity.workspaceId,
       parentId: identity.parentId,
       substreamId: this.externalSubstreamId(),
@@ -5758,8 +5760,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       finalTurnId: turnId,
       completed: true,
       backgroundAgent: this.state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM background_agent").one().n > 0,
-      parentReadFailure: "null",
-    }));
+      parentReadFailure: "throw",
+    });
+    settledBackfillOutcome(judgement);
+    const row = this.suggestions.byRun(`merge:${turnId}`);
+    if (row?.status === "open" && row.draft_status === "pending") throw new Error("merge_suggestion_draft_pending");
   }
 
   /**
@@ -6396,15 +6401,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       try {
         const event = this.semanticRealtimeEvent(reference);
         await this.deliverCommittedRealtimeEvent(event);
+        // Persist and arm a separate intent before acknowledging the realtime
+        // reference. The alarm survives isolate loss during either provider
+        // call, and never holds up the message's publication on the classifier.
+        if (event.type === "transcript_turn_upserted" && event.turn.blocks.some((block) =>
+          block.type === "text" && block.structuredContent?.["type"] === "conversation_merge",
+        )) await this.scheduleAlarm({ kind: MERGE_SUGGESTION_ALARM_KIND, key: event.turn.turnId, dueAt: Date.parse(event.occurredAt) });
         if (!this.objectStore.acknowledgeSemanticRealtime(reference.messageId, reference.sequence)) {
           throw new Error("semantic_realtime_acknowledgement_lost");
         }
-        // Both immediate admissions and queued no-run deliveries publish a
-        // canonical turn here. Use that same durable boundary for suggestions
-        // so a result cannot miss judgement merely because it waited in line.
-        if (event.type === "transcript_turn_upserted" && event.turn.blocks.some((block) =>
-          block.type === "text" && block.structuredContent?.["type"] === "conversation_merge",
-        )) this.observeMergedResult(event.turn.turnId);
       } catch (error) {
         this.objectStore.deferSemanticRealtime(
           reference.messageId,
@@ -7647,6 +7652,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * silent stall.
    */
   protected override async runScheduledAlarm(alarm: ScheduledAlarm): Promise<void> {
+    if (alarm.kind === MERGE_SUGGESTION_ALARM_KIND) return this.observeMergedResult(alarm.key);
     if (alarm.kind !== AGENT_TIMER_ALARM_KIND) {
       throw new Error(`substream_unknown_alarm_kind:${alarm.kind}`);
     }
