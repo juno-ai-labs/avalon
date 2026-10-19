@@ -8,24 +8,9 @@ import type { ObjectPortOf } from "../durable-objects/object-port-protocol";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { localWorkstreamAuthority, type ObjectPortAuthority } from "./local-authorities";
+import { ObjectPortError } from "./object-port-error";
 
-/**
- * The object rejected the request itself — a bad protocol or a misrouted stub.
- *
- * Distinct from a refused write, which is an ordinary outcome and is returned
- * in the operation's own result rather than thrown. Anything reaching here is a
- * defect in the caller or the routing, not a state the work stream can be in.
- *
- * One class for all four ports. There were four, one per port, and no caller
- * ever caught any of them by type — they existed only to be thrown. The `code`
- * still says which authority refused and why.
- */
-export class ObjectPortError extends Error {
-  constructor(readonly code: string, message: string) {
-    super(message);
-    this.name = "ObjectPortError";
-  }
-}
+export { ObjectPortError } from "./object-port-error";
 
 /** What distinguishes one object port from another, which is not much. */
 export interface ObjectPortContract<TStorage, TOperation extends keyof TStorage & string> {

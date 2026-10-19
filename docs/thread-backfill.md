@@ -90,8 +90,11 @@ arms its own alarm.
   `test-workers/thread-backfill.test.ts`.
 - **A model failure is a failure, not an outcome.** `summarizeExistingDescription`
   throws `description_summary_model_failed` so the row is retried; reporting
-  it as `unchanged` would settle the row with the model down. Guard:
-  `workstream-naming.test.ts`. `backfillSuggestion` throws the same way on a
+  it as `unchanged` would settle the row with the model down. A conversation
+  whose object is not authoritative is the opposite case: it refuses every
+  read until initialization or an import makes it authoritative, which no
+  retry does, so the job reports `not_authoritative` and the row settles.
+  Guard: `workstream-naming.test.ts`. `backfillSuggestion` throws the same way on a
   transient classifier failure (`suggestion_backfill_classifier_unavailable_<kind>`
   for a 5xx, 408 or 429, a deadline or an unreachable provider; the observer
   keeps no answer for a failed judgement, so the retry asks again) and on a
@@ -123,6 +126,12 @@ revisions.
   the key is missing does nothing and finishes. Without `TYPESAFE_API_KEY`,
   `suggestion_backfill` records each conversation as `classifier_unavailable`
   with `typesafe_key_missing` and settles it the same way.
+- **A conversation object that never became authoritative.** The directory can
+  list a thread whose object is still the `preparing` placeholder every
+  object is born with (seen in production: projected with a title and a
+  creator, the object empty and in `awaiting_authoritative_import`). Opening
+  it fails, and `description_summary` settles it as `not_authoritative`.
+  Repairing the thread is outside this lane.
 - **A retired Organization** refuses the write; the consumer acks without
   releasing the row or logging a failure.
 - **Batch size** is 100, Cloudflare Queues' `sendBatch` ceiling.
@@ -145,20 +154,53 @@ revisions.
   `workspace-suggestion-backfill-migration.test.ts`: the same for 115.
 - `apps/api/test/suggestion-backfill-service.test.ts`: the `suggestion_backfill`
   answer, thrown on a classifier failure and settled on a missing key.
-- `apps/api/test/workstream-naming.test.ts`: the `description_summary` step.
+- `apps/api/test/workstream-naming.test.ts`: the `description_summary` step,
+  thrown on a model failure and settled on an object that is not
+  authoritative.
 
 ## Operations
 
 | Event | Means |
 | --- | --- |
 | `thread_backfill_conversation` | One conversation ran. `outcome` is the handler's; for `description_summary`, a `DescriptionSummaryOutcome`; for `suggestion_backfill`, `nothing_to_judge` or the observer's `skipped:<gate>`, `judged:<code>`, `resumed` or `failed:<reason>`. |
-| `thread_backfill_failed` | A thread's job threw; its row retries at its gate. |
+| `thread_backfill_failed` | A thread's job threw; its row retries at its gate. `reason` is the thrown code; a conversation object's refusal arrives as the object's own code. |
 | `thread_backfill_publication_failed` | The alarm could not send a batch; its rows retry at their gates. |
 
 The list drains to empty when the job is done. A row that keeps coming back
 shows as repeated `thread_backfill_failed` for one `workstream_id`.
 
 ## Changelog
+
+### 2026-10-19 — A conversation that cannot serve settles
+
+**What changed:** `summarizeExistingDescription` answers `not_authoritative`
+when the conversation object refuses its identity read as
+`workstream_runtime_authority_fenced`, so the row settles instead of
+throwing.
+
+**Why:** One `description_summary` row in the KB QA Organization reached
+attempts 383, retried at the 30-minute gate since the backfill began. Its
+thread's Main object is the `preparing` placeholder at authority generation
+zero, with no title, transcript or participants, though WorkspaceDO lists the
+thread with all three. Every port operation refuses such an object, so the
+first read threw on every attempt. `suggestion_backfill` settled the same
+thread because it reads the object's storage directly and found no turn to
+judge. The log said only `thread_backfill_failed`; `diagnosticErrorCode` now
+names the object's refusal
+([`naming-a-schema-failure.md`](naming-a-schema-failure.md)).
+
+**Considered and rejected:** Settling every error a handler throws once it
+repeats: a model outage would then settle rows with nothing written, which
+the model-failure invariant exists to stop. Checking authority in
+`threadBackfillWork`: WorkspaceDO does not know the object's authority, and
+asking would be one more RPC per conversation for every job. Skipping the
+fence for this read: the fence is what keeps a placeholder from answering as
+a real conversation.
+
+**Consequences:** A thread whose object later becomes authoritative is not
+summarized by this backfill; its initialization or import writes its own
+description. How the KB QA thread's object lost its initialization on
+2026-10-06 was not traced; that is a repair for the thread, not for this lane.
 
 ### 2026-10-19 — A second job: the suggestion backfill
 

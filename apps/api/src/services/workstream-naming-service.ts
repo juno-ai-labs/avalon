@@ -17,6 +17,7 @@ import { publishWorkstreamEvent } from "./integrations";
 import { runStructuredInference } from "./structured-inference";
 import { MAXIMUM_DESCRIPTION_CHARACTERS, provisionalWorkstreamDescription } from "./workstream-description-service";
 import { createIdentityObjectPort } from "../runtime/identity-port";
+import { AUTHORITY_FENCED_CODE, ObjectPortError } from "../runtime/object-port-error";
 
 /**
  * The longest generated name that is written to a work stream. `title` holds
@@ -184,6 +185,7 @@ export type DescriptionSummaryOutcome =
   | "unchanged"
   | "superseded"
   | "not_found"
+  | "not_authoritative"
   | "archived"
   | "authored"
   | "not_a_thread"
@@ -202,6 +204,13 @@ export type DescriptionSummaryOutcome =
  * description a person wrote, one the description loop already rewrote, and
  * one this step already summarized all fail it before any model call. The
  * write is the same compare-and-swap the first pass uses.
+ *
+ * A conversation whose object is not authoritative refuses every read, and
+ * nothing the backfill does makes it one: initialization or an import makes it
+ * authoritative, and a thread the directory lists whose object never got
+ * either is stuck until someone repairs it. Reported as `not_authoritative`
+ * so the row settles, rather than thrown, which retried it at its gate for
+ * good (docs/thread-backfill.md, 2026-10-19).
  */
 export async function summarizeExistingDescription(env: Env, input: {
   workspaceId: string;
@@ -217,7 +226,11 @@ export async function summarizeExistingDescription(env: Env, input: {
 }): Promise<DescriptionSummaryOutcome> {
   const identity = await createIdentityObjectPort(
     env, input.workspaceId, input.workstreamId, undefined, input.substreamId,
-  ).identity();
+  ).identity().catch((error: unknown) => {
+    if (error instanceof ObjectPortError && error.code === AUTHORITY_FENCED_CODE) return "not_authoritative" as const;
+    throw error;
+  });
+  if (identity === "not_authoritative") return identity;
   if (!identity) return "not_found";
   if (input.onlyWhenEmpty && identity.description !== "") return "has_description";
   if (identity.archived_at != null) return "archived";
