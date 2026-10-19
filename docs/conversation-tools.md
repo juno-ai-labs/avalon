@@ -101,12 +101,15 @@ it.
   search reaches up exactly as far as read does. A Breakout member who cannot
   open its Thread reads the Thread's Main through the Breakout, so they find
   what was said there too; every group names a conversation already admitted,
-  and hits are narrowed to those conversations again. The index ranks
-  substring candidates by document id and stores `occurred_at` unindexed
-  (`filterable: false`), so it cannot order by time: when more messages match
-  than `limit`, the page holds an arbitrary subset, sorted newest first among
-  themselves, and the tool's description tells the model so. One candidate page, no continuation:
-  a narrower query or a read of the conversation finds more.
+  and hits are named from those conversations. The index ranks substring
+  candidates by document id, a hash, and stores `occurred_at` unindexed
+  (`filterable: false`), so it cannot order by time and the newest match can be
+  on any page. `newestSearchHits` reads every candidate page and keeps the
+  newest `limit`; `MAXIMUM_SEARCH_CANDIDATE_PAGES` is the open bound on how many
+  pages one search reads (`LIMIT UNSET`). Indexing `occurred_at` would let the
+  index sort, at an indexing cost on every row; that is the team's call. The
+  tool has no continuation: a narrower query, or a read of the conversation,
+  finds more than `limit`.
 - **post** takes `text` and `conversation`, and returns
   `{ conversationId, messageId, replayed }`. `conversation` may be left out to
   post to the Sidekick's home when there is one: a run knows from its
@@ -218,7 +221,8 @@ other reason throws `conversation_post_refused:<code>`.
 
 Limits, all placeholders for the team to set per
 [`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md),
-written as the numbers the design named: a page of 25 by default and at most 50
+written as the numbers the design named: `MAXIMUM_SEARCH_CANDIDATE_PAGES`, open,
+bounds how many index pages one search reads; a page of 25 by default and at most 50
 for list, read and search (`list_resources`' numbers), and a read budget of 12,000
 characters per page (`read_resource`'s). They live as constants at the top of
 `conversation-tools.ts`. The echo of a refused value in a sentence,
@@ -239,7 +243,8 @@ whole rather than splitting it.
   each of its Channels, and each refusal's sentence. A Channel: listed by id
   and title alone, its feed read as messages, and its continuation resuming
   inside a feed page and onto the next. Search: matches from a Channel and a
-  Thread in one index call, newest first, a hit outside the scope dropped, the
+  Thread, newest first, a hit outside the scope dropped, the newest matches kept
+  across candidate pages, index rows of both sources turned into hits, the
   audience groups of a Breakout, its Thread's Main and a Channel, and a Channel
   read resuming after its last item when a merge lands between pages.
   WorkspaceDO and the target are a typed double there; everything they decide

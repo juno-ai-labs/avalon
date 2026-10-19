@@ -48,7 +48,7 @@ import { asApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { ConversationMergeService } from "./conversation-merge-service";
 import { searchAudienceGroup, searchAudienceGroupIds } from "./search-audience";
-import { workspaceSearchIndex } from "./text-search";
+import { workspaceSearchIndex, type TextSearchCandidate } from "./text-search";
 import { createMessageObjectPort } from "../runtime/message-port";
 
 /**
@@ -224,44 +224,23 @@ export function conversationToolPorts(env: Env, input: WorkstreamWorkflowInput):
     },
     searchMessages: async (request) => {
       const audience = await searchAudienceGroupIds(conversationSearchGroups(request.conversations));
-      const wanted = new Set(request.conversations.map((conversation) => `${conversation.parentId}/${conversation.substreamId}`));
-      const channels = request.conversations.filter((conversation) => conversation.kind === "space");
-      const threads = request.conversations.filter((conversation) => conversation.kind !== "space");
-      // The index admitted every candidate through its audience; each loader
-      // keeps only the conversations in the loop's scope, as member search's
-      // loader keeps only what it can render.
       const index = await workspaceSearchIndex(env, workspaceId);
-      return index.query<ConversationIndexHit>([{
-        source: "messages",
-        scopeIds: [...new Set(threads.map((conversation) => conversation.parentId))],
-        load: async (candidates) => {
-          const hits = new Map<string, ConversationIndexHit>();
-          for (const candidate of candidates) {
-            const separator = candidate.source_id.indexOf("/");
-            // Rows written before `substream_id` existed name the substream first in `source_id`.
-            const substreamId = candidate.substream_id ?? candidate.source_id.slice(0, Math.max(0, separator));
-            const messageId = separator < 0 ? "" : candidate.source_id.slice(separator + 1);
-            if (!messageId || candidate.archived !== false || typeof candidate.text !== "string"
-              || typeof candidate.occurred_at !== "number" || !wanted.has(`${candidate.scope_id}/${substreamId}`)) continue;
-            hits.set(candidate.id, { parentId: candidate.scope_id, substreamId, messageId,
-              sentAt: new Date(candidate.occurred_at).toISOString(), text: candidate.text });
-          }
-          return hits;
-        },
-      }, {
-        source: CHANNEL_MESSAGE_SEARCH_SOURCE,
-        scopeIds: channels.map((conversation) => conversation.parentId),
-        load: async (candidates) => {
-          const hits = new Map<string, ConversationIndexHit>();
-          for (const candidate of candidates) {
-            if (candidate.archived !== false || typeof candidate.text !== "string"
-              || typeof candidate.occurred_at !== "number") continue;
-            hits.set(candidate.id, { parentId: candidate.scope_id, substreamId: "0", messageId: candidate.source_id,
-              sentAt: new Date(candidate.occurred_at).toISOString(), text: candidate.text });
-          }
-          return hits;
-        },
-      }], { query: request.query, mode: "substring", limit: request.limit, audience });
+      // The audience is exactly the scope's conversations, so a loader only
+      // renders: it admits nothing (`conversationSearchGroups`).
+      const load = async (candidates: readonly TextSearchCandidate[]) => new Map(candidates.flatMap((candidate) => {
+        const hit = conversationIndexHit(candidate);
+        return hit ? [[candidate.id, hit] as const] : [];
+      }));
+      const sources = [
+        { source: "messages", load,
+          scopeIds: [...new Set(request.conversations.filter((conversation) => conversation.kind !== "space")
+            .map((conversation) => conversation.parentId))] },
+        { source: CHANNEL_MESSAGE_SEARCH_SOURCE, load,
+          scopeIds: request.conversations.filter((conversation) => conversation.kind === "space")
+            .map((conversation) => conversation.parentId) },
+      ];
+      return newestSearchHits((cursor) => index.queryPage<ConversationIndexHit>(sources,
+        { query: request.query, mode: "substring", limit: request.limit, audience }, cursor), request.limit);
     },
     linkOrigins: [env.PUBLIC_WEB_BASE_URL, ...LEGACY_WORKSTREAM_LINK_ORIGINS],
     merge: async (request) => new ConversationMergeService(env, await actingAuth(env, input)).merge(request.threadId, {
@@ -316,6 +295,65 @@ export function conversationSearchGroups(
   return conversations.map((conversation) => conversation.kind === "space"
     ? searchAudienceGroup.space(conversation.parentId)
     : searchAudienceGroup.conversation(conversation.parentId, conversation.substreamId));
+}
+
+/**
+ * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
+ * docs/adding-security-defensive-and-other-limits.md.
+ *
+ * Bounds: candidate pages one `conversation_search` reads from the index.
+ * Without it: a word that matches every message in a busy Thread and its
+ *   Channel reads every match, one index round trip per page, before the
+ *   tool answers.
+ * Direction: upper bound; the open value is +Infinity.
+ * Trips: the search answers from the pages read so far, newest first among them.
+ * Derive from: the latency a search may add, divided by one index round trip.
+ */
+export const MAXIMUM_SEARCH_CANDIDATE_PAGES = Number.POSITIVE_INFINITY;
+
+/**
+ * The newest `limit` hits among every page the index returns. The index
+ * ranks substring candidates by document id, a hash, and cannot sort by time
+ * (`occurred_at` is stored unindexed), so the newest matches can be on any
+ * page: every page is read, and only the newest `limit` are kept.
+ */
+export async function newestSearchHits(
+  page: (cursor: string | undefined) => Promise<{ results: ConversationIndexHit[]; nextCursor: string | null }>,
+  limit: number,
+  maximumPages = MAXIMUM_SEARCH_CANDIDATE_PAGES,
+): Promise<ConversationIndexHit[]> {
+  let kept: ConversationIndexHit[] = [];
+  let cursor: string | undefined;
+  for (let read = 0; read < maximumPages; read += 1) {
+    const next = await page(cursor);
+    kept = [...kept, ...next.results]
+      .sort((a, b) => (a.sentAt < b.sentAt ? 1 : a.sentAt > b.sentAt ? -1 : 0))
+      .slice(0, limit);
+    if (next.nextCursor === null) break;
+    cursor = next.nextCursor;
+  }
+  return kept;
+}
+
+/**
+ * One index row as a hit, or null for a row with nothing to render: an
+ * archived one, or one written before the display attributes. A thread's row
+ * names its turn after the substream in `source_id`; a Channel's row is the
+ * message itself.
+ */
+export function conversationIndexHit(candidate: TextSearchCandidate): ConversationIndexHit | null {
+  if (candidate.archived !== false || typeof candidate.text !== "string" || typeof candidate.occurred_at !== "number") {
+    return null;
+  }
+  const sentAt = new Date(candidate.occurred_at).toISOString();
+  if (candidate.source === CHANNEL_MESSAGE_SEARCH_SOURCE) {
+    return { parentId: candidate.scope_id, substreamId: "0", messageId: candidate.source_id, sentAt, text: candidate.text };
+  }
+  const separator = candidate.source_id.indexOf("/");
+  // Rows written before `substream_id` existed name the substream first in `source_id`.
+  const substreamId = candidate.substream_id ?? candidate.source_id.slice(0, Math.max(0, separator));
+  const messageId = separator < 0 ? "" : candidate.source_id.slice(separator + 1);
+  return messageId ? { parentId: candidate.scope_id, substreamId, messageId, sentAt, text: candidate.text } : null;
 }
 
 /** A refusal the model can act on: a stable code, one sentence, allowlisted details only. */
@@ -779,7 +817,7 @@ export function createConversationsPlugin(
   const search: HarnessTool = {
     definition: {
       name: "search",
-      description: "Find messages that mention a word or phrase in the conversations you can reach, or in one of them. Returns up to limit matches, ordered newest first, with where each was said. When more messages match than it returns, the ones returned are not necessarily the newest: use a more specific phrase or name one conversation. conversation_read a conversation for the context around a match.",
+      description: "Find messages that mention a word or phrase in the conversations you can reach, or in one of them. Returns the newest matches, up to limit, with where each was said; conversation_read that conversation for the context around one.",
       capability: "rally.conversation.search",
       mode: "read",
       idempotency: "safe",
