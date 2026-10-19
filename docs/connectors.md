@@ -1505,6 +1505,8 @@ Workspace-principal automation runs retain their separate lifecycle authority.
 
 **What changed:** Calendar event updates normalize empty add, remove, and replacement attendee arrays to omitted values before validation and execution.
 
+The private pre-pagination receipt recipe retains the original attendee-field descriptions, so the new model-facing guidance does not change historical tool-surface hashes.
+
 **Why:** A production guest invitation repeatedly failed because the agent supplied an empty replacement array alongside an addition. Presence-based exclusivity made the unused field block a valid change.
 
 **Rejected:** Merely relaxing the conflict check would leave an empty replacement able to clear the guest list during execution. Normalizing once in the shared argument schema gives preflight validation and execution the same meaning.
