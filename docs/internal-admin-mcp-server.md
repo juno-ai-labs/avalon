@@ -236,6 +236,7 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | `list_model_flags` | None | Lists each agent role's model flag with its default and live route. |
 | `update_model_flag` | `role`, `routing` | Replaces an agent role's default route plan through Ace after checking each model id on OpenRouter. |
 | `query_data_lake` | `lakehouse`, `sql` | Runs read-only Basin SQL against `llm_inference`, `analytics_events`, or `usage_events`. |
+| `query_worker_observability` | `view`, `from`, optional `to`, `filters`, `needle`, `calculations`, `groupBys`, `limit`, `offset` | Queries Workers Logs and Traces for every Worker on the account, as the dashboard's Query Builder does. |
 
 SQL results include `columns`, JSON-safe `rows`, `rowsRead`, and `rowsWritten`.
 BLOB values are returned as `{ "type": "blob", "base64": "..." }`.
@@ -260,6 +261,10 @@ maintenance; it is not a domain-level count of changed records.
   is deleted for everyone it reached.
 
 - Follow `query_data_lake`'s tool description on scan cost and raw content.
+
+- Narrow `query_worker_observability` to one Worker with a
+  `$metadata.service` filter, and read one trace by querying the `events` view
+  filtered on `$metadata.traceId`.
 
 - The server audits the Access actor, tool, target IDs, and success or failure,
   but deliberately does not log SQL text, bindings, result rows, or SQLite error
