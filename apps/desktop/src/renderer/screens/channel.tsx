@@ -21,7 +21,7 @@ import { AttachmentPanel } from '../components/attachment-panel';
 import type { AttachmentPreview } from '../components/attachments';
 import { InspectorRail } from '../components/inspector-rail';
 import { openMemorySource, useMemoryFacts } from '../components/memory-review';
-import { MarkdownBody } from '../components/workstream-blocks';
+import { MarkdownBody, MessageActions } from '../components/workstream-blocks';
 import type { CitationContext } from '../components/markdown-citations';
 import { openLink } from '../lib/browser-rail-links';
 import { Avatar, Button, EmptyState, InlineError, LoadingState, Modal, RallyAvatar } from '../components/primitives';
@@ -627,7 +627,9 @@ function ThreadCard({ author, members, onOpen, open, placedAt, thread }: {
 
 /**
  * A message in the Channel itself, outside any thread, by whoever said it:
- * Rally, or a member. Not a button, because there is nothing to open.
+ * Rally, or a member. Not a button, because there is nothing to open. Its hover
+ * row is the one every message gets; a Channel has nothing to branch from or
+ * merge into, so it carries the text actions alone.
  */
 function MessageCard({ author, focused, members, message, placedAt }: {
   /** The member who said it, once the directory has them; unused for Rally. */
@@ -652,6 +654,9 @@ function MessageCard({ author, focused, members, message, placedAt }: {
           <span aria-hidden="true">·</span>
           <RelativeTime value={placedAt} />
         </span>
+        {/* The stored words, not the rendering: copy and speech take what was
+            said, and a typed @name reads the same either way. */}
+        <MessageActions subject={rally ? 'response' : 'message'} telemetry={{ messageId: message.id }} text={message.body} />
       </div>
     </div>
   </li>;
@@ -712,6 +717,7 @@ function MergeCard({ author, focused, members, merge, message, onOpenArtifact, o
   // quote line, nothing to open.
   return <li className={clsx('channel-feed-item is-message is-merge', focused && 'is-focused')} data-message-id={message.id}>
     <MergeMessage
+      actions={<MessageActions citations={citations} telemetry={{ messageId: message.id }} text={message.body} />}
       label={`${merge.private ? 'A private thread' : merge.title || 'A thread'}, merged by ${merger}`}
       mergedBy={<>{author && <Avatar member={author} size="small" title={null} />}{merger}</>}
       onQuote={showThread}

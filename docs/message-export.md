@@ -18,7 +18,7 @@ by the feed's own component and only the surroundings are new.
 | --- | --- |
 | `apps/desktop/src/common/message-export.ts` | The request and result contract both processes share, the file-type table, and `messageExportFileName` — the one place a message's text becomes a file name. |
 | `apps/desktop/src/renderer/lib/message-export.ts` | The renderer's half: serializes a `MarkdownBody` element to HTML in a detached root, reads the Rally mark out of the bundle once, calls the bridge. |
-| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `AssistantMessageActions` — the hover row under a turn, its in-flight and failed states. |
+| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MessageActions` — the hover row under every message (Thread, Breakout and Channel), its in-flight and failed states. |
 | `apps/desktop/src/main/message-export.ts` | Everything about the card: the document, its stylesheet, the splash, the page footer, request validation, and `MessageExporter`, which drives one render at a time and writes the file. |
 | `apps/desktop/src/main/index.ts` | The Electron adapter — the hidden `BrowserWindow`, the `rallywithai-export` protocol handler, the save dialog, and the `message-export:save` IPC handler. |
 | `packages/ui/src/styles/app.css` | Only the hover row's own styling. The card's stylesheet is not here; see the boundary below. |
