@@ -46,8 +46,8 @@ import type {
 import type { AuthContext, Env } from "../env";
 import { asApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { authorizationWorkspace } from "./authorization-service";
 import { ConversationMergeService } from "./conversation-merge-service";
+import { searchAudienceGroup, searchAudienceGroupIds } from "./search-audience";
 import { workspaceSearchIndex } from "./text-search";
 import { createMessageObjectPort } from "../runtime/message-port";
 
@@ -173,9 +173,9 @@ export interface ConversationToolPorts {
   ownMessage(messageId: string): Promise<MessageRow | undefined>;
   userNames(userIds: readonly string[]): Promise<Map<string, string>>;
   /**
-   * Messages in these conversations that hold `query`, as the acting person
-   * may read them: member search's index and its audience admission, narrowed
-   * to the conversations named.
+   * Messages in these conversations that hold `query`, from member search's
+   * index. The conversations were admitted by the scope before the call, so
+   * the index is asked for their rows alone ({@link conversationSearchGroups}).
    */
   searchMessages(request: {
     query: string;
@@ -223,9 +223,7 @@ export function conversationToolPorts(env: Env, input: WorkstreamWorkflowInput):
       return new Map(rows.results.map((row) => [row.id, row.name]));
     },
     searchMessages: async (request) => {
-      if (input.executionPrincipal.type !== "user") return [];
-      const audience = await (await authorizationWorkspace(env, workspaceId))
-        .readSearchAudience({ workspaceId, userId: asUserId(input.executionPrincipal.userId) });
+      const audience = await searchAudienceGroupIds(conversationSearchGroups(request.conversations));
       const wanted = new Set(request.conversations.map((conversation) => `${conversation.parentId}/${conversation.substreamId}`));
       const channels = request.conversations.filter((conversation) => conversation.kind === "space");
       const threads = request.conversations.filter((conversation) => conversation.kind !== "space");
@@ -301,6 +299,23 @@ async function actingAuth(env: Env, input: WorkstreamWorkflowInput): Promise<Aut
     analyticsWorkspaceId: null,
     principal: "connector",
   };
+}
+
+/**
+ * The search audience groups of conversations a scope admitted: exactly the
+ * group each one's rows carry (`search-audience.ts`), a Channel's `space:` and
+ * a Thread's or Breakout's `conversation:`. Not the person's own groups,
+ * because a scope admits some conversations through another: a Breakout
+ * member who cannot open its Thread still reads the Thread's Main, so they
+ * must find what was said there too. Searching up reaches what reading up
+ * reaches, and nothing more, since every group names a conversation in scope.
+ */
+export function conversationSearchGroups(
+  conversations: ReadonlyArray<Pick<ConversationToolEntry, "kind" | "parentId" | "substreamId">>,
+): string[] {
+  return conversations.map((conversation) => conversation.kind === "space"
+    ? searchAudienceGroup.space(conversation.parentId)
+    : searchAudienceGroup.conversation(conversation.parentId, conversation.substreamId));
 }
 
 /** A refusal the model can act on: a stable code, one sentence, allowlisted details only. */
