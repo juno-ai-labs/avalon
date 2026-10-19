@@ -8,6 +8,20 @@
   X-Frame-Options: DENY
   Cross-Origin-Opener-Policy: same-origin
 
+# Apollo and its LiveIntent dependency run only on the landing pages.
+# Replace the global CSP here so these permissions do not reach handoff pages.
+/
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data: https://rp.liadm.com https://rpr.liadm.com; script-src 'self' https://assets.apollo.io https://d-code.liadm.com; frame-src https://i.liadm.com; connect-src https://aplo-evnt.com https://idx.liadm.com https://rp.liadm.com https://rpr.liadm.com https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
+
+/start-fast/*
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data: https://rp.liadm.com https://rpr.liadm.com; script-src 'self' https://assets.apollo.io https://d-code.liadm.com; frame-src https://i.liadm.com; connect-src https://aplo-evnt.com https://idx.liadm.com https://rp.liadm.com https://rpr.liadm.com https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
+
+/concepts/*
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data: https://rp.liadm.com https://rpr.liadm.com; script-src 'self' https://assets.apollo.io https://d-code.liadm.com; frame-src https://i.liadm.com; connect-src https://aplo-evnt.com https://idx.liadm.com https://rp.liadm.com https://rpr.liadm.com https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
+
 # The help center fetches its own search index and page Markdown, so only
 # /help/ adds 'self' to connect-src. A second CSP header would be enforced
 # alongside the global one (the stricter wins), so the global header is
