@@ -67,4 +67,25 @@ describe("workspace placement cache", () => {
     await env.DB.prepare("INSERT INTO workspaces VALUES (?, 'global', 'enam')").bind(WORKSPACE).run();
     expect(await workspacePlacementAffinity(context, WORKSPACE)).toBe("enam");
   });
+
+  it("evicts only one warm entry when concurrent reads fill the same missing key", async () => {
+    const database = createTestD1Database({ prepare: (query: string) => env.DB.prepare(query) });
+    const context = { DB: database, APP_ENV: "production", AVALON_REGION: "global" } as const;
+    // Fill the existing 1,024-entry cache, keeping a known insertion order.
+    // The last key is reserved for two overlapping cache misses.
+    await env.DB.prepare(`WITH RECURSIVE numbers(n) AS (
+      VALUES(0) UNION ALL SELECT n + 1 FROM numbers WHERE n < 1024
+    ) INSERT INTO workspaces SELECT 'placement-' || n, 'global', 'enam' FROM numbers`).run();
+    for (let index = 0; index < 1024; index += 1) {
+      await workspacePlacementAffinity(context, `placement-${index}`);
+    }
+    expect(await Promise.all([
+      workspacePlacementAffinity(context, "placement-1024"),
+      workspacePlacementAffinity(context, "placement-1024"),
+    ])).toEqual(["enam", "enam"]);
+    await env.DB.exec("DROP TABLE workspaces");
+    // The first miss evicts placement-0. The other completion must not evict
+    // placement-1 too: its cached answer still works without the database.
+    expect(await workspacePlacementAffinity(context, "placement-1")).toBe("enam");
+  });
 });

@@ -79,6 +79,7 @@ beforeEach(async () => {
     userId: CREATOR_ID,
     sessionId: SESSION_ID,
   });
+  await env.DB.prepare("ALTER TABLE workspaces ADD COLUMN placement_affinity TEXT NOT NULL DEFAULT 'wnam'").run();
   await env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID))
     .initializeWorkspace(WORKSPACE_ID, "wnam");
   await env.DB.batch([
