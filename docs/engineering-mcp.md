@@ -7,7 +7,7 @@ It recreates the useful part of Cloudflare's dashboard database console through
 standard MCP tools at `https://mcp.internal.rallywith.ai/mcp`, including deliberate
 repair writes. It also reads and changes the feature flags and agent model
 routes that Ace manages, through Ace, and runs read-only queries against the
-Global analytical lakehouses. It is not a product API and it is never
+Global analytical lakehouses and the account's Workers Logs and Traces. It is not a product API and it is never
 available to Rally users by virtue of product membership.
 
 ## Where the code lives
@@ -33,6 +33,10 @@ available to Rally users by virtue of product membership.
 - `apps/engineering-mcp/src/lakehouse.ts` is the Basin SQL client behind
   `query_data_lake`. It takes bucket and table names from the checked-in
   `config/*-lakehouse.json` manifests.
+- `apps/engineering-mcp/src/observability.ts` is the Workers Observability
+  client behind `query_worker_observability`.
+- `apps/engineering-mcp/src/cloudflare-api.ts` reads both clients' Cloudflare
+  response envelope and names a refusal by Cloudflare's own code.
 - `.github/workflows/deploy-api.yml` deploys this Worker only after both
   regional API entrypoints are live and healthy.
 
@@ -165,6 +169,25 @@ runs the supplied statement through `ctx.storage.sql.exec`, and returns column
 names, JSON-safe rows, and the platform's physical `rowsRead` and `rowsWritten`
 counters. SQLite BLOB results are represented as `{ type: "blob", base64 }`.
 
+### Worker logs and traces
+
+`query_worker_observability` sends one query to Cloudflare's Workers
+Observability API (`/workers/observability/telemetry/query`), the store behind
+the dashboard's Query Builder. It reaches every Worker on the account, so a
+query narrows to one with a `$metadata.service` filter. The `view` picks the
+shape: `events` (one row per log line or span), `traces` (one row per trace),
+`invocations` (events grouped by request) or `calculations` (aggregates with
+group-bys). One trace's spans and logs are the `events` view filtered on
+`$metadata.traceId`.
+
+The tool takes Cloudflare's own filter, calculation and group-by vocabulary
+with one level of filter grouping, which is what every saved view in
+[`runbook.md`](runbook.md#log-shape) uses. It sends
+`dry: true` so runs stay out of the account's query history, and returns
+Cloudflare's `result` unchanged. A refusal is returned with Cloudflare's codes
+and messages and logged as `observability_query_failed:<code>`. The audit row
+names the view only; filter values and the needle can quote product data.
+
 ## Invariants and contracts
 
 - D1 locates authority; it never substitutes for Durable Object product state.
@@ -218,6 +241,8 @@ counters. SQLite BLOB results are represented as `{ type: "blob", base64 }`.
 - The lakehouse token reaches only Basin SQL, from inside this Worker. It never
   crosses to a client, and its permissions are scoped to the three lakehouse
   buckets, not the account.
+- The Workers Observability token is likewise used only from inside this Worker
+  and holds only Workers Observability permission.
 
 ## Boundaries and non-goals
 
@@ -266,7 +291,11 @@ identity or authorization.
   fallback because the absent response could hide an ambiguous identity.
 - There is no repository-defined query, row, statement, or execution limit.
   Cloudflare's current Worker RPC and response limits are the effective ceiling;
-  adding a defensive limit requires a separately chosen product value.
+  adding a defensive limit requires a separately chosen product value. The same
+  holds for `query_worker_observability`: Cloudflare caps a page at 2,000 rows
+  and keeps seven days, and this Worker adds no window or row limit of its own.
+- `query_worker_observability` fails as `observability_token_unconfigured`
+  until its secret is installed.
 
 ## Testing
 
@@ -325,6 +354,12 @@ therefore equivalent to database-console access across both Rally regions.
 It also grants read access to every lakehouse row, including the raw prompts,
 connector data and model output in `llm_inference`, which the
 [runbook's handling rules](runbook.md#inspecting-a-runs-raw-inference) cover.
+Access membership also grants every Worker's logs and traces. Cloudflare
+records the full request URL on invocation logs and spans, which carries a
+connector OAuth callback's one-time `code` and a WebSocket `ticket`, and the
+platform's Durable Object SQL spans carry their bindings, which for Avalon
+means message text ([`runbook.md`](runbook.md#log-shape)).
+
 Policy changes, identity-provider changes, and client approval belong in the
 Cloudflare Access application, not in application code.
 
@@ -333,6 +368,11 @@ the deployment token. Basin SQL requires R2 storage read/write on the buckets it
 reads, so create it as an R2 API token restricted to the three lakehouse
 buckets with Basin SQL Read, Basin Catalog Read, and R2 Storage Write. Never
 widen it to the account or reuse `CLOUDFLARE_API_TOKEN`.
+
+`WORKERS_OBSERVABILITY_API_TOKEN` is a runtime credential too: an account API
+token with only Workers Observability Write, which Cloudflare requires to run a
+query even though the tool only reads. Never reuse `CLOUDFLARE_API_TOKEN` for
+it.
 
 ## Operations
 
@@ -352,12 +392,14 @@ Changing that managed provider list remains an explicit Access administration
 decision.
 
 The provisioner also injects the account ID as a Worker variable and, when the
-`ENGINEERING_MCP_BASIN_SQL_API_TOKEN` GitHub secret is set in the
-`api-production` environment, installs it as `BASIN_SQL_API_TOKEN`. Without the
-secret the deploy keeps whatever token the Worker already has, and
-`query_data_lake` fails as `lakehouse_token_unconfigured` if it has none: the
-MCP deploys inside the API release, and a missing analytics credential should
-not turn that release red.
+`ENGINEERING_MCP_BASIN_SQL_API_TOKEN` and
+`ENGINEERING_MCP_WORKERS_OBSERVABILITY_API_TOKEN` GitHub secrets are set in the
+`api-production` environment, installs them as `BASIN_SQL_API_TOKEN` and
+`WORKERS_OBSERVABILITY_API_TOKEN`. Without a secret the deploy keeps whatever
+token the Worker already has, and its tool fails as
+`lakehouse_token_unconfigured` or `observability_token_unconfigured` if it has
+none: the MCP deploys inside the API release, and a missing read credential
+should not turn that release red.
 
 Model routes support optional `routing.reasoningEffort` (`low`, `medium`, or
 `high`) through `list_model_flags` and `update_model_flag`. Omission restores
@@ -365,6 +407,30 @@ each selected model's configured default; an explicit value applies to the
 primary and fallbacks. Ace owns validation and the atomic write.
 
 ## Changelog
+
+### 2026-10-19 — Query Workers Logs and Traces
+
+**What changed:** `query_worker_observability` runs Workers Observability
+queries (logs, traces, invocations, calculations) for every Worker on the
+account, with a token that holds only Workers Observability permission. The
+Cloudflare response handling `query_data_lake` had is now shared by both tools.
+
+**Why:** Reading logs or a trace meant a Cloudflare dashboard login with account
+access, or a hand-built API call with a personal token. Engineers already reach
+production state and the lakehouses through this MCP.
+
+**Considered and rejected:** Cloudflare's hosted observability MCP server, which
+needs each engineer to hold a dashboard login with account access. Reading the
+Global Worker's OTLP copy in PostHog, which covers only that one Worker. Separate
+log and trace tools, which would repeat one API call for what is one `view`
+choice. A recursive filter schema matching Cloudflare's four levels of nesting,
+which some MCP clients receive as an unresolved `$ref`; one level is what every
+saved view needs.
+
+**Consequences:** Access membership now includes request URLs carrying one-time
+OAuth codes and socket tickets, and span bindings carrying message text. The
+token needs Workers Observability Write because Cloudflare requires it to run a
+query. There is no repository-defined window or row limit.
 
 ### 2026-10-18 — List and search users with their Organizations
 

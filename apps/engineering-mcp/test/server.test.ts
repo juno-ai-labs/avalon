@@ -79,6 +79,7 @@ function testEnv(bindings: Partial<Env> = {}): Env {
     FLAG_ADMINISTRATION: flagAdministration(),
     CLOUDFLARE_ACCOUNT_ID: "account-1",
     BASIN_SQL_API_TOKEN: "basin-token",
+    WORKERS_OBSERVABILITY_API_TOKEN: "observability-token",
     ...bindings,
   };
 }
@@ -138,6 +139,7 @@ describe("Rally engineering MCP tools", () => {
       "list_model_flags",
       "update_model_flag",
       "query_data_lake",
+      "query_worker_observability",
     ]);
     for (const tool of result.tools.filter((item) => /^(run|update)_/.test(item.name))) {
       expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
@@ -619,6 +621,86 @@ describe("Rally engineering MCP tools", () => {
     expect(basin).not.toHaveBeenCalled();
     expect(logged.mock.calls.map((call) => JSON.parse(String(call[0])).error_code))
       .toEqual(["lakehouse_token_unconfigured"]);
+  });
+
+  it("sends a Workers Observability query for the window and returns Cloudflare's result", async () => {
+    const result = { traces: [{ traceId: "trace-1", rootSpanName: "fetch" }] };
+    const cloudflare = vi.fn<typeof fetch>(async () => Response.json({ success: true, errors: [], result }));
+    vi.stubGlobal("fetch", cloudflare);
+    const filters = [
+      { key: "$metadata.service", operation: "eq", type: "string", value: "avalon-api-global" },
+      { kind: "group", filterCombination: "or", filters: [{ key: "level", operation: "eq", type: "string", value: "error" }] },
+    ];
+
+    const response = await rpc(testEnv(), "tools/call", {
+      name: "query_worker_observability",
+      arguments: {
+        view: "traces",
+        from: "2026-10-19T10:00:00Z",
+        to: "2026-10-19T11:00:00+00:00",
+        filters,
+        needle: "timeout",
+        limit: 50,
+      },
+    });
+    const toolResult = response.result as { isError?: boolean; content: Array<{ text: string }> };
+    expect(toolResult.isError).toBeUndefined();
+    expect(JSON.parse(toolResult.content[0]!.text)).toEqual(result);
+    const [url, init] = cloudflare.mock.calls[0]!;
+    expect(url).toBe(
+      "https://api.cloudflare.com/client/v4/accounts/account-1/workers/observability/telemetry/query",
+    );
+    expect(init?.headers).toMatchObject({ Authorization: "Bearer observability-token" });
+    expect(JSON.parse(String(init?.body))).toEqual({
+      queryId: "rally-engineering-mcp",
+      view: "traces",
+      dry: true,
+      timeframe: { from: 1792404000000, to: 1792407600000 },
+      limit: 50,
+      parameters: { filters, needle: { value: "timeout" }, limit: 50 },
+    });
+  });
+
+  it("returns a Workers Observability refusal to the engineer and logs only its code", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => Response.json({
+      success: false,
+      errors: [{ code: 10000, message: "Authentication error" }],
+    }, { status: 403 })));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const response = await rpc(testEnv(), "tools/call", {
+      name: "query_worker_observability",
+      arguments: { view: "events", from: "2026-10-19T10:00:00Z", needle: "wks_secret" },
+    });
+    const result = response.result as { isError: boolean; content: Array<{ text: string }> };
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toBe("10000: Authentication error");
+    const rows = logged.mock.calls.map((call) => JSON.parse(String(call[0])) as Record<string, unknown>);
+    expect(rows).toEqual([expect.objectContaining({
+      event: "engineering_mcp_tool_failed",
+      tool: "query_worker_observability",
+      view: "events",
+      error_code: "observability_query_failed:10000",
+    })]);
+    expect(JSON.stringify(rows)).not.toContain("wks_secret");
+  });
+
+  it("refuses a Workers Observability query without a token before calling Cloudflare", async () => {
+    const cloudflare = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", cloudflare);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const env = testEnv();
+    delete env.WORKERS_OBSERVABILITY_API_TOKEN;
+
+    const response = await rpc(env, "tools/call", {
+      name: "query_worker_observability",
+      arguments: { view: "events", from: "2026-10-19T10:00:00Z" },
+    });
+    expect((response.result as { isError: boolean }).isError).toBe(true);
+    expect(cloudflare).not.toHaveBeenCalled();
+    expect(logged.mock.calls.map((call) => JSON.parse(String(call[0])).error_code))
+      .toEqual(["observability_token_unconfigured"]);
   });
 
   function organization(
