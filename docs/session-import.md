@@ -555,6 +555,8 @@ The migration reaches an Organization when it next wakes; force WorkspaceDO
 from the migration tracker to reach all of them
 ([`durable-object-migration-tracking.md`](durable-object-migration-tracking.md)).
 
+Shipped in #1310.
+
 ### 2026-10-19 — Take back a failed start by its create key
 
 **What changed:** `POST /workstreams/import/abandon` ends a new import by its
@@ -586,6 +588,8 @@ is finished by the next one. Abandon retires before it stops any agent, so a
 `complete` that claims the key in between keeps its agent, and the run-end
 reclaim also matches a `failed` receipt, for an abandon that beat the
 reservation's publication.
+
+Shipped in #1306.
 
 ### 2026-10-17 — Import a conversation as a Breakout of an existing thread
 
