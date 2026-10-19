@@ -2,7 +2,7 @@ import "../../../../../tests/isolated-region";
 import { AccountOnboardingGate } from './guided-onboarding';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { ClientFeatureFlagsSchema, DEFAULT_MEMBER_PREFERENCES,
-  DEFAULT_NOTIFICATION_CHANNELS } from '@rally/contracts';
+  DEFAULT_NOTIFICATION_CHANNELS, type MemoryReview, type MemoryReviewFact } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
@@ -51,6 +51,10 @@ const api = vi.hoisted(() => ({
   updateMyPersonalSystemPrompt: vi.fn(),
   getMyPreferences: vi.fn(),
   updateMyPreferences: vi.fn(),
+  getMyMemory: vi.fn<(signal?: AbortSignal) => Promise<MemoryReview>>(async () => ({ facts: [] })),
+  forgetMyMemory: vi.fn(async (factId: string) => ({ factId, retractedAt: '2026-10-19T12:00:00.000Z' })),
+  getOrganizationMemory: vi.fn<(signal?: AbortSignal) => Promise<MemoryReview>>(async () => ({ facts: [] })),
+  forgetOrganizationMemory: vi.fn(async (factId: string) => ({ factId, retractedAt: '2026-10-19T12:00:00.000Z' })),
 }));
 const copyText = vi.hoisted(() => vi.fn());
 const openExternal = vi.hoisted(() => vi.fn());
@@ -152,6 +156,14 @@ const invitation: WorkspaceInvitation = {
   createdAt: '2026-08-01T00:00:00.000Z',
 };
 const inviteUrl = 'https://rallywith.ai/invite/#region=enterprise&token=private-token-value-long-enough';
+
+function rememberedFact(factId: string, text: string, subjectKind: 'person' | 'organization', removable: boolean): MemoryReviewFact {
+  return {
+    factId, subjectKind, subjectTitle: null, kind: 'standing', text,
+    validFrom: null, validUntil: null, recordedAt: '2026-10-01T12:00:00.000Z', conflict: false, derivedFrom: 'person',
+    source: { kind: 'thread', workstreamId: 'plan', title: 'Q4 plan' }, removable,
+  };
+}
 
 function createTestQueryClient(): QueryClient {
   return new QueryClient({
@@ -302,6 +314,8 @@ describe('Organization settings', () => {
     api.getConnections.mockResolvedValue([]);
     api.getMyPersonalSystemPrompt.mockResolvedValue('');
     api.getMyPreferences.mockResolvedValue(DEFAULT_MEMBER_PREFERENCES);
+    api.getMyMemory.mockResolvedValue({ facts: [] });
+    api.getOrganizationMemory.mockResolvedValue({ facts: [] });
     api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({}));
     api.getGitHubRepositoryAccessSettings.mockResolvedValue({
       connectionId: '00000000-0000-7000-8000-000000000020',
@@ -607,6 +621,55 @@ describe('Organization settings', () => {
     await waitFor(() => expect(api.updateMyPersonalSystemPrompt).toHaveBeenCalledWith('Answer in French.'));
     await waitFor(() => expect(save).toBeDisabled());
     expect(prompt).toHaveValue('Answer in French.');
+  });
+
+  it('lists what Rally remembers about the person under Account, and removes one', async () => {
+    api.getMyMemory.mockResolvedValue({ facts: [
+      rememberedFact('own-1', 'Prefers short answers.', 'person', true),
+      rememberedFact('own-2', 'Works in Go.', 'person', true),
+    ] });
+    renderSettings();
+    openSettingsSection('Account');
+
+    const list = await screen.findByRole('region', { name: 'What Rally remembers about you' });
+    expect(await within(list).findByText('Prefers short answers.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'What Rally remembers about you' })).toBeInTheDocument();
+    fireEvent.click(within(list).getByRole('button', { name: 'Remove “Prefers short answers.”' }));
+
+    await waitFor(() => expect(within(list).queryByText('Prefers short answers.')).toBeNull());
+    expect(api.forgetMyMemory).toHaveBeenCalledWith('own-1');
+    expect(within(list).getByText('Works in Go.')).toBeInTheDocument();
+    expect(api.getOrganizationMemory).not.toHaveBeenCalled();
+  });
+
+  it('says so under Account when Rally has remembered nothing about the person', async () => {
+    renderSettings();
+    openSettingsSection('Account');
+
+    expect(await screen.findByText('Rally has not remembered anything about you yet.')).toBeInTheDocument();
+  });
+
+  it('lists the Organization’s facts under Organization, with Remove for an administrator', async () => {
+    // The server marks the Organization's facts removable for an administrator only.
+    api.getOrganizationMemory.mockResolvedValue({ facts: [rememberedFact('org-1', 'The fiscal year starts in February.', 'organization', true)] });
+    renderSettings();
+    openSettingsSection('Organization');
+
+    const list = await screen.findByRole('region', { name: 'What Rally remembers about the Organization' });
+    expect(await within(list).findByText('The fiscal year starts in February.')).toBeInTheDocument();
+    fireEvent.click(within(list).getByRole('button', { name: 'Remove “The fiscal year starts in February.”' }));
+    await waitFor(() => expect(within(list).queryByText('The fiscal year starts in February.')).toBeNull());
+    expect(api.forgetOrganizationMemory).toHaveBeenCalledWith('org-1');
+  });
+
+  it('lists the Organization’s facts to a member without Remove', async () => {
+    api.getOrganizationMemory.mockResolvedValue({ facts: [rememberedFact('org-1', 'The fiscal year starts in February.', 'organization', false)] });
+    renderSettings({ ...workspace, currentUser: member });
+    openSettingsSection('Organization');
+
+    const list = await screen.findByRole('region', { name: 'What Rally remembers about the Organization' });
+    expect(await within(list).findByText('The fiscal year starts in February.')).toBeInTheDocument();
+    expect(within(list).queryByRole('button', { name: /^Remove/u })).toBeNull();
   });
 
   it('opens on the member list the application already holds', async () => {
