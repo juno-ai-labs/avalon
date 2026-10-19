@@ -94,7 +94,7 @@ import {
 import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
 import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { uuidV7 } from "../lib/uuid-v7";
-import { ConversationSuggestionStorage, mergeJudgementKey, observeTurnDisposition, suggestionForClient, type SuggestionParent, type SuggestionRow } from "./conversation-suggestions";
+import { ConversationSuggestionStorage, MERGE_JUDGEMENT_KEY_PREFIX, observeTurnDisposition, suggestionForClient, type SuggestionParent, type SuggestionRow } from "./conversation-suggestions";
 import { createClassifierDiagnosticSink } from "../services/classifier-diagnostics";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { AUTHORITY_FENCED_CODE } from "../runtime/object-port-error";
@@ -5760,15 +5760,19 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       workspaceId: identity.workspaceId,
       parentId: identity.parentId,
       substreamId: this.externalSubstreamId(),
-      harnessRunId: mergeJudgementKey(turnId),
+      harnessRunId: `${MERGE_JUDGEMENT_KEY_PREFIX}${turnId}`,
       finalTurnId: turnId,
       completed: true,
       backgroundAgent: this.isBackgroundAgent(),
       parentReadFailure: "throw",
     });
     settledBackfillOutcome(judgement);
-    const row = this.suggestions.byRun(mergeJudgementKey(turnId));
+    const row = this.suggestions.byRun(`${MERGE_JUDGEMENT_KEY_PREFIX}${turnId}`);
     if (row?.status === "open" && row.draft_status === "pending") throw new Error("merge_suggestion_draft_pending");
+    // Classification can finish while canonical publication is deferred. Keep
+    // this intent until the saved suggestion reaches the room too; a replay
+    // reuses its judgement and publishes the latest row without redrafting.
+    if (row) await this.publishSuggestionChanged(row, "required");
   }
 
   /**
@@ -5947,14 +5951,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
   }
 
-  private async publishSuggestionChanged(row: SuggestionRow): Promise<void> {
-    await this.publishAgentRuntimeEvent({ type: "conversation_suggestion_changed", suggestion: suggestionForClient(row) })
+  private async publishSuggestionChanged(row: SuggestionRow, delivery: "best_effort" | "required" = "best_effort"): Promise<void> {
+    await this.publishAgentRuntimeEvent({ type: "conversation_suggestion_changed", suggestion: suggestionForClient(row) }, delivery)
       .catch((error: unknown) => {
+        const reason = zodDiagnosticCode(error, "conversation_suggestion") ?? diagnosticErrorCode(error, "conversation_suggestion_publish_failed");
         logWarn(this.env, "conversation_suggestion_publish_failed", {
           workstream_id: this.objectStore.identity()?.parentId,
           suggestion_id: row.suggestion_id,
-          reason: diagnosticErrorCode(error, "conversation_suggestion_publish_failed"),
+          reason,
         });
+        if (delivery === "required") throw new Error(reason, { cause: error });
       });
   }
 
@@ -6086,12 +6092,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     });
   }
 
-  private async publishAgentRuntimeEvent(event: Record<string, unknown>): Promise<void> {
+  private async publishAgentRuntimeEvent(event: Record<string, unknown>, delivery: "best_effort" | "required" = "best_effort"): Promise<void> {
     // A lower canonical sequence must reach the room before a later ephemeral
-    // stream frame. If its durable drain is unavailable, omit the ephemeral
-    // optimization; reconnect/snapshot recovery still carries canonical state.
+    // stream frame. If its durable drain is unavailable, best-effort events
+    // rely on snapshot recovery; required delivery throws so its caller retries.
     if (this.semanticRealtimePending
-      && !await this.flushSemanticRealtimeOutboxBestEffort()) return;
+      && !await this.flushSemanticRealtimeOutboxBestEffort()) {
+      if (delivery === "required") throw new Error("canonical_realtime_pending");
+      return;
+    }
     const parsed = ServerSocketEventSchema.parse({
       ...event,
       sequence: 0,
