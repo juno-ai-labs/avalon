@@ -75,6 +75,9 @@ export function workstreamSummaryState(workstream: WorkstreamSummary): {
       manualUnreadGeneration: workstream.manualUnreadGeneration,
       youAreMentioned: workstream.youAreMentioned,
       unseen: workstream.unseen,
+      // Only when said: a child-owned response does not carry it, and must not
+      // erase what the directory row said.
+      ...(workstream.isParticipant !== undefined ? { isParticipant: workstream.isParticipant } : {}),
       // Viewer-specific: whether Main is this reader's. Carried as an explicit
       // `undefined` too, so a row whose Main became theirs drops the mark.
       mainWithheld: workstream.mainWithheld,

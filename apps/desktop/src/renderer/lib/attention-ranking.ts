@@ -71,6 +71,7 @@ export interface AttentionChannel {
   readonly hasUnread?: boolean;
   readonly unseen?: boolean;
   readonly youAreMentioned?: boolean;
+  readonly isParticipant?: boolean;
 }
 
 /**
@@ -90,8 +91,15 @@ export interface AttentionItem {
   at: string;
 }
 
+/**
+ * Whether Main is a conversation this reader takes part in, so the Threads
+ * list shows it. A workspace-wide thread is listed to everyone and gathers
+ * unread for all of them; counting it would raise the badge for a thread the
+ * Threads list does not hold. A row that does not say is counted, as before.
+ */
 function mainIsViewers(workstream: AttentionChannel): boolean {
   return workstream.mainWithheld !== true
+    && workstream.isParticipant !== false
     && (!workstream.associativeSubstreamId || workstream.associativeSubstreamId === '0');
 }
 
