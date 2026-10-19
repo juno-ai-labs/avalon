@@ -139,6 +139,10 @@ export const WorkspaceResourceVersionSchema = deferredZodSchema(() => z.strictOb
   captured_at: z.string(),
   content_ref: z.string().nullable(),
   model_content_ref: z.string().nullable(),
+  model_mime_type:z.string().nullable().default(null),
+  model_content_sha256:z.string().nullable().default(null),
+  content_sha256:z.string().nullable().default(null),
+  model_metadata_json:z.string().nullable().default(null),
   metadata_json: z.string(),
 }));
 

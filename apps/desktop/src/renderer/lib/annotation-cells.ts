@@ -13,7 +13,7 @@ export function annotationSheets(text: string): AnnotationSheet[] {
         const row = Number(cell[2]) - 1; const col = columnIndex(cell[1] ?? 'A');
         cells[row] ??= []; cells[row]![col] = cell[3] ?? '';
       }
-      return { name: match[1] ?? 'Sheet1', cells: Array.from({ length: cells.length }, (_, i) => cells[i] ?? []) };
+      return { name: match[1] ?? 'Sheet1', cells };
     });
   }
   if (!/^\s*\|/mu.test(text)) {
@@ -54,4 +54,10 @@ export function resolveAnnotationCells(text: string, sheetName: string, range: s
   const end:[number,number] = [Number(match[4])-1,columnIndex(match[3]!)];
   if (end[0] >= sheet.cells.length || annotationCellRange(sheet,start,end).table !== exact) return null;
   return {index,start,end};
+}
+
+export function annotationRange(range:string): {start:[number,number];end:[number,number]}|null {
+  const match=/^([A-Z]+)([1-9]\d*)(?::([A-Z]+)([1-9]\d*))?$/u.exec(range);
+  if(!match)return null;
+  return {start:[Number(match[2])-1,columnIndex(match[1]!)],end:[Number(match[4]??match[2])-1,columnIndex(match[3]??match[1]!)]};
 }

@@ -770,7 +770,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       const opened = await desktopBridge().popOutArtifact({
         kind: 'generated',
         ...(annotationDraft?.scopeKey ? { annotationScope: annotationDraft.scopeKey } : {}),
-        ...(resource.mimeType ? { sourceMimeType: resource.mimeType } : {}),
+        sourceMimeType:resource.mimeType ?? 'application/octet-stream',
         resourceId: resource.id,
         version: resource.currentVersion,
         content: new Uint8Array(await content.arrayBuffer()),

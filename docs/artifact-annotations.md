@@ -46,13 +46,25 @@ a separate model source. The shared model projection escapes resource data,
 labels exact/converted/rendered content, and requires a fresh read for truncated
 selections and reconciliation before editing an older version.
 
-Target checks are shared only within one send for pins on the same resource
-version, avoiding repeated canonical reads without retaining an authorization
-lease between requests.
+Target checks reuse ordinary resource-sharing rules, including personal-connection
+ownership, and run once per distinct resource/version before participant changes.
+Targets load concurrently. Stored turns use a read schema without admission-time
+truncation or size policy. Authored comments count toward activation and naming;
+quoted resource data never becomes addressing input. The existing message length
+bound applies to each newly composed comment.
+
+Preview bytes open immediately. Entering Comment mode resolves and reloads a
+version-bound preview through the canonical MIME policy (including native image
+normalization and original CSV bytes), so cached thumbnails cannot be relabeled with a
+new revision. Sheets keep sparse coordinates and render the visible viewport;
+committed highlights derive from all remaining pins on the active sheet.
+Composer chips provide a comment editor even after their original preview closes.
+Annotation-bearing sends exclude another submission until the receipt returns;
+an open elicitation must be answered before artifact comments are sent.
 
 The canonical turn's existing `structuredContent` contains
 `{kind: 'artifact_annotations', annotations, names}`. Image annotations also
-retain server-built immutable image descriptors for replay; clients cannot
+retain server-built immutable image descriptors, version identity and model-image metadata for replay; clients cannot
 supply those R2 references through message admission. Feed rendering, replay and
 overheard turns use that same content. Opening a feed excerpt loads its saved
 version. Source ranges and cell tables must match the saved quote before they
@@ -143,11 +155,25 @@ on the configured medium fallback model, separately from end-to-end tool edits.
 
 ### 2026-10-19 — Send pointed resource content as user-message annotations
 
-People needed to ask for changes to a precise spot without describing it or
-making the model fetch it to understand the request. The implementation stores
-a versioned quote on the existing user turn rather than introducing artifact
-comment records. One source-position mapper and one HTML inspector serve the
-preview hosts, preserving exact source for text and explicitly marking rendered
-or converted quotations. Future changes must preserve resource authorization,
-opaque static HTML isolation, and verified historical restoration; a locator
-alone must never become authority to highlight or edit different content.
+**What changed:** Selections and comments travel as versioned content on ordinary
+user turns, with transient composer pins, source-aware previews and native HTML
+inspection. Shared resource-sharing rules authorize new selections before
+participant changes. Image originals retain their version and saved model metadata.
+
+**Why:** People needed to ask for changes to a precise spot without describing
+its position or making the model fetch it to understand the request. Review also
+caught stale image identity, blocked preview opens and draft lifecycle gaps that
+would have lost or duplicated those requests.
+
+**Considered and rejected:** A separate artifact-comment table duplicates message
+ownership. Serving-Worker injection adds a navigation and same-origin forgery
+boundary; the requester accepted native website selection instead. An inline
+nonce did not satisfy inherited app CSP, so static HTML loads a bundled asset.
+
+**Consequences:** New selections must preserve sharing authorization, exact saved
+versions and source fidelity. Historical reads do not reapply admission budgets.
+Native page input must be trusted, HTML stays opaque, popouts retain narrow IPC,
+and draft pins clear only on acceptance or acknowledged transfer. Preview opening
+must remain independent of annotation metadata availability.
+
+PR #1322; design: `docs/PRDs/2026-10-19_artifact-annotations/prd.md`.

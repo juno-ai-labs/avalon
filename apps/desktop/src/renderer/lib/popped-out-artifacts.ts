@@ -25,7 +25,7 @@ export async function restorePoppedOutArtifacts(input: {
         const access = await input.openSiteArtifact(saved.resourceId);
         if (input.signal.aborted) return;
         await input.bridge.popOutArtifact({
-          kind: 'site', restoreId: saved.id, resourceId: saved.resourceId,
+          kind: 'site', ...(saved.annotationScope?{annotationScope:saved.annotationScope}:{}), restoreId: saved.id, resourceId: saved.resourceId,
           version, title, artifactId: access.artifactId, url: access.openUrl,
         });
       } else {
@@ -34,8 +34,8 @@ export async function restorePoppedOutArtifacts(input: {
         const bytes = new Uint8Array(await content.arrayBuffer());
         if (input.signal.aborted) return;
         await input.bridge.popOutArtifact({
-          kind: 'generated', restoreId: saved.id, resourceId: saved.resourceId,
-          version, title, content: bytes,
+          kind: 'generated', ...(saved.annotationScope?{annotationScope:saved.annotationScope}:{}), restoreId: saved.id, resourceId: saved.resourceId,
+          version, title, content: bytes, sourceMimeType:current ? current.mimeType ?? 'application/octet-stream' : saved.mimeType ?? 'application/octet-stream',
           mimeType: content.type || current?.mimeType || saved.mimeType || 'text/plain',
         });
       }
@@ -118,6 +118,7 @@ export async function refreshPoppedOutArtifacts({
           version: resource.currentVersion,
           content: bytes,
           mimeType: content.type || resource.mimeType || 'text/plain',
+          sourceMimeType:resource.mimeType ?? 'application/octet-stream',
           title: resource.title,
         });
       }

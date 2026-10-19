@@ -1376,7 +1376,7 @@ export interface ConversationSurfaceProps {
  */
 export function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element {
   const { api } = useCollaborationSession();
-  return <AnnotationDraftProvider scopeKey={`${props.parentId}:${props.substreamId}`} readResource={api ? (id) => api.getResource(id) : undefined} upload={api ? async (file) => (await api.uploadResource(file, crypto.randomUUID())).id : undefined}><ConversationSurfaceContent {...props} /></AnnotationDraftProvider>;
+  return <AnnotationDraftProvider scopeKey={`${props.parentId}:${props.substreamId}`} readResource={api ? (id) => api.getResource(id) : undefined} readResourceVersion={api ? (id,version,signal) => api.getResourceVersionPreview(id,version,signal) : undefined} upload={api ? async (file) => (await api.uploadResource(file, crypto.randomUUID())).id : undefined}><ConversationSurfaceContent {...props} /></AnnotationDraftProvider>;
 }
 
 function ConversationSurfaceContent({
@@ -2817,6 +2817,7 @@ function ConversationSurfaceContent({
     invitedEmails: string[] = [],
   ): Promise<void> => {
     if (!api || !routedDetail) throw new Error('This thread is not ready to receive messages.');
+    if (annotationDraft?.pins.length && (sending || activeElicitation)) throw new Error(activeElicitation ? 'Answer the open question before sending artifact comments.' : 'Your artifact comments are still sending.');
     // Ahead of the optimistic turn and of `sending`. A message the server will
     // refuse must not appear in the transcript first and be pulled back out of
     // it, and the person is the only one who can resolve this.
@@ -3567,7 +3568,7 @@ function ConversationSurfaceContent({
         onCreate={substreamLaunch.onCreate}
         onOpenAttachment={openAttachment}
         parent={displayedDetail}
-        sendBlocked={feedFromLocalCache}
+        sendBlocked={feedFromLocalCache || Boolean(activeElicitation && annotationDraft?.pins.length)}
         titlePill={parentKind !== 'automation'}
         {...(launchOrigin ? { origin: { channelTitle: displayedDetail.title, ...launchOrigin } } : {})}
         workspaceId={workspaceId}
