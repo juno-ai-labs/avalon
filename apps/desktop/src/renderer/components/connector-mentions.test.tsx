@@ -5,16 +5,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import {
   ConnectorConnectionCard,
+  ConnectorConnectionUpdateCard,
   ConnectorResourceAuthorizationCard,
   ConnectorConnectionsProvider,
   ConnectorEmbedCard,
   ConnectorMentionChip,
   connectorConnectionCardInput,
+  isUnrecognizedConnectorConnectionCard,
   connectorResourceAuthorizationRequest,
 } from './connector-mentions';
 
 const mocks = vi.hoisted(() => ({
   setupEnabled: true,
+  desktop: true,
+  getUpdateStatus: vi.fn(),
+  checkForUpdates: vi.fn(),
+  installDownloadedUpdate: vi.fn(),
   getAvailableConnectorTypes: vi.fn(),
   getConnectorOAuthAttempt: vi.fn(),
   openExternal: vi.fn(),
@@ -69,12 +75,17 @@ vi.mock('../lib/collaboration-session', () => ({
   }),
 }));
 vi.mock('../lib/platform', () => ({
-  desktopBridge: () => ({ openExternal: mocks.openExternal }),
-  desktopServicesAvailable: () => false,
+  desktopBridge: () => ({ openExternal: mocks.openExternal, getUpdateStatus: mocks.getUpdateStatus,
+    checkForUpdates: mocks.checkForUpdates, installDownloadedUpdate: mocks.installDownloadedUpdate }),
+  desktopServicesAvailable: () => mocks.desktop,
 }));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.desktop = false;
+  mocks.getUpdateStatus.mockResolvedValue({ kind: 'idle' });
+  mocks.checkForUpdates.mockResolvedValue(undefined);
+  mocks.installDownloadedUpdate.mockResolvedValue(undefined);
   mocks.pendingConnectorOAuth = null;
   mocks.resourceAuthorizationAttempts = {};
   mocks.setupEnabled = true;
@@ -95,6 +106,52 @@ beforeEach(() => {
 });
 
 describe('connector connection resolution', () => {
+  it('recognizes future connectors from completed input, output and exact recovery summaries', () => {
+    for (const facts of [
+      { input: { connectorId: 'future-crm', scope: 'personal' } },
+      { output: { connectorId: 'future-crm', scope: 'workspace' } },
+      { summary: 'Presented the future-crm personal connection card' },
+    ]) {
+      expect(isUnrecognizedConnectorConnectionCard({ toolEvent: {
+        name: 'show_connector_connection', status: 'completed', ...facts,
+      } })).toBe(true);
+    }
+    for (const toolEvent of [
+      { name: 'another_tool', status: 'completed', input: { connectorId: 'future-crm', scope: 'personal' } },
+      { name: 'show_connector_connection', status: 'failed', input: { connectorId: 'future-crm', scope: 'personal' } },
+      { name: 'show_connector_connection', status: 'completed', input: { connectorId: 'future-crm', scope: 'invalid' } },
+      { name: 'show_connector_connection', status: 'completed', input: { connectorId: 'slack', scope: 'personal' } },
+      { name: 'show_connector_connection', status: 'completed', summary: 'Please present the future-crm personal connection card' },
+    ]) expect(isUnrecognizedConnectorConnectionCard({ toolEvent })).toBe(false);
+  });
+
+  it.each(['idle', 'downloaded'])('offers an update through the existing updater when %s', async (kind) => {
+    mocks.desktop = true;
+    mocks.getUpdateStatus.mockResolvedValue({ kind, ...(kind === 'downloaded' ? { version: '2.0.0' } : {}) });
+    render(<QueryClientProvider client={new QueryClient()}><ConnectorConnectionUpdateCard /></QueryClientProvider>);
+    expect(screen.getByText('Connector not recognized')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Update Rally' }));
+    await waitFor(() => expect(kind === 'downloaded' ? mocks.installDownloadedUpdate : mocks.checkForUpdates).toHaveBeenCalledOnce());
+    expect(kind === 'downloaded' ? mocks.checkForUpdates : mocks.installDownloadedUpdate).not.toHaveBeenCalled();
+    expect(mocks.startProviderConnection).not.toHaveBeenCalled();
+  });
+
+  it('offers a browser reload without trying to install a desktop update', async () => {
+    render(<QueryClientProvider client={new QueryClient()}><ConnectorConnectionUpdateCard /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Reload Rally' }));
+    await waitFor(() => expect(mocks.checkForUpdates).toHaveBeenCalledOnce());
+    expect(mocks.getUpdateStatus).not.toHaveBeenCalled();
+    expect(mocks.installDownloadedUpdate).not.toHaveBeenCalled();
+  });
+
+  it('shows a failed update action so the person can retry', async () => {
+    mocks.checkForUpdates.mockRejectedValueOnce(new Error('Unable to check for updates.'));
+    render(<QueryClientProvider client={new QueryClient()}><ConnectorConnectionUpdateCard /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Reload Rally' }));
+    expect(await screen.findByText('Unable to check for updates.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reload Rally' })).toBeEnabled();
+  });
+
   it('restores a resource authorization card only from a valid failed tool result', () => {
     const recovery = {
       kind: 'connector_resource_authorization',

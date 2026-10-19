@@ -51,12 +51,14 @@ import {
 } from '@rally/contracts/citations';
 import {
   ConnectorConnectionCard,
+  ConnectorConnectionUpdateCard,
   ConnectorResourceAuthorizationCard,
   ConnectorEmbedCard,
   ConnectorMentionChip,
   connectorConnectionCardInput,
   connectorConnectionCardProvider,
   connectorConnectionCardSelectionKey,
+  isUnrecognizedConnectorConnectionCard,
   connectorResourceAuthorizationRequest,
 } from './connector-mentions';
 import { markdownLineKinds } from '@rally/contracts/markdown-code';
@@ -2888,6 +2890,8 @@ export function MessageBlock({
             {...(onConnectorConnected ? { onConnected: onConnectorConnected } : {})}
             request={connectionCard}
           />
+        ) : connectorConnectionCards && (connectionCard || isUnrecognizedConnectorConnectionCard(message)) ? (
+          <ConnectorConnectionUpdateCard />
         ) : <ToolBlock message={message} />}
       </div>
     );
