@@ -31,6 +31,10 @@ import {
   type WorkspaceMemoryRecallResult,
   type WorkspaceMemoryRememberRequest,
   type WorkspaceMemoryRememberResult,
+  type WorkspaceMemoryReviewForgetRequest,
+  type WorkspaceMemoryReviewForgetResult,
+  type WorkspaceMemoryReviewRequest,
+  type WorkspaceMemoryReviewResult,
   type WorkspaceMemorySweepCandidatesRequest,
   type WorkspaceMemorySweepCandidatesResult,
 } from "./workspace-memory-facts-protocol";
@@ -341,16 +345,22 @@ export interface ResolvedConversation {
 
 export type ResolvedReader = ResolvedPerson | ResolvedSidekick | ResolvedConversation;
 
+/**
+ * A person's relationship does not depend on where they stand, so the review
+ * surface resolves them with no conversation; the conversation reader is
+ * nobody without one.
+ */
 export function resolveReader(
   sql: SqlStorage,
   reader: MemoryReader,
   relationship: WorkspaceRelationship | null,
-  conversation: MemoryConversation,
+  conversation: MemoryConversation | null,
 ): ResolvedReader | null {
   if (reader.kind === "sidekick") {
     return { kind: "sidekick", automationId: reader.automationId, row: sidekickRows(sql, [reader.automationId])[0] ?? null };
   }
   if (reader.kind === "conversation") {
+    if (conversation === null) return null;
     const audience = conversationAudience(sql, conversation);
     return audience ? { kind: "conversation", audience } : null;
   }
@@ -775,12 +785,14 @@ function sweepVisibleFacts(
 /**
  * The facts among `facts` this reader may see from inside `conversation`:
  * every source openable, the subject admitting them, and, for every fact but
- * their own, every current participant able to open it too.
+ * their own, every current participant able to open it too. With no
+ * conversation (the review surface) there is no audience, so the first two
+ * halves are the whole rule.
  */
 function visibleFacts(
   sql: SqlStorage,
   reader: ResolvedReader,
-  conversation: MemoryConversation,
+  conversation: MemoryConversation | null,
   facts: readonly MemoryFact[],
 ): MemoryFact[] {
   if (facts.length === 0) return [];
@@ -789,7 +801,7 @@ function visibleFacts(
   const open = openableBy(sql, reader, sources);
   const own = facts.filter((fact) => everySourceIn(fact, open) && subjectAdmits(reader, fact, open));
   const shared = own.filter((fact) => !(reader.kind === "person" && fact.subjectKind === "person"));
-  if (shared.length === 0) return own;
+  if (shared.length === 0 || conversation === null) return own;
   const audience = conversationAudience(sql, conversation);
   if (!audience) return own.filter((fact) => !shared.includes(fact));
   const audienceOpen = sourcesOpenToAudience(sql, audience, sourcesOf(shared));
@@ -1066,13 +1078,15 @@ export function rememberMemoryFact(
  * A person retracts their own facts; a participant retracts what the
  * conversation they stand in established (its own subject, or every source
  * here); a Channel's or the Organization's facts take an administrator; a
- * Sidekick retracts only what came from itself and its home.
+ * Sidekick retracts only what came from itself and its home. With no
+ * conversation (the review surface) only the first and third rules apply.
  */
-function mayForget(reader: ResolvedReader, conversation: MemoryConversation, fact: MemoryFact): boolean {
+function mayForget(reader: ResolvedReader, conversation: MemoryConversation | null, fact: MemoryFact): boolean {
   if (fact.subjectKind === "channel" || fact.subjectKind === "organization") {
     return reader.kind === "person" && reader.administrator;
   }
   if (fact.subjectKind === "person") return reader.kind === "person" && fact.subjectId === reader.userId;
+  if (conversation === null) return false;
   const here = memorySourceOf(conversation);
   const subject = conversationSubject(conversation);
   if (fact.subjectKind === subject.kind && fact.subjectId === subject.id) return true;
@@ -1115,6 +1129,89 @@ export function forgetMemoryFact(
     const result: WorkspaceMemoryForgetResult = { outcome: "retracted", fact: { ...fact, retractedAt: request.now, updatedAt: request.now } };
     writeReceipt(sql, request, "forget", result);
     return result;
+  });
+}
+
+// -- Review -------------------------------------------------------------------
+
+/** Not retracted and not superseded: the review lists expired facts too, so the horizon is not part of it. */
+const UNWITHDRAWN = (alias: string): string =>
+  `${alias}.retracted_at IS NULL AND ${alias}.superseded_by_fact_id IS NULL`;
+
+/**
+ * The facts in a person's review: their own `person` facts, and the
+ * Organization's and Channels' facts they may see outside any conversation.
+ *
+ * Their own facts are listed whether or not the person may still open the
+ * conversation each came from. They are facts about this person, and design
+ * decision 14 gives a person authority over their own facts apart from what
+ * they can see; this surface is where they exercise it, so a fact learned in
+ * a room they have since left must still reach them here to be removed.
+ * Recall and the digest still hold such a fact back, by the source rule.
+ *
+ * Shared facts go through the same visibility rule recall uses, with no
+ * conversation and so no audience: every source openable by the person today,
+ * a member for the Organization's, the Channel listed to them for a Channel's.
+ */
+export function reviewMemoryFacts(
+  storage: DurableObjectStorage,
+  request: WorkspaceMemoryReviewRequest,
+  relationship: WorkspaceRelationship | null,
+): WorkspaceMemoryReviewResult {
+  const sql = storage.sql;
+  const reader = resolveReader(sql, { kind: "person", userId: request.userId }, relationship, null);
+  if (!reader || reader.kind !== "person") return { own: [], shared: [], titles: [], administrator: false };
+  const own = sql.exec<FactRow>(
+    `SELECT ${FACT_COLUMNS} FROM memory_facts fact
+      WHERE fact.subject_kind = 'person' AND fact.subject_id = ? AND ${UNWITHDRAWN("fact")}
+      ORDER BY fact.created_at DESC, fact.fact_id`,
+    reader.userId,
+  ).toArray().map(factFromRow);
+  const candidates = sql.exec<FactRow>(
+    `SELECT ${FACT_COLUMNS} FROM memory_facts fact
+      WHERE ((fact.subject_kind = 'organization' AND fact.subject_id = ?) OR fact.subject_kind = 'channel')
+        AND ${UNWITHDRAWN("fact")}
+      ORDER BY fact.subject_kind = 'channel', fact.created_at DESC, fact.fact_id`,
+    request.workspaceId,
+  ).toArray().map(factFromRow);
+  const shared = visibleFacts(sql, reader, null, candidates);
+  return { own, shared, titles: titlesFor(sql, [...own, ...shared]), administrator: reader.administrator };
+}
+
+/**
+ * Remove one fact from a person's review: their own whatever its source, an
+ * Organization's or a Channel's when they may see it and administer the
+ * Organization. A fact the review would not list answers `not_found`, so a
+ * fact id learned elsewhere reveals nothing. Every digest holder is marked
+ * for the copy-sync lane, as a `memory_forget` marks them.
+ */
+export function forgetReviewedMemoryFact(
+  storage: DurableObjectStorage,
+  request: WorkspaceMemoryReviewForgetRequest,
+  relationship: WorkspaceRelationship | null,
+): WorkspaceMemoryReviewForgetResult {
+  return storage.transactionSync(() => {
+    const sql = storage.sql;
+    const reader = resolveReader(sql, { kind: "person", userId: request.userId }, relationship, null);
+    const fact = factById(sql, request.factId);
+    if (!reader || reader.kind !== "person" || !fact) return { outcome: "not_found" };
+    const listed = fact.subjectKind === "person"
+      ? fact.subjectId === reader.userId
+      : (fact.subjectKind === "organization" || fact.subjectKind === "channel")
+        && visibleFacts(sql, reader, null, [fact]).length > 0;
+    if (!listed) return { outcome: "not_found" };
+    if (fact.retractedAt !== null) return { outcome: "already_retracted", fact, retractedAt: fact.retractedAt };
+    if (!mayForget(reader, null, fact)) return { outcome: "not_removable" };
+    sql.exec(
+      `UPDATE memory_facts SET retracted_at = ?, retracted_by = ?, updated_at = ? WHERE fact_id = ?`,
+      request.now, `person:${reader.userId}`, request.now, request.factId,
+    );
+    markMemoryDigestHolders(sql);
+    return {
+      outcome: "retracted",
+      fact: { ...fact, retractedAt: request.now, updatedAt: request.now },
+      retractedAt: request.now,
+    };
   });
 }
 

@@ -39,6 +39,7 @@ import {
   WorkspaceMemoryDigestResultSchema,
   WorkspaceMemoryForgetResultSchema,
   WorkspaceMemoryRecallResultSchema,
+  WorkspaceMemoryReviewForgetResultSchema,
   WorkspaceMemorySweepCandidatesResultSchema,
 } from "../src/durable-objects/workspace-memory-facts-protocol";
 
@@ -438,6 +439,31 @@ describe("the fact store on workerd", () => {
       // A thread made private marks the holder again, numbered above the last.
       sql.exec(`UPDATE channels SET scope = 'personal' WHERE workstream_id = ?`, THREAD_OPEN);
       expect(syncRow(sql)).toMatchObject([{ conversation: THREAD_OPEN, revision: 2, attempts: 0, not_before: 0, in_flight: 0 }]);
+    });
+  });
+
+  it("marks every holder when an administrator removes an Organization fact from their review, and not when a member is refused", async () => {
+    await fresh();
+    const now = Date.parse("2026-10-19T09:00:00.000Z");
+    await workspace().applyMemorySweep({
+      workspaceId: WORKSPACE_ID, conversation: openThread, fromSeq: 0, toSeq: 3,
+      operations: [add("organization", "Release day is Thursday")],
+      model: "test/model", inputTokens: null, outputTokens: null, factIds: ["fact-release"], speakerIds: [], candidateFactIds: [], now,
+    });
+    await workspace().memoryDigest({
+      workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: MEMBER }, conversation: openThread, now, limit: 10,
+    });
+    const forget = async (userId: string) => WorkspaceMemoryReviewForgetResultSchema.parse(await workspace().forgetReviewedMemoryFact({
+      workspaceId: WORKSPACE_ID, userId, factId: "fact-release", now: now + 1,
+    })).outcome;
+
+    expect(await forget(MEMBER)).toBe("not_removable");
+    await runInDurableObject(workspace(), (_instance, state) => expect(syncRow(state.storage.sql)).toEqual([]));
+    expect(await forget(OWNER)).toBe("retracted");
+    await runInDurableObject(workspace(), (_instance, state) => {
+      expect(syncRow(state.storage.sql)).toMatchObject([{ conversation: THREAD_OPEN, revision: 1 }]);
+      expect(state.storage.sql.exec("SELECT retracted_by FROM memory_facts WHERE fact_id = 'fact-release'").toArray())
+        .toEqual([{ retracted_by: `person:${OWNER}` }]);
     });
   });
 
