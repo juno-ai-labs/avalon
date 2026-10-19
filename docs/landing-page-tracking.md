@@ -4,6 +4,19 @@ What the landing page at `rallywith.ai/` reports, and what a redesign or edit
 must keep so the reporting keeps working. The mechanism behind it is in
 [`public-site-telemetry.md`](public-site-telemetry.md).
 
+## Apollo visitor tracking
+
+The production homepage, `/start-fast/`, and the `/concepts/` landing variants
+also load Apollo’s website tracker with app ID `6ad67a1c7cdf770018b4f9bc`.
+`apps/site/src/apollo-loader.ts` loads it asynchronously through the shared site
+entry. Local development, previews, other marketing pages and handoff pages do
+not load it. New landing variants must be included in `runsApollo` and in the
+landing-only CSP overrides in `apps/site/public/_headers`.
+
+Apollo sends visits to `aplo-evnt.com` and can load LiveIntent’s identity
+resolution script. Those providers have a separate data path from the bounded
+first-party events below. The Cookie & Tracking Notice discloses this use.
+
 ## What we track
 
 Three events, all anonymous, sent by the site to `api.rallywith.ai` and
