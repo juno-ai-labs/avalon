@@ -3,8 +3,10 @@ import { asArtifactId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import {
   ArtifactInspectionInputSchema,
   ArtifactSqlInspectionInputSchema,
+  D1SqlInspectionInputSchema,
   EngineeringArtifactListLookupSchema,
   EngineeringArtifactTargetLookupSchema,
+  EngineeringD1SqlResultSchema,
   EngineeringSidekickListLookupSchema,
   EngineeringSqlLookupSchema,
   EngineeringSubstreamTargetLookupSchema,
@@ -26,6 +28,7 @@ import {
   type EngineeringInspectionRpcBinding,
   type EngineeringArtifactListLookup,
   type EngineeringArtifactTargetLookup,
+  type EngineeringD1SqlResult,
   type EngineeringSidekickListLookup,
   type EngineeringSpaceListLookup,
   type EngineeringSqlLookup,
@@ -36,6 +39,7 @@ import {
   type ListEngineeringWorkspacesResult,
   type SearchEngineeringOrganizationsResult,
   type SearchEngineeringUsersResult,
+  type InspectionSqlValue,
 } from "@rally/contracts/engineering-inspection";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { WorkerEntrypoint } from "cloudflare:workers";
@@ -46,6 +50,7 @@ import {
   conversationObjectName,
   workspaceDOName,
 } from "./durable-objects/names";
+import { base64 } from "./durable-objects/internally-inspectable-durable-object";
 import {
   resolveInspectionWorkspaceRoute,
   resolveInspectionWorkstreamRoute,
@@ -114,6 +119,13 @@ const SidekickDirectoryRowSchema = z.strictObject({
   next_run_at: z.number().int().nullable(),
   projected_at: z.number().int().nonnegative(),
 });
+
+/** D1 returns a BLOB as an array of byte values; the result shape names it a blob. */
+function d1InspectionValue(value: unknown): InspectionSqlValue {
+  return Array.isArray(value)
+    ? { type: "blob", base64: base64(Uint8Array.from(value as number[]).buffer) }
+    : value as InspectionSqlValue;
+}
 
 async function workspaceStub(env: Env, workspaceId: string) {
   const brandedWorkspaceId = asWorkspaceId(workspaceId);
@@ -601,6 +613,32 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         substreamId: null,
         artifactId: request.artifactId,
         result: await artifact.runInspectionSql(request.query),
+      },
+    });
+  }
+
+  /**
+   * Arbitrary SQL against one of this region's D1 databases. D1 has no
+   * authority generation to fence on: the binding is the database. Given
+   * several statements, D1 runs them all and answers with the last one's.
+   */
+  async runD1Sql(input: unknown): Promise<EngineeringD1SqlResult> {
+    const request = parseRpcInput(D1SqlInspectionInputSchema, input, "runD1Sql");
+    const result = await this.env[request.database]
+      .prepare(request.query.sql)
+      .bind(...request.query.bindings)
+      .all<Record<string, unknown>>();
+    const rows = result.results.map((row) => Object.fromEntries(
+      Object.entries(row).map(([column, value]) => [column, d1InspectionValue(value)]),
+    ));
+    return EngineeringD1SqlResultSchema.parse({
+      region: this.env.AVALON_REGION,
+      database: request.database,
+      result: {
+        columns: Object.keys(rows[0] ?? {}),
+        rows,
+        rowsRead: result.meta.rows_read,
+        rowsWritten: result.meta.rows_written,
       },
     });
   }
