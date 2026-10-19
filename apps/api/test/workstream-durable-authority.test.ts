@@ -108,6 +108,7 @@ describe("launching a run against the open authority", () => {
       origin: "scheduled_wakeup",
       executionPrincipal: { type: "user", userId: memberId },
       scheduledWakeupId: "00000000-0000-7000-8000-0000000000e1",
+      conversation: { parentKind: "workstream", substreamId: "0", backgroundAgent: false },
     })).rejects.toThrow(diagnostic);
 
     const objectStore = objectStores.get(workstreamId);
@@ -125,6 +126,7 @@ describe("launching a run against the open authority", () => {
       origin: "scheduled_wakeup",
       executionPrincipal: { type: "user", userId: memberId },
       scheduledWakeupId: "00000000-0000-7000-8000-0000000000e1",
+      conversation: { parentKind: "workstream", substreamId: "0", backgroundAgent: false },
     })).resolves.toBe(row.id);
     expect(workstreamObjectGet(
       objectStore,

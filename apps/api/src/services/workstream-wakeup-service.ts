@@ -631,14 +631,14 @@ export async function refreshWorkspaceSchedule(
 }
 
 /**
- * Arm the object that holds this work stream's wake-ups.
+ * Arm the object that holds this conversation's wake-ups.
  *
- * That is always the main child. It used to be "the exact SubstreamAgent whose
- * tool inserted the row", which was true while the insert arrived as routed SQL
- * following the caller's substream binding; the scheduling port names the main
- * child for every call, so an arm sent anywhere else would reconcile an object
- * whose `workstream_wakeups` is empty while the object that holds the row went
- * unarmed. Taking no substream id is what keeps the two from disagreeing.
+ * That is the conversation whose run scheduled them — the main child, a
+ * Breakout, or a Sidekick run child — the same object the scheduling port
+ * wrote to. This once took no substream id, back when every wake-up lived in
+ * the main child; once the tools wrote a child's wake-ups to the child, an
+ * arm sent to the main child reconciled an object with no such row while the
+ * one that held it went unarmed.
  *
  * This is still needed beside the endpoint's own arming, which is deliberately
  * best-effort and swallowed: the endpoint cannot fail a committed write just
@@ -649,8 +649,8 @@ export async function refreshAgentTimerAlarm(
   env: Env,
   workspaceId: string,
   workstreamId: string,
+  substreamId: string,
 ): Promise<void> {
-  const substreamId = "0";
   const agent = await durableObjectStubForWorkspace(
     env,
     env.SUBSTREAM_AGENTS,

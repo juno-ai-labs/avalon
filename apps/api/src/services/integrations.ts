@@ -7944,6 +7944,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
               env,
               input.workspaceId,
               input.parentId,
+              input.substreamId ?? "0",
             );
           }
           const persistedDueAt = new Date(replayed.dueAt);
@@ -7983,6 +7984,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
             env,
             input.workspaceId,
             input.parentId,
+            input.substreamId ?? "0",
           );
         } catch (error) {
           // The row exists but nothing is armed to fire it, and a workspace with
@@ -8086,6 +8088,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
           env,
           input.workspaceId,
           input.parentId,
+          input.substreamId ?? "0",
         );
         return {
           output: { wakeupId: args.wakeupId, status: "cancelled" },
