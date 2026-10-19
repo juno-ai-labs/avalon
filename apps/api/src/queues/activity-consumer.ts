@@ -15,6 +15,8 @@ import { ChannelColorSyncMessageSchema } from "../durable-objects/channel-color-
 import { ThreadBackfillMessageSchema, type ThreadBackfillJob } from "../durable-objects/thread-backfill";
 import { backfillSuggestion } from "../services/suggestion-backfill-service";
 import { MemorySweepMessageSchema, runMemorySweep } from "../services/memory-sweep-service";
+import { MemoryDigestSyncMessageSchema } from "../durable-objects/memory-digest-sync";
+import { refreshMemoryDigestCopies } from "../services/memory-digest-service";
 import { summarizeExistingDescription } from "../services/workstream-naming-service";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { projectAuthorization } from '../services/authorization-projection-service';
@@ -685,6 +687,46 @@ async function consumeOne(message: Message<unknown>, env: Env,
           reason: diagnosticErrorCode(error, "channel_color_sync_failed"),
         });
         await workspace.releaseChannelColorSync(target).catch(() => undefined);
+      }
+    }
+    message.ack();
+    return;
+  }
+  const digestSync = MemoryDigestSyncMessageSchema.safeParse(message.body);
+  if (digestSync.success) {
+    const target = digestSync.data;
+    if (target.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      target.workspaceId,
+      workspaceDOName(env.AVALON_REGION, target.workspaceId),
+    );
+    try {
+      const work = await workspace.memoryDigestSyncWork(target);
+      if (work) {
+        // Every copy the conversation holds, re-read as its own principal.
+        // A copy that failed keeps the row: released, so the alarm sends it
+        // again at its gate, rather than completed over a stale copy. Each
+        // failure was logged with its reason by the refresh.
+        const refreshed = await refreshMemoryDigestCopies(env, { workspaceId: target.workspaceId, ...work });
+        if (refreshed.failed > 0) await workspace.releaseMemoryDigestSync(target);
+        else await workspace.completeMemoryDigestSync(target);
+      }
+    } catch (error) {
+      // A retired Organization's conversation is never read again.
+      if (!isRetirementRefusal(error)) {
+        // Acked rather than retried, as colour sync is: the row's own gate
+        // sends it again, and releasing it lets the rest of its batch go.
+        logWarn(env, "memory_digest_sync_failed", {
+          workspace_id: target.workspaceId,
+          revision: target.revision,
+          reason: diagnosticErrorCode(error, "memory_digest_sync_failed"),
+        });
+        await workspace.releaseMemoryDigestSync(target).catch(() => undefined);
       }
     }
     message.ack();

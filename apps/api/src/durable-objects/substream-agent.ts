@@ -103,6 +103,7 @@ import {
 } from "../observability/harness-run-observability";
 import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
 import { PersonalSystemPromptRecordSchema } from "./personal-system-prompt";
+import type { MemoryDigestFact } from "./workspace-memory-facts-protocol";
 import { agentProfileFor, type AgentProfile } from "../services/agent-profiles";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
@@ -143,6 +144,7 @@ import { canonicalExternalResultText } from "../services/external-result-deliver
 import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
 import { attemptMemorySweep } from "../services/memory-sweep-service";
+import { digestReaderFor, refreshMemoryDigestCopy } from "../services/memory-digest-service";
 import { refreshWorkstreamName, summarizeExistingDescription } from "../services/workstream-naming-service";
 import { loadOpenRouterContextWindows } from "../services/openrouter-context-windows";
 import {
@@ -5202,6 +5204,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return {
       contextWindowTokensByModel: () => this.contextWindowTokensByModel(),
       personalSystemPrompt: (userId) => this.personalSystemPromptCopy(input.workspaceId, userId),
+      memoryDigest: (principal) => this.memoryDigestCopy(principal),
       assignSidekickSkillNames: (sources) => {
         fence();
         return this.state.storage.transactionSync(() => {
@@ -5675,6 +5678,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         parentId: input.parentId,
         substreamId: input.substreamId ?? "0",
       });
+      // The next run of this principal here renders from this copy; the run
+      // never reads WorkspaceDO for it. One WorkspaceDO call; never throws.
+      await refreshMemoryDigestCopy(executionEnv, {
+        workspaceId: input.workspaceId,
+        parentKind: input.parentKind,
+        parentId: input.parentId,
+        substreamId: input.substreamId ?? "0",
+      }, digestReaderFor(input));
     }
     return canvaCleanupDiagnostic ?? settlementDiagnosticCode;
   }
@@ -6243,6 +6254,25 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       });
     }));
     return copy?.text ?? "";
+  }
+
+  /**
+   * This conversation's memory digest copy for one principal, read
+   * synchronously and never refreshed here: the settlement step, the sweep, a
+   * forget, and the copy-sync lane refresh it. An unreadable copy renders no
+   * digest rather than failing the run, and names the field it rejected.
+   * See docs/agent-memory.md#the-digest.
+   */
+  private memoryDigestCopy(principal: string): MemoryDigestFact[] | null {
+    try {
+      return this.scheduling.memoryDigestCopy(principal);
+    } catch (error) {
+      logWarn(this.env, "memory_digest_copy_unreadable", {
+        substream_id: this.externalSubstreamId(),
+        reason: zodDiagnosticCode(error, "memory_digest_copy") ?? diagnosticErrorCode(error, "memory_digest_copy_unreadable"),
+      });
+      return null;
+    }
   }
 
   private async refreshPersonalSystemPromptCopy(workspaceId: string, userId: string): Promise<void> {

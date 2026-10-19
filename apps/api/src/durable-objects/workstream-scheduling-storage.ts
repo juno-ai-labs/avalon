@@ -1,3 +1,6 @@
+import { z } from "zod";
+
+import { MemoryDigestFactSchema, type MemoryDigestFact } from "./workspace-memory-facts-protocol";
 import { WorkstreamMessageStorage } from "./workstream-message-storage";
 import type { PreparedConversationTurn } from "./workstream-transcript-storage";
 
@@ -104,6 +107,8 @@ export interface MemorySweepStateRow extends Record<string, SqlStorageValue> {
   retry_at: number | null;
   version: number;
 }
+
+const MemoryDigestFactListSchema = z.array(MemoryDigestFactSchema);
 
 function first<T>(cursor: SqlStorageCursor<T extends Record<string, SqlStorageValue> ? T : never>) {
   return cursor.toArray()[0];
@@ -830,6 +835,83 @@ export class WorkstreamSchedulingStorage {
        ON CONFLICT(id) DO UPDATE SET retry_at = excluded.retry_at, updated_at = excluded.updated_at`,
       input.retryAt, input.now, input.now,
     );
+  }
+
+  // ------------------------------------------------------ memory digest
+
+  /**
+   * One principal's digest copy (`user:<id>`, `sidekick:<automationId>` or
+   * `conversation`), or `null` when none was written yet. `null` too below
+   * migration 77, which has no table: a run on an object that has not migrated
+   * renders no digest rather than failing. Validated here because the run
+   * renders from it with nothing else in between. `docs/agent-memory.md#the-digest`.
+   */
+  memoryDigestCopy(principal: string): MemoryDigestFact[] | null {
+    if (!this.#hasMemoryDigestCopies()) return null;
+    const row = first(this.sql.exec<{ facts_json: string } & Record<string, SqlStorageValue>>(
+      `SELECT facts_json FROM memory_digest_copies WHERE principal = ?`, principal,
+    ));
+    return row ? MemoryDigestFactListSchema.parse(JSON.parse(row.facts_json)) : null;
+  }
+
+  /**
+   * Replace one principal's copy with a newer read. Two refreshes can overlap
+   * and resume in either order; `readAt` is the WorkspaceDO's clock at the
+   * read, so an older answer arriving late never replaces a newer copy. An
+   * equal `readAt` writes, so a repeated refresh of the same read converges.
+   * `true` when the row was written.
+   */
+  storeMemoryDigestCopy(input: { principal: string; facts: MemoryDigestFact[]; readAt: number; now: number }): boolean {
+    return this.sql.exec<{ principal: string } & Record<string, SqlStorageValue>>(
+      `INSERT INTO memory_digest_copies (principal, facts_json, read_at, refreshed_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT (principal) DO UPDATE SET facts_json = excluded.facts_json, read_at = excluded.read_at,
+         refreshed_at = excluded.refreshed_at
+       WHERE excluded.read_at >= memory_digest_copies.read_at
+       RETURNING principal`,
+      input.principal, JSON.stringify(input.facts), input.readAt, input.now,
+    ).toArray().length > 0;
+  }
+
+  /** Every principal holding a copy here, so a refresh after a sweep can reach each one. */
+  memoryDigestPrincipals(): string[] {
+    if (!this.#hasMemoryDigestCopies()) return [];
+    return this.sql.exec<{ principal: string } & Record<string, SqlStorageValue>>(
+      `SELECT principal FROM memory_digest_copies ORDER BY principal`,
+    ).toArray().map((row) => row.principal);
+  }
+
+  /**
+   * Drop one forgotten fact from every copy here, in the same call as the
+   * forget that retracted it, so the next run in this conversation does not
+   * render it again before the copy-sync lane catches up. Answers the number
+   * of copies that held it. `read_at` is left alone: the copy is still the
+   * same read, less one fact, and a newer read already excludes it.
+   */
+  removeFactFromMemoryDigestCopies(input: { factId: string; now: number }): number {
+    if (!this.#hasMemoryDigestCopies()) return 0;
+    return this.storage.transactionSync(() => {
+      const rows = this.sql.exec<{ principal: string; facts_json: string } & Record<string, SqlStorageValue>>(
+        `SELECT principal, facts_json FROM memory_digest_copies`,
+      ).toArray();
+      let removed = 0;
+      for (const row of rows) {
+        const facts = MemoryDigestFactListSchema.parse(JSON.parse(row.facts_json));
+        const kept = facts.filter((fact) => fact.factId !== input.factId);
+        if (kept.length === facts.length) continue;
+        this.sql.exec(
+          `UPDATE memory_digest_copies SET facts_json = ?, refreshed_at = ? WHERE principal = ?`,
+          JSON.stringify(kept), input.now, row.principal,
+        );
+        removed += 1;
+      }
+      return removed;
+    });
+  }
+
+  #hasMemoryDigestCopies(): boolean {
+    return this.sql.exec(
+      "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'memory_digest_copies'",
+    ).toArray().length > 0;
   }
 
   /** Rows written by the statement that just ran, in this transaction. */
