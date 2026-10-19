@@ -71,6 +71,7 @@ export interface AttentionChannel {
   readonly hasUnread?: boolean;
   readonly unseen?: boolean;
   readonly youAreMentioned?: boolean;
+  readonly isParticipant?: boolean;
 }
 
 /**
@@ -90,8 +91,14 @@ export interface AttentionItem {
   at: string;
 }
 
+/**
+ * Whether Main is the reader's and waits on them: they take part in it
+ * (`WorkstreamSchema.isParticipant`), or it mentions them, since a mention in
+ * an Organization-wide thread does not make them a participant.
+ */
 function mainIsViewers(workstream: AttentionChannel): boolean {
   return workstream.mainWithheld !== true
+    && (workstream.isParticipant !== false || workstream.youAreMentioned === true)
     && (!workstream.associativeSubstreamId || workstream.associativeSubstreamId === '0');
 }
 

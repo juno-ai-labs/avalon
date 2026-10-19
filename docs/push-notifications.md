@@ -58,8 +58,11 @@ person-mention references to readable plain text before carrying the first
 Apple's 4,096-byte ceiling. Every alert also sets APNs `badge` to the number
 the sidebar's **Threads** button counts, less pending access requests
 ([`attention-menu.md`](attention-menu.md)):
-each Main the recipient may open and each Breakout they may list, in an
-unarchived, non-system Channel, that is unread, unseen or mentions them. The
+each Main and each Breakout the recipient takes part in, in an unarchived,
+non-system Channel, that is unread, unseen or mentions them, plus each Main
+that mentions them without their taking part. Other activity in an
+Organization-wide thread they are not in does not count, as it is not in their
+Threads list. The
 directory `attention` read returns it as `readerAttentionCount`
 (`WorkspaceSpaceStorage.readerAttentionCount`). A run in `needs_input` is not
 counted, as the Threads count does not include it. A send from one workspace does not sum
