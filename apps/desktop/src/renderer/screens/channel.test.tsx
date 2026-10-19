@@ -1,6 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Link, MemoryRouter, parsePath, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
@@ -19,6 +19,8 @@ const api = vi.hoisted(() => ({
   updateSpacePresentation: vi.fn(),
   updateSpaceAudience: vi.fn(),
   acknowledgeChannelRead: vi.fn(),
+  getMyMemoryReview: vi.fn(async () => ({ own: [], shared: [] })),
+  forgetMyMemory: vi.fn(),
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session: null }) }));
 const spaces = vi.hoisted(() => ({ data: undefined as unknown }));
@@ -54,9 +56,9 @@ const workspace: Workspace = {
   currentUser: { id: 'me', name: 'Me', email: 'me@rally.test', timezone: 'UTC', role: 'member', accessClass: 'member' },
 };
 
-function outbound(reach: 'organization' | 'participant' | 'through_channel') {
+function outbound(reach: 'organization' | 'participant' | 'through_channel', scope: 'workspace' | 'individual' = 'workspace') {
   return { waterline: 1, items: [{
-    id: 'outbound', name: 'Outbound', iconKey: 'briefcase', colorKey: 'blue', scope: 'workspace', status: 'active',
+    id: 'outbound', name: 'Outbound', iconKey: 'briefcase', colorKey: 'blue', scope, status: 'active',
     systemRole: null, revision: 1, reach, participants: [], channelCount: 2, attentionCount: 0,
     defaultResourceIds: [], defaultSidekickIds: [], createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
   }] };
@@ -114,6 +116,18 @@ describe('a Channel', () => {
     expect(rows[0]).toHaveTextContent('A four-week outbound setup plan.');
     expect(within(rows[0]!).getByRole('button', { name: 'Q4 plan' })).toBeInTheDocument();
     expect(screen.getByText('composer')).toBeInTheDocument();
+  });
+
+  it('shows what Rally remembers in a Personal Channel and not in an Organization one', async () => {
+    renderChannel();
+    await screen.findByRole('list', { name: 'Outbound feed' });
+    expect(screen.queryByRole('heading', { name: 'What Rally remembers' })).toBeNull();
+    cleanup();
+
+    spaces.data = outbound('participant', 'individual');
+    renderChannel();
+    expect(await screen.findByRole('heading', { name: 'What Rally remembers' })).toBeInTheDocument();
+    expect(await screen.findByText('Rally has not remembered anything for you yet.')).toBeInTheDocument();
   });
 
   it('opens a thread expanded over the Channel from its chip, and Collapse puts it beside the Channel', async () => {

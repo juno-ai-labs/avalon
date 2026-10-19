@@ -8911,6 +8911,26 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .channel-feed-message-text .markdown-body > :first-child { margin-top: 0; }
 .channel-feed-message-text .markdown-body > :last-child { margin-bottom: 0; }
 .channel-feed-empty { color: var(--av-sys-color-text-muted); margin: auto; max-width: 420px; padding: 24px; text-align: center; }
+/* "What Rally remembers" (docs/agent-memory.md), between a Personal
+   Channel's header and its feed. Its row takes what it needs up to two fifths
+   of the pane and scrolls past that, so the feed is never pushed off screen. */
+.channel-screen.has-memory-review { grid-template-rows: 64px fit-content(40%) minmax(0, 1fr) auto; }
+.memory-review { border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; flex-direction: column; gap: 14px; margin: 0 auto; max-width: 760px; min-height: 0; overflow-y: auto; padding: 16px 32px; width: 100%; }
+.memory-review h2 { font-size: var(--av-sys-font-size-title); font-weight: var(--av-sys-font-weight-emphasis); margin: 0; }
+.memory-review .center-state { height: auto; padding: 8px 0; }
+.memory-review-empty { color: var(--av-sys-color-text-muted); margin: 0; }
+.memory-review-group { display: flex; flex-direction: column; gap: 6px; }
+.memory-review-group h3 { color: var(--av-sys-color-text-subtle); font-size: 12px; font-weight: var(--av-sys-font-weight-emphasis); margin: 0; }
+.memory-review-group ul { display: flex; flex-direction: column; list-style: none; margin: 0; padding: 0; }
+.memory-review-fact { align-items: flex-start; border-top: .5px solid var(--av-sys-color-border-subtle); display: flex; gap: 12px; justify-content: space-between; padding: 8px 0; }
+.memory-review-fact:first-child { border-top: 0; }
+.memory-review-fact-body { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.memory-review-fact-body p { margin: 0; }
+.memory-review-conflict { margin-left: 8px; vertical-align: 1px; }
+.memory-review-fact-meta { color: var(--av-sys-color-text-muted); display: flex; flex-wrap: wrap; font-size: 12px; gap: 0 10px; }
+.memory-review-expired { color: var(--av-sys-color-text-subtle); }
+.memory-review-source { color: inherit; text-decoration: underline; text-decoration-color: var(--av-sys-color-border-default); text-underline-offset: 2px; }
+.memory-review-source:hover { color: var(--av-sys-color-text-default); }
 /* No scrim: the feed scrolls in the row above, not behind the dock. */
 .channel-composer-dock {
   background: none;
