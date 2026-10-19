@@ -614,7 +614,7 @@ describe('MessageBlock human identity', () => {
       loadAttachmentContent={async () => new Blob(['text'])} onOpenAttachment={vi.fn()} />);
     const attachment = document.querySelector('.message-attachments');
     expect(document.querySelector('.markdown-body')?.nextElementSibling).toBe(attachment);
-    expect(attachment?.nextElementSibling).toHaveClass('agent-message-actions');
+    expect(attachment?.nextElementSibling).toHaveClass('message-actions');
   });
 
   it('ends human identity headers with the author after optional context', () => {
@@ -1695,7 +1695,7 @@ describe('MessageBlock export actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save response as an image' }));
     await waitFor(() => expect(screen.getByText('Image failed')).toBeVisible());
 
-    fireEvent.pointerLeave(container.querySelector('.agent-message-actions')!);
+    fireEvent.pointerLeave(container.querySelector('.message-actions')!);
 
     expect(screen.queryByText('Image failed')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save response as an image' })).toBeEnabled();
@@ -1742,7 +1742,7 @@ describe('MessageBlock speech action', () => {
     await waitFor(() => expect(streamMessageSpeech).toHaveBeenCalledWith(markdown, expect.any(AbortSignal)));
     const stopButton = screen.getByRole('button', { name: 'Stop speaking' });
     expect(stopButton).toHaveTextContent('Stop speaking');
-    expect(stopButton.closest('.agent-message-actions')).toHaveClass('is-speaking');
+    expect(stopButton.closest('.message-actions')).toHaveClass('is-speaking');
 
     fireEvent.click(stopButton);
 
@@ -1958,7 +1958,7 @@ describe('MessageBlock action tooltips', () => {
       </SpeechPlaybackProvider>,
     );
 
-    const row = container.querySelector('.agent-message-actions');
+    const row = container.querySelector('.message-actions');
     const controls = [...row!.querySelectorAll('button')];
     expect(controls.map((control) => control.textContent?.trim()))
       .toEqual(['New breakout', 'Copy', 'Speak', 'Image', 'PDF']);
@@ -2774,7 +2774,7 @@ describe('MessageBlock breakout cutoff', () => {
     // reach the control by what it says.
     expect(control).toHaveAccessibleName(expect.stringContaining('New breakout'));
     expect(control.textContent?.trim()).toBe('New breakout');
-    const row = container.querySelector('.agent-message-actions');
+    const row = container.querySelector('.message-actions');
     expect(row).toContainElement(control);
     expect(container.querySelector('header')).not.toContainElement(control);
     // First, ahead of Merge and the rest: the row reads branch, then the
@@ -2798,7 +2798,7 @@ describe('MessageBlock breakout cutoff', () => {
     );
 
     const control = screen.getByRole('button', { name: 'New breakout from this message' });
-    expect(container.querySelector('.human-message-actions')).toContainElement(control);
+    expect(container.querySelector('.message-actions')).toContainElement(control);
     expect(container.querySelector('header')).not.toContainElement(control);
     expect(container.querySelector('.human-message-bubble')?.compareDocumentPosition(control))
       .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
@@ -2818,7 +2818,7 @@ describe('MessageBlock breakout cutoff', () => {
       <MessageBlock {...actions} message={{ ...baseMessage, transcriptTurnId: 'turn-4' }} />,
     );
 
-    const slot = container.querySelector('.human-message-actions');
+    const slot = container.querySelector('.message-actions');
     expect(slot).not.toBeNull();
     expect(slot!.querySelector('button')).toBeNull();
     expect(container.querySelector('.human-message-bubble')?.compareDocumentPosition(slot!))
@@ -2833,8 +2833,8 @@ describe('MessageBlock breakout cutoff', () => {
     );
 
     const response = screen.getByLabelText('Your elicitation response');
-    expect(response.querySelector('.human-message-actions')).not.toBeNull();
-    expect(response.querySelector('.human-message-actions button')).toBeNull();
+    expect(response.querySelector('.message-actions')).not.toBeNull();
+    expect(response.querySelector('.message-actions button')).toBeNull();
   });
 
   it('keeps the cutoff on a settled turn that carries no prose, without the actions that need it', () => {
@@ -2848,7 +2848,7 @@ describe('MessageBlock breakout cutoff', () => {
       />,
     );
 
-    const row = container.querySelector('.agent-message-actions');
+    const row = container.querySelector('.message-actions');
     expect(row).not.toBeNull();
     expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
       .toEqual(['New breakout']);
@@ -2930,7 +2930,7 @@ describe('MessageBlock merge-back', () => {
     const { container } = render(
       <MessageBlock {...actions} merge={{ label: 'Merge to thread', onMerge }} message={settledAgentTurn} onStartSubstream={vi.fn()} />,
     );
-    const row = container.querySelector('.agent-message-actions');
+    const row = container.querySelector('.message-actions');
     expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
       .toEqual(['New breakout', 'Merge to thread', 'Copy', 'Image', 'PDF']);
     fireEvent.click(screen.getByRole('button', { name: 'Merge to thread' }));
@@ -2947,7 +2947,7 @@ describe('MessageBlock merge-back', () => {
         onStartSubstream={vi.fn()}
       />,
     );
-    const row = container.querySelector('.human-message-actions');
+    const row = container.querySelector('.message-actions');
     expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
       .toEqual(['New breakout', 'Merge to GTM']);
   });

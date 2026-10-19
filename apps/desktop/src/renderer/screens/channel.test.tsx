@@ -318,6 +318,31 @@ describe('a Channel', () => {
     expect(within(rows[2]!).getByText('Q4', { selector: 'strong' })).toBeInTheDocument();
   });
 
+  it('gives a Channel message and a merge the hover row a thread’s turn has, copying the words as stored', async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    onTestFinished(() => { Reflect.deleteProperty(navigator, 'clipboard'); });
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [
+      { kind: 'message', placedAt: '2026-10-02T03:00:00.000Z', message: {
+        id: '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a63', author: { kind: 'member', userId: 'me' }, body: 'Shipped the plan.',
+        merge: { threadId: plan.id, title: 'Q4 plan', summary: null, embeds: [] },
+      } },
+      { kind: 'message', placedAt: '2026-10-02T02:00:00.000Z', message: { id: '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a60', author: { kind: 'member', userId: 'me' }, body: 'Kicking off **Q4**' } },
+      { kind: 'message', placedAt: '2026-10-02T00:00:00.000Z', message: { id: '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a61', author: { kind: 'rally' }, body: 'Welcome to the Channel' } },
+    ] });
+    renderChannel();
+    const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
+    const [welcome, kickoff, merge] = await feed.findAllByRole('listitem');
+    // A Channel has nothing to branch from or merge into, so the row is the text actions alone.
+    expect(within(kickoff!).queryByRole('button', { name: 'New breakout from this message' })).toBeNull();
+    fireEvent.click(within(kickoff!).getByRole('button', { name: 'Copy message' }));
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith('Kicking off **Q4**'));
+    fireEvent.click(within(welcome!).getByRole('button', { name: 'Copy response' }));
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith('Welcome to the Channel'));
+    fireEvent.click(within(merge!).getByRole('button', { name: 'Copy response' }));
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith('Shipped the plan.'));
+  });
+
   it('draws a thread’s merge with its thread, a quote, and its embeds', async () => {
     const mergeId = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a62';
     api.getWorkspaceMembers.mockResolvedValueOnce([workspace.currentUser] as never);
