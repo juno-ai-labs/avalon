@@ -527,6 +527,16 @@ describe("conversation import routes", () => {
     expect(await request("/workstreams", OWNER_AUTH)).toEqual(before);
   });
 
+  it("takes an import back through the abandon route by its create key alone", async () => {
+    const clientMessageId = "00000000-0000-7000-8000-00000000d208";
+    const started = await request("/workstreams/import/runs", OWNER_AUTH, { sourceUrl: SOURCE_URL, title: "Taken back", clientMessageId, spaceIds: [] });
+    expect(started.status).toBe(201);
+    const { workstreamId } = started.body as { workstreamId: string };
+    expect(await request("/workstreams/import/abandon", OWNER_AUTH, { clientMessageId })).toEqual({ status: 204, body: null });
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ archived_at: number | null }>(
+      "SELECT archived_at FROM channels WHERE workstream_id = ?", workstreamId).one().archived_at)).not.toBeNull();
+  });
+
   it("rejects an imported title outside the Channel creation contract", async () => {
     const started = await request("/workstreams/import/runs", OWNER_AUTH, {
       sourceUrl: SOURCE_URL,
