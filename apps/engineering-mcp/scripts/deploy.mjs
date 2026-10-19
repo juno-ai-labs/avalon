@@ -8,10 +8,13 @@ import { parseWranglerConfig } from "../../../scripts/wrangler-config.mjs";
 const appDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
 const deploymentToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
-// Read token for the Global lakehouse buckets' Basin SQL. Optional so a missing
-// GitHub secret does not fail the API release this deploy runs inside; the
-// query_data_lake tool names the missing secret instead.
-const basinSqlToken = process.env.ENGINEERING_MCP_BASIN_SQL_API_TOKEN?.trim();
+// Read tokens for the query tools, by the Worker secret each is installed as.
+// Optional so a missing GitHub secret does not fail the API release this deploy
+// runs inside; the tool names the missing secret instead.
+const runtimeSecrets = [
+  { name: "BASIN_SQL_API_TOKEN", tool: "query_data_lake" },
+  { name: "WORKERS_OBSERVABILITY_API_TOKEN", tool: "query_worker_observability" },
+].map((secret) => ({ ...secret, value: process.env[`ENGINEERING_MCP_${secret.name}`]?.trim() }));
 const mcpDomain = "mcp.internal.rallywith.ai";
 const aceDomain = "ace.internal.rallywith.ai";
 const generatedConfig = join(appDirectory, "wrangler.generated.json");
@@ -153,14 +156,16 @@ try {
     cwd: appDirectory,
     stdio: "inherit",
   });
-  if (basinSqlToken) {
-    execFileSync("pnpm", ["exec", "wrangler", "secret", "put", "BASIN_SQL_API_TOKEN", "--config", generatedConfig], {
-      cwd: appDirectory,
-      input: `${basinSqlToken}\n`,
-      stdio: ["pipe", "inherit", "inherit"],
-    });
-  } else {
-    console.warn("ENGINEERING_MCP_BASIN_SQL_API_TOKEN is not set; query_data_lake keeps any existing secret");
+  for (const { name, tool, value } of runtimeSecrets) {
+    if (value) {
+      execFileSync("pnpm", ["exec", "wrangler", "secret", "put", name, "--config", generatedConfig], {
+        cwd: appDirectory,
+        input: `${value}\n`,
+        stdio: ["pipe", "inherit", "inherit"],
+      });
+    } else {
+      console.warn(`ENGINEERING_MCP_${name} is not set; ${tool} keeps any existing secret`);
+    }
   }
 } finally {
   await unlink(generatedConfig).catch(() => undefined);
