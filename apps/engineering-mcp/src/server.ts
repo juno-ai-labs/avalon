@@ -31,7 +31,9 @@ import {
 } from "../../ace/src/protocol";
 import type { AccessPrincipal } from "./access";
 import type { Env } from "./env";
-import { LAKEHOUSE_TABLES, LAKEHOUSES, LakehouseQueryError, queryLakehouse } from "./lakehouse";
+import { CloudflareQueryError } from "./cloudflare-api";
+import { LAKEHOUSE_TABLES, LAKEHOUSES, queryLakehouse } from "./lakehouse";
+import { observabilityQueryInputSchema, queryObservability } from "./observability";
 import { organizationPage, organizationPageInputSchema } from "./organizations";
 import { userPage, userPageInputSchema } from "./users";
 
@@ -60,7 +62,7 @@ class InspectionRefusal extends Error {
  * what the statement touched.
  */
 function toolErrorCode(error: unknown, tool: string): string {
-  if (error instanceof InspectionRefusal || error instanceof LakehouseQueryError) return error.code;
+  if (error instanceof InspectionRefusal || error instanceof CloudflareQueryError) return error.code;
   const schema = zodDiagnosticCode(error, tool);
   if (schema) return schema;
   if (!(error instanceof Error)) return "tool_failed";
@@ -396,6 +398,14 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ lakehouse, sql }) => tool(principal, "query_data_lake", { lakehouse }, () =>
     queryLakehouse({ accountId: env.CLOUDFLARE_ACCOUNT_ID, token: env.BASIN_SQL_API_TOKEN }, lakehouse, sql)));
+
+  server.registerTool("query_worker_observability", {
+    title: "Query Worker Logs and Traces",
+    description: "Query Cloudflare Workers Observability: the structured logs, invocation logs and trace spans of every Worker on the account, as the dashboard's Query Builder shows them. Narrow to one Worker with a filter on $metadata.service (avalon-api-global is the Global API). Rally logs one JSON object per line, so filter on its fields (event, level, code, request_id, workspace_id) rather than with needle. To read one trace's spans and logs, query the events view filtered on $metadata.traceId. Retention is seven days. Invocation logs and spans carry full request URLs and SQL bindings, which can hold one-time OAuth codes, socket tickets and message text.",
+    inputSchema: observabilityQueryInputSchema,
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, (query) => tool(principal, "query_worker_observability", { view: query.view }, () =>
+    queryObservability({ accountId: env.CLOUDFLARE_ACCOUNT_ID, token: env.WORKERS_OBSERVABILITY_API_TOKEN }, query)));
 
   return server;
 }
