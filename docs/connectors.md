@@ -54,6 +54,14 @@ therefore reconstruct the card from durable history after reload, pagination,
 recovery, or virtualization. Summary-only interrupted-run recovery uses the
 same shared summary formatter as the writer. Arbitrary assistant prose cannot
 create a card.
+Completed requests for connector IDs this client does not know render a generic
+**Connector not recognized** card instead of a tool row. This display-only
+envelope accepts the stable connector id and scope, including exact recovery
+summaries, without widening tool execution validation or starting OAuth for an
+unknown provider. The card stays visible with agent work hidden. **Update Rally**
+uses the existing desktop updater (install a downloaded build, otherwise run a
+manual check); the browser offers **Reload Rally**. Clients shipped before this
+fallback still require an ordinary app update to learn it.
 Adjacent repeated presentations of the same connector and scope collapse to the
 newest durable row, while an intervening conversation row keeps a later request
 as a separate occasion.
@@ -1469,6 +1477,7 @@ independent change condition, mixed batches, and URL/metadata merge behavior.
 
 | Suite | Covers |
 | --- | --- |
+| `apps/desktop/src/renderer/components/connector-mentions.test.tsx`, `apps/desktop/src/renderer/components/workstream-blocks.test.tsx` | Unknown connector requests render an update card, survive hidden agent work and plugin grouping, recover from exact summaries, and use update/reload actions without starting OAuth. Run with `pnpm --filter @rally/desktop exec vitest run src/renderer/components/connector-mentions.test.tsx src/renderer/components/workstream-blocks.test.tsx`. Visual layout must also be checked in Electron. |
 | `apps/api/test/connector-credential-freshness.test.ts` | Both halves of the freshness contract. Its conformance half **enumerates the registry rather than a hand-written list**, so a connector added later is enrolled by existing: for every adapter that can refresh a credential, a provider that rejects the token must be answered with a refresh and a retry. An adapter whose health check does not present the connection's expiring credential — Notion introspects a token in the request body under the integration's own client credentials — declares that in the fixture table, so the exemption is a reviewable fact rather than a silent pass. |
 | `apps/api/test/connector-credential-refresh.test.ts` | The lease, the serialized rotation, the adopt-don't-redeem path, and that a successful refresh heals the row. |
 | `apps/api/test/connector-oauth-error.test.ts` | `isRevokedGrantError` and the three-answer classification. |
@@ -1506,6 +1515,23 @@ active workspace guest is insufficient after the addressed share is revoked.
 Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
+
+### 2026-10-19 — Unknown connector requests offer a client update
+
+**What changed:** A completed connection-card request for a newer connector now
+renders a generic update card, including when agent work is hidden. Desktop uses
+the existing updater and browser reloads the client.
+
+**Why:** A 1.627.0 client displayed Apollo's successful connection-card request
+as a raw tool row because its bundled catalog predated Apollo. The agent then
+claimed a card was visible with no action the person could take.
+
+**Rejected:** Widening the execution schema to accept unknown providers, or
+depending on a raw tool row to explain the mismatch. Only display recognition is
+forward-compatible; authorization still requires the trusted local catalog.
+
+**Respect:** Keep the card tool's wire identity and envelope stable. This helps
+clients containing the fallback; it cannot retrofit already-installed clients.
 
 ### 2026-10-19: Empty attendee changes are omitted
 

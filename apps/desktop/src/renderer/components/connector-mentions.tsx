@@ -5,12 +5,15 @@ import {
   ConnectorConnectionCardCatalog,
   ConnectorOAuthProviderSchema,
   connectorConnectionCardInputFromToolEvent,
+  isConnectorConnectionCardWireName,
   connectorResourceAuthorizationRequestFromToolEvent,
   type ConnectorConnectionCardInput,
   type ConnectorResourceAuthorizationRequest,
 } from '@rally/contracts';
-import { Check, AlertTriangle, LoaderCircle, Minus } from 'lucide-react';
+import { Check, AlertTriangle, LoaderCircle, Minus, Plug } from 'lucide-react';
 import { createContext, useContext, useEffect } from 'react';
+import { z } from 'zod';
+import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { useOptionalCollaborationSession, type CollaborationSessionValue, type ConnectorSetupCapability } from '../lib/collaboration-session';
 import { useViewerIsWorkspaceAdmin } from '../lib/use-workspace';
 import {
@@ -72,6 +75,53 @@ export function connectorConnectionCardInput(message: {
   toolEvent?: { name: string; input?: unknown; output?: unknown; summary?: string; status?: string };
 }): ConnectorConnectionCardInput | null {
   return connectorConnectionCardInputFromToolEvent(message.toolEvent);
+}
+
+// Display compatibility is deliberately wider than the tool's execution schema.
+// An unknown id may offer an app update, but must never start authorization.
+const connectionCardEnvelopeSchema = z.strictObject({
+  connectorId: z.string().min(1),
+  scope: z.enum(['personal', 'workspace']),
+});
+
+export function isUnrecognizedConnectorConnectionCard(message: Parameters<typeof connectorConnectionCardInput>[0]): boolean {
+  const event = message.toolEvent;
+  if (!isConnectorConnectionCardWireName(event?.name) || event?.status !== 'completed') return false;
+  const summary = /^Presented the ([a-z][a-z0-9-]*) (personal|workspace) connection card$/u.exec(event.summary ?? '');
+  for (const candidate of [event.input, event.output, summary && { connectorId: summary[1], scope: summary[2] }]) {
+    const parsed = connectionCardEnvelopeSchema.safeParse(candidate);
+    if (parsed.success && !Object.hasOwn(ConnectorConnectionCardCatalog, parsed.data.connectorId)) return true;
+  }
+  return false;
+}
+
+export function ConnectorConnectionUpdateCard(): React.JSX.Element {
+  const desktop = desktopServicesAvailable();
+  const update = useMutation({
+    mutationFn: async () => {
+      const bridge = desktopBridge();
+      if (desktop && (await bridge.getUpdateStatus()).kind === 'downloaded') {
+        await bridge.installDownloadedUpdate();
+      } else {
+        await bridge.checkForUpdates();
+      }
+    },
+  });
+  return (
+    <article aria-label="Connector update required" className="connector-connection-card">
+      <div className="connector-connection-card-header">
+        <span aria-hidden="true" className="provider-icon"><Plug size={24} /></span>
+        <div className="connector-connection-card-body">
+          <strong>Connector not recognized</strong>
+          <p>{desktop ? 'Update Rally to connect this account.' : 'Reload Rally to connect this account.'}</p>
+        </div>
+        <Button className="connector-connection-card-action button-primary" disabled={update.isPending} onClick={() => update.mutate()}>
+          {desktop ? 'Update Rally' : 'Reload Rally'}
+        </Button>
+      </div>
+      {update.error ? <InlineError>{update.error.message}</InlineError> : null}
+    </article>
+  );
 }
 
 export function connectorResourceAuthorizationRequest(message: {
