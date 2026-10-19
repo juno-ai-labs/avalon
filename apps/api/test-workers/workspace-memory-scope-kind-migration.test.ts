@@ -131,9 +131,11 @@ describe("the WorkspaceDO memory scope kind migration on workerd", () => {
         TABLE_ID, SIDEKICK_SCOPE_ID, WORKSPACE_ID, AUTOMATION_ID, AT,
       );
 
+      // Up to the last migration that still has an item store to look at:
+      // 116 imports the items as facts and drops the tables this test reads.
       applyDurableObjectSqliteMigrations({
         storage: state.storage,
-        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 115),
         component: COMPONENT,
         workerVersionId: "worker-with-scope-kind",
         now: 2_000,

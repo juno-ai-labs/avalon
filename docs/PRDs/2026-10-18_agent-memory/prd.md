@@ -294,10 +294,14 @@ that produced it, evaluated at read time.
     `memory_recall` with its trust class shown. Rejected: treating all
     evidence alike, given the measured success of poisoning writes from
     external content.
-12. **A product kill switch, not the model flag.** `memory-sweep-enabled`,
-    default enabled, registered in Ace, checked by the sweep lane. Rejected:
-    relying on the `agent-model-memory-sweep` routing flag, whose resolver
-    falls back to the Worker model when disabled and so cannot stop anything.
+12. **No feature flag.** The sweep ships on for every Organization on merge
+    and is not gated or staged behind a product flag (team decision,
+    2026-10-19). Stopping it is a revert or a deploy, the same as any other
+    lane. The `agent-model-memory-sweep` role is model routing with a
+    checked-in default, not a switch: its resolver falls back to the Worker
+    model when no flag exists, so no Flagship entry is needed to ship it.
+    Rejected: a `memory-sweep-enabled` kill switch, which the earlier draft
+    carried.
 13. **Every fact keeps its source, Organization facts included.** Visibility
     follows the source conversation's current reach, so narrowing a Channel
     to private withdraws the facts promoted from it at the next read.
@@ -439,18 +443,9 @@ Ships to everybody on merge, in three steps, each a pull request:
    its home conversation's, when it has one, plus the Sidekick's own facts.
 3. **Review surface** in the Personal Channel.
 
-Turning it off: one product flag, `memory-sweep-enabled`, a kill switch that
-**defaults enabled** and is registered in Ace in step 1. The sweep lane
-checks it before claiming a sweep and again before calling the model; off,
-no new facts are written and existing digests remain. The model-routing flag
-`agent-model-memory-sweep` is not the switch: its resolver deliberately
-falls back to the Worker-configured model when a flag is missing, disabled or
-invalid ([`feature-flags.md`](../../feature-flags.md)), so disabling it would
-keep sweeps running on the fallback model while an operator believed them
-stopped. The default is enabled because the feature ships to everybody on
-merge and the flag exists to stop it, not to stage it; it is a product flag
-and therefore fail-closed, so a Flagship outage stops sweeps rather than
-running them unmetered by policy.
+Turning it off: there is no feature flag (design decision 12). The lane is
+stopped the way any other background lane is, by reverting or deploying.
+Each step merges complete and on; a step that is not ready does not merge.
 
 Numbers for the team, each open in step 1 ([research.md §9](research.md#9-numbers-the-team-has-to-set-and-open-decisions)
 has the arithmetic): sweep rest floor and ceiling; human-message and
@@ -460,4 +455,7 @@ consolidation.
 
 ## Decision log
 
-None yet.
+- **2026-10-19, no feature flags.** The team struck the `memory-sweep-enabled`
+  kill switch from step 1 before implementation began. Design decision 12 and
+  Rollout now say the lane ships on, ungated, and is stopped by a revert or a
+  deploy. No product flag is created for memory.

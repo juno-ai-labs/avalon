@@ -17,7 +17,7 @@ export function contractCompleteEnv(overrides: Partial<Env> = {}): Env {
   return createTestEnv({
     DB: binding(), TELEMETRY_DB: binding(), AUDIT_DB: binding(), USAGE_DB: binding(), PLATFORM_DB: binding(), PAYLOADS: binding(), TELEMETRY_PAYLOADS: binding(),
     INFERENCE_PRICING_CACHE: binding(), FAVICON_CACHE: binding(),
-    IMAGES: binding(), AI: binding(), MEMORY_INDEX: binding(),
+    IMAGES: binding(), AI: binding(),
     RUN_ANALYTICS: binding(), TERMINAL_ANALYTICS: binding(),
     DOCUMENT_PROCESSOR: binding(), TERMINAL_PROVIDER: binding(), TELEMETRY_DELIVERY: binding(),
     CRASH_SYMBOLICATOR: binding(),

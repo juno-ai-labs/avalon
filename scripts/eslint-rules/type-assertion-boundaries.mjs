@@ -106,7 +106,6 @@ const cloudflareTypes = new Set([
   "ImagesBinding",
   "Queue",
   "R2Bucket",
-  "VectorizeIndex",
 ]);
 
 function assertedTypeName(node) {

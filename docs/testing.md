@@ -150,7 +150,7 @@ declares fails here. Assert by reading rows back, not by trusting the write.
 ### 3. Node with a capability double
 
 For the one collaborator that genuinely cannot run: a binding with no local
-implementation (`AI`, `MEMORY_INDEX`, `FLAGS` — see
+implementation (`AI`, `FLAGS` — see
 [what cannot be verified in a sandbox](dev-environment.md#what-cannot-be-verified-in-a-sandbox)),
 a provider's HTTP API, a clock, a source of randomness. Double that collaborator
 and nothing else, and type it per
@@ -835,7 +835,7 @@ import { useOpenRouterDouble } from "./helpers/openrouter-double";
 
 // File scope: every test in the file gets it, and the assertions below hold.
 const provider = useOpenRouterDouble((call) => {
-  expect(call.toolNames).toContain("memory_search");
+  expect(call.toolNames).toContain("memory_recall");
   return { say: "Noted." };
 });
 

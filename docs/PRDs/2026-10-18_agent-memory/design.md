@@ -336,12 +336,9 @@ at its gate; nothing is settled while the model is down (the thread-backfill
 rule). A schema failure names the field (`zodDiagnosticCode`). A refused
 operation is logged by code and skipped; the rest of the batch applies. A
 redelivery after a committed apply completes the copy and the settle from
-the stored receipt, as above. The lane is stopped by the `memory-sweep-enabled`
-product flag ([`prd.md` Rollout](prd.md#rollout)): a claim checks it before
-publishing, and a consumer checks it before calling the model, so turning the
-flag off stops new sweeps within one alarm tick without touching the model
-routing flag, whose resolver deliberately falls back to the Worker model when
-a flag is missing or disabled.
+the stored receipt, as above. There is no feature flag on the lane
+([`prd.md` design decision 12](prd.md#key-design-decisions)); stopping it is a
+revert or a deploy.
 
 ## 7. Digest
 

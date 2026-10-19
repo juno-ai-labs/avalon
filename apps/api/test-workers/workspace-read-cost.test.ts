@@ -109,7 +109,7 @@ it('refreshes only a runtime write source kind and preserves unrelated alarms an
     seed(sql);
     sql.exec(`INSERT INTO _internal_durable_alarms
       (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json, created_at, updated_at)
-      VALUES ('maintenance', 'memory_index', 4000000000000, NULL, 4000000001000, 2, NULL, 0, 0)`);
+      VALUES ('maintenance', 'resource_slugs', 4000000000000, NULL, 4000000001000, 2, NULL, 0, 0)`);
     const spy = vi.spyOn(sql, 'exec');
     const directory = vi.spyOn(instance, 'workstreamScheduleTargets');
     const notifications = vi.spyOn(instance, 'notificationIntentMaintenanceTarget');
@@ -122,7 +122,7 @@ it('refreshes only a runtime write source kind and preserves unrelated alarms an
       expect(spy.mock.calls.some(([query]) => query.includes('FROM resource_watches'))).toBe(false);
       expect(directory).not.toHaveBeenCalled();
       expect(notifications).not.toHaveBeenCalled();
-      expect(sql.exec("SELECT attempt, retry_at FROM _internal_durable_alarms WHERE kind = 'maintenance' AND alarm_key = 'memory_index'").one())
+      expect(sql.exec("SELECT attempt, retry_at FROM _internal_durable_alarms WHERE kind = 'maintenance' AND alarm_key = 'resource_slugs'").one())
         .toEqual({ attempt: 2, retry_at: 4000000001000 });
     } finally { spy.mockRestore(); directory.mockRestore(); notifications.mockRestore(); }
   });

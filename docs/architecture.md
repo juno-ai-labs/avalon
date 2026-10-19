@@ -424,19 +424,17 @@ and percentiles answer image/cold-start questions without pretending a provider
 phase is a model-run summary. The Terminal adapter emits both the structured log
 and non-blocking aggregate point; neither is canonical sandbox state.
 
-Durable memory is scoped to an ad-hoc work stream, a user inside a workspace,
-the workspace itself, or a Sidekick, whose chat and runs share one scope of
-kind `sidekick` in the same WorkspaceDO store. The host — not
-the model — derives the searchable scope union from the frozen execution principal
-and run origin. WorkspaceDO FTS5 and the regional Vectorize index are searched
-concurrently, merged with reciprocal-rank fusion, and rechecked against canonical
-WorkspaceDO revision, expiry, and invalidation state plus current D1 membership. Admission freezes
-recalled items and their context hash for retries. Memory writes use receipt
-replay, revision compare-and-swap, append-only mutation records, and a
-transactional indexing outbox; lexical search remains available while embeddings
-catch up.
+Agent memory is a store of facts in WorkspaceDO that a background sweep writes
+after a Thread, Breakout or Sidekick conversation settles, each filed under a
+subject (the Organization, a Channel, a Thread, a Breakout, a person, a
+Sidekick) and carrying the conversations it was learned from; who may read a
+fact is decided at read time from those sources and the directory WorkspaceDO
+already keeps, never from a scope the model names. A run recalls, remembers
+and forgets through three tools; WorkspaceDO FTS5 answers recall.
+[`agent-memory.md`](agent-memory.md) owns it. Typed durable tables stay scoped
+to a work stream, a user, the workspace, or a Sidekick in the same store.
 
-[`agent-harness.md`](agent-harness.md) owns all of this in detail, and
+[`agent-harness.md`](agent-harness.md) owns the harness in detail, and
 [`context-compaction.md`](context-compaction.md) owns what a run remembers once
 its window fills.
 

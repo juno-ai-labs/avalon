@@ -58,7 +58,6 @@ export interface Env {
   AUTHORIZATION_CACHE?: KVNamespace;
   IMAGES: ImagesBinding;
   AI: Ai;
-  MEMORY_INDEX: VectorizeIndex;
   BROWSER?: BrowserRun;
   TURBO_PUFFER_DEV_API_KEY?: string;
   TURBO_PUFFER_PROD_API_KEY?: string;
@@ -439,7 +438,6 @@ const EnvContractSchema = z.object({
   AUTHORIZATION_CACHE: binding<KVNamespace>().optional(),
   IMAGES: binding<ImagesBinding>(),
   AI: binding<Ai>(),
-  MEMORY_INDEX: binding<VectorizeIndex>(),
   RUN_ANALYTICS: binding<AnalyticsEngineDataset>(),
   TERMINAL_ANALYTICS: binding<AnalyticsEngineDataset>(),
   DOCUMENT_PROCESSOR: binding<DocumentProcessingRpcBinding>().optional(),

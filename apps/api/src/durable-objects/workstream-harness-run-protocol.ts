@@ -38,8 +38,6 @@ const DISPATCHED_OPERATIONS = [
   "hostOutcomeParticipantNotice",
   "persistScope",
   "scope",
-  "memoryContext",
-  "persistMemoryContext",
   "persistPluginActivation",
   "recordInferenceAttempt",
   "cancelDescendants",
