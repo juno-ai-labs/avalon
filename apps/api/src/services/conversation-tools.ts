@@ -462,14 +462,16 @@ const ReadCursorSchema = z.strictObject({
   limit: LimitSchema,
 });
 /**
- * A Channel's continuation: the feed page to read again and how many of its
- * items were already returned. The feed's own pages are larger than a read's,
- * so a read resumes inside one rather than skipping what did not fit.
+ * A Channel's continuation: the feed page to read again, and the last item
+ * already returned from it. The feed's own pages are larger than a read's, so
+ * a read resumes inside one. It resumes after that item, never after a count:
+ * a merge landing or a message removed between pages moves every item below
+ * it, and an offset would then repeat one or skip one.
  */
 const ChannelReadCursorSchema = z.strictObject({
   conversationId: z.string().min(1),
   feedCursor: z.string().min(1).nullable(),
-  skip: z.number().int().nonnegative(),
+  after: z.strictObject({ placedAt: z.string().min(1), id: z.string().min(1) }).nullable(),
   limit: LimitSchema,
 });
 
@@ -592,6 +594,10 @@ export interface ConversationSearchMatch {
   textTruncated: boolean;
 }
 
+function channelItemId(item: ChannelFeedItem): string {
+  return item.kind === "thread" ? item.thread.id : item.message.id;
+}
+
 function channelItemMessage(
   item: ChannelFeedItem,
   names: ReadonlyMap<string, string>,
@@ -601,7 +607,7 @@ function channelItemMessage(
   const userId = item.kind === "thread" ? item.thread.createdByUserId
     : item.message.author.kind === "member" ? item.message.author.userId : null;
   return {
-    messageId: item.kind === "thread" ? item.thread.id : item.message.id,
+    messageId: channelItemId(item),
     author: userId ? { kind: "person", name: names.get(userId) ?? "A person" } : { kind: "agent", name: "Rally" },
     sentAt: item.placedAt,
     text,
@@ -739,8 +745,15 @@ export function createConversationsPlugin(
       throw conversationRefusalError({ ok: false, code: "conversation_access_denied", available: [],
         resourceId: target.parentId }, target.conversationId);
     }
-    const skip = state?.skip ?? 0;
-    const items = result.page.items.slice(skip);
+    // The feed's own order: newest placement first, then id. Everything at or
+    // above the last item returned was read, or is newer than what this read
+    // pages back through.
+    const after = state?.after ?? null;
+    const items = after === null ? result.page.items : result.page.items.filter((item) => {
+      const placed = Date.parse(item.placedAt);
+      const anchor = Date.parse(after.placedAt);
+      return placed < anchor || (placed === anchor && channelItemId(item) > after.id);
+    });
     const names = await ports.userNames([...new Set(items.flatMap((item) => {
       const userId = item.kind === "thread" ? item.thread.createdByUserId
         : item.message.author.kind === "member" ? item.message.author.userId : null;
@@ -748,8 +761,10 @@ export function createConversationsPlugin(
     }))]);
     const messages = fitPage(items, limit, channelItemText,
       (item, text, truncated) => channelItemMessage(item, names, text, truncated));
-    const next = messages.length < items.length ? { feedCursor, skip: skip + messages.length }
-      : result.page.nextCursor ? { feedCursor: result.page.nextCursor, skip: 0 } : null;
+    const last = items[messages.length - 1];
+    const next = messages.length < items.length && last
+      ? { feedCursor, after: { placedAt: last.placedAt, id: channelItemId(last) } }
+      : result.page.nextCursor ? { feedCursor: result.page.nextCursor, after: null } : null;
     return {
       output: { conversationId: target.conversationId, title: target.title, messages },
       summary: `Read ${messages.length} messages from ${target.title || "a conversation"}`,
@@ -764,7 +779,7 @@ export function createConversationsPlugin(
   const search: HarnessTool = {
     definition: {
       name: "search",
-      description: "Find messages that mention a word or phrase in the conversations you can reach, or in one of them. Returns matches newest first with where each was said; conversation_read that conversation for the context around one.",
+      description: "Find messages that mention a word or phrase in the conversations you can reach, or in one of them. Returns up to limit matches, ordered newest first, with where each was said. When more messages match than it returns, the ones returned are not necessarily the newest: use a more specific phrase or name one conversation. conversation_read a conversation for the context around a match.",
       capability: "rally.conversation.search",
       mode: "read",
       idempotency: "safe",

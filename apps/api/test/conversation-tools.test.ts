@@ -651,6 +651,22 @@ describe("a conversation the loop sits inside", () => {
     expect((third.output as { nextPageId: string | null }).nextPageId).toBeNull();
     expect(ports.feedReads).toEqual([null, null, "3"]);
   });
+
+  it("resumes a Channel after the last item it returned when a merge lands between pages", async () => {
+    const ports = new Ports();
+    ports.scoped = [gtm];
+    ports.feed = ["m-3", "m-2", "m-1"].map((id, index) =>
+      channelMessage(id, `said ${id}`, `2026-10-1${8 - index}T00:00:00.000Z`));
+    const surface = tools(loop(), ports);
+    const ids = (output: unknown) => (output as { messages: Array<{ messageId: string }> }).messages.map((m) => m.messageId);
+    const first = await surface.get("conversation_read")!.execute({ conversation: SPACE_ID, limit: 2 }, context("a"));
+    expect(ids(first.output)).toEqual(["m-3", "m-2"]);
+    // A merge lands at the top, pushing every item down one.
+    ports.feed.unshift(channelMessage("m-new", "merged", "2026-10-19T00:00:00.000Z", { title: "Pitch deck" }));
+    const second = await surface.get("conversation_read_next")!
+      .execute({ pageId: (first.output as { nextPageId: string }).nextPageId }, context("b"));
+    expect(ids(second.output)).toEqual(["m-1"]);
+  });
 });
 
 describe("conversation_search", () => {
