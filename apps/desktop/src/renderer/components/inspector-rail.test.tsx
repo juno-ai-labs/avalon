@@ -979,6 +979,7 @@ describe('resource detail content preview', () => {
       version: note.currentVersion,
       content: expect.any(Uint8Array),
       mimeType: 'text/markdown',
+      sourceMimeType: 'text/markdown',
       title: note.title,
     }));
     expect(loadResourceContent).toHaveBeenCalledWith(note.id, expect.any(AbortSignal));

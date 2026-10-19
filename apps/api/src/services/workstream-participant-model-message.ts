@@ -1,3 +1,5 @@
+import { annotationModelSources } from "./annotation-model-sources";
+import { renderAnnotations } from "@rally/contracts";
 import { ElicitationSchema } from "@rally/contracts";
 import { z } from "zod";
 import type { ModelMessage } from "@rally/agent-harness";
@@ -197,10 +199,11 @@ function withAuthorAttribution(
 export function projectParticipantTextMessage(input: Pick<
   ParticipantModelProjectionInput,
   "author" | "text" | "mentions" | "externalFraming"
-> & {
+> & Partial<Pick<ParticipantModelProjectionInput, "structuredContent"
+>> & {
   overheard?: boolean;
 }): ModelMessage | null {
-  const content = participantModelMessageContent(input.text, input.mentions);
+  const content = [participantModelMessageContent(input.text, input.mentions), renderAnnotations(input.structuredContent)].filter(Boolean).join("\n\n");
   if (content.trim().length === 0) return null;
   if (input.author.type === "external") {
     return externalAttributedMessage(
@@ -310,7 +313,7 @@ export async function projectParticipantModelMessage(
     );
   }
   if (input.messageType !== "text") return null;
-  const content = participantModelMessageContent(input.text, input.mentions);
+  const content = [participantModelMessageContent(input.text, input.mentions), renderAnnotations(input.structuredContent)].filter(Boolean).join("\n\n");
   if (content.trim().length === 0 && input.attachments.length === 0) return null;
   // An external author's attachments have never reached the model; the
   // attribution is what it reads, and a message that is only an attachment
@@ -318,8 +321,9 @@ export async function projectParticipantModelMessage(
   if (input.author.type === "external") {
     return externalAttributedMessage(input.author.actor, content, false, input.externalFraming ?? "request");
   }
-  if (input.attachments.length === 0) return projectParticipantTextMessage(input);
   const sources = [...input.attachments];
+  for (const image of annotationModelSources(input.structuredContent)) if (!sources.some((source) => source.id === image.id)) sources.push(image);
+  if (sources.length === 0) return projectParticipantTextMessage(input);
   const parts = input.includeAttachmentContents
     ? await buildAttachmentModelParts(env.PAYLOADS, sources, {
         database: env.DB,

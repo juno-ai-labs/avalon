@@ -206,7 +206,9 @@ describe('token references', () => {
   // Set at runtime rather than in CSS: some by components as inline styles,
   // three by libraries on their own elements. They cannot be checked from this
   // file, so they are listed to say they were considered.
-  const RUNTIME = ['--rail-width', '--person-accent', '--person-dot',
+  const RUNTIME = [
+    // Trusted SVG cursor shared by annotation preview transports.
+    '--annotation-cursor', '--rail-width', '--person-accent', '--person-dot',
     // Set per glyph from PALETTE_INK, which is a decision about a fill rather
     // than about the appearance, so it cannot be a theme token.
     '--glyph-ink',

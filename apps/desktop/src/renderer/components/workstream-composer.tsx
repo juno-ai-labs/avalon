@@ -1,3 +1,5 @@
+import { AnnotationsSchema } from '@rally/contracts';
+import { AnnotationChips, useAnnotationDraft } from './artifact-annotations';
 import clsx from 'clsx';
 import { LoaderCircle, Square, UserPlus } from 'lucide-react';
 import { type ReactNode, type RefObject, useMemo, useRef, useState } from 'react';
@@ -96,6 +98,7 @@ interface WorkstreamComposerProps {
    * participant is the person writing, so the tag would land on everyone else.
    */
   markNonParticipants?: boolean;
+  annotationsEnabled?: boolean;
   /** The key the unsent draft is cached under; see `lib/draft-keys.ts`. */
   draftKey: string;
   substreamId?: string;
@@ -175,6 +178,7 @@ const BASE_COMMANDS: ComposerCommand[] = [
 
 export function WorkstreamComposer({
   placeholder = 'Message the thread…',
+  annotationsEnabled = true,
   ariaLabel,
   className,
   footerHint,
@@ -209,6 +213,12 @@ export function WorkstreamComposer({
   onStop,
   backgroundAgentCount,
 }: WorkstreamComposerProps): React.JSX.Element {
+  const inheritedAnnotationDraft = useAnnotationDraft();
+  const annotationDraft = annotationsEnabled ? inheritedAnnotationDraft : null;
+  const annotationPayloadValid = AnnotationsSchema.safeParse(annotationDraft?.pins.map((p) => p.annotation) ?? []).success;
+  const annotationAttachmentCount = annotationDraft?.pins.filter((p) => p.annotation.content.imageAttachmentId).length ?? 0;
+  const annotationBlocked = !annotationPayloadValid || annotationAttachmentCount + attachments.length > 10 || annotationDraft?.uploading;
+  const hasCommentedPin = annotationDraft?.pins.some((p) => p.annotation.comment.trim()) ?? false;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRevisionRef = useRef(0);
   const {
@@ -402,7 +412,7 @@ export function WorkstreamComposer({
   const send = async (): Promise<void> => {
     const submitted = mentionsInTrimmedText(text, selectedMentions);
     const trimmed = submitted.text;
-    if (sendBlocked || (!trimmed && readyAttachmentCount === 0) || uploading) return;
+    if (sendBlocked || annotationBlocked || (!trimmed && readyAttachmentCount === 0 && !hasCommentedPin) || uploading) return;
     const resolvedPersonIds = new Set(resolveMentionPayload(
       trimmed,
       submitted.mentions,
@@ -523,10 +533,11 @@ export function WorkstreamComposer({
       <ComposerInput
         api={api}
         ariaLabel={ariaLabel ?? placeholder.replace(/…$/u, '')}
+        beforeInput={annotationsEnabled ? <AnnotationChips /> : undefined}
         attachments={attachments}
         autoFocus={autoFocus}
         {...(className ? { className } : {})}
-        error={error}
+        error={!annotationPayloadValid ? 'These pins are too large to send together.' : annotationAttachmentCount + attachments.length > 10 ? 'Send no more than 10 images and attachments together.' : error}
         {...(footerHint ? { footerHint } : {})}
         {...(notice ? { notice } : {})}
         {...(toolsAccessory ? { toolsAccessory } : {})}
@@ -589,7 +600,7 @@ export function WorkstreamComposer({
             </IconButton>
           </div>
         )}
-        submitDisabled={sendBlocked || uploading || (!text.trim() && readyAttachmentCount === 0)}
+        submitDisabled={sendBlocked || annotationBlocked || uploading || (!text.trim() && readyAttachmentCount === 0 && !hasCommentedPin)}
         submitLabel={sendBlocked ? `${submitLabel}, available once Rally connects` : submitLabel}
         submitting={sending}
         uploading={uploading}

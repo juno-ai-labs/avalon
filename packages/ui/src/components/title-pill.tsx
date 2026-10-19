@@ -415,7 +415,7 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
   const headerRef = useRef<HTMLElement>(null);
   const currentRef = useRef<HTMLDivElement>(null);
   const trailingRef = useRef<HTMLDivElement>(null);
-  const { crowded, shift } = useTrailingCrowded(headerRef, currentRef, trailingRef, shownActions?.length ?? 0);
+  const { crowded, shift } = useTrailingCrowded(headerRef, currentRef, trailingRef, shownActions?.filter((action) => !action.alwaysVisible).length ?? 0);
   return <header
     className={clsx('title-pill-header window-drag', crowded && 'is-crowded', className)}
     ref={headerRef}
@@ -458,12 +458,6 @@ function useTrailingCrowded(
     const header = headerRef.current;
     const current = currentRef.current;
     const trailing = trailingRef.current;
-    // Only a header with actions has anything to fold. Without them it is
-    // never crowded and pays for no observer.
-    if (actionCount === 0) {
-      setState((was) => was.crowded || was.shift ? { crowded: false, shift: 0 } : was);
-      return;
-    }
     if (!header || !current || !trailing || typeof ResizeObserver === 'undefined') return;
     const measure = (): void => {
       const group = trailing.querySelector<HTMLElement>('.icon-group');
@@ -479,7 +473,7 @@ function useTrailingCrowded(
       const folded = actions ? getComputedStyle(actions).display === 'none' : false;
       const more = group.querySelector<HTMLElement>('.icon-group-more');
       const button = more && more.offsetWidth ? more.offsetWidth : 0;
-      const step = (actionCount - 1) * (button + gap);
+      const step = Math.max(0, actionCount - 1) * (button + gap);
       const rowWidth = group.offsetWidth + (folded ? step : 0);
       // The pill only ever moves, never shrinks, so its width is its own even
       // while crowded, and follows a title that gets shorter.

@@ -1,6 +1,7 @@
+import { useAnnotationDraft } from './artifact-annotations';
+import { AnnotationSurface } from './annotation-surface';
 import { openLink } from '../lib/browser-rail-links';
 import { desktopBridge } from '../lib/platform';
-import { isHtmlFile, isolatedHtml } from './attachment-lightbox';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { IconArchive, IconArrowLeft, IconChevronRight, IconChevronsRight, IconExternalLink, IconEye, IconFileText, IconHistory, IconLink, IconLoader2, IconPencil, IconPin, IconPinnedOff, IconPlus, IconRefresh, IconUserPlus, IconWindowMaximize, IconX } from '@tabler/icons-react';
@@ -23,7 +24,6 @@ import { ResourceIcon } from './markdown-citations';
 import { CopyButton } from './copy-button';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, Modal } from './primitives';
 import { SiteResourceDetail, type SiteResourceDetailProps } from './site-resource-detail';
-import { MarkdownBody } from './workstream-blocks';
 import { RailSurface } from './rail-surface';
 import { RelativeTime } from './relative-time';
 
@@ -417,38 +417,14 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
     // a citation substantiating a claim with the wrong revision.
   }, [loadResourceContent, media, resource.currentVersion, resource.id]);
 
+  if (state.failed && attachmentKind === 'other') return <AnnotationSurface resourceId={resource.id} version={resource.currentVersion} name={resource.title} mimeType={resource.mimeType} sizeBytes={resource.sizeBytes} />;
   if (state.failed) {
     return <p className="inspector-detail-preview-status">This preview is not available.</p>;
   }
-  if (state.src) {
-    return (
-      <article className="inspector-detail-document">
-        {state.media === 'audio'
-          ? <audio aria-label={`Audio: ${resource.title}`} className="inspector-detail-audio" controls src={state.src} />
-          : <img alt={resource.title} className="inspector-detail-image" src={state.src} />}
-      </article>
-    );
-  }
-  if (state.text === undefined) {
-    return (
-      <p className="inspector-detail-preview-status" role="status">
-        <IconLoader2 aria-hidden="true" className="spin" size={14} stroke={1.9} /> Loading preview…
-      </p>
-    );
-  }
-  // A page renders in the lightbox's sandbox, never as text the panel trusts.
-  if (isHtmlFile({ name: resource.title, mimeType: resource.mimeType })) {
-    return (
-      <article className="inspector-detail-document is-html">
-        <iframe sandbox="" srcDoc={isolatedHtml(state.text)} title={`Preview of ${resource.title}`} />
-      </article>
-    );
-  }
-  return (
-    <article className="inspector-detail-document">
-      <MarkdownBody verbatim>{state.text}</MarkdownBody>
-    </article>
-  );
+  if (state.src && state.media === 'audio') return <audio aria-label={`Audio: ${resource.title}`} controls src={state.src} />;
+  if (state.text === undefined && !state.src) return <p className="inspector-detail-preview-status" role="status">Loading preview…</p>;
+  return <article className="inspector-detail-document"><AnnotationSurface resourceId={resource.id} version={resource.currentVersion} name={resource.title} mimeType={resource.mimeType} sizeBytes={resource.sizeBytes} text={state.text} src={state.src} /></article>;
+
 }
 
 /**
@@ -730,6 +706,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const [archiveTarget, setArchiveTarget] = useState<WorkstreamResource | null>(null);
   const [archiving, setArchiving] = useState(false);
   const [archiveFailed, setArchiveFailed] = useState(false);
+  const annotationDraft = useAnnotationDraft();
   const [popOutFailed, setPopOutFailed] = useState(false);
   const [poppingOut, setPoppingOut] = useState(false);
   const [copyLinkFailed, setCopyLinkFailed] = useState(false);
@@ -792,6 +769,8 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       );
       const opened = await desktopBridge().popOutArtifact({
         kind: 'generated',
+        ...(annotationDraft?.scopeKey ? { annotationScope: annotationDraft.scopeKey } : {}),
+        ...(resource.mimeType ? { sourceMimeType: resource.mimeType } : {}),
         resourceId: resource.id,
         version: resource.currentVersion,
         content: new Uint8Array(await content.arrayBuffer()),
@@ -874,9 +853,9 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         /> } : {}),
       }}
       // The detail's own actions, such as a live artifact's, join Expand in
-      // the header's group, so they fold into "⋯" with it. A live site expands
+      // the header's group. Comment mode and Expand stay directly accessible. A live site expands
       // like any other artifact: the panel takes the pane, not a lightbox.
-      actions={[...detailActions, ...(props.panel.expandAction ?? [])]}
+      actions={[...detailActions.filter((action) => action.key !== 'comment-mode'), ...detailActions.filter((action) => action.key === 'comment-mode').map((action) => ({...action,alwaysVisible:true})), ...(props.panel.expandAction ?? []).map((action) => ({...action,alwaysVisible:true}))]}
       ancestors={props.panel.ancestors ? [...props.panel.ancestors] : []}
       // A live site composites a native view under this header that paints
       // above all renderer DOM, so a label hanging down lands behind the page.
@@ -917,6 +896,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
                 aria-pressed={action.pressed}
                 className={action.pressed === undefined ? undefined : 'icon-button-toggle'}
                 disabled={action.disabled}
+                disabledReason={action.disabledReason}
                 key={action.key}
                 label={action.label}
                 onClick={action.onSelect}

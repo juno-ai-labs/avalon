@@ -1,3 +1,5 @@
+import { AnnotationsSchema, validateAnnotationAttachments, annotationAllowedForResource } from "@rally/contracts";
+import { ResourceService } from "../services/resource-service";
 import { mergeEmbedsOf, resolveShareableResources } from "../services/resource-share-rules";
 import { stableUuid } from "../lib/stable-uuid";
 import { AGENT_MESSAGE_CONTENT_KIND, ConversationInitializationSchema, ImportedMessageProvenanceSchema, PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
@@ -161,6 +163,7 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
   mentions: z.array(MentionSchema).default([]),
   confirmedParticipantUserIds: z.array(z.string().uuid()).default([]),
   attachmentIds: z.array(z.string().uuid()).max(10).default([]),
+  annotations: AnnotationsSchema.optional(),
   runMode: z.enum(["steer", "queue"]).optional(),
   telemetryOperationId: z.string().min(1).max(180).optional(),
   telemetryRequestReceivedAt: z.number().int().nonnegative().optional(),
@@ -185,7 +188,7 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
    * internal RPC: the message route's request schema has no such field.
    */
   merge: ConversationMergeV1Schema.optional(),
-}).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0, {
+}).superRefine(validateAnnotationAttachments).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0 || value.annotations?.some((a) => a.comment.trim()), {
   message: "A message must include text or an attachment",
 });
 
@@ -4768,6 +4771,27 @@ export class WorkstreamObjectProductService {
     if (missingParticipantUserIds.length > 0) {
       await this.prepareMessageParticipants(auth, input.clientMessageId, missingParticipantUserIds);
     }
+    const annotationNames: Record<string, string> = {};
+    const annotationImages: ModelAttachmentSource[] = [];
+    if (input.annotations?.length) {
+      const resources = new ResourceService(this.env, auth);
+      // Several pins usually share one version. Validate that target once per
+      // message rather than paying the same canonical reads for every pin.
+      const targets = new Map<string,ReturnType<ResourceService['annotationTarget']>>();
+      for (const annotation of input.annotations) {
+        const key = `${annotation.target.resourceId}:${annotation.target.version}`;
+        const target = targets.get(key) ?? resources.annotationTarget(annotation.target.resourceId,annotation.target.version);
+        targets.set(key,target);
+        const resource = await target;
+        if (resource.image && !annotationImages.some((image) => image.id === resource.image?.id)) annotationImages.push(resource.image);
+        if (!annotationAllowedForResource(annotation, { fileName: resource.title, mimeType: resource.mimeType })) {
+          throw new ApiError(422, "annotation_locator_type_mismatch", "The annotation locator does not match this resource");
+        }
+        annotationNames[annotation.target.resourceId] = resource.title;
+      }
+    }
+    const structuredContent = input.merge ?? (input.annotations?.length
+      ? { kind: "artifact_annotations", annotations: input.annotations, names: annotationNames, ...(annotationImages.length ? {images:annotationImages} : {}) } : null);
     const attachmentRows = await this.reserveAttachmentDrafts({
       workspaceId: auth.workspaceId,
       workstreamId: root.workstream_key,
@@ -4852,7 +4876,7 @@ export class WorkstreamObjectProductService {
       clientMessageId: input.clientMessageId,
       messageType: "text",
       text: prepared.text,
-      structuredContentJson: input.merge ? JSON.stringify(input.merge) : null,
+      structuredContentJson: structuredContent ? JSON.stringify(structuredContent) : null,
       externalActorJson: null,
       producedByRunId: null,
       messageSequenceNumber: root.next_sequence_number,
@@ -4894,7 +4918,7 @@ export class WorkstreamObjectProductService {
         },
         messageType: "text",
         text: prepared.text,
-        structuredContent: input.merge ?? null,
+        structuredContent,
         mentions: prepared.mentions.map((mention) => ({
           type: mention.type,
           userId: mention.userId,

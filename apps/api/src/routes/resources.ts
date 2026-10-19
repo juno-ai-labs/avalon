@@ -165,6 +165,10 @@ resourceRoutes.get("/:id/versions/:version/content", zValidator("param", version
   const param = c.req.valid("param");
   return new ResourceService(c.env, getWorkspaceAuth(c)).versionContent(param.id, param.version, "original");
 });
+resourceRoutes.get("/:id/versions/:version/site-preview", zValidator("param", versionParam), async (c) => {
+  const param = c.req.valid("param");
+  return new ResourceService(c.env, getWorkspaceAuth(c)).annotationSitePreview(param.id,param.version,c.req.query('path') ?? '/');
+});
 resourceRoutes.get("/:id/versions/:version/model-content", zValidator("param", versionParam), async (c) => {
   const param = c.req.valid("param");
   return new ResourceService(c.env, getWorkspaceAuth(c)).versionContent(param.id, param.version, "model");

@@ -1,3 +1,4 @@
+import { artifactPickerPlugin } from './artifact-picker-plugin';
 import { resolve } from 'node:path';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
@@ -54,7 +55,7 @@ export default defineConfig({
         '@renderer': resolve('src/renderer'),
       },
     },
-    plugins: [rendererContentSecurityPolicy, react()],
+    plugins: [rendererContentSecurityPolicy, artifactPickerPlugin(), react()],
     build: {
       sourcemap: true,
     },
