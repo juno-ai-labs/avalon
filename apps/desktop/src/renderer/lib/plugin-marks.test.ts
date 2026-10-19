@@ -26,7 +26,7 @@ describe('connectorBrandMark', () => {
   });
 
   it('names a real mark for every connector Rally has an adapter for', () => {
-    const adapters = ['ashby', 'fireflies', 'github', 'google', 'granola', 'linear', 'notion', 'slack', 'x'];
+    const adapters = ['apollo', 'ashby', 'canva', 'fireflies', 'github', 'google', 'granola', 'linear', 'notion', 'slack', 'x'];
     for (const connectorType of adapters) {
       const mark = connectorBrandMark(connectorType);
       expect(mark, connectorType).not.toBeNull();
@@ -40,6 +40,8 @@ describe('connectorBrandMark', () => {
     expect(connectorBrandMark('custom_mcp', 'Google Drive (team)')).toBe('google-drive');
     expect(connectorBrandMark('custom_mcp', 'linear-staging')).toBe('linear');
     expect(connectorBrandMark('custom_mcp', 'Next X tools')).toBe('model-context-protocol');
+    expect(connectorBrandMark('custom_mcp', 'Apollo MCP Server')).toBe('model-context-protocol');
+    expect(connectorBrandMark('custom_mcp', 'Apollo GraphQL')).toBe('model-context-protocol');
     expect(connectorBrandMark('custom_mcp', 'Internal search')).toBe('model-context-protocol');
     expect(connectorBrandMark('custom_mcp')).toBe('model-context-protocol');
     expect(connectorBrandMark('custom_mcp', 'Model Context Protocol')).toBe('model-context-protocol');
