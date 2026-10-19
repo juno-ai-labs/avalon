@@ -163,18 +163,20 @@ export function WorkstreamScreen(): React.JSX.Element {
   const { id = '' } = useParams();
   const row = useCachedWorkstreamSummary(id);
   // Optional: the pending screen needs the API only to preview attachments.
+  // Stable, so a pending-row update does not restart the previews' reads.
   const api = useOptionalCollaborationSession()?.api;
+  const loadAttachmentContent = useCallback(
+    (resourceId: string, signal?: AbortSignal) => api!.getResourcePreviewContent(resourceId, signal),
+    [api],
+  );
   if (row?.pending) {
-    const opening = row.pendingOrigin === 'import'
-      ? undefined
-      : row.pendingOpening ?? (row.objective ? { text: row.objective, mentions: [], attachments: [] } : undefined);
     return (
       <ConversationOpeningSkeleton
         caption
         label={row.pendingOrigin === 'import' ? 'Importing conversation…' : 'Starting…'}
-        loadAttachmentContent={api ? (resourceId, signal) => api.getResourcePreviewContent(resourceId, signal) : undefined}
+        loadAttachmentContent={api ? loadAttachmentContent : undefined}
         openingAuthorId={row.createdByUserId}
-        openingMessage={opening}
+        openingMessage={row.pendingOpening}
         parentKind="workstream"
       />
     );
