@@ -1,14 +1,15 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Link, MemoryRouter, parsePath, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type { ChannelStats, MemoryReview, MemoryReviewFact } from '@rally/contracts';
+import { asUserId, asWorkstreamId } from '@rally/contracts';
 import { OPEN_EXPANDED, revealChannelMessageState } from '../lib/navigation-routes';
 import { useUiStore } from '../lib/ui-store';
-import { CHANNEL_STATS_QUERY_KEY } from '../lib/sidebar-list-store';
-import { mapResource } from '../lib/api';
+import { CHANNEL_STATS_QUERY_KEY, channelFeedQueryKey } from '../lib/sidebar-list-store';
+import { mapResource, type ChannelFeedPageView } from '../lib/api';
 import { RESOURCE_HEADS_QUERY_KEY } from '../lib/resource-heads';
 import type { ResourceVersion, Workspace, WorkstreamSummary } from '../lib/types';
 import { ChannelScreen } from './channel';
@@ -16,6 +17,7 @@ import { ChannelScreen } from './channel';
 const api = vi.hoisted(() => ({
   recordActivityEvents: vi.fn(async () => undefined),
   getChannelFeed: vi.fn(),
+  getChannelStats: vi.fn(),
   getResource: vi.fn(),
   getResourcePreviewContent: vi.fn(async () => new Blob(['The model, in full.'], { type: 'text/markdown' })),
   getResourceVersions: vi.fn(async (): Promise<ResourceVersion[]> => []),
@@ -32,7 +34,10 @@ const api = vi.hoisted(() => ({
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session: null }) }));
 const spaces = vi.hoisted(() => ({ data: undefined as unknown }));
 vi.mock('../lib/use-space-directories', () => ({ useSpaceDirectories: () => ({ active: spaces, inactive: { data: undefined } }) }));
-vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ data: [] }), useCachedWorkstreamAppearance: () => undefined }));
+// Like a settled query, retain the array across renders: a new array would
+// recompute feed rows on pane visibility changes and mask missing positioning.
+const liveThreads = vi.hoisted(() => ({ data: [] }));
+vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => liveThreads, useCachedWorkstreamAppearance: () => undefined }));
 vi.mock('../components/channel-composer', () => ({
   ChannelComposer: ({ threadOpen }: { threadOpen?: boolean }) => <div data-thread-open={String(threadOpen)}>composer</div>,
 }));
@@ -87,6 +92,17 @@ function outboundStats(overrides: Partial<ChannelStats> = {}): ChannelStats {
   };
 }
 
+function numberedFeed(sequences: number[], nextCursor: string | null = null): ChannelFeedPageView {
+  return {
+    nextCursor,
+    latestAttentionSequenceNumber: 10,
+    items: sequences.map((sequence) => ({
+      kind: 'message', attentionSequenceNumber: sequence, placedAt: '2026-10-02T00:00:00.000Z',
+      message: { id: `message-${sequence}`, body: `Channel item ${sequence}`, author: { kind: 'rally' } },
+    })),
+  };
+}
+
 function Location(): React.JSX.Element {
   const location = useLocation();
   return <div data-state={JSON.stringify(location.state)} data-testid="location">{location.pathname}</div>;
@@ -103,23 +119,74 @@ function priceModel(overrides: { slug?: string } = {}) {
   } as Parameters<typeof mapResource>[0]);
 }
 
+const feedRowHeights = new Map<string, number>();
+
+function installFeedGeometry(): void {
+  feedRowHeights.clear();
+  // jsdom has no layout. Model the browser's clamped scroll range and
+  // the zero geometry of a pane hidden behind its expanded thread.
+  const positions = new WeakMap<Element, number>();
+  const top = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop')!;
+  const height = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight')!;
+  const client = Object.getOwnPropertyDescriptor(Element.prototype, 'clientHeight')!;
+  Object.defineProperties(Element.prototype, {
+    scrollHeight: { configurable: true, get(this: Element) {
+      if (!this.matches('.channel-feed')) return height.get!.call(this);
+      if (this.closest('[hidden]')) return 0;
+      return Math.max(2_000, Array.from(this.querySelectorAll<HTMLElement>('.channel-feed-item'))
+        .reduce((sum, row) => sum + (feedRowHeights.get(row.dataset.feedRowId ?? '') ?? 200), 0));
+    } },
+    clientHeight: { configurable: true, get() { return this.matches('.channel-feed') ? (this.closest('[hidden]') ? 0 : 500) : client.get!.call(this); } },
+    scrollTop: {
+      configurable: true,
+      get() { return positions.get(this) ?? 0; },
+      set(value: number) { positions.set(this, Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight))); },
+    },
+  });
+  const originalBounds = Element.prototype.getBoundingClientRect;
+  const bounds = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    if (this.matches('.channel-feed')) return new DOMRect(0, 0, 700, 500);
+    if (this.matches('.channel-feed-item')) {
+      const feed = this.closest('.channel-feed')!;
+      const rows = Array.from(feed.querySelectorAll<HTMLElement>('.channel-feed-item'));
+      const index = rows.indexOf(this as HTMLElement);
+      const start = rows.slice(0, index).reduce((sum, row) => sum + (feedRowHeights.get(row.dataset.feedRowId ?? '') ?? 200), 0);
+      return new DOMRect(0, start - feed.scrollTop, 700, feedRowHeights.get(this.getAttribute('data-feed-row-id') ?? '') ?? 200);
+    }
+    return originalBounds.call(this);
+  });
+  onTestFinished(() => {
+    bounds.mockRestore();
+    Object.defineProperties(Element.prototype, { scrollTop: top, scrollHeight: height, clientHeight: client });
+  });
+}
+
 function renderChannel(path = '/channels/outbound', seed: (client: QueryClient) => void = () => undefined, state: unknown = null) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+    readThroughSequenceNumber: 2, firstUnreadSequenceNumber: null, hasUnread: false,
+  })]);
   seed(client);
   const view = render(<QueryClientProvider client={client}><Tooltip.Provider>
     <MemoryRouter initialEntries={[{ ...parsePath(path), state }]}>
       <Routes><Route element={<ChannelScreen workspace={workspace} />} path="/channels/:channelId/*" /></Routes>
       <Routes><Route element={<Location />} path="*" /></Routes>
       <Link to="/channels/outbound/threads/plan">Plain link to Q4 plan</Link>
+      <Link to="/channels/empty">Empty Channel</Link>
+      <Link to="/channels/outbound">Outbound Channel</Link>
     </MemoryRouter>
   </Tooltip.Provider></QueryClientProvider>);
   return { ...view, client };
 }
 
 describe('a Channel', () => {
+  beforeEach(installFeedGeometry);
   beforeEach(() => {
     vi.clearAllMocks();
     spaces.data = outbound('organization');
+    api.getChannelStats.mockResolvedValue([outboundStats({
+      readThroughSequenceNumber: 2, firstUnreadSequenceNumber: null, hasUnread: false,
+    })]);
     // Placement 2 is a private thread this reader is not in: not a row, but
     // the page's latest number still carries it.
     api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 2, items: [
@@ -134,6 +201,261 @@ describe('a Channel', () => {
     expect(rows[0]).toHaveTextContent('A four-week outbound setup plan.');
     expect(within(rows[0]!).getByRole('button', { name: 'Q4 plan' })).toBeInTheDocument();
     expect(screen.getByText('composer')).toBeInTheDocument();
+  });
+
+  describe('feed positioning', () => {
+
+    it('refreshes invalidated caught-up stats before freezing the opening waterline', async () => {
+      let answer!: (rows: ChannelStats[]) => void;
+      api.getChannelStats.mockReturnValue(new Promise<ChannelStats[]>((resolve) => { answer = resolve; }));
+      api.getChannelFeed.mockResolvedValue(numberedFeed([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]));
+      const { container } = renderChannel('/channels/outbound', (client) => {
+        void client.invalidateQueries({ queryKey: CHANNEL_STATS_QUERY_KEY, refetchType: 'none' });
+      });
+      await screen.findByText('Channel item 10');
+      expect(screen.getByRole('list', { name: 'Outbound feed' })).toHaveAttribute('aria-busy', 'true');
+      await act(async () => answer([outboundStats({
+        latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 6, firstUnreadSequenceNumber: 7,
+      })]));
+      await waitFor(() => expect(container.querySelector('.channel-feed')!.scrollTop).toBe(1_000));
+    });
+
+    it('refreshes a defined stats list missing the entered Channel before positioning', async () => {
+      let answer!: (rows: ChannelStats[]) => void;
+      api.getChannelStats.mockReturnValue(new Promise<ChannelStats[]>((resolve) => { answer = resolve; }));
+      api.getChannelFeed.mockResolvedValue(numberedFeed([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]));
+      const { container } = renderChannel('/channels/outbound', (client) => client.setQueryData(CHANNEL_STATS_QUERY_KEY, []));
+      await waitFor(() => expect(api.getChannelStats).toHaveBeenCalledOnce());
+      expect(screen.getByRole('list', { name: 'Outbound feed' })).toHaveAttribute('aria-busy', 'true');
+      await act(async () => answer([outboundStats({
+        latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 6, firstUnreadSequenceNumber: 7,
+      })]));
+      await waitFor(() => expect(container.querySelector('.channel-feed')!.scrollTop).toBe(1_000));
+    });
+
+    it('waits for unread rows missing from cached pages while the entry refetch is pending', async () => {
+      let answer!: (page: ChannelFeedPageView) => void;
+      api.getChannelFeed.mockReturnValue(new Promise<ChannelFeedPageView>((resolve) => { answer = resolve; }));
+      const { container } = renderChannel('/channels/outbound', (client) => {
+        client.setQueryData(channelFeedQueryKey('outbound'), {
+          pages: [numberedFeed([5, 4, 3, 2, 1])], pageParams: [null],
+        });
+        client.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+          latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 5, firstUnreadSequenceNumber: 6,
+        })]);
+      });
+      await waitFor(() => expect(api.getChannelFeed).toHaveBeenCalledOnce());
+      expect(screen.getByRole('list', { name: 'Outbound feed' })).toHaveAttribute('aria-busy', 'true');
+      await act(async () => answer(numberedFeed([10, 9, 8, 7, 6, 5, 4, 3, 2, 1])));
+      await waitFor(() => expect(container.querySelector('.channel-feed')!.scrollTop).toBe(800));
+    });
+
+    it('loads a preceding context row when first unread is the oldest row of the first page', async () => {
+      api.getChannelFeed.mockImplementation(async (_id: string, cursor: string | null) => cursor === null
+        ? numberedFeed([10, 9, 8, 7, 6], 'older') : numberedFeed([5, 4, 3, 2, 1]));
+      const { container } = renderChannel('/channels/outbound', (client) => client.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+        latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 5, firstUnreadSequenceNumber: 6,
+      })]));
+      await waitFor(() => expect(container.querySelector('.channel-feed')!.scrollTop).toBe(800));
+      expect(api.getChannelFeed.mock.calls.map((call) => call[1])).toEqual([null, 'older']);
+    });
+
+    it('keeps first unread visible when the preceding context row is taller than the viewport', async () => {
+      feedRowHeights.set('message-6', 1_000);
+      api.getChannelFeed.mockResolvedValue(numberedFeed([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]));
+      const { container } = renderChannel('/channels/outbound', (client) => client.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+        latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 6, firstUnreadSequenceNumber: 7,
+      })]));
+      await waitFor(() => expect(container.querySelector('.channel-feed')!.scrollTop).toBe(1_700));
+      expect(screen.getByText('Channel item 7').closest('li')!.getBoundingClientRect().bottom).toBe(500);
+    });
+
+    it('finishes a merge reveal when a newer arrival puts the target behind the newest row', async () => {
+      const revealScroll = vi.spyOn(Element.prototype, 'scrollIntoView');
+      onTestFinished(() => revealScroll.mockRestore());
+      api.getChannelFeed.mockResolvedValue(numberedFeed([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]));
+      renderChannel('/channels/outbound', undefined, revealChannelMessageState('message-8'));
+      await waitFor(() => expect(screen.getByRole('list', { name: 'Outbound feed' })).toHaveAttribute('aria-busy', 'false'));
+      expect(revealScroll.mock.contexts).toContain(screen.getByText('Channel item 8').closest('li'));
+    });
+
+    it('falls back to the waterline when a settled merge reveal cannot find its message', async () => {
+      api.getChannelFeed.mockResolvedValue(numberedFeed([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]));
+      const { container } = renderChannel('/channels/outbound', (client) => client.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+        latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 6, firstUnreadSequenceNumber: 7,
+      })]), revealChannelMessageState('removed-message'));
+      await waitFor(() => expect(container.querySelector('.channel-feed')!.scrollTop).toBe(1_000));
+      expect(screen.getByRole('list', { name: 'Outbound feed' })).toHaveAttribute('aria-busy', 'false');
+    });
+
+    it('positions after a failed earlier page without acknowledging past missing unread history until the reader scrolls', async () => {
+      vi.useFakeTimers();
+      onTestFinished(() => { vi.useRealTimers(); });
+      const focus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+      onTestFinished(() => focus.mockRestore());
+      api.getChannelFeed.mockImplementation(async (_id: string, cursor: string | null) => {
+        if (cursor !== null) throw new Error('offline');
+        return numberedFeed([10, 9, 8, 7, 6], 'older');
+      });
+      api.acknowledgeChannelRead.mockResolvedValue(outboundStats({ latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 10, firstUnreadSequenceNumber: null, hasUnread: false }));
+      const { container } = renderChannel('/channels/outbound', (client) => client.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+        latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 2, firstUnreadSequenceNumber: 3,
+      })]));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+      expect(screen.getByRole('list', { name: 'Outbound feed' })).toHaveAttribute('aria-busy', 'false');
+      expect(api.getChannelFeed).toHaveBeenCalledTimes(2);
+      expect(api.acknowledgeChannelRead).not.toHaveBeenCalled();
+      const feed = container.querySelector('.channel-feed')!;
+      feed.scrollTop = 1_500;
+      fireEvent.scroll(feed);
+      await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+      expect(api.acknowledgeChannelRead).toHaveBeenCalledWith('outbound', 10);
+    });
+
+    it('shows a retryable reading-position failure and positions when stats cannot be loaded', async () => {
+      api.getChannelStats.mockRejectedValue(new Error('offline'));
+      api.getChannelFeed.mockResolvedValue(numberedFeed([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]));
+      const { container } = renderChannel('/channels/outbound', (client) => client.removeQueries({ queryKey: CHANNEL_STATS_QUERY_KEY }));
+      await screen.findByRole('button', { name: 'Retry reading position' });
+      await waitFor(() => expect(screen.getByRole('list', { name: 'Outbound feed' })).toHaveAttribute('aria-busy', 'false'));
+      api.getChannelStats.mockResolvedValue([outboundStats({ latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 6, firstUnreadSequenceNumber: 7 })]);
+      fireEvent.click(screen.getByRole('button', { name: 'Retry reading position' }));
+      await waitFor(() => expect(container.querySelector('.channel-feed')!.scrollTop).toBe(1_000));
+    });
+
+    it('opens at the server read waterline with the preceding row for context and keeps that position as stats advance', async () => {
+      api.getChannelFeed.mockResolvedValue(numberedFeed([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]));
+      const { client, container } = renderChannel('/channels/outbound', (seeded) => {
+        seeded.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+          latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 6, firstUnreadSequenceNumber: 7,
+        })]);
+      });
+      const feed = container.querySelector('.channel-feed')!;
+      await waitFor(() => expect(feed.scrollTop).toBe(1_000));
+      await act(async () => {
+        client.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+          latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 8, firstUnreadSequenceNumber: 9,
+        })]);
+      });
+      expect(feed.scrollTop).toBe(1_000);
+    });
+
+    it('loads the earlier page containing the server read waterline before positioning', async () => {
+      api.getChannelFeed.mockImplementation(async (_id: string, cursor: string | null) => cursor === null
+        ? numberedFeed([10, 9, 8, 7, 6], 'older') : numberedFeed([5, 4, 3, 2, 1]));
+      const { container } = renderChannel('/channels/outbound', (seeded) => {
+        seeded.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+          latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 2, firstUnreadSequenceNumber: 3,
+        })]);
+      });
+      await waitFor(() => expect(container.querySelector('.channel-feed')!.scrollTop).toBe(200));
+      expect(api.getChannelFeed.mock.calls.map((call) => call[1])).toEqual([null, 'older']);
+    });
+
+    it('loads unread context for the entered Channel rather than the previous Channel when switching onto cached pages', async () => {
+      const directory = outbound('organization');
+      spaces.data = { ...directory, items: [...directory.items, { ...directory.items[0], id: 'empty', name: 'Empty' }] };
+      api.getChannelFeed.mockImplementation(async (id: string, cursor: string | null) => id === 'empty'
+        ? { items: [], nextCursor: null, latestAttentionSequenceNumber: 0 }
+        : cursor === 'older' ? numberedFeed([5, 4, 3, 2, 1]) : numberedFeed([10, 9, 8, 7, 6], 'older'));
+      const { container } = renderChannel('/channels/empty', (seeded) => {
+        seeded.setQueryDefaults(['channel-feed'], { staleTime: Infinity });
+        seeded.setQueryData(channelFeedQueryKey('outbound'), {
+          pages: [numberedFeed([10, 9, 8, 7, 6], 'older')], pageParams: [null],
+        });
+        seeded.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+          latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 2, firstUnreadSequenceNumber: 3,
+        }), { ...outboundStats(), channelId: 'empty', latestAttentionSequenceNumber: 0,
+          readThroughSequenceNumber: 0, firstUnreadSequenceNumber: null, hasUnread: false }]);
+      });
+      await screen.findByText('No threads yet. Describe the work below and Rally starts a thread for it.');
+      fireEvent.click(screen.getByRole('link', { name: 'Outbound Channel' }));
+      await waitFor(() => expect(container.querySelector('.channel-feed')!.scrollTop).toBe(200));
+      expect(api.getChannelFeed).toHaveBeenCalledWith('outbound', 'older', expect.anything());
+    });
+
+    it('waits for the server read state rather than positioning at the latest row before it arrives', async () => {
+      let answerStats!: (rows: ChannelStats[]) => void;
+      api.getChannelStats.mockReturnValue(new Promise<ChannelStats[]>((resolve) => { answerStats = resolve; }));
+      api.getChannelFeed.mockResolvedValue(numberedFeed([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]));
+      const { container } = renderChannel('/channels/outbound', (seeded) => {
+        seeded.removeQueries({ queryKey: CHANNEL_STATS_QUERY_KEY });
+      });
+      await screen.findByText('Channel item 10');
+      const feed = container.querySelector('.channel-feed')!;
+      expect(feed.scrollTop).toBe(0);
+      await act(async () => {
+        answerStats([outboundStats({
+          latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 6, firstUnreadSequenceNumber: 7,
+        })]);
+      });
+      await waitFor(() => expect(feed.scrollTop).toBe(1_000));
+    });
+
+    it('falls back to the server waterline when an explicitly requested message is no longer in the feed', async () => {
+      api.getChannelFeed.mockResolvedValue(numberedFeed([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]));
+      const { container } = renderChannel('/channels/outbound', (seeded) => {
+        seeded.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+          latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 6, firstUnreadSequenceNumber: 7,
+        })]);
+      }, revealChannelMessageState('removed-message', { searchHistory: true }));
+      await waitFor(() => expect(container.querySelector('.channel-feed')!.scrollTop).toBe(1_000));
+    });
+
+    it('positions at the newest row when a Channel first opened behind an expanded thread becomes visible', async () => {
+      const { container } = renderChannel('/channels/outbound/threads/plan', (client) => {
+        client.setQueryDefaults(['channel-feed'], { staleTime: Infinity });
+        client.setQueryData(channelFeedQueryKey('outbound'), {
+          pages: [{ nextCursor: null, items: [
+            { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: plan },
+          ] }],
+          pageParams: [null],
+        });
+      }, OPEN_EXPANDED);
+      await screen.findByText('thread pane');
+      const feed = container.querySelector('.channel-feed')!;
+      await waitFor(() => expect(feed.closest('[hidden]')).not.toBeNull());
+      await screen.findByText('A four-week outbound setup plan.');
+      fireEvent.click(screen.getByRole('button', { name: 'Channel crumb' }));
+      await waitFor(() => expect(feed.scrollTop).toBe(1_500));
+    });
+
+    it('restores an older reading position after an expanded thread hides the Channel', async () => {
+      const { container } = renderChannel();
+      await screen.findByRole('button', { name: 'Q4 plan' });
+      const feed = container.querySelector('.channel-feed')!;
+      await waitFor(() => expect(feed.scrollTop).toBe(1_500));
+      feed.scrollTop = 700;
+      fireEvent.scroll(feed);
+      fireEvent.click(screen.getByRole('button', { name: 'Q4 plan' }));
+      await waitFor(() => expect(feed.closest('[hidden]')).not.toBeNull());
+      feed.scrollTop = 0;
+      fireEvent.scroll(feed);
+      fireEvent.click(screen.getByRole('button', { name: 'Channel crumb' }));
+      await waitFor(() => expect(feed.scrollTop).toBe(700));
+    });
+
+    it('opens at the newest row again after visiting an empty Channel', async () => {
+      const directory = outbound('organization');
+      spaces.data = { ...directory, items: [...directory.items, { ...directory.items[0], id: 'empty', name: 'Empty' }] };
+      const page = { nextCursor: null, items: [
+        { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: plan },
+      ] };
+      api.getChannelFeed.mockImplementation(async (id: string) => id === 'empty' ? { nextCursor: null, items: [] } : page);
+      const { container } = renderChannel();
+      await screen.findByRole('button', { name: 'Q4 plan' });
+      const feed = container.querySelector('.channel-feed')!;
+      await waitFor(() => expect(feed.scrollTop).toBe(1_500));
+      feed.scrollTop = 700;
+      fireEvent.scroll(feed);
+      fireEvent.click(screen.getByRole('link', { name: 'Empty Channel' }));
+      await screen.findByText('No threads yet. Describe the work below and Rally starts a thread for it.');
+      feed.scrollTop = 0;
+      fireEvent.scroll(feed);
+      fireEvent.click(screen.getByRole('link', { name: 'Outbound Channel' }));
+      await waitFor(() => expect(feed.scrollTop).toBe(1_500));
+    });
   });
 
   it('lists the Channel’s own facts in its pill’s Memory level, read only once the level opens', async () => {
@@ -412,24 +734,28 @@ describe('a Channel', () => {
   it('waits for a merge the feed has yet to list, then brings it into view once', async () => {
     const mergeId = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a64';
     const thread = { kind: 'thread' as const, placedAt: '2026-10-02T01:00:00.000Z', attentionSequenceNumber: 1, thread: plan };
-    api.getChannelFeed.mockResolvedValueOnce({ nextCursor: null, latestAttentionSequenceNumber: 1, items: [thread] });
-    api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 3, items: [
+    let answer!: (page: ChannelFeedPageView) => void;
+    api.getChannelFeed.mockReturnValue(new Promise<ChannelFeedPageView>((resolve) => { answer = resolve; }));
+    const refreshed: ChannelFeedPageView = { nextCursor: null, latestAttentionSequenceNumber: 3, items: [
       { kind: 'message', placedAt: '2026-10-02T03:00:00.000Z', attentionSequenceNumber: 3, message: {
         id: mergeId,
-        author: { kind: 'member', userId: 'me' },
+        author: { kind: 'member', userId: asUserId('00000000-0000-7000-8000-000000000001') },
         body: 'Landed later.',
-        merge: { threadId: plan.id, title: 'Q4 plan', summary: null, embeds: [] },
+        merge: { threadId: asWorkstreamId('00000000-0000-7000-8000-000000000020'), title: 'Q4 plan', summary: null, embeds: [] },
       } },
       thread,
-    ] });
+    ] };
     const original = Element.prototype.scrollIntoView;
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;
     onTestFinished(() => { Element.prototype.scrollIntoView = original; });
-    const { client } = renderChannel('/channels/outbound', undefined, revealChannelMessageState(mergeId));
+    const { client } = renderChannel('/channels/outbound', (seeded) => seeded.setQueryData(channelFeedQueryKey('outbound'), {
+      pages: [{ nextCursor: null, latestAttentionSequenceNumber: 1, items: [thread] }], pageParams: [null],
+    }), revealChannelMessageState(mergeId));
     await screen.findByRole('button', { name: 'Q4 plan' });
     expect(scrollIntoView).not.toHaveBeenCalled();
-    await client.invalidateQueries();
+    api.getChannelFeed.mockResolvedValue(refreshed);
+    await act(async () => answer(refreshed));
     const merge = await screen.findByText('Landed later.');
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({ block: 'center' }));
     expect(scrollIntoView.mock.contexts[0]).toBe(merge.closest('li'));
@@ -441,22 +767,24 @@ describe('a Channel', () => {
     const mergeId = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a65';
     const merge = (placedAt: string, attentionSequenceNumber: number) => ({ kind: 'message' as const, placedAt, attentionSequenceNumber, message: {
       id: mergeId,
-      author: { kind: 'member' as const, userId: 'me' },
+      author: { kind: 'member' as const, userId: asUserId('00000000-0000-7000-8000-000000000001') },
       body: 'Merged again.',
-      merge: { threadId: plan.id, title: 'Q4 plan', summary: null, embeds: [] },
+      merge: { threadId: asWorkstreamId('00000000-0000-7000-8000-000000000020'), title: 'Q4 plan', summary: null, embeds: [] },
     } });
     const thread = { kind: 'thread' as const, placedAt: '2026-10-02T02:00:00.000Z', attentionSequenceNumber: 2, thread: plan };
     // The first merge, cached above a newer thread; the repeat moves it to the bottom.
-    api.getChannelFeed.mockResolvedValueOnce({ nextCursor: null, latestAttentionSequenceNumber: 2, items: [thread, merge('2026-10-02T01:00:00.000Z', 1)] });
-    api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 3, items: [merge('2026-10-02T03:00:00.000Z', 3), thread] });
+    let answer!: (page: ChannelFeedPageView) => void;
+    api.getChannelFeed.mockReturnValue(new Promise<ChannelFeedPageView>((resolve) => { answer = resolve; }));
     const original = Element.prototype.scrollIntoView;
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;
     onTestFinished(() => { Element.prototype.scrollIntoView = original; });
-    const { client } = renderChannel('/channels/outbound', undefined, revealChannelMessageState(mergeId));
+    renderChannel('/channels/outbound', (seeded) => seeded.setQueryData(channelFeedQueryKey('outbound'), {
+      pages: [{ nextCursor: null, latestAttentionSequenceNumber: 2, items: [thread, merge('2026-10-02T01:00:00.000Z', 1)] }], pageParams: [null],
+    }), revealChannelMessageState(mergeId));
     await screen.findByText('Merged again.');
     expect(scrollIntoView).not.toHaveBeenCalled();
-    await client.invalidateQueries();
+    await act(async () => answer({ nextCursor: null, latestAttentionSequenceNumber: 3, items: [merge('2026-10-02T03:00:00.000Z', 3), thread] }));
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({ block: 'center' }));
     expect(scrollIntoView.mock.contexts[0]).toBe(screen.getByText('Merged again.').closest('li'));
   });
@@ -832,6 +1160,27 @@ describe('a Channel', () => {
     });
     afterEach(() => {
       restore.splice(0).forEach((undo) => undo());
+    });
+
+    it('advances the server waterline only through visible rows, then through the latest when the reader reaches the end', async () => {
+      api.getChannelFeed.mockResolvedValue(numberedFeed([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]));
+      api.acknowledgeChannelRead.mockImplementation(async (_id: string, through: number) => outboundStats({
+        latestAttentionSequenceNumber: 10, readThroughSequenceNumber: through,
+        hasUnread: through < 10, firstUnreadSequenceNumber: through < 10 ? through + 1 : null,
+      }));
+      const { client, container } = renderChannel('/channels/outbound', (seeded) => {
+        seeded.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+          latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 6, firstUnreadSequenceNumber: 7,
+        })]);
+      });
+      await waitFor(() => expect(api.acknowledgeChannelRead).toHaveBeenCalledWith('outbound', 8));
+      expect(api.acknowledgeChannelRead).not.toHaveBeenCalledWith('outbound', 10);
+      expect(client.getQueryData<ChannelStats[]>(CHANNEL_STATS_QUERY_KEY)?.[0])
+        .toMatchObject({ readThroughSequenceNumber: 8, hasUnread: true });
+      const feed = container.querySelector('.channel-feed')!;
+      feed.scrollTop = 1_500;
+      fireEvent.scroll(feed);
+      await waitFor(() => expect(api.acknowledgeChannelRead).toHaveBeenCalledWith('outbound', 10));
     });
 
     it('acknowledges its newest placement when that is past the read position, and keeps the answer', async () => {
