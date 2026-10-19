@@ -1,14 +1,14 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Link, MemoryRouter, parsePath, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type { ChannelStats, MemoryReview, MemoryReviewFact } from '@rally/contracts';
 import { OPEN_EXPANDED, revealChannelMessageState } from '../lib/navigation-routes';
 import { useUiStore } from '../lib/ui-store';
-import { CHANNEL_STATS_QUERY_KEY } from '../lib/sidebar-list-store';
-import { mapResource } from '../lib/api';
+import { CHANNEL_STATS_QUERY_KEY, channelFeedQueryKey } from '../lib/sidebar-list-store';
+import { mapResource, type ChannelFeedPageView } from '../lib/api';
 import { RESOURCE_HEADS_QUERY_KEY } from '../lib/resource-heads';
 import type { ResourceVersion, Workspace, WorkstreamSummary } from '../lib/types';
 import { ChannelScreen } from './channel';
@@ -32,7 +32,10 @@ const api = vi.hoisted(() => ({
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session: null }) }));
 const spaces = vi.hoisted(() => ({ data: undefined as unknown }));
 vi.mock('../lib/use-space-directories', () => ({ useSpaceDirectories: () => ({ active: spaces, inactive: { data: undefined } }) }));
-vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ data: [] }), useCachedWorkstreamAppearance: () => undefined }));
+// Like a settled query, retain the array across renders: a new array would
+// recompute feed rows on pane visibility changes and mask missing positioning.
+const liveThreads = vi.hoisted(() => ({ data: [] }));
+vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => liveThreads, useCachedWorkstreamAppearance: () => undefined }));
 vi.mock('../components/channel-composer', () => ({
   ChannelComposer: ({ threadOpen }: { threadOpen?: boolean }) => <div data-thread-open={String(threadOpen)}>composer</div>,
 }));
@@ -87,6 +90,17 @@ function outboundStats(overrides: Partial<ChannelStats> = {}): ChannelStats {
   };
 }
 
+function numberedFeed(sequences: number[], nextCursor: string | null = null): ChannelFeedPageView {
+  return {
+    nextCursor,
+    latestAttentionSequenceNumber: 10,
+    items: sequences.map((sequence) => ({
+      kind: 'message', attentionSequenceNumber: sequence, placedAt: '2026-10-02T00:00:00.000Z',
+      message: { id: `message-${sequence}`, body: `Channel item ${sequence}`, author: { kind: 'rally' } },
+    })),
+  };
+}
+
 function Location(): React.JSX.Element {
   const location = useLocation();
   return <div data-state={JSON.stringify(location.state)} data-testid="location">{location.pathname}</div>;
@@ -103,20 +117,58 @@ function priceModel(overrides: { slug?: string } = {}) {
   } as Parameters<typeof mapResource>[0]);
 }
 
+function installFeedGeometry(): void {
+  // jsdom has no layout. Model the browser's clamped scroll range and
+  // the zero geometry of a pane hidden behind its expanded thread.
+  const positions = new WeakMap<Element, number>();
+  const top = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop')!;
+  const height = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight')!;
+  const client = Object.getOwnPropertyDescriptor(Element.prototype, 'clientHeight')!;
+  Object.defineProperties(Element.prototype, {
+    scrollHeight: { configurable: true, get() { return this.matches('.channel-feed') ? (this.closest('[hidden]') ? 0 : 2_000) : height.get!.call(this); } },
+    clientHeight: { configurable: true, get() { return this.matches('.channel-feed') ? (this.closest('[hidden]') ? 0 : 500) : client.get!.call(this); } },
+    scrollTop: {
+      configurable: true,
+      get() { return positions.get(this) ?? 0; },
+      set(value: number) { positions.set(this, Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight))); },
+    },
+  });
+  const originalBounds = Element.prototype.getBoundingClientRect;
+  const bounds = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    if (this.matches('.channel-feed')) return new DOMRect(0, 0, 700, 500);
+    if (this.matches('.channel-feed-item')) {
+      const feed = this.closest('.channel-feed')!;
+      const index = Array.from(feed.querySelectorAll('.channel-feed-item')).indexOf(this);
+      return new DOMRect(0, index * 200 - feed.scrollTop, 700, 200);
+    }
+    return originalBounds.call(this);
+  });
+  onTestFinished(() => {
+    bounds.mockRestore();
+    Object.defineProperties(Element.prototype, { scrollTop: top, scrollHeight: height, clientHeight: client });
+  });
+}
+
 function renderChannel(path = '/channels/outbound', seed: (client: QueryClient) => void = () => undefined, state: unknown = null) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+    readThroughSequenceNumber: 2, firstUnreadSequenceNumber: null, hasUnread: false,
+  })]);
   seed(client);
   const view = render(<QueryClientProvider client={client}><Tooltip.Provider>
     <MemoryRouter initialEntries={[{ ...parsePath(path), state }]}>
       <Routes><Route element={<ChannelScreen workspace={workspace} />} path="/channels/:channelId/*" /></Routes>
       <Routes><Route element={<Location />} path="*" /></Routes>
       <Link to="/channels/outbound/threads/plan">Plain link to Q4 plan</Link>
+      <Link to="/channels/empty">Empty Channel</Link>
+      <Link to="/channels/outbound">Outbound Channel</Link>
     </MemoryRouter>
   </Tooltip.Provider></QueryClientProvider>);
   return { ...view, client };
 }
 
 describe('a Channel', () => {
+  beforeEach(installFeedGeometry);
   beforeEach(() => {
     vi.clearAllMocks();
     spaces.data = outbound('organization');
@@ -134,6 +186,139 @@ describe('a Channel', () => {
     expect(rows[0]).toHaveTextContent('A four-week outbound setup plan.');
     expect(within(rows[0]!).getByRole('button', { name: 'Q4 plan' })).toBeInTheDocument();
     expect(screen.getByText('composer')).toBeInTheDocument();
+  });
+
+  describe('feed positioning', () => {
+
+    it('opens at the server read waterline with the preceding row for context and keeps that position as stats advance', async () => {
+      api.getChannelFeed.mockResolvedValue(numberedFeed([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]));
+      const { client, container } = renderChannel('/channels/outbound', (seeded) => {
+        seeded.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+          latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 6, firstUnreadSequenceNumber: 7,
+        })]);
+      });
+      const feed = container.querySelector('.channel-feed')!;
+      await waitFor(() => expect(feed.scrollTop).toBe(1_000));
+      await act(async () => {
+        client.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+          latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 8, firstUnreadSequenceNumber: 9,
+        })]);
+      });
+      expect(feed.scrollTop).toBe(1_000);
+    });
+
+    it('loads the earlier page containing the server read waterline before positioning', async () => {
+      api.getChannelFeed.mockImplementation(async (_id: string, cursor: string | null) => cursor === null
+        ? numberedFeed([10, 9, 8, 7, 6], 'older') : numberedFeed([5, 4, 3, 2, 1]));
+      const { container } = renderChannel('/channels/outbound', (seeded) => {
+        seeded.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+          latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 2, firstUnreadSequenceNumber: 3,
+        })]);
+      });
+      await waitFor(() => expect(container.querySelector('.channel-feed')!.scrollTop).toBe(200));
+      expect(api.getChannelFeed.mock.calls.map((call) => call[1])).toEqual([null, 'older']);
+    });
+
+    it('loads unread context for the entered Channel rather than the previous Channel when switching onto cached pages', async () => {
+      const directory = outbound('organization');
+      spaces.data = { ...directory, items: [...directory.items, { ...directory.items[0], id: 'empty', name: 'Empty' }] };
+      api.getChannelFeed.mockImplementation(async (id: string, cursor: string | null) => id === 'empty'
+        ? { items: [], nextCursor: null, latestAttentionSequenceNumber: 0 }
+        : cursor === 'older' ? numberedFeed([5, 4, 3, 2, 1]) : numberedFeed([10, 9, 8, 7, 6], 'older'));
+      const { container } = renderChannel('/channels/empty', (seeded) => {
+        seeded.setQueryDefaults(['channel-feed'], { staleTime: Infinity });
+        seeded.setQueryData(channelFeedQueryKey('outbound'), {
+          pages: [numberedFeed([10, 9, 8, 7, 6], 'older')], pageParams: [null],
+        });
+        seeded.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+          latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 2, firstUnreadSequenceNumber: 3,
+        })]);
+      });
+      await screen.findByText('No threads yet. Describe the work below and Rally starts a thread for it.');
+      fireEvent.click(screen.getByRole('link', { name: 'Outbound Channel' }));
+      await waitFor(() => expect(container.querySelector('.channel-feed')!.scrollTop).toBe(200));
+      expect(api.getChannelFeed).toHaveBeenCalledWith('outbound', 'older', expect.anything());
+    });
+
+    it('waits for the server read state rather than positioning at the latest row before it arrives', async () => {
+      api.getChannelFeed.mockResolvedValue(numberedFeed([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]));
+      const { client, container } = renderChannel('/channels/outbound', (seeded) => {
+        seeded.removeQueries({ queryKey: CHANNEL_STATS_QUERY_KEY });
+      });
+      await screen.findByText('Channel item 10');
+      const feed = container.querySelector('.channel-feed')!;
+      expect(feed.scrollTop).toBe(0);
+      await act(async () => {
+        client.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+          latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 6, firstUnreadSequenceNumber: 7,
+        })]);
+      });
+      await waitFor(() => expect(feed.scrollTop).toBe(1_000));
+    });
+
+    it('falls back to the server waterline when an explicitly requested message is no longer in the feed', async () => {
+      api.getChannelFeed.mockResolvedValue(numberedFeed([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]));
+      const { container } = renderChannel('/channels/outbound', (seeded) => {
+        seeded.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+          latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 6, firstUnreadSequenceNumber: 7,
+        })]);
+      }, revealChannelMessageState('removed-message', { searchHistory: true }));
+      await waitFor(() => expect(container.querySelector('.channel-feed')!.scrollTop).toBe(1_000));
+    });
+
+    it('positions at the newest row when a Channel first opened behind an expanded thread becomes visible', async () => {
+      const { container } = renderChannel('/channels/outbound/threads/plan', (client) => {
+        client.setQueryDefaults(['channel-feed'], { staleTime: Infinity });
+        client.setQueryData(channelFeedQueryKey('outbound'), {
+          pages: [{ nextCursor: null, items: [
+            { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: plan },
+          ] }],
+          pageParams: [null],
+        });
+      }, OPEN_EXPANDED);
+      await screen.findByText('thread pane');
+      const feed = container.querySelector('.channel-feed')!;
+      await waitFor(() => expect(feed.closest('[hidden]')).not.toBeNull());
+      await screen.findByText('A four-week outbound setup plan.');
+      fireEvent.click(screen.getByRole('button', { name: 'Channel crumb' }));
+      await waitFor(() => expect(feed.scrollTop).toBe(1_500));
+    });
+
+    it('restores an older reading position after an expanded thread hides the Channel', async () => {
+      const { container } = renderChannel();
+      await screen.findByRole('button', { name: 'Q4 plan' });
+      const feed = container.querySelector('.channel-feed')!;
+      await waitFor(() => expect(feed.scrollTop).toBe(1_500));
+      feed.scrollTop = 700;
+      fireEvent.scroll(feed);
+      fireEvent.click(screen.getByRole('button', { name: 'Q4 plan' }));
+      await waitFor(() => expect(feed.closest('[hidden]')).not.toBeNull());
+      feed.scrollTop = 0;
+      fireEvent.scroll(feed);
+      fireEvent.click(screen.getByRole('button', { name: 'Channel crumb' }));
+      await waitFor(() => expect(feed.scrollTop).toBe(700));
+    });
+
+    it('opens at the newest row again after visiting an empty Channel', async () => {
+      const directory = outbound('organization');
+      spaces.data = { ...directory, items: [...directory.items, { ...directory.items[0], id: 'empty', name: 'Empty' }] };
+      const page = { nextCursor: null, items: [
+        { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: plan },
+      ] };
+      api.getChannelFeed.mockImplementation(async (id: string) => id === 'empty' ? { nextCursor: null, items: [] } : page);
+      const { container } = renderChannel();
+      await screen.findByRole('button', { name: 'Q4 plan' });
+      const feed = container.querySelector('.channel-feed')!;
+      await waitFor(() => expect(feed.scrollTop).toBe(1_500));
+      feed.scrollTop = 700;
+      fireEvent.scroll(feed);
+      fireEvent.click(screen.getByRole('link', { name: 'Empty Channel' }));
+      await screen.findByText('No threads yet. Describe the work below and Rally starts a thread for it.');
+      feed.scrollTop = 0;
+      fireEvent.scroll(feed);
+      fireEvent.click(screen.getByRole('link', { name: 'Outbound Channel' }));
+      await waitFor(() => expect(feed.scrollTop).toBe(1_500));
+    });
   });
 
   it('lists the Channel’s own facts in its pill’s Memory level, read only once the level opens', async () => {
@@ -832,6 +1017,27 @@ describe('a Channel', () => {
     });
     afterEach(() => {
       restore.splice(0).forEach((undo) => undo());
+    });
+
+    it('advances the server waterline only through visible rows, then through the latest when the reader reaches the end', async () => {
+      api.getChannelFeed.mockResolvedValue(numberedFeed([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]));
+      api.acknowledgeChannelRead.mockImplementation(async (_id: string, through: number) => outboundStats({
+        latestAttentionSequenceNumber: 10, readThroughSequenceNumber: through,
+        hasUnread: through < 10, firstUnreadSequenceNumber: through < 10 ? through + 1 : null,
+      }));
+      const { client, container } = renderChannel('/channels/outbound', (seeded) => {
+        seeded.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
+          latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 6, firstUnreadSequenceNumber: 7,
+        })]);
+      });
+      await waitFor(() => expect(api.acknowledgeChannelRead).toHaveBeenCalledWith('outbound', 8));
+      expect(api.acknowledgeChannelRead).not.toHaveBeenCalledWith('outbound', 10);
+      expect(client.getQueryData<ChannelStats[]>(CHANNEL_STATS_QUERY_KEY)?.[0])
+        .toMatchObject({ readThroughSequenceNumber: 8, hasUnread: true });
+      const feed = container.querySelector('.channel-feed')!;
+      feed.scrollTop = 1_500;
+      fireEvent.scroll(feed);
+      await waitFor(() => expect(api.acknowledgeChannelRead).toHaveBeenCalledWith('outbound', 10));
     });
 
     it('acknowledges its newest placement when that is past the read position, and keeps the answer', async () => {
