@@ -431,6 +431,8 @@ export async function runMemorySweep(env: Env, message: MemorySweepMessage): Pro
       inputTokens: inference.inputTokens,
       outputTokens: inference.outputTokens,
       factIds: operations.map(() => newId()),
+      speakerIds,
+      candidateFactIds: candidates.candidates.map((fact) => fact.factId),
       now: Date.now(),
     }));
     if (applied.outcome === "cursor_ahead") {

@@ -63,14 +63,17 @@ archived; the window since the cursor holds at least
 `MEMORY_SWEEP_MINIMUM_PERSON_CHARACTERS` between them (agent turns and tool rows
 never count); the conversation has rested (`rest_until`). A rested-later
 conversation with enough behind the cursor sets `retry_at = rest_until` so the
-alarm comes back; every other path clears `retry_at`, which is what keeps the
+alarm comes back; every other skip clears `retry_at`, which is what keeps the
 alarm from waking into the same answer.
 
 **Claim.** `claimMemorySweep` pushes `rest_until` to the floor and records the
 range *before* anything is sent, the description loop's claim: two runs settling
 together spend one sweep, and a failing model is not retried by every run behind
 it. A claim in flight blocks the next for `MEMORY_SWEEP_CLAIM_TIMEOUT_MS`; after
-that a lost delivery is presumed and the next run may claim. The claim is one
+that a lost delivery is presumed and the next run may claim. The claim leaves
+`retry_at` at its rest, so a delivery lost together with its release is claimed
+again by the alarm at the rest rather than waiting for an unrelated run to
+settle; a settle or release moves `retry_at` first. The claim is one
 `ACTIVITY_QUEUE.send` of `{ type: "memory_sweep", region, workspaceId,
 parentKind, parentId, substreamId, fromSeq, toSeq, attempt }`; a failed send
 releases the claim.
@@ -83,13 +86,17 @@ its Thread, the Channels it sits in, whether it is Organization-wide, the
 speakers who may be the subject of a `person` fact) and the **candidates**:
 active facts on the conversation's subjects matching the window's terms, plus
 every active situational fact on those subjects, **restricted to facts every
-current participant of the conversation may open**. Render the prompt, call
+current participant of the conversation may open and whose subject the
+placement admits** (`sweepVisibleFacts`: an Organization fact only in an
+Organization-wide conversation, a Channel fact only for a Channel every
+participant may list, a person fact only for a speaker). Render the prompt, call
 `runStructuredInference` on role `memory_sweep` (flag
 `agent-model-memory-sweep`, default the primary model, metered `memory_sweep`,
 Organization pays). The model returns a flat list of operations (`add`,
 `update`, `confirm`, `retract`); the service drops incoherent rows (an `add`
 without text, an `update` without an id), converts horizons to instants, mints
-one fact id per operation, and calls `applyMemorySweep`.
+one fact id per operation, and calls `applyMemorySweep` with the speakers and
+the candidate ids it was handed.
 
 **Apply**, one `WorkspaceDO` transaction. Compare `fromSeq` with the stored
 receipt's `to_seq` for this conversation: behind it, the range was already
@@ -99,8 +106,12 @@ An `add` is refused by code when its subject is wider than the placement allows
 (`subject_above_placement`), names a Channel or person outside it
 (`subject_id_not_in_placement`), or is situational without a horizon
 (`horizon_required`). An `update`, `confirm` or `retract` is refused when the
-fact is missing, inactive, or not one every participant may open
-(`fact_not_candidate`). An `update` inserts a new fact that supersedes and links
+fact is not among the candidates this sweep was handed, or is no longer one
+every participant may open under a subject the placement admits
+(`fact_not_candidate`), or is missing or inactive; the model reads a fact id off
+an untrusted transcript as readily as off the candidate list, so the list the
+store returned is the only one it accepts back. An `update` inserts a new fact
+that supersedes and links
 its predecessor and carries the union of both facts' sources. The receipt
 (`memory_sweep_receipts`, one row per conversation) is written in the same
 transaction and the refusals are returned, not thrown.
@@ -159,8 +170,11 @@ tool call passes).
   the acting person (`about: "me"`) or the conversation's own subject. The
   trust class is the input that started the run (`derivedFromOf`): a Slack or
   email trigger writes `external`, an agent exchange `agent`. A sentence that
-  matches an active fact on the subject word for word returns that fact with
-  `deduplicated: true`. Idempotent on the provider key: a replay answers from
+  matches an active fact on the subject word for word, among the facts the
+  reader may see from here, returns that fact with `deduplicated: true`; a
+  match they can no longer open is written again, since a dedupe against it
+  would report a memory recall could never return. Every active fact of the
+  subject is compared, not a page. Idempotent on the provider key: a replay answers from
   `memory_fact_receipts`.
 - `memory_forget(factId)`: retracts, when the reader may. A person forgets
   their own facts and what the conversation they stand in established; a
@@ -209,11 +223,14 @@ nine items in one Organization and none to one elsewhere when this shipped.
   a Channel the conversation sits in; a `person` fact a listed speaker. Breaking
   it promotes a private room's words to everyone. Guard: `applyMemorySweep`'s
   refusal codes, `test-workers/memory-facts.test.ts`.
-- **Candidates and updates are fenced by the audience.** A sweep is handed only
-  facts every participant may open, and an update carries the union of sources,
-  so a public Thread's sweep can never restate a private Breakout's words under
-  the public source. Guard: `sourcesOpenToAudience` in `memorySweepCandidates`
-  and `applyMemorySweep`; the workerd suite above.
+- **Candidates and updates are fenced by the audience and the placement.** A
+  sweep is handed only facts every participant may open under a subject the
+  placement admits; an `update`, `confirm` or `retract` must name one of those
+  candidates; and an update carries the union of sources, so a public Thread's
+  sweep can never restate a private Breakout's words under the public source,
+  and a fact id quoted in a transcript cannot reach a fact the sweep was not
+  shown. Guard: `sweepVisibleFacts` and `candidateFactIds` in
+  `memorySweepCandidates` and `applyMemorySweep`; the workerd suite above.
 - **The cursor fence is the store's, not the consumer's.** A range is applied
   once; a replay answers from the receipt; a gap is refused. Breaking it
   double-writes facts on a Queue redelivery. Guard: `test-workers/memory-facts.test.ts`
@@ -255,8 +272,9 @@ vector-index facts (Turbopuffer, when wanted:
 - **`WorkspaceDO` unreachable from a tool:** `memory_unavailable` to the model,
   `memory_tool_unavailable` with the cause in the log.
 - **Lost Queue delivery:** the claim times out after
-  `MEMORY_SWEEP_CLAIM_TIMEOUT_MS`; the next settlement or alarm claims again.
-  The store's fence makes the late delivery, if it arrives, a replay.
+  `MEMORY_SWEEP_CLAIM_TIMEOUT_MS`; the alarm, left `retry_at` at the claim's
+  rest, claims again there, as does any settlement before it. The store's fence
+  makes the late delivery, if it arrives, a replay.
 - **Conversation archived or deleted between claim and run:** candidates
   answer `conversation_missing`; the cursor settles to `toSeq` with nothing
   written.

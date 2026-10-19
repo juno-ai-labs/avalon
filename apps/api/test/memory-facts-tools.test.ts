@@ -210,6 +210,25 @@ describe("the rally:memory tools", () => {
     expect(replay.output).toEqual(remembered.output);
   });
 
+  it("writes the sentence again when its only match is a fact the person can no longer open", async () => {
+    const { env, objectDatabase } = fixture();
+    const first = await tool(env, "owner-private", "remember").execute(
+      { text: "Owner prefers release notes as bullets.", kind: "standing", about: "me" }, "receipt-remember-1",
+    );
+    const firstId = (first.output as { factId: string }).factId;
+    // The owner leaves the side room: the fact is still theirs, and out of reach.
+    objectDatabase.prepare(`DELETE FROM channel_viewers WHERE workstream_id = ? AND user_id = ?`).run(PRIVATE_THREAD, OWNER_ID);
+    const again = await tool(env, "owner-open", "remember").execute(
+      { text: "Owner prefers release notes as bullets.", kind: "standing", about: "me" }, "receipt-remember-2",
+    );
+    expect(again.output).toMatchObject({ deduplicated: false });
+    const againId = (again.output as { factId: string }).factId;
+    expect(againId).not.toBe(firstId);
+    // What was remembered can be recalled, which a dedupe against the hidden fact could not promise.
+    const recall = await tool(env, "owner-open", "recall").execute({ query: "release notes bullets" }, "receipt-recall-1");
+    expect((recall.output as Recalled).facts.map((fact) => fact.factId)).toEqual([againId]);
+  });
+
   it("keeps a conversation's fact to the conversation and its readers", async () => {
     const { env } = fixture();
     await tool(env, "owner-private", "remember").execute(
@@ -232,6 +251,7 @@ describe("the rally:memory tools", () => {
     const applied = await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName("x")).applyMemorySweep({
       workspaceId: WORKSPACE_ID, conversation: { parentKind: "workstream", parentId: OPEN_THREAD, substreamId: "0" },
       fromSeq: 0, toSeq: 5, model: "test/model", inputTokens: null, outputTokens: null, now: Date.now(), factIds: ["fact-org"],
+      speakerIds: [], candidateFactIds: [],
       operations: [{
         op: "add", subjectKind: "organization", subjectId: null, kind: "standing", text: "Release day is Thursday.",
         validFrom: null, validUntil: null, validUntilBasis: null, derivedFrom: "person", conflict: false, confidence: 0.9, evidence: [2],
