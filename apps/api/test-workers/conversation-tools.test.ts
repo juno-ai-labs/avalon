@@ -757,6 +757,27 @@ describe("a Breakout's merge into its Thread", () => {
     await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID));
   });
 
+  it("refuses to merge an artifact its author cannot read, sharing nothing", async () => {
+    const UNREAD_ID = "00000000-0000-7000-8000-0000000c0af3";
+    // A colleague's generated artifact, attached to no conversation the author reads.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, metadata_json, uploaded_by_user_id, attachment_status, created_at, updated_at)
+        VALUES (?, ?, 'document', 'avalon_generated', 'Comp model', '{}', ?, 'attached', ?, ?)`,
+      UNREAD_ID, WORKSPACE_ID, COLLEAGUE_ID, NOW, NOW);
+      // Discovery has covered every conversation, so "attached nowhere" is an answer, not a gap.
+      state.storage.sql.exec(`INSERT OR IGNORE INTO authorization_backfill(parent_id, parent_kind, completed)
+        SELECT workstream_id, 'workstream', 1 FROM channels`);
+    });
+    const breakout = await seedBreakout("Sequence B");
+    const service = new ConversationMergeService(TEST_ENV, AUTH);
+
+    await expect(service.merge(ROOM_ID, {
+      body: `See [the model](resource://${UNREAD_ID}).`, clientMessageId: "merge-unread", breakoutId: breakout,
+    })).rejects.toMatchObject({ code: "merge_resource_not_shareable", details: { field: "body.resources[0]" } });
+    expect(await mainState()).toMatchObject({ merges: [], links: [] });
+  });
+
   it("replays a retry after the Breakout was renamed, keeping the first title", async () => {
     const breakout = await seedBreakout("Sequence B");
     const service = new ConversationMergeService(TEST_ENV, AUTH);

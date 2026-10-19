@@ -8,6 +8,7 @@ function noopActions(): MenuBarActions {
   return {
     selected: vi.fn(),
     openConversation: vi.fn(),
+    openChannel: vi.fn(),
     openAccessRequest: vi.fn(),
     openRally: vi.fn(),
     quit: vi.fn(),

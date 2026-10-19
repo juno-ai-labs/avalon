@@ -18,6 +18,11 @@ export function channelRoute(channelId: string): string {
   return `/channels/${encodeURIComponent(channelId)}`;
 }
 
+/** An artifact a merge shared with a Channel, open in the Channel's panel. */
+export function channelArtifactRoute(channelId: string, resourceId: string): string {
+  return `${channelRoute(channelId)}/artifacts/${encodeURIComponent(resourceId)}`;
+}
+
 export function threadRoute(threadId: string, channelId: string | null, substreamId?: string | null): string {
   const base = channelId === null
     ? `/workstreams/${encodeURIComponent(threadId)}`

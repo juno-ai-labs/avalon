@@ -1,5 +1,5 @@
 import { notifyOps } from "../observability/ops-slack-notifier";
-import { asUserId, asWorkspaceId, WorkspaceAttentionSchema } from "@rally/contracts";
+import { asUserId, asWorkspaceId, spaceCanonicalUrl, WorkspaceAttentionSchema } from "@rally/contracts";
 import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
 import { PushDeliveryMessageSchema, type PushDeliveryMessage, type PushNotificationData } from "@rally/contracts/push-notifications";
 import type { Env } from "../env";
@@ -51,6 +51,8 @@ type PushContent =
     substreamId: string | null;
     /** The artifact the notification opens its thread onto, expanded. */
     artifactId?: string;
+    /** A merge from a thread the person cannot open opens its Channel instead. */
+    channelId?: string;
   };
 
 type WorkspaceStub = DurableObjectStub<WorkspaceDO>;
@@ -93,7 +95,8 @@ async function activityContent(env: Env, workspace: WorkspaceStub, message: Push
   const actor = item.actorUserId === null ? item.actorLabel
     : (await workspaceRegionalDatabase(env).prepare(`SELECT name FROM users WHERE id = ?`)
       .bind(item.actorUserId).first<{ name: string | null }>())?.name?.trim() || "Someone";
-  const thread = item.threadTitle.trim() || UNNAMED_THREAD;
+  // A merge from a thread this person cannot open names no thread.
+  const thread = item.mergedInto?.threadPrivate ? PRIVATE_THREAD : item.threadTitle.trim() || UNNAMED_THREAD;
   const breakout = item.breakout ? item.breakout.title.trim() || UNNAMED_BREAKOUT : null;
   const words = item.kind === "thread_started" ? { title: `${actor} started ${thread}`, body: "" }
     : item.kind === "breakout_started" ? { title: `${actor} started a breakout on ${thread}`, body: breakout ?? "" }
@@ -110,7 +113,20 @@ async function activityContent(env: Env, workspace: WorkspaceStub, message: Push
     substreamId: item.kind === "merged" ? null : item.breakout?.substreamId ?? null,
     // A pinned artifact's update opens the artifact, not just its thread.
     ...(item.kind === "artifact_updated" && item.artifact ? { artifactId: item.artifact.resourceId } : {}),
+    // The thread when the person can open it, which every client can follow
+    // (the iOS build parses no Channel link); otherwise the Channel it landed in.
+    ...(item.kind === "merged" && item.mergedInto?.threadPrivate ? { channelId: item.mergedInto.channelId } : {}),
   };
+}
+
+/** Where a delivery links: the Channel a private thread's merge landed in, else the thread. */
+async function contentUrl(env: Env, workspaceId: string, content: Extract<PushContent, { outcome: "ready" }>): Promise<string> {
+  if (content.channelId) {
+    return spaceCanonicalUrl(env.PUBLIC_WEB_BASE_URL, { region: env.AVALON_REGION, workspaceId, spaceId: content.channelId });
+  }
+  return await canonicalWorkstreamUrl(env, { region: env.AVALON_REGION, workspaceId,
+    workstreamId: content.workstreamId, ...(content.substreamId ? { substreamId: content.substreamId } : {}),
+    ...(content.artifactId ? { artifactId: content.artifactId } : {}) });
 }
 
 /** "Maya merged Sequence B into Q3 plan", or "Maya merged Q3 plan into GTM". */
@@ -119,6 +135,7 @@ function mergedWords(actor: string, thread: string, breakout: string | null, cha
   return { title: `${actor} merged ${thread} into ${channel?.trim() || "a channel"}`, body: "" };
 }
 const UNNAMED_THREAD = "Untitled thread";
+const PRIVATE_THREAD = "a private thread";
 const UNNAMED_BREAKOUT = "Untitled breakout";
 
 /**
@@ -169,8 +186,7 @@ async function deliverActivityElsewhere(
         workspaceName: identity!.workspace_name,
         title: ready.title,
         body: ready.body,
-        url: await canonicalWorkstreamUrl(env, { region: env.AVALON_REGION, workspaceId: message.workspaceId,
-          workstreamId: ready.workstreamId, ...(ready.substreamId ? { substreamId: ready.substreamId } : {}) }),
+        url: await contentUrl(env, message.workspaceId, ready),
         region: env.AVALON_REGION,
       });
       case "slack_agent_dm": return senders.slack(env, {
@@ -181,6 +197,7 @@ async function deliverActivityElsewhere(
         workspaceName: identity!.workspace_name,
         workstreamId: ready.workstreamId,
         ...(ready.substreamId ? { substreamId: ready.substreamId } : {}),
+        ...(ready.channelId ? { url: await contentUrl(env, message.workspaceId, ready) } : {}),
         title: ready.title,
         body: ready.body,
       });
@@ -237,9 +254,7 @@ export async function deliverPush(
   const attention = WorkspaceAttentionSchema.parse(await workspace.attention({
     workspaceId: id, userId: message.recipientUserId, accessClass: member?.access_class ?? "member",
   }));
-  const url = await canonicalWorkstreamUrl(env, { region: env.AVALON_REGION, workspaceId: message.workspaceId,
-    workstreamId: content.workstreamId, ...(content.substreamId ? { substreamId: content.substreamId } : {}),
-    ...(content.artifactId ? { artifactId: content.artifactId } : {}) });
+  const url = await contentUrl(env, message.workspaceId, content);
   const data = { v: 1 as const, kind: content.kind, region: env.AVALON_REGION, workspaceId: message.workspaceId, url };
   const collapseId = await pushCollapseId(message.workspaceId, content.deliveryKey);
   const { title, body } = content;

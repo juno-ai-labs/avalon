@@ -47,8 +47,6 @@ export type ConversationMergeRequest = z.infer<typeof ConversationMergeRequestSc
 export const ConversationMergeErrorCodeSchema = z.enum([
   /** The named Channel does not hold this thread now. */
   "merge_channel_not_placed",
-  /** Only an Organization-wide thread merges into a Channel. */
-  "merge_thread_private",
   /** The person cannot post in the target. */
   "merge_target_not_writable",
   /** An embedded resource fails the attach path's source check. */
@@ -159,6 +157,13 @@ export const ChannelMergeSourceSchema = z.strictObject({
   /** The thread's description, for the quote line; null when it has none. */
   summary: z.string().nullable(),
   embeds: z.array(MergeEmbedSchema),
+  /**
+   * The reader cannot open the thread, so its title and summary are withheld
+   * (empty) and the merge reads as from a private thread. Its embeds are not:
+   * the merge shared them with the Channel. Served only to a build at
+   * `CHANNEL_PRIVATE_MERGES_CLIENT_CONTRACT` or later.
+   */
+  private: z.literal(true).optional(),
 });
 export type ChannelMergeSource = z.infer<typeof ChannelMergeSourceSchema>;
 

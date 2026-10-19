@@ -170,7 +170,7 @@ Each refusal is a typed failure with a stable `code`, a model-visible sentence
 | read, post, attach | `conversation_access_denied` | `resourceId` |
 | post | `invalid_arguments` (no home, `conversation` left out) | `field`, `expected` |
 | merge | `invalid_arguments` (empty `body`, or any other field) | `field`, `expected` |
-| merge | `merge_thread_private`, `merge_target_not_writable` (no Channel the person can post in) | none |
+| merge | `merge_target_not_writable` (no Channel the person can post in) | none |
 | merge | `merge_resource_not_shareable` | `field` (`body.resources[i]`) |
 | merge | `conversation_archived`, `conversation_access_denied` | `resourceId` |
 | read_next, list_next | the wrapper's page codes, per [`tool-pagination.md`](tool-pagination.md) | as there |

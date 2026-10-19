@@ -189,8 +189,13 @@ export const ActivityItemSchema = z.strictObject({
   threadId: WorkstreamIdSchema,
   threadTitle: z.string(),
   breakout: z.strictObject({ substreamId: IdSchema, title: z.string() }).nullable(),
-  /** On a thread's `merged` row: the Channel it merged into. */
-  mergedInto: z.strictObject({ channelId: IdSchema, name: z.string() }).optional(),
+  /**
+   * On a thread's `merged` row: the Channel it merged into. `threadPrivate`
+   * when the viewer may not open the thread: `threadTitle` is then empty and
+   * the row is the Channel's. Served only to builds at
+   * `CHANNEL_PRIVATE_MERGES_CLIENT_CONTRACT` or later.
+   */
+  mergedInto: z.strictObject({ channelId: IdSchema, name: z.string(), threadPrivate: z.literal(true).optional() }).optional(),
   /** On an `artifact_updated` row: the artifact, its current title, and the version the row is about. */
   artifact: z.strictObject({
     resourceId: IdSchema,

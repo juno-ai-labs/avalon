@@ -129,6 +129,9 @@ everyone's, because each answers only for what the person may already reach.
   may not open, so breaking one alone does not show it. Guard:
   `channels-threads-navigation.test.ts` "given a private thread in a Channel,
   when a member who cannot open it reads the feed, then it is not listed".
+  A merge from such a thread is shown, as the merger chose, with its words and
+  embeds but without the thread's name or summary
+  ([`conversation-merge.md`](conversation-merge.md)).
 - **A hidden placement is not news.** A private thread placed since a member
   last read a Channel moves its latest number but leaves it read. Guard: the
   same file, "given a private thread placed since a member last read a
