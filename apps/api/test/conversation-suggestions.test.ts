@@ -118,6 +118,7 @@ describe("observeTurnDisposition", () => {
     expect(storage.open()).toHaveLength(1);
     const request = JSON.parse(String(vi.mocked(input.fetch!).mock.calls[0]![1]!.body));
     expect(request.state.judged_message.author).toBe("person");
+    expect(request.state.judged_message.merged_from).toEqual({ kind: "breakout", title: "Demo schedule" });
   });
 
   it("skips an incoming merge with no eligible Channel without calling the provider", async () => {
@@ -158,6 +159,7 @@ describe("observeTurnDisposition", () => {
     };
     expect(request.state.parent.title).toBe("Pricing for the spring launch");
     expect(request.state.judged_message.outputs).toEqual([{ title: "Retention table", first_time_here: true }]);
+    expect(request.state.judged_message).not.toHaveProperty("merged_from");
     expect(request.state.recent_messages).toHaveLength(1);
     expect(request.state.conversation.messages_before).toBe(1);
   });
