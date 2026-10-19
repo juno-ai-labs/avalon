@@ -255,19 +255,33 @@ the lane publishes once, and complete and release settle the row.
 
 Branch `claude/agent-memory-step-3`, one pull request on top of step 2.
 
-`GET /workspace/me/memory` answers `MemoryReview`: the caller's own facts
-(expired included, retracted excluded), each with its source conversation and
-title, horizon and `expired`; below them the Organization's facts and those of
-the Channels the caller may open, read-only for a member and removable by an
-administrator (`removable` per fact). `DELETE /workspace/me/memory/:factId`
-retracts through `forgetMemoryFact` with no conversation: own facts by their
-person, Channel and Organization facts by an administrator; a retraction marks
-every holder for the copy-sync lane. New `WorkspaceDO` RPC `reviewMemoryFacts`;
-contracts in `packages/contracts/src/memory.ts`.
+Four reads and four removals, one contract (`MemoryReview`, a list of facts
+newest first, each with its subject, horizon and `expired`, its first source,
+and `removable`; `packages/contracts/src/memory.ts`):
 
-The desktop renders **What Rally remembers** in the Personal Channel
-(`scope === "individual"`), above the feed: own facts with a link to the
-source conversation, the horizon or *Expired*, and a Remove action; shared
-facts grouped by Organization and Channel below, with Remove for
-administrators. Verified in a real window under Xvfb. `state.md` moves to
-completed.
+- `GET /workspace/me/memory`: the caller's own `person` facts, expired
+  included, retracted excluded, whether or not the source is still openable;
+  every one removable. `DELETE /workspace/me/memory/:factId`.
+- `GET /workspace/memory`: the Organization's facts under the ordinary
+  visibility rule with no conversation; removable by an administrator.
+  `DELETE /workspace/memory/:factId`.
+- `GET /workstreams/:id/memory?substreamId=`: the facts whose subject is that
+  Thread or Breakout, visible to the caller inside it (the recall path,
+  audience intersection included); removable by a participant, as
+  `memory_forget` already allows. `DELETE /workstreams/:id/memory/:factId`.
+- `GET /spaces/:id/memory`: the facts whose subject is that Channel, for a
+  caller it is listed to; removable by an administrator.
+  `DELETE /spaces/:id/memory/:factId`.
+
+One `WorkspaceDO` RPC `reviewMemoryFacts` takes a scope (own, organization,
+or a conversation, a `space` parent being the Channel) and computes
+`removable` through `mayForget`, so no route re-derives authority;
+`forgetReviewedMemoryFact` retracts under the same rule, marks every digest
+holder, and wakes the alarm.
+
+The desktop adds a **Memory** level to the title-pill pop-out of a Channel, a
+Thread and a Breakout, listing that conversation's facts with the horizon or
+*Expired* and Remove where `removable`; Settings → Account gains the person's
+own facts and Settings → Organization the Organization's, each with Remove on
+the same rule. The Personal Channel panel is gone. Verified in a real window
+under Xvfb. `state.md` moves to completed.
