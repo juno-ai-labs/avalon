@@ -3397,11 +3397,11 @@ function embeddedBrowserFor(window: BrowserWindow): EmbeddedBrowser {
   previous?.browser.dispose();
   const browser = new EmbeddedBrowser(window, userId, (state) => {
     if (!window.isDestroyed()) window.webContents.send('embedded-browser:state', state);
-  }, () => {
-    // Keyboard focus is in the visited page; the address field is Rally's own.
+  }, (request) => {
+    // Keyboard focus is in the visited page; the controls are Rally's own.
     if (window.isDestroyed()) return;
     window.webContents.focus();
-    window.webContents.send('embedded-browser:focus-address');
+    window.webContents.send('embedded-browser:host-request', request);
   }, window === browserImportWindow);
   embeddedBrowsers.set(window, { userId, browser });
   window.once('closed', () => embeddedBrowsers.delete(window));

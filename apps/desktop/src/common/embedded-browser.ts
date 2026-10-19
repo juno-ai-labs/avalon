@@ -112,6 +112,13 @@ export function embeddedBrowserUrl(raw: string): string | null {
   }
 }
 
+/**
+ * What a shortcut pressed inside a page asks of the host's own controls: the
+ * address field, or the close of the only tab, which the host may turn into
+ * closing the browser.
+ */
+export type EmbeddedBrowserHostRequest = 'focus-address' | 'close-last-tab';
+
 /** What a browser keyboard shortcut asks for. */
 export type EmbeddedBrowserShortcut =
   | { kind: 'new-tab' | 'close-tab' | 'focus-address' | 'reload' | 'next-tab' | 'previous-tab' | 'back' | 'forward' }

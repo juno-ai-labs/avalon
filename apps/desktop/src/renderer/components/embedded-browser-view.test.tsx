@@ -1,11 +1,19 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { describe, expect, it, vi } from 'vitest';
-import type { EmbeddedBrowserCommand, EmbeddedBrowserState, EmbeddedBrowserTab } from '../../common/embedded-browser';
+import type { EmbeddedBrowserCommand, EmbeddedBrowserHostRequest, EmbeddedBrowserState, EmbeddedBrowserTab } from '../../common/embedded-browser';
 import { useRef } from 'react';
 import { EmbeddedBrowserTabs, useEmbeddedBrowserShortcuts } from './embedded-browser-view';
 
-vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ onEmbeddedBrowserFocusAddress: () => () => undefined }) }));
+const hostRequests = vi.hoisted(() => new Set<(request: EmbeddedBrowserHostRequest) => void>());
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => ({
+    onEmbeddedBrowserHostRequest: (listener: (request: EmbeddedBrowserHostRequest) => void) => {
+      hostRequests.add(listener);
+      return () => hostRequests.delete(listener);
+    },
+  }),
+}));
 
 const tab = (id: string, title: string, extra: Partial<EmbeddedBrowserTab> = {}): EmbeddedBrowserTab => ({
   id, title, url: `https://${id}.example/`, loading: false, canGoBack: false, canGoForward: false, favicon: null, ...extra,
@@ -91,6 +99,11 @@ describe('the browser tab strip', () => {
     fireEvent.keyDown(window, { key: 'w', code: 'KeyW', ctrlKey: true, metaKey: true });
     expect(command).toHaveBeenLastCalledWith({ action: 'close', tabId: 'a' });
     expect(onCloseLast).toHaveBeenCalledTimes(2);
+    // ⌘W inside the page reaches the host as a request from main.
+    command.mockClear();
+    for (const listener of hostRequests) listener('close-last-tab');
+    expect(command).toHaveBeenCalledExactlyOnceWith({ action: 'close', tabId: 'a' });
+    expect(onCloseLast).toHaveBeenCalledTimes(3);
   });
 
   it('moves a dragged tab to where it is dropped', () => {

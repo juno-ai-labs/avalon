@@ -208,7 +208,10 @@ export function useEmbeddedBrowserShortcuts({ state, command, addressRef, scope,
       }
     };
     window.addEventListener('keydown', onKey);
-    const unsubscribe = desktopBridge().onEmbeddedBrowserFocusAddress(() => focusAddress(addressRef));
+    const unsubscribe = desktopBridge().onEmbeddedBrowserHostRequest((request) => {
+      if (request === 'focus-address') focusAddress(addressRef);
+      else if (latest.current.activeTabId) closeTab(latest.current, latest.current.activeTabId, command, closeLast.current);
+    });
     return () => {
       window.removeEventListener('keydown', onKey);
       unsubscribe();
