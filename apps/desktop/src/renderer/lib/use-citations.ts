@@ -81,6 +81,7 @@ export function useCitations({ actions, loadResourceContent, onOpenPreview, onOp
   const resourcesIdentity = JSON.stringify(resources.map((resource) => ({
     contentAvailable: resource.contentAvailable,
     currentVersion: resource.currentVersion,
+    direction: resource.direction,
     id: resource.id,
     mimeType: resource.mimeType,
     resourceType: resource.resourceType,
@@ -99,7 +100,7 @@ export function useCitations({ actions, loadResourceContent, onOpenPreview, onOp
    * degradation it can lean on.
    */
   const local = useMemo(() => {
-    const byToken = new Map<string, { citation: CitationResource; contentAvailable: boolean; version: number }>();
+    const byToken = new Map<string, { citation: CitationResource; contentAvailable: boolean; version: number; opensInspector: boolean }>();
     for (const resource of stableResources) {
       // The version rides beside the citation rather than inside it: a chip is
       // dressed from the record's name and kind, and which revision it names is
@@ -113,6 +114,8 @@ export function useCitations({ actions, loadResourceContent, onOpenPreview, onOp
         },
         contentAvailable: resource.contentAvailable === true,
         version: resource.currentVersion,
+        opensInspector: resource.resourceType === 'generated_site'
+          || (resource.resourceType === 'generated_file' && resource.direction === 'artifact'),
       };
       byToken.set(resource.id, entry);
       if (resource.slug) byToken.set(resource.slug, entry);
@@ -221,7 +224,7 @@ export function useCitations({ actions, loadResourceContent, onOpenPreview, onOp
 
   const attachmentPreview = useCallback((resourceId: string, returnFocus: HTMLElement): AttachmentPreview | undefined => {
     const entry = local.get(resourceId);
-    if (!entry || entry.citation.resourceType === 'generated_site' || entry.citation.resourceType === 'generated_file') return undefined;
+    if (!entry || entry.opensInspector) return undefined;
     return {
       name: entry.citation.title,
       resourceId: entry.citation.id,
@@ -237,19 +240,20 @@ export function useCitations({ actions, loadResourceContent, onOpenPreview, onOp
   const openPreview = useCallback((resourceId: string, returnFocus: HTMLElement, resourceIds?: readonly string[], selectedIndex?: number): void => {
     const entry = local.get(resourceId);
     if (!entry) return;
-    // Generated resources open with their artifact controls, regardless of
-    // file format. Attachment previews are for sources and their galleries.
-    if (entry.citation.resourceType === 'generated_site' || entry.citation.resourceType === 'generated_file') {
+    // A generated file attached as a source keeps the source preview. Live
+    // sites always need their inspector because they are not attachment blobs.
+    if (entry.opensInspector) {
       onOpenResourceDetails(entry.citation.id, returnFocus);
       return;
     }
     const selected = attachmentPreview(resourceId, returnFocus);
     if (!selected) return;
-    const members = resourceIds?.flatMap((id) => {
+    const members = resourceIds?.flatMap((id, index) => {
       const preview = attachmentPreview(id, returnFocus);
-      return preview ? [{ id, preview }] : [];
+      return preview ? [{ id, preview, index }] : [];
     });
-    const galleryIndex = selectedIndex !== undefined && members?.[selectedIndex]?.id === resourceId ? selectedIndex : members?.findIndex(({ id }) => id === resourceId) ?? -1;
+    const occurrence = members?.findIndex(({ id, index }) => index === selectedIndex && id === resourceId) ?? -1;
+    const galleryIndex = occurrence >= 0 ? occurrence : members?.findIndex(({ id }) => id === resourceId) ?? -1;
     onOpenPreview(members && galleryIndex >= 0 ? {
       ...selected, gallery: members.map(({ preview }) => preview), galleryIndex,
     } : selected);

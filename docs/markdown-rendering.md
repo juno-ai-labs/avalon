@@ -347,11 +347,15 @@ cover scaling, matching message attachment tiles. It shows
 a shimmering media skeleton while those bytes load. Other resource kinds do
 not fetch original bytes for feed decoration: audio and video use square tiles,
 while sites, documents, and other files use 54px-high icon, filename, and kind
-cards that fit two grid tracks. Clicking a `generated_file` or `generated_site`
-opens the host's standard artifact inspector, with its artifact management
-controls. Source files open the host's attachment preview; generated resources
-are excluded from its galleries so stepping through source attachments cannot
-bypass the artifact inspector. Feed excerpts still use the shared preview reader.
+cards that fit two grid tracks. Clicking a `generated_file` produced by this
+conversation, or a `generated_site`, opens the host's standard artifact inspector.
+A generated file attached as a source keeps the attachment preview. Inspector
+resources are excluded from attachment galleries; filtering preserves the
+clicked occurrence's original index when a source appears more than once.
+The inspector downloads original file bytes through `/resources/:id/content`,
+independently of its readable preview. Plain text, code, and structured text
+render literally in a `pre`; Markdown and converted documents use `MarkdownBody`.
+Feed excerpts still use the shared preview reader.
 
 On a work stream, rendering or receiving an embed never opens the right-side
 inspector automatically. The transcript stays where the person left it until
@@ -960,12 +964,16 @@ PR #1322; design: `docs/PRDs/2026-10-19_artifact-annotations/prd.md`.
 
 ### 2026-10-19 — Generated files open with artifact controls
 
-Citation clicks route `generated_file` resources to the standard artifact
-inspector, alongside `generated_site`, and exclude them from source attachment
-galleries. Generated Markdown previously opened a generic Attachment menu with
+Citation clicks route `generated_file` artifacts to the standard artifact
+inspector, alongside `generated_site`, and exclude them from attachment
+galleries while preserving the selected occurrence. A generated file attached
+as a source keeps the source preview. Generated Markdown previously opened a generic Attachment menu with
 only Download and Details, hiding the artifact's management controls behind a
 second click. Reusing the inspector keeps those controls in one place rather
-than duplicating them in the attachment preview. Source attachment previews and
+than duplicating them in the attachment preview. The inspector also retains
+Download through the original-file endpoint, so archives remain retrievable and
+converted Office previews are not saved in place of originals. Plain-text files
+render literally to preserve their formatting; converted document previews and
 feed excerpts keep their existing readers.
 
 ### 2026-10-13 — A glance draws mentions as chips
