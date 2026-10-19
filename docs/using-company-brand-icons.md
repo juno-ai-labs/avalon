@@ -105,7 +105,7 @@ two render their colour art, and `.connector-mark` recolours any painted shape
 inside: a CSS `fill` beats an SVG presentation attribute, and `[fill="none"]` is
 deliberately left alone, because those shapes are hollow and filling them turns
 a mark into a blob. Ashby and Fireflies are not in the package; their local
-components only ship the monochrome art. Canva uses the upstream C path without its gradient disc: recolouring both the disc and white letter would make the mark a solid circle.
+components only ship the monochrome art. Apollo.io uses the catalog's A path without its background tile, and Canva uses the upstream C path without its gradient disc: recolouring both the disc and white letter would make the mark a solid circle.
 
 Two smaller consequences of rendering real SVG, both handled:
 

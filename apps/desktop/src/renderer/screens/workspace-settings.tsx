@@ -114,6 +114,7 @@ function hasWorkspaceInstallationSurface(connectorType: string): boolean {
 }
 
 const reconnectableConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
+  'apollo',
   'ashby',
   'canva',
   'fireflies',
@@ -875,7 +876,7 @@ export function WorkspaceSettingsScreen({
     staleTime: 30_000,
   });
   const connectProvider = useMutation({
-    mutationFn: async (input: { provider: 'ashby' | 'canva' | 'fireflies' | 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
+    mutationFn: async (input: { provider: 'apollo' | 'ashby' | 'canva' | 'fireflies' | 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
       if (input.provider === 'x') {
         await api!.createXConnection(input.capabilities);
         return { kind: 'direct' as const };
