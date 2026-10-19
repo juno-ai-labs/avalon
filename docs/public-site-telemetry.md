@@ -127,12 +127,21 @@ PostHog organization's proxy settings, with the project's public token.
   bootstrap failure, a rejected event, and destination failure are silent to
   navigation, downloads, and desktop handoffs.
 
+### Apollo landing-page tracker
+
+The production homepage and its landing variants additionally load Apollo via
+`apollo-loader.ts`; see [landing-page tracking](landing-page-tracking.md#apollo-visitor-tracking)
+for the paths and app ID. It runs independently of first-party reporting and
+uses Apollo and LiveIntent endpoints permitted only by the landing-page CSP
+overrides. Apollo receives page visits directly rather than closed Rally events.
+
 ## Boundary
 
 This module owns public-site page classification, anonymous acquisition
 identity, semantic action capture, browser-to-desktop handoff measurement, and,
-for now, the PostHog browser SDK on the marketing pages. It does not own
-advertising, cross-site identity, account identification, form analytics,
+for now, the PostHog browser SDK on the marketing pages. The Apollo integration
+additionally owns loading the third-party visitor tracker on landing pages. This
+module does not own account identification, form analytics,
 consent-law determinations, or the desktop action that follows a handoff. Site
 identities are not automatically linked to a Rally login; signup reports join
 the site to the app by `flowId`.
@@ -211,6 +220,22 @@ avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
 
 ## Changelog
+
+### 2026-10-19 — Apollo tracks landing-page visits
+
+**What changed:** Added the supplied Apollo tracker to production landing pages
+and concept variants, with landing-only CSP permissions for Apollo and LiveIntent.
+
+**Why:** The landing pages need the requested Apollo visitor tracking alongside
+the existing acquisition reporting.
+
+**Considered and rejected:** Inlining the snippet in every HTML file would repeat
+the integration and be blocked by the existing script policy. Loading it on
+every site page would expose credential-bearing handoff URLs.
+
+**Consequences:** New landing variants must opt into the loader and CSP. Apollo
+tracking is separate from the first-party event and regional-delivery guarantees.
+
 
 ### 2026-10-11 — Report which ad platform's click identifier a landing carried
 
