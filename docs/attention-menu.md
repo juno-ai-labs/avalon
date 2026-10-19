@@ -65,11 +65,39 @@ Rules that still hold:
   goes in `readerMarkerStatus` and `MARKER_PRECEDENCE`, and in the server
   count. Guard: `attention-items.test.ts`, `navigation-sidebar.test.tsx`, and
   `workspace-attention.test.ts` for the server side.
+- **It counts only what the Threads list holds.** Main counts when the
+  reader takes part in it (`isParticipant` on the row; absent is counted, as
+  before the field existed), and Breakouts come only from the reader's own
+  Breakout list. `readerAttentionCount` requires `is_participant = 1` on both
+  arms to match.
 - **It covers the active Organization only.** Other Organizations' attention
   is the account menu's (`GET /workspace/attention`,
   [`multiple-workspaces.md`](multiple-workspaces.md)).
 
 ## Changelog
+
+### 2026-10-19 — Count only threads the reader takes part in
+
+**What changed:** Thread rows carry `isParticipant`. `attentionItems` skips
+Main when it is `false`, and `readerAttentionCount` requires participation for
+Main and Breakouts alike.
+
+**Why:** The Threads list shows only conversations the reader takes part in
+or pinned, but the badge counted every listed thread. An Organization-wide
+thread somebody else was working in raised the badge by one while the list,
+sorted by Needs attention, showed nothing waiting. The badge's own rule is
+that the count and the list are one list, and this broke it.
+
+**Considered and rejected:** Counting pinned threads the reader is not in:
+they sit in the Pinned section rather than the list the Needs attention sort
+orders, and adding them would need the pin list in the count for no case
+anybody reported. Mentions are not lost: mentioning somebody who is not in a
+thread adds them to it.
+
+**Consequences:** Unread activity in an Organization-wide thread the reader
+is not in now shows only in the Channels tab and Activity. A new place that
+lists threads for a reader must take part in the same rule or the badge and
+the list will disagree again.
 
 ### 2026-10-10 — The pop-out becomes the Threads badge and the Activity tab
 
