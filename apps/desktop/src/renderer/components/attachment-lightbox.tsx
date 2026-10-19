@@ -141,6 +141,11 @@ export function useAttachmentView(preview: AttachmentPreview | null) {
     const controller=new AbortController();preparedLoad.current=controller;
     const version = (await draft.readResource(active.resourceId)).currentVersion;
     controller.signal.throwIfAborted();
+    // Whole-file pins only need the immutable version, even when no preview exists.
+    if (classifyAttachmentKind({fileName:active.name,mimeType:active.mimeType}) === 'other') {
+      setLoaded(previous => previous?.preview === active ? {...previous,version} : {preview:active,version,error:'This resource has no preview available.'});
+      return;
+    }
     const blob = await draft.readResourceVersion(active.resourceId,version,controller.signal);
     controller.signal.throwIfAborted();
     if (mode==='image') {
