@@ -7453,11 +7453,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     reportScheduledAlarmAttempt(this.env, (promise) => this.ctx.waitUntil(promise), {
       event: "substream_scheduled_alarm_failed",
-      summary: "An agent object's alarm entry keeps throwing; `code` is the handler's error, and `alarm_kind` and `alarm_key` name the entry.",
+      summary: "An agent object's alarm entry keeps throwing; `code` is the handler's error, and `alarm_kind` and `alarm_key` name the entry in the conversation `substream_id` names.",
       attempt,
       fields: {
         workspace_id: identity?.workspaceId ?? null,
         workstream_id: identity?.parentId ?? null,
+        substream_id: this.externalSubstreamId(),
         alarm_kind: alarm.kind,
         alarm_key: alarm.key,
       },
@@ -7469,11 +7470,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     reportScheduledAlarmAttempt(this.env, (promise) => this.ctx.waitUntil(promise), {
       event: "substream_scheduled_alarm_stalled",
-      summary: "An agent object's alarm entry keeps coming back due at the same instant after running: the source row behind `alarm_kind` and `alarm_key` is not moving. Find why.",
+      summary: "An agent object's alarm entry keeps coming back due at the same instant after running: the source row behind `alarm_kind` and `alarm_key`, in the conversation `substream_id` names, is not moving. Find why.",
       attempt,
       fields: {
         workspace_id: identity?.workspaceId ?? null,
         workstream_id: identity?.parentId ?? null,
+        substream_id: this.externalSubstreamId(),
         alarm_kind: alarm.kind,
         alarm_key: alarm.key,
         due_at: new Date(alarm.dueAt).toISOString(),
@@ -7612,22 +7614,34 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * here. Taking the seam instead would skip the endpoint — and with it the
    * commit that republishes the sidebar's next-wake-up marker, which after a
    * claim still advertises a wake-up that has already fired.
+   *
+   * The port names this object's substream. `this.env` carries no installed
+   * authorities, so a port without one reaches the parent's Main, which in a
+   * Breakout or a Sidekick run child is a different object holding no such
+   * row.
+   *
+   * Every way this returns leaves the row out of `pending` or throws a named
+   * code, so a timer that cannot fire is a reported failure rather than a
+   * silent stall.
    */
   protected override async runScheduledAlarm(alarm: ScheduledAlarm): Promise<void> {
     if (alarm.kind !== AGENT_TIMER_ALARM_KIND) {
       throw new Error(`substream_unknown_alarm_kind:${alarm.kind}`);
     }
     const identity = this.objectStore.identity();
-    if (!identity) return;
+    if (!identity) throw new Error("agent_timer_identity_unavailable");
+    const substreamId = this.externalSubstreamId();
     const executionEnv = this.localRuntimeEnvironment(
       identity.workspaceId,
       identity.parentId,
-      this.externalSubstreamId(),
+      substreamId,
     );
     const scheduling = createSchedulingObjectPort(
       this.env,
       identity.workspaceId,
       identity.parentId,
+      undefined,
+      substreamId,
     );
     const wakeup = await loadWorkstreamWakeup(
       scheduling,
@@ -7635,8 +7649,31 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       identity.parentId,
       alarm.key,
     );
-    if (!wakeup || wakeup.status !== "pending") return;
-    await fireWorkstreamWakeup(executionEnv, wakeup, scheduling);
+    if (!wakeup || wakeup.status !== "pending") {
+      // The index is reconciled from this object's own table after the drain,
+      // so an entry whose row really has settled leaves on its own. One whose
+      // row is still pending here was answered by some other object.
+      if (this.agentTimerStillPending(alarm.key)) throw new Error("agent_timer_wakeup_unreachable");
+      return;
+    }
+    const background = this.state.storage.sql.exec<{ stopped_at: number | null }>(
+      "SELECT stopped_at FROM background_agent WHERE id = 1",
+    ).toArray()[0];
+    const { fired } = await fireWorkstreamWakeup(executionEnv, wakeup, scheduling, {
+      parentKind: identity.parentKind,
+      substreamId,
+      backgroundAgent: background ? (background.stopped_at !== null ? "stopped" : true) : false,
+    });
+    // Not firing is a decision that consumes the row. One still pending lost
+    // its claim to a writer that has not settled it.
+    if (!fired && this.agentTimerStillPending(alarm.key)) throw new Error("agent_timer_claim_lost");
+  }
+
+  private agentTimerStillPending(wakeupId: string): boolean {
+    return this.state.storage.sql.exec(
+      `SELECT 1 FROM workstream_wakeups WHERE wakeup_id = ? AND status = 'pending'`,
+      wakeupId,
+    ).toArray().length > 0;
   }
 
   /**
