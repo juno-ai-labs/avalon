@@ -7,6 +7,10 @@ const operations = [
   "includes", "not_includes", "starts_with", "ends_with", "regex", "exists", "is_null",
 ] as const;
 const valueTypes = ["string", "number", "boolean"] as const;
+const calculationOperators = [
+  "count", "uniq", "sum", "avg", "min", "max", "median", "stddev", "variance",
+  "p001", "p01", "p05", "p10", "p25", "p75", "p90", "p95", "p99", "p999",
+] as const;
 
 const filterSchema = z.object({
   key: z.string().min(1).describe(
@@ -40,7 +44,7 @@ export const observabilityQueryInputSchema = {
   filterCombination: z.enum(["and", "or"]).optional().describe("How top-level filters combine; and when omitted."),
   needle: z.string().min(1).optional().describe("Full-text search across every field, case-insensitive."),
   calculations: z.object({
-    operator: z.string().min(1).describe("count, uniq, sum, avg, min, max, median, p50, p90, p99, …"),
+    operator: z.enum(calculationOperators).describe("median is the 50th percentile; Cloudflare has no p50."),
     key: z.string().min(1).optional().describe("The field to aggregate; omitted for count."),
     keyType: z.enum(valueTypes).optional(),
     alias: z.string().min(1).optional(),
@@ -64,7 +68,7 @@ type ObservabilityQuery = z.infer<z.ZodObject<typeof observabilityQueryInputSche
  */
 export async function queryObservability(
   { accountId, token }: { accountId: string; token: string | undefined },
-  { view, from, to, limit, offset, ...parameters }: ObservabilityQuery,
+  { view, from, to, limit, offset, needle, ...parameters }: ObservabilityQuery,
 ): Promise<unknown> {
   if (!token) {
     throw new CloudflareQueryError(
@@ -84,7 +88,11 @@ export async function queryObservability(
         timeframe: { from: Date.parse(from), to: to === undefined ? Date.now() : Date.parse(to) },
         ...(limit === undefined ? {} : { limit }),
         ...(offset === undefined ? {} : { offset }),
-        parameters: { ...parameters, ...(limit === undefined ? {} : { limit }) },
+        parameters: {
+          ...parameters,
+          ...(needle === undefined ? {} : { needle: { value: needle } }),
+          ...(limit === undefined ? {} : { limit }),
+        },
       }),
     },
   );
