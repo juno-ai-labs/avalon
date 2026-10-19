@@ -113,6 +113,50 @@ export const WorkspaceMemoryRecallResultSchema = deferredZodSchema(() => z.stric
   titles: z.array(z.strictObject({ key: z.string().min(1), title: z.string() })),
 }));
 
+// -- Digest -------------------------------------------------------------------
+
+/**
+ * One fact as a conversation's digest copy holds it: what the renderer needs
+ * and nothing it does not (`renderMemoryDigest`), with the subject's title
+ * resolved here so the run reads nothing beyond its own object.
+ */
+export const MemoryDigestFactSchema = deferredZodSchema(() => z.strictObject({
+  factId: z.string().min(1),
+  subjectKind: MemorySubjectKindSchema,
+  /** The subject's display title; null for the Organization and for the person themselves. */
+  subjectLabel: z.string().nullable(),
+  kind: MemoryFactKindSchema,
+  text: z.string(),
+  validFrom: InstantSchema.nullable(),
+  validUntil: InstantSchema.nullable(),
+  conflict: z.boolean(),
+  derivedFrom: MemoryDerivedFromSchema,
+  createdAt: InstantSchema,
+}));
+export type MemoryDigestFact = z.infer<typeof MemoryDigestFactSchema>;
+
+/**
+ * The facts one principal's digest copy in one conversation is refreshed
+ * from: recall with no query, as the reader, and the conversation recorded
+ * as a holder so the copy-sync lane can reach it.
+ */
+export const WorkspaceMemoryDigestRequestSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: IdSchema,
+  reader: MemoryReaderSchema,
+  conversation: MemoryConversationSchema,
+  now: InstantSchema,
+  limit: z.number().int().positive(),
+}));
+
+export const WorkspaceMemoryDigestResultSchema = deferredZodSchema(() => z.strictObject({
+  facts: z.array(MemoryDigestFactSchema),
+  /** The object's clock when the facts were read; a copy keeps the newest read. */
+  readAt: InstantSchema,
+}));
+
+export type WorkspaceMemoryDigestRequest = z.infer<typeof WorkspaceMemoryDigestRequestSchema>;
+export type WorkspaceMemoryDigestResult = z.infer<typeof WorkspaceMemoryDigestResultSchema>;
+
 // -- Remember -----------------------------------------------------------------
 
 export const WorkspaceMemoryRememberRequestSchema = deferredZodSchema(() => z.strictObject({

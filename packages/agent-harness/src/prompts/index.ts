@@ -8,6 +8,7 @@ export * from "./personal";
 export * from "./workstream";
 export * from "./workstream-description";
 export * from "./memory-sweep";
+export * from "./memory-digest";
 export * from "./suggestion-draft";
 export * from "./icon-catalog";
 export * from "./workstream-name";
