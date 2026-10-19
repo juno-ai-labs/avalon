@@ -67,6 +67,11 @@ const CONVERSATION_PROSE: Record<string, ToolProse> = {
     settled: "Read earlier messages",
     failed: "Could not read earlier messages",
   },
+  conversation_search: {
+    started: "Searching conversations",
+    settled: "Searched conversations",
+    failed: "Could not search conversations",
+  },
   conversation_post: {
     started: "Posting to a conversation",
     settled: "Posted to a conversation",
