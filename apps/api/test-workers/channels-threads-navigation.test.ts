@@ -41,6 +41,7 @@ import { drainResourceVersionChanges } from "../src/durable-objects/workspace-re
 import { WorkspaceActivityFeed } from "../src/durable-objects/workspace-activity-feed";
 import { WorkspaceActivityPushes } from "../src/durable-objects/workspace-activity-push";
 import { WorkspaceSpaceStorage } from "../src/durable-objects/workspace-space-storage";
+import { searchAudienceGroup, searchAudienceGroupIds } from "../src/services/search-audience";
 import { WorkspaceRegionalEffectApplyRequestSchema } from "../src/durable-objects/workspace-directory-protocol";
 import { applyWorkstreamRegionalEnvelope } from "../src/durable-objects/workspace-regional-effect-storage";
 import { hostedParentStub } from "./helpers/hosted-parent";
@@ -1295,10 +1296,16 @@ describe("Channel merges", () => {
   });
 
   async function merge(channelId: SpaceId | null, operationId: string, body = "Shipped the sequence.") {
+    await storeResource(ARTIFACT, "Price model").catch(() => undefined);
     return workspace().mergeThreadIntoChannel({
-      auth: auth(OWNER), workstreamId: OPEN_THREAD, spaceId: channelId, body, operationId,
-      embeds: [{ id: "resource-1", title: "Price model", kind: "document" }],
+      auth: auth(OWNER), workstreamId: OPEN_THREAD, spaceId: channelId, body, operationId, resources: [ARTIFACT],
     });
+  }
+
+  /** Where the canonical resource check finds this reader may read the artifact through a Channel. */
+  async function sharedThrough(userId: UserId, resourceId = ARTIFACT) {
+    const [facts] = await workspace().authorizationResourceFacts({ workspaceId: WORKSPACE_ID, userId, resourceIds: [resourceId], accessClass: "member" });
+    return facts && facts.exists ? facts.sharedThrough : "absent";
   }
 
   async function messages(channelId: SpaceId, userId: UserId) {
@@ -1348,7 +1355,7 @@ describe("Channel merges", () => {
         author: { kind: "member", userId: OWNER },
         body: "Shipped the sequence.",
         merge: { threadId: OPEN_THREAD, title: "Cold outreach", summary: "Cold outreach summary",
-          embeds: [{ id: "resource-1", title: "Price model", kind: "document" }] },
+          embeds: [{ id: ARTIFACT, title: "Price model", kind: "generated_file" }] },
       },
     });
     expect(await stats(MEMBER, channelId)).toEqual({ latest: 3, readThrough: 2, firstUnread: 3, hasUnread: true, newThreads: 0 });
@@ -1360,7 +1367,8 @@ describe("Channel merges", () => {
     const first = await merge(channelId, "op-1");
     if (!first.ok) throw new Error("merge refused");
 
-    expect(await merge(channelId, "op-1", "A retry's words")).toEqual({ ...first, replayed: true });
+    // A retry shares nothing new: the first attempt already linked the embed.
+    expect(await merge(channelId, "op-1", "A retry's words")).toEqual({ ...first, replayed: true, linked: [] });
     expect((await messages(channelId, OWNER)).map((item) => [item.message.body, item.attentionSequenceNumber]))
       .toEqual([["Shipped the sequence.", 3]]);
 
@@ -1386,35 +1394,83 @@ describe("Channel merges", () => {
     expect(await messages(elsewhere, OWNER)).toEqual([]);
   });
 
-  it("given a private thread, when its participant merges it, then a member who cannot open it sees the result as news without the thread's name, summary or embeds, and the participant sees it whole", async () => {
+  it("given a private thread, when its participant merges it, then a member who cannot open it sees the result and its embeds as news without the thread's name or summary, and the participant sees it whole", async () => {
     const channelId = await channelWithThreads();
     await workspace().acknowledgeSpaceRead({ workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId, readThroughSequenceNumber: 2 });
+    await storeResource(OTHER_ARTIFACT, "Comp model");
 
     expect(await workspace().mergeThreadIntoChannel({
       auth: auth(OWNER), workstreamId: PRIVATE_THREAD, spaceId: null, body: "Bands are set.", operationId: "op-p",
-      embeds: [{ id: "resource-2", title: "Comp model", kind: "document" }],
-    })).toMatchObject({ ok: true, spaceId: channelId, name: "Outbound", replayed: false });
+      resources: [OTHER_ARTIFACT],
+    })).toMatchObject({ ok: true, spaceId: channelId, name: "Outbound", replayed: false, linked: [OTHER_ARTIFACT] });
 
+    const embeds = [{ id: OTHER_ARTIFACT, title: "Comp model", kind: "generated_file" }];
     expect((await messages(channelId, MEMBER)).map((item) => item.message)).toEqual([{
       id: expect.any(String),
       author: { kind: "member", userId: OWNER },
       body: "Bands are set.",
-      merge: { threadId: PRIVATE_THREAD, title: "", summary: null, embeds: [], private: true },
+      merge: { threadId: PRIVATE_THREAD, title: "", summary: null, embeds, private: true },
     }]);
     expect(await stats(MEMBER, channelId)).toMatchObject({ hasUnread: true, firstUnread: 3 });
     expect((await messages(channelId, OWNER))[0]?.message.merge).toEqual({
-      threadId: PRIVATE_THREAD, title: "Comp bands", summary: "Comp bands summary",
-      embeds: [{ id: "resource-2", title: "Comp model", kind: "document" }],
+      threadId: PRIVATE_THREAD, title: "Comp bands", summary: "Comp bands summary", embeds,
     });
   });
 
-  it("given a merge whose thread was made private since, when a member who cannot open it reads the Channel, then the merge stays, without its thread's name or embeds", async () => {
+  it("given a merge into an Organization-wide Channel, when a member who cannot open the thread asks to read its artifact, then the Channel admits them", async () => {
+    const channelId = await channelWithThreads();
+    await storeResource(OTHER_ARTIFACT, "Comp model");
+    expect(await sharedThrough(MEMBER, OTHER_ARTIFACT)).toBeNull();
+    await workspace().mergeThreadIntoChannel({
+      auth: auth(OWNER), workstreamId: PRIVATE_THREAD, spaceId: null, body: "Bands are set.", operationId: "op-p",
+      resources: [OTHER_ARTIFACT],
+    });
+    expect(await sharedThrough(MEMBER, OTHER_ARTIFACT)).toBe(channelId);
+  });
+
+  it("given a merge into a private Channel, when a member is added to the Channel later, then they can read its artifact, and when removed, they cannot", async () => {
+    const channelId = await channelWithThreads();
+    await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId, audience: { scope: "personal", participantUserIds: [OWNER] },
+    });
+    expect(await merge(channelId, "op-1")).toMatchObject({ ok: true });
+    expect(await sharedThrough(OWNER)).toBe(channelId);
+    expect(await sharedThrough(MEMBER)).toBeNull();
+
+    const [channelGroup] = await searchAudienceGroupIds([searchAudienceGroup.space(channelId)]);
+    expect(await workspace().readSearchAudience({ workspaceId: WORKSPACE_ID, userId: MEMBER })).not.toContain(channelGroup);
+
+    await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId, audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
+    });
+    expect(await sharedThrough(MEMBER)).toBe(channelId);
+    // Search follows: the member now holds the Channel's group.
+    expect(await workspace().readSearchAudience({ workspaceId: WORKSPACE_ID, userId: MEMBER })).toContain(channelGroup);
+
+    await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId, audience: { scope: "personal", participantUserIds: [OWNER] },
+    });
+    expect(await sharedThrough(MEMBER)).toBeNull();
+  });
+
+  it("given an embed that names nothing, when the thread merges, then it is refused at that position and nothing is posted or shared", async () => {
+    const channelId = await channelWithThreads();
+    await storeResource(ARTIFACT, "Price model");
+    expect(await workspace().mergeThreadIntoChannel({
+      auth: auth(OWNER), workstreamId: OPEN_THREAD, spaceId: channelId, body: "Done", operationId: "op-x",
+      resources: [ARTIFACT, "no-such-resource"],
+    })).toEqual({ ok: false, code: "merge_resource_not_shareable", index: 1 });
+    expect(await messages(channelId, OWNER)).toEqual([]);
+    expect(await sharedThrough(OWNER)).toBeNull();
+  });
+
+  it("given a merge whose thread was made private since, when a member who cannot open it reads the Channel, then the merge stays, without its thread's name", async () => {
     const channelId = await channelWithThreads();
     await merge(channelId, "op-1");
     await publish(OPEN_THREAD, [threadEffect("Cold outreach", { scope: "personal" }), viewerEffect(OWNER)], undefined, 2);
 
     expect((await messages(channelId, MEMBER)).map((item) => item.message.merge))
-      .toEqual([{ threadId: OPEN_THREAD, title: "", summary: null, embeds: [], private: true }]);
+      .toEqual([{ threadId: OPEN_THREAD, title: "", summary: null, embeds: [{ id: ARTIFACT, title: "Price model", kind: "generated_file" }], private: true }]);
     expect((await messages(channelId, OWNER))[0]?.message.merge).toMatchObject({ title: "Cold outreach" });
   });
 

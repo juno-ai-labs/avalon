@@ -1179,11 +1179,10 @@ export function mergeLabel(target: MergeTarget): string {
 }
 
 /**
- * The merge composer's audience line: who will see it, and who can open what
- * it embeds, named when the conversation knows them. An Organization-wide
- * thread's merge into a Channel that is not Organization-wide shares its
- * artifacts wider than the Channel; a private thread's shares them with
- * nobody new. Each says so.
+ * The merge composer's audience line: who will see it and open what it embeds,
+ * named when the conversation knows them. A merge shares its embeds with its
+ * parent, so the two audiences are one. A private thread's merge into a
+ * Channel also says the thread's name stays hidden.
  */
 export function mergeAudience(
   target: MergeTarget,
@@ -1200,18 +1199,9 @@ export function mergeAudience(
     return named ? `${who} will see this and can open ${named}.` : `${who} will see this.`;
   }
   if (!channel) return '';
-  if (target.threadPrivate) {
-    const who = channel.scope === 'workspace' ? `Everyone in ${channel.name}` : `People in ${channel.name}`;
-    return named
-      ? `${who} will see this, but not the thread’s name. Only the thread’s people can open ${named}.`
-      : `${who} will see this, but not the thread’s name.`;
-  }
-  if (channel.scope === 'workspace') {
-    return named ? `Everyone in ${channel.name} will see this and can open ${named}.` : `Everyone in ${channel.name} will see this.`;
-  }
-  return named
-    ? `People in ${channel.name} will see this. Everyone in your organization can open ${named}.`
-    : `People in ${channel.name} will see this.`;
+  const who = channel.scope === 'workspace' ? `Everyone in ${channel.name}` : `People in ${channel.name}`;
+  const sees = named ? `${who} will see this and can open ${named}` : `${who} will see this`;
+  return target.threadPrivate ? `${sees}, but not the thread’s name.` : `${sees}.`;
 }
 
 /** The titles of the artifacts a merge draft cites, as this conversation knows them. */

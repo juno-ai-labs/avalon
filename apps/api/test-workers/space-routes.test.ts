@@ -1139,7 +1139,7 @@ describe("the navigation routes", () => {
     expect(await activityRows("6")).toEqual([]);
   });
 
-  it("serves a private thread's merge, without the thread, to a build that reads private merges, and leaves it out for one that does not", async () => {
+  it("serves a private thread's merge, without the thread but with its embeds, to a build that reads private merges, and leaves it out for one that does not", async () => {
     const opened = await workspace().openGeneralSpace({
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId("00000000-0000-7000-8000-00000000d2a7"),
     });
@@ -1162,7 +1162,7 @@ describe("the navigation routes", () => {
     const merged = (body: unknown) => (body as { items: Array<{ kind: string; message?: Record<string, unknown> }> }).items
       .flatMap((item) => (item.message?.body === "Bands are set." ? [item] : []));
     expect(merged((await request(path, MEMBER_AUTH, undefined, "GET", "9")).body)).toEqual([expect.objectContaining({
-      message: expect.objectContaining({ merge: { threadId, title: "", summary: null, embeds: [], private: true } }),
+      message: expect.objectContaining({ merge: { threadId, title: "", summary: null, embeds: [{ id: "resource-2", title: "Comp model", kind: "document" }], private: true } }),
     })]);
     expect(merged((await request(path, MEMBER_AUTH, undefined, "GET", "8")).body)).toEqual([]);
   });

@@ -5,7 +5,7 @@ import { Link, MemoryRouter, parsePath, Route, Routes, useLocation } from 'react
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type { ChannelStats, MemoryReview, MemoryReviewFact } from '@rally/contracts';
-import { OPEN_EXPANDED, openResourceRequest, revealChannelMessageState } from '../lib/navigation-routes';
+import { OPEN_EXPANDED, revealChannelMessageState } from '../lib/navigation-routes';
 import { CHANNEL_STATS_QUERY_KEY } from '../lib/sidebar-list-store';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { ChannelScreen } from './channel';
@@ -13,6 +13,8 @@ import { ChannelScreen } from './channel';
 const api = vi.hoisted(() => ({
   recordActivityEvents: vi.fn(async () => undefined),
   getChannelFeed: vi.fn(),
+  getResource: vi.fn(),
+  getResourcePreviewContent: vi.fn(async () => new Blob(['The model, in full.'], { type: 'text/markdown' })),
   getWorkspaceMembers: vi.fn(async () => []),
   getWorkspaceInvitees: vi.fn(async () => []),
   archiveSpace: vi.fn(),
@@ -466,7 +468,7 @@ describe('a Channel', () => {
     expect(merge.closest('li')?.classList.contains('is-focused')).toBe(true);
   });
 
-  it('opens an artifact a merge cites, by its alias, in its thread', async () => {
+  it('opens an artifact a merge cites, by its alias, in the Channel’s own panel', async () => {
     api.getWorkspaceMembers.mockResolvedValueOnce([workspace.currentUser] as never);
     api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 3, items: [
       { kind: 'message', placedAt: '2026-10-02T03:00:00.000Z', attentionSequenceNumber: 3, message: {
@@ -483,10 +485,25 @@ describe('a Channel', () => {
     ] });
     renderChannel();
     const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
+    api.getResource.mockResolvedValue({
+      id: 'res-1', slug: 'calm-river-quiet-lamp', title: 'Price model', resourceType: 'generated_file', provider: 'avalon_generated',
+      mimeType: 'text/markdown', contentAvailable: true, currentVersion: 1, updatedAt: '2026-10-02T03:00:00.000Z',
+      refreshSupported: false, watchEnabled: false, watchStatus: 'unsupported', relationshipType: 'generated', direction: 'artifact',
+    });
     fireEvent.click(await feed.findByText('Price model'));
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/plan'));
-    expect(openResourceRequest(JSON.parse(screen.getByTestId('location').dataset.state ?? 'null')))
-      .toEqual({ threadId: 'plan', resourceId: 'res-1' });
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/artifacts/res-1'));
+    // The Channel stays, and the artifact opens beside it, read by its id.
+    expect(screen.getByRole('list', { name: 'Outbound feed' })).toBeInTheDocument();
+    expect(await screen.findByRole('complementary', { name: 'Resource: Price model' })).toBeInTheDocument();
+    expect(api.getResource).toHaveBeenCalledWith('res-1');
+  });
+
+  it('says so when the artifact it opens cannot be read', async () => {
+    api.getResource.mockRejectedValue(new Error('resource_not_shared'));
+    renderChannel('/channels/outbound/artifacts/res-9');
+    expect(await screen.findByText('Item unavailable')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close panel' }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(/^\/channels\/outbound$/u));
   });
 
   it('names somebody it cannot look up as someone, not Rally', async () => {

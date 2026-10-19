@@ -94,6 +94,12 @@ interface InspectorRailProps {
   resourceLink?: ((resource: WorkstreamResource) => (() => Promise<void>) | undefined) | undefined;
   /** Whether this artifact is pinned, and the switch; undefined where it cannot be pinned. */
   resourcePin?: ((resource: WorkstreamResource) => { on: boolean; onChange: (next: boolean) => void } | undefined) | undefined;
+  /**
+   * The resource itself, for a host with no conversation to look it up in: a
+   * Channel opening an artifact a merge shared with it. `null` once that host
+   * knows it cannot be read. Absent, the panel finds it in `workstream`.
+   */
+  resource?: WorkstreamResource | null | undefined;
   /** True while the inspector is fading out. */
   leaving?: boolean;
   dropTarget?: {
@@ -621,19 +627,17 @@ function ResourcePanelMenu({ onArchive, onCopyLink, onOpenSource, onPopOut, onRe
 }
 
 function InspectorDetail({
-  inspector,
   loadResourceContent,
-  workstream,
+  resource,
+  settled,
   onRefreshResource,
   refreshingResourceId,
   siteArtifacts,
 }: Pick<
   InspectorRailProps,
-  'loadResourceContent' | 'workstream' | 'onRefreshResource' | 'refreshingResourceId'
-  | 'siteArtifacts'
-> & { inspector: RailInspector | null }): React.JSX.Element | null {
-  if (!inspector || !workstream) return null;
-  const resource = inspector.type === 'resource' ? workstream.resources.find((item) => item.id === inspector.id) : undefined;
+  'loadResourceContent' | 'onRefreshResource' | 'refreshingResourceId' | 'siteArtifacts'
+> & { resource: WorkstreamResource | undefined; settled: boolean }): React.JSX.Element | null {
+  if (!resource && !settled) return null;
 
   if (resource) {
     // A live artifact is a page people open, not a record to describe. Behind
@@ -720,7 +724,9 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
     if (props.panel) props.panel.onClose();
     else storeInspect(selection);
   };
-  const resource = inspectedResource(inspector, props.workstream);
+  const resource = props.resource === undefined ? inspectedResource(inspector, props.workstream) : props.resource ?? undefined;
+  // Whether a missing resource is gone, rather than still on its way.
+  const settled = props.resource === null || (props.resource === undefined && props.workstream !== undefined);
   const [archiveTarget, setArchiveTarget] = useState<WorkstreamResource | null>(null);
   const [archiving, setArchiving] = useState(false);
   const [archiveFailed, setArchiveFailed] = useState(false);
@@ -979,12 +985,12 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         </InlineError></div>}
         {inspector ? (
           <InspectorDetail
-            inspector={inspector}
             {...(props.loadResourceContent ? { loadResourceContent: props.loadResourceContent } : {})}
             onRefreshResource={props.onRefreshResource}
             refreshingResourceId={props.refreshingResourceId}
+            resource={resource}
+            settled={settled}
             {...(props.siteArtifacts ? { siteArtifacts: props.siteArtifacts } : {})}
-            workstream={props.workstream}
           />
         ) : (
           <ContextContent {...props} />

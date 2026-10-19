@@ -31,6 +31,7 @@ import {
   safeParseSocketEvent,
   type ActivityItem,
   type AutomationDetail,
+  type MergeEmbed,
   type SidekickAttachment,
   type SidekickSkillSource,
 } from "@rally/contracts";
@@ -10952,12 +10953,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!await this.activeSpaceMember(request.auth.workspaceId, request.auth.userId)) {
       return { ok: false, code: "space_access_denied", channels: [] };
     }
+    const embeds = this.mergeEmbeds(request.auth.workspaceId, request.auth.userId, request.resources);
+    if (!embeds.ok) return { ok: false, code: "merge_resource_not_shareable", index: embeds.index };
     const now = Date.now();
     const result = this.spaceStorage().mergeThreadIntoChannel(member(request.auth.userId), {
       workstreamId: request.workstreamId,
       spaceId: request.spaceId,
       body: request.body,
-      embeds: request.embeds,
+      embeds: embeds.embeds,
       operationId: request.operationId,
     }, now);
     if (result.ok && !result.replayed) {
@@ -10970,6 +10973,37 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }));
     }
     return WorkspaceChannelMergeResultSchema.parse(result);
+  }
+
+  /**
+   * A Channel merge's embeds, resolved by id or alias and checked the way the
+   * attach path checks a member's link (`WorkstreamObjectProduct
+   * .attachResources`): it exists, a personal connection's resource is its
+   * owner's to share, and an upload has been sent. Synchronous, so nothing
+   * moves between these reads and the merge's commit.
+   */
+  private mergeEmbeds(workspaceId: string, userId: string, tokens: readonly string[]):
+    | { ok: true; embeds: MergeEmbed[] }
+    | { ok: false; index: number } {
+    const embeds = new Map<string, MergeEmbed>();
+    for (const [index, token] of tokens.entries()) {
+      const row = this.state.storage.sql.exec<{
+        id: string; slug: string | null; title: string; resource_type: string; provider: string;
+        attachment_status: string | null; connection_scope: string | null; owner_user_id: string | null;
+      }>(`SELECT resource.id, resource.slug, resource.title, resource.resource_type, resource.provider,
+                 resource.attachment_status, connection.scope AS connection_scope, connection.owner_user_id
+            FROM resources resource
+            LEFT JOIN connector_connections connection ON connection.id = resource.connection_id
+           WHERE (resource.id = ? OR resource.slug = ?) AND resource.workspace_id = ?`,
+      token, token, workspaceId).toArray()[0];
+      if (!row
+        || (row.connection_scope === "personal" && row.owner_user_id !== userId)
+        || (row.provider === "avalon_upload" && row.attachment_status !== "attached")) return { ok: false, index };
+      embeds.set(row.id, {
+        id: row.id, ...(row.slug ? { slug: row.slug } : {}), title: row.title.slice(0, 500), kind: row.resource_type.slice(0, 100),
+      });
+    }
+    return { ok: true, embeds: [...embeds.values()] };
   }
 
   /**
@@ -16634,6 +16668,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         groups.push(searchAudienceGroup.connection(connection.id));
       }
     }
+    // Each unarchived Channel this person reads that has resources shared with
+    // it, as the canonical resource check admits them.
+    const viewer = { userId: request.userId, accessClass: relationship.accessClass };
+    for (const { parent_id: spaceId } of sql.exec<{ parent_id: string }>(
+      "SELECT DISTINCT parent_id FROM authorization_locations WHERE parent_kind = 'space'").toArray()) {
+      if (this.spaceStorage().reach(viewer, spaceId, true) !== null) groups.push(searchAudienceGroup.space(spaceId));
+    }
     return searchAudienceGroupIds(groups);
   }
 
@@ -16653,9 +16694,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       members.results.map((row) => row.user_id), request.target);
   }
 
-  async authorizationResourceFacts(input: { workspaceId: string; userId: string; resourceIds: string[] }) {
+  async authorizationResourceFacts(input: {
+    workspaceId: string; userId: string; resourceIds: string[];
+    /** The reader's access class, which decides the Channels they read; absent reads as a guest's, the narrowest. */
+    accessClass?: "member" | "guest";
+  }) {
     await this.initialized;
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema, resourceIds: z.array(IdSchema) }).parse(input);
+    const request = z.strictObject({
+      workspaceId: WorkspaceIdSchema, userId: UserIdSchema, resourceIds: z.array(IdSchema),
+      accessClass: z.enum(["member", "guest"]).optional(),
+    }).parse(input);
+    const reader = { userId: request.userId, accessClass: request.accessClass ?? "guest" as const };
     this.assertWorkspace(request.workspaceId);
     const locations = new AuthorizationStorage(this.state.storage);
     const coverage = this.authorizationCoverage();
@@ -16674,13 +16723,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ).toArray()[0] : null;
 
       const owned = row.uploaded_by_user_id === request.userId;
-      return { resourceId, exists: true as const, validatedAt: Date.now(), revision: row.updated_at, owned,
+      const placed = locations.locations(resourceId);
+      // A Channel a merge shared this with admits whoever reads that Channel
+      // today, decided here because this object owns the Channel.
+      const sharedThrough = placed.find((location) => location.parentKind === "space"
+        && this.spaceStorage().reach(reader, location.parentId) !== null)?.parentId ?? null;
+      return { resourceId, exists: true as const, validatedAt: Date.now(), revision: row.updated_at, owned, sharedThrough,
         connectionAllowed: !row.connection_id || Boolean(connection && connection.status !== 'disabled'
           && (connection.scope === 'workspace' || connection.owner_user_id === request.userId)),
         noteAllowed: row.provider !== 'avalon_note',
         draftAllowed: !isDraftUpload(row) || owned,
         requiresAttachment: requiresAttachment(row, owned),
-        locations: locations.locations(resourceId), projectionComplete: coverage.complete, discoveryAt,
+        locations: placed.filter((location) => location.parentKind !== "space"), projectionComplete: coverage.complete, discoveryAt,
       };
     });
   }
