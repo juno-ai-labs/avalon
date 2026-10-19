@@ -165,8 +165,17 @@ function feedRowId(row: FeedRow): string {
 }
 
 function containsReadBoundary(rows: readonly FeedRow[], firstUnread: number | null): boolean {
-  return firstUnread === null || rows.some((row) => row.attentionSequenceNumber !== undefined
-    && row.attentionSequenceNumber > 0 && row.attentionSequenceNumber <= firstUnread);
+  if (firstUnread === null) return true;
+  const ordered = [...rows].reverse();
+  const unreadIndex = ordered.findIndex((row) => (row.attentionSequenceNumber ?? 0) >= firstUnread);
+  return unreadIndex !== 0 && rows.some((row) => {
+    const sequence = row.attentionSequenceNumber ?? 0;
+    return sequence > 0 && sequence <= firstUnread;
+  });
+}
+
+function isAtNewest(element: HTMLElement): boolean {
+  return element.scrollHeight - element.scrollTop - element.clientHeight < 48;
 }
 
 /**
@@ -246,15 +255,31 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
       ...page.items.map((item) => item.attentionSequenceNumber ?? 0),
       page.latestAttentionSequenceNumber ?? 0,
     ])), [feed.data]);
-  // Subscribed rather than read once, so stats arriving after the feed (or a
-  // mark made elsewhere) schedules the acknowledgement again. The sidebar owns
-  // fetching this list; this pane only reads it.
+  // Reuse fresh pushed stats, but refresh invalidated or missing state before
+  // choosing a read position, even when the Channels sidebar is not shown.
   const channelStats = useQuery<ChannelStatsList>({
     queryKey: CHANNEL_STATS_QUERY_KEY,
     queryFn: ({ signal }) => api!.getChannelStats(signal),
-    enabled: false,
+    enabled: Boolean(api && space),
+    staleTime: Infinity,
+    retry: false,
   });
   const stats = channelStats.data?.find((row) => row.channelId === channelId);
+  const statsAttempt = useRef<string | null>(null);
+  const statsReady = stats !== undefined && !channelStats.isStale && !channelStats.isFetching && !channelStats.isError;
+  const statsUnavailable = channelStats.isError
+    || (!stats && statsAttempt.current === channelId && !channelStats.isFetching);
+  useEffect(() => {
+    if (!api || !space) return;
+    if (channelStats.isFetching) {
+      statsAttempt.current = channelId;
+      return;
+    }
+    if (!channelStats.isError && (channelStats.isStale || (!stats && statsAttempt.current !== channelId))) {
+      statsAttempt.current = channelId;
+      void channelStats.refetch();
+    }
+  }, [api, channelId, channelStats.isError, channelStats.isFetching, channelStats.isStale, channelStats.refetch, space, stats]);
   // An artifact panel expanded over the feed, or filling a narrow window,
   // covers it: what arrives behind it has not been seen.
   const railExpanded = useUiStore((state) => state.railExpanded);
@@ -266,11 +291,12 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
   // whose acknowledgement failed is opening it again, and may send again.
   useEffect(() => { ackInFlight.current = null; }, [channelId]);
   const acknowledgeRead = useCallback((): void => {
-    if (!api || !stats || feedCovered || document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    if (!api || !stats || !statsReady || feedCovered || document.visibilityState !== 'visible' || !document.hasFocus()) return;
     const element = feedScroll.current;
     if (!element || element.clientHeight === 0 || anchoredChannel.current !== channelId) return;
+    if (degradedOpening.current) return;
     const viewport = element.getBoundingClientRect();
-    const atEnd = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+    const atEnd = isAtNewest(element);
     const visibleSequence = atEnd ? newestLoadedSequence : Math.max(0, ...Array.from(
       element.querySelectorAll<HTMLElement>('[data-attention-sequence]'),
     ).filter((row) => {
@@ -300,7 +326,9 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
       })
       // Leave the authoritative dot standing when the read was not recorded.
       .catch(() => undefined);
-  }, [api, channelId, feedCovered, newestLoadedSequence, queryClient, rows, stats]);
+    // Rows intentionally reschedule visible reads, even when their arrival
+    // does not change the newest attention sequence.
+  }, [api, channelId, feedCovered, newestLoadedSequence, queryClient, rows, stats, statsReady]);
   const scheduleRead = useVisibleReadAcknowledgement(acknowledgeRead);
   const members = useQuery({
     queryKey: ['workspace-members'],
@@ -326,12 +354,14 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
   const anchoredChannel = useRef<string | null>(null);
   const heldScrollTop = useRef(0);
   const restoreScroll = useRef(false);
+  const degradedOpening = useRef(false);
   const previousHeight = useRef(0);
   const earlierPages = feed.data?.pages.length ?? 0;
   const previousPages = useRef(earlierPages);
   const openingRead = useRef<{ channelId: string; firstUnread: number | null } | null>(null);
   const [positionedChannel, setPositionedChannel] = useState<string | null>(null);
-  const { fetchNextPage, hasNextPage, isFetching, isSuccess: feedLoaded, isFetchNextPageError } = feed;
+  const { fetchNextPage, hasNextPage, isFetching, isFetchNextPageError } = feed;
+  const feedLoaded = feed.data !== undefined;
   useLayoutEffect(() => {
     // Even an empty or still-loading Channel starts a new visit. Otherwise
     // A -> empty B -> A can mistake A's first page for a history prepend.
@@ -343,6 +373,8 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
       previousHeight.current = 0;
       previousPages.current = earlierPages;
       openingRead.current = null;
+      degradedOpening.current = false;
+      setPositionedChannel(null);
     }
     const element = feedScroll.current;
     if (!element) return;
@@ -352,26 +384,39 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
       restoreScroll.current = true;
       return;
     }
-    if (openingRead.current === null && channelStats.data !== undefined) {
-      openingRead.current = { channelId, firstUnread: stats?.firstUnreadSequenceNumber ?? null };
+    if (openingRead.current === null && statsReady) {
+      openingRead.current = { channelId, firstUnread: stats.firstUnreadSequenceNumber };
     }
     const loadedEarlier = earlierPages > previousPages.current;
     previousPages.current = earlierPages;
     if (anchoredChannel.current !== channelId) {
       if (reveal && finishedRevealKey !== location.key) return;
-      if (!openingRead.current || !feedLoaded) return;
-      const firstUnread = openingRead.current.firstUnread;
-      if (hasNextPage && !containsReadBoundary(rows, firstUnread)) return;
+      if ((!openingRead.current && !statsUnavailable) || !feedLoaded) return;
+      const firstUnread = openingRead.current?.firstUnread ?? null;
+      const missingUnread = firstUnread !== null && !rows.some((row) => (row.attentionSequenceNumber ?? 0) >= firstUnread);
+      if (missingUnread && isFetching) return;
+      if (hasNextPage && !containsReadBoundary(rows, firstUnread) && !isFetchNextPageError) return;
+      degradedOpening.current = statsUnavailable || isFetchNextPageError;
       anchoredChannel.current = channelId;
       const ordered = [...rows].reverse();
       const unreadIndex = firstUnread === null ? -1 : ordered.findIndex((row) =>
         row.attentionSequenceNumber !== undefined && row.attentionSequenceNumber >= firstUnread);
-      const target = unreadIndex < 0 ? null : element.querySelector<HTMLElement>(
-        `[data-feed-row-id="${CSS.escape(feedRowId(ordered[Math.max(0, unreadIndex - 1)]!))}"]`,
+      const targetIndex = degradedOpening.current ? 0 : Math.max(0, unreadIndex - 1);
+      const target = unreadIndex < 0 && !degradedOpening.current ? null : element.querySelector<HTMLElement>(
+        `[data-feed-row-id="${CSS.escape(ordered[targetIndex] ? feedRowId(ordered[targetIndex]) : '')}"]`,
       );
-      element.scrollTop = target === null ? element.scrollHeight
+      const unread = unreadIndex < 0 ? null : element.querySelector<HTMLElement>(
+        `[data-feed-row-id="${CSS.escape(feedRowId(ordered[unreadIndex]!))}"]`,
+      );
+      let top = target === null ? element.scrollHeight
         : element.scrollTop + target.getBoundingClientRect().top - element.getBoundingClientRect().top;
-      atNewest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+      if (unread && !degradedOpening.current) {
+        const bounds = unread.getBoundingClientRect();
+        top = Math.max(top, element.scrollTop + bounds.top - element.getBoundingClientRect().top
+          - element.clientHeight + Math.min(bounds.height, element.clientHeight));
+      }
+      element.scrollTop = top;
+      atNewest.current = isAtNewest(element);
       setPositionedChannel(channelId);
       scheduleRead();
     } else if (loadedEarlier) {
@@ -386,8 +431,8 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
     previousHeight.current = element.scrollHeight;
     // `space` too: the feed element first mounts when the Channel list arrives,
     // which may be after the rows were already in hand.
-  }, [channelId, channelStats.data, earlierPages, feedLoaded, feedVisible, hasNextPage,
-    finishedRevealKey, location.key, reveal?.messageId, rows, scheduleRead, space, stats]);
+  }, [channelId, earlierPages, feedLoaded, feedVisible, hasNextPage, isFetching, isFetchNextPageError,
+    finishedRevealKey, location.key, reveal?.messageId, rows, scheduleRead, space, stats, statsReady, statsUnavailable]);
   // useInfiniteQuery updates its observer's address in a passive effect. A
   // layout-effect fetch during a route switch can still page the previous
   // Channel, so network work follows that update; positioning stays before paint.
@@ -419,10 +464,18 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
     if (!feedVisible || !feedScroll.current || feedScroll.current.clientHeight === 0) return;
     const target = feedScroll.current?.querySelector(`[data-message-id="${CSS.escape(reveal.messageId)}"]`);
     if (!reveal.searchHistory) {
-      if (rows[0] === undefined || feedRowId(rows[0]) !== reveal.messageId || !target) return;
+      if (rows[0] === undefined || feedRowId(rows[0]) !== reveal.messageId || !target) {
+        if (!feedLoaded || isFetching) return;
+        if (!target) {
+          revealedFor.current = location.key;
+          setFinishedRevealKey(location.key);
+          return;
+        }
+        atNewest.current = false;
+      }
     } else if (!target) {
       if (!feedLoaded || isFetching || !feedScroll.current) return;
-      if (!hasNextPage) {
+      if (!hasNextPage || isFetchNextPageError) {
         revealedFor.current = location.key;
         setFinishedRevealKey(location.key);
       }
@@ -438,7 +491,7 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
     setPositionedChannel(channelId);
     scheduleRead();
     setHighlightedId(reveal.messageId);
-  }, [channelId, feedLoaded, feedVisible, fetchNextPage, hasNextPage, isFetching, location.key,
+  }, [channelId, feedLoaded, feedVisible, fetchNextPage, hasNextPage, isFetching, isFetchNextPageError, location.key,
     reveal?.messageId, reveal?.searchHistory, rows, scheduleRead, space]);
   useEffect(() => {
     if (highlightedId === null) return;
@@ -460,66 +513,80 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
       {/* Keyed so a confirmation still open when the route changes (a leave,
           a removal, an archive) cannot be continued against the next Channel. */}
       <ChannelHeader key={space.id} members={members.data ?? []} space={space} workspace={workspace} />
-      <div
-        className="channel-feed transcript-scroll"
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          if (!feedVisible || element.clientHeight === 0) return;
-          heldScrollTop.current = element.scrollTop;
-          atNewest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
-          scheduleRead();
-        }}
-        ref={feedScroll}
-      >
-        {/* Newest nearest the composer: the list reads down to now. */}
-        <EmailMentionContext.Provider value={emailMentions}><ol aria-busy={positionedChannel !== channelId} aria-label={`${space.name} feed`} className="channel-feed-list">
-          {feed.hasNextPage && <li className="channel-feed-more">
-            <Button disabled={feed.isFetchingNextPage} onClick={() => void feed.fetchNextPage()}>Show earlier</Button>
-          </li>}
-          {[...rows].reverse().flatMap((row, index, ordered) => {
-            // Grouped by the local calendar date, year and all; the label is
-            // only for display, and two years' "Oct 2" are different days.
-            const day = new Date(row.placedAt).toDateString();
-            const card = row.kind === 'thread'
-              ? <ThreadCard
-                attentionSequenceNumber={row.attentionSequenceNumber}
-                author={row.thread.createdByUserId ? memberById.get(row.thread.createdByUserId) : undefined}
-                key={row.thread.id}
-                members={members.data ?? NO_MEMBERS}
-                onOpen={openThread}
-                open={row.thread.id === openThreadId}
-                placedAt={row.placedAt}
-                thread={row.thread}
-              />
-              : row.message.merge
-                ? <MergeCard
+      <div className="channel-feed-pane">
+        {feed.isError && <InlineError>{isFetchNextPageError
+          ? 'Earlier messages couldn’t be loaded. Use Show earlier to retry.'
+          : 'The threads in this channel couldn’t be loaded.'}</InlineError>}
+        {statsUnavailable && <InlineError>
+          Your reading position couldn’t be loaded. <Button onClick={() => {
+            anchoredChannel.current = null;
+            openingRead.current = null;
+            degradedOpening.current = false;
+            setPositionedChannel(null);
+            void channelStats.refetch();
+          }}>Retry reading position</Button>
+        </InlineError>}
+        <div
+          className="channel-feed transcript-scroll"
+          onScroll={(event) => {
+            const element = event.currentTarget;
+            if (!feedVisible || element.clientHeight === 0) return;
+            if (element.scrollTop !== heldScrollTop.current) degradedOpening.current = false;
+            heldScrollTop.current = element.scrollTop;
+            atNewest.current = isAtNewest(element);
+            scheduleRead();
+          }}
+          ref={feedScroll}
+        >
+          {/* Newest nearest the composer: the list reads down to now. */}
+          <EmailMentionContext.Provider value={emailMentions}><ol aria-busy={positionedChannel !== channelId} aria-label={`${space.name} feed`} className="channel-feed-list">
+            {feed.hasNextPage && <li className="channel-feed-more">
+              <Button disabled={feed.isFetchingNextPage} onClick={() => void feed.fetchNextPage()}>Show earlier</Button>
+            </li>}
+            {[...rows].reverse().flatMap((row, index, ordered) => {
+              // Grouped by the local calendar date, year and all; the label is
+              // only for display, and two years' "Oct 2" are different days.
+              const day = new Date(row.placedAt).toDateString();
+              const card = row.kind === 'thread'
+                ? <ThreadCard
                   attentionSequenceNumber={row.attentionSequenceNumber}
-                  author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
-                  focused={row.message.id === highlightedId}
-                  key={row.message.id}
+                  author={row.thread.createdByUserId ? memberById.get(row.thread.createdByUserId) : undefined}
+                  key={row.thread.id}
                   members={members.data ?? NO_MEMBERS}
-                  merge={row.message.merge}
-                  message={row.message}
-                  onOpenArtifact={openArtifact}
-                  onOpenThread={openThread}
+                  onOpen={openThread}
+                  open={row.thread.id === openThreadId}
                   placedAt={row.placedAt}
+                  thread={row.thread}
                 />
-                : <MessageCard
-                  attentionSequenceNumber={row.attentionSequenceNumber}
-                  author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
-                  focused={row.message.id === highlightedId}
-                  key={row.message.id}
-                  members={members.data ?? NO_MEMBERS}
-                  message={row.message}
-                  placedAt={row.placedAt}
-                />;
-            const previous = ordered[index - 1];
-            if (previous && new Date(previous.placedAt).toDateString() === day) return [card];
-            return [<DaySeparator key={`day:${feedRowId(row)}`} placedAt={row.placedAt} />, card];
-          })}
-        </ol></EmailMentionContext.Provider>
-        {feed.isSuccess && rows.length === 0 && <p className="channel-feed-empty">No threads yet. Describe the work below and Rally starts a thread for it.</p>}
-        {feed.isError && <InlineError>The threads in this channel couldn’t be loaded.</InlineError>}
+                : row.message.merge
+                  ? <MergeCard
+                    attentionSequenceNumber={row.attentionSequenceNumber}
+                    author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
+                    focused={row.message.id === highlightedId}
+                    key={row.message.id}
+                    members={members.data ?? NO_MEMBERS}
+                    merge={row.message.merge}
+                    message={row.message}
+                    onOpenArtifact={openArtifact}
+                    onOpenThread={openThread}
+                    placedAt={row.placedAt}
+                  />
+                  : <MessageCard
+                    attentionSequenceNumber={row.attentionSequenceNumber}
+                    author={row.message.author.kind === 'member' ? memberById.get(row.message.author.userId) : undefined}
+                    focused={row.message.id === highlightedId}
+                    key={row.message.id}
+                    members={members.data ?? NO_MEMBERS}
+                    message={row.message}
+                    placedAt={row.placedAt}
+                  />;
+              const previous = ordered[index - 1];
+              if (previous && new Date(previous.placedAt).toDateString() === day) return [card];
+              return [<DaySeparator key={`day:${feedRowId(row)}`} placedAt={row.placedAt} />, card];
+            })}
+          </ol></EmailMentionContext.Provider>
+          {feed.isSuccess && rows.length === 0 && <p className="channel-feed-empty">No threads yet. Describe the work below and Rally starts a thread for it.</p>}
+        </div>
       </div>
       {canStart && <ChannelComposer channelColor={space.colorKey} channelId={channelId} channelName={space.name} channelScope={space.scope === 'workspace' ? 'workspace' : 'personal'} threadOpen={openThreadId !== null} workspace={workspace} />}
     </div>

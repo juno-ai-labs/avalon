@@ -1994,16 +1994,6 @@ member is still unseated.
 
 ## Changelog
 
-### 2026-10-19: Channel visits resume from the server read position
-
-The renderer opens at first unread with preceding context and acknowledges
-only visible rows until the reader reaches the end. Previously opening marked
-the whole feed read, which would erase the saved position before a subsequent
-visit could use it. The existing server read state and paginated feed remain
-the authorities; no pixel offset is stored on the server. Hidden panes neither
-position nor acknowledge their feed. See the
-[Channel screen](desktop-shell.md#the-channel-screen) for viewport behavior.
-
 ### 2026-10-16: The Channel waterline counts news of any kind
 
 **What changed:** A Channel message can be news. It takes the Channel's next
