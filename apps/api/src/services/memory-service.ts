@@ -1,40 +1,41 @@
-import { resolveMemorySearchAccess } from './memory-search-authorization';
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { asWorkspaceId, MEMORY_RECALL_QUERY_LIMIT } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
+import type { HarnessTool, HarnessToolResult } from "@rally/agent-harness";
 import type { Env } from "../env";
-import { sha256 } from "../lib/crypto";
-import { OpenRouterError, type HarnessTool, type HarnessToolResult } from "@rally/agent-harness";
 import { workspaceDOName } from "../durable-objects/names";
+import { WorkspaceMemoryScopeSchema } from "../durable-objects/workspace-memory-protocol";
 import {
-  WorkspaceMemoryAddResultSchema,
-  WorkspaceMemoryCandidateListSchema,
-  WorkspaceMemoryItemForWriteResultSchema,
-  WorkspaceMemoryItemListSchema,
-  WorkspaceMemoryOutboxClaimResultSchema,
-  WorkspaceMemoryOutboxDueListSchema,
-  WorkspaceMemoryProjectionSourceResultSchema,
-  WorkspaceMemoryReceiptResultSchema,
-  WorkspaceMemoryScopeSchema,
-  WorkspaceMemoryWriteResultSchema,
-  type WorkspaceMemoryItem,
-  type WorkspaceMemoryOutboxRow,
-} from "../durable-objects/workspace-memory-protocol";
+  WorkspaceMemoryForgetResultSchema,
+  WorkspaceMemoryRecallResultSchema,
+  WorkspaceMemoryRememberResultSchema,
+  type MemoryConversation,
+  type MemoryDerivedFrom,
+  type MemoryFact,
+  type MemoryReader,
+  type WorkspaceMemoryRecallResult,
+} from "../durable-objects/workspace-memory-facts-protocol";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { memoryScopeRows } from "./memory-scope-cache";
-import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createIdentityObjectPort } from "../runtime/identity-port";
-import { isMemoryEmbeddingModel, MEMORY_EMBEDDING_MODEL, runEmbeddingInference } from "./structured-inference";
+import { diagnosticErrorCode, logWarn } from "../observability/logger";
 
-export const MEMORY_EMBEDDING_DIMENSIONS = 1_024;
-const MEMORY_EMBEDDING_SPACE_VERSION = "v1";
+/**
+ * Agent memory as the harness sees it: the `rally:memory` plugin's three tools
+ * over the fact store in `WorkspaceDO`, and the scope resolution that
+ * `rally_tables` still hangs off.
+ *
+ * The tools never choose a scope, a subject, or a conversation. The host
+ * derives who is acting (the run's frozen principal), where (the run's
+ * conversation) and what trust class a remembered fact carries (the input that
+ * started the run); `WorkspaceDO` decides what is visible and what may be
+ * retracted from the facts' own sources. The sweep that writes most facts
+ * lives in `memory-sweep-service.ts`. See `docs/agent-memory.md`.
+ */
 
 export const MEMORY_SCOPE_KINDS = ["workstream", "sidekick", "user", "workspace"] as const;
-const SEARCH_CANDIDATES_PER_LEG = 20;
-const SEARCH_RESULTS = 10;
-const RRF_OFFSET = 60;
 
 export type MemoryScopeKind = typeof MEMORY_SCOPE_KINDS[number];
 
@@ -46,46 +47,6 @@ export interface MemoryScope {
   writable: boolean;
 }
 
-export interface MemorySearchItem {
-  memoryItemId: string;
-  memoryScopeId: string;
-  scopeKind: MemoryScopeKind;
-  text: string;
-  revision: number;
-  expiresAt: string | null;
-}
-
-export type MemoryRetrievalMode = "hybrid" | "fts_only" | "vector_only" | "none";
-
-export interface MemorySearchResult {
-  query: string;
-  retrievalMode: MemoryRetrievalMode;
-  results: MemorySearchItem[];
-}
-
-export interface FrozenMemoryContext extends MemorySearchResult {
-  memoryScopeIds: string[];
-  memoryContextHash: string;
-}
-
-interface MemoryRunLease {
-  attemptId: string;
-  owner: string;
-}
-
-interface RankedCandidate {
-  memoryItemId: string;
-  revision: number;
-}
-
-interface MutationResult {
-  memoryItemId: string;
-  memoryScopeId: string;
-  scopeKind: MemoryScopeKind;
-  revision: number;
-  invalidated: boolean;
-}
-
 /** The WorkspaceDO that owns this workspace's memory tables. */
 function workspaceMemoryObject(env: Env, workspaceId: string) {
   return durableObjectStubForWorkspace(
@@ -95,41 +56,6 @@ function workspaceMemoryObject(env: Env, workspaceId: string) {
     workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
   );
 }
-
-/**
- * The message matters more than usual here. The wire schema no longer declares
- * the exclusivity — a `oneOf` of bare `required` branches does not survive
- * sanitization — so this rejection is the model's only feedback. Left to its
- * default a union reports each branch's own complaint, which for two `.strict()`
- * objects reads `Unrecognized key: "memoryItemId"` and `Unrecognized key:
- * "query"`: together, "neither key is allowed", and a model that believes it
- * retries with `{}`, which fails too.
- */
-const SearchInputSchema = z.union([
-  z.strictObject({ query: z.string().trim().min(1).max(MEMORY_RECALL_QUERY_LIMIT) }),
-  z.strictObject({ memoryItemId: z.string().uuid() }),
-], { error: "Send exactly one of query or memoryItemId: query to search, memoryItemId to reread one known item." });
-
-const AddInputSchema = z.strictObject({
-  scopeKind: z.enum(MEMORY_SCOPE_KINDS),
-  text: z.string().trim().min(1).max(16_000),
-  expiresAt: z.string().datetime({ offset: true }).optional(),
-  rationale: z.string().trim().min(1).max(2_000),
-});
-
-const UpdateInputSchema = z.strictObject({
-  memoryItemId: z.string().uuid(),
-  expectedRevision: z.number().int().positive(),
-  text: z.string().trim().min(1).max(16_000),
-  expiresAt: z.string().datetime({ offset: true }).optional(),
-  rationale: z.string().trim().min(1).max(2_000),
-});
-
-const InvalidateInputSchema = z.strictObject({
-  memoryItemId: z.string().uuid(),
-  expectedRevision: z.number().int().positive(),
-  reason: z.string().trim().min(1).max(2_000),
-});
 
 class MemoryToolError extends Error {
   override readonly name = "MemoryToolError";
@@ -143,15 +69,6 @@ class MemoryToolError extends Error {
   }
 }
 
-function memoryRevisionConflict(): MemoryToolError {
-  return new MemoryToolError(
-    "memory_revision_conflict",
-    "The durable memory changed after it was read. Read it again by memoryItemId, inspect the current text and revision, and rebuild the mutation.",
-    {
-      reason: "Call memory_search with this memoryItemId, inspect its current text and revision, and rebuild the update or invalidation. Do not retry with the old revision.",
-    },
-  );
-}
 
 /**
  * The scope kinds a refusal names, narrowest first.
@@ -232,28 +149,6 @@ function stableJson(value: unknown): string {
       .join(",")}}`;
   }
   return JSON.stringify(value) ?? "null";
-}
-
-function vectorId(memoryItemId: string, revision: number): string {
-  return `${memoryItemId}:${revision}`;
-}
-
-function parseVectorId(value: string): RankedCandidate | null {
-  const separator = value.lastIndexOf(":");
-  if (separator <= 0) return null;
-  const memoryItemId = value.slice(0, separator);
-  const revision = Number.parseInt(value.slice(separator + 1), 10);
-  if (!Number.isInteger(revision) || revision <= 0) return null;
-  return { memoryItemId, revision };
-}
-
-function ftsQuery(value: string): string | null {
-  const tokens = value.normalize("NFKC").match(/[\p{L}\p{N}_-]+/gu) ?? [];
-  if (tokens.length === 0) return null;
-  return [...new Set(tokens.map((token) => token.toLocaleLowerCase()))]
-    .slice(0, 96)
-    .map((token) => `"${token.replaceAll('"', '""')}"`)
-    .join(" OR ");
 }
 
 export async function ensureScope(
@@ -358,376 +253,6 @@ export async function resolveMemoryAccess(
   return scopes;
 }
 
-async function searchFts(
-  env: Env,
-  workspaceId: string,
-  scopeIds: readonly string[],
-  query: string,
-): Promise<RankedCandidate[]> {
-  const match = ftsQuery(query);
-  if (!match || scopeIds.length === 0) return [];
-  const workspace = await workspaceMemoryObject(env, workspaceId);
-  return WorkspaceMemoryCandidateListSchema.parse(await workspace.searchMemoryItemsFts({
-    workspaceId,
-    match,
-    scopeIds: [...scopeIds],
-    now: nowIso(),
-    limit: SEARCH_CANDIDATES_PER_LEG,
-  })).candidates;
-}
-
-interface MemoryEmbeddingContext {
-  workspaceId: string;
-  workstreamId?: string;
-  substreamId?: string;
-  harnessRunId?: string;
-  requestId?: string;
-  executionPrincipal?: WorkstreamWorkflowInput["executionPrincipal"];
-}
-
-interface MemoryEmbedding {
-  values: number[];
-}
-
-async function embedMemory(
-  env: Env,
-  text: string,
-  inputType: "search_query" | "search_document",
-  context: MemoryEmbeddingContext,
-): Promise<MemoryEmbedding> {
-  const contextUserId = context.executionPrincipal?.type === "user"
-    ? context.executionPrincipal.userId
-    : undefined;
-  const result = await runEmbeddingInference(env, {
-    context: {
-      workspaceId: context.workspaceId,
-      ...(context.workstreamId ? { workstreamId: context.workstreamId } : {}),
-      ...(context.substreamId ? { substreamId: context.substreamId } : {}),
-      ...(contextUserId ? { userId: contextUserId } : {}),
-    },
-    text,
-    inputType,
-    dimensions: MEMORY_EMBEDDING_DIMENSIONS,
-    generationName: inputType === "search_query" ? "memory_query_embedding" : "memory_document_embedding",
-    ...(context.harnessRunId ? { harnessRunId: context.harnessRunId } : {}),
-    ...(context.requestId ? { requestId: context.requestId } : {}),
-    ...(context.executionPrincipal ? {
-      executionPrincipalType: context.executionPrincipal.type,
-      executionPrincipalId: context.executionPrincipal.type === "user"
-        ? context.executionPrincipal.userId
-        : context.executionPrincipal.workspaceId,
-    } : {}),
-  });
-  if (
-    result.requestedModel !== MEMORY_EMBEDDING_MODEL
-    || !isMemoryEmbeddingModel(result.resolvedModel)
-  ) {
-    throw new Error("memory_embedding_model_mismatch");
-  }
-  const values = result.embeddings[0];
-  if (!values) throw new Error(`memory_${inputType}_embedding_empty`);
-  return { values };
-}
-
-async function memoryVectorNamespace(scopeId: string): Promise<string> {
-  const space = (await sha256(
-    `${MEMORY_EMBEDDING_SPACE_VERSION}:${MEMORY_EMBEDDING_MODEL}:${MEMORY_EMBEDDING_DIMENSIONS}`,
-  )).slice(0, 12);
-  return `${scopeId}:${space}`;
-}
-
-async function searchVector(
-  env: Env,
-  input: WorkstreamWorkflowInput,
-  scopes: readonly MemoryScope[],
-  query: string,
-): Promise<RankedCandidate[]> {
-  if (!env.MEMORY_INDEX) throw new Error("memory_vector_binding_unavailable");
-  const embedding = await embedMemory(env, query, "search_query", {
-    workspaceId: input.workspaceId,
-    workstreamId: input.parentId,
-    ...(input.substreamId ? { substreamId: input.substreamId } : {}),
-    harnessRunId: input.harnessRunId,
-    executionPrincipal: input.executionPrincipal,
-  });
-  const matchesByScope = await Promise.all(scopes.map(async (scope) => env.MEMORY_INDEX.query(
-    embedding.values,
-    {
-      topK: SEARCH_CANDIDATES_PER_LEG,
-      namespace: await memoryVectorNamespace(scope.memoryScopeId),
-      returnMetadata: false,
-      returnValues: false,
-    },
-  )));
-  return matchesByScope
-    .flatMap((result) => result.matches)
-    .sort((left, right) => right.score - left.score)
-    .map((match) => parseVectorId(match.id))
-    .filter((candidate): candidate is RankedCandidate => candidate !== null)
-    .slice(0, SEARCH_CANDIDATES_PER_LEG);
-}
-
-async function loadCanonicalItems(
-  env: Env,
-  workspaceId: string,
-  scopeIds: readonly string[],
-  memoryItemIds: readonly string[],
-): Promise<WorkspaceMemoryItem[]> {
-  if (scopeIds.length === 0 || memoryItemIds.length === 0) return [];
-  const workspace = await workspaceMemoryObject(env, workspaceId);
-  return WorkspaceMemoryItemListSchema.parse(await workspace.canonicalMemoryItems({
-    workspaceId,
-    scopeIds: [...scopeIds],
-    memoryItemIds: [...memoryItemIds],
-    now: nowIso(),
-  })).items;
-}
-
-async function recordAccess(
-  env: Env,
-  workspaceId: string,
-  itemIds: readonly string[],
-): Promise<void> {
-  if (itemIds.length === 0) return;
-  const workspace = await workspaceMemoryObject(env, workspaceId);
-  await workspace.recordMemoryItemAccess({
-    workspaceId,
-    memoryItemIds: [...itemIds],
-    at: nowIso(),
-  });
-}
-
-async function hybridMemorySearch(
-  env: Env,
-  input: WorkstreamWorkflowInput,
-  query: string,
-  trackAccess = true,
-): Promise<MemorySearchResult & { scopes: MemoryScope[] }> {
-  const scopes = await resolveMemorySearchAccess(env, input);
-  if (scopes.length === 0) {
-    return { query, retrievalMode: "none", results: [], scopes };
-  }
-  const scopeIds = scopes.map((scope) => scope.memoryScopeId);
-  const [ftsSettled, vectorSettled] = await Promise.allSettled([
-    searchFts(env, input.workspaceId, scopeIds, query),
-    searchVector(env, input, scopes, query),
-  ]);
-  const fts = ftsSettled.status === "fulfilled" ? ftsSettled.value : [];
-  const vector = vectorSettled.status === "fulfilled" ? vectorSettled.value : [];
-  const retrievalMode: MemoryRetrievalMode = ftsSettled.status === "fulfilled"
-    ? vectorSettled.status === "fulfilled" ? "hybrid" : "fts_only"
-    : vectorSettled.status === "fulfilled" ? "vector_only" : "none";
-
-  const canonicalScopeIds = scopeIds;
-  const candidateIds = [...new Set([...fts, ...vector].map((candidate) => candidate.memoryItemId))];
-  const canonicalRows = await loadCanonicalItems(
-    env,
-    input.workspaceId,
-    canonicalScopeIds,
-    candidateIds,
-  );
-  const canonicalById = new Map(canonicalRows.map((row) => [row.memoryItemId, row]));
-  const scores = new Map<string, number>();
-  for (const candidates of [fts, vector]) {
-    candidates.forEach((candidate, index) => {
-      const canonical = canonicalById.get(candidate.memoryItemId);
-      if (!canonical || canonical.revision !== candidate.revision) return;
-      scores.set(
-        candidate.memoryItemId,
-        (scores.get(candidate.memoryItemId) ?? 0) + 1 / (RRF_OFFSET + index + 1),
-      );
-    });
-  }
-  const ranked = [...scores.entries()]
-    .sort(([leftId, leftScore], [rightId, rightScore]) => {
-      if (rightScore !== leftScore) return rightScore - leftScore;
-      const updated = canonicalById.get(rightId)!.updatedAt.localeCompare(
-        canonicalById.get(leftId)!.updatedAt,
-      );
-      return updated || (leftId < rightId ? -1 : leftId > rightId ? 1 : 0);
-    })
-    .slice(0, SEARCH_RESULTS)
-    .map(([memoryItemId]): MemorySearchItem => {
-      const row = canonicalById.get(memoryItemId)!;
-      return {
-        memoryItemId: row.memoryItemId,
-        memoryScopeId: row.memoryScopeId,
-        scopeKind: row.scopeKind,
-        text: row.text,
-        revision: row.revision,
-        expiresAt: row.expiresAt,
-      };
-    });
-  if (trackAccess) {
-    // Retrieval remains available when non-authoritative access counters cannot
-    // be updated; projected scope admission and the canonical item read above have already succeeded.
-    await recordAccess(env, input.workspaceId, ranked.map((item) => item.memoryItemId))
-      .catch(() => undefined);
-  }
-  return { query, retrievalMode, results: ranked, scopes };
-}
-
-export async function memorySearch(
-  env: Env,
-  input: WorkstreamWorkflowInput,
-  query: string,
-): Promise<MemorySearchResult> {
-  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
-  const parsed = SearchInputSchema.parse({ query });
-  if (!("query" in parsed)) throw new Error("memory_search_query_expected");
-  const result = await hybridMemorySearch(env, input, parsed.query);
-  return { query: result.query, retrievalMode: result.retrievalMode, results: result.results };
-}
-
-async function memoryReadById(
-  env: Env,
-  input: WorkstreamWorkflowInput,
-  memoryItemId: string,
-) {
-  const scopes = await resolveMemoryAccess(env, input);
-  const scopeIds = scopes.map((scope) => scope.memoryScopeId);
-  const row = (await loadCanonicalItems(env, input.workspaceId, scopeIds, [memoryItemId]))[0];
-  const currentScopes = await resolveMemoryAccess(env, input);
-  const currentlyAuthorized = new Set(currentScopes.map((scope) => scope.memoryScopeId));
-  const visible = row && currentlyAuthorized.has(row.memoryScopeId) ? row : null;
-  if (visible) {
-    await recordAccess(env, input.workspaceId, [visible.memoryItemId]).catch(() => undefined);
-  }
-  return {
-    query: null,
-    memoryItemId,
-    retrievalMode: "exact" as const,
-    results: visible ? [{
-      memoryItemId: visible.memoryItemId,
-      memoryScopeId: visible.memoryScopeId,
-      scopeKind: visible.scopeKind,
-      text: visible.text,
-      revision: visible.revision,
-      expiresAt: visible.expiresAt,
-    }] : [],
-  };
-}
-
-function parseFrozenContext(row: {
-  memory_scope_ids_json: string;
-  query_text: string;
-  // The object stores what it was given; the narrow union is the runtime's.
-  retrieval_mode: string;
-  results_json: string;
-  memory_context_hash: string;
-}): FrozenMemoryContext {
-  return {
-    memoryScopeIds: JSON.parse(row.memory_scope_ids_json) as string[],
-    query: row.query_text,
-    retrievalMode: row.retrieval_mode as MemoryRetrievalMode,
-    results: JSON.parse(row.results_json) as MemorySearchItem[],
-    memoryContextHash: row.memory_context_hash,
-  };
-}
-
-export async function freezeRunMemoryContext(
-  env: Env,
-  input: WorkstreamWorkflowInput,
-  lease: MemoryRunLease,
-  rawQuery: string,
-): Promise<FrozenMemoryContext> {
-  // Bounded to what the recall surfaces accept, because this query is assembled
-  // from run content rather than chosen by anyone: `memoryQueryParts` joins the
-  // objective, the trigger context and the full text of the triggering message.
-  // An automation triggered by a long email or chat message therefore built a
-  // query over the automation memory tool's 2000-character bound, and the
-  // ZodError from that parse escaped run setup — before the frozen scope, before
-  // the first inference — so the run failed on every attempt and stayed failed,
-  // with a bare `harness_execution_failed` naming nothing anyone could act on.
-  //
-  // The two branches lose different amounts, and only one of them loses
-  // nothing. On the automation side the match is `instr(lower(text),
-  // lower(?))`, so a query longer than any stored memory could never have
-  // matched and truncation costs nothing at all. The workspace side is
-  // `hybridMemorySearch`, whose vector leg embeds the query — a 2000-character
-  // prefix genuinely does retrieve differently from the whole string, and that
-  // branch had no bound of its own forcing this.
-  //
-  // It is still the right cut, because of what the tail is. `memoryQueryParts`
-  // appends in order: the recallable objective first, then the trigger context,
-  // then the full text of the triggering message. Truncating drops the end of a
-  // long email or chat message, not the objective the recall is about.
-  //
-  // The bound is the receiving schema's rather than a new number of this
-  // function's choosing, and it is applied before the hash and the persisted
-  // text so a replay freezes the same query.
-  const query = (rawQuery.trim() || "Current work-stream objective and trigger")
-    .slice(0, MEMORY_RECALL_QUERY_LIMIT);
-  const runs = createHarnessRunObjectPort(env, input.workspaceId, input.parentId);
-  const fence = {
-    runId: input.harnessRunId,
-    attemptId: lease.attemptId,
-    owner: lease.owner,
-    now: Date.now(),
-  };
-  const existing = await runs.memoryContext(fence);
-  if (existing) return parseFrozenContext(existing);
-
-  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
-  const workspaceRecall = await hybridMemorySearch(env, input, query);
-  const memoryScopeIds = workspaceRecall.scopes.map((scope) => scope.memoryScopeId).sort();
-  const results = workspaceRecall.results;
-  const retrievalMode = workspaceRecall.retrievalMode;
-  const memoryContextHash = await sha256(stableJson({ memoryScopeIds, query, retrievalMode, results }));
-  // The recall above costs a vector search, so the read and the write cannot be
-  // one operation. A loser gets the winner's row rather than an outcome to
-  // interpret: freezing recall exists so every replay of this attempt sees the
-  // same memories, which makes the row the run will actually use the only
-  // useful answer.
-  const frozen = await runs.persistMemoryContext({
-    ...fence,
-    now: Date.now(),
-    memoryScopeIdsJson: JSON.stringify(memoryScopeIds),
-    queryText: query,
-    retrievalMode,
-    resultsJson: JSON.stringify(results),
-    memoryContextHash,
-  });
-  if (frozen.outcome === "ownership_lost") {
-    throw new Error("memory_context_run_ownership_lost");
-  }
-  return parseFrozenContext(frozen.row);
-}
-
-function requireReceipt(context: { providerIdempotencyKey?: string }): string {
-  const receipt = context.providerIdempotencyKey?.trim();
-  if (!receipt) throw new Error("Memory writes require a durable provider idempotency key");
-  return receipt;
-}
-
-async function loadReceipt(
-  env: Env,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "harnessRunId">,
-  receiptId: string,
-  operation: "add" | "update" | "invalidate",
-  inputHash: string,
-): Promise<MutationResult | null> {
-  const workspace = await workspaceMemoryObject(env, input.workspaceId);
-  const receipt = WorkspaceMemoryReceiptResultSchema.parse(await workspace.memoryMutationReceipt({
-    workspaceId: input.workspaceId,
-    harnessRunId: input.harnessRunId,
-    receiptId,
-  }));
-  if (receipt.outcome === "none") return null;
-  if (receipt.operation !== operation || receipt.inputHash !== inputHash) {
-    throw new Error("memory_mutation_receipt_mismatch");
-  }
-  return JSON.parse(receipt.resultJson) as MutationResult;
-}
-
-async function mutationInputHash(operation: string, args: unknown): Promise<string> {
-  return sha256(stableJson({ operation, args }));
-}
-
-function mutationToolResult(result: MutationResult, summary: string): HarnessToolResult {
-  return { output: result, summary, providerOperationId: result.memoryItemId };
-}
-
 /**
  * The one place a write tool turns a model-chosen scope kind into a scope.
  *
@@ -748,208 +273,274 @@ export async function writableScope(
   return scope;
 }
 
-async function addMemory(
+// -- The three tools ----------------------------------------------------------
+
+const RecallInputSchema = z.strictObject({
+  query: z.string().trim().min(1).max(MEMORY_RECALL_QUERY_LIMIT),
+  limit: z.number().int().min(1).max(25).optional(),
+});
+
+const RememberInputSchema = z.strictObject({
+  text: z.string().trim().min(1).max(600),
+  kind: z.enum(["standing", "situational"]),
+  validUntil: z.string().datetime({ offset: true }).optional(),
+  about: z.enum(["me", "this conversation"]).optional(),
+});
+
+const ForgetInputSchema = z.strictObject({
+  factId: z.string().trim().min(1),
+});
+
+const RECALL_DEFAULT_LIMIT = 10;
+
+/** The subject label the model reads; never an id it could reuse as a scope. */
+const PERSON_LABEL = "the person you are working for";
+const ORGANIZATION_LABEL = "this Organization";
+
+function memoryUnavailable(env: Env, input: WorkstreamWorkflowInput, error: unknown): MemoryToolError {
+  // A generic code is a defect without its reason beside it: the log carries
+  // the cause the model is not told.
+  logWarn(env, "memory_tool_unavailable", {
+    workspace_id: input.workspaceId,
+    workstream_id: input.parentId,
+    substream_id: input.substreamId ?? "0",
+    harness_run_id: input.harnessRunId,
+    reason: diagnosticErrorCode(error, "memory_unavailable"),
+    detail: error instanceof Error ? error.message.slice(0, 500) : undefined,
+  });
+  return new MemoryToolError(
+    "memory_unavailable",
+    "Memory is not reachable right now. Continue without it; do not retry this call.",
+    { reason: "Memory is not reachable right now. Continue without it; do not retry this call." },
+  );
+}
+
+/** The conversation a run acts in, as the fact store names one. */
+function conversationOf(input: WorkstreamWorkflowInput): MemoryConversation {
+  return { parentKind: input.parentKind, parentId: input.parentId, substreamId: input.substreamId ?? "0" };
+}
+
+/**
+ * Who is acting, from the frozen principal: a person, the Sidekick whose
+ * conversation this is, or the conversation itself when a workspace principal
+ * runs in a Thread and nobody in particular is asking.
+ */
+function readerOf(input: WorkstreamWorkflowInput): MemoryReader {
+  if (input.executionPrincipal.type === "user") return { kind: "person", userId: input.executionPrincipal.userId };
+  if (input.parentKind === "automation") return { kind: "sidekick", automationId: input.parentId };
+  return { kind: "conversation" };
+}
+
+/**
+ * The trust class of what started this run, which is what a remembered fact
+ * inherits: a Slack or email trigger cannot talk the model into a `person`
+ * fact, and an agent's message cannot either.
+ */
+export function derivedFromOf(input: WorkstreamWorkflowInput): Exclude<MemoryDerivedFrom, "mixed"> {
+  if (input.agentExchange) return "agent";
+  if (input.activityId || input.slackOrigin || input.reason === "inbound_email" || input.reason.startsWith("slack_")) {
+    return "external";
+  }
+  if (input.automationRun && !input.triggerMessageId) return "agent";
+  return "person";
+}
+
+function iso(instant: number | null): string | null {
+  return instant === null ? null : new Date(instant).toISOString();
+}
+
+function renderFact(fact: MemoryFact, titles: ReadonlyMap<string, string>, now: number) {
+  const subjectLabel = fact.subjectKind === "person"
+    ? PERSON_LABEL
+    : fact.subjectKind === "organization"
+      ? ORGANIZATION_LABEL
+      : titles.get(`${fact.subjectKind}:${fact.subjectId}`) ?? fact.subjectKind;
+  const source = fact.sourceConversations[0]!;
+  return {
+    factId: fact.factId,
+    subject: { kind: fact.subjectKind, label: subjectLabel },
+    kind: fact.kind,
+    text: fact.text,
+    validFrom: iso(fact.validFrom),
+    validUntil: iso(fact.validUntil),
+    validUntilBasis: fact.validUntilBasis,
+    recordedAt: iso(fact.createdAt),
+    derivedFrom: fact.derivedFrom,
+    conflict: fact.conflict,
+    expired: fact.validUntil !== null && fact.validUntil <= now,
+    upcoming: fact.validFrom !== null && fact.validFrom > now,
+    source: { conversationId: source, title: titles.get(source) ?? null },
+  };
+}
+
+function titlesOf(result: WorkspaceMemoryRecallResult): Map<string, string> {
+  return new Map(result.titles.map((entry) => [entry.key, entry.title]));
+}
+
+/**
+ * The gate every tool call passes: the run exists, its principal is the one
+ * frozen into it, the person is still a member, and this is a root run. An
+ * inline child reaches no memory, as before.
+ */
+async function admitted(env: Env, input: WorkstreamWorkflowInput): Promise<boolean> {
+  return (await resolveMemoryAccess(env, input)).length > 0;
+}
+
+async function recall(env: Env, input: WorkstreamWorkflowInput, raw: unknown): Promise<HarnessToolResult> {
+  const args = RecallInputSchema.parse(raw);
+  if (!(await admitted(env, input))) return { output: { facts: [] }, summary: "Recalled 0 facts" };
+  const now = Date.now();
+  let result: WorkspaceMemoryRecallResult;
+  try {
+    const workspace = await workspaceMemoryObject(env, input.workspaceId);
+    result = WorkspaceMemoryRecallResultSchema.parse(await workspace.recallMemoryFacts({
+      workspaceId: input.workspaceId,
+      reader: readerOf(input),
+      conversation: conversationOf(input),
+      query: args.query,
+      now,
+      limit: args.limit ?? RECALL_DEFAULT_LIMIT,
+    }));
+  } catch (error) {
+    throw memoryUnavailable(env, input, error);
+  }
+  const titles = titlesOf(result);
+  const facts = result.facts.map((fact) => renderFact(fact, titles, now));
+  return { output: { facts }, summary: `Recalled ${facts.length} fact${facts.length === 1 ? "" : "s"}` };
+}
+
+function requireReceipt(context: { providerIdempotencyKey?: string }): string {
+  if (!context.providerIdempotencyKey) throw new Error("memory_receipt_missing");
+  return context.providerIdempotencyKey;
+}
+
+async function remember(
   env: Env,
   input: WorkstreamWorkflowInput,
   raw: unknown,
   context: { providerIdempotencyKey?: string },
 ): Promise<HarnessToolResult> {
-  const parsed = AddInputSchema.parse(raw);
-  const args = {
-    ...parsed,
-    ...(parsed.expiresAt ? { expiresAt: new Date(parsed.expiresAt).toISOString() } : {}),
-  };
-  const receiptId = requireReceipt(context);
-  const inputHash = await mutationInputHash("add", args);
-  const replay = await loadReceipt(env, input, receiptId, "add", inputHash);
-  if (replay) return mutationToolResult(replay, "Added durable memory");
-  const scope = await writableScope(env, input, args.scopeKind);
-  const memoryItemId = newId();
-  const memoryMutationId = newId();
-  const at = nowIso();
-  const result: MutationResult = {
-    memoryItemId,
-    memoryScopeId: scope.memoryScopeId,
-    scopeKind: scope.kind,
-    revision: 1,
-    invalidated: false,
-  };
-  const provenance = {
-    source: "agent",
-    harnessRunId: input.harnessRunId,
-    workstreamId: input.parentId,
-    executionPrincipal: input.executionPrincipal,
-    rationale: args.rationale,
-  };
-  const workspace = await workspaceMemoryObject(env, input.workspaceId);
-  const outcome = WorkspaceMemoryAddResultSchema.parse(await workspace.addMemoryItem({
-    workspaceId: input.workspaceId,
-    memoryItemId,
-    memoryScopeId: scope.memoryScopeId,
-    text: args.text,
-    expiresAt: args.expiresAt ?? null,
-    provenanceJson: JSON.stringify(provenance),
-    mutation: {
-      memoryMutationId,
-      receiptId,
-      actorPrincipalJson: JSON.stringify(input.executionPrincipal),
-      harnessRunId: input.harnessRunId,
-      workstreamId: input.parentId,
-      rationale: args.rationale,
-      inputHash,
-      mutationJson: JSON.stringify({ text: args.text, expiresAt: args.expiresAt ?? null }),
-      resultJson: JSON.stringify(result),
-    },
-    at,
-  }));
-  // A replay that raced this write past the preflight read above settles
-  // inside the object's transaction and answers with the recorded result.
-  if (outcome.outcome === "replayed") {
-    return mutationToolResult(JSON.parse(outcome.resultJson) as MutationResult, "Added durable memory");
+  const args = RememberInputSchema.parse(raw);
+  if (args.kind === "situational" && args.validUntil === undefined) {
+    throw new MemoryToolError(
+      "memory_horizon_required",
+      "A situational fact needs `validUntil`. Add the date the person gave, or record it as standing.",
+      { reason: "Add validUntil as an RFC 3339 date-time, or set kind to standing." },
+    );
   }
-  if (outcome.outcome === "receipt_mismatch") throw new Error("memory_mutation_receipt_mismatch");
-  return mutationToolResult(result, "Added durable memory");
+  if (args.kind === "standing" && args.validUntil !== undefined) {
+    throw new MemoryToolError(
+      "memory_horizon_forbidden",
+      "A standing fact takes no `validUntil`. Remove it, or record the fact as situational.",
+      { reason: "Remove validUntil, or set kind to situational." },
+    );
+  }
+  const receiptId = requireReceipt(context);
+  if (!(await admitted(env, input))) throw memoryUnavailable(env, input, new Error("memory_run_not_admitted"));
+  const now = Date.now();
+  let outcome;
+  try {
+    const workspace = await workspaceMemoryObject(env, input.workspaceId);
+    outcome = WorkspaceMemoryRememberResultSchema.parse(await workspace.rememberMemoryFact({
+      workspaceId: input.workspaceId,
+      reader: readerOf(input),
+      conversation: conversationOf(input),
+      receiptId,
+      harnessRunId: input.harnessRunId,
+      factId: newId(),
+      text: args.text,
+      kind: args.kind,
+      validUntil: args.validUntil === undefined ? null : Date.parse(args.validUntil),
+      about: args.about ?? "this conversation",
+      derivedFrom: derivedFromOf(input),
+      now,
+    }));
+  } catch (error) {
+    throw memoryUnavailable(env, input, error);
+  }
+  if (outcome.outcome === "personal_unavailable") {
+    throw new MemoryToolError(
+      "memory_personal_unavailable",
+      "This run acts for a Sidekick, not a person, so `about: \"me\"` is not available. Record it about this conversation or say it could not be stored personally.",
+      { reason: "Call memory_remember again without `about`, or tell the person it could not be stored personally." },
+    );
+  }
+  const deduplicated = outcome.outcome === "deduplicated" || (outcome.outcome === "replayed" && outcome.deduplicated);
+  const rendered = renderFact(outcome.fact, new Map(), now);
+  return {
+    output: {
+      factId: rendered.factId,
+      subject: rendered.subject,
+      kind: rendered.kind,
+      text: rendered.text,
+      validFrom: rendered.validFrom,
+      validUntil: rendered.validUntil,
+      derivedFrom: rendered.derivedFrom,
+      deduplicated,
+    },
+    summary: deduplicated ? "That fact was already remembered" : "Remembered one fact",
+  };
 }
 
-async function loadWritableItem(
-  env: Env,
-  input: WorkstreamWorkflowInput,
-  memoryItemId: string,
-): Promise<{ item: WorkspaceMemoryItem; scope: MemoryScope }> {
-  const scopes = await resolveMemoryAccess(env, input);
-  const workspace = await workspaceMemoryObject(env, input.workspaceId);
-  const found = WorkspaceMemoryItemForWriteResultSchema.parse(await workspace.memoryItemForWrite({
-    workspaceId: input.workspaceId,
-    memoryItemId,
-  }));
-  if (found.outcome !== "found") throw new Error("memory_item_not_found");
-  const scope = scopes.find((candidate) => candidate.memoryScopeId === found.item.memoryScopeId);
-  if (!scope) throw new Error("memory_item_not_authorized");
-  if (!scope.writable) throw new Error(`memory_scope_not_writable:${scope.kind}`);
-  return { item: found.item, scope };
-}
-
-async function updateMemory(
+async function forget(
   env: Env,
   input: WorkstreamWorkflowInput,
   raw: unknown,
   context: { providerIdempotencyKey?: string },
 ): Promise<HarnessToolResult> {
-  const parsed = UpdateInputSchema.parse(raw);
-  const args = {
-    ...parsed,
-    ...(parsed.expiresAt ? { expiresAt: new Date(parsed.expiresAt).toISOString() } : {}),
-  };
+  const args = ForgetInputSchema.parse(raw);
   const receiptId = requireReceipt(context);
-  const inputHash = await mutationInputHash("update", args);
-  const replay = await loadReceipt(env, input, receiptId, "update", inputHash);
-  if (replay) return mutationToolResult(replay, "Updated durable memory");
-  const { item, scope } = await loadWritableItem(env, input, args.memoryItemId);
-  if (item.invalidatedAt) throw new Error("memory_item_invalidated");
-  if (item.revision !== args.expectedRevision) throw memoryRevisionConflict();
-  const nextRevision = args.expectedRevision + 1;
-  const memoryMutationId = newId();
-  const at = nowIso();
-  const expiresAt = args.expiresAt ?? item.expiresAt;
-  const result: MutationResult = {
-    memoryItemId: args.memoryItemId,
-    memoryScopeId: scope.memoryScopeId,
-    scopeKind: scope.kind,
-    revision: nextRevision,
-    invalidated: false,
-  };
-  const workspace = await workspaceMemoryObject(env, input.workspaceId);
-  const outcome = WorkspaceMemoryWriteResultSchema.parse(await workspace.updateMemoryItem({
-    workspaceId: input.workspaceId,
-    memoryItemId: args.memoryItemId,
-    memoryScopeId: scope.memoryScopeId,
-    expectedRevision: args.expectedRevision,
-    text: args.text,
-    expiresAt,
-    mutation: {
-      memoryMutationId,
+  if (!(await admitted(env, input))) throw memoryUnavailable(env, input, new Error("memory_run_not_admitted"));
+  let outcome;
+  try {
+    const workspace = await workspaceMemoryObject(env, input.workspaceId);
+    outcome = WorkspaceMemoryForgetResultSchema.parse(await workspace.forgetMemoryFact({
+      workspaceId: input.workspaceId,
+      reader: readerOf(input),
+      conversation: conversationOf(input),
       receiptId,
-      actorPrincipalJson: JSON.stringify(input.executionPrincipal),
       harnessRunId: input.harnessRunId,
-      workstreamId: input.parentId,
-      rationale: args.rationale,
-      inputHash,
-      mutationJson: JSON.stringify({ text: args.text, expiresAt }),
-      resultJson: JSON.stringify(result),
-    },
-    at,
-  }));
-  if (outcome.outcome === "replayed") {
-    return mutationToolResult(JSON.parse(outcome.resultJson) as MutationResult, "Updated durable memory");
+      factId: args.factId,
+      now: Date.now(),
+    }));
+  } catch (error) {
+    throw memoryUnavailable(env, input, error);
   }
-  if (outcome.outcome === "receipt_mismatch") throw new Error("memory_mutation_receipt_mismatch");
-  // The object's transaction settles a replay before checking the revision,
-  // so a conflict here is genuinely another writer's, not this receipt's.
-  if (outcome.outcome === "revision_conflict") throw memoryRevisionConflict();
-  return mutationToolResult(result, "Updated durable memory");
-}
-
-async function invalidateMemory(
-  env: Env,
-  input: WorkstreamWorkflowInput,
-  raw: unknown,
-  context: { providerIdempotencyKey?: string },
-): Promise<HarnessToolResult> {
-  const args = InvalidateInputSchema.parse(raw);
-  const receiptId = requireReceipt(context);
-  const inputHash = await mutationInputHash("invalidate", args);
-  const replay = await loadReceipt(env, input, receiptId, "invalidate", inputHash);
-  if (replay) return mutationToolResult(replay, "Invalidated durable memory");
-  const { item, scope } = await loadWritableItem(env, input, args.memoryItemId);
-  if (item.invalidatedAt) throw new Error("memory_item_invalidated");
-  if (item.revision !== args.expectedRevision) throw memoryRevisionConflict();
-  const nextRevision = args.expectedRevision + 1;
-  const memoryMutationId = newId();
-  const at = nowIso();
-  const principalJson = JSON.stringify(input.executionPrincipal);
-  const result: MutationResult = {
-    memoryItemId: args.memoryItemId,
-    memoryScopeId: scope.memoryScopeId,
-    scopeKind: scope.kind,
-    revision: nextRevision,
-    invalidated: true,
-  };
-  const workspace = await workspaceMemoryObject(env, input.workspaceId);
-  const outcome = WorkspaceMemoryWriteResultSchema.parse(await workspace.invalidateMemoryItem({
-    workspaceId: input.workspaceId,
-    memoryItemId: args.memoryItemId,
-    memoryScopeId: scope.memoryScopeId,
-    expectedRevision: args.expectedRevision,
-    reason: args.reason,
-    mutation: {
-      memoryMutationId,
-      receiptId,
-      actorPrincipalJson: principalJson,
-      harnessRunId: input.harnessRunId,
-      workstreamId: input.parentId,
-      rationale: args.reason,
-      inputHash,
-      mutationJson: JSON.stringify({ reason: args.reason }),
-      resultJson: JSON.stringify(result),
-    },
-    at,
-  }));
-  if (outcome.outcome === "replayed") {
-    return mutationToolResult(JSON.parse(outcome.resultJson) as MutationResult, "Invalidated durable memory");
+  switch (outcome.outcome) {
+    case "retracted":
+    case "already_retracted":
+      return {
+        output: { factId: outcome.fact.factId, retractedAt: iso(outcome.fact.retractedAt) },
+        summary: outcome.outcome === "retracted" ? "Forgot one fact" : "That fact was already forgotten",
+      };
+    case "not_found":
+      throw new MemoryToolError(
+        "memory_fact_not_found",
+        "No fact has that id. Search again and use a `factId` from the results.",
+        { reason: "Call memory_recall and copy a factId from its results." },
+      );
+    case "not_visible":
+      throw new MemoryToolError(
+        "memory_fact_not_visible",
+        "That fact is not one this conversation may see. Search again; if it is not in the results, say it could not be forgotten.",
+        { reason: "Call memory_recall; if the fact is not in the results, tell the person it could not be forgotten." },
+      );
+    case "not_forgettable":
+      throw new MemoryToolError(
+        "memory_fact_not_forgettable",
+        "That fact belongs to a Channel or to the Organization, and only an administrator may forget it. Tell the person it can be removed from the review surface by an administrator.",
+        { reason: `This ${outcome.subjectKind} fact can be forgotten only by an administrator. Do not retry.` },
+      );
   }
-  if (outcome.outcome === "receipt_mismatch") throw new Error("memory_mutation_receipt_mismatch");
-  if (outcome.outcome === "revision_conflict") throw memoryRevisionConflict();
-  return mutationToolResult(result, "Invalidated durable memory");
 }
 
 export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): HarnessTool[] {
-  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
-  const tools: HarnessTool[] = [
+  return [
     {
       definition: {
-        name: "search",
-        description: "Search every durable memory scope authorized by the host using query, or reread one exact authorized item using memoryItemId. Pass exactly one; scope selection is not accepted.",
-        capability: "memory.search",
+        name: "recall",
+        description: "Search what Rally remembers that this conversation may use: facts about this Organization, this Channel, this Thread, this Breakout and the person you are working for. Returns facts with when they were true and where each was said. Nothing remembered on the subject is an empty list, not an error.",
+        capability: "memory.recall",
         mode: "read",
         idempotency: "safe",
         inputSchema: {
@@ -960,43 +551,28 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
               type: "string",
               minLength: 1,
               maxLength: MEMORY_RECALL_QUERY_LIMIT,
-              description: "What the remembered fact would be about, in plain words, for example \"which deploy tool this team uses\". It searches every scope this run is authorized for at once, so do not try to name a scope here. Nothing remembered on the subject comes back as an empty result rather than an error. Send this or `memoryItemId`, never both.",
+              description: "Plain words for what the fact would be about, for example \"which deploy tool this team uses\" or \"when Priya is back\".",
             },
-            memoryItemId: {
-              type: "string",
-              format: "uuid",
-              description: "Reread one exact memory, as the `memoryItemId` an earlier search returned, for example `a1b2c3d4-e5f6-4789-a012-3456789abcde`. Use it to pick up a current revision before an update. Send this or `query`, never both.",
+            limit: {
+              type: "integer",
+              minimum: 1,
+              maximum: 25,
+              description: "How many facts to return, best match first. Defaults to 10.",
             },
           },
-          // Exclusivity is stated in the description and enforced by
-          // `SearchInputSchema`; a `oneOf` of bare `required` branches does not
-          // survive schema sanitization. See `docs/agent-tools.md`.
+          required: ["query"],
         },
       },
-      // The exclusivity the description states is unrepresentable in the
-      // declared schema, so `{}` and both-keys-at-once both pass it and are
-      // then rejected here. Without the hook the runtime reads that as the
-      // tool's data being bad rather than the model's arguments, and the
-      // carefully worded union message below never reaches the model at all.
       validateInput: (raw) => {
-        const result = SearchInputSchema.safeParse(raw);
+        const result = RecallInputSchema.safeParse(raw);
         return result.success ? null : result.error;
       },
-      execute: async (raw) => {
-        const args = SearchInputSchema.parse(raw);
-        const result = "query" in args
-          ? await memorySearch(env, input, args.query)
-          : await memoryReadById(env, input, args.memoryItemId);
-        return {
-          output: result,
-          summary: `Found ${result.results.length} durable memor${result.results.length === 1 ? "y" : "ies"} (${result.retrievalMode})`,
-        };
-      },
+      execute: (raw) => recall(env, input, raw),
     },
     {
       definition: {
-        name: "add",
-        description: "Add one durable memory to the narrowest host-authorized scope of the requested kind.",
+        name: "remember",
+        description: "Record something a person asked Rally to remember. Say it as one or two plain sentences a later run can act on without this conversation. Give validUntil when the person said how long it holds; leave it out for something standing.",
         capability: "memory.write",
         mode: "write",
         idempotency: "provider_key",
@@ -1004,33 +580,42 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
           type: "object",
           additionalProperties: false,
           properties: {
-            scopeKind: {
-              type: "string",
-              enum: MEMORY_SCOPE_KINDS,
-              description: "How widely the fact should be remembered, narrowest first: `workstream` for this thread alone, `sidekick` for future runs of this installed Sidekick, `user` for one person's durable preferences, `workspace` for knowledge shared across the organization. Not every run authorizes every kind; a refusal names the ones this run does have, so retry with the narrowest of those.",
-            },
             text: {
               type: "string",
               minLength: 1,
-              maxLength: 16_000,
-              description: "The fact itself, written as a standalone sentence a later run can act on without this conversation, for example \"Dana prefers release notes as a bulleted summary, not prose.\" A pronoun or a \"that\" pointing at something said here is unreadable later.",
+              maxLength: 600,
+              description: "The fact itself, as a standalone sentence, for example \"Dana prefers release notes as a bulleted summary, not prose.\" Not an instruction, and no pronoun pointing at something said here.",
             },
-            expiresAt: {
+            kind: {
+              type: "string",
+              enum: ["standing", "situational"],
+              description: "`standing` for something that stays true until it changes; `situational` for something with an end the person named, which then needs validUntil.",
+            },
+            validUntil: {
               type: "string",
               format: "date-time",
-              description: "When the fact stops being true, as an ISO 8601 timestamp, for example 2026-12-31T00:00:00Z. Omit it for a fact with no known end. A time already past is accepted and the memory is expired the moment it is written, which reads as never having been stored.",
+              description: "When a situational fact stops holding, as an RFC 3339 date-time such as 2026-10-27T00:00:00Z. Required for situational; omit for standing.",
             },
-            rationale: { type: "string", minLength: 1, maxLength: 2_000, description: "Why this is worth remembering, in one or two sentences, for the person reviewing what the run did." },
+            about: {
+              type: "string",
+              enum: ["me", "this conversation"],
+              description: "`me` files the fact under the person you are working for, so it follows them to every conversation. Defaults to `this conversation`.",
+            },
           },
-          required: ["scopeKind", "text", "rationale"],
+          required: ["text", "kind"],
         },
       },
-      execute: (raw, context) => addMemory(env, input, raw, context),
+      serial: true,
+      validateInput: (raw) => {
+        const result = RememberInputSchema.safeParse(raw);
+        return result.success ? null : result.error;
+      },
+      execute: (raw, context) => remember(env, input, raw, context),
     },
     {
       definition: {
-        name: "update",
-        description: "Replace an authorized durable memory. Copy memoryItemId and expectedRevision from memory_search; after a revision conflict, call memory_search with memoryItemId and rebuild the update from that exact result.",
+        name: "forget",
+        description: "Retract one remembered fact a person asked Rally to forget, by the factId a recall returned. You may forget a fact about the person you are working for, or a fact this conversation itself established. A Channel's or the Organization's facts can be forgotten only when an administrator asks; otherwise say so. Retraction is immediate for every later run and cannot be undone by you.",
         capability: "memory.write",
         mode: "write",
         idempotency: "provider_key",
@@ -1038,178 +623,17 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
           type: "object",
           additionalProperties: false,
           properties: {
-            memoryItemId: { type: "string", format: "uuid", description: "The memory to replace, copied exactly from the latest memory_search result." },
-            expectedRevision: {
-              type: "integer",
-              minimum: 1,
-              description: "Copy revision exactly from memory_search for this memoryItemId.",
-            },
-            text: { type: "string", minLength: 1, maxLength: 16_000, description: "The memory's complete new text. It replaces the old text rather than adding to it, so restate anything from the original that still holds." },
-            expiresAt: {
-              type: "string",
-              format: "date-time",
-              description: "Move the expiry to this moment, as an ISO 8601 timestamp, for example 2026-12-31T00:00:00Z. Omitting it keeps the expiry the memory already has, and there is no way to remove one through this tool — so a fact that has become permanent cannot be made permanent here, and once its expiry passes the memory stops coming back from memory_search entirely rather than returning as stale.",
-            },
-            rationale: { type: "string", minLength: 1, maxLength: 2_000, description: "Why the memory is changing, in one or two sentences, for the person reviewing what the run did." },
+            factId: { type: "string", minLength: 1, description: "The fact to retract, copied exactly from a memory_recall result." },
           },
-          required: ["memoryItemId", "expectedRevision", "text", "rationale"],
+          required: ["factId"],
         },
       },
-      execute: (raw, context) => updateMemory(env, input, raw, context),
-    },
-    {
-      definition: {
-        name: "invalidate",
-        description: "Retire an authorized durable memory so it stops being recalled. This is final for these tools — nothing restores an invalidated memory, and a later update on it is refused — so write the fact again with memory_add if it holds again. Copy memoryItemId and expectedRevision from memory_search; after a revision conflict, call memory_search with memoryItemId and retry from that exact result.",
-        capability: "memory.write",
-        mode: "write",
-        idempotency: "provider_key",
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            memoryItemId: { type: "string", format: "uuid", description: "The memory to invalidate, copied exactly from the latest memory_search result." },
-            expectedRevision: {
-              type: "integer",
-              minimum: 1,
-              description: "Copy revision exactly from memory_search for this memoryItemId.",
-            },
-            reason: { type: "string", minLength: 1, maxLength: 2_000, description: "Why the fact no longer holds, in one or two sentences, for the person reviewing what the run did. Nothing here brings the memory back: a later memory_update on it is refused, so if the fact turns out to hold again, write it again with memory_add." },
-          },
-          required: ["memoryItemId", "expectedRevision", "reason"],
-        },
+      serial: true,
+      validateInput: (raw) => {
+        const result = ForgetInputSchema.safeParse(raw);
+        return result.success ? null : result.error;
       },
-      execute: (raw, context) => invalidateMemory(env, input, raw, context),
+      execute: (raw, context) => forget(env, input, raw, context),
     },
   ];
-  return tools;
 }
-
-async function projectOutboxRow(
-  env: Env,
-  workspace: Awaited<ReturnType<typeof workspaceMemoryObject>>,
-  row: WorkspaceMemoryOutboxRow,
-): Promise<void> {
-  if (!env.MEMORY_INDEX) throw new Error("memory_vector_binding_unavailable");
-  const current = WorkspaceMemoryProjectionSourceResultSchema.parse(
-    await workspace.memoryIndexProjectionSource({
-      workspaceId: row.workspaceId,
-      memoryItemId: row.memoryItemId,
-      memoryScopeId: row.memoryScopeId,
-    }),
-  );
-  const priorVectorId = row.revision > 1 ? vectorId(row.memoryItemId, row.revision - 1) : null;
-  if (
-    row.operation === "delete"
-    || current.outcome === "none"
-    || current.revision !== row.revision
-    || current.invalidatedAt
-    || (current.expiresAt != null && current.expiresAt <= nowIso())
-  ) {
-    await env.MEMORY_INDEX.deleteByIds([
-      vectorId(row.memoryItemId, row.revision),
-      ...(priorVectorId ? [priorVectorId] : []),
-    ]);
-    return;
-  }
-  const embedding = await embedMemory(env, current.text, "search_document", {
-    workspaceId: row.workspaceId,
-    ...(current.scopeKind === "workstream" ? { workstreamId: current.scopeOwnerId } : {}),
-    requestId: row.outboxId,
-  });
-  await env.MEMORY_INDEX.upsert([{
-    id: vectorId(row.memoryItemId, row.revision),
-    values: embedding.values,
-    namespace: await memoryVectorNamespace(row.memoryScopeId),
-    metadata: {
-      workspaceId: row.workspaceId,
-      scopeKind: current.scopeKind,
-      revision: row.revision,
-      embeddingModel: MEMORY_EMBEDDING_MODEL,
-      embeddingDimensions: MEMORY_EMBEDDING_DIMENSIONS,
-    },
-  }]);
-  if (priorVectorId) await env.MEMORY_INDEX.deleteByIds([priorVectorId]);
-}
-
-function memoryProjectionFailureCode(error: unknown): string {
-  if (error instanceof OpenRouterError) {
-    return error.status == null ? "openrouter_error" : `openrouter_http_${error.status}`;
-  }
-  if (error instanceof DOMException) {
-    if (error.name === "AbortError") return "embedding_aborted";
-    if (error.name === "TimeoutError") return "embedding_timeout";
-  }
-  if (error instanceof TypeError) return "embedding_network_error";
-  return "embedding_failure";
-}
-
-/**
- * Replay the transactional embedding outbox. Safe for concurrent workers: a
- * row is claimed under a lease before its projection leaves the object, and a
- * lost lease means another worker finished it. Runs inside WorkspaceDO's own
- * alarm in production, where {@link durableObjectStubForWorkspace} hands back
- * the registered instance rather than an RPC round trip to itself.
- */
-export async function processMemoryIndexOutbox(
-  env: Env,
-  limit = 50,
-  workspaceId?: string,
-): Promise<number> {
-  if (!workspaceId) throw new Error("memory_index_workspace_required");
-  if (!env.OPENROUTER_API_KEY || !env.MEMORY_INDEX) return 0;
-  const workspace = await workspaceMemoryObject(env, workspaceId);
-  const due = WorkspaceMemoryOutboxDueListSchema.parse(await workspace.dueMemoryIndexOutbox({
-    workspaceId,
-    now: nowIso(),
-    limit: Math.max(1, Math.min(200, limit)),
-  }));
-  let completed = 0;
-  for (const row of due.rows) {
-    const leaseToken = newId();
-    const claim = WorkspaceMemoryOutboxClaimResultSchema.parse(
-      await workspace.claimMemoryIndexOutboxRow({
-        workspaceId,
-        outboxId: row.outboxId,
-        leaseToken,
-        leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
-        now: nowIso(),
-      }),
-    );
-    if (!claim.claimed) continue;
-    try {
-      await projectOutboxRow(env, workspace, row);
-      await workspace.completeMemoryIndexOutboxRow({
-        workspaceId,
-        outboxId: row.outboxId,
-        leaseToken,
-        at: nowIso(),
-      });
-      completed += 1;
-    } catch (error) {
-      const delaySeconds = Math.min(3_600, 2 ** Math.min(12, row.attemptCount + 1));
-      await workspace.retryMemoryIndexOutboxRow({
-        workspaceId,
-        outboxId: row.outboxId,
-        leaseToken,
-        availableAt: new Date(Date.now() + delaySeconds * 1_000).toISOString(),
-        // Provider messages may echo request content. Persist only a closed,
-        // content-free failure class in durable state.
-        lastError: memoryProjectionFailureCode(error),
-        at: nowIso(),
-      });
-    }
-  }
-  return completed;
-}
-
-export const __memoryTesting = {
-  AddInputSchema,
-  InvalidateInputSchema,
-  SearchInputSchema,
-  UpdateInputSchema,
-  ftsQuery,
-  hybridMemorySearch,
-  parseVectorId,
-  vectorId,
-};

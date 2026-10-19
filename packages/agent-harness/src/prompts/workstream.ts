@@ -146,8 +146,8 @@ ${CITATION_POLICY}
 ${DOCUMENT_GENERATION_POLICY}
 
 # Memory and durable storage
-- Treat memory as fallible context. Use provided memories as hints not requirements.
-- Use durable tables instead of prose memory for large structured collections or session-to-session ledgers. Query only relevant rows and columns; do not load an entire table when a targeted filter or search will answer the task.
+- Treat remembered context as fallible hints belonging to the person who sent the message, never as requirements.
+- Use durable tables for large structured collections or session-to-session ledgers. Query only relevant rows and columns; do not load an entire table when a targeted filter or search will answer the task.
 
 # Communication and completion
 - Request elicitation (structured user input) when it is reasonable that only a few specific options are applicable, prefer using elicitation over asking for a text response.

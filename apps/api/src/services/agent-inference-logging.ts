@@ -75,7 +75,6 @@ export interface AgentInferencePreparationBreakdown {
   sidekickRecommendationsMs: number;
   leaseHeartbeatMs: number;
   runContextMs: number;
-  memoryContextMs: number;
   transcriptBootstrapMs: number;
   toolInventoryMs: number;
   toolConstructionMs: number;
@@ -83,7 +82,6 @@ export interface AgentInferencePreparationBreakdown {
   transcriptBootstrapRequired: boolean;
   sidekickSnapshotReused: boolean;
   sidekickRecommendationsRead: boolean;
-  memoryRecallRequired: boolean;
 }
 
 export function logAgentInferencePrepared(
@@ -122,7 +120,6 @@ export function logAgentInferencePrepared(
     sidekick_recommendations_ms: timing.breakdown.sidekickRecommendationsMs,
     lease_heartbeat_ms: timing.breakdown.leaseHeartbeatMs,
     run_context_ms: timing.breakdown.runContextMs,
-    memory_context_ms: timing.breakdown.memoryContextMs,
     transcript_bootstrap_ms: timing.breakdown.transcriptBootstrapMs,
     tool_inventory_ms: timing.breakdown.toolInventoryMs,
     tool_construction_ms: timing.breakdown.toolConstructionMs,
@@ -130,7 +127,6 @@ export function logAgentInferencePrepared(
     transcript_bootstrap_required: timing.breakdown.transcriptBootstrapRequired,
     sidekick_snapshot_reused: timing.breakdown.sidekickSnapshotReused,
     sidekick_recommendations_read: timing.breakdown.sidekickRecommendationsRead,
-    memory_recall_required: timing.breakdown.memoryRecallRequired,
   });
 }
 

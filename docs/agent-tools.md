@@ -83,9 +83,9 @@ gone. Two things make a name qualify, and either is enough:
 
 `rally_memory` and `rally_tables` are always active and still keep
 `memory_`/`table_`, because they fail the naming half: their canonical names are
-local verbs (`search`, `query`, `create`, `add`, `update`), two of them
-identical, and bare verbs are the naming the rest of this document exists to
-prevent. `rally_web` keeps `web_` for the opposite reason: `web_search` and
+local verbs (`recall`, `remember`, `forget`, `search`, `query`, `create`), and
+bare verbs are the naming the rest of this document exists to prevent;
+`rally_tables`' `search` also collides with `rally_web`'s. `rally_web` keeps `web_` for the opposite reason: `web_search` and
 `web_fetch` *are* the pretrained names, and stripping the prefix would leave
 bare `search` and `fetch`. `rally_conversations` keeps `conversation_` because
 its canonical names are the local verbs `list`, `read`, `post` and `attach`;
@@ -510,7 +510,7 @@ labels:
 
   **That resume is load-bearing, not incidental.** `admit` grants it on the
   declared class alone, so a `provider_key` tool owes a key-scoped replay lookup
-  as its first act — `loadReceipt` in `memory-service.ts` and
+  as its first act — `memory_fact_receipts` behind `rememberMemoryFact` and
   `loadMutationReceipt` in `memory-table-service.ts` are the shape. Every
   `provider_key` write in this tree has one, and a new one without it would be
   re-executed rather than deduped.

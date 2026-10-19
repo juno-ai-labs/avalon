@@ -57,7 +57,7 @@ const workflowInput = (): WorkstreamWorkflowInput => ({
  * missing conditional tool still leaves 130-odd others behind it.
  */
 export const EXPECTED_TOOLS = [
-  "memory.search:search",
+  "memory.recall:recall",
   "multimodal.generate:generate_image",
   "rally.plugins.list:list_plugins",
   "rally.skills.load:load_skill",
@@ -85,9 +85,9 @@ export function everyAuthoredToolSchema(): AuthoredToolSchema[] {
   // without one, so an empty environment silently drops `web_search`/`web_fetch`
   // from a walk that claims to cover everything.
   const env = createTestEnv({ FIRECRAWL_API_KEY: "test-firecrawl-key" });
-  // Labelled `capability:name`, because neither alone is unique: the memory and
+  // Labelled `capability:name`, because neither alone is unique: the tables and
   // web plugins both export a tool called `search`, and `memory.write` covers
-  // three. A failure has to name one tool unambiguously to be worth reading.
+  // two. A failure has to name one tool unambiguously to be worth reading.
   const core = __integrationTesting.createAvalonTools(env, workflowInput())
     .map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema }));
   // The Sidekick creator's four tools are added by hand because they are

@@ -618,7 +618,7 @@ configures from.
   it is server-only, and what degrades when it is absent. Flag a new read with no
   entry, and an entry whose described default or required-ness no longer matches
   `assertEnvContract`. This does **not** apply to Cloudflare **bindings** — `DB`,
-  `PAYLOADS`, `IMAGES`, `AI`, `MEMORY_INDEX`, `FLAGS`, the Durable Object namespaces,
+  `PAYLOADS`, `IMAGES`, `AI`, `FLAGS`, the Durable Object namespaces,
   queues, workflows, and the RPC service bindings are declared in the Wrangler configs,
   not in `.env.example`, so a new binding needs no entry there.
 - **Where it goes next depends on what it is, and conflating the three is itself a
