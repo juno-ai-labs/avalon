@@ -252,6 +252,20 @@ describe("observeTurnDisposition", () => {
     expect(storage.open()).toEqual([]);
     expect(storage.judgementForRun(runId)?.code).toBe("already_carried_up");
   });
+
+  it("writes nothing when another caller judged the run while the classifier was answering", async () => {
+    const { storage } = conversation(twoTurns);
+    const answer = answering("worth_carrying_up", 0.91);
+    const fetcher = vi.fn(async (...args: Parameters<typeof fetch>) => {
+      // The backfill and the settlement judge the same run; the other finishes first.
+      await observeTurnDisposition(observation(storage, { fetch: answering("continue_here", 0.8) }));
+      return answer(...args);
+    }) as unknown as typeof fetch;
+    const result = await observeTurnDisposition(observation(storage, { fetch: fetcher }));
+    expect(result).toEqual({ outcome: "skipped", gate: "already_judged" });
+    expect(storage.judgementForRun(runId)).toMatchObject({ code: "continue_here", suggestion_id: null });
+    expect(storage.open()).toEqual([]);
+  });
 });
 
 describe("ConversationSuggestionStorage", () => {
