@@ -124,13 +124,15 @@ import {
 } from '../components/substream-launch';
 import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
-import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, MessageMergedInto, Participant, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, MessageMergedInto, Participant, PendingOpening, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { workstreamSidekickRows, type SidekickRow, type SidekickSectionFailure } from '../components/sidekick-section';
 import { AgentCompactionIndicator, AgentWorkTiming, RunStopAcknowledgement, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentPanel } from '../components/attachment-panel';
-import type { AttachmentPreview } from '../components/attachments';
+import { type AttachmentPreview, MessageAttachments } from '../components/attachments';
+import { AttachmentLightbox } from '../components/attachment-lightbox';
+import { MarkdownBody } from '../components/workstream-blocks';
 import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
 import { ConversationAccessRequest } from '../components/conversation-access-request';
 import { useAccessRequests, useDecideAccessRequest } from '../lib/access-requests';
@@ -198,19 +200,23 @@ export function workspaceMemberFromSession(session: ClientSession | null): Works
  * opening. The status lives here rather than on the layout so that a rail drawn
  * beside it, placeholder or real, is never read out as part of it.
  */
-function ConversationOpeningFeed({ label, parentKind, caption = false, openingMessage, openingAuthorId }: {
+function ConversationOpeningFeed({ label, parentKind, caption = false, openingMessage, openingAuthorId, loadAttachmentContent }: {
   label: string;
   parentKind: ConversationParentKind;
   /** Show the label above the placeholders, for a wait long enough to explain. */
   caption?: boolean;
   /**
    * What the person just sent, for a thread still being created: drawn as the
-   * message it is about to be, so the pane does not swap a placeholder for it.
+   * message it is about to be, mentions and attachments included, so the pane
+   * does not swap a placeholder for it.
    */
-  openingMessage?: string | undefined;
+  openingMessage?: PendingOpening | undefined;
   /** Who sent it, for their own bubble colour, as the transcript draws it. */
   openingAuthorId?: string | undefined;
+  /** Reads an attachment's preview; without it the opening shows no attachments. */
+  loadAttachmentContent?: ((id: string, signal?: AbortSignal) => Promise<Blob>) | undefined;
 }): React.JSX.Element {
+  const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const presentations = useContext(MemberPresentationContext);
   const profile = openingAuthorId ? presentations.get(openingAuthorId) : undefined;
   const bubbleStyle = profile ? {
@@ -241,9 +247,24 @@ function ConversationOpeningFeed({ label, parentKind, caption = false, openingMe
           {openingMessage ? <div className="transcript-column conversation-opening-messages">
             <article className="message-block human-message own-human-message" style={bubbleStyle}>
               <div className="human-message-content">
-                <div className="human-message-bubble">
-                  <div className="human-message-bubble-body"><div className="markdown-body"><p>{openingMessage}</p></div></div>
-                </div>
+                {openingMessage.text ? <div className="human-message-bubble">
+                  <div className="human-message-bubble-body">
+                    <MarkdownBody
+                      mentions={openingMessage.mentions}
+                      preserveLineBreaks
+                      rallyMentions
+                      speechKind="message"
+                      verbatim
+                    >{openingMessage.text}</MarkdownBody>
+                  </div>
+                </div> : null}
+                {openingMessage.attachments.length > 0 && loadAttachmentContent ? (
+                  <MessageAttachments
+                    attachments={openingMessage.attachments}
+                    loadContent={loadAttachmentContent}
+                    onOpen={setAttachmentPreview}
+                  />
+                ) : null}
               </div>
             </article>
             <p aria-hidden="true" className="conversation-opening-caption">{label}</p>
@@ -292,6 +313,7 @@ function ConversationOpeningFeed({ label, parentKind, caption = false, openingMe
           <div className="skeleton-bar conversation-opening-composer" />
         </div>
         <span className="sr-only">{label}</span>
+        <AttachmentLightbox preview={attachmentPreview} onClose={() => setAttachmentPreview(null)} />
     </div>
   );
 }
@@ -302,16 +324,18 @@ export function ConversationOpeningSkeleton({
   caption = false,
   openingMessage,
   openingAuthorId,
+  loadAttachmentContent,
 }: {
   label: string;
   parentKind: ConversationParentKind;
   caption?: boolean;
-  openingMessage?: string | undefined;
+  openingMessage?: PendingOpening | undefined;
   openingAuthorId?: string | undefined;
+  loadAttachmentContent?: ((id: string, signal?: AbortSignal) => Promise<Blob>) | undefined;
 }): React.JSX.Element {
   return (
     <div className="conversation-layout conversation-opening-skeleton">
-      <ConversationOpeningFeed caption={caption} label={label} openingAuthorId={openingAuthorId} openingMessage={openingMessage} parentKind={parentKind} />
+      <ConversationOpeningFeed caption={caption} label={label} loadAttachmentContent={loadAttachmentContent} openingAuthorId={openingAuthorId} openingMessage={openingMessage} parentKind={parentKind} />
     </div>
   );
 }
