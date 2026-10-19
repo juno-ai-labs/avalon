@@ -10,6 +10,7 @@ import {
   summarizeEvent,
 } from "../src/observability/logger";
 import { ApiError } from "../src/lib/api-error";
+import { ObjectPortError } from "../src/runtime/object-port-error";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
 const env = createTestEnv({
@@ -40,6 +41,19 @@ describe("structured logging", () => {
       new Error("Provider included customer@example.com in its response"),
       "connector_event_failed",
     )).toBe("connector_event_failed");
+  });
+
+  it("names a conversation object's refusal by its code, not the sentence written for members", () => {
+    const sentence = "Rally's work-stream identity authority rejected an internal request. Retry after the application and service versions are aligned.";
+    expect(diagnosticErrorCode(
+      new ObjectPortError("workstream_runtime_authority_fenced", sentence),
+      "thread_backfill_failed",
+    )).toBe("workstream_runtime_authority_fenced");
+    // A code that is not the bare constant shape is not trusted as one.
+    expect(diagnosticErrorCode(
+      new ObjectPortError("page expired for customer@example.com", sentence),
+      "thread_backfill_failed",
+    )).toBe("thread_backfill_failed");
   });
 
   it("names a Workers runtime failure behind the caller's own code without copying its sentence", () => {

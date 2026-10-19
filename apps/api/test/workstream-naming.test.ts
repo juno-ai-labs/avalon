@@ -1011,6 +1011,22 @@ describe("backfilling an existing thread's summary", () => {
     expect(description(database)).toBe(objective);
   });
 
+  it("settles a conversation whose object never became authoritative, asking nothing", async () => {
+    const database = seededDatabase();
+    seedMessages(database, 1);
+    // The placeholder a conversation object is born with, which only its
+    // initialization or an import replaces: production had a listed thread
+    // whose object stayed this way, and every attempt threw on the first read.
+    objectStoreOf(database).prepare(
+      "UPDATE workstream SET authority_mode = 'preparing', authority_generation = 0 WHERE id = 1",
+    ).run();
+    const requests: Array<Record<string, unknown>> = [];
+    stubOpenRouter(requests, "Danny download link", undefined, "megaphone", summary);
+
+    expect(await summarizeExistingDescription(environment(database, []), target)).toBe("not_authoritative");
+    expect(requests).toHaveLength(0);
+  });
+
   it("fails rather than settling when the model call fails, so the backfill retries it", async () => {
     const database = seededDatabase();
     seedMessages(database, 1);

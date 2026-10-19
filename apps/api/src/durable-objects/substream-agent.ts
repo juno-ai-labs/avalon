@@ -96,6 +96,7 @@ import { uuidV7 } from "../lib/uuid-v7";
 import { ConversationSuggestionStorage, observeTurnDisposition, suggestionForClient, type SuggestionParent, type SuggestionRow } from "./conversation-suggestions";
 import { createClassifierDiagnosticSink } from "../services/classifier-diagnostics";
 import { createIdentityObjectPort } from "../runtime/identity-port";
+import { AUTHORITY_FENCED_CODE } from "../runtime/object-port-error";
 import { draftSuggestion } from "../services/suggestion-draft-service";
 import {
   HarnessRunMetricsSchema,
@@ -2786,7 +2787,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return { status: 409, payload: { ok: false, error: identityMismatchCode } };
     }
     if (!this.objectStore.isAuthoritative()) {
-      return { status: 409, payload: { ok: false, error: "workstream_runtime_authority_fenced" } };
+      return { status: 409, payload: { ok: false, error: AUTHORITY_FENCED_CODE } };
     }
     return null;
   }
