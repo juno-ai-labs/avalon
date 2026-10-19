@@ -2,18 +2,11 @@
 
 > Created 2026-10-18.
 >
-> Companions: [`research.md`](research.md) (the survey and competing designs) and [`design.md`](design.md) (plugin contract, tool catalog, sweep pipeline).
->
-> Rally remembers what its people and their conversations have established,
-> without anyone asking it to, and brings that to every run at no cost to
-> latency. A background sweep reads each conversation's feed after it rests,
-> writes short-term and long-term facts with their provenance into the
-> Organization's store, and a bounded digest reaches the agent attached to
-> the message that started the run. Research and the competing designs this
-> chooses between: [`research.md`](research.md). Standing contract:
+> Rally gathers memory from its conversations in the background and brings a
+> bounded digest to every run at no cost to latency. Companions:
+> [`research.md`](research.md), [`design.md`](design.md). Standing contract:
 > [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
-> Current mechanism being replaced:
-> [`agent-harness.md`](../../agent-harness.md#scoped-durable-memory).
+> Replaces [`agent-harness.md` scoped durable memory](../../agent-harness.md#scoped-durable-memory).
 
 ## Summary
 
@@ -155,8 +148,14 @@ started it and visible only to the model, a digest headed as fallible
 remembered context: Organization facts, then the Channel's, the Thread's, and
 in a Breakout the Breakout's, then the acting person's own. Standing facts
 come first; situational facts carry their horizon ("until 2026-10-23").
-Facts whose source the acting person may not open today are absent. The
-digest is bounded; when it is cut, it says so and newest facts are kept.
+The Organization, Channel, Thread and Breakout facts are those every current
+participant of the conversation may see, the same rule recall applies, so a
+Breakout member acting in the Thread above it is not handed the Breakout's
+facts where others would read the reply; the acting person's own facts are
+included whatever the room (design decision 7). The digest is bounded; when
+it is cut, the oldest facts of the widest subject go first, so this
+conversation's and the person's own facts are kept longest, and the digest
+says how many were left out.
 Nothing of this appears in the feed, and nothing of it is replayed into an
 activation another person starts.
 
@@ -245,16 +244,19 @@ that produced it, evaluated at read time.
    conversation decides visibility, evaluated at read time through the same
    SQL fragments the directory renders, so membership changes need no fan-out.
    Rejected: a stored audience list per fact.
-5. **Bi-temporal facts with deterministic supersession first.** `valid_from`,
-   `valid_until` for when a fact was true; `recorded_at`, `superseded_at`,
-   `retracted_at` for when Rally knew. A fact with a parsable
-   `(subject, relation)` key supersedes its predecessor with no judgment call
-   when the same person stated both; when a different person states a
-   different value for the same key, the host writes the disagreement fact of
-   decision 8 and leaves both claims active. The model decides only for
-   unkeyed facts, with the existing facts in view.
-   Rejected: similarity-gated updates, which cannot tell a contradiction from
-   a duplicate.
+5. **Bi-temporal facts, superseded by the sweep with the existing facts in
+   view.** `valid_from`, `valid_until` for when a fact was true;
+   `recorded_at`, `superseded_at`, `retracted_at` for when Rally knew; nothing
+   is deleted. The sweep model decides `update`, `retract` or `confirm` with
+   the matching existing facts beside the new text, and writes the
+   disagreement fact of decision 8 when the contradiction is between two
+   people. Rejected: similarity-gated updates, which cannot tell a
+   contradiction from a duplicate. Deferred: a host-parsed `(subject,
+   relation)` key with deterministic supersession (the MemStrata result in
+   [research.md §4.3](research.md#43-time-bi-temporal-rows-deterministic-supersession-no-access-decay-for-deadlines));
+   with the model already deciding over the same facts it would be a second
+   mechanism for one decision, and the key it would run on is model-written
+   anyway. It is one column away if the measured stale rate asks for it.
 6. **Expiry by predicate.** Reads filter on `valid_until`; nothing is deleted
    and no alarm fires. Rejected: access-based decay, which keeps a deadline
    alive as long as it is read.
@@ -329,17 +331,21 @@ authoritative.
   narrowed to private follows the Channel's current reach; a fact derived
   from a candidate carries the union of its sources, and a reader needs
   access to every one), `kind` (`standing` | `situational`),
-  `text`, `fact_key` (nullable `(subject, relation)`), `observed_at`,
-  `valid_from`, `valid_until`, `valid_until_basis` (`stated` | `event` |
-  `assumed`), `recorded_at`, `superseded_at`, `superseded_by`, `retracted_at`,
-  `retracted_by_json`, `retraction_reason`, `last_confirmed_at`,
-  `derived_from` (`person` | `external` | `agent` | `mixed`), `evidence_json`
-  (message references with author), `revision`. FTS5 over `text`.
+  `text`, `valid_from`, `valid_until`, `valid_until_basis` (`stated` |
+  `event` | `assumed`), `recorded_at`, `superseded_at`, `superseded_by`,
+  `retracted_at`, `retracted_by_json`, `retraction_reason`,
+  `last_confirmed_at`, `derived_from` (`person` | `external` | `agent` |
+  `mixed`), `evidence_json` (message references with author and time, which
+  is where "when it was said" lives), `revision`. FTS5 over `text`.
+  `valid_from` is kept because a future-start fact must render as upcoming,
+  not current; `last_confirmed_at` because `confirm` and the review surface
+  read it.
 - `memory_sweep_receipts`: one row per applied sweep, `conversation`,
-  `from_seq`, `to_seq`, operations applied, the model and usage; the
-  compare-and-swap on `from_seq` lives here.
-- `memory_digests`: `conversation`, `user_id` (nullable), `digest_hash`,
-  `text`, `revision`, `rendered_at`.
+  `from_seq`, `to_seq`, operations applied, the model and usage, and the
+  fact list the swept conversation's copy is refreshed from; the
+  compare-and-swap on `from_seq` lives here. There is no separate digest
+  table in `WorkspaceDO`: a copy is rendered from the facts when it is
+  refreshed, and the copy is the only thing the hot path reads.
 - Existing `memory_items`, `memory_mutations` and `memory_index_outbox`:
   every active item in every Organization imports as a `standing` fact in
   step 1, before the tables retire. Scope kind maps to subject: `user` to
@@ -404,11 +410,14 @@ historical memory is wanted.
 ## Agent behavior
 
 The `rally_memory` plugin is replaced by one with three tools, always active
-in root runs: `memory_recall(query)`, `memory_remember(text, kind,
-valid_until?)`, `memory_forget(fact_id)`. The model never names a scope or a
-subject for recall; the host derives both. The model is told that remembered
-context is fallible and is the asker's, and is no longer told to search before
-writing, because it no longer writes on its own. Sidekick runs receive the
+in root runs: `memory_recall(query, limit?)`, `memory_remember(text, kind,
+validUntil?, about?)`, `memory_forget(factId)`. The model never names a scope
+or a subject for recall; the host derives both. A fact written by
+`memory_remember` takes the trust class of the input that started the run, so
+a Slack or email message that talks the model into "remembering" writes an
+`external` fact, which stays out of digests (design decision 11). The model
+is told that remembered context is fallible and is the asker's, and is no
+longer told to search before writing, because it no longer writes on its own. Sidekick runs receive the
 home conversation's digest and lose the frozen admission recall. Inline child
 runs receive nothing, as today.
 
