@@ -42,7 +42,8 @@ export function isolatedHtml(source: string): string {
   return `<!doctype html><html><head>${policy}</head><body>${source}</body></html>`;
 }
 
-async function downloadPreview(preview: AttachmentPreview, loadedSource?: string): Promise<void> {
+/** Saves supplied bytes without interpreting their file format. */
+export async function downloadPreview(preview: AttachmentPreview, loadedSource?: string): Promise<void> {
   let url = loadedSource;
   let shouldRevoke = false;
   if (!url && preview.loadContent) {
