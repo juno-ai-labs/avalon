@@ -82,9 +82,12 @@ Organization and by far the most active.
 | Organization | Threads (open) | Breakouts | Memory items (active) | Memory writes, lifetime | Items with an expiry | Workspace-scope items | Table rows |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Juno Labs | 360 (142) | 96 | 9 (8) | 12 (Aug 9, Sep 2, Oct 1) | 0 | 0 | 1,256 |
-| Forward Search | 26 | 26 | 0 | 0 | 0 | 0 | 0 |
-| AI Fund | 1 | 0 | 1 | 1 | 0 | 0 | 0 |
-| Mucker Capital | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Customer Organization B | 26 | 26 | 0 | 0 | 0 | 0 | 0 |
+| Customer Organization C | 1 | 0 | 1 | 1 | 0 | 0 | 0 |
+| Customer Organization D | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+The three customer Organizations are the three with the most threads after
+Juno Labs; their names are left out of the repository on purpose.
 
 The nine Juno Labs items split 4 `user` and 5 `workstream`. Every one is a
 standing instruction or recurring fact that somebody told Rally to keep:
@@ -201,7 +204,9 @@ shipped designs face the same shape:
 - **ChatGPT shared projects** and **Glean's Slack agents** both chose an
   intersection rule: a shared space gets its own memory and cannot see any
   member's personal memory; a channel-visible agent uses only what every
-  member may see. That is the rule section 7.1 proposes for injection.
+  member may see. Section 7.1 proposed that intersection rule for personal
+  memory too; the PRD's decision 7 (2026-10-18) superseded it for personal
+  facts and kept it for Channel, Thread and Breakout facts.
 - **Managed Agents memory stores** and **Notion Lore** are the two documented
   shared stores. Both separate the shared store's write path (a reviewable
   consolidation output; agents through typed tools) from its read path, and
@@ -497,9 +502,10 @@ document that owns it.
    Review and editing surfaces land on desktop and web first.
 
 A note on the model named in the ask. `openai/gpt-6.1-sol` is the checked-in
-primary for the work-stream agent; the live flag currently routes that role to
-`openai/gpt-5.6-terra` with Gemini 3.8 Flash and Grok 4.6 as fallbacks, and the
-description loop also runs live on Terra. A sweep role gets its own flag, so
+primary for the work-stream agent; as read on 2026-10-18 the live flag routed
+that role to `openai/gpt-5.6-terra` with Gemini 3.8 Flash and Grok 4.6 as
+fallbacks, and the description loop also ran on Terra (a flag value, so this
+sentence dates the moment it was read). A sweep role gets its own flag, so
 "Sol or higher" is a flag value, not a code change.
 
 ## 6. The building blocks
@@ -608,8 +614,9 @@ long-expired rows is housekeeping, not correctness.
 **B9. Digest render.** A pure function from a set of facts to bounded text:
 grouped by subject from widest to narrowest, standing facts first, situational
 facts with their "until" date, each line ending in a short id, sorted
-deterministically, truncated newest-first under a token budget with the
-truncation stated. Its hash is the digest's identity, so an unchanged digest
+deterministically, and when the token budget is exceeded cut oldest first
+from the widest group so the conversation's own and the person's own facts
+are kept longest, with the truncation stated. Its hash is the digest's identity, so an unchanged digest
 costs no write and no delivery.
 
 **B10. Projection to the conversation object.** The digest a conversation will
@@ -657,10 +664,10 @@ cannot reach a later speaker through the shared summary. Either way a digest
 that changes mid-run waits for the next activation. Promotion into the system
 prompt at a compaction stays a separate decision (section 9).
 
-**B12. Recall tools.** `memory_recall(query, scope?)` runs FTS in `WorkspaceDO`
+**B12. Recall tools.** `memory_recall(query, limit?)` runs FTS in `WorkspaceDO`
 over the facts the acting person may see, intersected with what the
-conversation's participants may see, and returns facts with their dates and a
-source link. `memory_remember(text, kind, valid_until?)` writes a fact when a
+conversation's participants may see for everything but the acting person's
+own facts, and returns facts with their dates and a source link. `memory_remember(text, kind, valid_until?)` writes a fact when a
 person asks Rally to remember something, under the conversation as source.
 `memory_forget(id)` retracts. Three tools; no scope parameter the model could
 widen. Semantic recall over facts, if wanted, rides the existing Turbopuffer
@@ -727,9 +734,12 @@ conversation's placement so it can pick a subject level, and told to prefer
 `update` and `confirm` over `add` when the existing memories already say it.
 People can also write directly with `memory_remember`.
 
-**Read.** The run's per-run context message carries the conversation digest and,
-when the conversation's audience is the acting person alone, their personal
-digest (B11). The agent can go deeper with `memory_recall` (B12).
+**Read.** The run's per-run context message carries the conversation digest
+and the acting person's personal digest (B11). As first written this
+paragraph injected the personal digest only where the person was alone with
+Rally; the PRD's decision 7 (2026-10-18) superseded that, and personal facts
+now follow the person into every activation they start. The agent can go
+deeper with `memory_recall` (B12).
 
 **Updated and expired.** Reconciliation at sweep time (B5); people edit or
 retract in the review surface (B13); expiry by predicate (B8). A standing fact
