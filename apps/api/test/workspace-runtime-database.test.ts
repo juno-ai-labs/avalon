@@ -245,6 +245,9 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "channel_color_sync", // Its triggers, the alarm lane and the channel-colour RPCs only.
   "channel_color_sync_state", // The revision counter those triggers number marks from.
   "thread_backfill", // The alarm lane and the thread-backfill RPCs only.
+  "memory_digest_holders", // Conversations holding a memory digest copy; `memoryDigest` and the lane only.
+  "memory_digest_sync", // The copy-sync lane's marks; its triggers, the alarm lane and its RPCs only.
+  "memory_digest_sync_state", // The revision counter those marks number from.
   "space_reads", // Each person's Channel read position; only the Space read RPCs.
   "space_messages", // Rally's messages in a Channel; written at Space creation, read by the feed RPC.
   "space_message_operations", // Every operation that wrote a Channel message, for merge retries; WorkspaceDO RPC only.

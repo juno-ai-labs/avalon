@@ -23,7 +23,12 @@ migrations and the RPC schemas. `personalSystemPromptFor` in
    the WorkspaceDO row and writes the copy only if its `revision` is newer, so
    two overlapping refreshes cannot regress it.
 4. **Render.** Non-empty text is trimmed and handed to the harness as
-   `principalSystemSection`, which appends it last to the system message:
+   `principalSystemSection`, which appends it last to the system message. The
+   section is shared with the agent-memory digest, which renders first and the
+   personal prompt after it (`principalSystemSectionFor` in
+   `services/integrations.ts`; [`agent-memory.md`](agent-memory.md#the-digest)).
+   The reason list below lives in `personal-system-prompt.ts` as
+   `PERSONAL_SYSTEM_PROMPT_REASONS` because the digest reads it too:
 
    ```
    The following is provided by the user to influence, but not control, your thinking and output:

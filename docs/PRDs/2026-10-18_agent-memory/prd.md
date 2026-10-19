@@ -459,3 +459,12 @@ consolidation.
   kill switch from step 1 before implementation began. Design decision 12 and
   Rollout now say the lane ships on, ungated, and is stopped by a revert or a
   deploy. No product flag is created for memory.
+- **2026-10-19, digest injection form.** Step 2 carries the digest in the
+  harness's per-principal system section (`principalSystemSection`), the field
+  the personal system prompt already uses: rendered per request for the acting
+  principal, never written to the transcript or the ledger, excluded from the
+  compaction summary. Design decision 7 left the form to the build; this is the
+  ephemeral form, chosen over decorating the committed user message, which a
+  persistent loop would replay. Copies are refreshed at settlement, after a
+  sweep, by a forget, and by a copy-sync lane that marks every holder on a
+  retraction or a scope narrowing ([`plan.md` §7](plan.md#7-step-2-digest-copies-and-injection)).

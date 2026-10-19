@@ -276,6 +276,7 @@ describe("the shared Durable Object alarm list", () => {
         { phase: "space_bootstrap", alarmKind: undefined },
         { phase: "channel_color_sync", alarmKind: undefined },
         { phase: "thread_backfill", alarmKind: undefined },
+        { phase: "memory_digest_sync", alarmKind: undefined },
         { phase: "activity_reap", alarmKind: undefined },
         { phase: "connector_event_reap", alarmKind: undefined },
         { phase: "schedule_reconcile", alarmKind: undefined },
