@@ -55,6 +55,12 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
   the human, assistant, tool, activity, attachment, and failure rows it
   composes. Both adapters render `MessageFeed`; windowing is the one thing it
   takes from its host, because only the paging surface needs it.
+- `MessageActions` in `workstream-blocks.tsx` is the one hover row under a
+  message, on every surface that draws one: Rally's turn, a person's turn and a
+  merged result in a Thread or Breakout, and a Channel's own messages and merges
+  (`screens/channel.tsx`). The host passes what it can offer (New breakout,
+  Merge, whether the text actions apply); the row owns order, labels, fade and
+  metrics, styled by the single `.message-actions` class in `app.css`.
 - `apps/desktop/src/renderer/components/message-text-menu.tsx` is the Radix
   right-click menu on a feed `MarkdownBody` — assistant and human prose, not
   glances, stills, the inspector, or the lightbox. Copy writes the rendered
@@ -751,6 +757,34 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-10-19 — One hover row for every message, Channels included
+
+**What changed:** The three hover rows (Rally's turn, a person's turn, a
+merged result) are one exported `MessageActions` with one `.message-actions`
+class, and a Channel's own messages and merges now carry it with Copy, Speak,
+Image and PDF.
+
+**Why:** Channels had no row at all, and each surface that wanted one would
+have rebuilt it a fourth time. The three copies had already drifted: the merge
+row in a Thread was classed `.agent-message-actions` inside an article that is
+not `.agent-message`, so its hover rule never matched and New breakout and Merge
+under a merged result could not be seen. One component and one reveal rule
+keyed on the message's container is what stops the next surface from repeating
+that.
+
+**Consequences:** A new surface that draws messages renders `MessageActions`
+and gets the row; if its container is neither `.message-block` nor
+`.channel-feed-item`, add it to the reveal rule rather than writing a second
+one. A person's turn in a Thread still passes `textActions={false}`, as before.
+A Channel's message copies its stored body, so a typed @name copies as typed,
+and passes the text it drew as `rendered`, so the exports keep its mention
+chips. It also passes `verbatim`, so its image and PDF keep
+the line breaks the feed drew and skip model-text repairs; a host that draws
+text verbatim must pass it, or the saved card differs from the screen. In a
+Channel the row sits on the message's name · time line (`.channel-feed-byline`)
+rather than a line of its own: the row is laid out while hidden, and on its own
+line it made every Channel message about 31px taller at rest.
 
 ### 2026-10-18 — A long paste attaches as a typed, named file
 
