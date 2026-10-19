@@ -233,8 +233,8 @@ export async function launchWorkstreamHarness(
     /** Admit only while this is still the latest participant-facing run. */
     expectedLatestHarnessRunId?: string;
     scheduledWakeupId: string;
-    /** The conversation to run in; the work stream's main one when absent. */
-    conversation?: WakeupConversation;
+    /** The conversation to run in. */
+    conversation: WakeupConversation;
     /** A Sidekick run child's run, as `continueSidekickRun` answered for it. */
     automationRun?: WorkstreamWorkflowInput["automationRun"];
     automationContinuation?: WorkstreamWorkflowInput["automationContinuation"];
@@ -242,7 +242,7 @@ export async function launchWorkstreamHarness(
   publishEvent: typeof publishWorkstreamEvent = publishWorkstreamEvent,
 ): Promise<string> {
   const executionEnv = env;
-  const { parentKind, substreamId } = input.conversation ?? MAIN_WAKEUP_CONVERSATION;
+  const { parentKind, substreamId, backgroundAgent } = input.conversation;
   const id = await stableActivationRunId(input);
   const at = nowIso();
   const executionPrincipalJson = JSON.stringify(input.executionPrincipal);
@@ -306,6 +306,9 @@ export async function launchWorkstreamHarness(
     ...(input.scheduledWakeupId ? { scheduledWakeupId: input.scheduledWakeupId } : {}),
     ...(input.automationRun ? { automationRun: input.automationRun } : {}),
     ...(input.automationContinuation ? { automationContinuation: input.automationContinuation } : {}),
+    // As the message path derives it: a delegated worker's run uses its
+    // owner's sandbox and reports to its owner rather than publishing.
+    ...(backgroundAgent ? { backgroundAgent: true } : {}),
     ...(input.telemetryOperationId && input.telemetrySubjectUserId ? {
       telemetryOperationId: input.telemetryOperationId,
       telemetrySubjectUserId: input.telemetrySubjectUserId,
@@ -418,9 +421,9 @@ async function stableActivationRunId(input: {
 export interface WakeupConversation {
   parentKind: ConversationParentKind;
   substreamId: SubstreamId | "0";
+  /** This conversation's delegated-worker state, from its `background_agent` row. */
+  backgroundAgent: "stopped" | boolean;
 }
-
-const MAIN_WAKEUP_CONVERSATION: WakeupConversation = { parentKind: "workstream", substreamId: "0" };
 
 /**
  * Start the run one due wake-up asked for.
@@ -444,13 +447,8 @@ export async function fireWorkstreamWakeup(
    * claim together with the sidebar projection it invalidates.
    */
   scheduling: SchedulingObjectPort,
-  /**
-   * Where the run starts. `env` must carry this conversation's own
-   * authorities, as the owning object's runtime environment does: the
-   * identity and transcript ports below are built without a substream id,
-   * which means "the conversation this executes in".
-   */
-  conversation: WakeupConversation = MAIN_WAKEUP_CONVERSATION,
+  /** The conversation the wake-up belongs to, and where its run starts. */
+  conversation: WakeupConversation,
 ): Promise<{ fired: boolean; harnessRunId?: string }> {
   if (!await claimDueWorkstreamWakeup(scheduling, row)) return { fired: false };
 
@@ -462,8 +460,9 @@ export async function fireWorkstreamWakeup(
   // decisions, not failures, and retrying them would only reach the same answer.
   try {
     const principal = wakeupExecutionPrincipal(row);
-    const workstream = await createIdentityObjectPort(env, row.workspace_id, row.workstream_id)
-      .identity();
+    const workstream = await createIdentityObjectPort(
+      env, row.workspace_id, row.workstream_id, undefined, conversation.substreamId,
+    ).identity();
     if (!workstream || workstream.archived_at !== null) {
       // The work stream this wake-up belongs to is gone. Leave the row claimed:
       // there is nothing left to wake, and a retry cannot change that.
@@ -472,6 +471,8 @@ export async function fireWorkstreamWakeup(
     if (!await wakeupPrincipalStillAuthorized(env, row.workspace_id, principal)) {
       return { fired: false };
     }
+    // A stopped worker admits nothing new, and its wake-ups stay consumed.
+    if (conversation.backgroundAgent === "stopped") return { fired: false };
     // A Sidekick run child runs only as its Sidekick allows, the same question
     // a member's message there asks. A refusal — paused, archived, run-as
     // changed — stays consumed like a revoked principal: a retry gets the same
@@ -488,7 +489,7 @@ export async function fireWorkstreamWakeup(
       continuation = decided;
     }
 
-    await appendWakeupSystemMessage(env, row);
+    await appendWakeupSystemMessage(env, row, conversation.substreamId);
 
     const harnessRunId = await launchWorkstreamHarness(env, {
       workspaceId: asWorkspaceId(row.workspace_id),
@@ -564,9 +565,13 @@ function wakeupPromptPreview(prompt: string): string {
  * system rows are deliberately UI state — so this exists to answer the question
  * a person opening the work stream will have: why did this start on its own?
  */
-async function appendWakeupSystemMessage(env: Env, row: WorkstreamWakeupRow): Promise<void> {
+async function appendWakeupSystemMessage(
+  env: Env,
+  row: WorkstreamWakeupRow,
+  substreamId: SubstreamId | "0",
+): Promise<void> {
   const clientMessageId = `wakeup:${row.id}`;
-  const messages = createMessageObjectPort(env, row.workspace_id, row.workstream_id);
+  const messages = createMessageObjectPort(env, row.workspace_id, row.workstream_id, undefined, substreamId);
   // The insert and the counter it consumed were a two-statement batch: one of
   // them advanced `next_attention_ordinal` inside the retired view's trigger
   // and the other advanced `next_sequence_number` here. One operation now.
