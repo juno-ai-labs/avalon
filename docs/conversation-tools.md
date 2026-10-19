@@ -85,17 +85,27 @@ it.
   `Merged the result of "<title>" here:` and the body, or `of a conversation`
   when the thread is private to this reader. The feed's pages are larger than a
   read's, so a Channel's continuation is the feed cursor of the page being read
-  and how many of its items were returned; the next read fetches that page
-  again and skips them.
+  and the last item returned from it (its placement time and id); the next
+  read fetches that page again and resumes after that item in the feed's own
+  order. Not after a count: a merge landing, or a message removed, between two
+  pages moves every item below it, and an offset would repeat or skip one.
 - **search** takes `query`, an optional `conversation` and `limit`, and returns
   `{ matches: [{ conversationId, title, messageId, sentAt, text, textTruncated }] }`,
   newest first, within the read budget. It searches the loop's scope, never
   everything the person may read: in a shared Thread a search as the asker
   would otherwise show their private threads to the room. The matching is
   member search's (`docs/text-search.md`): one substring query over the shared
-  index, admitted by the person's audience groups, Thread and Breakout
-  messages under `messages` and Channel messages under `channel_messages`, then
-  narrowed to the conversations in scope. One candidate page, no continuation:
+  index, Thread and Breakout messages under `messages` and Channel messages
+  under `channel_messages`. Its audience is the groups the scope's
+  conversations carry (`conversationSearchGroups`), not the person's own:
+  search reaches up exactly as far as read does. A Breakout member who cannot
+  open its Thread reads the Thread's Main through the Breakout, so they find
+  what was said there too; every group names a conversation already admitted,
+  and hits are narrowed to those conversations again. The index ranks
+  substring candidates by document id and stores `occurred_at` unindexed
+  (`filterable: false`), so it cannot order by time: when more messages match
+  than `limit`, the page holds an arbitrary subset, sorted newest first among
+  themselves, and the tool's description tells the model so. One candidate page, no continuation:
   a narrower query or a read of the conversation finds more.
 - **post** takes `text` and `conversation`, and returns
   `{ conversationId, messageId, replayed }`. `conversation` may be left out to
@@ -229,7 +239,9 @@ whole rather than splitting it.
   each of its Channels, and each refusal's sentence. A Channel: listed by id
   and title alone, its feed read as messages, and its continuation resuming
   inside a feed page and onto the next. Search: matches from a Channel and a
-  Thread in one index call, newest first, and a hit outside the scope dropped.
+  Thread in one index call, newest first, a hit outside the scope dropped, the
+  audience groups of a Breakout, its Thread's Main and a Channel, and a Channel
+  read resuming after its last item when a merge lands between pages.
   WorkspaceDO and the target are a typed double there; everything they decide
   is proved on workerd.
 - `apps/api/test/sidekick-conversation-storage.test.ts` (Node, the object
@@ -249,7 +261,8 @@ whole rather than splitting it.
   server-written tags and no run in a room of two, refused whole when one embed
   cannot be shared, and refused for a Breakout that is not the Thread's.
 - `apps/api/test-workers/channels-threads-navigation.test.ts` (workerd): a
-  thread's Channel listed as a parent and resolved by id and by name, and a
+  thread's Channel listed as a parent and resolved by id and by name, from the
+  Thread and from one of its Breakouts, and a
   private Channel neither listed nor resolved for a member outside it.
 - `apps/api/test-workers/external-bindings-mucker-flow.test.ts` (workerd): the
   whole flow, a continued run's forward landing in the home Breakout.
@@ -280,7 +293,8 @@ conversation chose that audience.
 **What changed:** A Thread's Main loop gets list, read and search beside merge,
 and a Breakout loop gains search. Both reach the Channels their thread is in,
 read through the Channel screen's own feed. Every loop with read gets
-`conversation_search`. `conversation_list` no longer returns `kind`; it marks a
+`conversation_search`, which searches every conversation the loop reads, the
+ones above it included. `conversation_list` no longer returns `kind`; it marks a
 conversation the loop sits inside with `isParent`. A Breakout's instruction to
 read "the Thread's Main conversation" became one line for both loops about
 reading what they sit inside.
@@ -297,7 +311,9 @@ Thread's opening context: it costs prompt space in every Thread and goes stale
 as merges land. Admitting a Channel through the thread's placement: it would
 show a member a private Channel they cannot open. Searching everything the
 person can read: in a shared Thread it would show the asker's private threads
-to everyone in the room. A search in WorkspaceDO's SQL beside the index, which
+to everyone in the room. Admitting search by the person's own audience groups:
+a Breakout member outside its Thread could read Main but not search it, and
+the owner's rule is that a loop can always search up. A search in WorkspaceDO's SQL beside the index, which
 the first draft had: the owner asked for one search path, so Channel messages
 went into the index instead (`text-search.md`).
 
