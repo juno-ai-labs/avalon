@@ -7,7 +7,7 @@ import { InspectionSqlRequestSchema } from "@rally/contracts/engineering-inspect
 import type { Env } from "../env";
 import { MigratableDurableObject } from "./migratable-durable-object";
 
-function base64(buffer: ArrayBuffer): string {
+export function base64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   const chunks: string[] = [];
   for (let offset = 0; offset < bytes.length; offset += 32_768) {
