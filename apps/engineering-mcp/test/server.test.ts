@@ -60,6 +60,9 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     runArtifactSql: vi.fn<EngineeringInspectionRpcBinding["runArtifactSql"]>(
       async () => ({ found: false }),
     ),
+    runD1Sql: vi.fn<EngineeringInspectionRpcBinding["runD1Sql"]>(
+      async ({ database }) => ({ region, database, result: { columns: [], rows: [], rowsRead: 0, rowsWritten: 0 } }),
+    ),
   };
 }
 
@@ -134,6 +137,7 @@ describe("Rally engineering MCP tools", () => {
       "run_workspace_sql",
       "run_substream_sql",
       "run_artifact_sql",
+      "run_d1_sql",
       "list_feature_flags",
       "update_feature_flag",
       "list_model_flags",
@@ -414,6 +418,36 @@ describe("Rally engineering MCP tools", () => {
       query: { sql: "SELECT current_version FROM artifact_state", bindings: [] },
     });
     expect(global.runArtifactSql).not.toHaveBeenCalled();
+  });
+
+  it("sends D1 SQL to the named region's binding only", async () => {
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    vi.mocked(enterprise.runD1Sql).mockResolvedValue({
+      region: "enterprise",
+      database: "AUDIT_DB",
+      result: { columns: ["answer"], rows: [{ answer: 42 }], rowsRead: 1, rowsWritten: 0 },
+    });
+
+    const response = await rpc(
+      testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }),
+      "tools/call",
+      {
+        name: "run_d1_sql",
+        arguments: { region: "enterprise", database: "AUDIT_DB", sql: "SELECT ? AS answer", bindings: [42] },
+      },
+    );
+    const result = response.result as { content: Array<{ text: string }> };
+    expect(JSON.parse(result.content[0]!.text)).toEqual({
+      region: "enterprise",
+      database: "AUDIT_DB",
+      result: { columns: ["answer"], rows: [{ answer: 42 }], rowsRead: 1, rowsWritten: 0 },
+    });
+    expect(enterprise.runD1Sql).toHaveBeenCalledWith({
+      database: "AUDIT_DB",
+      query: { sql: "SELECT ? AS answer", bindings: [42] },
+    });
+    expect(global.runD1Sql).not.toHaveBeenCalled();
   });
 
   it("does not execute SQL when both regions resolve the target", async () => {
