@@ -1730,7 +1730,8 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
               {item.kind === 'artifact_updated' ? <>
                 <strong>{item.artifact?.title ?? 'an artifact'}</strong> in <strong>{item.threadTitle}</strong>
               </> : item.kind === 'merged' ? <>
-                <strong>{item.breakout ? item.breakout.title : item.threadTitle}</strong> into{' '}
+                {/* A merge from a thread this reader cannot open names no thread. */}
+                {item.mergedInto?.threadPrivate ? 'a private thread' : <strong>{item.breakout ? item.breakout.title : item.threadTitle}</strong>} into{' '}
                 <strong>{item.breakout ? item.threadTitle : item.mergedInto?.name ?? 'a channel'}</strong>
               </> : <strong>{item.breakout && item.kind !== 'breakout_started' ? item.breakout.title : item.threadTitle}</strong>}
             </span>

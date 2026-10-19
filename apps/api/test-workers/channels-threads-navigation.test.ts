@@ -1298,7 +1298,8 @@ describe("Channel merges", () => {
   async function merge(channelId: SpaceId | null, operationId: string, body = "Shipped the sequence.") {
     await storeResource(ARTIFACT, "Price model").catch(() => undefined);
     return workspace().mergeThreadIntoChannel({
-      auth: auth(OWNER), workstreamId: OPEN_THREAD, spaceId: channelId, body, operationId, resources: [ARTIFACT],
+      auth: auth(OWNER), workstreamId: OPEN_THREAD, spaceId: channelId, body, operationId,
+      embeds: [{ id: ARTIFACT, title: "Price model", kind: "generated_file" }],
     });
   }
 
@@ -1401,7 +1402,7 @@ describe("Channel merges", () => {
 
     expect(await workspace().mergeThreadIntoChannel({
       auth: auth(OWNER), workstreamId: PRIVATE_THREAD, spaceId: null, body: "Bands are set.", operationId: "op-p",
-      resources: [OTHER_ARTIFACT],
+      embeds: [{ id: OTHER_ARTIFACT, title: "Comp model", kind: "generated_file" }],
     })).toMatchObject({ ok: true, spaceId: channelId, name: "Outbound", replayed: false, linked: [OTHER_ARTIFACT] });
 
     const embeds = [{ id: OTHER_ARTIFACT, title: "Comp model", kind: "generated_file" }];
@@ -1423,7 +1424,7 @@ describe("Channel merges", () => {
     expect(await sharedThrough(MEMBER, OTHER_ARTIFACT)).toBeNull();
     await workspace().mergeThreadIntoChannel({
       auth: auth(OWNER), workstreamId: PRIVATE_THREAD, spaceId: null, body: "Bands are set.", operationId: "op-p",
-      resources: [OTHER_ARTIFACT],
+      embeds: [{ id: OTHER_ARTIFACT, title: "Comp model", kind: "generated_file" }],
     });
     expect(await sharedThrough(MEMBER, OTHER_ARTIFACT)).toBe(channelId);
   });
@@ -1453,17 +1454,6 @@ describe("Channel merges", () => {
     expect(await sharedThrough(MEMBER)).toBeNull();
   });
 
-  it("given an embed that names nothing, when the thread merges, then it is refused at that position and nothing is posted or shared", async () => {
-    const channelId = await channelWithThreads();
-    await storeResource(ARTIFACT, "Price model");
-    expect(await workspace().mergeThreadIntoChannel({
-      auth: auth(OWNER), workstreamId: OPEN_THREAD, spaceId: channelId, body: "Done", operationId: "op-x",
-      resources: [ARTIFACT, "no-such-resource"],
-    })).toEqual({ ok: false, code: "merge_resource_not_shareable", index: 1 });
-    expect(await messages(channelId, OWNER)).toEqual([]);
-    expect(await sharedThrough(OWNER)).toBeNull();
-  });
-
   it("given a merge whose thread was made private since, when a member who cannot open it reads the Channel, then the merge stays, without its thread's name", async () => {
     const channelId = await channelWithThreads();
     await merge(channelId, "op-1");
@@ -1488,6 +1478,17 @@ describe("Channel merges", () => {
     await workspace().recordActivityEvents({ workspaceId: WORKSPACE_ID, userId: MEMBER,
       events: [{ kind: "read", subject: { kind: "channel", channelId }, through: 3 }] });
     expect((await activity(MEMBER)).items.find((item) => item.kind === "merged")?.unread).toBe(false);
+  });
+
+  it("given a private thread's merge, when a member who cannot open the thread reads Activity, then the row is the Channel's and names no thread", async () => {
+    const channelId = await channelWithThreads();
+    await workspace().mergeThreadIntoChannel({
+      auth: auth(OWNER), workstreamId: PRIVATE_THREAD, spaceId: null, body: "Bands are set.", operationId: "op-p", embeds: [],
+    });
+    expect((await activity(MEMBER)).items.filter((item) => item.kind === "merged")).toEqual([expect.objectContaining({
+      kind: "merged", actorUserId: OWNER, threadTitle: "", breakout: null, channelIds: [channelId],
+      mergedInto: { channelId, name: "Outbound", threadPrivate: true }, unread: true,
+    })]);
   });
 
   it("given a merge, when a member who is not its author removes it, then it stays; when its author does, then it is gone", async () => {

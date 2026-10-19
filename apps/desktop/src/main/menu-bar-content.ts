@@ -26,7 +26,9 @@ function activityDetail(item: ActivityItem): string {
     case 'run_finished': return actor ? `${actor} finished` : 'Finished';
     case 'merged': return item.breakout
       ? `${actor || 'Someone'} merged ${item.breakout.title} into it`
-      : `${actor || 'Someone'} merged it into ${item.mergedInto?.name ?? 'a channel'}`;
+      : item.mergedInto?.threadPrivate
+        ? `${actor || 'Someone'} merged a private thread into it`
+        : `${actor || 'Someone'} merged it into ${item.mergedInto?.name ?? 'a channel'}`;
     case 'artifact_updated': return `${actor || 'Someone'} updated it`;
   }
 }
@@ -36,13 +38,16 @@ function attentionRow(item: ActivityItem): MenuBarAttentionRow {
   const detail = activityDetail(item);
   // An artifact's row leads with the artifact, and names its thread below.
   const title = item.kind === 'artifact_updated' ? item.artifact?.title ?? item.threadTitle
-    : item.kind === 'merged' ? item.threadTitle : item.breakout?.title ?? item.threadTitle;
+    : item.kind === 'merged' ? (item.mergedInto?.threadPrivate ? item.mergedInto.name : item.threadTitle)
+      : item.breakout?.title ?? item.threadTitle;
   return {
     key: item.id,
     workstreamId: item.threadId,
     // A breakout's merge is about the thread it landed in.
     substreamId: item.kind === 'merged' ? null : item.breakout?.substreamId ?? null,
     title: title.trim().length > 0 ? title : UNNAMED_WORKSTREAM_LABEL,
+    // A thread's merge opens where it landed, as the Activity tab's row does.
+    ...(item.kind === 'merged' && item.mergedInto ? { channelId: item.mergedInto.channelId } : {}),
     detail: item.kind === 'artifact_updated' || (item.breakout && item.kind !== 'merged') ? `${detail} in ${item.threadTitle}` : detail,
   };
 }

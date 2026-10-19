@@ -49,11 +49,29 @@ export function authorizationSnapshotKey(subject: AuthorizationSubject, resource
  * ids it newly linked.
  */
 export function linkSpaceResources(sql: SqlStorage, spaceId: string, resourceIds: readonly string[]): string[] {
+  // The returned row is the witness of a new link: a conflict returns none.
+  // Not `rowsWritten`, which the search trigger's own write inflates.
   return resourceIds.filter((resourceId) => sql.exec(
     `INSERT INTO authorization_locations(parent_id, substream_id, parent_kind, resource_id) VALUES (?, '0', 'space', ?)
-     ON CONFLICT(parent_id, substream_id, resource_id) DO NOTHING`,
-    spaceId, resourceId).rowsWritten > 0);
+     ON CONFLICT(parent_id, substream_id, resource_id) DO NOTHING
+     RETURNING resource_id`,
+    spaceId, resourceId).toArray().length > 0);
 }
+
+/**
+ * WorkspaceDO migration 118: link what every Channel merge made before
+ * `linkSpaceResources` embeds to its Channel, so an older merge's artifacts
+ * follow the Channel's readers like a new one's (docs/conversation-merge.md).
+ * Each was an Organization-wide thread's, attached to that thread, so no
+ * reader loses access; an embed whose resource is gone is skipped.
+ */
+export const SPACE_MERGE_EMBED_LINKS_MIGRATION: readonly string[] = [
+  `INSERT OR IGNORE INTO authorization_locations(parent_id, substream_id, parent_kind, resource_id)
+   SELECT DISTINCT message.space_id, '0', 'space', resource.id
+     FROM space_messages message, json_each(message.embeds_json) embed
+     JOIN resources resource ON resource.id = json_extract(embed.value, '$.id')
+    WHERE message.source_workstream_id IS NOT NULL AND message.embeds_json IS NOT NULL`,
+];
 
 export class AuthorizationStorage {
   constructor(private readonly storage: DurableObjectStorage) {}

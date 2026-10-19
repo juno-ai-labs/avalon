@@ -103,6 +103,8 @@ interface ActivityKey extends Record<string, SqlStorageValue> {
   /** On a thread's `merged` row: the Channel it merged into. */
   merged_channel_id?: string | null;
   merged_channel_name?: string | null;
+  /** On a thread's `merged` row: 1 when this viewer may not open the thread. */
+  merged_thread_private?: number | null;
   /** On an `artifact_updated` row: the artifact, its title now, and the version. */
   artifact_id?: string | null;
   artifact_title?: string | null;
@@ -446,7 +448,11 @@ export class WorkspaceActivityFeed {
       return row !== undefined && cleared(ACTIVITY_CLEAR_RULES[key.kind], row, waterlines);
     };
     return keys.flatMap((key): ActivityItem[] => {
-      const threadTitle = threads.get(key.thread_id);
+      // A merge from a thread this viewer may not open reaches them through
+      // the Channel it landed in, as the Channel's feed shows it: the row is
+      // the Channel's, and names no thread.
+      const privateMerge = key.merged_channel_id != null && Number(key.merged_thread_private) === 1;
+      const threadTitle = privateMerge ? "" : threads.get(key.thread_id);
       const onBreakout = key.substream_id !== null && key.substream_id !== "0";
       const breakout = onBreakout ? breakouts.get(key.substream_id as string) : undefined;
       // A breakout row needs the breakout listed; a thread row needs the thread
@@ -463,11 +469,13 @@ export class WorkspaceActivityFeed {
         breakout: breakout ? { substreamId: key.substream_id as string, title: breakout.title }
           : key.merged_breakout_id ? { substreamId: key.merged_breakout_id, title: key.merged_breakout_title ?? "" }
             : null,
-        ...(key.merged_channel_id ? { mergedInto: { channelId: key.merged_channel_id, name: key.merged_channel_name ?? "" } } : {}),
+        ...(key.merged_channel_id ? { mergedInto: {
+          channelId: key.merged_channel_id, name: key.merged_channel_name ?? "", ...(privateMerge ? { threadPrivate: true as const } : {}),
+        } } : {}),
         ...(key.artifact_id ? {
           artifact: { resourceId: key.artifact_id, title: key.artifact_title ?? "", version: Number(key.artifact_version) },
         } : {}),
-        channelIds: channelIds.get(key.thread_id) ?? [],
+        channelIds: privateMerge ? [key.merged_channel_id as string] : channelIds.get(key.thread_id) ?? [],
         unread: key.occurred_at > seenThrough && !done(key),
       }];
     });

@@ -199,9 +199,12 @@ for one person, newest first:
 - every **merge** somebody else made ([`conversation-merge.md`](conversation-merge.md)):
   a breakout's into a thread they may list, read from the merge message's own
   event (its `metadata.mergedFrom`, through migration 109's partial index), and
-  a thread's into a Channel they may list, about a thread they may open, read
-  from `space_messages`. Both are `merged`; a thread's carries `mergedInto`.
-  A build before client contract 7 is served the page without them.
+  a thread's into a Channel they may list, read from `space_messages`, whether
+  or not they may open the thread. Both are `merged`; a thread's carries
+  `mergedInto`. A merge from a thread they may not open is the Channel's row:
+  `mergedInto.threadPrivate`, an empty `threadTitle`, and the Channel as its
+  only `channelIds`. A build before client contract 7 is served the page
+  without merges, and one before 9 without those rows.
 - every new **version of an artifact they pinned** that somebody else made
   after they pinned it, while it is generated in a Main they may open
   (`artifact_updated`), read from `resource_versions` against their pin

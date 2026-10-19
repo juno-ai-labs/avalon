@@ -186,10 +186,12 @@ closes any artifact not attached to that thread.
 generated artifacts with a preview.
 
 **Consequences:** The panel sits inside the Channel pane, not in the stack's
-second slot, so opening a thread replaces it, and it has no Expand yet. It
-claims the shell's rail (`railScope` `channel:<id>`) while mounted, as a
-thread's panel does, which is what makes the shell narrow the Channel beside
-it. The
+second slot, so opening a thread replaces it. It claims the shell's rail
+(`railScope` `channel:<id>`) while mounted, as a thread's panel does, which is
+what makes the shell narrow the Channel beside it. Its Expand, its crumb back
+to the Channel and its live artifacts are the thread panel's own:
+`usePaneExpansion`, `expandToggle`, `useRailFillsPane` and `useSiteArtifacts`,
+which both panels now share. The
 route keeps it across a reload, as a thread's does.
 
 ### 2026-10-17 — A panel standing alone carries its crumbs, as one glass bridge

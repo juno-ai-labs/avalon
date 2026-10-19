@@ -369,6 +369,30 @@ signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
 
+### 2026-10-19 — A Channel merge reaches the Channel, and opens it
+
+**What changed:** A thread's merge into a Channel is pushed, emailed or sent to
+Slack to everyone who reads the Channel (`ActivityPushSubject.channelId`):
+every member for an Organization-wide Channel, its participants and the
+thread's readers for a private one. Push, email and Slack link to the Channel
+(`spaceCanonicalUrl`), not the thread. A reader who cannot open the thread is
+told "Maya merged a private thread into GTM", and the macOS menu bar names the
+Channel and opens it.
+
+**Why:** The product owner's call: a private thread may now merge into its
+Channel, and the Channel feed shows the merge to all its readers, so the
+notification had to reach the same people. Their audience used to be the
+thread's, which for a private thread left out everyone it was meant for. A
+merge opens where it landed, as the Activity row already did; the push opened
+the thread, which such a reader cannot.
+
+**Considered and rejected:** Keeping the thread's audience and adding the
+missing readers by hand: the Channel's scope and its participants already
+answer who reads it.
+
+**Consequences:** An Organization-wide thread's merge into a private Channel
+now notifies the Channel's people rather than the whole Organization.
+
 ### 2026-10-16 — Merges push
 
 **What changed:** A `merged` Activity row pushes, and goes by email or Slack,

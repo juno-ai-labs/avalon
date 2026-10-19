@@ -1165,6 +1165,13 @@ describe("the navigation routes", () => {
       message: expect.objectContaining({ merge: { threadId, title: "", summary: null, embeds: [{ id: "resource-2", title: "Comp model", kind: "document" }], private: true } }),
     })]);
     expect(merged((await request(path, MEMBER_AUTH, undefined, "GET", "8")).body)).toEqual([]);
+    // Activity likewise: its row, without the thread, only for a build that reads it.
+    const activityRows = async (contract: string) => ((await request("/navigation/activity", MEMBER_AUTH, undefined, "GET", contract))
+      .body as { items: Array<{ kind: string; threadTitle: string; mergedInto?: unknown }> }).items.filter((item) => item.kind === "merged");
+    expect(await activityRows("9")).toEqual([expect.objectContaining({
+      threadTitle: "", mergedInto: { channelId: opened.space.id, name: opened.space.name, threadPrivate: true },
+    })]);
+    expect(await activityRows("8")).toEqual([]);
   });
 
   it("answers nobody who is not signed in", async () => {
