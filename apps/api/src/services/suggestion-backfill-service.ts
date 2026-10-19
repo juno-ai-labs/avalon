@@ -4,6 +4,7 @@ import { conversationObjectName } from "../durable-objects/names";
 import type { SettledTurnJudgement } from "../durable-objects/substream-agent";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { stableCode } from "../observability/logger";
 
 /**
  * The one classifier failure the backfill settles on: without a
@@ -29,18 +30,22 @@ export async function backfillSuggestion(env: Env, input: {
   return settledBackfillOutcome(await conversation.backfillTurnDisposition(input));
 }
 
+/** The settlement step's own catch: the step threw before it could judge. */
+const STEP_FAILED = "failed:";
+
 /**
- * A classifier failure is a failure, not an outcome (docs/thread-backfill.md):
- * thrown so the lane releases the row and sends it again, and the observer,
- * which keeps no answer for a failed judgement, asks again. The one exception
- * is a missing key, which a retry cannot fix.
+ * A failure is a failure, not an outcome (docs/thread-backfill.md): thrown so
+ * the lane releases the row and sends it again. A classifier failure retries
+ * because the observer keeps no answer for a failed judgement and asks again;
+ * a step that threw retries because nothing was judged. The one exception is
+ * a missing key, which a retry cannot fix.
  */
 export function settledBackfillOutcome(judgement: SettledTurnJudgement): string {
   if (judgement.failureKind !== null && judgement.failureKind !== SETTLES_WITHOUT_RETRY) {
-    // Shaped as a stable code, so `thread_backfill_failed` logs the kind
-    // rather than its fallback (docs/naming-a-schema-failure.md).
-    throw new Error(`suggestion_backfill_classifier_unavailable_${judgement.failureKind}`
-      .toLowerCase().replace(/[^a-z0-9_]/gu, "_").slice(0, 120));
+    throw new Error(stableCode(`suggestion_backfill_classifier_unavailable_${judgement.failureKind}`));
+  }
+  if (judgement.outcome.startsWith(STEP_FAILED)) {
+    throw new Error(stableCode(`suggestion_backfill_${judgement.outcome.slice(STEP_FAILED.length)}`));
   }
   return judgement.outcome;
 }

@@ -18,6 +18,11 @@ describe("settledBackfillOutcome", () => {
       .toThrow("suggestion_backfill_classifier_unavailable_http_503");
   });
 
+  it("throws when the step itself failed before judging, so the row is not lost", () => {
+    expect(() => settledBackfillOutcome({ outcome: "failed:turn_disposition_step_failed:d1_error", failureKind: null }))
+      .toThrow("suggestion_backfill_turn_disposition_step_failed_d1_error");
+  });
+
   it("settles a conversation judged without a key, which a retry cannot fix", () => {
     expect(settledBackfillOutcome({ outcome: "judged:classifier_unavailable", failureKind: "typesafe_key_missing" }))
       .toBe("judged:classifier_unavailable");

@@ -454,6 +454,11 @@ export async function observeTurnDisposition(input: TurnDispositionObservationIn
     code = !(decision.confidence > threshold) ? "confidence_below_threshold" : "not_offerable";
   }
   const written = input.commit(() => {
+  // Gate 3 again, inside the write: the classifier call yielded, and another
+  // caller judging the same run meanwhile (its settlement and the backfill)
+  // must not have its decision overwritten, nor its row collided with.
+  const meanwhile = input.storage.judgementForRun(input.runId);
+  if (meanwhile && meanwhile.failure_kind === null) return null;
   let suggestion: SuggestionRow | null = null;
   if (kind !== null) {
     // Gate 5 again, inside the write: the classifier call yielded, and a merge
@@ -499,6 +504,7 @@ export async function observeTurnDisposition(input: TurnDispositionObservationIn
   });
   return { code, suggestion };
   });
+  if (written === null) return { outcome: "skipped", gate: "already_judged" };
   return { outcome: "judged", code: written.code, confidence: decision.confidence, model: decision.model, failureKind: decision.failureKind ?? null, suggestion: written.suggestion };
 }
 
