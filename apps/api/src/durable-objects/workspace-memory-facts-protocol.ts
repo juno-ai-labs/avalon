@@ -33,9 +33,17 @@ export const MemoryValidUntilBasisSchema = z.enum(["stated", "event", "assumed"]
 const InstantSchema = z.number().int().nonnegative();
 
 /**
+ * `WorkspaceDO`'s `memory_revision`: advanced in every transaction that writes
+ * a fact and by every mark of the copy-sync lane, so it orders the reads a
+ * digest copy is refreshed from (`docs/agent-memory.md#the-digest`).
+ */
+const RevisionSchema = z.number().int().nonnegative();
+
+/**
  * The conversation a call acts in: a Thread's Main (`substreamId` `"0"`), a
  * Breakout, a Sidekick's own conversation or run, or a Channel's own feed.
- * `memorySourceOf` renders it as the source string a fact stores.
+ * `memorySourceOf` renders it as the source string a fact stores, and
+ * `memoryConversationKeyOf` as the key that names this one conversation.
  */
 export const MemoryConversationSchema = z.strictObject({
   parentKind: z.enum(["workstream", "automation", "space"]),
@@ -58,6 +66,20 @@ export function memorySourceOf(conversation: MemoryConversation): string {
 }
 
 /**
+ * The key naming one conversation, where `memorySourceOf` names what a fact
+ * was learned from. They differ for a Sidekick: every conversation of one
+ * Sidekick (its own at substream `"0"` and one child per run) is the single
+ * source `sidekick:<automationId>`, but each has its own transcript, cursor
+ * and digest copies. A sweep's receipt and a digest holder are both keyed by
+ * this; Thread, Breakout and Channel keys are their sources.
+ */
+export function memoryConversationKeyOf(conversation: MemoryConversation): string {
+  return conversation.parentKind === "automation"
+    ? `sidekick:${conversation.parentId}/${conversation.substreamId}`
+    : memorySourceOf(conversation);
+}
+
+/**
  * Who is reading or writing. A person is resolved to their Organization
  * relationship inside the object; a Sidekick reads its own facts and its home
  * conversation's, and the Organization's only when its scope is `workspace`.
@@ -69,6 +91,15 @@ export const MemoryReaderSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("conversation") }),
 ]);
 export type MemoryReader = z.infer<typeof MemoryReaderSchema>;
+
+/** The digest copy's row key for a reader: `user:<id>`, `sidekick:<automationId>`, or `conversation`. */
+export function digestPrincipalKey(reader: MemoryReader): string {
+  switch (reader.kind) {
+    case "person": return `user:${reader.userId}`;
+    case "sidekick": return `sidekick:${reader.automationId}`;
+    case "conversation": return "conversation";
+  }
+}
 
 export const MemoryFactSchema = deferredZodSchema(() => z.strictObject({
   factId: z.string().min(1),
@@ -137,8 +168,9 @@ export type MemoryDigestFact = z.infer<typeof MemoryDigestFactSchema>;
 
 /**
  * The facts one principal's digest copy in one conversation is refreshed
- * from: recall with no query, as the reader, and the conversation recorded
- * as a holder so the copy-sync lane can reach it.
+ * from: recall with no query, as the reader, leaving out `external` facts
+ * before the limit (they never render), and the conversation recorded as a
+ * holder of those facts so the copy-sync lane can reach it.
  */
 export const WorkspaceMemoryDigestRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
@@ -150,8 +182,8 @@ export const WorkspaceMemoryDigestRequestSchema = deferredZodSchema(() => z.stri
 
 export const WorkspaceMemoryDigestResultSchema = deferredZodSchema(() => z.strictObject({
   facts: z.array(MemoryDigestFactSchema),
-  /** The object's clock when the facts were read; a copy keeps the newest read. */
-  readAt: InstantSchema,
+  /** `memory_revision` when the facts were read; a copy keeps the newest read. */
+  revision: RevisionSchema,
 }));
 
 export type WorkspaceMemoryDigestRequest = z.infer<typeof WorkspaceMemoryDigestRequestSchema>;
@@ -197,7 +229,8 @@ export const WorkspaceMemoryForgetRequestSchema = deferredZodSchema(() => z.stri
 }));
 
 export const WorkspaceMemoryForgetResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
-  z.strictObject({ outcome: z.literal("retracted"), fact: MemoryFactSchema }),
+  /** `revision` is the retraction's: a digest read below it may still show the fact. */
+  z.strictObject({ outcome: z.literal("retracted"), fact: MemoryFactSchema, revision: RevisionSchema }),
   z.strictObject({ outcome: z.literal("already_retracted"), fact: MemoryFactSchema }),
   z.strictObject({ outcome: z.literal("not_found") }),
   z.strictObject({ outcome: z.literal("not_visible") }),
@@ -317,7 +350,8 @@ export const MemorySweepOperationSchema = deferredZodSchema(() => z.discriminate
     validFrom: InstantSchema.nullable(),
     validUntil: InstantSchema.nullable(),
     validUntilBasis: MemoryValidUntilBasisSchema.nullable(),
-    derivedFrom: z.enum(["person", "agent", "external"]),
+    /** The trust class of the cited messages, computed by the host from their authors. */
+    derivedFrom: MemoryDerivedFromSchema,
     conflict: z.boolean(),
     confidence: z.number().min(0).max(1),
     evidence: EvidenceSchema,
@@ -327,6 +361,8 @@ export const MemorySweepOperationSchema = deferredZodSchema(() => z.discriminate
     factId: z.string().min(1),
     text: SweepTextSchema,
     validUntil: InstantSchema.nullable(),
+    /** The class of this update's evidence; the store writes `mixed` when it differs from the predecessor's. */
+    derivedFrom: MemoryDerivedFromSchema,
     evidence: EvidenceSchema,
   }),
   z.strictObject({
@@ -362,6 +398,7 @@ export const WorkspaceMemoryApplySweepRequestSchema = deferredZodSchema(() => z.
 }));
 
 export const MemorySweepReceiptSchema = deferredZodSchema(() => z.strictObject({
+  /** `memoryConversationKeyOf` the swept conversation, not its fact source. */
   conversation: z.string().min(1),
   fromSeq: z.number().int().nonnegative(),
   toSeq: z.number().int().nonnegative(),
@@ -388,6 +425,10 @@ export const WorkspaceMemoryApplySweepResultSchema = deferredZodSchema(() => z.d
     outcome: z.literal("applied"),
     receipt: MemorySweepReceiptSchema,
     refused: z.array(z.strictObject({ index: z.number().int().nonnegative(), code: MemorySweepRefusalSchema })),
+    /** `memory_revision` after the apply; advanced when any operation applied. */
+    revision: RevisionSchema,
+    /** Whether a retraction marked a digest holder, so the caller wakes the copy-sync lane. */
+    markedHolders: z.boolean(),
   }),
   /** `fromSeq` is behind the stored `toSeq`: an earlier delivery applied this range. */
   z.strictObject({ outcome: z.literal("already_applied"), receipt: MemorySweepReceiptSchema }),

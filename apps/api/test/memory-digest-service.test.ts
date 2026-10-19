@@ -1,4 +1,4 @@
-import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import {
   asAutomationId,
   asHarnessRunId,
@@ -9,6 +9,8 @@ import {
 } from "@rally/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { workspaceDOName } from "../src/durable-objects/names";
+import { WorkspaceMemoryDigestResultSchema } from "../src/durable-objects/workspace-memory-facts-protocol";
 import type { Env } from "../src/env";
 import { createSchedulingObjectPort } from "../src/runtime/scheduling-port";
 import { __integrationTesting } from "../src/services/integrations";
@@ -18,7 +20,7 @@ import {
   renderMemoryDigestSection,
 } from "../src/services/memory-digest-service";
 import { createMemoryTools } from "../src/services/memory-service";
-import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestEnv } from "./helpers/cloudflare-test";
 import {
   applyWorkstreamObjectRootFields,
   seedWorkstreamObjectRoot,
@@ -26,7 +28,7 @@ import {
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
 } from "./helpers/durable-authority";
-import { migratedSqliteDatabase } from "./helpers/sqlite-d1";
+import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
 
 /**
@@ -47,33 +49,6 @@ const OWNER_RUN = asHarnessRunId("00000000-0000-4000-8000-000000000221");
 const MEMBER_RUN = asHarnessRunId("00000000-0000-4000-8000-000000000222");
 const SIDEKICK_ID = asAutomationId("00000000-0000-4000-8000-000000000231");
 const NOW = Date.parse("2026-10-19T12:00:00.000Z");
-
-class SqliteD1Statement {
-  private values: unknown[] = [];
-  constructor(private readonly statement: StatementSync) {}
-  bind(...values: unknown[]): SqliteD1Statement { this.values = values; return this; }
-  async run(): Promise<D1Result<unknown>> {
-    const result = this.statement.run(...this.values as SQLInputValue[]);
-    return createTestD1Result<unknown>({ success: true, meta: { changes: Number(result.changes) } });
-  }
-  async first<T>(): Promise<T | null> {
-    return (this.statement.get(...this.values as SQLInputValue[]) as T | undefined) ?? null;
-  }
-  async all<T>(): Promise<D1Result<T>> {
-    return createTestD1Result<T>({ success: true, results: this.statement.all(...this.values as SQLInputValue[]) as T[], meta: { changes: 0 } });
-  }
-}
-
-function sqliteD1(database: DatabaseSync): D1Database {
-  return createTestD1Database({
-    prepare: (sql: string) => createTestD1PreparedStatement(new SqliteD1Statement(database.prepare(sql))),
-    batch: async (statements: D1PreparedStatement[]) => {
-      const results: D1Result<unknown>[] = [];
-      for (const statement of statements) results.push(await (statement as unknown as SqliteD1Statement).run());
-      return results;
-    },
-  });
-}
 
 const openDatabases: DatabaseSync[] = [];
 const objectStores = new Map<string, DatabaseSync>();
@@ -175,6 +150,21 @@ function tool(env: Env, input: WorkstreamWorkflowInput, name: "remember" | "forg
 
 const OPEN_CONVERSATION = { workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: OPEN_THREAD, substreamId: "0" } as const;
 
+/** One reader's digest read straight from `WorkspaceDO`, as a refresh reads it before it stores. */
+function workspaceStub(env: Env) {
+  return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
+}
+
+async function readDigest(env: Env, userId: string, limit = 50) {
+  return WorkspaceMemoryDigestResultSchema.parse(await workspaceStub(env).memoryDigest({
+    workspaceId: WORKSPACE_ID,
+    reader: { kind: "person", userId },
+    conversation: { parentKind: "workstream", parentId: OPEN_THREAD, substreamId: "0" },
+    now: Date.now(),
+    limit,
+  }));
+}
+
 /** The owner remembers one fact about themselves and one about the thread, in the thread. */
 async function rememberTwo(env: Env): Promise<{ personFactId: string; threadFactId: string }> {
   const remember = tool(env, runInput(OWNER_ID, OWNER_RUN), "remember");
@@ -210,7 +200,7 @@ describe("digestReaderFor", () => {
 });
 
 describe("the memory digest copy", () => {
-  it("holds what each reader may see here, with the subject's title, and an older read never replaces it", async () => {
+  it("holds what each reader may see here, with the subject's title, and an older revision never replaces it", async () => {
     const env = fixture();
     const { personFactId, threadFactId } = await rememberTwo(env);
     const port = createSchedulingObjectPort(env, WORKSPACE_ID, OPEN_THREAD);
@@ -227,8 +217,8 @@ describe("the memory digest copy", () => {
     expect((await port.memoryDigestCopy(`user:${MEMBER_ID}`))?.map((fact) => fact.factId)).toEqual([threadFactId]);
     expect(await port.memoryDigestPrincipals()).toEqual([`user:${MEMBER_ID}`, `user:${OWNER_ID}`].sort());
 
-    // A refresh that read earlier and landed late leaves the newer copy alone.
-    const stale = await port.storeMemoryDigestCopy({ principal: `user:${OWNER_ID}`, facts: [], readAt: 0, now: Date.now() });
+    // A refresh that read at an earlier revision and landed late leaves the newer copy alone.
+    const stale = await port.storeMemoryDigestCopy({ principal: `user:${OWNER_ID}`, facts: [], sourceRevision: 0, now: Date.now() });
     expect((await port.memoryDigestCopy(`user:${OWNER_ID}`))?.map((fact) => fact.factId).sort()).toEqual([personFactId, threadFactId].sort());
     expect(stale).toBe(false);
     // A principal that never acted here has no copy.
@@ -248,7 +238,50 @@ describe("the memory digest copy", () => {
     expect((await port.memoryDigestCopy(`user:${OWNER_ID}`))?.map((fact) => fact.factId)).toEqual([personFactId]);
     expect(await port.memoryDigestCopy(`user:${MEMBER_ID}`)).toEqual([]);
     // Nothing left to drop is not an error, and touches no copy.
-    expect(await port.removeFactFromMemoryDigestCopies({ factId: threadFactId, now: Date.now() })).toBe(0);
+    expect(await port.removeFactFromMemoryDigestCopies({ factId: threadFactId, revision: 0, now: Date.now() })).toBe(0);
+  });
+
+  it("refuses a refresh that read before a forget and lands after it, in every copy of the conversation", async () => {
+    const env = fixture();
+    const { personFactId, threadFactId } = await rememberTwo(env);
+    await refreshMemoryDigestCopy(env, OPEN_CONVERSATION, { kind: "person", userId: OWNER_ID });
+    await refreshMemoryDigestCopy(env, OPEN_CONVERSATION, { kind: "person", userId: MEMBER_ID });
+    // Two refreshes in flight: each has read, neither has stored yet.
+    const ownerBefore = await readDigest(env, OWNER_ID);
+    const memberBefore = await readDigest(env, MEMBER_ID);
+    expect(memberBefore.facts.map((fact) => fact.factId)).toEqual([threadFactId]);
+
+    await tool(env, runInput(MEMBER_ID, MEMBER_RUN), "forget")({ factId: threadFactId }, "receipt-forget-race");
+    const port = createSchedulingObjectPort(env, WORKSPACE_ID, OPEN_THREAD);
+    for (const [principal, read] of [[`user:${OWNER_ID}`, ownerBefore], [`user:${MEMBER_ID}`, memberBefore]] as const) {
+      expect(await port.storeMemoryDigestCopy({ principal, facts: read.facts, sourceRevision: read.revision, now: Date.now() })).toBe(false);
+    }
+    expect((await port.memoryDigestCopy(`user:${OWNER_ID}`))?.map((fact) => fact.factId)).toEqual([personFactId]);
+    expect(await port.memoryDigestCopy(`user:${MEMBER_ID}`)).toEqual([]);
+    // A read taken after the forget still lands.
+    expect(await refreshMemoryDigestCopy(env, OPEN_CONVERSATION, { kind: "person", userId: OWNER_ID })).toBe(true);
+    expect((await port.memoryDigestCopy(`user:${OWNER_ID}`))?.map((fact) => fact.factId)).toEqual([personFactId]);
+  });
+
+  it("leaves external facts out of the digest before its limit, while recall still returns them", async () => {
+    const env = fixture();
+    const remember = (factId: string, text: string, derivedFrom: "person" | "external", now: number) => workspaceStub(env).rememberMemoryFact({
+      workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: OWNER_ID },
+      conversation: { parentKind: "workstream", parentId: OPEN_THREAD, substreamId: "0" },
+      receiptId: `receipt-${factId}`, harnessRunId: OWNER_RUN, factId, text, kind: "standing", validUntil: null,
+      about: "this conversation", derivedFrom, now,
+    });
+    await remember("fact-said-here", "The launch thread meets on Tuesdays.", "person", NOW);
+    // Newer, so it would take the digest's one place if it were cut after the limit.
+    await remember("fact-from-email", "A customer wrote that the launch slipped.", "external", NOW + 1);
+
+    expect((await readDigest(env, OWNER_ID, 1)).facts.map((fact) => fact.factId)).toEqual(["fact-said-here"]);
+    const recalled = await workspaceStub(env).recallMemoryFacts({
+      workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: OWNER_ID },
+      conversation: { parentKind: "workstream", parentId: OPEN_THREAD, substreamId: "0" },
+      query: null, now: NOW + 2, limit: 10,
+    });
+    expect(recalled.facts.map((fact) => fact.factId)).toEqual(["fact-from-email", "fact-said-here"]);
   });
 
   it("renders the copy as the section a run starts with, the digest before the personal system prompt", async () => {
@@ -258,8 +291,8 @@ describe("the memory digest copy", () => {
     const copy = await createSchedulingObjectPort(env, WORKSPACE_ID, OPEN_THREAD).memoryDigestCopy(`user:${OWNER_ID}`);
 
     const digest = renderMemoryDigestSection(copy ?? [], NOW);
-    expect(digest).toContain(`About the Thread "Launch":\n- The launch thread meets on Tuesdays. [${threadFactId.slice(0, 8)}]`);
-    expect(digest).toContain(`About the person:\n- Owner prefers release notes as bullets. [${personFactId.slice(0, 8)}]`);
+    expect(digest).toContain(`About the Thread "Launch":\n- The launch thread meets on Tuesdays. [${threadFactId}]`);
+    expect(digest).toContain(`About the person:\n- Owner prefers release notes as bullets. [${personFactId}]`);
 
     const section = principalSystemSectionFor(runInput(OWNER_ID, OWNER_RUN), {
       memoryDigest: (principal) => (principal === `user:${OWNER_ID}` ? copy : null),
