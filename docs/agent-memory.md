@@ -368,4 +368,4 @@ second one. Anything that changes who may open a conversation changes who may
 read the facts learned there, with no write: that is the design, and a cache of
 visibility decisions would break it.
 
-Design: `docs/PRDs/2026-10-18_agent-memory/prd.md` and `design.md`.
+Shipped in #1300. Design: `docs/PRDs/2026-10-18_agent-memory/prd.md` and `design.md`.
