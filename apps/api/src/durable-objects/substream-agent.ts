@@ -7615,11 +7615,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * claim still advertises a wake-up that has already fired.
    *
    * The port names this object's substream. `this.env` carries no installed
-   * authorities, so a port without one dispatches to the parent's main
-   * conversation — and inside a Breakout or a Sidekick run child that is a
-   * different object, whose `workstream_wakeups` has no such row. The timer
-   * then read "not pending", returned, and came back due at the same instant
-   * on every wake: one Sidekick held 91 such timers for over two weeks.
+   * authorities, so a port without one reaches the parent's Main, which in a
+   * Breakout or a Sidekick run child is a different object holding no such
+   * row.
    *
    * Every way this returns leaves the row out of `pending` or throws a named
    * code, so a timer that cannot fire is a reported failure rather than a
@@ -7657,9 +7655,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (this.agentTimerStillPending(alarm.key)) throw new Error("agent_timer_wakeup_unreachable");
       return;
     }
+    const background = this.state.storage.sql.exec<{ stopped_at: number | null }>(
+      "SELECT stopped_at FROM background_agent WHERE id = 1",
+    ).toArray()[0];
     const { fired } = await fireWorkstreamWakeup(executionEnv, wakeup, scheduling, {
       parentKind: identity.parentKind,
       substreamId,
+      backgroundAgent: background ? (background.stopped_at !== null ? "stopped" : true) : false,
     });
     // Not firing is a decision that consumes the row. One still pending lost
     // its claim to a writer that has not settled it.
