@@ -430,22 +430,19 @@ export class SessionImportRunService {
   }
 
   /**
-   * `discard` for a failed start, by the caller's create key alone; a key
-   * `complete` has claimed is refused before any agent is stopped. See
-   * `docs/session-import.md`, step 5.
+   * `discard` for a failed start, by the caller's create key alone. Retires
+   * before stopping anything, so a `complete` that claims the key first wins
+   * the receipt and keeps its agent. See `docs/session-import.md`, step 5.
    */
   async abandon(clientMessageId: string): Promise<{ abandoned: boolean }> {
     const receipt = await this.env.DB.prepare(
-      `SELECT workstream_id, state FROM workstream_create_receipts
+      `SELECT workstream_id FROM workstream_create_receipts
         WHERE workspace_id = ? AND creator_user_id = ? AND client_message_id = ?`,
     ).bind(this.auth.workspaceId, this.auth.userId, clientMessageId)
-      .first<{ workstream_id: string; state: string }>();
+      .first<{ workstream_id: string }>();
     if (!receipt) return { abandoned: false };
-    if (receipt.state !== "reserved" && receipt.state !== "failed") {
-      throw new ApiError(409, "session_import_already_open", "This thread has already opened; archive it instead");
-    }
-    await this.stopImports(receipt.workstream_id);
     await this.retire(receipt.workstream_id, clientMessageId);
+    await this.stopImports(receipt.workstream_id);
     return { abandoned: true };
   }
 }

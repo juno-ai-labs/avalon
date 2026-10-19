@@ -172,7 +172,9 @@ contract 1.
    closes or crashes mid-run sends none. So the `session_import` [agent
    profile](agent-harness.md#agent-profiles)'s `ended` hook runs once the run's
    outcome is durable, however it ended, and archives the Channel if its
-   receipt is still `reserved` (retired with `session_import_unfinished`). The
+   receipt is still `reserved` (retired with `session_import_unfinished`), or
+   `failed` by an abandon that landed before the reservation published and so
+   found nothing to archive. The
    desktop opens the Channel inside the finish tool, before the run's final
    turn, so a reservation still unopened at the end never will be; an update's
    Channel has a completed receipt and is untouched.
@@ -527,7 +529,10 @@ step 6.
 which today is only an import's, because no other client calls it. A key
 `complete` has claimed is refused before anything is stopped. A `failed`
 receipt is retired again, so a retire that stopped after writing the receipt
-is finished by the next one.
+is finished by the next one. Abandon retires before it stops any agent, so a
+`complete` that claims the key in between keeps its agent, and the run-end
+reclaim also matches a `failed` receipt, for an abandon that beat the
+reservation's publication.
 
 ### 2026-10-17 — Import a conversation as a Breakout of an existing thread
 
