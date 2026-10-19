@@ -7527,7 +7527,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       space_bootstrap: () => this.spaceStorage().nextBootstrapDueAt(),
       channel_color_sync: () => nextChannelColorSyncAt(sql),
       thread_backfill: () => nextThreadBackfillAt(sql),
-      import_reservation_reclaim: () => hosted ? nextImportReservationReclaimAt(sql) : null,
+      import_reservation_reclaim: () => nextImportReservationReclaimAt(sql),
       memory_digest_sync: () => nextMemoryDigestSyncAt(sql),
       activity_reap: () => {
         const oldest = sql.exec<{ created_at: number | null }>(
