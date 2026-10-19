@@ -20,6 +20,7 @@ import {
 import {
   seedCanonicalConversationTurn,
   seedWorkstreamObjectRoot,
+  seedWorkstreamRun,
   testWorkstreamObjectStore,
 } from "./helpers/durable-authority";
 import { createTestSqlStorage } from "./helpers/sql-storage";
@@ -217,6 +218,17 @@ describe("observeTurnDisposition", () => {
     expect(storage.judgementForRun(runId)).toMatchObject({ code: "classifier_unavailable", failure_kind: "typesafe_key_missing" });
   });
 
+  it("asks again after a recorded classifier failure, since a failure is not an answer", async () => {
+    const { storage } = conversation(twoTurns);
+    await observeTurnDisposition(observation(storage, { env: {} }));
+    const fetcher = answering("worth_carrying_up", 0.91);
+    const again = await observeTurnDisposition(observation(storage, { fetch: fetcher }));
+    expect(again).toMatchObject({ outcome: "judged", code: "worth_carrying_up" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(storage.judgementForRun(runId)).toMatchObject({ code: "worth_carrying_up", failure_kind: null });
+    expect(storage.open()).toHaveLength(1);
+  });
+
   it("records a confident side question in a Breakout as not_offerable, not as below the threshold", async () => {
     const { storage } = conversation(twoTurns);
     const result = await observeTurnDisposition(observation(storage, { fetch: answering("side_question_worth_a_breakout", 0.95) }));
@@ -296,6 +308,32 @@ describe("ConversationSuggestionStorage", () => {
     expect(storage.setDraft(row.suggestion_id, null)).toBeNull();
     const second = openRow(storage, "merge_up", "turn-1", 1);
     expect(storage.setDraft(second.suggestion_id, null)).toMatchObject({ status: "withdrawn", draft_status: "failed" });
+  });
+
+  describe("newestSettledTurn, the backfill's pick", () => {
+    function settledRun(database: ReturnType<typeof testWorkstreamObjectStore>, id: string, finalTurnId: string, status: "completed" | "running" = "completed") {
+      seedWorkstreamRun(database, { id, status });
+      database.prepare("UPDATE runs SET final_turn_id = ? WHERE run_id = ?").run(finalTurnId, id);
+    }
+
+    it("names the newest completed final turn among the newest three readable messages", () => {
+      const { database, storage } = conversation([...twoTurns, { actor: "human", text: "and the Starter tier?" }, { actor: "assistant", text: "Starter needs its own look." }]);
+      settledRun(database, "run-a", "turn-2");
+      settledRun(database, "run-b", "turn-4");
+      expect(storage.newestSettledTurn()).toEqual({ runId: "run-b", turnId: "turn-4" });
+    });
+
+    it("finds nothing when the last settled turn sits behind three newer messages", () => {
+      const { database, storage } = conversation([...twoTurns, { actor: "human", text: "thanks" }, { actor: "human", text: "one more thing" }, { actor: "human", text: "never mind" }]);
+      settledRun(database, "run-a", "turn-2");
+      expect(storage.newestSettledTurn()).toBeNull();
+    });
+
+    it("finds nothing when the newest Rally turn's run has not completed", () => {
+      const { database, storage } = conversation(twoTurns);
+      settledRun(database, "run-a", "turn-2", "running");
+      expect(storage.newestSettledTurn()).toBeNull();
+    });
   });
 
   it("reads resource embeds once each with the link text as the title", () => {

@@ -24,7 +24,7 @@ import { z } from "zod";
  */
 
 /** Every job a row may name. A job is added with the code that runs it, never before. */
-export const THREAD_BACKFILL_JOBS = ["description_summary"] as const;
+export const THREAD_BACKFILL_JOBS = ["description_summary", "suggestion_backfill"] as const;
 export const ThreadBackfillJobSchema = z.enum(THREAD_BACKFILL_JOBS);
 export type ThreadBackfillJob = z.infer<typeof ThreadBackfillJobSchema>;
 
@@ -45,6 +45,18 @@ export const THREAD_BACKFILL_MIGRATION: readonly string[] = [
   `CREATE INDEX thread_backfill_due_idx ON thread_backfill(not_before, job, workstream_id)`,
   `INSERT INTO thread_backfill(job, workstream_id, attempts, not_before)
      SELECT 'description_summary', workstream_id, 0, 0 FROM channels WHERE archived_at IS NULL`,
+];
+
+/**
+ * WorkspaceDO migration 115: the suggestion backfill. Every thread that is
+ * not archived has the newest settled Rally turn of its Main and of each open
+ * Breakout judged for a merge or Breakout suggestion, the way a fresh
+ * settlement is (`backfillSuggestion`), so a conversation that was quiet when
+ * the chip shipped gets its line without waiting for a new run.
+ */
+export const SUGGESTION_BACKFILL_MIGRATION: readonly string[] = [
+  `INSERT OR IGNORE INTO thread_backfill(job, workstream_id, attempts, not_before)
+     SELECT 'suggestion_backfill', workstream_id, 0, 0 FROM channels WHERE archived_at IS NULL`,
 ];
 
 /** One thread for one job. */
